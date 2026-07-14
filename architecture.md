@@ -1,3 +1,4 @@
+```mermaid
 flowchart TB
     %% ================= TÁC NHÂN BÊN NGOÀI (EXTERNAL ACTORS) =================
     subgraph ExternalActors ["Tác nhân bên ngoài - Thiết bị Phần cứng"]
@@ -103,3 +104,4 @@ flowchart TB
     SessionSvc -- "Yêu cầu Start/Stop sạc" --> ChargingSvc
     ChargingSvc -- "Gửi lệnh điều khiển" --> OCPPGW
     OCPPGW <-->|"Truyền tải bản tin điều khiển"| EVSE_OS
+```
