@@ -189,6 +189,36 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.
 - Docstring bắt buộc cho service function xử lý nghiệp vụ phức tạp (đối soát vi phạm, tính KPI...).
 
+#### 5.1.1 SQLAlchemy Models — Primary Key Convention
+- **Mọi bảng PHẢI có internal ID** (không dùng business key như license_plate, VIN làm PK):
+  ```python
+  # ✅ ĐÚNG: Internal auto-increment ID
+  class Vehicle(Base):
+      __tablename__ = "vehicles"
+      
+      vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+      license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
+      vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
+  
+  # ❌ SAI: Dùng business key làm PK
+  class Vehicle(Base):
+      __tablename__ = "vehicles"
+      
+      license_plate: Mapped[str] = mapped_column(String(20), primary_key=True)  # KHÔNG BAO GIỜ
+  ```
+- **Lý do:**
+  - Business key có thể thay đổi (biển số xe đổi khi chuyển vùng, VIN có thể nhập sai cần sửa)
+  - Internal ID bất biến, ổn định cho foreign key references
+  - Auto-increment integer hiệu năng cao hơn UUID string
+- **Foreign key** luôn tham chiếu đến internal ID:
+  ```python
+  # ✅ ĐÚNG
+  charging_session.vehicle_id  # → Vehicle.vehicle_id (int)
+  
+  # ❌ SAI
+  charging_session.vehicle_license_plate  # → Vehicle.license_plate (business key)
+  ```
+
 ### 5.2 Web Portal — React / TypeScript
 - Package manager: **pnpm**.
 - Format: **Prettier**. Lint: **ESLint** (`@typescript-eslint/recommended` + `eslint-plugin-react-hooks`).
