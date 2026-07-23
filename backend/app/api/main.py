@@ -3,7 +3,6 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from app.libs.common.config import settings
 from app.libs.db.session import close_db, init_db
@@ -24,15 +23,6 @@ app = FastAPI(
     description="Backend for G3Network - Electric truck driver support system",
     version=settings.APP_VERSION,
     lifespan=lifespan,
-)
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 
