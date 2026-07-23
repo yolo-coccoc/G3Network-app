@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Identity
 import enum
 
 from app.libs.db.session import Base
@@ -36,7 +37,7 @@ class Vehicle(Base):
     
     __tablename__ = "vehicles"
     
-    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
     telematics_device_id: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)

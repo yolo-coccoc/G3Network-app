@@ -1,7 +1,5 @@
 """Router layer for Vehicle domain - defines API endpoints."""
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,7 +73,7 @@ async def list_vehicles(
     description="Lấy thông tin chi tiết của một xe theo ID."
 )
 async def get_vehicle(
-    vehicle_id: UUID,
+    vehicle_id: int,
     db: AsyncSession = Depends(get_db)
 ) -> VehicleResponse:
     """Get a vehicle by ID.
@@ -97,7 +95,7 @@ async def get_vehicle(
     description="Cập nhật thông tin xe. Chỉ cập nhật các trường được cung cấp."
 )
 async def update_vehicle(
-    vehicle_id: UUID,
+    vehicle_id: int,
     update_data: VehicleUpdate,
     db: AsyncSession = Depends(get_db)
 ) -> VehicleResponse:
@@ -121,7 +119,7 @@ async def update_vehicle(
     description="Soft delete xe. Xe vẫn còn trong database nhưng không hiển thị trong danh sách."
 )
 async def delete_vehicle(
-    vehicle_id: UUID,
+    vehicle_id: int,
     db: AsyncSession = Depends(get_db)
 ) -> dict[str, str]:
     """Delete a vehicle (soft delete).

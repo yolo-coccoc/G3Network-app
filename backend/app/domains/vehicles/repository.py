@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
 
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,12 +26,12 @@ async def create_vehicle(db: AsyncSession, vehicle_data: dict[str, Any]) -> Vehi
     return vehicle
 
 
-async def get_vehicle_by_id(db: AsyncSession, vehicle_id: UUID | str) -> Vehicle | None:
+async def get_vehicle_by_id(db: AsyncSession, vehicle_id: int) -> Vehicle | None:
     """Get vehicle by ID (excluding soft-deleted).
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle UUID
+        vehicle_id: Vehicle internal ID
         
     Returns:
         Vehicle instance or None if not found
@@ -40,7 +39,7 @@ async def get_vehicle_by_id(db: AsyncSession, vehicle_id: UUID | str) -> Vehicle
     result = await db.execute(
         select(Vehicle).where(
             and_(
-                Vehicle.id == str(vehicle_id),
+                Vehicle.vehicle_id == vehicle_id,
                 Vehicle.deleted_at.is_(None)
             )
         )
@@ -162,21 +161,21 @@ async def count_vehicles(
         conditions.append(Vehicle.status == status_filter)
     
     result = await db.execute(
-        select(func.count(Vehicle.id)).where(and_(*conditions))
+        select(func.count(Vehicle.vehicle_id)).where(and_(*conditions))
     )
     return result.scalar() or 0
 
 
 async def update_vehicle(
     db: AsyncSession,
-    vehicle_id: UUID | str,
+    vehicle_id: int,
     update_data: dict[str, Any]
 ) -> Vehicle | None:
     """Update vehicle fields.
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle UUID
+        vehicle_id: Vehicle internal ID
         update_data: Dictionary of fields to update
         
     Returns:
@@ -196,7 +195,7 @@ async def update_vehicle(
     return vehicle
 
 
-async def soft_delete_vehicle(db: AsyncSession, vehicle_id: UUID | str) -> Vehicle | None:
+async def soft_delete_vehicle(db: AsyncSession, vehicle_id: int) -> Vehicle | None:
     """Soft delete vehicle by setting deleted_at timestamp.
     
     Args:

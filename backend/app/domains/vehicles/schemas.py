@@ -1,7 +1,6 @@
 """Pydantic schemas for Vehicle domain."""
 
 from datetime import datetime
-from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -55,7 +54,7 @@ class VehicleBase(BaseModel):
 class VehicleCreate(VehicleBase):
     """Schema for creating a new vehicle."""
     
-    fleet_id: UUID | None = Field(
+    fleet_id: str | None = Field(
         None,
         description="ID đội xe (nullable - có thể chưa phân bổ)"
     )
@@ -103,7 +102,7 @@ class VehicleUpdate(BaseModel):
         None,
         description="Trạng thái xe"
     )
-    fleet_id: UUID | None = Field(
+    fleet_id: str | None = Field(
         None,
         description="ID đội xe"
     )
@@ -114,8 +113,8 @@ class VehicleResponse(VehicleBase):
     
     model_config = ConfigDict(from_attributes=True)
     
-    id: UUID = Field(..., description="ID xe (UUID)")
-    fleet_id: UUID | None = Field(None, description="ID đội xe")
+    vehicle_id: int = Field(..., description="ID xe (internal)")
+    fleet_id: str | None = Field(None, description="ID đội xe")
     created_at: datetime = Field(..., description="Thời gian tạo")
     updated_at: datetime = Field(..., description="Thời gian cập nhật cuối")
 
