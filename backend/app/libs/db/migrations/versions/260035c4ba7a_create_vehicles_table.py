@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # Tạo bảng vehicles với vehicle_id là auto-increment integer
-    # SQLAlchemy sẽ tự động tạo enum type vehiclestatus
+    # SQLAlchemy sẽ tự động tạo enum type vehiclestatus với giá trị UPPERCASE
     op.create_table(
         'vehicles',
         sa.Column('vehicle_id', sa.Integer(), sa.Identity(), primary_key=True),
@@ -30,7 +30,7 @@ def upgrade() -> None:
         sa.Column('make', sa.String(50), nullable=False),
         sa.Column('model', sa.String(50), nullable=False),
         sa.Column('year', sa.Integer(), nullable=False),
-        sa.Column('status', sa.Enum('active', 'inactive', 'maintenance', 'decommissioned', name='vehiclestatus'), nullable=False, server_default='active'),
+        sa.Column('status', sa.Enum('ACTIVE', 'INACTIVE', 'MAINTENANCE', 'DECOMMISSIONED', name='vehiclestatus'), nullable=False, server_default='ACTIVE'),
         sa.Column('fleet_id', sa.String(36), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),

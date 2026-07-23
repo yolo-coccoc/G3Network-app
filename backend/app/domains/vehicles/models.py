@@ -12,10 +12,10 @@ from app.libs.db.session import Base
 
 class VehicleStatus(str, enum.Enum):
     """Vehicle status enum."""
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    MAINTENANCE = "maintenance"
-    DECOMMISSIONED = "decommissioned"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    MAINTENANCE = "MAINTENANCE"
+    DECOMMISSIONED = "DECOMMISSIONED"
 
 
 class Vehicle(Base):
