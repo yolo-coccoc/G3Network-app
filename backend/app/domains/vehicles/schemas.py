@@ -1,7 +1,6 @@
 """Pydantic schemas for Vehicle domain."""
 
 from datetime import datetime
-from decimal import Decimal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
@@ -16,46 +15,54 @@ class VehicleBase(BaseModel):
         ...,
         min_length=1,
         max_length=20,
-        description="Biển số xe",
-        examples=["51A-12345"]
+        description="Biển số xe"
     )
     vin: str | None = Field(
         None,
         min_length=17,
         max_length=17,
-        description="Số khung (Vehicle Identification Number)",
-        examples=["1HGBH41JXMN109186"]
+        description="Số khung (Vehicle Identification Number)"
     )
     telematics_device_id: str | None = Field(
         None,
         max_length=50,
-        description="Mã thiết bị telematics gắn trên xe",
-        examples=["TEL-001-ABC123"]
+        description="Mã thiết bị telematics gắn trên xe"
     )
     make: str = Field(
         ...,
         min_length=1,
         max_length=50,
-        description="Hãng xe",
-        examples=["VinFast"]
+        description="Hãng xe"
     )
     model: str = Field(
         ...,
         min_length=1,
         max_length=50,
-        description="Dòng xe",
-        examples=["eTruck 500"]
+        description="Dòng xe"
     )
     year: int = Field(
         ...,
         ge=1900,
         le=2100,
-        description="Năm sản xuất",
-        examples=[2024]
+        description="Năm sản xuất"
     )
     status: VehicleStatus = Field(
         default=VehicleStatus.ACTIVE,
         description="Trạng thái xe"
+    )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "license_plate": "51A-12345",
+                "vin": "1HGBH41JXMN109186",
+                "telematics_device_id": "TEL-001-ABC123",
+                "make": "VinFast",
+                "model": "eTruck 500",
+                "year": 2024,
+                "status": "active"
+            }
+        }
     )
 
 
@@ -65,6 +72,21 @@ class VehicleCreate(VehicleBase):
     fleet_id: UUID | None = Field(
         None,
         description="ID đội xe (nullable - có thể chưa phân bổ)"
+    )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "license_plate": "51A-12345",
+                "vin": "1HGBH41JXMN109186",
+                "telematics_device_id": "TEL-001-ABC123",
+                "make": "VinFast",
+                "model": "eTruck 500",
+                "year": 2024,
+                "status": "active",
+                "fleet_id": "123e4567-e89b-12d3-a456-426614174000"
+            }
+        }
     )
 
 
@@ -114,12 +136,38 @@ class VehicleUpdate(BaseModel):
         None,
         description="ID đội xe"
     )
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "year": 2025,
+                "status": "maintenance"
+            }
+        }
+    )
 
 
 class VehicleResponse(VehicleBase):
     """Schema for vehicle response."""
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "license_plate": "51A-12345",
+                "vin": "1HGBH41JXMN109186",
+                "telematics_device_id": "TEL-001-ABC123",
+                "make": "VinFast",
+                "model": "eTruck 500",
+                "year": 2024,
+                "status": "active",
+                "fleet_id": "123e4567-e89b-12d3-a456-426614174001",
+                "created_at": "2024-01-15T10:30:00",
+                "updated_at": "2024-01-15T10:30:00"
+            }
+        }
+    )
     
     id: UUID = Field(..., description="ID xe (UUID)")
     fleet_id: UUID | None = Field(None, description="ID đội xe")
@@ -129,6 +177,31 @@ class VehicleResponse(VehicleBase):
 
 class VehicleListResponse(BaseModel):
     """Schema for paginated list of vehicles."""
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "items": [
+                    {
+                        "id": "123e4567-e89b-12d3-a456-426614174000",
+                        "license_plate": "51A-12345",
+                        "vin": "1HGBH41JXMN109186",
+                        "telematics_device_id": "TEL-001-ABC123",
+                        "make": "VinFast",
+                        "model": "eTruck 500",
+                        "year": 2024,
+                        "status": "active",
+                        "fleet_id": "123e4567-e89b-12d3-a456-426614174001",
+                        "created_at": "2024-01-15T10:30:00",
+                        "updated_at": "2024-01-15T10:30:00"
+                    }
+                ],
+                "total": 1,
+                "page": 1,
+                "page_size": 10
+            }
+        }
+    )
     
     items: list[VehicleResponse] = Field(..., description="Danh sách xe")
     total: int = Field(..., ge=0, description="Tổng số xe")
