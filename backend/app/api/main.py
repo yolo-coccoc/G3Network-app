@@ -6,14 +6,14 @@ from fastapi import FastAPI
 
 from app.domains.vehicles.router import router as vehicles_router
 from app.libs.common.config import settings
-from app.libs.db.session import close_db, init_db
+from app.libs.db.session import close_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    await init_db()
+    # Note: Tables are created via Alembic migrations
     yield
     # Shutdown
     await close_db()
