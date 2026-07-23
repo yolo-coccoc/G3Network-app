@@ -1,15 +1,46 @@
 """FastAPI application entry point."""
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.libs.common.config import settings
+from app.libs.db.session import close_db, init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan events."""
+    # Startup
+    await init_db()
+    yield
+    # Shutdown
+    await close_db()
+
 
 app = FastAPI(
-    title="G3Network Backend",
+    title=settings.APP_NAME,
     description="Backend for G3Network - Electric truck driver support system",
-    version="0.1.0",
+    version=settings.APP_VERSION,
+    lifespan=lifespan,
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
 @app.get("/health")
 async def health_check() -> dict:
     """Health check endpoint."""
-    return {"status": "healthy", "version": "0.1.0"}
+    return {
+        "status": "healthy",
+        "version": settings.APP_VERSION,
+        "app_name": settings.APP_NAME,
+    }
