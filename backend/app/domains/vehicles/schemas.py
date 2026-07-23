@@ -17,8 +17,8 @@ class VehicleBase(BaseModel):
         max_length=20,
         description="Biển số xe"
     )
-    vin: str | None = Field(
-        None,
+    vin: str = Field(
+        ...,
         min_length=17,
         max_length=17,
         description="Số khung (Vehicle Identification Number)"
