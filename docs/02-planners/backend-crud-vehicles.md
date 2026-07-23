@@ -46,6 +46,55 @@ backend/
 
 ## Danh sách bước thực hiện
 
+### Bước 0: Khởi tạo hạ tầng database
+
+**Mục tiêu:** Tạo PostgreSQL container với TimescaleDB + PostGIS extensions
+
+**Prompt:**
+```
+Tạo hạ tầng database trong thư mục infra/:
+1. Tạo docker-compose.yml với service db (PostgreSQL 16)
+2. Tạo thư mục db/init/ với script bật extensions (TimescaleDB, PostGIS, uuid-ossp)
+3. Tạo .env.example với POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+4. Cập nhật backend/.env.example với DATABASE_URL khớp với infra/.env.example
+```
+
+**Lưu ý quan trọng:**
+- Image `postgres:16` mặc định **không có** TimescaleDB và PostGIS
+- Cho development cơ bản (CRUD vehicles), image này đủ dùng
+- Khi cần dùng TimescaleDB/PostGIS (domain telemetry, charging), cần chuyển sang:
+  - `timescale/timescaledb-ha:pg16` (có TimescaleDB)
+  - `postgis/postgis:16-3.4` (có PostGIS)
+  - Hoặc build custom image có cả 2 extensions
+
+**Lệnh chạy:**
+```bash
+# Copy .env.example to .env
+cp infra/.env.example infra/.env
+
+# Khởi động container
+docker compose -f infra/docker-compose.yml up -d
+
+# Kiểm tra container đang chạy
+docker ps
+
+# Xem logs (nếu cần)
+docker compose -f infra/docker-compose.yml logs -f db
+
+# Dừng và xóa container (giữ volume)
+docker compose -f infra/docker-compose.yml down
+
+# Dừng và xóa cả volume (reset database)
+docker compose -f infra/docker-compose.yml down -v
+```
+
+**Kiểm tra:**
+- [ ] Container `g3network-db` đang chạy
+- [ ] Port 5432 accessible
+- [ ] Extensions đã được bật trong database
+
+---
+
 ### Bước 1: Thiết lập môi trường backend
 
 **Mục tiêu:** Khởi tạo project backend với FastAPI + uv
