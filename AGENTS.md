@@ -35,39 +35,40 @@ Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-
 ```
 .
 ├── backend/
-│   ├── domains/
-│   │   ├── identity/              # Auth & RBAC (AD-01) — domain nền tảng
-│   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   ├── app/                        # Source code chính (uv package layout)
+│   │   ├── domains/
+│   │   │   ├── identity/              # Auth & RBAC (AD-01) — domain nền tảng
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │
+│   │   │   ├── vehicles/              # Hồ sơ tĩnh, provisioning, kích hoạt/hủy kích hoạt (AD-05)
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │
+│   │   │   ├── telemetry/             # Dữ liệu thời gian thực & lịch sử của xe (AD-02, FM-01, FM-02, AD-08)
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │   └── ingestion/         # Nhận dữ liệu telematics qua MQTT (EMQX)
+│   │   │   │       ├── mqtt_consumer.py
+│   │   │   │       └── entrypoint.py  # container "telemetry-ingestion" trỏ vào đây
+│   │   │   │
+│   │   │   ├── charging/              # Trụ sạc, phiên sạc, đối soát vi phạm (S-02, AD-03)
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │   └── ocpp/              # WebSocket server giao tiếp trụ sạc (OCPP)
+│   │   │   │       ├── ocpp_server.py
+│   │   │   │       └── entrypoint.py  # container "charging-ocpp" trỏ vào đây
+│   │   │   │
+│   │   │   ├── policy/                # Chính sách sạc/bảo hành (AD-04)
+│   │   │   ├── notifications/         # Cấu hình ngưỡng & kênh thông báo (AD-06)
+│   │   │   ├── drivers/                # Hồ sơ & phân công tài xế (FM-04)
+│   │   │   ├── fleet/                  # Dashboard KPI, báo cáo theo đội xe (FM-01…FM-07)
+│   │   │   ├── billing/                # Gói dịch vụ, thuê bao (AD-09)
+│   │   │   ├── support/                # CSKH/ticket (AD-07)
+│   │   │   └── scoring/                 # Chấm điểm hành vi lái (AD-08)
 │   │   │
-│   │   ├── vehicles/              # Hồ sơ tĩnh, provisioning, kích hoạt/hủy kích hoạt (AD-05)
-│   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   ├── api/
+│   │   │   └── main.py                # FastAPI app gộp router từ tất cả domains/*/router.py → container "api"
 │   │   │
-│   │   ├── telemetry/             # Dữ liệu thời gian thực & lịch sử của xe (AD-02, FM-01, FM-02, AD-08)
-│   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
-│   │   │   └── ingestion/         # Nhận dữ liệu telematics qua MQTT (EMQX)
-│   │   │       ├── mqtt_consumer.py
-│   │   │       └── entrypoint.py  # container "telemetry-ingestion" trỏ vào đây
-│   │   │
-│   │   ├── charging/              # Trụ sạc, phiên sạc, đối soát vi phạm (S-02, AD-03)
-│   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
-│   │   │   └── ocpp/              # WebSocket server giao tiếp trụ sạc (OCPP)
-│   │   │       ├── ocpp_server.py
-│   │   │       └── entrypoint.py  # container "charging-ocpp" trỏ vào đây
-│   │   │
-│   │   ├── policy/                # Chính sách sạc/bảo hành (AD-04)
-│   │   ├── notifications/         # Cấu hình ngưỡng & kênh thông báo (AD-06)
-│   │   ├── drivers/                # Hồ sơ & phân công tài xế (FM-04)
-│   │   ├── fleet/                  # Dashboard KPI, báo cáo theo đội xe (FM-01…FM-07)
-│   │   ├── billing/                # Gói dịch vụ, thuê bao (AD-09)
-│   │   ├── support/                # CSKH/ticket (AD-07)
-│   │   └── scoring/                 # Chấm điểm hành vi lái (AD-08)
-│   │
-│   ├── api/
-│   │   └── main.py                # FastAPI app gộp router từ tất cả domains/*/router.py → container "api"
-│   │
-│   ├── libs/
-│   │   ├── common/                 # config, logging — dùng chung, KHÔNG chứa nghiệp vụ
-│   │   └── db/                     # SQLAlchemy base, Alembic migrations dùng chung
+│   │   └── libs/
+│   │       ├── common/                 # config, logging — dùng chung, KHÔNG chứa nghiệp vụ
+│   │       └── db/                     # SQLAlchemy base, Alembic migrations dùng chung
 │   │
 │   ├── pyproject.toml
 │   ├── uv.lock
