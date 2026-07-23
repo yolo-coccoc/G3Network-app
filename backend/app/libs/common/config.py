@@ -22,9 +22,6 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://g3network:g3network123@localhost:5432/g3network"
 
-    # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
-
 
 @lru_cache
 def get_settings() -> Settings:
