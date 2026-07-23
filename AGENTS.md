@@ -152,24 +152,19 @@ Backend/web-portal chạy trên host kết nối vào 2 container này qua `loca
 
 ### 4.3 Lệnh thường dùng
 
+Sử dụng Makefile làm nguồn chân lý. Xem danh sách lệnh đầy đủ:
+
 ```bash
-# Khởi động hạ tầng (chỉ db + broker)
-docker compose -f infra/docker-compose.yml up -d
-
-# Cài dependency & chạy backend
-cd backend
-uv sync
-uv run alembic upgrade head
-uv run uvicorn api.main:app --reload
-
-# Chạy web portal
-cd web-portal
-pnpm install
-pnpm dev
-
-# Tắt hạ tầng + xoá volume (reset DB)
-docker compose -f infra/docker-compose.yml down -v
+make help
 ```
+
+Các lệnh cơ bản:
+- `make infra-up` — Khởi động hạ tầng (PostgreSQL)
+- `make backend-install` — Cài đặt dependencies
+- `make backend-dev` — Chạy backend server
+- `make db-migrate` — Chạy database migrations
+
+Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 ### 4.4 Biến môi trường
 - `.env.example` trỏ tới `localhost` (không dùng tên service Docker nội bộ), VD: `DATABASE_URL=postgresql://...@localhost:5432/...`, `MQTT_HOST=localhost`.
@@ -215,6 +210,7 @@ docker compose -f infra/docker-compose.yml down -v
 - Mọi PR phải qua review trước khi merge vào `main`; không push thẳng vào `main`.
 - Không commit secrets — mọi config nhạy cảm qua `.env` (đã có `.env.example` làm mẫu, không chứa giá trị thật).
 - Khi thêm chức năng mới, đối chiếu lại mã chức năng tương ứng trong `docs/Chuc_nang_tong_hop.xlsx` (VD: `AD-03`, `D-05`) để giữ nhất quán giữa code và đặc tả.
+- **KHÔNG tự ý bổ sung thành phần mới** (middleware, library, config, infrastructure...) mà **phải hỏi ý kiến bạn trước**. Chỉ triển khai những gì được yêu cầu rõ ràng trong planner hoặc prompt.
 
 ---
 
