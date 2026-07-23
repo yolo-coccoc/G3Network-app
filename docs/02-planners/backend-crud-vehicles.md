@@ -25,18 +25,21 @@ Xây dựng backend API cho quản lý xe (vehicles) với các thao tác CRUD c
 
 ```
 backend/
-├── domains/
-│   └── vehicles/
-│       ├── router.py      # FastAPI endpoints
-│       ├── service.py     # Business logic
-│       ├── repository.py  # Database queries
-│       ├── schemas.py     # Pydantic models
-│       └── models.py      # SQLAlchemy models
-├── api/
-│   └── main.py           # Mount router
-└── libs/
-    └── db/
-        └── base.py        # SQLAlchemy base
+├── app/                        # Source code chính (uv package layout)
+│   ├── domains/
+│   │   └── vehicles/
+│   │       ├── router.py      # FastAPI endpoints
+│   │       ├── service.py     # Business logic
+│   │       ├── repository.py  # Database queries
+│   │       ├── schemas.py     # Pydantic models
+│   │       └── models.py      # SQLAlchemy models
+│   ├── api/
+│   │   └── main.py           # Mount router
+│   └── libs/
+│       └── db/
+│           └── base.py        # SQLAlchemy base
+├── pyproject.toml
+└── uv.lock
 ```
 
 ---
@@ -54,9 +57,9 @@ Khởi tạo project backend trong thư mục backend/ với:
 - FastAPI
 - uv để quản lý dependency (pyproject.toml + uv.lock)
 - Cấu trúc thư mục theo AGENTS.md:
-  - backend/domains/vehicles/
-  - backend/api/main.py
-  - backend/libs/db/
+  - backend/app/domains/vehicles/
+  - backend/app/api/main.py
+  - backend/app/libs/db/
 - File .env.example với DATABASE_URL
 - File .gitignore cho Python
 ```
@@ -74,7 +77,7 @@ Khởi tạo project backend trong thư mục backend/ với:
 
 **Prompt:**
 ```
-Thiết lập kết nối database trong backend/libs/db/:
+Thiết lập kết nối database trong backend/app/libs/db/:
 1. Tạo base.py với SQLAlchemy declarative_base
 2. Tạo session management (async session)
 3. Cấu hình database URL từ environment variable
@@ -93,7 +96,7 @@ Thiết lập kết nối database trong backend/libs/db/:
 
 **Prompt:**
 ```
-Tạo backend/domains/vehicles/models.py với SQLAlchemy model Vehicle:
+Tạo backend/app/domains/vehicles/models.py với SQLAlchemy model Vehicle:
 
 Bảng vehicles:
 - id: UUID primary key
@@ -129,7 +132,7 @@ Lưu ý:
 
 **Prompt:**
 ```
-Tạo backend/domains/vehicles/schemas.py với Pydantic models:
+Tạo backend/app/domains/vehicles/schemas.py với Pydantic models:
 
 1. VehicleBase:
    - plate_number: str
@@ -179,7 +182,7 @@ Lưu ý:
 
 **Prompt:**
 ```
-Tạo backend/domains/vehicles/repository.py với các hàm async:
+Tạo backend/app/domains/vehicles/repository.py với các hàm async:
 
 1. create_vehicle(db, vehicle_data) -> Vehicle
 2. get_vehicle_by_id(db, vehicle_id) -> Vehicle | None
@@ -209,7 +212,7 @@ Lưu ý:
 
 **Prompt:**
 ```
-Tạo backend/domains/vehicles/service.py với các hàm:
+Tạo backend/app/domains/vehicles/service.py với các hàm:
 
 1. create_vehicle(db, vehicle_data) -> VehicleResponse
    - Kiểm tra plate_number đã tồn tại chưa
@@ -249,7 +252,7 @@ Lưu ý:
 
 **Prompt:**
 ```
-Tạo backend/domains/vehicles/router.py với FastAPI APIRouter:
+Tạo backend/app/domains/vehicles/router.py với FastAPI APIRouter:
 
 Endpoints:
 1. POST /vehicles
@@ -296,7 +299,7 @@ Lưu ý:
 
 **Prompt:**
 ```
-Cập nhật backend/api/main.py:
+Cập nhật backend/app/api/main.py:
 1. Import router từ domains.vehicles.router
 2. Tạo FastAPI app với title, description
 3. Include router với prefix="/api/v1"
@@ -382,7 +385,7 @@ Test case 6: Tạo xe trùng biển số
 
 **Prompt:**
 ```
-Tạo file backend/domains/vehicles/vehicles.md mô tả:
+Tạo file backend/app/domains/vehicles/vehicles.md mô tả:
 - Mục đích của domain vehicles
 - Các endpoints và cách sử dụng
 - Các trường trong model Vehicle
