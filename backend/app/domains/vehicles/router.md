@@ -25,7 +25,7 @@
 - Response: `VehicleResponse` (200)
 - Error: 404 nếu không tìm thấy
 
-### PATCH /vehicles/{vehicle_id}
+### PUT /vehicles/{vehicle_id}
 - Cập nhật thông tin xe
 - Path param: `vehicle_id` (UUID)
 - Request body: `VehicleUpdate` (partial update)

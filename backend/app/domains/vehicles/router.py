@@ -90,7 +90,7 @@ async def get_vehicle(
     return await service.get_vehicle(db, vehicle_id)
 
 
-@router.patch(
+@router.put(
     "/{vehicle_id}",
     response_model=VehicleResponse,
     summary="Cập nhật xe",
