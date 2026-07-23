@@ -318,7 +318,7 @@ Endpoints:
    - Chi tiết 1 xe
    - Response: VehicleResponse (200)
 
-4. PATCH /vehicles/{vehicle_id}
+4. PUT /vehicles/{vehicle_id}
    - Cập nhật thông tin xe
    - Request: VehicleUpdate
    - Response: VehicleResponse (200)

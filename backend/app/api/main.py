@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.domains.vehicles.router import router as vehicles_router
 from app.libs.common.config import settings
 from app.libs.db.session import close_db, init_db
 
@@ -34,3 +35,7 @@ async def health_check() -> dict:
         "version": settings.APP_VERSION,
         "app_name": settings.APP_NAME,
     }
+
+
+# Include routers
+app.include_router(vehicles_router, prefix="/api/v1/vehicles")
