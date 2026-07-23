@@ -1,0 +1,111 @@
+# === PYTHON / UV ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# UV
+.uv/
+uv.lock
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Linting
+.ruff_cache/
+
+# === NODE.JS / PNPM ===
+node_modules/
+.pnpm-store/
+.pnpm-debug.log
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# === FLUTTER / DART ===
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.flutter-plugins
+
+# === ENVIRONMENT VARIABLES ===
+.env
+.env.local
+.env.*.local
+*.env
+
+# === IDE / EDITORS ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# === OS ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# === DATABASE ===
+*.db
+*.sqlite
+*.sqlite3
+
+# === LOGS ===
+*.log
+logs/
+
+# === DOCKER ===
+docker-compose.override.yml
+
+# === MISC ===
+*.bak
+*.tmp
+*.temp
+.cache/
