@@ -12,7 +12,6 @@ Xử lý tất cả truy vấn database cho domain Vehicle. Repository là layer
 - `get_vehicle_by_id(db, vehicle_id)` - Lấy xe theo ID
 - `get_vehicle_by_plate(db, license_plate)` - Lấy xe theo biển số
 - `get_vehicle_by_vin(db, vin)` - Lấy xe theo số khung
-- `get_vehicle_by_telematics_id(db, telematics_device_id)` - Lấy xe theo mã thiết bị telematics
 - `get_vehicles(db, skip, limit, status_filter)` - Lấy danh sách xe phân trang
 - `count_vehicles(db, status_filter)` - Đếm tổng số xe
 

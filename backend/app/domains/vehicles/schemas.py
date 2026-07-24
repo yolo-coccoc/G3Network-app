@@ -22,11 +22,6 @@ class VehicleBase(BaseModel):
         max_length=17,
         description="Số khung (Vehicle Identification Number)"
     )
-    telematics_device_id: str | None = Field(
-        None,
-        max_length=50,
-        description="Mã thiết bị telematics gắn trên xe"
-    )
     make: str = Field(
         ...,
         min_length=1,
@@ -74,11 +69,6 @@ class VehicleUpdate(BaseModel):
         min_length=17,
         max_length=17,
         description="Số khung"
-    )
-    telematics_device_id: str | None = Field(
-        None,
-        max_length=50,
-        description="Mã thiết bị telematics"
     )
     make: str | None = Field(
         None,

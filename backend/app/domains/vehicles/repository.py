@@ -89,27 +89,6 @@ async def get_vehicle_by_vin(db: AsyncSession, vin: str) -> Vehicle | None:
     return result.scalar_one_or_none()
 
 
-async def get_vehicle_by_telematics_id(db: AsyncSession, telematics_device_id: str) -> Vehicle | None:
-    """Get vehicle by telematics device ID (excluding soft-deleted).
-    
-    Args:
-        db: Async database session
-        telematics_device_id: Telematics device identifier
-        
-    Returns:
-        Vehicle instance or None if not found
-    """
-    result = await db.execute(
-        select(Vehicle).where(
-            and_(
-                Vehicle.telematics_device_id == telematics_device_id,
-                Vehicle.deleted_at.is_(None)
-            )
-        )
-    )
-    return result.scalar_one_or_none()
-
-
 async def get_vehicles(
     db: AsyncSession,
     skip: int = 0,

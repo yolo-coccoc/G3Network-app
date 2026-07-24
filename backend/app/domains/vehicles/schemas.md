@@ -9,7 +9,6 @@
 Schema cơ sở chứa các trường chung:
 - `license_plate`: Biển số xe (bắt buộc, 1-20 ký tự)
 - `vin`: Số khung (optional, đúng 17 ký tự)
-- `telematics_device_id`: Mã thiết bị telematics (optional, max 50 ký tự)
 - `make`: Hãng xe (bắt buộc)
 - `model`: Dòng xe (bắt buộc)
 - `year`: Năm sản xuất (bắt buộc, 1900-2100)
@@ -41,7 +40,6 @@ Schema danh sách xe phân trang:
 ## Validation
 - `license_plate`: min_length=1, max_length=20
 - `vin`: đúng 17 ký tự (nếu có)
-- `telematics_device_id`: max_length=50
 - `year`: 1900 ≤ year ≤ 2100
 - `page_size`: 1 ≤ page_size ≤ 100
 

@@ -26,7 +26,6 @@ def upgrade() -> None:
         sa.Column('vehicle_id', sa.Integer(), sa.Identity(), primary_key=True),
         sa.Column('license_plate', sa.String(20), unique=True, nullable=False),
         sa.Column('vin', sa.String(17), unique=True, nullable=False),
-        sa.Column('telematics_device_id', sa.String(50), unique=True, nullable=True),
         sa.Column('make', sa.String(50), nullable=False),
         sa.Column('model', sa.String(50), nullable=False),
         sa.Column('year', sa.Integer(), nullable=False),
@@ -40,14 +39,12 @@ def upgrade() -> None:
     # Tạo indexes
     op.create_index('ix_vehicles_license_plate', 'vehicles', ['license_plate'])
     op.create_index('ix_vehicles_vin', 'vehicles', ['vin'])
-    op.create_index('ix_vehicles_telematics_device_id', 'vehicles', ['telematics_device_id'])
     op.create_index('ix_vehicles_status', 'vehicles', ['status'])
 
 
 def downgrade() -> None:
     # Drop indexes
     op.drop_index('ix_vehicles_status', 'vehicles')
-    op.drop_index('ix_vehicles_telematics_device_id', 'vehicles')
     op.drop_index('ix_vehicles_vin', 'vehicles')
     op.drop_index('ix_vehicles_license_plate', 'vehicles')
     

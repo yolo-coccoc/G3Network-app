@@ -22,10 +22,9 @@ class Vehicle(Base):
     """Vehicle model representing electric trucks.
     
     Attributes:
-        id: Primary key (UUID)
+        vehicle_id: Primary key (int)
         license_plate: Biển số xe (unique)
         vin: Số khung (unique)
-        telematics_device_id: Mã thiết bị telematics gắn trên xe (unique)
         make: Hãng xe
         model: Dòng xe
         year: Năm sản xuất
@@ -40,7 +39,6 @@ class Vehicle(Base):
     vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
-    telematics_device_id: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
     make: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(50), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
