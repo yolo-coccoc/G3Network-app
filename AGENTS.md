@@ -5,6 +5,7 @@
 > code thực tế đã tồn tại, **code thực tế luôn đúng hơn** — hãy cập nhật lại AGENT.md khi phát hiện lệch.
 
 - `docs/01-requirements/feature-list.md` - Đặc tả chức năng theo actor, và status
+- `docs/01-requirements/future.md` - Thành phần hoãn lại (bỏ qua tạm thời để sớm hoàn thành MVP)
 
 ---
 
@@ -123,8 +124,8 @@ Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
 - **`telemetry`** là domain dữ liệu thời gian thực: nhiều domain khác (`charging`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
-- Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/Chuc_nang_tong_hop.xlsx`; AGENT.md chỉ nêu nguyên tắc chung ở cấp domain.
-- Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/Chuc_nang_tong_hop.xlsx` (VD: `AD-03`, `D-05`).
+- Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENT.md chỉ nêu nguyên tắc chung ở cấp domain.
+- Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).
 - Dùng **`import-linter`** (Python) để chặn ở mức CI nếu domain A import trực tiếp vào nội bộ (`repository`/`models`) của domain B — biến quy tắc trên thành ràng buộc kỹ thuật, không chỉ là quy ước bằng lời.
 
 ---
@@ -239,8 +240,12 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Branch: `feature/<mo-ta-ngan>`, `fix/<mo-ta-ngan>`, `chore/<mo-ta-ngan>`.
 - Mọi PR phải qua review trước khi merge vào `main`; không push thẳng vào `main`.
 - Không commit secrets — mọi config nhạy cảm qua `.env` (đã có `.env.example` làm mẫu, không chứa giá trị thật).
-- Khi thêm chức năng mới, đối chiếu lại mã chức năng tương ứng trong `docs/Chuc_nang_tong_hop.xlsx` (VD: `AD-03`, `D-05`) để giữ nhất quán giữa code và đặc tả.
+- Khi thêm chức năng mới, đối chiếu lại mã chức năng tương ứng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`) để giữ nhất quán giữa code và đặc tả.
 - **KHÔNG tự ý bổ sung thành phần mới** (middleware, library, config, infrastructure...) mà **phải hỏi ý kiến bạn trước**. Chỉ triển khai những gì được yêu cầu rõ ràng trong planner hoặc prompt.
+- **Khi bỏ qua/xóa thành phần** với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm" (VD: middleware giữa frontend và backend, caching layer, rate limiting...):
+  - **KHÔNG** đặt placeholder trong source code.
+  - **PHẢI** ghi nhận vào `docs/01-requirements/future.md` với mô tả đầy đủ về: thành phần, tác dụng, vai trò trong hệ thống, lý do hoãn, liên quan đến planner/feature nào.
+  - Nếu đã có placeholder cũ trong source, xóa sạch và chuyển thông tin sang future.md.
 
 ---
 
