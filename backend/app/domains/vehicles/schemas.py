@@ -1,6 +1,7 @@
 """Pydantic schemas for Vehicle domain."""
 
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -103,7 +104,7 @@ class VehicleResponse(VehicleBase):
     
     model_config = ConfigDict(from_attributes=True)
     
-    vehicle_id: int = Field(..., description="ID xe (internal)")
+    vehicle_id: UUID = Field(..., description="ID xe (internal)")
     fleet_id: str | None = Field(None, description="ID đội xe")
     created_at: datetime = Field(..., description="Thời gian tạo")
     updated_at: datetime = Field(..., description="Thời gian cập nhật cuối")

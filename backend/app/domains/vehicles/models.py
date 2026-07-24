@@ -1,10 +1,11 @@
 """SQLAlchemy model for Vehicle domain."""
 
 from datetime import datetime
+from uuid import UUID, uuid4
 
 from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Identity
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 import enum
 
 from app.libs.db.session import Base
@@ -22,7 +23,7 @@ class Vehicle(Base):
     """Vehicle model representing electric trucks.
     
     Attributes:
-        vehicle_id: Primary key (int)
+        vehicle_id: Primary key (UUID)
         license_plate: Biển số xe (unique)
         vin: Số khung (unique)
         make: Hãng xe
@@ -36,7 +37,11 @@ class Vehicle(Base):
     
     __tablename__ = "vehicles"
     
-    vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    vehicle_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
     license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
     vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
     make: Mapped[str] = mapped_column(String(50), nullable=False)

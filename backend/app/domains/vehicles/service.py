@@ -1,6 +1,7 @@
 """Service layer for Vehicle domain - handles business logic."""
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,12 +63,12 @@ async def create_vehicle(db: AsyncSession, vehicle_data: VehicleCreate) -> Vehic
     return VehicleResponse.model_validate(vehicle)
 
 
-async def get_vehicle(db: AsyncSession, vehicle_id: int) -> VehicleResponse:
+async def get_vehicle(db: AsyncSession, vehicle_id: UUID) -> VehicleResponse:
     """Get a vehicle by ID.
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle internal ID
+        vehicle_id: Vehicle internal ID (UUID)
         
     Returns:
         Vehicle response
@@ -126,7 +127,7 @@ async def list_vehicles(
 
 async def update_vehicle(
     db: AsyncSession,
-    vehicle_id: int,
+    vehicle_id: UUID,
     update_data: VehicleUpdate
 ) -> VehicleResponse:
     """Update a vehicle.
@@ -135,7 +136,7 @@ async def update_vehicle(
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle internal ID
+        vehicle_id: Vehicle internal ID (UUID)
         update_data: Update data
         
     Returns:
@@ -169,12 +170,12 @@ async def update_vehicle(
     return VehicleResponse.model_validate(updated_vehicle)
 
 
-async def delete_vehicle(db: AsyncSession, vehicle_id: int) -> dict[str, str]:
+async def delete_vehicle(db: AsyncSession, vehicle_id: UUID) -> dict[str, str]:
     """Soft delete a vehicle.
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle UUID
+        vehicle_id: Vehicle ID (UUID)
         
     Returns:
         Success message

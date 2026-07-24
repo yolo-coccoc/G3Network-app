@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +27,12 @@ async def create_vehicle(db: AsyncSession, vehicle_data: dict[str, Any]) -> Vehi
     return vehicle
 
 
-async def get_vehicle_by_id(db: AsyncSession, vehicle_id: int) -> Vehicle | None:
+async def get_vehicle_by_id(db: AsyncSession, vehicle_id: UUID) -> Vehicle | None:
     """Get vehicle by ID (excluding soft-deleted).
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle internal ID
+        vehicle_id: Vehicle internal ID (UUID)
         
     Returns:
         Vehicle instance or None if not found
@@ -147,14 +148,14 @@ async def count_vehicles(
 
 async def update_vehicle(
     db: AsyncSession,
-    vehicle_id: int,
+    vehicle_id: UUID,
     update_data: dict[str, Any]
 ) -> Vehicle | None:
     """Update vehicle fields.
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle internal ID
+        vehicle_id: Vehicle internal ID (UUID)
         update_data: Dictionary of fields to update
         
     Returns:
@@ -174,12 +175,12 @@ async def update_vehicle(
     return vehicle
 
 
-async def soft_delete_vehicle(db: AsyncSession, vehicle_id: int) -> Vehicle | None:
+async def soft_delete_vehicle(db: AsyncSession, vehicle_id: UUID) -> Vehicle | None:
     """Soft delete vehicle by setting deleted_at timestamp.
     
     Args:
         db: Async database session
-        vehicle_id: Vehicle UUID
+        vehicle_id: Vehicle ID (UUID)
         
     Returns:
         Soft-deleted Vehicle instance or None if not found

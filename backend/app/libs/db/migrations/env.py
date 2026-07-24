@@ -16,6 +16,7 @@ load_dotenv()
 
 # Import models to register them with Base.metadata
 from app.domains.vehicles.models import Vehicle  # noqa: F401
+from app.domains.telemetry.models import Telematic  # noqa: F401
 from app.libs.db.base import Base
 
 # this is the Alembic Config object, which provides
