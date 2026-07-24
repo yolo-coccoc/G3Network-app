@@ -138,10 +138,10 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Model không có lỗi syntax
-- [ ] Có foreign key đến vehicles
-- [ ] Có index cho serial và vehicle_id
-- [ ] Có UNIQUE constraint cho vehicle_id
+- [x] Model không có lỗi syntax
+- [x] Có foreign key đến vehicles
+- [x] Có index cho serial và vehicle_id
+- [x] Có UNIQUE constraint cho vehicle_id
 
 ---
 
@@ -189,11 +189,11 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Model không có lỗi syntax
-- [ ] Có docstring đầy đủ
-- [ ] Primary key chứa recorded_at
-- [ ] Unique constraint đúng nghiệp vụ
-- [ ] Có raw_payload JSONB
+- [x] Model không có lỗi syntax
+- [x] Có docstring đầy đủ
+- [x] Primary key chứa recorded_at
+- [x] Unique constraint đúng nghiệp vụ
+- [x] Có raw_payload JSONB
 
 ---
 
@@ -240,11 +240,11 @@ docker exec g3network-db psql -U g3network -d g3network -c "SELECT hypertable_na
 ```
 
 **Kiểm tra:**
-- [ ] Migration chạy thành công
-- [ ] Bảng telematics được tạo
-- [ ] Bảng vehicle_telemetry là hypertable
-- [ ] Indexes được tạo đúng
-- [ ] Unique constraint (telematic_id, recorded_at) tồn tại
+- [x] Migration chạy thành công
+- [x] Bảng telematics được tạo
+- [x] Bảng vehicle_telemetry là hypertable
+- [x] Indexes được tạo đúng
+- [x] Unique constraint (telematic_id, recorded_at) tồn tại
 
 ---
 
