@@ -1,0 +1,858 @@
+# Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
+
+> Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
+> Trạng thái: 📋 Dự kiến
+> Ngày tạo: 2026-07-24
+
+---
+
+## Tổng quan
+
+Xây dựng hệ thống ingest dữ liệu telemetry từ xe tải điện theo mô hình **batch processing**:
+
+**Luồng dữ liệu:**
+```
+Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Batch Queue → PostgreSQL (TimescaleDB)
+```
+
+**Nguyên lý batch:**
+- Telematic publish message liên tục (mỗi 5-10 giây)
+- Backend consume message và đưa vào in-memory queue
+- Batch worker xử lý queue theo batch (mỗi 30 giây hoặc 100 messages)
+- Bulk insert vào database để tối ưu hiệu năng
+
+**Phạm vi:**
+- Backend (FastAPI + MQTT consumer)
+- EMQX broker
+- TimescaleDB hypertable
+- Chưa bao gồm: API query telemetry, frontend dashboard
+
+**Giả định và giới hạn MVP:**
+- MQTT sử dụng QoS 0 (fire-and-forget)
+- Giả định message được gửi và nhận một cách lý tưởng
+- Không xử lý retry
+- Không xử lý duplicate detection nâng cao
+- Không có persistent queue
+- Không có dead-letter queue (DLQ)
+- Không xử lý queue đầy
+- Không bảo đảm zero data loss khi process hoặc database gặp lỗi
+- Các lớp reliability sẽ được bổ sung ở phase sau
+
+Phạm vi MVP tập trung vào việc chứng minh luồng:
+```
+Simulator → EMQX → MQTT consumer → asyncio.Queue → batch worker → TimescaleDB
+```
+
+---
+
+## Kiến trúc theo AGENTS.md
+
+```
+backend/
+├── app/
+│   ├── domains/
+│   │   ├── telemetry/
+│   │   │   ├── models.py           # Telematic, VehicleTelemetry (TimescaleDB)
+│   │   │   ├── repository.py       # Bulk insert, telematic lookup
+│   │   │   ├── schemas.py          # MQTT payload validation
+│   │   │   ├── service.py          # Batch processing logic
+│   │   │   └── ingestion/
+│   │   │       ├── mqtt_consumer.py    # MQTT client, message handler
+│   │   │       ├── batch_worker.py     # Async batch processor
+│   │   │       └── entrypoint.py       # Container entrypoint
+│   │   └── vehicles/
+│   │       └── service.py          # Gọi để validate vehicle_id
+│   ├── api/
+│   │   └── main.py                 # Health check endpoint
+│   └── libs/
+│       ├── common/
+│       │   └── config.py           # MQTT config, batch settings
+│       └── db/
+│           └── base.py
+├── pyproject.toml
+└── Dockerfile                      # Multi-stage: api + telemetry-ingestion
+
+infra/
+├── docker-compose.yml              # Thêm service: broker (EMQX)
+└── mqtt/
+    └── acl.conf                    # ACL rules cho telematics
+```
+
+**Lưu ý về ranh giới domain:**
+- `telemetry/ingestion/mqtt_consumer.py` được phép gọi trực tiếp `telemetry/repository.py` (cùng domain)
+- `telemetry/service.py` có thể gọi `vehicles/service.py` để validate vehicle_id (qua service layer)
+- `telemetry` KHÔNG được import trực tiếp `vehicles/models.py` hay `vehicles/repository.py`
+
+---
+
+## Danh sách bước thực hiện
+
+### Bước 0: Nghiên cứu đặc tả chức năng
+
+**Mục tiêu:** Hiểu rõ yêu cầu nghiệp vụ và kỹ thuật
+
+**Prompt:**
+```
+Đọc và tóm tắt các file sau:
+1. docs/01-requirements/feature-list.md - tìm các mục AD-02, FM-01, FM-02
+
+Trả lời các câu hỏi:
+- Dữ liệu telemetry gồm những trường nào? (GPS, SOC, speed, voltage...)
+- Tần suất gửi dữ liệu từ xe?
+- Có cần lưu trữ bao lâu?
+- Có cần real-time alert không? (nếu có, sẽ làm ở phase sau)
+```
+
+**Kiểm tra:**
+- [ ] Đã hiểu rõ các trường dữ liệu cần thu thập
+- [ ] Đã biết tần suất và volume dự kiến
+- [ ] Đã xác định được phụ thuộc với domain khác
+
+---
+
+### Bước 1: Thiết kế bảng telematics
+
+**Mục tiêu:** Tạo bảng quản lý thiết bị telematics gắn trên xe
+
+**Prompt:**
+```
+Thiết kế bảng telematics trong backend/app/domains/telemetry/models.py:
+
+Bảng telematics:
+- id: UUID primary key (tên cột trong DB: id, tên trong code: telematic_id)
+- serial: VARCHAR(50), unique, not null (mã vật lý trên thiết bị)
+- vehicle_id: UUID foreign key → vehicles.id (nullable, có thể gán sau)
+- status: ENUM ('active', 'inactive', 'maintenance') not null
+- firmware_version: VARCHAR(50), nullable
+- last_seen_at: TIMESTAMPTZ, nullable (cập nhật khi nhận message)
+- created_at: TIMESTAMPTZ not null
+- updated_at: TIMESTAMPTZ not null
+
+Lưu ý:
+- Dùng async SQLAlchemy 2.0 với Mapped và mapped_column
+- Import base từ libs.db.base
+- Thêm indexes cho serial, vehicle_id
+- Thêm UNIQUE constraint cho vehicle_id (mỗi xe chỉ có tối đa 1 telematic)
+- Thêm docstring
+- Trong code Python, dùng tên rõ nghĩa: telematic_id, telematic_serial
+```
+
+**Kiểm tra:**
+- [ ] Model không có lỗi syntax
+- [ ] Có foreign key đến vehicles
+- [ ] Có index cho serial và vehicle_id
+- [ ] Có UNIQUE constraint cho vehicle_id
+
+---
+
+### Bước 2: Thiết kế bảng vehicle_telemetry (TimescaleDB)
+
+**Mục tiêu:** Tạo hypertable lưu dữ liệu telemetry time-series
+
+**Prompt:**
+```
+Thiết kế bảng vehicle_telemetry trong backend/app/domains/telemetry/models.py:
+
+Bảng vehicle_telemetry:
+- message_id: BIGINT GENERATED BY DEFAULT AS IDENTITY (PK)
+- message_uuid: UUID not null (do telematic tạo)
+- telematic_id: UUID not null (foreign key → telematics.id)
+- telematic_serial: VARCHAR(50) not null (lưu lại để debug, audit)
+- vehicle_id: UUID not null (foreign key → vehicles.id)
+- recorded_at: TIMESTAMPTZ not null (thời điểm telematic ghi nhận)
+- received_at: TIMESTAMPTZ not null (thời điểm backend nhận)
+- latitude: DOUBLE PRECISION
+- longitude: DOUBLE PRECISION
+- speed: DOUBLE PRECISION (km/h)
+- heading: DOUBLE PRECISION, nullable (độ, 0-360)
+- soc: DOUBLE PRECISION (State of Charge, %)
+- battery_voltage: DOUBLE PRECISION, nullable (V)
+- battery_current: DOUBLE PRECISION, nullable (A)
+- battery_temperature: DOUBLE PRECISION, nullable (°C)
+- motor_temperature: DOUBLE PRECISION, nullable (°C)
+- odometer: DOUBLE PRECISION, nullable (km)
+- signal_strength: INTEGER, nullable (dBm)
+- error_codes: JSONB, nullable
+- raw_payload: JSONB not null (lưu dữ liệu gốc từ telematic)
+
+Lưu ý:
+- Dùng TimescaleDB hypertable (partition by recorded_at)
+- Chunk interval: 1 day
+- Primary key: (message_id, recorded_at) - phải chứa partition key
+- Unique constraint: (telematic_id, recorded_at) - một telematic chỉ có 1 message tại 1 thời điểm
+- Index trên (vehicle_id, recorded_at DESC)
+- Index trên message_uuid (để trace, chưa unique trong MVP)
+- Không dùng UUID làm PK (TimescaleDB khuyến nghị BIGINT)
+- Thêm docstring giải thích từng trường
+- heading nullable vì không phải telematic nào cũng cung cấp
+- raw_payload lưu toàn bộ JSON gốc để debug và reprocessing
+```
+
+**Kiểm tra:**
+- [ ] Model không có lỗi syntax
+- [ ] Có docstring đầy đủ
+- [ ] Primary key chứa recorded_at
+- [ ] Unique constraint đúng nghiệp vụ
+- [ ] Có raw_payload JSONB
+
+---
+
+### Bước 3: Tạo Alembic migrations
+
+**Mục tiêu:** Tạo migration cho 2 bảng telematics và vehicle_telemetry
+
+**Prompt:**
+```
+Tạo Alembic migration trong backend/libs/db/migrations/versions/:
+
+Migration 1: Create telematics table
+- Tạo bảng telematics với đầy đủ constraints, indexes
+- Thêm foreign key đến vehicles
+- Thêm UNIQUE constraint cho vehicle_id
+
+Migration 2: Create vehicle_telemetry hypertable
+- Tạo bảng vehicle_telemetry
+- Chuyển thành hypertable: SELECT create_hypertable('vehicle_telemetry', 'recorded_at', chunk_time_interval => INTERVAL '1 day');
+- Tạo indexes
+- Thêm unique constraint (telematic_id, recorded_at)
+- Tạo index cho message_uuid
+
+Lưu ý:
+- Import models trong env.py
+- Dùng --autogenerate nhưng kiểm tra kỹ migration file
+- Test trên database đang chạy
+```
+
+**Lệnh chạy:**
+```bash
+# Tạo migration
+cd backend
+uv run alembic revision --autogenerate -m "create telematics table"
+uv run alembic revision --autogenerate -m "create vehicle_telemetry hypertable"
+
+# Chạy migration
+uv run alembic upgrade head
+
+# Kiểm tra
+docker exec g3network-db psql -U g3network -d g3network -c "\d telematics"
+docker exec g3network-db psql -U g3network -d g3network -c "\d vehicle_telemetry"
+docker exec g3network-db psql -U g3network -d g3network -c "SELECT hypertable_name FROM timescaledb_information.hypertables;"
+```
+
+**Kiểm tra:**
+- [ ] Migration chạy thành công
+- [ ] Bảng telematics được tạo
+- [ ] Bảng vehicle_telemetry là hypertable
+- [ ] Indexes được tạo đúng
+- [ ] Unique constraint (telematic_id, recorded_at) tồn tại
+
+---
+
+### Bước 4: Chốt MQTT topic và payload schema
+
+**Mục tiêu:** Định nghĩa giao thức giao tiếp giữa telematic và backend
+
+**Prompt:**
+```
+Tạo file docs/02-planners/mqtt-spec.md với nội dung:
+
+1. MQTT Topics:
+   - Publish từ telematic: `g3network/telematics/{telematic_serial}/telemetry`
+   - Telematic status: `g3network/telematics/{telematic_serial}/status`
+   - Backend command: `g3network/telematics/{telematic_serial}/command` (dành cho sau)
+
+2. Payload Schema (JSON):
+   {
+     "message_uuid": "497f6eca-6276-4993-bfeb-53cbbbba6f08",
+     "telematic_serial": "TBOX-VN-000123",
+     "recorded_at": "2026-07-24T10:30:00Z",
+     "location": {
+       "latitude": 21.0285,
+       "longitude": 105.8542
+     },
+     "vehicle_state": {
+       "speed": 45.2,
+       "heading": 90.0,
+       "odometer": 12345.6
+     },
+     "battery": {
+       "soc": 78.5,
+       "voltage": 400.2,
+       "current": -15.3,
+       "temperature": 35.2
+     },
+     "motor": {
+       "temperature": 42.1
+     },
+     "signal": {
+       "strength": -75
+     },
+     "errors": ["E001"]
+   }
+
+3. QoS Level: 0 (fire-and-forget)
+
+4. Retain: false
+
+Lưu ý:
+- Giải thích rõ từng trường
+- Nêu rõ đơn vị đo
+- Có ví dụ minh họa
+- Payload KHÔNG chứa: message_id, telematic_id, vehicle_id, received_at (backend bổ sung sau)
+- heading: hướng di chuyển theo góc (0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây)
+```
+
+**Kiểm tra:**
+- [ ] Topic sử dụng telematic_serial (không dùng vehicle_id)
+- [ ] Payload có message_uuid (không phải message_id)
+- [ ] Payload không chứa ID nội bộ (message_id, telematic_id, vehicle_id)
+- [ ] QoS được cấu hình là 0
+- [ ] Có ví dụ minh họa
+
+---
+
+### Bước 5: Viết Pydantic validation schema
+
+**Mục tiêu:** Validate message từ MQTT trước khi đưa vào queue
+
+**Prompt:**
+```
+Tạo backend/app/domains/telemetry/schemas.py với Pydantic models:
+
+1. LocationData:
+   - latitude: float (range -90 to 90)
+   - longitude: float (range -180 to 180)
+
+2. VehicleState:
+   - speed: float | None (range 0-200)
+   - heading: float | None (range 0-360, nullable)
+   - odometer: float | None
+
+3. BatteryData:
+   - soc: float (range 0-100)
+   - voltage: float | None
+   - current: float | None
+   - temperature: float | None
+
+4. MotorData:
+   - temperature: float | None
+
+5. SignalData:
+   - strength: int | None
+
+6. TelemetryMessage:
+   - message_uuid: UUID
+   - telematic_serial: str
+   - recorded_at: datetime
+   - location: LocationData
+   - vehicle_state: VehicleState | None
+   - battery: BatteryData
+   - motor: MotorData | None
+   - signal: SignalData | None
+   - errors: list[str] | None
+
+Lưu ý:
+- Dùng Pydantic v2
+- Thêm validation cho các trường có range
+- Thêm examples
+- Thêm method to_db_dict(telematic_id: UUID, vehicle_id: UUID, received_at: datetime) để convert sang dict phù hợp với DB model
+- heading nullable vì không phải telematic nào cũng cung cấp
+```
+
+**Kiểm tra:**
+- [ ] Schema không có lỗi syntax
+- [ ] Validation đúng range
+- [ ] heading có thể null
+- [ ] Examples hiển thị tốt trong docs
+
+---
+
+### Bước 6: Dựng EMQX và kiểm tra publish/subscribe thủ công
+
+**Mục tiêu:** Cài đặt EMQX broker và test kết nối với QoS 0
+
+**Prompt:**
+```
+Cập nhật infra/docker-compose.yml:
+
+1. Thêm service broker (EMQX):
+   - Image: emqx/emqx:5.5
+   - Ports: 1883 (MQTT), 18083 (Dashboard)
+   - Environment: EMQX_NAME, EMQX_HOST
+   - Volume: ./mqtt/acl.conf:/opt/emqx/etc/acl.conf
+
+2. Tạo file infra/mqtt/acl.conf với ACL rules:
+   - Telematic chỉ được publish vào topic của chính nó
+   - Backend có thể subscribe tất cả
+
+3. Cập nhật .env.example:
+   - MQTT_HOST=localhost
+   - MQTT_PORT=1883
+   - MQTT_CLIENT_ID=g3network-backend
+   - MQTT_USERNAME, MQTT_PASSWORD (nếu cần)
+
+4. Cập nhật backend/app/libs/common/config.py:
+   - Thêm MQTTConfig class với các settings từ env
+   - Mặc định QoS = 0
+```
+
+**Lệnh chạy:**
+```bash
+# Khởi động EMQX
+docker compose -f infra/docker-compose.yml up -d broker
+
+# Kiểm tra dashboard
+open http://localhost:18083
+# Default: admin / public
+
+# Test subscribe (cài mosquitto-clients nếu chưa có)
+sudo apt install mosquitto-clients
+mosquitto_sub -h localhost -p 1883 -t "g3network/telematics/+/telemetry" -v
+
+# Test publish với QoS 0
+mosquitto_pub -h localhost -p 1883 -q 0 -t "g3network/telematics/TBOX-VN-000123/telemetry" -m '{"message_uuid":"497f6eca-6276-4993-bfeb-53cbbbba6f08","telematic_serial":"TBOX-VN-000123","recorded_at":"2026-07-24T10:00:00Z","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
+```
+
+**Kiểm tra:**
+- [ ] EMQX container đang chạy
+- [ ] Dashboard accessible tại port 18083
+- [ ] Subscribe/publish thủ công thành công với QoS 0
+
+---
+
+### Bước 7: Viết MQTT client + consumer
+
+**Mục tiêu:** Kết nối đến EMQX và nhận message với QoS 0
+
+**Prompt:**
+```
+Tạo backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
+
+1. Class MQTTConsumer:
+   - __init__(config: MQTTConfig, message_queue: asyncio.Queue)
+   - async connect() - kết nối đến broker với QoS 0
+   - async subscribe(topic_pattern: str) - subscribe topic
+   - async start_consuming() - vòng lặp nhận message
+   - async disconnect() - ngắt kết nối
+
+2. Message handling:
+   - Parse JSON payload
+   - Validate bằng TelemetryMessage schema
+   - Nếu hợp lệ: đưa vào asyncio.Queue
+   - Nếu không hợp lệ: log warning, bỏ qua (MVP không có DLQ)
+
+3. Error handling:
+   - Reconnect khi mất kết nối (exponential backoff)
+   - Log đầy đủ để debug
+
+4. Dùng thư viện:
+   - gmqtt (async MQTT client) hoặc
+   - aiomqtt (wrapper của paho-mqtt)
+
+Lưu ý:
+- Mọi I/O phải là async
+- Không block trong message handler
+- Subscribe với QoS 0
+- Thêm docstring và type hints
+```
+
+**Kiểm tra:**
+- [ ] Consumer kết nối được đến EMQX
+- [ ] Message được parse và validate đúng
+- [ ] Message hợp lệ được đưa vào queue
+- [ ] Subscribe với QoS 0
+
+---
+
+### Bước 8: Đưa message hợp lệ vào asyncio.Queue
+
+**Mục tiêu:** Tạo queue trung gian giữa consumer và batch worker
+
+**Prompt:**
+```
+Cập nhật backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
+
+1. Tạo module-level queue:
+   message_queue: asyncio.Queue[TelemetryMessage] = asyncio.Queue(maxsize=10000)
+
+2. Trong message handler:
+   - Try: message_queue.put_nowait(validated_message)
+   - Except QueueFull: log error, increment metric, drop message
+
+3. Thêm metrics (dùng prometheus-client hoặc simple counter):
+   - messages_received_total
+   - messages_valid_total
+   - messages_invalid_total
+   - messages_dropped_total (queue full)
+
+4. Thêm graceful shutdown:
+   - Khi nhận SIGTERM, dừng consuming
+   - Đợi queue xử lý xong (hoặc timeout)
+```
+
+**Kiểm tra:**
+- [ ] Queue hoạt động đúng
+- [ ] Metrics được ghi nhận
+- [ ] Graceful shutdown hoạt động
+
+---
+
+### Bước 9: Viết batch worker
+
+**Mục tiêu:** Xử lý queue theo batch định kỳ
+
+**Prompt:**
+```
+Tạo backend/app/domains/telemetry/ingestion/batch_worker.py:
+
+1. Class BatchWorker:
+   - __init__(queue: asyncio.Queue, batch_size: int = 100, flush_interval: float = 30.0)
+   - async start() - bắt đầu worker
+   - async stop() - dừng worker
+
+2. Logic:
+   - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages:
+     + Lấy tối đa batch_size messages từ queue
+     + Gọi telemetry.service.process_batch(messages)
+     + Log số lượng processed, time taken
+   - Nếu lỗi: retry 3 lần với exponential backoff
+   - Nếu vẫn lỗi: đưa vào dead-letter queue (file hoặc DB table)
+
+3. Metrics:
+   - batches_processed_total
+   - messages_processed_total
+   - batch_processing_time_seconds
+   - batch_errors_total
+
+4. Graceful shutdown:
+   - Khi stop(), xử lý nốt batch hiện tại
+   - Đợi tối đa 60 giây
+
+Lưu ý:
+- Dùng asyncio.wait_for để timeout
+- Thêm docstring và type hints
+```
+
+**Kiểm tra:**
+- [ ] Worker chạy định kỳ đúng interval
+- [ ] Batch được xử lý khi đủ size
+- [ ] Retry logic hoạt động
+
+---
+
+### Bước 10: Viết repository batch lookup và bulk insert
+
+**Mục tiêu:** Insert batch telemetry vào database hiệu quả với batch lookup
+
+**Prompt:**
+```
+Cập nhật backend/app/domains/telemetry/repository.py:
+
+1. async def get_telematic_mappings(db: AsyncSession, serials: list[str]) -> dict[str, tuple[UUID, UUID]]:
+   - Query bảng telematics một lần với WHERE serial IN (...)
+   - Trả về dict: {telematic_serial: (telematic_id, vehicle_id)}
+   - Dùng SQLAlchemy Core select
+
+2. async def bulk_insert_telemetry(db: AsyncSession, messages: list[dict]) -> int:
+   - Dùng SQLAlchemy Core insert (không phải ORM):
+     stmt = insert(VehicleTelemetry).values(messages)
+     result = await db.execute(stmt)
+     await db.commit()
+   - Trả về số rows inserted
+
+3. async def update_telematic_last_seen(db: AsyncSession, telematic_data: list[tuple[UUID, datetime]]) -> None:
+   - Update last_seen_at cho nhiều telematics cùng lúc
+   - Chỉ update nếu timestamp mới lớn hơn giá trị hiện tại
+   - Dùng batch update với CASE WHEN hoặc execute nhiều update
+
+Lưu ý:
+- Dùng async session
+- Bulk insert phải dùng Core API, không dùng ORM add_all (chậm)
+- Batch lookup: 1 query cho cả batch, không query từng message
+- Thêm docstring
+```
+
+**Kiểm tra:**
+- [ ] Batch lookup hoạt động đúng
+- [ ] Bulk insert hoạt động
+- [ ] Performance tốt với 100+ records
+- [ ] Transaction được commit đúng
+
+---
+
+### Bước 11: Viết service process_batch
+
+**Mục tiêu:** Business logic xử lý batch message với batch lookup
+
+**Prompt:```
+Cập nhật backend/app/domains/telemetry/service.py:
+
+1. async def process_batch(db: AsyncSession, messages: list[TelemetryMessage]) -> dict:
+   - Lấy danh sách telematic_serial duy nhất từ batch
+   - Gọi repository.get_telematic_mappings(serials) - 1 query cho cả batch
+   - Với mỗi message:
+     + Nếu telematic_serial không tồn tại: log warning, skip message
+     + Nếu tồn tại: bổ sung telematic_id và vehicle_id
+   - Tạo received_at = datetime.now(timezone.utc)
+   - Convert messages to DB dicts: [msg.to_db_dict(telematic_id, vehicle_id, received_at) for msg in valid_messages]
+   - Gọi repository.bulk_insert_telemetry()
+   - Gọi repository.update_telematic_last_seen() với MAX(received_at) của từng telematic
+   - Trả về {"processed": count, "skipped": count}
+
+2. Error handling:
+   - Nếu DB error: raise để batch worker retry (MVP không có retry logic phức tạp)
+   - Nếu validation error: log và skip message đó
+
+3. Logging:
+   - Log INFO khi batch processed thành công
+   - Log WARNING khi có message bị skip
+   - Log ERROR khi DB error
+
+Lưu ý:
+- Gọi repository, KHÔNG query trực tiếp
+- Batch lookup: 1 query cho cả batch, không query từng message
+- Không dùng cache trong MVP
+- Thêm docstring
+```
+
+**Kiểm tra:**
+- [ ] Batch được xử lý đúng
+- [ ] Batch lookup hoạt động (1 query cho cả batch)
+- [ ] Telematic validation hoạt động
+- [ ] Logging đầy đủ
+
+---
+
+### Bước 12: Cập nhật telematic last_seen
+
+**Mục tiêu:** Cập nhật thời điểm telematic hoạt động lần cuối
+
+**Prompt:**
+```
+Cập nhật backend/app/domains/telemetry/service.py:
+
+1. Trong process_batch(), sau khi bulk insert:
+   - Nhóm message theo telematic_id
+   - Lấy MAX(received_at) của từng telematic
+   - Gọi repository.update_telematic_last_seen([(telematic_id, max_received_at), ...])
+
+2. Repository update:
+   - Chỉ update nếu timestamp mới lớn hơn giá trị hiện tại
+   - Dùng batch update để tối ưu
+
+Lưu ý:
+- Không update từng message riêng lẻ
+- Chỉ update với MAX(received_at) của batch
+- Thêm docstring
+```
+
+**Kiểm tra:**
+- [ ] last_seen_at được cập nhật đúng
+- [ ] Chỉ update khi timestamp mới hơn
+- [ ] Performance tốt với batch update
+
+---
+
+### Bước 13: Thêm logging cơ bản (MVP không có retry/DLQ)
+
+**Mục tiêu:** Logging đầy đủ để debug (MVP không có retry/DLQ)
+
+**Prompt:**
+```
+Cập nhật backend/app/domains/telemetry/ingestion/batch_worker.py:
+
+1. Logging:
+   - Dùng Python logging module
+   - Log format: JSON với timestamp, level, message, extra fields
+   - Log level: INFO cho normal, WARNING cho skip, ERROR cho failure
+
+2. Error handling (MVP):
+   - Nếu DB error: log ERROR, raise exception (batch worker sẽ dừng)
+   - Không có retry logic phức tạp trong MVP
+   - Không có dead-letter queue trong MVP
+   - Các lớp reliability sẽ được bổ sung ở phase sau
+
+3. Metrics (optional):
+   - messages_received_total
+   - messages_processed_total
+   - messages_skipped_total
+   - batch_processing_time_seconds
+
+Lưu ý:
+- MVP tập trung vào việc chứng minh luồng hoạt động
+- Retry, DLQ, persistent queue sẽ được ghi nhận vào future.md
+- Thêm docstring
+```
+
+**Kiểm tra:**
+- [ ] Logging đầy đủ
+- [ ] Error được log đúng level
+- [ ] Metrics được ghi nhận (nếu có)
+
+---
+
+### Bước 14: Tách telemetry worker thành container riêng
+
+**Mục tiêu:** Chạy telemetry ingestion độc lập với API server
+
+**Prompt:**
+```
+Tạo backend/app/domains/telemetry/ingestion/entrypoint.py:
+
+1. Main function:
+   - Load config từ env
+   - Init database connection pool
+   - Create asyncio.Queue(maxsize=10000)
+   - Start MQTTConsumer với QoS 0
+   - Start BatchWorker với batch_size=100, flush_interval=30s
+   - Handle SIGTERM/SIGINT for graceful shutdown
+
+2. Health check:
+   - Expose HTTP endpoint /health trên port 8081
+   - Return {"status": "healthy"} nếu worker đang chạy
+
+3. Cập nhật backend/Dockerfile:
+   - Multi-stage build:
+     - Stage 1: api (uvicorn api.main:app)
+     - Stage 2: telemetry-ingestion (python -m app.domains.telemetry.ingestion.entrypoint)
+   - Hoặc 2 Dockerfile riêng
+
+4. Cập nhật infra/docker-compose.yml (optional cho dev):
+   - Thêm service telemetry-ingestion
+   - Mount code từ host
+   - Set environment variables
+```
+
+**Lệnh chạy:**
+```bash
+# Chạy trên host
+cd backend
+uv run python -m app.domains.telemetry.ingestion.entrypoint
+
+# Hoặc build Docker image
+docker build -t g3network-telemetry-ingestion -f backend/Dockerfile.telemetry backend/
+
+# Chạy container
+docker run -d \
+  --name telemetry-ingestion \
+  -e DATABASE_URL=postgresql://... \
+  -e MQTT_HOST=localhost \
+  -e MQTT_PORT=1883 \
+  g3network-telemetry-ingestion
+```
+
+**Kiểm tra:**
+- [ ] Entrypoint chạy được
+- [ ] Health check hoạt động
+- [ ] Graceful shutdown hoạt động
+
+---
+
+### Bước 15: Test end-to-end
+
+**Mục tiêu:** Kiểm tra toàn bộ luồng hoạt động với QoS 0
+
+**Prompt:**
+```
+Không cần code, chỉ test thủ công:
+
+1. Chuẩn bị:
+   - DB đang chạy
+   - EMQX đang chạy
+   - Telemetry worker đang chạy
+   - Có ít nhất 1 telematic và 1 vehicle trong DB
+
+2. Test case 1: Message hợp lệ
+   - Publish message MQTT với payload đúng schema
+   - Kiểm tra log worker: message received, batch processed
+   - Query DB: data đã được insert, raw_payload được lưu
+
+3. Test case 2: Message không hợp lệ
+   - Publish message thiếu trường bắt buộc
+   - Kiểm tra log: validation error, message skipped
+
+4. Test case 3: Telematic không tồn tại
+   - Publish message với telematic_serial không có trong DB
+   - Kiểm tra log: telematic not found, message skipped
+
+5. Test case 4: Batch processing
+   - Publish 100 messages liên tục
+   - Kiểm tra worker xử lý theo batch (100 messages hoặc 30 giây)
+
+6. Test case 5: Graceful shutdown
+   - Gửi SIGTERM đến worker
+   - Kiểm tra worker dừng đúng cách, không mất message trong queue
+```
+
+**Lệnh test:**
+```bash
+# Subscribe để monitor
+mosquitto_sub -h localhost -p 1883 -t "g3network/telematics/+/telemetry" -v
+
+# Publish test message với QoS 0
+mosquitto_pub -h localhost -p 1883 -q 0 \
+  -t "g3network/telematics/TBOX-VN-000123/telemetry" \
+  -m '{"message_uuid":"497f6eca-6276-4993-bfeb-53cbbbba6f08","telematic_serial":"TBOX-VN-000123","recorded_at":"2026-07-24T10:00:00Z","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
+
+# Query DB
+docker exec g3network-db psql -U g3network -d g3network \
+  -c "SELECT message_id, message_uuid, telematic_serial, raw_payload FROM vehicle_telemetry ORDER BY message_id DESC LIMIT 5;"
+
+# Kiểm tra last_seen_at
+docker exec g3network-db psql -U g3network -d g3network \
+  -c "SELECT id, serial, last_seen_at FROM telematics;"
+```
+
+**Kiểm tra:**
+- [ ] Message hợp lệ được insert
+- [ ] Message không hợp lệ bị skip
+- [ ] Telematic không tồn tại bị skip
+- [ ] raw_payload được lưu đúng
+- [ ] Batch processing hoạt động
+- [ ] last_seen_at được cập nhật
+- [ ] Graceful shutdown hoạt động
+
+---
+
+## Tổng kết
+
+Sau khi hoàn thành tất cả các bước, hệ thống sẽ có:
+
+1. **Database**: 2 bảng `telematics` và `vehicle_telemetry` (TimescaleDB hypertable)
+2. **MQTT Broker**: EMQX chạy local, có ACL rules, QoS 0
+3. **Backend**: 
+   - MQTT consumer nhận message từ broker với QoS 0
+   - Batch worker xử lý queue định kỳ (100 messages hoặc 30 giây)
+   - Batch lookup telematic mapping (không dùng cache)
+   - Repository bulk insert vào TimescaleDB
+   - Lưu raw_payload JSONB để debug và reprocessing
+   - Graceful shutdown và error handling cơ bản
+
+**Công nghệ sử dụng:**
+- Python 3.12 + FastAPI
+- SQLAlchemy 2.0 (async)
+- TimescaleDB (PostgreSQL extension)
+- EMQX 5.5
+- Pydantic v2
+- asyncio.Queue
+
+**Performance mong đợi:**
+- Throughput: 1000+ messages/second
+- Latency: < 30 giây (batch interval)
+- Storage: Tối ưu với TimescaleDB compression
+
+**Giới hạn MVP:**
+- MQTT QoS 0 (không đảm bảo delivery)
+- Không có retry logic phức tạp
+- Không có dead-letter queue
+- Không có persistent queue
+- Không có duplicate detection nâng cao
+- Các lớp reliability sẽ được bổ sung ở phase sau
+
+**Phase tiếp theo:**
+- API query telemetry (realtime + history)
+- Real-time alerting (WebSocket)
+- Dashboard frontend
+- Retry và DLQ mechanism
+- Persistent queue
+- Duplicate detection nâng cao
