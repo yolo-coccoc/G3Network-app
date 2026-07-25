@@ -246,6 +246,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Mọi PR phải qua review trước khi merge vào `main`; không push thẳng vào `main`.
 - Không commit secrets — mọi config nhạy cảm qua `.env` (đã có `.env.example` làm mẫu, không chứa giá trị thật).
 - Khi thêm chức năng mới, đối chiếu lại mã chức năng tương ứng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`) để giữ nhất quán giữa code và đặc tả.
+- **File `__init__.py` KHÔNG chứa code**: Mọi file `__init__.py` trong repo chỉ được chứa docstring mô tả module, KHÔNG được import hay export bất kỳ thứ gì. Các file khác cần import từ nhau phải import trực tiếp từ module (VD: `from app.domains.telemetry.models import Telematic` thay vì `from app.domains.telemetry import Telematic`).
 - **KHÔNG tự ý bổ sung thành phần mới** (middleware, library, config, infrastructure...) mà **phải hỏi ý kiến bạn trước**. Chỉ triển khai những gì được yêu cầu rõ ràng trong planner hoặc prompt.
 - **Khi bỏ qua/xóa thành phần** với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm" (VD: middleware giữa frontend và backend, caching layer, rate limiting...):
   - **KHÔNG** đặt placeholder trong source code.

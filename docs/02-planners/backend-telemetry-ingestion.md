@@ -464,10 +464,10 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Consumer kết nối được đến EMQX
-- [ ] Message được parse và validate đúng
-- [ ] Message hợp lệ được đưa vào queue
-- [ ] Subscribe với QoS 0
+- [x] Consumer kết nối được đến EMQX
+- [x] Message được parse và validate đúng
+- [x] Message hợp lệ được đưa vào queue
+- [x] Subscribe với QoS 0
 
 ---
 
