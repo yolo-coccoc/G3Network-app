@@ -57,7 +57,7 @@ Lưu dữ liệu telemetry time-series từ thiết bị telematics. Sử dụng
 | `received_at` | `received_at` | TIMESTAMPTZ | Thời điểm backend nhận |
 | `latitude` | `latitude` | DOUBLE | Vĩ độ GPS |
 | `longitude` | `longitude` | DOUBLE | Kinh độ GPS |
-| `speed` | `speed` | DOUBLE | Tốc độ (km/h) |
+| `speed` | `speed` | DOUBLE | Tốc độ (km/h, nullable) |
 | `heading` | `heading` | DOUBLE | Hướng di chuyển (0-360°, nullable) |
 | `soc` | `soc` | DOUBLE | State of Charge (%) |
 | `battery_voltage` | `battery_voltage` | DOUBLE | Điện áp pin (V, nullable) |
@@ -86,6 +86,7 @@ Lưu dữ liệu telemetry time-series từ thiết bị telematics. Sử dụng
 
 ### Lưu ý
 
+- `speed` nullable: không phải telematic nào cũng cung cấp tốc độ (có thể tính từ GPS hoặc cảm biến)
 - `heading` nullable: không phải telematic nào cũng cung cấp hướng di chuyển
 - `raw_payload` lưu toàn bộ JSON gốc để debug và reprocessing sau này
 - `telematic_serial` được lưu lại (denormalized) để audit khi thiết bị bị xóa

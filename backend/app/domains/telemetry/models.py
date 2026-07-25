@@ -183,7 +183,7 @@ class VehicleTelemetry(Base):
     longitude: Mapped[float] = mapped_column(Double(), nullable=False)
     
     # Motion data
-    speed: Mapped[float] = mapped_column(Double(), nullable=False)  # km/h
+    speed: Mapped[float | None] = mapped_column(Double(), nullable=True)  # km/h, nullable vì không phải telematic nào cũng cung cấp
     heading: Mapped[float | None] = mapped_column(Double(), nullable=True)  # degrees 0-360
     
     # Battery data

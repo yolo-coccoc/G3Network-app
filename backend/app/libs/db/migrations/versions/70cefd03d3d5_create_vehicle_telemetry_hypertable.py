@@ -30,7 +30,7 @@ def upgrade() -> None:
     sa.Column('received_at', sa.DateTime(timezone=True), nullable=False),
     sa.Column('latitude', sa.Double(), nullable=False),
     sa.Column('longitude', sa.Double(), nullable=False),
-    sa.Column('speed', sa.Double(), nullable=False),
+    sa.Column('speed', sa.Double(), nullable=True),
     sa.Column('heading', sa.Double(), nullable=True),
     sa.Column('soc', sa.Double(), nullable=False),
     sa.Column('battery_voltage', sa.Double(), nullable=True),
