@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum, UniqueConstraint, Index, BigInteger, Double
+from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum, UniqueConstraint, Index, BigInteger, Double, literal_column
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 import enum
@@ -212,7 +212,7 @@ class VehicleTelemetry(Base):
         # Unique constraint: one message per telematic per timestamp
         UniqueConstraint("telematic_id", "recorded_at", name="uq_telematic_recorded_at"),
         # Index for querying by vehicle with time ordering
-        Index("ix_vehicle_telemetry_vehicle_time", "vehicle_id", recorded_at.desc()),
+        Index("ix_vehicle_telemetry_vehicle_time", "vehicle_id", literal_column("recorded_at DESC")),
     )
     
     def __repr__(self) -> str:
