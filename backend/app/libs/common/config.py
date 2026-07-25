@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://g3network:g3network123@localhost:5432/g3network"
 
+    # MQTT
+    MQTT_HOST: str = "localhost"
+    MQTT_PORT: int = 1883
+    MQTT_CLIENT_ID: str = "g3network-backend"
+    MQTT_USERNAME: str | None = None
+    MQTT_PASSWORD: str | None = None
+    MQTT_QOS: int = 0  # QoS 0 for MVP
+
 
 @lru_cache
 def get_settings() -> Settings:

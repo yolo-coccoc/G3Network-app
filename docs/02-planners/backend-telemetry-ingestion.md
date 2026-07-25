@@ -369,37 +369,43 @@ Lưu ý:
 
 ### Bước 6: Dựng EMQX và kiểm tra publish/subscribe thủ công
 
-**Mục tiêu:** Cài đặt EMQX broker và test kết nối với QoS 0
+**Mục tiêu:** Cài đặt EMQX 5.x broker và test kết nối với QoS 0
+
+**Lưu ý quan trọng về EMQX 5.x:**
+- EMQX 5.x **không dùng file `acl.conf`** như EMQX 4.x
+- ACL được cấu hình qua Dashboard UI hoặc REST API
+- File `acl.conf` mặc định vẫn tồn tại nhưng không được dùng để custom rules
+- Đối với MVP, chúng ta sẽ bỏ qua ACL phức tạp và dùng default security
 
 **Prompt:**
 ```
 Cập nhật infra/docker-compose.yml:
 
-1. Thêm service broker (EMQX):
+1. Thêm service broker (EMQX 5.5):
    - Image: emqx/emqx:5.5
    - Ports: 1883 (MQTT), 18083 (Dashboard)
-   - Environment: EMQX_NAME, EMQX_HOST
-   - Volume: ./mqtt/acl.conf:/opt/emqx/etc/acl.conf
+   - Environment: EMQX_NAME=g3network-broker, EMQX_HOST=0.0.0.0
+   - Volumes: broker_data, broker_log (không mount ACL file)
 
-2. Tạo file infra/mqtt/acl.conf với ACL rules:
-   - Telematic chỉ được publish vào topic của chính nó
-   - Backend có thể subscribe tất cả
-
-3. Cập nhật .env.example:
+2. Cập nhật infra/.env.example:
    - MQTT_HOST=localhost
    - MQTT_PORT=1883
-   - MQTT_CLIENT_ID=g3network-backend
-   - MQTT_USERNAME, MQTT_PASSWORD (nếu cần)
+   - MQTT_DASHBOARD_PORT=18083
 
-4. Cập nhật backend/app/libs/common/config.py:
-   - Thêm MQTTConfig class với các settings từ env
-   - Mặc định QoS = 0
+3. Cập nhật backend/app/libs/common/config.py:
+   - Thêm MQTT settings vào Settings class:
+     * MQTT_HOST, MQTT_PORT, MQTT_CLIENT_ID
+     * MQTT_USERNAME, MQTT_PASSWORD (nullable)
+     * MQTT_QOS = 0 (default)
 ```
 
 **Lệnh chạy:**
 ```bash
 # Khởi động EMQX
 docker compose -f infra/docker-compose.yml up -d broker
+
+# Kiểm tra container
+docker ps --filter "name=g3network-broker"
 
 # Kiểm tra dashboard
 open http://localhost:18083
@@ -414,9 +420,10 @@ mosquitto_pub -h localhost -p 1883 -q 0 -t "g3network/telematics/TBOX-VN-000123/
 ```
 
 **Kiểm tra:**
-- [ ] EMQX container đang chạy
-- [ ] Dashboard accessible tại port 18083
+- [ ] EMQX container đang chạy (healthy)
+- [ ] Dashboard accessible tại http://localhost:18083
 - [ ] Subscribe/publish thủ công thành công với QoS 0
+- [ ] MQTT settings đã được thêm vào config.py
 
 ---
 

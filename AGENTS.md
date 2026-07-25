@@ -19,7 +19,7 @@
 | Package manager Web Portal | **pnpm** | đã chốt |
 | Vehicle App (màn hình trên xe) | **Flutter (Dart)**, build ra APK chạy trên **Android** | đã chốt |
 | Database | **PostgreSQL 16 + TimescaleDB (time-series) + PostGIS (địa lý)** | đã chốt |
-| Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX** | đã chốt |
+| Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX 5.5** | đã chốt - Lưu ý: EMQX 5.x không dùng file `acl.conf` như EMQX 4.x, ACL được cấu hình qua Dashboard UI hoặc REST API |
 | OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging`** (thư mục `charging/ocpp/`), dùng thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | vì là kết nối WebSocket dài hạn, khác REST API thường, nhưng vẫn chỉ phục vụ domain `charging` nên đặt code cạnh nhau |
 | Reverse proxy / API Gateway | **Không dùng ở môi trường dev** (mỗi thành phần chạy port riêng trên host, gọi thẳng qua `localhost`) | cân nhắc lại (Traefik/Nginx) khi làm `docker-compose.prod.yml` |
 | State management (Web) | TanStack Query (server state) + Zustand (client state) | đề xuất |
