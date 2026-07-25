@@ -189,6 +189,37 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Toàn bộ I/O (DB, HTTP, MQTT) dùng **async/await**.
 - Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.
 - Docstring bắt buộc cho service function xử lý nghiệp vụ phức tạp (đối soát vi phạm, tính KPI...).
+- **Comment/Docstring chi tiết cho mọi class và method**:
+  - Mọi class PHẢI có docstring mô tả vai trò và danh sách `Attributes:` (nếu có).
+  - Mọi method PHẢI có docstring mô tả ngắn gọn, danh sách `Args:` và `Returns:` (nếu có tham số/giá trị trả về).
+  - Ví dụ:
+    ```python
+    class VehicleState(BaseModel):
+        """
+        Trạng thái xe từ telematic.
+        
+        Attributes:
+            speed: Tốc độ (0-200 km/h)
+            heading: Hướng di chuyển (0-360 độ, nullable)
+            odometer: Tổng quãng đường đã đi (km)
+        """
+        speed: float | None
+        heading: float | None
+        odometer: float | None
+    
+    def to_db_dict(self, telematic_id: UUID, vehicle_id: UUID) -> dict:
+        """
+        Convert message thành dict phù hợp với VehicleTelemetry model.
+        
+        Args:
+            telematic_id: UUID của telematic (lookup từ telematic_serial)
+            vehicle_id: UUID của xe (lookup từ telematic_id)
+            
+        Returns:
+            Dict với đầy đủ trường để insert vào DB
+        """
+        ...
+    ```
 
 #### 5.1.1 SQLAlchemy Models — Primary Key Convention
 - **Mọi bảng PHẢI có internal ID** (không dùng business key như license_plate, VIN làm PK):
