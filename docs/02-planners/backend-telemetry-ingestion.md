@@ -303,11 +303,11 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Topic sử dụng telematic_serial (không dùng vehicle_id)
-- [ ] Payload có message_uuid (không phải message_id)
-- [ ] Payload không chứa ID nội bộ (message_id, telematic_id, vehicle_id)
-- [ ] QoS được cấu hình là 0
-- [ ] Có ví dụ minh họa
+- [x] Topic sử dụng telematic_serial (không dùng vehicle_id)
+- [x] Payload có message_uuid (không phải message_id)
+- [x] Payload không chứa ID nội bộ (message_id, telematic_id, vehicle_id)
+- [x] QoS được cấu hình là 0
+- [x] Có ví dụ minh họa
 
 ---
 
@@ -360,10 +360,10 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Schema không có lỗi syntax
-- [ ] Validation đúng range
-- [ ] heading có thể null
-- [ ] Examples hiển thị tốt trong docs
+- [x] Schema không có lỗi syntax
+- [x] Validation đúng range
+- [x] heading có thể null
+- [x] Examples hiển thị tốt trong docs
 
 ---
 

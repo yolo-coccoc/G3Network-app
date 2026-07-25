@@ -193,11 +193,16 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 #### 5.1.1 SQLAlchemy Models — Primary Key Convention
 - **Mọi bảng PHẢI có internal ID** (không dùng business key như license_plate, VIN làm PK):
   ```python
-  # ✅ ĐÚNG: Internal auto-increment ID
+  # ✅ ĐÚNG: Internal ID (UUID hoặc auto-increment tùy trường hợp)
   class Vehicle(Base):
       __tablename__ = "vehicles"
       
-      vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+      # Option 1: UUID (phù hợp cho distributed systems)
+      vehicle_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+      
+      # Option 2: Auto-increment (phù hợp cho single database)
+      # vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+      
       license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
       vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
   
@@ -207,14 +212,14 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
       
       license_plate: Mapped[str] = mapped_column(String(20), primary_key=True)  # KHÔNG BAO GIỜ
   ```
-- **Lý do:**
-  - Business key có thể thay đổi (biển số xe đổi khi chuyển vùng, VIN có thể nhập sai cần sửa)
-  - Internal ID bất biến, ổn định cho foreign key references
-  - Auto-increment integer hiệu năng cao hơn UUID string
+- **Lựa chọn UUID vs Auto-increment:**
+  - **UUID**: Phù hợp cho distributed systems, telematic devices có thể tạo ID từ nhiều nguồn, không cần central coordination
+  - **Auto-increment**: Phù hợp cho single database, hiệu năng cao hơn, dễ debug
+  - **Quyết định**: Dùng UUID cho các bảng chính (vehicles, telematics) vì hệ thống có thể mở rộng sang distributed architecture
 - **Foreign key** luôn tham chiếu đến internal ID:
   ```python
   # ✅ ĐÚNG
-  charging_session.vehicle_id  # → Vehicle.vehicle_id (int)
+  charging_session.vehicle_id  # → Vehicle.vehicle_id (UUID hoặc int)
   
   # ❌ SAI
   charging_session.vehicle_license_plate  # → Vehicle.license_plate (business key)
