@@ -1,23 +1,21 @@
 """Alembic environment configuration for async migrations."""
 
 import asyncio
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 
+from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from alembic import context
+from app.domains.telemetry.models import Telematic, VehicleTelemetry  # noqa: F401
+from app.domains.vehicles.models import Vehicle  # noqa: F401
+from app.libs.db.base import Base
 
 # Load .env file from backend directory
 load_dotenv()
-
-# Import models to register them with Base.metadata
-from app.domains.vehicles.models import Vehicle  # noqa: F401
-from app.domains.telemetry.models import Telematic, VehicleTelemetry  # noqa: F401
-from app.libs.db.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -73,8 +71,11 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     """Run migrations in async mode."""
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url")
-    
+    sqlalchemy_url = config.get_main_option("sqlalchemy.url")
+    if sqlalchemy_url is None:
+        raise RuntimeError("Alembic sqlalchemy.url is not configured")
+    configuration["sqlalchemy.url"] = sqlalchemy_url
+
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",

@@ -1,8 +1,9 @@
-# AGENT.md — Hệ thống hỗ trợ tài xế lái xe tải điện
+# AGENTS.md — Hệ thống hỗ trợ tài xế lái xe tải điện
 
-> Tài liệu định hướng cho AI coding agent (Claude Code) và developer khi làm việc trong repo này.
-> Đây là dự án **mới, chưa có code**, tổ chức dạng **monorepo**. Nếu có mâu thuẫn giữa file này và
-> code thực tế đã tồn tại, **code thực tế luôn đúng hơn** — hãy cập nhật lại AGENT.md khi phát hiện lệch.
+> Tài liệu định hướng cho AI coding agent và developer khi làm việc trong repo monorepo này.
+> Dự án đã có code đang phát triển. Khi code, planner, requirements và tài liệu này không khớp,
+> phải xác định quyết định mới nhất; không mặc định sao chép pattern hiện có nếu pattern đó vi phạm
+> convention. Cập nhật lại AGENTS.md sau khi quyết định được xác nhận.
 
 - `docs/01-requirements/feature-list.md` - Đặc tả chức năng theo actor, và status
 - `docs/01-requirements/future.md` - Thành phần hoãn lại (bỏ qua tạm thời để sớm hoàn thành MVP)
@@ -31,7 +32,7 @@
 
 ## 2. Cấu trúc thư mục (Monorepo)
 
-Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-portal/`** — 2 phần được tổ chức theo **domain nghiệp vụ** (bounded context), thay vì chia theo layer kỹ thuật chung. `vehicle-app/`, `infra/`, `docs/` giữ nguyên vị trí như một monorepo thông thường.
+Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web-portal/`** — 2 phần được tổ chức theo **domain nghiệp vụ** (bounded context), thay vì chia theo layer kỹ thuật chung. File/domain thuộc planner chưa hoàn thành có thể chưa tồn tại trong source hiện tại; không tạo placeholder chỉ để khớp cây thư mục. `vehicle-app/`, `infra/`, `docs/` giữ nguyên vị trí như một monorepo thông thường.
 
 ```
 .
@@ -39,10 +40,10 @@ Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-
 │   ├── app/                        # Source code chính (uv package layout)
 │   │   ├── domains/
 │   │   │   ├── identity/              # Auth & RBAC (AD-01) — domain nền tảng
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py
 │   │   │   │
 │   │   │   ├── vehicles/              # Hồ sơ tĩnh, provisioning, kích hoạt/hủy kích hoạt (AD-05)
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py
 │   │   │   │
 │   │   │   ├── telemetry/             # Dữ liệu thời gian thực & lịch sử của xe (AD-02, FM-01, FM-02, AD-08)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
@@ -113,20 +114,20 @@ Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-
 ├── scripts/                        # script tiện ích (seed data, migrate, lint-all...)
 ├── .env.example
 ├── Makefile
-└── AGENT.md
+└── AGENTS.md
 ```
 
 ---
 
 ## 3. Quy tắc ranh giới domain (backend)
 
-- Mỗi thư mục trong `backend/domains/` là **1 bounded context**. Domain này chỉ được gọi sang domain khác qua **`service.py` công khai** của domain đó — **không** import/query chéo trực tiếp `repository.py`/`models.py` của domain khác.
+- Mỗi thư mục trong `backend/app/domains/` là **1 bounded context**. Domain này chỉ được gọi sang domain khác qua **`service.py` công khai** của domain đó — **không** import/query chéo trực tiếp `repository.py`/`models.py` của domain khác.
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
 - **`telemetry`** là domain dữ liệu thời gian thực: nhiều domain khác (`charging`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
-- Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENT.md chỉ nêu nguyên tắc chung ở cấp domain.
+- Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENTS.md chỉ nêu nguyên tắc chung ở cấp domain.
 - Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).
-- Dùng **`import-linter`** (Python) để chặn ở mức CI nếu domain A import trực tiếp vào nội bộ (`repository`/`models`) của domain B — biến quy tắc trên thành ràng buộc kỹ thuật, không chỉ là quy ước bằng lời.
+- Khi nền tảng CI/CD được chốt, bổ sung **`import-linter`** để chặn domain A import trực tiếp nội bộ (`repository`/`models`) của domain B. Hiện package/config này chưa được cài đặt, nên review và tìm kiếm import là bước bắt buộc.
 
 ---
 
@@ -138,7 +139,7 @@ Cấu trúc chi tiết dưới đây tập trung vào **`backend/`** và **`web-
 
 | Thành phần | Công cụ |
 |---|---|
-| Backend (`api`, và các entrypoint trong `telemetry/ingestion`, `charging/ocpp`) | `uv` — `uv run uvicorn ...`, `uv run python -m domains.telemetry.ingestion.entrypoint`... |
+| Backend (`api`, và các entrypoint trong `telemetry/ingestion`, `charging/ocpp`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... |
 | Web Portal | `pnpm dev` |
 | Vehicle App | `flutter run` |
 
@@ -176,15 +177,16 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 ### 5.1 Backend — Python / FastAPI
 - Quản lý môi trường/dependency bằng **`uv`** (`pyproject.toml` + `uv.lock` là nguồn chân lý duy nhất; không dùng pip/poetry thuần song song).
-- Format: **Black** (line length 88) + **isort** — chạy qua `uv run black .`, `uv run isort .` hoặc pre-commit.
+- Format: **Black** (line length 88) + **isort**. Không để formatter sửa migration đã merge; khi format toàn repo phải exclude `app/libs/db/migrations/versions/`, còn migration mới phải được format trước khi merge.
 - Lint: **Ruff** (`uv run ruff check`).
 - Type checking: type hint bắt buộc cho function signature; dùng **mypy** hoặc **Pyright** (`uv run mypy .`).
-- Mỗi domain trong `backend/domains/<ten_domain>/` tự có đủ layer riêng:
+- Mỗi domain trong `backend/app/domains/<ten_domain>/` dùng các module sau theo nhu cầu chức năng; không tạo file rỗng làm placeholder:
   - `router.py` — định nghĩa endpoint (FastAPI `APIRouter`), không chứa business logic.
   - `service.py` — business logic thuần Python; đây là **giao diện công khai duy nhất** để domain khác gọi vào.
   - `repository.py` — truy vấn DB (SQLAlchemy), không chứa business logic.
   - `schemas.py` — Pydantic models cho request/response.
   - `models.py` — SQLAlchemy models.
+  - `types.py` — enum/value object dùng chung giữa các layer khi cần; không phụ thuộc FastAPI, Pydantic hoặc SQLAlchemy.
 - Naming: `snake_case` cho biến/hàm/module, `PascalCase` cho class, hằng số `UPPER_SNAKE_CASE`.
 - Toàn bộ I/O (DB, HTTP, MQTT) dùng **async/await**.
 - Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.
@@ -221,7 +223,58 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
         ...
     ```
 
-#### 5.1.1 SQLAlchemy Models — Primary Key Convention
+#### 5.1.1 Database session và transaction
+
+- Chỉ **entry boundary** được tạo và đóng `AsyncSession`:
+  - FastAPI dùng `Depends(get_db)`.
+  - Background worker/CLI dùng `async_session_factory` từ `app.libs.db.session`; không tự tạo engine hoặc session factory.
+- Entry boundary sở hữu transaction:
+  - HTTP dependency hoặc worker unit-of-work thực hiện commit/rollback.
+  - `service.py` và `repository.py` **không** gọi `commit()` hoặc `rollback()`.
+  - Repository được phép `flush()` khi cần phát hiện constraint error hoặc lấy generated value.
+- Một business operation mặc định chạy trong một transaction atomic. Nếu cần chia transaction, phải xin xác nhận và mô tả rõ hành vi partial failure.
+- `Base` chỉ được định nghĩa và import từ `app.libs.db.base`; `session.py` chỉ quản lý engine/session lifecycle.
+
+#### 5.1.2 Quy ước thời gian
+
+- Toàn backend và database dùng UTC timezone-aware.
+- Python dùng `datetime.now(timezone.utc)`; không dùng `datetime.utcnow()`.
+- SQLAlchemy timestamp dùng `DateTime(timezone=True)`.
+- Timestamp từ API/MQTT phải có timezone và được normalize về UTC trước khi lưu.
+- Biến môi trường phải có namespace theo component (`APP_`, `MQTT_`, `DB_`...); không dùng tên chung dễ va chạm như `DEBUG`, `HOST` hoặc `PORT`.
+
+#### 5.1.3 Ranh giới layer và exception
+
+- Router xử lý HTTP request/response/status code và chuyển domain exception thành `HTTPException`.
+- Service không import FastAPI, không ném `HTTPException`, và chỉ chứa business logic.
+- Repository chỉ truy cập DB; không chứa HTTP/business policy và không commit/rollback.
+- Schema không import SQLAlchemy model. Enum/value object dùng chung được đặt trong `types.py`.
+- Partial update dùng `PATCH` cùng `model_dump(exclude_unset=True)`.
+- “Không gửi field” khác với “gửi field = null”; repository không tự loại `None` của cột nullable.
+- Validation create/update phải nhất quán. Unique constraint DB là bảo vệ cuối cùng; `IntegrityError` phải được chuyển thành domain error phù hợp.
+
+#### 5.1.4 Background worker, logging và error handling
+
+- Một component duy nhất sở hữu lifecycle connect/run/stop của external client.
+- Topic, QoS, batch size, queue size và timeout phải lấy từ settings/constructor; không hard-code khi đã có config.
+- Với `asyncio.Queue`, mỗi `get()` thành công phải có đúng một `task_done()`.
+- Graceful shutdown phải ngừng nhận message mới, drain queue theo policy, hoàn tất/rollback transaction hiện tại, rồi cancel và await task nếu quá timeout.
+- Telemetry MVP dùng QoS 0, không retry và không DLQ; DB error phải rollback batch, log traceback và làm worker dừng.
+- Dùng structured logging qua `extra`; không dùng f-string trong logger call. Exception bất ngờ dùng `logger.exception()`.
+- Không dùng `except Exception` ngoài process/task boundary.
+- Các metric `processed`, `skipped`, `errors`, `dropped` phải có định nghĩa và phản ánh đúng kết quả.
+
+#### 5.1.5 Kiểm tra tính nhất quán trước khi hoàn thành backend task
+
+1. Tìm pattern tương tự đang tồn tại ở domain/entrypoint khác.
+2. Không tạo engine, session factory, config hoặc logger riêng nếu shared implementation đã có.
+3. Chạy Black, isort, Ruff, mypy và test liên quan.
+4. Kiểm tra `__init__.py` chỉ chứa docstring.
+5. Không để placeholder/TODO cho thành phần chắc chắn cần về sau; chuyển sang `docs/01-requirements/future.md`.
+6. Review migration về timezone, FK, index, constraint, PostGIS/TimescaleDB, upgrade và downgrade.
+7. Nếu code mới cần convention khác, phải cập nhật AGENTS.md hoặc xin xác nhận trước khi triển khai.
+
+#### 5.1.6 SQLAlchemy Models — Primary Key Convention
 - **Mọi bảng PHẢI có internal ID** (không dùng business key như license_plate, VIN làm PK):
   ```python
   # ✅ ĐÚNG: Internal ID (UUID hoặc auto-increment tùy trường hợp)
@@ -290,9 +343,9 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 - 1 instance PostgreSQL duy nhất, bật 2 extension: `timescaledb`, `postgis` (script khởi tạo ở `infra/db/init/`).
 - Bảng dữ liệu time-series (telemetry xe, trạng thái trụ sạc, phiên sạc) tạo dưới dạng **hypertable** (TimescaleDB) để tối ưu truy vấn/nén dữ liệu lịch sử.
-- Cột vị trí (GPS xe, vị trí trạm sạc, geofence) dùng kiểu `geometry`/`geography` (PostGIS).
-- Naming bảng: số nhiều, `snake_case` (`vehicles`, `charging_sessions`, `alerts`, `policy_configs`...).
-- Migration quản lý bằng Alembic, đặt trong `backend/libs/db/migrations/`.
+- Cột vị trí (GPS xe, vị trí trạm sạc, geofence) dùng kiểu `geometry`/`geography` (PostGIS), trừ ngoại lệ MVP đã được planner chốt và ghi trong `future.md`.
+- Naming bảng mặc định là số nhiều, `snake_case` (`vehicles`, `charging_sessions`, `alerts`, `policy_configs`...). Ngoại lệ phải được planner hoặc migration đã chốt ghi rõ; telemetry MVP hiện dùng `vehicle_telemetry`.
+- Migration quản lý bằng Alembic, đặt trong `backend/app/libs/db/migrations/`.
 
 ---
 

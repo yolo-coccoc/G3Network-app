@@ -7,7 +7,7 @@ Schema này validate message từ MQTT trước khi đưa vào queue.
 Message được gửi từ thiết bị Telematics, không chứa ID nội bộ hệ thống.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 class LocationData(BaseModel):
     """
     Dữ liệu vị trí GPS từ telematic.
-    
+
     Attributes:
         latitude: Vĩ độ (-90 to 90 độ)
         longitude: Kinh độ (-180 to 180 độ)
@@ -39,16 +39,28 @@ class LocationData(BaseModel):
 class VehicleState(BaseModel):
     """
     Trạng thái xe từ telematic.
-    
+
     Attributes:
         speed: Tốc độ (0-200 km/h)
         heading: Hướng di chuyển (0-360 độ, nullable). 0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây
         odometer: Tổng quãng đường đã đi (km)
     """
 
-    speed: Annotated[float | None, Field(default=None, ge=0, le=200, description="Tốc độ (km/h)")]
-    heading: Annotated[float | None, Field(default=None, ge=0, le=360, description="Hướng di chuyển (độ). 0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây")]
-    odometer: Annotated[float | None, Field(default=None, ge=0, description="Tổng quãng đường (km)")]
+    speed: Annotated[
+        float | None, Field(default=None, ge=0, le=200, description="Tốc độ (km/h)")
+    ]
+    heading: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0,
+            le=360,
+            description="Hướng di chuyển (độ). 0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây",
+        ),
+    ]
+    odometer: Annotated[
+        float | None, Field(default=None, ge=0, description="Tổng quãng đường (km)")
+    ]
 
     model_config = {
         "json_schema_extra": {
@@ -63,7 +75,7 @@ class VehicleState(BaseModel):
 class BatteryData(BaseModel):
     """
     Dữ liệu pin từ telematic.
-    
+
     Attributes:
         soc: State of Charge - mức pin còn lại (0-100%)
         voltage: Điện áp pin (V)
@@ -71,10 +83,19 @@ class BatteryData(BaseModel):
         temperature: Nhiệt độ pin (°C)
     """
 
-    soc: Annotated[float, Field(ge=0, le=100, description="State of Charge - mức pin còn lại (%)")]
-    voltage: Annotated[float | None, Field(default=None, ge=0, description="Điện áp pin (V)")]
-    current: Annotated[float | None, Field(default=None, description="Dòng điện (A). Âm = xả, Dương = sạc")]
-    temperature: Annotated[float | None, Field(default=None, description="Nhiệt độ pin (°C)")]
+    soc: Annotated[
+        float, Field(ge=0, le=100, description="State of Charge - mức pin còn lại (%)")
+    ]
+    voltage: Annotated[
+        float | None, Field(default=None, ge=0, description="Điện áp pin (V)")
+    ]
+    current: Annotated[
+        float | None,
+        Field(default=None, description="Dòng điện (A). Âm = xả, Dương = sạc"),
+    ]
+    temperature: Annotated[
+        float | None, Field(default=None, description="Nhiệt độ pin (°C)")
+    ]
 
     model_config = {
         "json_schema_extra": {
@@ -89,12 +110,14 @@ class BatteryData(BaseModel):
 class MotorData(BaseModel):
     """
     Dữ liệu động cơ từ telematic.
-    
+
     Attributes:
         temperature: Nhiệt độ động cơ (°C)
     """
 
-    temperature: Annotated[float | None, Field(default=None, description="Nhiệt độ động cơ (°C)")]
+    temperature: Annotated[
+        float | None, Field(default=None, description="Nhiệt độ động cơ (°C)")
+    ]
 
     model_config = {
         "json_schema_extra": {
@@ -109,12 +132,18 @@ class MotorData(BaseModel):
 class SignalData(BaseModel):
     """
     Dữ liệu tín hiệu mạng từ telematic.
-    
+
     Attributes:
         strength: Cường độ tín hiệu (dBm). Giá trị âm, càng gần 0 càng mạnh
     """
 
-    strength: Annotated[int | None, Field(default=None, description="Cường độ tín hiệu (dBm). Giá trị âm, càng gần 0 càng mạnh")]
+    strength: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Cường độ tín hiệu (dBm). Giá trị âm, càng gần 0 càng mạnh",
+        ),
+    ]
 
     model_config = {
         "json_schema_extra": {
@@ -129,10 +158,10 @@ class SignalData(BaseModel):
 class TelemetryMessage(BaseModel):
     """
     Message telemetry từ thiết bị Telematics qua MQTT.
-    
+
     Message này được gửi từ telematic, không chứa ID nội bộ hệ thống.
     Backend sẽ bổ sung: message_id, telematic_id, vehicle_id, received_at.
-    
+
     Attributes:
         message_uuid: ID duy nhất cho message, do telematic tạo
         telematic_serial: Mã serial vật lý của thiết bị (VD: TBOX-VN-000123)
@@ -145,15 +174,31 @@ class TelemetryMessage(BaseModel):
         errors: Danh sách mã lỗi đang active (nullable)
     """
 
-    message_uuid: Annotated[UUID, Field(description="ID duy nhất cho message, do telematic tạo")]
-    telematic_serial: Annotated[str, Field(min_length=1, max_length=50, description="Mã serial vật lý của thiết bị")]
-    recorded_at: Annotated[datetime, Field(description="Thời điểm telematic ghi nhận dữ liệu (UTC)")]
+    message_uuid: Annotated[
+        UUID, Field(description="ID duy nhất cho message, do telematic tạo")
+    ]
+    telematic_serial: Annotated[
+        str,
+        Field(min_length=1, max_length=50, description="Mã serial vật lý của thiết bị"),
+    ]
+    recorded_at: Annotated[
+        datetime, Field(description="Thời điểm telematic ghi nhận dữ liệu (UTC)")
+    ]
     location: Annotated[LocationData, Field(description="Dữ liệu vị trí GPS")]
-    vehicle_state: Annotated[VehicleState | None, Field(default=None, description="Trạng thái xe")]
+    vehicle_state: Annotated[
+        VehicleState | None, Field(default=None, description="Trạng thái xe")
+    ]
     battery: Annotated[BatteryData, Field(description="Dữ liệu pin")]
-    motor: Annotated[MotorData | None, Field(default=None, description="Dữ liệu động cơ")]
-    signal: Annotated[SignalData | None, Field(default=None, description="Dữ liệu tín hiệu mạng")]
-    errors: Annotated[list[str] | None, Field(default=None, description="Danh sách mã lỗi đang active")]
+    motor: Annotated[
+        MotorData | None, Field(default=None, description="Dữ liệu động cơ")
+    ]
+    signal: Annotated[
+        SignalData | None, Field(default=None, description="Dữ liệu tín hiệu mạng")
+    ]
+    errors: Annotated[
+        list[str] | None,
+        Field(default=None, description="Danh sách mã lỗi đang active"),
+    ]
 
     @field_validator("telematic_serial")
     @classmethod
@@ -164,20 +209,28 @@ class TelemetryMessage(BaseModel):
             raise ValueError("telematic_serial không được rỗng")
         return v
 
+    @field_validator("recorded_at")
+    @classmethod
+    def validate_recorded_at(cls, value: datetime) -> datetime:
+        """Require a timezone and normalize the recorded timestamp to UTC."""
+        if value.utcoffset() is None:
+            raise ValueError("recorded_at phải có timezone")
+        return value.astimezone(timezone.utc)
+
     def to_db_dict(
         self,
         telematic_id: UUID,
         vehicle_id: UUID,
         received_at: datetime,
-    ) -> dict:
+    ) -> dict[str, object]:
         """
         Convert message thành dict phù hợp với VehicleTelemetry model.
-        
+
         Args:
             telematic_id: UUID của telematic (lookup từ telematic_serial)
             vehicle_id: UUID của xe (lookup từ telematic_id)
             received_at: Thời điểm backend nhận message
-            
+
         Returns:
             Dict với đầy đủ trường để insert vào DB
         """
@@ -230,13 +283,17 @@ class TelemetryMessage(BaseModel):
             "latitude": self.location.latitude,
             "longitude": self.location.longitude,
             "speed": vehicle_state_dict.get("speed") if vehicle_state_dict else None,
-            "heading": vehicle_state_dict.get("heading") if vehicle_state_dict else None,
+            "heading": (
+                vehicle_state_dict.get("heading") if vehicle_state_dict else None
+            ),
             "soc": battery_dict["soc"],
             "battery_voltage": battery_dict.get("voltage"),
             "battery_current": battery_dict.get("current"),
             "battery_temperature": battery_dict.get("temperature"),
             "motor_temperature": motor_dict.get("temperature") if motor_dict else None,
-            "odometer": vehicle_state_dict.get("odometer") if vehicle_state_dict else None,
+            "odometer": (
+                vehicle_state_dict.get("odometer") if vehicle_state_dict else None
+            ),
             "signal_strength": signal_dict.get("strength") if signal_dict else None,
             "error_codes": error_codes_dict,
             "raw_payload": raw_payload,
@@ -250,8 +307,17 @@ class TelemetryMessage(BaseModel):
                     "telematic_serial": "TBOX-VN-000123",
                     "recorded_at": "2026-07-25T10:30:00Z",
                     "location": {"latitude": 21.0285, "longitude": 105.8542},
-                    "vehicle_state": {"speed": 45.2, "heading": 90.0, "odometer": 12345.6},
-                    "battery": {"soc": 78.5, "voltage": 400.2, "current": -15.3, "temperature": 35.2},
+                    "vehicle_state": {
+                        "speed": 45.2,
+                        "heading": 90.0,
+                        "odometer": 12345.6,
+                    },
+                    "battery": {
+                        "soc": 78.5,
+                        "voltage": 400.2,
+                        "current": -15.3,
+                        "temperature": 35.2,
+                    },
                     "motor": {"temperature": 42.1},
                     "signal": {"strength": -75},
                     "errors": ["E001"],

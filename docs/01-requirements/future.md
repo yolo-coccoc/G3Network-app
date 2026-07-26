@@ -150,6 +150,39 @@
 
 ---
 
+### 9. PostGIS Geography cho vị trí telemetry
+
+- **Mô tả ngắn**: Thay hai cột `latitude`/`longitude` bằng cột `geography(Point, 4326)` hoặc bổ sung cột geography được đồng bộ.
+- **Tác dụng/Vai trò trong hệ thống**: Hỗ trợ spatial index, truy vấn bán kính, geofence và lịch sử hành trình hiệu quả.
+- **Lý do hoãn lại**: Planner telemetry MVP đã chốt lưu tọa độ bằng hai cột `DOUBLE PRECISION` để chứng minh luồng ingest trước.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Cần migration dữ liệu hiện có và chốt geometry hay geography trước khi triển khai.
+
+---
+
+### 10. Foreign key từ vehicles đến fleet
+
+- **Mô tả ngắn**: Chuyển `vehicles.fleet_id` sang UUID internal ID và tạo foreign key đến bảng thuộc domain fleet.
+- **Tác dụng/Vai trò trong hệ thống**: Bảo đảm toàn vẹn phân công xe theo đội và tuân thủ quy tắc foreign key luôn tham chiếu internal ID.
+- **Lý do hoãn lại**: Domain và bảng fleet chưa được triển khai; không đặt relationship placeholder trong source trước khi có model đích.
+- **Liên quan đến planner/feature**: FM-01…FM-07
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Khi triển khai fleet phải có migration chuyển dữ liệu `String(36)` hiện tại sang UUID và thêm constraint.
+
+---
+
+### 11. Import-linter trong CI
+
+- **Mô tả ngắn**: Cấu hình `import-linter` để kiểm tra tự động ranh giới import giữa các bounded context.
+- **Tác dụng/Vai trò trong hệ thống**: Ngăn domain import trực tiếp `models.py`/`repository.py` của domain khác và biến convention kiến trúc thành ràng buộc CI.
+- **Lý do hoãn lại**: Nền tảng CI/CD chưa được lựa chọn và package/config import-linter chưa tồn tại trong backend.
+- **Liên quan đến planner/feature**: Quy tắc kiến trúc chung trong `AGENTS.md`.
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Khi triển khai cần thêm dependency bằng `uv`, contract cấu hình và job CI tương ứng.
+
+---
+
 ## Quy tắc cập nhật
 
 1. **Khi nào ghi nhận**: Khi developer hoặc AI agent quyết định bỏ qua/xóa một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm".

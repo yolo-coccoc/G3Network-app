@@ -1,2 +1,1 @@
 """Telemetry domain package."""
-

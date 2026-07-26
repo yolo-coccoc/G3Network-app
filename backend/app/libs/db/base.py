@@ -1,9 +1,7 @@
-"""SQLAlchemy Base class for models.
+"""SQLAlchemy declarative base shared by all database models."""
 
-This file exists for Alembic to import Base.metadata.
-The actual Base class is defined in session.py to avoid circular imports.
-"""
+from sqlalchemy.orm import DeclarativeBase
 
-from app.libs.db.session import Base  # noqa: F401
 
-__all__ = ["Base"]
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""

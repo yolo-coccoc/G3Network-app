@@ -1,27 +1,26 @@
 """SQLAlchemy model for Vehicle domain."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import DateTime
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-import enum
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.libs.db.session import Base
+from app.domains.vehicles.types import VehicleStatus
+from app.libs.db.base import Base
 
 
-class VehicleStatus(str, enum.Enum):
-    """Vehicle status enum."""
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-    MAINTENANCE = "MAINTENANCE"
-    DECOMMISSIONED = "DECOMMISSIONED"
+def utc_now() -> datetime:
+    """Return the current timezone-aware UTC datetime."""
+    return datetime.now(timezone.utc)
 
 
 class Vehicle(Base):
     """Vehicle model representing electric trucks.
-    
+
     Attributes:
         vehicle_id: Primary key (UUID)
         license_plate: Biển số xe (unique)
@@ -34,32 +33,37 @@ class Vehicle(Base):
         created_at: Thời gian tạo
         updated_at: Thời gian cập nhật
     """
-    
+
     __tablename__ = "vehicles"
-    
+
     vehicle_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
     )
-    license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
-    vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
+    license_plate: Mapped[str] = mapped_column(
+        String(20), unique=True, nullable=False, index=True
+    )
+    vin: Mapped[str] = mapped_column(
+        String(17), unique=True, nullable=False, index=True
+    )
     make: Mapped[str] = mapped_column(String(50), nullable=False)
     model: Mapped[str] = mapped_column(String(50), nullable=False)
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[VehicleStatus] = mapped_column(
-        SQLEnum(VehicleStatus),
-        default=VehicleStatus.ACTIVE,
-        nullable=False,
-        index=True
+        SQLEnum(VehicleStatus), default=VehicleStatus.ACTIVE, nullable=False, index=True
     )
     fleet_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    
-    # Relationships (will be defined when Fleet model is created)
-    # fleet: Mapped["Fleet"] = relationship("Fleet", back_populates="vehicles")
-    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     def __repr__(self) -> str:
+        """Return a concise debug representation of the vehicle."""
         return f"<Vehicle {self.license_plate} ({self.vin})>"

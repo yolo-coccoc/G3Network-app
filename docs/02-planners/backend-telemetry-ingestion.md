@@ -448,9 +448,9 @@ Tạo backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
    - Nếu hợp lệ: đưa vào asyncio.Queue
    - Nếu không hợp lệ: log warning, bỏ qua (MVP không có DLQ)
 
-3. Error handling:
-   - Reconnect khi mất kết nối (exponential backoff)
-   - Log đầy đủ để debug
+3. Error handling (MVP):
+   - Log lỗi kết nối và để consumer dừng
+   - Không reconnect/retry; ghi nhận reliability nâng cao trong `future.md`
 
 4. Dùng thư viện:
    - gmqtt (async MQTT client) hoặc
@@ -492,9 +492,9 @@ Cập nhật backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
    - messages_invalid_total
    - messages_dropped_total (queue full)
 
-4. Thêm graceful shutdown:
-   - Khi nhận SIGTERM, dừng consuming
-   - Đợi queue xử lý xong (hoặc timeout)
+4. Hỗ trợ graceful shutdown:
+   - `disconnect()` dừng consuming
+   - Entrypoint chịu trách nhiệm nhận SIGTERM, dừng consumer rồi đợi worker drain queue
 ```
 
 **Kiểm tra:**
@@ -522,8 +522,8 @@ Tạo backend/app/domains/telemetry/ingestion/batch_worker.py:
      + Lấy tối đa batch_size messages từ queue
      + Gọi telemetry.service.process_batch(messages)
      + Log số lượng processed, time taken
-   - Nếu lỗi: retry 3 lần với exponential backoff
-   - Nếu vẫn lỗi: đưa vào dead-letter queue (file hoặc DB table)
+   - Nếu DB lỗi: rollback toàn batch, log traceback và để worker dừng
+   - MVP không retry và không có dead-letter queue
 
 3. Metrics:
    - batches_processed_total
@@ -543,7 +543,7 @@ Lưu ý:
 **Kiểm tra:**
 - [x] Worker chạy định kỳ đúng interval
 - [x] Batch được xử lý khi đủ size
-- [x] Retry logic hoạt động
+- [x] DB error làm worker dừng, không retry
 
 ---
 
@@ -564,7 +564,6 @@ Cập nhật backend/app/domains/telemetry/repository.py:
    - Dùng SQLAlchemy Core insert (không phải ORM):
      stmt = insert(VehicleTelemetry).values(messages)
      result = await db.execute(stmt)
-     await db.commit()
    - Trả về số rows inserted
 
 3. async def update_telematic_last_seen(db: AsyncSession, telematic_data: list[tuple[UUID, datetime]]) -> None:
@@ -574,6 +573,8 @@ Cập nhật backend/app/domains/telemetry/repository.py:
 
 Lưu ý:
 - Dùng async session
+- Worker entry boundary sở hữu transaction và commit/rollback toàn batch
+- Repository/service không gọi commit hoặc rollback
 - Bulk insert phải dùng Core API, không dùng ORM add_all (chậm)
 - Batch lookup: 1 query cho cả batch, không query từng message
 - Thêm docstring
@@ -607,7 +608,7 @@ Cập nhật backend/app/domains/telemetry/service.py:
    - Trả về {"processed": count, "skipped": count}
 
 2. Error handling:
-   - Nếu DB error: raise để batch worker retry (MVP không có retry logic phức tạp)
+   - Nếu DB error: raise để transaction rollback và batch worker dừng
    - Nếu validation error: log và skip message đó
 
 3. Logging:

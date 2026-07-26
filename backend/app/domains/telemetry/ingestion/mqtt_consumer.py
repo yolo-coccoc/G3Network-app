@@ -12,24 +12,19 @@ Luồng dữ liệu:
 Lưu ý:
     - Subscribe với QoS 0 (fire-and-forget)
     - Message không hợp lệ được log warning và bỏ qua (không có DLQ trong MVP)
-    - Reconnect tự động với exponential backoff
+    - Lỗi kết nối làm consumer dừng trong phạm vi MVP
 """
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
-from aiomqtt import Client as MQTTClient, MqttError, Will
+from aiomqtt import Client as MQTTClient
+from aiomqtt import Message, MqttError, Will
 from pydantic import ValidationError
 
-from app.libs.common.config import settings
 from app.domains.telemetry.schemas import TelemetryMessage
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-    from uuid import UUID
+from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +36,7 @@ class Metrics:
     """Simple metrics counter for MVP."""
 
     def __init__(self) -> None:
+        """Initialize all in-memory counters to zero."""
         self.messages_received_total = 0
         self.messages_valid_total = 0
         self.messages_invalid_total = 0
@@ -58,10 +54,10 @@ metrics = Metrics()
 class MQTTConsumer:
     """
     MQTT consumer cho telemetry messages.
-    
+
     Consumer kết nối đến EMQX broker, subscribe topic pattern và
     xử lý message đến. Message hợp lệ được đưa vào asyncio.Queue.
-    
+
     Attributes:
         host: MQTT broker host
         port: MQTT broker port
@@ -70,7 +66,7 @@ class MQTTConsumer:
         password: MQTT password (optional)
         qos: QoS level (0 for MVP)
         queue: asyncio.Queue để batch worker consume
-        
+
     Example:
         >>> consumer = MQTTConsumer(
         ...     host="localhost",
@@ -89,12 +85,13 @@ class MQTTConsumer:
         client_id: str | None = None,
         username: str | None = None,
         password: str | None = None,
-        qos: int = 0,
+        qos: int | None = None,
+        topic_pattern: str | None = None,
         queue: asyncio.Queue[TelemetryMessage] | None = None,
     ) -> None:
         """
         Khởi tạo MQTT consumer.
-        
+
         Args:
             host: MQTT broker host (default từ settings)
             port: MQTT broker port (default từ settings)
@@ -102,6 +99,7 @@ class MQTTConsumer:
             username: MQTT username (default từ settings)
             password: MQTT password (default từ settings)
             qos: QoS level (default 0)
+            topic_pattern: Topic MQTT nhận telemetry (default từ settings)
             queue: asyncio.Queue để batch worker consume (default module-level queue)
         """
         self.host = host or settings.MQTT_HOST
@@ -109,7 +107,8 @@ class MQTTConsumer:
         self.client_id = client_id or settings.MQTT_CLIENT_ID
         self.username = username or settings.MQTT_USERNAME
         self.password = password or settings.MQTT_PASSWORD
-        self.qos = qos
+        self.qos = settings.MQTT_QOS if qos is None else qos
+        self.topic_pattern = topic_pattern or settings.MQTT_TELEMETRY_TOPIC
         self.queue = queue or message_queue
 
         self._client: MQTTClient | None = None
@@ -117,10 +116,7 @@ class MQTTConsumer:
 
     async def connect(self) -> None:
         """
-        Kết nối đến MQTT broker.
-        
-        Raises:
-            MqttError: Nếu không thể kết nối sau nhiều lần thử
+        Configure the MQTT client before entering its async context.
         """
         logger.info(
             "Connecting to MQTT broker",
@@ -128,7 +124,7 @@ class MQTTConsumer:
                 "host": self.host,
                 "port": self.port,
                 "client_id": self.client_id,
-            }
+            },
         )
 
         # Configure will message for connection loss detection
@@ -149,50 +145,39 @@ class MQTTConsumer:
         )
 
         self._running = True
-        logger.info(
-            "Connected to MQTT broker",
-            extra={"client_id": self.client_id}
-        )
+        logger.info("MQTT client configured", extra={"client_id": self.client_id})
 
     async def disconnect(self) -> None:
         """
         Ngắt kết nối từ MQTT broker.
-        
+
         Phương thức này được gọi khi graceful shutdown.
         """
         if self._client and self._running:
             logger.info("Disconnecting from MQTT broker")
             self._running = False
-            try:
-                await self._client.disconnect()
-            except Exception as e:
-                logger.warning(f"Error during disconnect: {e}")
-            finally:
-                self._client = None
+            self._client = None
 
     async def subscribe(self, topic_pattern: str) -> None:
         """
         Subscribe đến topic pattern.
-        
-        Note: Trong implementation hiện tại, subscribe được thực hiện
-        tự động trong start_consuming(). Method này được giữ lại để
-        tương thích với planner.
-        
+
         Args:
             topic_pattern: Topic pattern để subscribe (VD: "g3network/telematics/+/telemetry")
         """
+        self.topic_pattern = topic_pattern
         logger.info(
-            "Subscribe will be done in start_consuming()",
+            "MQTT subscription configured",
             extra={
                 "topic": topic_pattern,
                 "qos": self.qos,
-            }
+            },
         )
 
     async def start_consuming(self) -> None:
         """
         Bắt đầu vòng lặp nhận message.
-        
+
         Vòng lặp này sẽ chạy cho đến khi disconnect() được gọi.
         Mỗi message được parse, validate và đưa vào queue nếu hợp lệ.
         """
@@ -204,24 +189,31 @@ class MQTTConsumer:
         try:
             async with self._client as client:
                 # Subscribe inside context manager
-                await client.subscribe("g3network/telematics/+/telemetry", qos=self.qos)
-                logger.info("Subscribed to g3network/telematics/+/telemetry")
+                await client.subscribe(self.topic_pattern, qos=self.qos)
+                logger.info(
+                    "Subscribed to MQTT telemetry",
+                    extra={"topic": self.topic_pattern, "qos": self.qos},
+                )
 
-                async for message in client.messages:
-                    if not self._running:
-                        break
-
+                messages = client.messages
+                while self._running:
+                    try:
+                        message = await asyncio.wait_for(anext(messages), timeout=1.0)
+                    except asyncio.TimeoutError:
+                        continue
                     await self._handle_message(message)
 
-        except MqttError as e:
+        except MqttError:
             if self._running:
-                logger.error(f"MQTT error during consumption: {e}")
+                logger.exception("MQTT consumption failed")
                 raise
+        finally:
+            self._running = False
 
-    async def _handle_message(self, message: object) -> None:
+    async def _handle_message(self, message: Message) -> None:
         """
         Xử lý một message từ MQTT broker.
-        
+
         Args:
             message: Message từ aiomqtt
         """
@@ -246,7 +238,7 @@ class MQTTConsumer:
                         "message_uuid": str(telemetry_msg.message_uuid),
                         "telematic_serial": telemetry_msg.telematic_serial,
                         "queue_size": self.queue.qsize(),
-                    }
+                    },
                 )
 
             except asyncio.QueueFull:
@@ -256,7 +248,7 @@ class MQTTConsumer:
                     extra={
                         "message_uuid": str(telemetry_msg.message_uuid),
                         "telematic_serial": telemetry_msg.telematic_serial,
-                    }
+                    },
                 )
 
         except json.JSONDecodeError as e:
@@ -266,7 +258,7 @@ class MQTTConsumer:
                 extra={
                     "error": str(e),
                     "topic": str(message.topic),
-                }
+                },
             )
 
         except ValidationError as e:
@@ -276,5 +268,5 @@ class MQTTConsumer:
                 extra={
                     "error": str(e),
                     "topic": str(message.topic),
-                }
+                },
             )

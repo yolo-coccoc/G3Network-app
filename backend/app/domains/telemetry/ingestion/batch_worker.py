@@ -7,7 +7,7 @@ Worker xử lý queue theo batch định kỳ:
 - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages
 - Lấy tối đa batch_size messages từ queue
 - Gọi telemetry.service.process_batch để xử lý
-- Retry khi gặp lỗi (tối đa 3 lần)
+- Dừng worker khi database gặp lỗi trong phạm vi MVP
 
 Luồng dữ liệu:
     asyncio.Queue → BatchWorker → telemetry.service.process_batch → Database
@@ -23,16 +23,12 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-
-from app.libs.common.config import settings
-from app.domains.telemetry import service as telemetry_service
+import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
+from app.libs.db.session import async_session_factory
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from uuid import UUID
 
     from app.domains.telemetry.schemas import TelemetryMessage
 
@@ -66,20 +62,18 @@ batch_metrics = BatchMetrics()
 class BatchWorker:
     """
     Batch worker xử lý telemetry messages từ queue.
-    
+
     Worker chạy định kỳ và xử lý messages theo batch:
     - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages
     - Lấy tối đa batch_size messages từ queue
     - Gọi telemetry.service.process_batch để xử lý
     - Retry khi gặp lỗi (tối đa max_retries lần với exponential backoff)
-    
+
     Attributes:
         queue: asyncio.Queue chứa TelemetryMessage
         batch_size: Số message tối đa trong 1 batch (default 100)
         flush_interval: Khoảng thời gian flush batch (giây, default 30.0)
-        max_retries: Số lần retry khi gặp lỗi (default 3)
-        retry_base_delay: Thời gian chờ cơ bản giữa các retry (giây, default 1.0)
-        
+
     Example:
         >>> worker = BatchWorker(
         ...     queue=message_queue,
@@ -96,31 +90,21 @@ class BatchWorker:
         queue: asyncio.Queue["TelemetryMessage"] | None = None,
         batch_size: int = 100,
         flush_interval: float = 30.0,
-        max_retries: int = 3,
-        retry_base_delay: float = 1.0,
     ) -> None:
         """
         Khởi tạo batch worker.
-        
+
         Args:
             queue: asyncio.Queue chứa TelemetryMessage (default module-level queue)
             batch_size: Số message tối đa trong 1 batch
             flush_interval: Khoảng thời gian flush batch (giây)
-            max_retries: Số lần retry khi gặp lỗi
-            retry_base_delay: Thời gian chờ cơ bản giữa các retry (giây)
         """
         self.queue = queue or message_queue
         self.batch_size = batch_size
         self.flush_interval = flush_interval
-        self.max_retries = max_retries
-        self.retry_base_delay = retry_base_delay
 
         self._running = False
-        self._task: asyncio.Task | None = None
-        self._engine = create_async_engine(settings.DATABASE_URL, echo=False)
-        self._session_factory = sessionmaker(
-            self._engine, class_=AsyncSession, expire_on_commit=False
-        )
+        self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Bắt đầu batch worker."""
@@ -135,41 +119,41 @@ class BatchWorker:
             extra={
                 "batch_size": self.batch_size,
                 "flush_interval": self.flush_interval,
-            }
+            },
         )
 
     async def stop(self, timeout: float = 60.0) -> None:
         """
         Dừng batch worker.
-        
+
         Phương thức này được gọi khi graceful shutdown.
         Worker sẽ xử lý nốt batch hiện tại trước khi dừng.
-        
+
         Args:
             timeout: Thời gian tối đa đợi worker dừng (giây)
         """
-        if not self._running:
+        if self._task is None:
             return
 
         logger.info("Stopping batch worker")
         self._running = False
 
-        if self._task:
+        try:
+            await asyncio.wait_for(self._task, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("Batch worker did not stop gracefully, cancelling task")
+            self._task.cancel()
             try:
-                await asyncio.wait_for(self._task, timeout=timeout)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Batch worker did not stop gracefully, cancelling task"
-                )
-                self._task.cancel()
+                await self._task
+            except asyncio.CancelledError:
+                pass
 
-        await self._engine.dispose()
         logger.info("Batch worker stopped")
 
     async def _run_loop(self) -> None:
         """
         Vòng lặp chính của batch worker.
-        
+
         Vòng lặp này sẽ chạy cho đến khi stop() được gọi.
         Mỗi iteration:
         1. Đợi message trong queue với timeout = flush_interval
@@ -178,12 +162,11 @@ class BatchWorker:
         """
         logger.info("Batch worker loop started")
 
-        while self._running:
+        while self._running or not self.queue.empty():
             try:
                 # Đợi message đầu tiên với timeout
                 first_message = await asyncio.wait_for(
-                    self.queue.get(),
-                    timeout=self.flush_interval
+                    self.queue.get(), timeout=self.flush_interval
                 )
 
                 # Thu thập batch
@@ -196,7 +179,7 @@ class BatchWorker:
                         break
 
                 # Xử lý batch
-                await self._process_batch_with_retry(messages)
+                await self._process_batch(messages)
 
             except asyncio.TimeoutError:
                 # Timeout: không có message trong flush_interval
@@ -211,67 +194,44 @@ class BatchWorker:
                             break
 
                     if messages:
-                        await self._process_batch_with_retry(messages)
+                        await self._process_batch(messages)
 
-            except Exception as e:
-                logger.error(f"Unexpected error in batch worker loop: {e}")
-                await asyncio.sleep(1.0)
+            except Exception:
+                self._running = False
+                logger.exception("Batch worker stopped after an unexpected error")
+                raise
 
-    async def _process_batch_with_retry(
-        self, messages: "Sequence[TelemetryMessage]"
-    ) -> None:
+    async def _process_batch(self, messages: "Sequence[TelemetryMessage]") -> None:
         """
-        Xử lý batch với retry logic.
-        
+        Process one batch in a single database transaction.
+
         Args:
             messages: Danh sách TelemetryMessage cần xử lý
         """
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(timezone.utc)
+        try:
+            async with async_session_factory.begin() as db:
+                result = await telemetry_service.process_batch(db, messages)
 
-                async with self._session_factory() as db:
-                    result = await telemetry_service.process_batch(db, messages)
-
-                processing_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-                batch_metrics.record_batch(len(messages), processing_time)
-
-                logger.info(
-                    "Batch processed successfully",
-                    extra={
-                        "batch_size": len(messages),
-                        "processed": result["processed"],
-                        "skipped": result["skipped"],
-                        "errors": result["errors"],
-                        "processing_time_ms": round(processing_time * 1000, 2),
-                        "attempt": attempt,
-                    }
-                )
-                return
-
-            except Exception as e:
-                batch_metrics.record_error()
-                logger.error(
-                    f"Batch processing failed (attempt {attempt}/{self.max_retries}): {e}",
-                    extra={
-                        "batch_size": len(messages),
-                        "error": str(e),
-                    }
-                )
-
-                if attempt < self.max_retries:
-                    # Exponential backoff
-                    delay = self.retry_base_delay * (2 ** (attempt - 1))
-                    logger.info(f"Retrying in {delay} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    # Max retries reached: log and drop batch
-                    logger.error(
-                        "Batch processing failed after max retries, dropping batch",
-                        extra={
-                            "batch_size": len(messages),
-                            "max_retries": self.max_retries,
-                        }
-                    )
-                    # TODO: Implement dead-letter queue (file or DB table)
-                    # For MVP, we just log and drop
+            processing_time = (datetime.now(timezone.utc) - start_time).total_seconds()
+            batch_metrics.record_batch(len(messages), processing_time)
+            logger.info(
+                "Batch processed successfully",
+                extra={
+                    "batch_size": len(messages),
+                    "processed": result["processed"],
+                    "skipped": result["skipped"],
+                    "errors": result["errors"],
+                    "processing_time_ms": round(processing_time * 1000, 2),
+                },
+            )
+        except Exception:
+            batch_metrics.record_error()
+            logger.exception(
+                "Batch processing failed; stopping worker",
+                extra={"batch_size": len(messages)},
+            )
+            raise
+        finally:
+            for _ in messages:
+                self.queue.task_done()
