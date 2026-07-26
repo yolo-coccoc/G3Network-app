@@ -10,18 +10,15 @@ Service xử lý business logic cho telemetry data, bao gồm:
 """
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 import app.domains.telemetry.repository as telemetry_repository
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from app.domains.telemetry.schemas import TelemetryMessage
+from app.domains.telemetry.schemas import TelemetryMessage
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +32,7 @@ class BatchResult(TypedDict):
 
 
 async def process_batch(
-    db: "AsyncSession", messages: "Sequence[TelemetryMessage]"
+    db: AsyncSession, messages: Sequence[TelemetryMessage]
 ) -> BatchResult:
     """
     Xử lý batch telemetry messages.

@@ -20,17 +20,13 @@ Lưu ý:
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
+from app.domains.telemetry.schemas import TelemetryMessage
 from app.libs.db.session import async_session_factory
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from app.domains.telemetry.schemas import TelemetryMessage
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +63,7 @@ class BatchWorker:
     - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages
     - Lấy tối đa batch_size messages từ queue
     - Gọi telemetry.service.process_batch để xử lý
-    - Retry khi gặp lỗi (tối đa max_retries lần với exponential backoff)
+    - Dừng worker khi database gặp lỗi trong phạm vi MVP
 
     Attributes:
         queue: asyncio.Queue chứa TelemetryMessage
@@ -87,7 +83,7 @@ class BatchWorker:
 
     def __init__(
         self,
-        queue: asyncio.Queue["TelemetryMessage"] | None = None,
+        queue: asyncio.Queue[TelemetryMessage] | None = None,
         batch_size: int = 100,
         flush_interval: float = 30.0,
     ) -> None:
@@ -201,7 +197,7 @@ class BatchWorker:
                 logger.exception("Batch worker stopped after an unexpected error")
                 raise
 
-    async def _process_batch(self, messages: "Sequence[TelemetryMessage]") -> None:
+    async def _process_batch(self, messages: Sequence[TelemetryMessage]) -> None:
         """
         Process one batch in a single database transaction.
 
