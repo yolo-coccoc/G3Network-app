@@ -5,6 +5,10 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.vehicles.exceptions import (
+    VehicleConflictError,
+    VehicleNotFoundError,
+)
 from app.domains.vehicles.repository import count_vehicles as repo_count_vehicles
 from app.domains.vehicles.repository import create_vehicle as repo_create_vehicle
 from app.domains.vehicles.repository import get_vehicle_by_id as repo_get_vehicle_by_id
@@ -26,18 +30,6 @@ from app.domains.vehicles.schemas import (
     VehicleUpdate,
 )
 from app.domains.vehicles.types import VehicleStatus
-
-
-class VehicleError(Exception):
-    """Base exception for vehicle business-rule failures."""
-
-
-class VehicleNotFoundError(VehicleError):
-    """Raised when a requested vehicle does not exist."""
-
-
-class VehicleConflictError(VehicleError):
-    """Raised when unique vehicle data conflicts with an existing vehicle."""
 
 
 async def create_vehicle(

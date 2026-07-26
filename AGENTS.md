@@ -40,10 +40,10 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   ├── app/                        # Source code chính (uv package layout)
 │   │   ├── domains/
 │   │   │   ├── identity/              # Auth & RBAC (AD-01) — domain nền tảng
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── vehicles/              # Hồ sơ tĩnh, provisioning, kích hoạt/hủy kích hoạt (AD-05)
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── telemetry/             # Dữ liệu thời gian thực & lịch sử của xe (AD-02, FM-01, FM-02, AD-08)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
@@ -187,6 +187,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
   - `schemas.py` — Pydantic models cho request/response.
   - `models.py` — SQLAlchemy models.
   - `types.py` — enum/value object dùng chung giữa các layer khi cần; không phụ thuộc FastAPI, Pydantic hoặc SQLAlchemy.
+  - `exceptions.py` — domain exception thuần Python; router chuyển exception này thành lỗi transport tương ứng.
 - Naming: `snake_case` cho biến/hàm/module, `PascalCase` cho class, hằng số `UPPER_SNAKE_CASE`.
 - Toàn bộ I/O (DB, HTTP, MQTT) dùng **async/await**.
 - Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.

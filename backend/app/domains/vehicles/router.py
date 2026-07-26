@@ -6,6 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.vehicles.service as vehicle_service
+from app.domains.vehicles.exceptions import (
+    VehicleConflictError,
+    VehicleNotFoundError,
+)
 from app.domains.vehicles.schemas import (
     VehicleCreate,
     VehicleListResponse,
@@ -39,7 +43,7 @@ async def create_vehicle(
     """
     try:
         return await vehicle_service.create_vehicle(db, vehicle_data)
-    except vehicle_service.VehicleConflictError as error:
+    except VehicleConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
@@ -93,7 +97,7 @@ async def get_vehicle(
     """
     try:
         return await vehicle_service.get_vehicle(db, vehicle_id)
-    except vehicle_service.VehicleNotFoundError as error:
+    except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
         ) from error
@@ -120,11 +124,11 @@ async def update_vehicle(
     """
     try:
         return await vehicle_service.update_vehicle(db, vehicle_id, update_data)
-    except vehicle_service.VehicleNotFoundError as error:
+    except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
         ) from error
-    except vehicle_service.VehicleConflictError as error:
+    except VehicleConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
         ) from error
@@ -150,7 +154,7 @@ async def delete_vehicle(
     """
     try:
         return await vehicle_service.delete_vehicle(db, vehicle_id)
-    except vehicle_service.VehicleNotFoundError as error:
+    except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
         ) from error
