@@ -498,9 +498,9 @@ Cập nhật backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
 ```
 
 **Kiểm tra:**
-- [ ] Queue hoạt động đúng
-- [ ] Metrics được ghi nhận
-- [ ] Graceful shutdown hoạt động
+- [x] Queue hoạt động đúng
+- [x] Metrics được ghi nhận
+- [x] Graceful shutdown hoạt động
 
 ---
 
@@ -541,9 +541,9 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Worker chạy định kỳ đúng interval
-- [ ] Batch được xử lý khi đủ size
-- [ ] Retry logic hoạt động
+- [x] Worker chạy định kỳ đúng interval
+- [x] Batch được xử lý khi đủ size
+- [x] Retry logic hoạt động
 
 ---
 

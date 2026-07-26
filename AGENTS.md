@@ -296,16 +296,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 ---
 
-## 7. Tài liệu đi kèm mã nguồn (bắt buộc)
-
-- Mọi file source code **có logic đáng kể** (loại trừ file boilerplate/gần như rỗng như `__init__.py`, file config đơn giản) **bắt buộc** phải có 1 file `.md` mô tả nội dung đi kèm 1-1.
-- File `.md` đặt **cùng thư mục, cùng tên** với file gốc (VD: `service.py` ⇄ `service.md`, `VehicleMap.tsx` ⇄ `VehicleMap.md`).
-- Đây là **quy ước bằng lời**, hiện chưa có script/CI kiểm tra tự động — sẽ được rà soát thủ công định kỳ.
-- Không có khung mẫu nội dung cố định; chỉ cần mô tả rõ được nội dung/vai trò của file nguồn tương ứng. Các file `.md` này thường do AI agent tự sinh khi tạo/sửa file nguồn.
-
----
-
-## 8. Câu hỏi / quyết định cần bạn xác nhận thêm
+## 7. Câu hỏi / quyết định cần bạn xác nhận thêm
 
 1. **Giao thức kết nối cục bộ** giữa Thiết bị Telematics ↔ Màn hình xe (BLE/Wi-Fi Direct/CAN...) — vẫn đang "Cần thông tin" từ bảng chức năng, cần chốt trước khi code module `core/` trong `vehicle-app`.
 2. **CI/CD**: dùng nền tảng nào (GitHub Actions, GitLab CI, Jenkins...)?
