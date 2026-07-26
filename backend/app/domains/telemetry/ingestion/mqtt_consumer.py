@@ -23,13 +23,13 @@ from aiomqtt import Client as MQTTClient
 from aiomqtt import Message, MqttError, Will
 from pydantic import ValidationError
 
-from app.domains.telemetry.schemas import TelemetryMessage
+from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Module-level queue để batch worker consume
-message_queue: asyncio.Queue[TelemetryMessage] = asyncio.Queue(maxsize=10000)
+message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(maxsize=10000)
 
 
 class Metrics:
@@ -87,7 +87,7 @@ class MQTTConsumer:
         password: str | None = None,
         qos: int | None = None,
         topic_pattern: str | None = None,
-        queue: asyncio.Queue[TelemetryMessage] | None = None,
+        queue: asyncio.Queue[TelemetryEnvelope] | None = None,
     ) -> None:
         """
         Khởi tạo MQTT consumer.
@@ -229,7 +229,12 @@ class MQTTConsumer:
 
             # Đưa vào queue
             try:
-                self.queue.put_nowait(telemetry_msg)
+                self.queue.put_nowait(
+                    TelemetryEnvelope(
+                        message=telemetry_msg,
+                        raw_payload=payload_dict,
+                    )
+                )
                 metrics.increment("messages_valid_total")
 
                 logger.debug(

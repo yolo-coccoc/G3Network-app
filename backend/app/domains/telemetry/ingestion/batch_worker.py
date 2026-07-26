@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
-from app.domains.telemetry.schemas import TelemetryMessage
+from app.domains.telemetry.schemas import TelemetryEnvelope
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -38,13 +38,31 @@ class BatchMetrics:
         """Initialize metrics counters."""
         self.batches_processed_total = 0
         self.messages_processed_total = 0
+        self.messages_skipped_total = 0
+        self.message_errors_total = 0
         self.batch_processing_time_seconds = 0.0
         self.batch_errors_total = 0
 
-    def record_batch(self, message_count: int, processing_time: float) -> None:
-        """Record a successful batch."""
+    def record_batch(
+        self,
+        processed_count: int,
+        skipped_count: int,
+        error_count: int,
+        processing_time: float,
+    ) -> None:
+        """
+        Record counters and duration for a successful database batch.
+
+        Args:
+            processed_count: Messages inserted into the database.
+            skipped_count: Messages skipped by business rules.
+            error_count: Messages that failed conversion.
+            processing_time: Batch processing duration in seconds.
+        """
         self.batches_processed_total += 1
-        self.messages_processed_total += message_count
+        self.messages_processed_total += processed_count
+        self.messages_skipped_total += skipped_count
+        self.message_errors_total += error_count
         self.batch_processing_time_seconds += processing_time
 
     def record_error(self) -> None:
@@ -83,7 +101,7 @@ class BatchWorker:
 
     def __init__(
         self,
-        queue: asyncio.Queue[TelemetryMessage] | None = None,
+        queue: asyncio.Queue[TelemetryEnvelope] | None = None,
         batch_size: int = 100,
         flush_interval: float = 30.0,
     ) -> None:
@@ -160,44 +178,61 @@ class BatchWorker:
 
         while self._running or not self.queue.empty():
             try:
-                # Đợi message đầu tiên với timeout
+                # Chờ message đầu tiên; không busy-loop khi queue rỗng.
                 first_message = await asyncio.wait_for(
                     self.queue.get(), timeout=self.flush_interval
                 )
-
-                # Thu thập batch
-                messages = [first_message]
-                while len(messages) < self.batch_size:
-                    try:
-                        msg = self.queue.get_nowait()
-                        messages.append(msg)
-                    except asyncio.QueueEmpty:
-                        break
-
-                # Xử lý batch
-                await self._process_batch(messages)
-
             except asyncio.TimeoutError:
-                # Timeout: không có message trong flush_interval
-                # Kiểm tra nếu queue không rỗng thì flush
-                if self.queue.qsize() > 0:
-                    messages = []
-                    while len(messages) < self.batch_size:
-                        try:
-                            msg = self.queue.get_nowait()
-                            messages.append(msg)
-                        except asyncio.QueueEmpty:
-                            break
+                # Queue không có message trong flush_interval; tiếp tục chờ.
+                continue
 
-                    if messages:
-                        await self._process_batch(messages)
-
+            try:
+                messages = await self._collect_batch(first_message)
+                await self._process_batch(messages)
             except Exception:
                 self._running = False
                 logger.exception("Batch worker stopped after an unexpected error")
                 raise
 
-    async def _process_batch(self, messages: Sequence[TelemetryMessage]) -> None:
+    async def _collect_batch(
+        self, first_message: TelemetryEnvelope
+    ) -> list[TelemetryEnvelope]:
+        """
+        Collect messages until the batch is full or its time window expires.
+
+        The window starts when the first message arrives. During shutdown, the
+        worker drains only messages already queued instead of waiting for more.
+
+        Args:
+            first_message: Message that starts the batch window.
+
+        Returns:
+            Messages collected for one database transaction.
+        """
+        messages = [first_message]
+        deadline = asyncio.get_running_loop().time() + self.flush_interval
+
+        while len(messages) < self.batch_size:
+            if not self._running:
+                try:
+                    messages.append(self.queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
+                continue
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+
+            try:
+                message = await asyncio.wait_for(self.queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+            messages.append(message)
+
+        return messages
+
+    async def _process_batch(self, messages: Sequence[TelemetryEnvelope]) -> None:
         """
         Process one batch in a single database transaction.
 
@@ -210,7 +245,12 @@ class BatchWorker:
                 result = await telemetry_service.process_batch(db, messages)
 
             processing_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-            batch_metrics.record_batch(len(messages), processing_time)
+            batch_metrics.record_batch(
+                result["processed"],
+                result["skipped"],
+                result["errors"],
+                processing_time,
+            )
             logger.info(
                 "Batch processed successfully",
                 extra={

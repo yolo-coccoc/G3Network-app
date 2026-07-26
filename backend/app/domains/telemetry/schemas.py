@@ -7,6 +7,7 @@ Schema này validate message từ MQTT trước khi đưa vào queue.
 Message được gửi từ thiết bị Telematics, không chứa ID nội bộ hệ thống.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
@@ -222,6 +223,7 @@ class TelemetryMessage(BaseModel):
         telematic_id: UUID,
         vehicle_id: UUID,
         received_at: datetime,
+        raw_payload: dict[str, object],
     ) -> dict[str, object]:
         """
         Convert message thành dict phù hợp với VehicleTelemetry model.
@@ -230,6 +232,7 @@ class TelemetryMessage(BaseModel):
             telematic_id: UUID của telematic (lookup từ telematic_serial)
             vehicle_id: UUID của xe (lookup từ telematic_id)
             received_at: Thời điểm backend nhận message
+            raw_payload: JSON object nguyên bản trước khi Pydantic normalize
 
         Returns:
             Dict với đầy đủ trường để insert vào DB
@@ -269,9 +272,6 @@ class TelemetryMessage(BaseModel):
         error_codes_dict = None
         if self.errors:
             error_codes_dict = {"codes": self.errors}
-
-        # Build raw_payload (original message)
-        raw_payload = self.model_dump(mode="json")
 
         return {
             "message_uuid": self.message_uuid,
@@ -332,3 +332,17 @@ class TelemetryMessage(BaseModel):
             ]
         }
     }
+
+
+@dataclass(slots=True)
+class TelemetryEnvelope:
+    """
+    Validated telemetry message paired with its original JSON object.
+
+    Attributes:
+        message: Telemetry payload after Pydantic validation and normalization.
+        raw_payload: Parsed JSON object before Pydantic modifies or drops fields.
+    """
+
+    message: TelemetryMessage
+    raw_payload: dict[str, object]

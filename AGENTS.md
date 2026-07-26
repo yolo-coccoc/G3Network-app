@@ -269,7 +269,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 1. Tìm pattern tương tự đang tồn tại ở domain/entrypoint khác.
 2. Không tạo engine, session factory, config hoặc logger riêng nếu shared implementation đã có.
-3. Chạy Black, isort, Ruff, mypy và test liên quan.
+3. Chạy Black, isort, Ruff và mypy. Trong MVP hiện chưa có automated test suite; phải chạy smoke test phù hợp cho phần thay đổi và ghi rõ phạm vi đã kiểm tra. Khi test suite được bổ sung, mọi test liên quan phải chạy trước khi hoàn thành task.
 4. Kiểm tra `__init__.py` chỉ chứa docstring.
 5. Không để placeholder/TODO cho thành phần chắc chắn cần về sau; chuyển sang `docs/01-requirements/future.md`.
 6. Review migration về timezone, FK, index, constraint, PostGIS/TimescaleDB, upgrade và downgrade.

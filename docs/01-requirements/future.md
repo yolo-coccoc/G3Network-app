@@ -183,6 +183,61 @@
 
 ---
 
+### 12. Alembic filter cho object do PostGIS/TimescaleDB quản lý
+
+- **Mô tả ngắn**: Thêm `include_object` vào Alembic để bỏ qua `spatial_ref_sys` và index nội bộ do TimescaleDB tạo.
+- **Tác dụng/Vai trò trong hệ thống**: Giúp `alembic check` và autogenerate chỉ phản ánh schema do application quản lý, tránh sinh migration xóa object của extension.
+- **Lý do hoãn lại**: MVP chưa chốt CI/CD và migration hiện được review/chạy thủ công; Alembic head hiện vẫn đúng.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02), cấu hình database chung.
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Trước khi bật `alembic check` trong CI hoặc dùng autogenerate cho migration mới, hạng mục này phải được hoàn thành.
+
+---
+
+### 13. Đối chiếu telematic serial giữa MQTT topic và payload
+
+- **Mô tả ngắn**: Parse `{telematic_serial}` từ MQTT topic và reject message nếu không khớp `telematic_serial` trong JSON payload.
+- **Tác dụng/Vai trò trong hệ thống**: Ngăn message bị gán nhầm thiết bị khi topic và payload không đồng nhất, đồng thời hỗ trợ kiểm soát danh tính device.
+- **Lý do hoãn lại**: MVP giả định telematic publish đúng topic và payload theo đặc tả.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Nên triển khai cùng authentication/authorization MQTT trước môi trường production.
+
+---
+
+### 14. Chính xác hóa cập nhật `telematics.last_seen_at`
+
+- **Mô tả ngắn**: Chỉ cập nhật `last_seen_at`, `updated_at` và row count khi timestamp mới thực sự lớn hơn giá trị hiện tại.
+- **Tác dụng/Vai trò trong hệ thống**: Giữ `updated_at` đúng ngữ nghĩa và làm metric/log `telematics_updated` phản ánh số thiết bị thực sự thay đổi.
+- **Lý do hoãn lại**: Sai lệch hiện tại chỉ ảnh hưởng metadata/log, không làm `last_seen_at` lùi thời gian và không chặn luồng ingest MVP.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Cần cân nhắc batch SQL phù hợp để vẫn giữ một lần update cho cả batch.
+
+---
+
+### 15. Phân biệt telematic không tồn tại và chưa gán xe
+
+- **Mô tả ngắn**: Batch lookup trả đủ thiết bị kể cả `vehicle_id` null để service log/metric riêng hai trạng thái provisioning.
+- **Tác dụng/Vai trò trong hệ thống**: Giúp vận hành phân biệt serial không hợp lệ với thiết bị hợp lệ nhưng chưa được gán xe.
+- **Lý do hoãn lại**: Cả hai trường hợp đều được skip an toàn trong MVP và chưa có dashboard vận hành provisioning.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02), AD-05.
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Khi triển khai cần đổi return type mapping thành `tuple[UUID, UUID | None]` và bổ sung metric riêng.
+
+---
+
+### 16. Automated backend test suite
+
+- **Mô tả ngắn**: Bổ sung pytest, pytest-asyncio, test fixtures và các test unit/integration cho backend.
+- **Tác dụng/Vai trò trong hệ thống**: Bảo vệ transaction boundary, API validation, repository query, MQTT ingestion, batch window và graceful shutdown khỏi regression.
+- **Lý do hoãn lại**: MVP hiện ưu tiên hoàn thiện luồng chức năng; tạm dùng Ruff, mypy, compile, smoke test và kiểm tra end-to-end thủ công.
+- **Liên quan đến planner/feature**: Toàn bộ backend; ưu tiên `backend-telemetry-ingestion.md` (AD-02) và vehicles AD-05.
+- **Ngày ghi nhận**: 2026-07-26
+- **Ghi chú thêm**: Trước khi thiết lập CI/CD phải thêm test dependencies bằng `uv`, sửa `make backend-test` để dùng môi trường đã cài test và xác định ngưỡng coverage.
+
+---
+
 ## Quy tắc cập nhật
 
 1. **Khi nào ghi nhận**: Khi developer hoặc AI agent quyết định bỏ qua/xóa một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm".

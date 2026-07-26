@@ -18,7 +18,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telemetry.repository as telemetry_repository
-from app.domains.telemetry.schemas import TelemetryMessage
+from app.domains.telemetry.schemas import TelemetryEnvelope
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ class BatchResult(TypedDict):
 
 
 async def process_batch(
-    db: AsyncSession, messages: Sequence[TelemetryMessage]
+    db: AsyncSession, messages: Sequence[TelemetryEnvelope]
 ) -> BatchResult:
     """
     Xử lý batch telemetry messages.
@@ -68,7 +68,9 @@ async def process_batch(
     logger.info("process_batch started", extra={"batch_size": len(messages)})
 
     # Step 1: Lấy danh sách telematic_serial duy nhất từ batch
-    unique_serials = list(set(msg.telematic_serial for msg in messages))
+    unique_serials = list(
+        set(envelope.message.telematic_serial for envelope in messages)
+    )
 
     # Step 2: Batch lookup telematic mappings (1 query cho cả batch)
     # Returns: {telematic_serial: (telematic_id, vehicle_id)}
@@ -87,7 +89,8 @@ async def process_batch(
     # Thời điểm backend nhận message (cùng 1 timestamp cho cả batch)
     received_at = datetime.now(timezone.utc)
 
-    for message in messages:
+    for envelope in messages:
+        message = envelope.message
         serial = message.telematic_serial
 
         # Kiểm tra telematic_serial có tồn tại trong mapping không
@@ -121,7 +124,12 @@ async def process_batch(
 
         # Convert message sang DB dict
         try:
-            db_dict = message.to_db_dict(telematic_id, vehicle_id, received_at)
+            db_dict = message.to_db_dict(
+                telematic_id,
+                vehicle_id,
+                received_at,
+                envelope.raw_payload,
+            )
             valid_messages.append(db_dict)
 
             # Track timestamp để update last_seen_at sau
