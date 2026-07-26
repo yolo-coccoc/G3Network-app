@@ -174,7 +174,14 @@ async def update_vehicle(
             )
 
     # Update vehicle
-    update_dict = update_data.model_dump(exclude_unset=True)
+    update_dict = {
+        field_name: value
+        for field_name, value in update_data.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    if not update_dict:
+        return VehicleResponse.model_validate(vehicle)
+
     try:
         updated_vehicle = await repo_update_vehicle(db, vehicle_id, update_dict)
     except IntegrityError as error:

@@ -251,7 +251,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Repository chỉ truy cập DB; không chứa HTTP/business policy và không commit/rollback.
 - Schema không import SQLAlchemy model. Enum/value object dùng chung được đặt trong `types.py`.
 - Partial update dùng `PATCH` cùng `model_dump(exclude_unset=True)`.
-- “Không gửi field” khác với “gửi field = null”; repository không tự loại `None` của cột nullable.
+- Với `VehicleUpdate`, cả “không gửi field” và “gửi field = null” đều có nghĩa không cập nhật field đó; service lọc `None` trước khi gọi repository. Nếu một chức năng cần xóa giá trị nullable, phải có contract riêng được xác nhận thay vì ngầm dùng `null`.
 - Validation create/update phải nhất quán. Unique constraint DB là bảo vệ cuối cùng; `IntegrityError` phải được chuyển thành domain error phù hợp.
 
 #### 5.1.4 Background worker, logging và error handling

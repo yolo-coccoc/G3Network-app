@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.vehicles.types import VehicleStatus
 
@@ -48,22 +48,6 @@ class VehicleUpdate(BaseModel):
     year: int | None = Field(None, ge=1900, le=2100, description="Năm sản xuất")
     status: VehicleStatus | None = Field(None, description="Trạng thái xe")
     fleet_id: str | None = Field(None, description="ID đội xe")
-
-    @field_validator(
-        "license_plate",
-        "vin",
-        "make",
-        "model",
-        "year",
-        "status",
-        mode="before",
-    )
-    @classmethod
-    def reject_null_for_required_columns(cls, value: object) -> object:
-        """Reject explicit null for fields backed by non-nullable DB columns."""
-        if value is None:
-            raise ValueError("field không được là null khi được gửi")
-        return value
 
 
 class VehicleResponse(VehicleBase):
