@@ -10,27 +10,24 @@ Repository xử lý database operations cho telemetry data:
 """
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import bindparam, case, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telemetry.models import Telematic, VehicleTelemetry
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 
 async def get_telematic_mappings(
-    db: "AsyncSession",
-    serials: "Sequence[str]",
+    db: AsyncSession,
+    serials: Sequence[str],
 ) -> dict[str, tuple[UUID, UUID]]:
     """
     Lấy mapping từ telematic_serial sang (telematic_id, vehicle_id).
@@ -86,8 +83,8 @@ async def get_telematic_mappings(
 
 
 async def bulk_insert_telemetry(
-    db: "AsyncSession",
-    messages: "Sequence[dict[str, object]]",
+    db: AsyncSession,
+    messages: Sequence[dict[str, object]],
 ) -> int:
     """
     Bulk insert telemetry data vào database.
@@ -105,7 +102,7 @@ async def bulk_insert_telemetry(
     Note:
         - Không dùng ORM add_all vì chậm với batch lớn
         - Dùng Core insert với values() để tận dụng bulk insert của PostgreSQL
-        - Caller phải commit transaction
+        - Entry boundary sở hữu transaction và commit/rollback
     """
     if not messages:
         return 0
@@ -128,8 +125,8 @@ async def bulk_insert_telemetry(
 
 
 async def update_telematic_last_seen(
-    db: "AsyncSession",
-    telematic_data: "Sequence[tuple[UUID, datetime]]",
+    db: AsyncSession,
+    telematic_data: Sequence[tuple[UUID, datetime]],
 ) -> int:
     """
     Update last_seen_at cho nhiều telematics cùng lúc.
@@ -149,7 +146,7 @@ async def update_telematic_last_seen(
     Note:
         - Chỉ update khi timestamp mới > timestamp hiện tại
         - Dùng CASE WHEN để update nhiều rows trong 1 query
-        - Caller phải commit transaction
+        - Entry boundary sở hữu transaction và commit/rollback
     """
     if not telematic_data:
         return 0
@@ -164,12 +161,10 @@ async def update_telematic_last_seen(
     # WHERE telematic_id IN (:id1, :id2, ...)
 
     # Build CASE WHEN clauses
-    case_clauses = []
     telematic_ids = []
 
     for telematic_id, max_received_at in telematic_data:
         telematic_ids.append(telematic_id)
-        case_clauses.append((Telematic.telematic_id == telematic_id, max_received_at))
 
     # Build WHERE clause for last_seen_at comparison
     # Chỉ update khi timestamp mới > timestamp hiện tại HOẶC last_seen_at IS NULL
