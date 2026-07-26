@@ -580,10 +580,10 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Batch lookup hoạt động đúng
-- [ ] Bulk insert hoạt động
-- [ ] Performance tốt với 100+ records
-- [ ] Transaction được commit đúng
+- [x] Batch lookup hoạt động đúng
+- [x] Bulk insert hoạt động
+- [x] Performance tốt với 100+ records
+- [x] Transaction được commit đúng
 
 ---
 
