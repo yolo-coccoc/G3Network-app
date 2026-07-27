@@ -26,7 +26,6 @@ from datetime import datetime, timezone
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
 from app.domains.telemetry.schemas import TelemetryEnvelope
-from app.libs.common.logging import configure_logging
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -114,6 +113,7 @@ class BatchWorker:
         _running: Worker có tiếp tục nhận vòng lặp mới hay không.
         _task: Background task sở hữu việc consume queue, hoặc ``None`` trước
             khi khởi động.
+        _stop_event: Event đánh thức các thao tác đang chờ queue khi shutdown.
 
     Example:
         >>> worker = BatchWorker(
@@ -144,32 +144,34 @@ class BatchWorker:
             Lưu quyền sở hữu queue và khởi tạo state lifecycle của worker. Chưa
             tạo background task hoặc database session cho tới khi gọi ``start``.
         """
-        self.queue = queue or message_queue
+        self.queue = message_queue if queue is None else queue
         self.batch_size = batch_size
         self.flush_interval = flush_interval
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
         """
-        Cấu hình logging của process và khởi động task consume queue.
+        Khởi động task consume queue.
 
         Gọi method khi worker đang chạy sẽ không thay đổi state và chỉ ghi
         warning, qua đó ngăn hai task cùng consume một queue.
 
         Side Effects:
-            Cấu hình root JSON logger dùng chung và tạo một asyncio task.
+            Tạo một asyncio task xử lý queue trong background.
         """
         if self._running:
             logger.warning("Batch worker is already running")
             return
 
-        # Khởi tạo logging tại lifecycle boundary thay vì lúc import để việc
-        # import module trong API process hoặc test không gây global side effect.
-        configure_logging()
+        self._stop_event.clear()
         self._running = True
-        self._task = asyncio.create_task(self._run_loop())
+        self._task = asyncio.create_task(
+            self._run_loop(),
+            name="telemetry-batch-worker",
+        )
         logger.info(
             "Batch worker started",
             extra={
@@ -197,6 +199,9 @@ class BatchWorker:
 
         logger.info("Stopping batch worker")
         self._running = False
+        # Đánh thức queue wait ngay lập tức; batch đang xử lý vẫn hoàn tất vì
+        # event chỉ ảnh hưởng thao tác chờ message tiếp theo.
+        self._stop_event.set()
 
         try:
             await asyncio.wait_for(self._task, timeout=timeout)
@@ -209,6 +214,30 @@ class BatchWorker:
                 pass
 
         logger.info("Batch worker stopped")
+
+    @property
+    def is_running(self) -> bool:
+        """
+        Cho biết background task của worker có đang hoạt động hay không.
+
+        Returns:
+            ``True`` khi worker đã được start, chưa nhận yêu cầu dừng và task nền
+            chưa kết thúc; ngược lại trả về ``False``.
+        """
+        return self._running and self._task is not None and not self._task.done()
+
+    async def wait(self) -> None:
+        """
+        Chờ background task của worker kết thúc.
+
+        Method cung cấp lifecycle API công khai để entrypoint theo dõi worker mà
+        không truy cập trực tiếp private attribute ``_task``.
+
+        Raises:
+            Exception: Raise lại exception đã làm background task kết thúc.
+        """
+        if self._task is not None:
+            await self._task
 
     async def _run_loop(self) -> None:
         """
@@ -228,13 +257,8 @@ class BatchWorker:
         logger.info("Batch worker loop started")
 
         while self._running or not self.queue.empty():
-            try:
-                # Chờ message đầu tiên; không busy-loop khi queue rỗng.
-                first_message = await asyncio.wait_for(
-                    self.queue.get(), timeout=self.flush_interval
-                )
-            except asyncio.TimeoutError:
-                # Queue không có message trong flush_interval; tiếp tục chờ.
+            first_message = await self._get_message_or_stop(self.flush_interval)
+            if first_message is None:
                 continue
 
             try:
@@ -242,8 +266,65 @@ class BatchWorker:
                 await self._process_batch(messages)
             except Exception:
                 self._running = False
-                logger.exception("Batch worker stopped after an unexpected error")
                 raise
+
+    async def _get_message_or_stop(
+        self,
+        timeout: float,
+    ) -> TelemetryEnvelope | None:
+        """
+        Chờ message hoặc tín hiệu dừng, tùy sự kiện nào tới trước.
+
+        Queue đã có dữ liệu luôn được ưu tiên để shutdown có thể drain message
+        tồn đọng. Khi queue rỗng, stop event đánh thức worker ngay thay vì chờ hết
+        flush interval.
+
+        Args:
+            timeout: Số giây tối đa chờ message mới.
+
+        Returns:
+            Telemetry envelope lấy từ queue; ``None`` khi nhận stop event hoặc
+            hết timeout.
+
+        Side Effects:
+            Tạo hai task chờ tạm thời và luôn cancel/await task không thắng để
+            không rò background task.
+        """
+        try:
+            return self.queue.get_nowait()
+        except asyncio.QueueEmpty:
+            if self._stop_event.is_set():
+                return None
+
+        queue_task = asyncio.create_task(
+            self.queue.get(),
+            name="telemetry-batch-queue-wait",
+        )
+        stop_task = asyncio.create_task(
+            self._stop_event.wait(),
+            name="telemetry-batch-stop-wait",
+        )
+        wait_tasks = {queue_task, stop_task}
+        try:
+            completed_tasks, _ = await asyncio.wait(
+                wait_tasks,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # Caller có thể bị cancel trong lúc asyncio.wait; luôn thu hồi cả hai
+            # child task để không để queue.get chạy ngầm và lấy mất message sau đó.
+            pending_tasks = {task for task in wait_tasks if not task.done()}
+            for pending_task in pending_tasks:
+                pending_task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        # Nếu queue và stop đồng thời hoàn thành, giữ message để không làm mất
+        # item đã được queue.get() lấy ra; vòng lặp sẽ drain phần còn lại.
+        if queue_task in completed_tasks:
+            return queue_task.result()
+        return None
 
     async def _collect_batch(
         self, first_message: TelemetryEnvelope
@@ -281,9 +362,8 @@ class BatchWorker:
             if remaining <= 0:
                 break
 
-            try:
-                message = await asyncio.wait_for(self.queue.get(), timeout=remaining)
-            except asyncio.TimeoutError:
+            message = await self._get_message_or_stop(remaining)
+            if message is None:
                 break
             messages.append(message)
 

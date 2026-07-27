@@ -259,13 +259,13 @@
 - **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` bước 13-14
   (AD-02, FM-01, FM-02).
 - **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: JSON logging hiện được kích hoạt khi `BatchWorker.start()`
-  chạy. Khi triển khai entrypoint ở bước 14, cần cấu hình logging tại process
-  lifecycle boundary đủ sớm để cả log khởi động/kết nối trước worker cũng tuân
-  theo cùng output contract. Đồng thời cần tránh gắn handler cũ + JSON handler
-  gây output trùng và tránh log cùng traceback ở cả transaction boundary lẫn
-  outer task boundary nếu không bổ sung context mới. Cần chốt backend
-  observability stack trước khi thêm dependency hoặc infrastructure mới.
+- **Ghi chú thêm**: Bước 14 đã chuyển JSON logging lên telemetry entrypoint nên
+  log startup/database/MQTT/worker/health/shutdown dùng cùng output contract.
+  Phần còn lại của mục này là log shipping, retention, dashboard/alert và
+  persistent metrics/exporter. Khi triển khai cần tránh gắn handler cũ + JSON
+  handler gây output trùng và tránh log cùng traceback ở nhiều boundary nếu
+  không bổ sung context mới. Cần chốt backend observability stack trước khi thêm
+  dependency hoặc infrastructure mới.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-### 1. Khởi động hạ tầng (PostgreSQL)
+### 1. Khởi động hạ tầng (PostgreSQL + EMQX)
 
 ```bash
 make infra-up
@@ -25,7 +25,19 @@ Server sẽ chạy tại: http://localhost:8000
 - ReDoc: http://localhost:8000/redoc
 - Health check: http://localhost:8000/health
 
-### 4. Xem tất cả lệnh có sẵn
+### 4. Chạy telemetry ingestion
+
+Mở terminal riêng:
+
+```bash
+make telemetry-dev
+```
+
+Telemetry worker nhận MQTT tại `localhost:1883`, ghi batch vào PostgreSQL và
+expose runtime health tại http://localhost:8081/health. Development process chạy
+trực tiếp trên host; Docker Compose chỉ chạy PostgreSQL và EMQX.
+
+### 5. Xem tất cả lệnh có sẵn
 
 ```bash
 make help
@@ -35,11 +47,12 @@ make help
 
 | Lệnh | Mô tả |
 |------|-------|
-| `make infra-up` | Khởi động PostgreSQL |
-| `make infra-down` | Dừng PostgreSQL (giữ data) |
-| `make infra-reset` | Xóa PostgreSQL và data |
+| `make infra-up` | Khởi động PostgreSQL và EMQX |
+| `make infra-down` | Dừng PostgreSQL và EMQX (giữ data) |
+| `make infra-reset` | Xóa PostgreSQL, EMQX và data |
 | `make backend-install` | Cài đặt dependencies |
 | `make backend-dev` | Chạy backend server |
+| `make telemetry-dev` | Chạy telemetry ingestion process |
 | `make db-migrate` | Chạy database migrations |
 
 ## Cấu trúc dự án

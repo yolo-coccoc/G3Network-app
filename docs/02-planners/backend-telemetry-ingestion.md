@@ -1,7 +1,7 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đang thực hiện — bước 0-13 đã triển khai, bước 14-15 đang lập kế hoạch/nghiệm thu
+> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai, bước 15 chờ nghiệm thu E2E
 > Ngày tạo: 2026-07-24
 > Rà soát gần nhất: 2026-07-27
 
@@ -1236,16 +1236,41 @@ Test publish MQTT → queue → batch → TimescaleDB đầy đủ vẫn thuộc
 
 **Kiểm tra:**
 
-- [ ] Entrypoint chạy độc lập trên host
-- [ ] Logging được cấu hình tại process boundary
-- [ ] Database startup probe dùng shared session factory
-- [ ] Consumer và worker dùng chung một queue
-- [ ] Public lifecycle API hoạt động đúng
-- [ ] Health check phản ánh đúng runtime state
-- [ ] SIGINT/SIGTERM graceful shutdown đúng thứ tự
-- [ ] Failure của background task được propagate và cleanup đầy đủ
-- [ ] Static checks và smoke tests pass
-- [ ] Makefile/README hướng dẫn chạy được đồng bộ
+- [x] Entrypoint chạy độc lập trên host
+- [x] Logging được cấu hình tại process boundary
+- [x] Database startup probe dùng shared session factory
+- [x] Consumer và worker dùng chung một queue
+- [x] Public lifecycle API hoạt động đúng
+- [x] Health check phản ánh đúng runtime state
+- [x] SIGINT/SIGTERM graceful shutdown đúng thứ tự
+- [x] Failure của background task được propagate và cleanup đầy đủ
+- [x] Static checks và smoke tests pass
+- [x] Makefile/README hướng dẫn chạy được đồng bộ
+
+**Kết quả thực hiện (2026-07-27):**
+
+- Tạo `entrypoint.py` làm process boundary duy nhất cho logging, signal, database
+  startup probe, MQTT consumer, batch worker, health server và cleanup.
+- Database probe chạy `SELECT 1` qua shared `async_session_factory`; thử với
+  database port không tồn tại đã xác nhận log traceback, không start MQTT và
+  process exit code 1.
+- Entrypoint tạo một queue theo `TELEMETRY_QUEUE_SIZE` rồi inject cùng instance
+  vào consumer/worker. Các setting queue, batch, health và shutdown đã được thêm
+  vào `Settings` và `.env.example`.
+- `BatchWorker` có `is_running`/`wait`; `MQTTConsumer` có `is_consuming` chỉ bật
+  sau khi subscribe thành công.
+- Health app dùng FastAPI/Uvicorn nhưng Uvicorn không chiếm signal handler.
+  Runtime thật đã kết nối PostgreSQL, subscribe EMQX QoS 0 và trả
+  `GET /health` HTTP 200 với `{"status":"healthy"}`.
+- SIGINT smoke test xác nhận thứ tự dừng consumer → worker → health server →
+  database pool và process exit code 0. Stop event đánh thức queue wait nên
+  worker queue rỗng không còn chờ hết flush interval.
+- MQTT port không tồn tại đã xác nhận consumer failure được propagate,
+  worker/health/database được cleanup và process exit code 1.
+- Smoke test cô lập xác nhận health chuyển `503 → 200 → 503`, worker stop nhanh
+  và `wait()` propagate exception.
+- Black, isort, Ruff và mypy toàn backend pass. Bước này chưa publish telemetry
+  để kiểm tra insert; luồng dữ liệu đầy đủ thuộc bước 15.
 
 ---
 
@@ -1479,11 +1504,11 @@ Ghi vào planner:
 
 ### Trạng thái hiện tại
 
-- Bước 0-13: đã triển khai; planner đã được đối chiếu lại với source/migration.
-- Bước 14: kế hoạch đã chi tiết hóa, chưa triển khai.
+- Bước 0-14: đã triển khai; planner đã được đối chiếu với source/migration và
+  smoke test runtime.
 - Bước 15: ma trận E2E đã xác định, chưa nghiệm thu.
 
-Sau khi hoàn thành bước 14-15, hệ thống có:
+Sau khi hoàn thành bước 15, hệ thống có:
 
 1. **Database**: 2 bảng `telematics` và `vehicle_telemetry` (TimescaleDB hypertable)
 2. **MQTT Broker**: EMQX 5.5 chạy local, QoS 0; chưa cấu hình ACL production

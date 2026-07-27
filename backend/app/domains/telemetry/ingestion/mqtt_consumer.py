@@ -1,5 +1,5 @@
 """
-MQTT consumer for telemetry messages.
+MQTT consumer nhận các message telemetry.
 
 Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
 
@@ -28,22 +28,40 @@ from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Module-level queue để batch worker consume
+# Queue mặc định hỗ trợ cách khởi tạo độc lập hiện có. Runtime entrypoint sẽ tạo
+# một queue theo settings rồi inject cùng instance vào consumer và worker.
 message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(maxsize=10000)
 
 
 class Metrics:
-    """Simple metrics counter for MVP."""
+    """
+    Lưu các counter MQTT cục bộ trong bộ nhớ cho MVP.
+
+    Attributes:
+        messages_received_total: Tổng message callback đã nhận.
+        messages_valid_total: Tổng message hợp lệ đã đưa vào queue.
+        messages_invalid_total: Tổng message lỗi JSON hoặc Pydantic validation.
+        messages_dropped_total: Tổng message bị drop do queue đầy.
+    """
 
     def __init__(self) -> None:
-        """Initialize all in-memory counters to zero."""
+        """Khởi tạo toàn bộ counter trong bộ nhớ bằng không."""
         self.messages_received_total = 0
         self.messages_valid_total = 0
         self.messages_invalid_total = 0
         self.messages_dropped_total = 0
 
     def increment(self, metric_name: str) -> None:
-        """Increment a metric counter."""
+        """
+        Tăng một counter đã khai báo lên một đơn vị.
+
+        Args:
+            metric_name: Tên attribute counter cần tăng.
+
+        Side Effects:
+            Thay đổi counter tương ứng nếu attribute tồn tại; tên không hợp lệ
+            được bỏ qua để metrics không làm gián đoạn ingestion MVP.
+        """
         if hasattr(self, metric_name):
             setattr(self, metric_name, getattr(self, metric_name) + 1)
 
@@ -66,6 +84,9 @@ class MQTTConsumer:
         password: MQTT password (optional)
         qos: QoS level (0 for MVP)
         queue: asyncio.Queue để batch worker consume
+        _client: MQTT client đã cấu hình, hoặc ``None`` ngoài lifecycle.
+        _running: Cờ cho phép vòng lặp consumer tiếp tục nhận message.
+        _consuming: Trạng thái đã kết nối, subscribe và đang ở consume loop.
 
     Example:
         >>> consumer = MQTTConsumer(
@@ -109,14 +130,33 @@ class MQTTConsumer:
         self.password = password or settings.MQTT_PASSWORD
         self.qos = settings.MQTT_QOS if qos is None else qos
         self.topic_pattern = topic_pattern or settings.MQTT_TELEMETRY_TOPIC
-        self.queue = queue or message_queue
+        self.queue = message_queue if queue is None else queue
 
         self._client: MQTTClient | None = None
         self._running = False
+        self._consuming = False
+
+    @property
+    def is_consuming(self) -> bool:
+        """
+        Cho biết consumer có đang nhận message sau khi subscribe hay không.
+
+        Returns:
+            ``True`` chỉ khi MQTT context đã mở, subscribe thành công và consume
+            loop chưa nhận yêu cầu dừng.
+        """
+        return self._consuming and self._running
 
     async def connect(self) -> None:
         """
-        Configure the MQTT client before entering its async context.
+        Cấu hình MQTT client trước khi mở async network context.
+
+        Method này chưa tạo kết nối network thật. Kết nối và subscribe diễn ra
+        trong ``start_consuming()`` để một component duy nhất sở hữu lifecycle
+        của aiomqtt context manager.
+
+        Side Effects:
+            Tạo MQTT client và bật cờ cho phép consume loop chạy.
         """
         logger.info(
             "Connecting to MQTT broker",
@@ -127,7 +167,8 @@ class MQTTConsumer:
             },
         )
 
-        # Configure will message for connection loss detection
+        # Last Will giúp broker công bố trạng thái offline nếu connection mất đột
+        # ngột; đây là status message, không thay đổi QoS 0 của telemetry topic.
         will = Will(
             topic=f"g3network/consumers/{self.client_id}/status",
             payload=b'{"status":"offline"}',
@@ -152,11 +193,14 @@ class MQTTConsumer:
         Ngắt kết nối từ MQTT broker.
 
         Phương thức này được gọi khi graceful shutdown.
+
+        Side Effects:
+            Tắt cờ nhận message mới. Async MQTT context trong
+            ``start_consuming()`` sẽ tự đóng connection khi vòng lặp thoát.
         """
-        if self._client and self._running:
+        if self._client is not None and self._running:
             logger.info("Disconnecting from MQTT broker")
             self._running = False
-            self._client = None
 
     async def subscribe(self, topic_pattern: str) -> None:
         """
@@ -180,6 +224,14 @@ class MQTTConsumer:
 
         Vòng lặp này sẽ chạy cho đến khi disconnect() được gọi.
         Mỗi message được parse, validate và đưa vào queue nếu hợp lệ.
+
+        Raises:
+            RuntimeError: Khi client chưa được cấu hình bằng ``connect()``.
+            MqttError: Khi kết nối, subscribe hoặc consume MQTT thất bại.
+
+        Side Effects:
+            Mở/đóng MQTT connection, cập nhật trạng thái ``is_consuming`` và đưa
+            các message hợp lệ vào queue.
         """
         if not self._client:
             raise RuntimeError("Not connected to MQTT broker")
@@ -188,8 +240,10 @@ class MQTTConsumer:
 
         try:
             async with self._client as client:
-                # Subscribe inside context manager
+                # Subscribe bên trong context để chỉ công bố trạng thái consuming
+                # sau khi broker thực sự chấp nhận subscription.
                 await client.subscribe(self.topic_pattern, qos=self.qos)
+                self._consuming = True
                 logger.info(
                     "Subscribed to MQTT telemetry",
                     extra={"topic": self.topic_pattern, "qos": self.qos},
@@ -208,7 +262,9 @@ class MQTTConsumer:
                 logger.exception("MQTT consumption failed")
                 raise
         finally:
+            self._consuming = False
             self._running = False
+            self._client = None
 
     async def _handle_message(self, message: Message) -> None:
         """
@@ -220,14 +276,14 @@ class MQTTConsumer:
         metrics.increment("messages_received_total")
 
         try:
-            # Parse JSON payload
+            # Parse trước khi validate để giữ lại đúng object gốc trong envelope.
             payload_str = message.payload.decode("utf-8")
             payload_dict = json.loads(payload_str)
 
-            # Validate bằng Pydantic schema
+            # Validation tại MQTT boundary ngăn payload sai vào queue nghiệp vụ.
             telemetry_msg = TelemetryMessage.model_validate(payload_dict)
 
-            # Đưa vào queue
+            # put_nowait bảo vệ callback khỏi block khi producer vượt consumer.
             try:
                 self.queue.put_nowait(
                     TelemetryEnvelope(
