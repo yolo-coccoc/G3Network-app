@@ -274,8 +274,9 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 - Một component duy nhất sở hữu lifecycle connect/run/stop của external client.
 - Topic, QoS, batch size, queue size và timeout phải lấy từ settings/constructor; không hard-code khi đã có config.
-- Với `asyncio.Queue`, mỗi `get()` thành công phải có đúng một `task_done()`.
-- Graceful shutdown phải ngừng nhận message mới, drain queue theo policy, hoàn tất/rollback transaction hiện tại, rồi cancel và await task nếu quá timeout.
+- Telemetry ingestion MVP không dùng `queue.join()`/`task_done()` vì queue chỉ
+  nằm trong RAM và dữ liệu tồn đọng được phép mất khi process kết thúc.
+- Telemetry ingestion MVP giữ queue/task trong RAM. Khi shutdown, cancel và await worker ngay, rollback transaction đang chạy và bỏ qua message còn trong queue; không drain queue.
 - Telemetry MVP dùng QoS 0, không retry và không DLQ; DB error phải rollback batch, log traceback và làm worker dừng.
 - Dùng structured logging qua `extra`; không dùng f-string trong logger call. Exception bất ngờ dùng `logger.exception()`.
 - Không dùng `except Exception` ngoài process/task boundary.

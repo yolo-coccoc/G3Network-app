@@ -13,15 +13,13 @@ Luồng dữ liệu:
     asyncio.Queue → BatchWorker → telemetry.service.process_batch → Database
 
 Lưu ý:
-    - Dùng asyncio.wait_for để timeout
-    - Graceful shutdown: xử lý nốt batch hiện tại
-    - Metrics để monitor performance
+    - Task chỉ tồn tại trong RAM.
+    - Shutdown cancel worker ngay; message còn trong queue được bỏ qua.
 """
 
 import asyncio
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
 
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
@@ -29,69 +27,6 @@ from app.domains.telemetry.schemas import TelemetryEnvelope
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
-
-
-class BatchMetrics:
-    """
-    Lưu các counter cục bộ của process cho hoạt động xử lý telemetry batch.
-
-    Trong MVP, metric chủ ý chỉ nằm trong bộ nhớ và reset mỗi khi ingestion
-    process khởi động lại. Batch thành công ghi nhận kết quả message và thời gian
-    xử lý; transaction thất bại chỉ tăng counter lỗi batch.
-
-    Attributes:
-        batches_processed_total: Số transaction hoàn thành thành công.
-        messages_processed_total: Số row được insert thành công.
-        messages_skipped_total: Số message bị loại bởi rule mapping nghiệp vụ.
-        message_errors_total: Số message hợp lệ nhưng lỗi khi chuyển đổi DB.
-        batch_processing_time_seconds: Tổng thời gian xử lý các batch thành công.
-        batch_errors_total: Số batch transaction phát sinh exception.
-    """
-
-    def __init__(self) -> None:
-        """Khởi tạo toàn bộ metric cục bộ của process bằng không."""
-        self.batches_processed_total = 0
-        self.messages_processed_total = 0
-        self.messages_skipped_total = 0
-        self.message_errors_total = 0
-        self.batch_processing_time_seconds = 0.0
-        self.batch_errors_total = 0
-
-    def record_batch(
-        self,
-        processed_count: int,
-        skipped_count: int,
-        error_count: int,
-        processing_time: float,
-    ) -> None:
-        """
-        Ghi nhận các counter và thời gian của một database batch thành công.
-
-        Args:
-            processed_count: Số message được insert vào database.
-            skipped_count: Số message bị skip theo rule nghiệp vụ.
-            error_count: Số message lỗi khi chuyển đổi.
-            processing_time: Thời gian xử lý batch tính bằng giây.
-        """
-        self.batches_processed_total += 1
-        self.messages_processed_total += processed_count
-        self.messages_skipped_total += skipped_count
-        self.message_errors_total += error_count
-        self.batch_processing_time_seconds += processing_time
-
-    def record_error(self) -> None:
-        """
-        Ghi nhận một batch transaction thất bại.
-
-        Method không đếm lỗi theo từng message vì database failure trong
-        transaction atomic khiến toàn bộ message của batch đều không thành công.
-        """
-        self.batch_errors_total += 1
-
-
-# Ingestion process sở hữu một metrics instance trong toàn bộ lifecycle. Counter
-# chủ ý reset khi restart vì persistent metrics nằm ngoài phạm vi MVP.
-batch_metrics = BatchMetrics()
 
 
 class BatchWorker:
@@ -113,7 +48,6 @@ class BatchWorker:
         _running: Worker có tiếp tục nhận vòng lặp mới hay không.
         _task: Background task sở hữu việc consume queue, hoặc ``None`` trước
             khi khởi động.
-        _stop_event: Event đánh thức các thao tác đang chờ queue khi shutdown.
 
     Example:
         >>> worker = BatchWorker(
@@ -150,7 +84,6 @@ class BatchWorker:
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
-        self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
         """
@@ -166,7 +99,6 @@ class BatchWorker:
             logger.warning("Batch worker is already running")
             return
 
-        self._stop_event.clear()
         self._running = True
         self._task = asyncio.create_task(
             self._run_loop(),
@@ -180,64 +112,24 @@ class BatchWorker:
             },
         )
 
-    async def stop(self, timeout: float = 60.0) -> None:
+    async def stop(self) -> None:
         """
         Dừng batch worker.
 
-        Phương thức này được gọi khi graceful shutdown.
-        Worker sẽ xử lý nốt batch hiện tại trước khi dừng.
-
-        Args:
-            timeout: Thời gian tối đa đợi worker dừng (giây)
+        Phương thức cancel task ngay và không drain queue theo phạm vi MVP.
 
         Side Effects:
-            Ngừng nhận batch window mới, drain message đang có trong queue và chỉ
-            cancel worker task khi hết graceful timeout.
+            Transaction đang chạy bị cancel và rollback; message chưa xử lý còn
+            trong queue RAM sẽ mất khi process kết thúc.
         """
         if self._task is None:
             return
 
         logger.info("Stopping batch worker")
         self._running = False
-        # Đánh thức queue wait ngay lập tức; batch đang xử lý vẫn hoàn tất vì
-        # event chỉ ảnh hưởng thao tác chờ message tiếp theo.
-        self._stop_event.set()
-
-        try:
-            await asyncio.wait_for(self._task, timeout=timeout)
-        except asyncio.TimeoutError:
-            logger.warning("Batch worker did not stop gracefully, cancelling task")
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
         logger.info("Batch worker stopped")
-
-    @property
-    def is_running(self) -> bool:
-        """
-        Cho biết background task của worker có đang hoạt động hay không.
-
-        Returns:
-            ``True`` khi worker đã được start, chưa nhận yêu cầu dừng và task nền
-            chưa kết thúc; ngược lại trả về ``False``.
-        """
-        return self._running and self._task is not None and not self._task.done()
-
-    async def wait(self) -> None:
-        """
-        Chờ background task của worker kết thúc.
-
-        Method cung cấp lifecycle API công khai để entrypoint theo dõi worker mà
-        không truy cập trực tiếp private attribute ``_task``.
-
-        Raises:
-            Exception: Raise lại exception đã làm background task kết thúc.
-        """
-        if self._task is not None:
-            await self._task
 
     async def _run_loop(self) -> None:
         """
@@ -256,9 +148,12 @@ class BatchWorker:
         """
         logger.info("Batch worker loop started")
 
-        while self._running or not self.queue.empty():
-            first_message = await self._get_message_or_stop(self.flush_interval)
-            if first_message is None:
+        while self._running:
+            try:
+                first_message = await asyncio.wait_for(
+                    self.queue.get(), timeout=self.flush_interval
+                )
+            except asyncio.TimeoutError:
                 continue
 
             try:
@@ -268,72 +163,13 @@ class BatchWorker:
                 self._running = False
                 raise
 
-    async def _get_message_or_stop(
-        self,
-        timeout: float,
-    ) -> TelemetryEnvelope | None:
-        """
-        Chờ message hoặc tín hiệu dừng, tùy sự kiện nào tới trước.
-
-        Queue đã có dữ liệu luôn được ưu tiên để shutdown có thể drain message
-        tồn đọng. Khi queue rỗng, stop event đánh thức worker ngay thay vì chờ hết
-        flush interval.
-
-        Args:
-            timeout: Số giây tối đa chờ message mới.
-
-        Returns:
-            Telemetry envelope lấy từ queue; ``None`` khi nhận stop event hoặc
-            hết timeout.
-
-        Side Effects:
-            Tạo hai task chờ tạm thời và luôn cancel/await task không thắng để
-            không rò background task.
-        """
-        try:
-            return self.queue.get_nowait()
-        except asyncio.QueueEmpty:
-            if self._stop_event.is_set():
-                return None
-
-        queue_task = asyncio.create_task(
-            self.queue.get(),
-            name="telemetry-batch-queue-wait",
-        )
-        stop_task = asyncio.create_task(
-            self._stop_event.wait(),
-            name="telemetry-batch-stop-wait",
-        )
-        wait_tasks = {queue_task, stop_task}
-        try:
-            completed_tasks, _ = await asyncio.wait(
-                wait_tasks,
-                timeout=timeout,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-        finally:
-            # Caller có thể bị cancel trong lúc asyncio.wait; luôn thu hồi cả hai
-            # child task để không để queue.get chạy ngầm và lấy mất message sau đó.
-            pending_tasks = {task for task in wait_tasks if not task.done()}
-            for pending_task in pending_tasks:
-                pending_task.cancel()
-            if pending_tasks:
-                await asyncio.gather(*pending_tasks, return_exceptions=True)
-
-        # Nếu queue và stop đồng thời hoàn thành, giữ message để không làm mất
-        # item đã được queue.get() lấy ra; vòng lặp sẽ drain phần còn lại.
-        if queue_task in completed_tasks:
-            return queue_task.result()
-        return None
-
     async def _collect_batch(
         self, first_message: TelemetryEnvelope
     ) -> list[TelemetryEnvelope]:
         """
         Gom message cho tới khi batch đầy hoặc hết khoảng thời gian chờ.
 
-        Khoảng thời gian bắt đầu khi message đầu tiên tới. Trong lúc shutdown,
-        worker chỉ drain các message đã có trong queue thay vì chờ message mới.
+        Khoảng thời gian bắt đầu khi message đầu tiên tới.
 
         Args:
             first_message: Message bắt đầu khoảng thời gian gom batch.
@@ -342,8 +178,7 @@ class BatchWorker:
             Các message được gom cho một database transaction.
 
         Side Effects:
-            Lấy từng message trả về khỏi ``queue``. Lệnh ``task_done`` tương ứng
-            được hoãn tới khi xử lý transaction hoàn tất.
+            Lấy các message trả về khỏi queue trong RAM.
         """
         messages = [first_message]
         # Dùng monotonic clock của event loop để việc hiệu chỉnh wall clock không
@@ -351,19 +186,13 @@ class BatchWorker:
         deadline = asyncio.get_running_loop().time() + self.flush_interval
 
         while len(messages) < self.batch_size:
-            if not self._running:
-                try:
-                    messages.append(self.queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
-                continue
-
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 break
 
-            message = await self._get_message_or_stop(remaining)
-            if message is None:
+            try:
+                message = await asyncio.wait_for(self.queue.get(), timeout=remaining)
+            except asyncio.TimeoutError:
                 break
             messages.append(message)
 
@@ -378,28 +207,18 @@ class BatchWorker:
                 transaction.
 
         Raises:
-            Exception: Raise lại lỗi database hoặc service sau khi ghi nhận batch
-                thất bại cùng traceback.
+            Exception: Raise lại lỗi database hoặc service sau khi log traceback.
 
         Side Effects:
-            Commit khi thoát context thành công, rollback khi lỗi, cập nhật metric
-            trong bộ nhớ, xuất structured log và acknowledge mỗi message đã lấy
-            khỏi queue đúng một lần.
+            Commit khi thoát context thành công, rollback khi lỗi và xuất
+            structured log.
         """
-        start_time = datetime.now(timezone.utc)
         try:
             # Worker là transaction boundary: service và repository được
             # execute/flush nhưng không bao giờ commit hoặc rollback.
             async with async_session_factory.begin() as db:
                 result = await telemetry_service.process_batch(db, messages)
 
-            processing_time = (datetime.now(timezone.utc) - start_time).total_seconds()
-            batch_metrics.record_batch(
-                result["processed"],
-                result["skipped"],
-                result["errors"],
-                processing_time,
-            )
             logger.info(
                 "Batch processed successfully",
                 extra={
@@ -407,19 +226,11 @@ class BatchWorker:
                     "processed": result["processed"],
                     "skipped": result["skipped"],
                     "errors": result["errors"],
-                    "processing_time_ms": round(processing_time * 1000, 2),
                 },
             )
         except Exception:
-            batch_metrics.record_error()
             logger.exception(
                 "Batch processing failed; stopping worker",
                 extra={"batch_size": len(messages)},
             )
             raise
-        finally:
-            # Queue accounting không phụ thuộc database có thành công hay không.
-            # Nếu không giữ invariant này, ``queue.join`` có thể block vô hạn khi
-            # shutdown.
-            for _ in messages:
-                self.queue.task_done()

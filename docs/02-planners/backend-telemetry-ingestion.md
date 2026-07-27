@@ -1,9 +1,9 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai, bước 15 chờ nghiệm thu E2E
+> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai theo scope MVP tối giản, bước 15 chờ nghiệm thu E2E
 > Ngày tạo: 2026-07-24
-> Rà soát gần nhất: 2026-07-27
+> Rà soát gần nhất: 2026-07-28
 
 ---
 
@@ -23,8 +23,8 @@ Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Batch Queue →
 - Bulk insert vào database để tối ưu hiệu năng
 
 **Phạm vi:**
-- Backend Python async (MQTT consumer + batch worker; FastAPI chỉ dùng cho
-  health endpoint của runtime ở bước 14)
+- Backend Python async (MQTT consumer + batch worker + process entrypoint tối
+  giản; không có HTTP runtime/health server trong MVP hiện tại)
 - EMQX broker
 - TimescaleDB hypertable
 - Chưa bao gồm: API query telemetry, frontend dashboard
@@ -36,10 +36,11 @@ Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Batch Queue →
 - Không xử lý duplicate detection nâng cao
 - Không có persistent queue
 - Không có dead-letter queue (DLQ)
-- Queue đầy được log, tăng metric `dropped` và drop message; không retry/persist
+- Queue đầy được log warning và drop message; không retry/persist
 - Không bảo đảm zero data loss khi process hoặc database gặp lỗi
-- Metrics chỉ nằm trong bộ nhớ và reset khi process restart
+- Không có metrics/counter trong ingestion MVP hiện tại; chỉ dùng structured log
 - Structured log chỉ xuất `stderr`, chưa có log shipping/retention/alert
+- Shutdown không drain queue; message còn trong RAM được phép mất
 - Các lớp reliability sẽ được bổ sung ở phase sau
 
 Phạm vi MVP tập trung vào việc chứng minh luồng:
@@ -63,7 +64,7 @@ backend/
 │   │   │   └── ingestion/
 │   │   │       ├── mqtt_consumer.py    # MQTT client, message handler
 │   │   │       ├── batch_worker.py     # Async batch processor
-│   │   │       └── entrypoint.py       # Runtime entrypoint, triển khai ở bước 14
+│   │   │       └── entrypoint.py       # Process entrypoint tối giản
 │   │   └── vehicles/
 │   │       └── models.py           # Bảng vehicles được FK tham chiếu
 │   ├── api/
@@ -607,10 +608,13 @@ Lưu ý:
 - `connect()` hiện chuẩn bị client/config, còn kết nối network và subscribe thật
   xảy ra khi vào async context trong `start_consuming()`.
 - Payload hợp lệ được đóng gói thành `TelemetryEnvelope`; payload JSON hoặc schema
-  không hợp lệ được log `WARNING`, tăng metric invalid và skip.
+  không hợp lệ được log `WARNING` và skip.
 - `MqttError` tại process/task boundary được log kèm traceback rồi raise; MVP
   không reconnect/retry.
 - Client, topic, credential và QoS lấy từ settings/constructor.
+- Quyết định cập nhật ngày 2026-07-28: bỏ `Metrics`, `is_consuming`,
+  `subscribe()` public method và state `_consuming`. Consumer hiện chỉ còn
+  `connect()`, `start_consuming()`, `disconnect()` và `_handle_message()`.
 
 ---
 
@@ -642,23 +646,22 @@ Cập nhật backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
 
 **Kiểm tra:**
 - [x] Queue hoạt động đúng
-- [x] Metrics được ghi nhận
-- [x] Queue full được drop có chủ đích và ghi metric
+- [x] Queue full được drop có chủ đích và log warning
 - [x] Consumer có primitive dừng; orchestration toàn process thuộc bước 14
 
 **Kết quả/Quyết định:**
 
 - Queue chứa `TelemetryEnvelope`, không chỉ `TelemetryMessage`, để giữ
   `raw_payload`.
-- Metrics in-memory gồm `received`, `valid`, `invalid`, `dropped`; không dùng
-  Prometheus dependency trong MVP.
-- Queue đầy không block callback MQTT: message bị drop, ghi `WARNING` và tăng
-  `messages_dropped_total`.
+- Quyết định cập nhật ngày 2026-07-28: bỏ toàn bộ metrics/counter trong
+  `mqtt_consumer.py`. Không dùng Prometheus dependency và cũng không giữ counter
+  process-local trong MVP.
+- Queue đầy không block callback MQTT: message bị drop và ghi `WARNING`.
 - Module-level queue hiện là default để các component cũ dùng chung. Bước 14 sẽ
   để entrypoint tạo một queue theo settings và inject cùng instance vào consumer
   và worker, giúp ownership/lifecycle rõ ràng.
-- Consumer chỉ cung cấp primitive `disconnect`; thứ tự ngừng nhận, drain queue và
-  timeout/cancel toàn process được nghiệm thu ở bước 14.
+- Consumer chỉ cung cấp primitive `disconnect`; entrypoint hủy task còn lại khi
+  một task kết thúc trước. Không drain queue trong MVP hiện tại.
 
 ---
 
@@ -702,7 +705,7 @@ Lưu ý:
 - [x] Worker chạy định kỳ đúng interval
 - [x] Batch được xử lý khi đủ size
 - [x] DB error làm worker dừng, không retry
-- [x] Mỗi message lấy khỏi queue có đúng một `task_done()`
+- [x] Worker không dùng `queue.join()`/`task_done()` trong MVP tối giản
 - [x] Mỗi batch chạy trong một transaction atomic
 
 **Kết quả/Quyết định:**
@@ -711,12 +714,12 @@ Lưu ý:
   clock; flush khi đủ size hoặc hết interval.
 - Worker dùng `async_session_factory.begin()`: context commit khi thành công,
   rollback khi exception; service/repository không commit/rollback.
-- Khi shutdown, worker drain message đã có trong queue; nếu quá timeout thì task
-  bị cancel và được await.
-- DB/service error tăng `batch_errors_total`, log traceback, raise và làm worker
+- Quyết định cập nhật ngày 2026-07-28: bỏ `BatchMetrics`, `is_running`,
+  `wait()`, drain queue, `queue.join()` và `task_done()`.
+- Khi shutdown, worker bị cancel ngay; transaction đang chạy rollback theo
+  context manager và message còn trong queue RAM được phép mất.
+- DB/service error được log bằng `logger.exception()`, raise lại và làm worker
   dừng theo policy MVP.
-- Queue accounting nằm trong `finally`, độc lập với kết quả database, để
-  `queue.join()` không treo.
 
 ---
 
@@ -922,7 +925,7 @@ Lưu ý:
 **Kiểm tra:**
 - [x] Logging đầy đủ
 - [x] Error được log đúng level
-- [x] Metrics được ghi nhận
+- [x] Không còn metrics/counter trong ingestion MVP tối giản
 
 **Kết quả thực hiện (2026-07-27):**
 - Bổ sung formatter JSON dùng Python standard library với các field chuẩn
@@ -932,32 +935,37 @@ Lưu ý:
   Luồng bình thường dùng `INFO`, message bị skip/drop hoặc không hợp lệ dùng
   `WARNING`, lỗi database/process boundary dùng `logger.exception()` ở level
   `ERROR` rồi raise để worker dừng.
-- Metrics in-memory của MQTT consumer ghi nhận `received`, `valid`, `invalid`,
-  `dropped`; batch worker ghi nhận số batch, `processed`, `skipped`, lỗi message,
-  lỗi batch và tổng thời gian xử lý.
+- Quyết định cập nhật ngày 2026-07-28: bỏ metrics/counter trong MQTT consumer và
+  batch worker. Ingestion MVP chỉ log các event quan trọng và summary batch
+  gồm `batch_size`, `processed`, `skipped`, `errors`.
 - Không bổ sung retry, DLQ hoặc persistent queue trong phạm vi MVP; các hạng mục
   reliability này tiếp tục được theo dõi trong `future.md`.
-- Black, isort, Ruff và mypy đều pass. Smoke test formatter xác nhận output là
-  JSON hợp lệ, timestamp UTC, đúng level/message và giữ nguyên structured fields.
+- Tại thời điểm triển khai logging ngày 2026-07-27, Black, isort, Ruff và mypy
+  đều pass. Sau các thay đổi tối giản ngày 2026-07-28, cần chạy lại static
+  checks đầy đủ khi môi trường dependency có `ruff`.
 - `configure_logging()` chỉ cấu hình cách xuất các `LogRecord` hiện có, không tự
   sinh business event mới. Handler ghi JSON một dòng ra `stderr`.
-- Metrics chỉ là process-local counters, chưa expose qua endpoint/exporter và
-  reset khi restart; centralized observability đã được ghi trong `future.md`.
-- Bước 14 sẽ chuyển ownership gọi `configure_logging()` từ
-  `BatchWorker.start()` lên entrypoint để log startup/database/MQTT trước worker
-  cũng dùng chung format.
-- Hiện một batch failure có thể được log ở cả transaction method và outer worker
-  loop. Bước 14 cần rà lại boundary log/propagate để giữ đủ context mà không tạo
-  traceback trùng không cần thiết.
+- `configure_logging()` hiện được gọi tại entrypoint thay vì trong worker để mọi
+  log startup/MQTT/worker/shutdown dùng cùng format.
+- Centralized observability và persistent metrics đã được chuyển sang
+  `future.md`.
 
 ---
 
-### Bước 14: Tách telemetry ingestion thành runtime process riêng
+### Bước 14: Tách telemetry ingestion thành process riêng
 
-**Mục tiêu:** Chạy telemetry ingestion độc lập với API server, có lifecycle,
-health check và graceful shutdown rõ ràng. Trong môi trường development, process
-chạy trực tiếp trên host theo convention của `AGENTS.md`; đóng gói container
-production chưa nằm trong phạm vi bước này.
+> **Quyết định MVP cập nhật ngày 2026-07-28:** ingestion process được tối giản
+> mạnh: bỏ `runtime.py`, `health.py`, HTTP health server, database startup probe,
+> graceful drain, `BatchMetrics`, MQTT metrics, `BatchWorker.is_running`,
+> `BatchWorker.wait()`, `MQTTConsumer.is_consuming` và `MQTTConsumer.subscribe()`.
+> `entrypoint.py` trực tiếp khởi tạo queue RAM, consumer và worker. Khi một task
+> kết thúc hoặc nhận SIGINT/SIGTERM, entrypoint cancel task còn lại rồi cleanup.
+> Message còn trong queue RAM được phép mất trong phạm vi MVP.
+
+**Mục tiêu:** Chạy telemetry ingestion độc lập với API server bằng process
+entrypoint tối giản. Trong môi trường development, process chạy trực tiếp trên
+host theo convention của `AGENTS.md`; đóng gói container production chưa nằm
+trong phạm vi bước này.
 
 #### 14.1. Phạm vi thay đổi
 
@@ -979,7 +987,7 @@ Không thay đổi trong bước này:
 - `infra/docker-compose.yml`: development Compose tiếp tục chỉ chạy `db` và
   `broker`.
 - `infra/docker-compose.prod.yml` và Dockerfile production.
-- Retry/reconnect, DLQ, persistent queue hoặc metrics exporter.
+- Retry/reconnect, DLQ, persistent queue, metrics exporter hoặc health endpoint.
 - Business logic trong telemetry service/repository.
 
 #### 14.2. Entrypoint và ownership lifecycle
@@ -992,52 +1000,42 @@ main()
   └─ asyncio.run(run())
        ├─ cấu hình JSON logging
        ├─ đăng ký SIGINT/SIGTERM
-       ├─ kiểm tra kết nối database
        ├─ tạo shared asyncio.Queue
        ├─ tạo MQTTConsumer và BatchWorker dùng cùng queue
-       ├─ khởi động health server
        ├─ khởi động MQTT consumer và batch worker
-       └─ theo dõi signal và các background task
+       └─ chờ signal hoặc task đầu tiên kết thúc
 ```
 
 Yêu cầu:
 
 - Có `main()` đồng bộ gọi `asyncio.run(run())`.
 - Không thực hiện network I/O tại import time.
-- Entrypoint phải await/cancel đầy đủ mọi task do nó tạo.
-- Exception từ background task phải được retrieve và propagate; không để xuất
-  hiện `Task exception was never retrieved`.
+- Entrypoint cancel các task còn lại khi một task kết thúc trước.
+- MVP tối giản không còn phân biệt shutdown signal với consumer/worker tự dừng;
+  process đi cleanup chung.
 - Khi startup/runtime lỗi, cleanup vẫn phải đóng database pool và các component
   đã khởi động trước đó.
 
 #### 14.3. Cấu hình logging tại process boundary
 
 - Chuyển lời gọi `configure_logging()` từ `BatchWorker.start()` lên đầu
-  entrypoint, trước startup probe và MQTT connection.
+  entrypoint, trước MQTT connection.
 - Entrypoint sở hữu cấu hình log cấp process; `BatchWorker` chỉ sở hữu batching
   và transaction.
-- Mọi log startup, database, MQTT, worker, health và shutdown phải tuân theo cùng
+- Mọi log startup, MQTT, worker và shutdown phải tuân theo cùng
   JSON output contract từ bước 13.
 - `configure_logging()` tiếp tục idempotent nhưng không dựa vào worker để kích
   hoạt.
 
-#### 14.4. Database startup probe
+#### 14.4. Database lifecycle
 
-- Import và dùng `async_session_factory` cùng `close_db()` từ
-  `app.libs.db.session`; không tạo engine/session factory mới.
-- Import factory vẫn giữ lazy connection. Khi lifecycle bắt đầu, entrypoint chủ
-  động thực hiện `SELECT 1` bằng shared factory để buộc mở và xác minh kết nối
-  database thật.
-- Startup probe dùng `async_session_factory()` vì không thay đổi dữ liệu và không
-  cần transaction tự động.
-- Batch worker tiếp tục dùng `async_session_factory.begin()` để mỗi batch nằm
-  trong một transaction atomic.
+- Không còn database startup probe trong entrypoint MVP.
+- Batch worker dùng `async_session_factory.begin()` để mỗi batch nằm trong một
+  transaction atomic.
 - Không dùng `get_db()` vì đây là async-generator dependency dành cho HTTP
   request lifecycle của FastAPI.
-- Nếu probe thất bại: ghi `ERROR` kèm traceback, không bắt đầu nhận MQTT message,
-  cleanup và để process thoát khác 0.
-- `close_db()` phải chạy trong cleanup để dispose đúng shared engine/pool của
-  process telemetry.
+- `close_db()` vẫn chạy trong cleanup để dispose shared engine/pool của process
+  telemetry nếu worker đã mở kết nối.
 
 Mỗi OS process vẫn có engine, pool và factory riêng trong bộ nhớ. “Shared
 factory” ở đây có nghĩa mọi component **trong cùng telemetry process** dùng
@@ -1051,9 +1049,6 @@ Thêm các setting có namespace:
 TELEMETRY_QUEUE_SIZE=10000
 TELEMETRY_BATCH_SIZE=100
 TELEMETRY_FLUSH_INTERVAL=30
-TELEMETRY_HEALTH_HOST=0.0.0.0
-TELEMETRY_HEALTH_PORT=8081
-TELEMETRY_SHUTDOWN_TIMEOUT=60
 ```
 
 Ý nghĩa:
@@ -1061,8 +1056,8 @@ TELEMETRY_SHUTDOWN_TIMEOUT=60
 - `TELEMETRY_QUEUE_SIZE`: số envelope tối đa trong in-memory queue.
 - `TELEMETRY_BATCH_SIZE`: số message tối đa trong một database transaction.
 - `TELEMETRY_FLUSH_INTERVAL`: số giây tối đa chờ batch chưa đầy.
-- `TELEMETRY_HEALTH_HOST`, `TELEMETRY_HEALTH_PORT`: địa chỉ health server.
-- `TELEMETRY_SHUTDOWN_TIMEOUT`: thời gian tối đa cho graceful drain/cancel.
+- Không còn `TELEMETRY_HEALTH_HOST`, `TELEMETRY_HEALTH_PORT` hoặc
+  `TELEMETRY_SHUTDOWN_TIMEOUT` trong MVP hiện tại.
 
 Entrypoint tạo đúng một queue và truyền cùng instance cho consumer và worker:
 
@@ -1070,116 +1065,76 @@ Entrypoint tạo đúng một queue và truyền cùng instance cho consumer và
 MQTTConsumer ──put──▶ shared queue ──get──▶ BatchWorker
 ```
 
-#### 14.6. Public runtime API của BatchWorker và MQTTConsumer
+#### 14.6. API tối giản của BatchWorker và MQTTConsumer
 
-Không để entrypoint truy cập trực tiếp `_running`, `_task` hoặc private state.
-
-`BatchWorker` bổ sung:
+`BatchWorker` hiện chỉ cung cấp:
 
 ```python
-@property
-def is_running(self) -> bool:
-    """Trả về True khi background task của worker đang hoạt động."""
-
-async def wait(self) -> None:
-    """Chờ worker kết thúc và propagate exception của background task."""
+async def start() -> None: ...
+async def stop() -> None: ...
 ```
 
-`MQTTConsumer` bổ sung:
+`MQTTConsumer` hiện chỉ cung cấp:
 
 ```python
-@property
-def is_consuming(self) -> bool:
-    """Trả về True sau khi subscribe thành công và đang nhận MQTT message."""
+async def connect() -> None: ...
+async def start_consuming() -> None: ...
+async def disconnect() -> None: ...
 ```
 
-Lưu ý:
+Quyết định hiện hành:
 
-- `is_consuming` không được chuyển thành `True` chỉ vì MQTT client đã được cấu
-  hình; phải phản ánh vòng lặp consume thực tế sau khi subscribe thành công.
-- Entrypoint trực tiếp sở hữu task chạy `start_consuming()`, nên consumer chưa
-  cần method `wait()` riêng.
-- Các public API chỉ cung cấp quan sát/wait lifecycle, không chứa logic restart.
+- Không còn `BatchWorker.is_running`, `BatchWorker.wait()` hoặc
+  `MQTTConsumer.is_consuming`.
+- Không còn `MQTTConsumer.subscribe()` public method; subscribe telemetry topic
+  diễn ra trực tiếp trong `start_consuming()`.
+- Entrypoint hiện truy cập `worker._task` sau `start()` để đưa task worker vào
+  danh sách chờ. Đây là trade-off được chấp nhận cho MVP tối giản; nếu sau này
+  cần lifecycle API sạch hơn thì chuyển vào phase observability/runtime.
 
-#### 14.7. Theo dõi task và failure propagation
+#### 14.7. Theo dõi task tối giản
 
 Entrypoint chờ đồng thời:
 
 - SIGINT/SIGTERM.
 - MQTT consumer task.
-- `BatchWorker.wait()`.
-- Health server task.
+- Background task của `BatchWorker`.
 
 Dùng `asyncio.wait(..., return_when=FIRST_COMPLETED)` hoặc cơ chế tương đương.
 
 Hành vi:
 
-- Signal hoàn thành trước: bắt đầu graceful shutdown.
-- Consumer kết thúc/lỗi trước: ghi nhận lỗi, drain queue đã nhận, cleanup và
-  process thoát khác 0 nếu là failure.
-- Worker kết thúc/lỗi trước: dừng consumer, cleanup và process thoát khác 0 nếu
-  là failure.
-- Health server kết thúc bất ngờ: shutdown toàn process vì mất khả năng giám sát.
+- Task nào hoàn thành trước cũng làm process đi vào cleanup.
+- Các task còn lại bị cancel; queue không được drain.
+- Exception từ task đã hoàn thành không còn được phân tích riêng trong entrypoint
+  MVP tối giản. Nếu task lỗi trước khi `asyncio.wait()` trả về và exception không
+  được retrieve, đây là giới hạn đã chấp nhận để giữ code ngắn; logging lỗi chính
+  vẫn nằm trong consumer/worker boundary.
 
 #### 14.8. Health check
 
-Dùng FastAPI + Uvicorn đã có trong dependency để chạy một health app nhỏ trong
-cùng event loop; không dùng API app nghiệp vụ chính và không thêm dependency mới.
+Không có health endpoint trong ingestion MVP hiện tại. HTTP health/readiness cho
+process riêng đã được chuyển sang `docs/01-requirements/future.md`.
 
-Endpoint:
+#### 14.9. Shutdown tối giản
 
-```http
-GET /health
-```
-
-Healthy:
-
-```http
-HTTP 200
-{"status": "healthy"}
-```
-
-Unhealthy:
-
-```http
-HTTP 503
-{"status": "unhealthy"}
-```
-
-Healthy chỉ khi:
-
-- Startup đã hoàn tất.
-- Process chưa trong trạng thái shutdown.
-- MQTT consumer đang consuming.
-- Batch worker đang chạy.
-
-Health endpoint chỉ đọc runtime state, không query database hoặc mở MQTT
-connection mới trên mỗi request. Database được xác minh lúc startup; database
-failure khi chạy sẽ làm batch worker dừng và propagate về entrypoint.
-
-#### 14.9. Graceful shutdown
-
-Thứ tự bắt buộc:
+Thứ tự hiện tại:
 
 ```text
-1. Đánh dấu runtime đang stopping; health chuyển unhealthy
-2. Dừng MQTT consumer để không nhận message mới
-3. Await consumer task kết thúc
-4. Yêu cầu BatchWorker drain queue
-5. Chờ tối đa TELEMETRY_SHUTDOWN_TIMEOUT
-6. Nếu quá hạn: cancel và await worker task
-7. Dừng và await health server
-8. Gọi close_db() để dispose engine/pool
-9. Process thoát
+1. Một task kết thúc hoặc SIGINT/SIGTERM được nhận
+2. Entrypoint cancel các task còn pending
+3. Gọi consumer.disconnect()
+4. Gọi worker.stop() để cancel worker task
+5. Gọi close_db()
+6. Gỡ signal handler và process thoát
 ```
 
 Invariant:
 
-- Ngừng nguồn message trước khi drain queue.
-- Mỗi `queue.get()` thành công có đúng một `task_done()`.
-- Transaction hiện tại phải hoàn tất hoặc rollback.
-- Task bị cancel luôn được await.
-- MVP không retry/reconnect/DLQ; database hoặc task failure làm process dừng.
+- Không drain queue, không `queue.join()` và không `task_done()`.
+- Transaction đang chạy rollback khi task bị cancel hoặc exception xảy ra.
+- Message còn trong queue RAM được phép mất.
+- MVP không retry/reconnect/DLQ.
 
 #### 14.10. Lệnh development
 
@@ -1212,16 +1167,12 @@ Static checks:
 
 Smoke test lifecycle:
 
-- Database probe thành công/thất bại đúng hành vi.
 - Shared queue được truyền cho cả consumer và worker.
-- `BatchWorker.is_running` phản ánh đúng task.
-- `BatchWorker.wait()` propagate exception.
-- `MQTTConsumer.is_consuming` chỉ đúng sau khi subscribe.
-- Health trả 200 khi healthy và 503 khi chưa sẵn sàng/đang shutdown.
-- SIGTERM dừng consumer trước khi drain worker.
-- Consumer, worker hoặc health server failure đều làm process shutdown.
+- `entrypoint.py` tạo consumer task, worker task và shutdown signal task.
+- `asyncio.wait(..., FIRST_COMPLETED)` làm process đi cleanup khi task đầu tiên
+  kết thúc.
+- SIGTERM/SIGINT kích hoạt cleanup tối giản.
 - `close_db()` luôn được gọi.
-- Không còn background task chưa await.
 - JSON logging được cấu hình trước log startup đầu tiên.
 
 Integration khi hạ tầng khả dụng:
@@ -1229,7 +1180,6 @@ Integration khi hạ tầng khả dụng:
 ```bash
 make infra-up
 make telemetry-dev
-curl http://localhost:8081/health
 ```
 
 Test publish MQTT → queue → batch → TimescaleDB đầy đủ vẫn thuộc bước 15.
@@ -1238,39 +1188,28 @@ Test publish MQTT → queue → batch → TimescaleDB đầy đủ vẫn thuộc
 
 - [x] Entrypoint chạy độc lập trên host
 - [x] Logging được cấu hình tại process boundary
-- [x] Database startup probe dùng shared session factory
+- [x] Không còn database startup probe trong MVP tối giản
 - [x] Consumer và worker dùng chung một queue
-- [x] Public lifecycle API hoạt động đúng
-- [x] Health check phản ánh đúng runtime state
-- [x] SIGINT/SIGTERM graceful shutdown đúng thứ tự
-- [x] Failure của background task được propagate và cleanup đầy đủ
-- [x] Static checks và smoke tests pass
+- [x] Public lifecycle API thừa đã được bỏ
+- [x] Health check đã được bỏ khỏi source và chuyển sang future
+- [x] SIGINT/SIGTERM cleanup tối giản
+- [x] Smoke check `compileall` pass cho các file ingestion
 - [x] Makefile/README hướng dẫn chạy được đồng bộ
 
-**Kết quả thực hiện (2026-07-27):**
+**Kết quả thực hiện (2026-07-28):**
 
-- Tạo `entrypoint.py` làm process boundary duy nhất cho logging, signal, database
-  startup probe, MQTT consumer, batch worker, health server và cleanup.
-- Database probe chạy `SELECT 1` qua shared `async_session_factory`; thử với
-  database port không tồn tại đã xác nhận log traceback, không start MQTT và
-  process exit code 1.
+- `entrypoint.py` là process boundary tối giản cho logging, signal, queue,
+  MQTT consumer, batch worker và database cleanup.
+- `health.py` và `runtime.py` đã bị xóa khỏi source.
 - Entrypoint tạo một queue theo `TELEMETRY_QUEUE_SIZE` rồi inject cùng instance
-  vào consumer/worker. Các setting queue, batch, health và shutdown đã được thêm
-  vào `Settings` và `.env.example`.
-- `BatchWorker` có `is_running`/`wait`; `MQTTConsumer` có `is_consuming` chỉ bật
-  sau khi subscribe thành công.
-- Health app dùng FastAPI/Uvicorn nhưng Uvicorn không chiếm signal handler.
-  Runtime thật đã kết nối PostgreSQL, subscribe EMQX QoS 0 và trả
-  `GET /health` HTTP 200 với `{"status":"healthy"}`.
-- SIGINT smoke test xác nhận thứ tự dừng consumer → worker → health server →
-  database pool và process exit code 0. Stop event đánh thức queue wait nên
-  worker queue rỗng không còn chờ hết flush interval.
-- MQTT port không tồn tại đã xác nhận consumer failure được propagate,
-  worker/health/database được cleanup và process exit code 1.
-- Smoke test cô lập xác nhận health chuyển `503 → 200 → 503`, worker stop nhanh
-  và `wait()` propagate exception.
-- Black, isort, Ruff và mypy toàn backend pass. Bước này chưa publish telemetry
-  để kiểm tra insert; luồng dữ liệu đầy đủ thuộc bước 15.
+  vào consumer/worker. Chỉ còn setting queue, batch size và flush interval.
+- `BatchWorker` bỏ `BatchMetrics`, `is_running`, `wait()`, drain queue,
+  `queue.join()` và `task_done()`.
+- `MQTTConsumer` bỏ `Metrics`, `is_consuming`, `subscribe()` public method và
+  `_consuming`; consumer hiện chỉ consume, validate và enqueue.
+- Smoke check hiện tại đã chạy `compileall` cho các file ingestion. Ruff không
+  chạy được trong môi trường hiện tại vì `uv` không tìm thấy binary/module
+  `ruff`; cần chạy lại static checks đầy đủ khi môi trường dependency sẵn sàng.
 
 ---
 
@@ -1287,9 +1226,9 @@ gồm success path, skip/drop path, transaction failure và process lifecycle.
   constraint làm sai kết quả.
 - Ghi lại lệnh, thời điểm, input, log liên quan, query xác minh và kết quả
   pass/fail. Không chỉ đánh dấu checkbox dựa trên quan sát chung.
-- QoS 0 không cho phép khẳng định “không mất message” trong mọi failure. Graceful
-  shutdown chỉ cần chứng minh message đã vào queue được drain theo policy trong
-  điều kiện process nhận signal bình thường.
+- QoS 0 và queue RAM không cho phép khẳng định “không mất message” trong mọi
+  failure. Shutdown MVP không drain queue; E2E chỉ cần chứng minh process cleanup
+  được và dữ liệu còn trong RAM có thể bị bỏ qua.
 
 #### 15.2. Preconditions
 
@@ -1299,7 +1238,7 @@ gồm success path, skip/drop path, transaction failure và process lifecycle.
 - Có một vehicle chưa soft-delete.
 - Có một telematic active gán đúng vehicle đó.
 - Có một serial không tồn tại để test skip.
-- Telemetry entrypoint bước 14 đang chạy trên host và `/health` trả HTTP 200.
+- Telemetry entrypoint bước 14 đang chạy trên host.
 - Biết rõ batch size/flush interval đang dùng trong `.env`.
 
 Nếu chưa có seed script chính thức, có thể insert fixture bằng SQL thủ công nhưng
@@ -1311,9 +1250,6 @@ phải ghi rõ ID/serial và cleanup sau test; không đưa credential thật v�
 # Hạ tầng và migration
 docker compose -f infra/docker-compose.yml ps
 cd backend && uv run alembic current
-
-# Health runtime
-curl -i http://localhost:8081/health
 
 # Hypertable
 docker exec g3network-db psql -U g3network -d g3network \
@@ -1375,10 +1311,9 @@ Thực hiện riêng:
 
 Pass khi mỗi message:
 
-- Tăng invalid metric.
 - Log `WARNING` có topic/error context.
 - Không vào queue và không tạo row DB.
-- Worker/health vẫn hoạt động.
+- Worker/process vẫn hoạt động.
 
 ##### Case D — Serial không có mapping hợp lệ
 
@@ -1429,30 +1364,29 @@ Pass khi:
 
 ##### Case H — Database failure
 
-Sau khi worker healthy, tạo một batch rồi làm database unavailable trước khi
+Sau khi worker đã chạy, tạo một batch rồi làm database unavailable trước khi
 flush hoặc dùng failure injection an toàn trong môi trường test.
 
 Pass khi:
 
 - Toàn batch rollback, không có partial insert/last_seen update.
 - Log `ERROR` có traceback và batch context.
-- Worker/process dừng theo MVP, health không tiếp tục báo healthy.
+- Worker/process dừng theo MVP.
 - Không retry và không đưa message vào DLQ.
 
 Không chạy failure injection trên database chứa dữ liệu quan trọng.
 
-##### Case I — Graceful shutdown
+##### Case I — Shutdown tối giản
 
 Đưa một số message hợp lệ vào queue, sau đó gửi SIGTERM tới telemetry process.
 
 Pass khi:
 
-- Health chuyển unhealthy khi bắt đầu shutdown.
-- Consumer ngừng nhận message mới trước.
-- Queue đã nhận được drain trong timeout.
-- Transaction hiện tại hoàn tất hoặc rollback rõ ràng.
-- Worker, consumer, health server và database pool đều đóng; không có task chưa
-  await hoặc traceback do cancel sai.
+- Process nhận signal và đi vào cleanup.
+- Consumer được yêu cầu disconnect.
+- Worker task bị cancel; transaction đang chạy rollback nếu bị cancel giữa batch.
+- Queue không drain; message còn trong RAM được phép mất.
+- Database pool được đóng qua `close_db()`.
 
 ##### Case J — Queue full
 
@@ -1462,7 +1396,7 @@ Pass khi:
 
 - Callback không block vô hạn.
 - Message vượt capacity bị drop có chủ đích.
-- Log `WARNING` và metric dropped tăng đúng.
+- Log `WARNING` khi queue đầy.
 - Process tiếp tục chạy; không tuyên bố zero data loss.
 
 #### 15.5. Cleanup
@@ -1492,10 +1426,10 @@ Ghi vào planner:
 - [ ] Invalid payload không vào DB
 - [ ] Serial không mapping được skip
 - [ ] Flush theo size và interval đúng
-- [ ] Mixed batch có counters đúng
+- [ ] Mixed batch có log/result đúng
 - [ ] Database failure rollback và dừng process
-- [ ] Graceful shutdown drain/cleanup đúng
-- [ ] Queue full drop/metric đúng
+- [ ] Shutdown tối giản cleanup đúng, không drain queue
+- [ ] Queue full drop/log đúng
 - [ ] Báo cáo nghiệm thu có môi trường và bằng chứng
 
 ---
@@ -1504,8 +1438,8 @@ Ghi vào planner:
 
 ### Trạng thái hiện tại
 
-- Bước 0-14: đã triển khai; planner đã được đối chiếu với source/migration và
-  smoke test runtime.
+- Bước 0-14: đã triển khai theo scope MVP tối giản; planner đã được đối chiếu
+  lại với source ingestion ngày 2026-07-28.
 - Bước 15: ma trận E2E đã xác định, chưa nghiệm thu.
 
 Sau khi hoàn thành bước 15, hệ thống có:
@@ -1518,8 +1452,8 @@ Sau khi hoàn thành bước 15, hệ thống có:
    - Batch lookup telematic mapping (không dùng cache)
    - Repository bulk insert vào TimescaleDB
    - Lưu raw_payload JSONB để debug và reprocessing
-   - Runtime process riêng, health check, graceful shutdown và failure propagation
-   - JSON structured logging và process-local metrics
+   - Process entrypoint riêng, signal handling và cleanup tối giản
+   - JSON structured logging, không còn process-local metrics
 
 **Công nghệ sử dụng:**
 
@@ -1547,7 +1481,7 @@ Sau khi hoàn thành bước 15, hệ thống có:
 - Không có persistent queue
 - Không có duplicate detection nâng cao
 - Queue full sẽ drop message
-- Metrics không persistent/export
+- Không có metrics/counter trong ingestion MVP hiện tại
 - Log chưa được thu thập tập trung
 - Chưa có authentication/authorization MQTT production
 - Chưa có automated backend test suite
@@ -1564,4 +1498,5 @@ Sau khi hoàn thành bước 15, hệ thống có:
 - Persistent queue
 - Duplicate detection nâng cao
 - Observability tập trung và persistent metrics
+- Health/readiness endpoint và graceful drain khi cần vận hành production
 - Retention/compression/benchmark theo volume thật

@@ -364,6 +364,28 @@
 
 ---
 
+### 22. Health/readiness và graceful drain cho telemetry ingestion
+
+- **Mô tả ngắn**: Bổ sung lại endpoint health/readiness và cơ chế ngừng nhận
+  MQTT rồi drain queue có timeout cho telemetry ingestion khi hệ thống cần vận
+  hành production.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Cho orchestrator biết process đã sẵn sàng nhận dữ liệu và phát hiện
+    consumer/worker bị lỗi.
+  - Giảm mất telemetry đã nhận vào queue khi deploy hoặc shutdown có kế hoạch.
+  - Cung cấp shutdown timeout và trạng thái lifecycle rõ ràng.
+- **Lý do hoãn lại**: MVP chủ ý giữ process, task và queue hoàn toàn trong RAM,
+  chấp nhận mất dữ liệu còn trong queue khi dừng để lifecycle và batch worker
+  đơn giản hơn.
+- **Liên quan đến planner/feature**:
+  `backend-telemetry-ingestion.md` (AD-02), bước 14.
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: Khi triển khai lại cần dựa trên môi trường deploy thực tế để
+  chọn liveness/readiness contract và drain timeout; không khôi phục nguyên xi
+  orchestration cũ nếu chưa xác nhận.
+
+---
+
 ## Quy tắc cập nhật
 
 1. **Khi nào ghi nhận**: Khi developer hoặc AI agent quyết định bỏ qua/xóa một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm".

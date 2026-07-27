@@ -2,7 +2,7 @@
 Cấu hình dùng chung của các backend process bằng Pydantic Settings.
 
 Settings đọc biến môi trường và file ``.env`` tại working directory của process.
-Tên biến được namespace theo component để API, MQTT và telemetry runtime không
+Tên biến được namespace theo component để API, MQTT và telemetry ingestion không
 va chạm khi cùng chạy trên host.
 """
 
@@ -31,9 +31,6 @@ class Settings(BaseSettings):
         TELEMETRY_QUEUE_SIZE: Sức chứa in-memory queue.
         TELEMETRY_BATCH_SIZE: Số message tối đa trong một transaction.
         TELEMETRY_FLUSH_INTERVAL: Thời gian tối đa chờ batch chưa đầy.
-        TELEMETRY_HEALTH_HOST: Interface bind health server.
-        TELEMETRY_HEALTH_PORT: Cổng HTTP health server.
-        TELEMETRY_SHUTDOWN_TIMEOUT: Thời gian tối đa graceful shutdown.
     """
 
     model_config = SettingsConfigDict(
@@ -62,13 +59,10 @@ class Settings(BaseSettings):
     MQTT_QOS: int = Field(default=0, ge=0, le=2)
     MQTT_TELEMETRY_TOPIC: str = "g3network/telematics/+/telemetry"
 
-    # Cấu hình runtime của telemetry process; không hard-code trong entrypoint.
+    # Cấu hình queue và batch của telemetry process.
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
     TELEMETRY_BATCH_SIZE: int = Field(default=100, ge=1)
     TELEMETRY_FLUSH_INTERVAL: float = Field(default=30.0, gt=0)
-    TELEMETRY_HEALTH_HOST: str = "0.0.0.0"
-    TELEMETRY_HEALTH_PORT: int = Field(default=8081, ge=1, le=65535)
-    TELEMETRY_SHUTDOWN_TIMEOUT: float = Field(default=60.0, gt=0)
 
 
 @lru_cache
