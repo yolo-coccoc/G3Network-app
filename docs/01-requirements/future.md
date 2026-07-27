@@ -262,8 +262,105 @@
 - **Ghi chú thêm**: JSON logging hiện được kích hoạt khi `BatchWorker.start()`
   chạy. Khi triển khai entrypoint ở bước 14, cần cấu hình logging tại process
   lifecycle boundary đủ sớm để cả log khởi động/kết nối trước worker cũng tuân
-  theo cùng output contract. Cần chốt backend observability stack trước khi thêm
-  dependency hoặc infrastructure mới.
+  theo cùng output contract. Đồng thời cần tránh gắn handler cũ + JSON handler
+  gây output trùng và tránh log cùng traceback ở cả transaction boundary lẫn
+  outer task boundary nếu không bổ sung context mới. Cần chốt backend
+  observability stack trước khi thêm dependency hoặc infrastructure mới.
+
+---
+
+### 18. API gán/tháo thiết bị telematic cho vehicle
+
+- **Mô tả ngắn**: Bổ sung use case provisioning để Admin gán, đổi hoặc tháo một
+  telematic khỏi vehicle; hiện telemetry đã có bảng `telematics`, foreign key và
+  unique constraint nhưng domain vehicles chưa có API nghiệp vụ tương ứng.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Hoàn thành phần “gán thiết bị” của chức năng Quản lý xe.
+  - Bảo đảm một vehicle có tối đa một telematic và ngăn một thiết bị bị gán sai.
+  - Cho phép vận hành ingestion mà không phải insert/update mapping bằng SQL thủ
+    công.
+  - Có contract rõ cho replace/unassign, conflict và thiết bị/xe không tồn tại.
+- **Lý do hoãn lại**: Vehicles CRUD MVP ban đầu loại provisioning khỏi phạm vi;
+  telemetry ingestion mới chỉ cần mapping tồn tại để lookup và chưa xây Admin
+  workflow quản lý thiết bị.
+- **Liên quan đến planner/feature**: `backend-crud-vehicles.md`,
+  `backend-telemetry-ingestion.md` (AD-05, AD-02).
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: Vì model/repository telematic thuộc domain telemetry,
+  vehicles không được import trực tiếp các module nội bộ này. Trước khi triển
+  khai cần chốt router/use-case owner; nếu vehicles điều phối thì phải gọi public
+  API trong `telemetry/service.py`. Operation phải atomic và chuyển unique/FK
+  `IntegrityError` thành domain conflict rõ ràng.
+
+---
+
+### 19. Structured logging, request metrics và health thực chất cho API process
+
+- **Mô tả ngắn**: Áp dụng output contract logging/observability đã hình thành ở
+  telemetry cho FastAPI API process và các domain HTTP như vehicles.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Cấu hình JSON logging tại FastAPI lifespan/process boundary để startup,
+    shutdown, router/service/repository error dùng cùng format.
+  - Ghi structured context cho request/operation quan trọng mà không log dữ liệu
+    nhạy cảm.
+  - Có counters/latency/error metrics cho CRUD/API thay vì chỉ access log.
+  - Làm health/readiness phản ánh database và lifecycle thay vì luôn trả
+    `{"status": "healthy"}` khi Python process còn chạy.
+- **Lý do hoãn lại**: Bước 13 mới triển khai formatter và process-local metrics
+  cho telemetry worker. `app.api.main` hiện chưa gọi `configure_logging()`;
+  vehicles chưa có structured operation logs/metrics và `/health` không xác minh
+  dependency hoặc readiness.
+- **Liên quan đến planner/feature**: `backend-crud-vehicles.md`, API backend nói
+  chung và mục 17 của `future.md`.
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: Cần chốt ranh giới giữa access log, business audit log và
+  application error log để tránh log trùng. Có thể tách `/live` và `/ready` khi
+  deploy bằng orchestrator; không query dependency nặng trên mỗi health request.
+
+---
+
+### 20. Chuẩn hóa tài liệu source và OpenAPI examples của domain vehicles
+
+- **Mô tả ngắn**: Rà soát module/class/function docstring, comment và schema
+  examples của vehicles theo convention mới trong `AGENTS.md`.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Docstring/comment tiếng Việt mô tả đúng business rule, transaction ownership,
+    exception và partial update.
+  - `VehicleCreate`, `VehicleUpdate`, response/list schema có ví dụ nhất quán để
+    Swagger và planner dùng làm contract.
+  - Loại mô tả cũ/sai như tên field, HTTP method hoặc behavior không còn khớp
+    implementation.
+- **Lý do hoãn lại**: Domain vehicles được triển khai trước khi convention
+  docstring/comment chi tiết bằng tiếng Việt được chốt. Nhiều docstring hiện còn
+  ngắn và bằng tiếng Anh; `json_schema_extra` examples đã bị lược bỏ trong lịch
+  sử trong khi telemetry schemas đã có examples chi tiết.
+- **Liên quan đến planner/feature**: `backend-crud-vehicles.md` (AD-05), quy tắc
+  coding convention trong `AGENTS.md`.
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: Đây là documentation debt, không thay đổi API behavior. Khi
+  thực hiện phải đối chiếu source hiện tại làm nguồn chân lý và không khôi phục
+  example cũ nếu field/enum đã đổi.
+
+---
+
+### 21. Đồng bộ planner và bằng chứng nghiệm thu domain vehicles
+
+- **Mô tả ngắn**: Viết lại `backend-crud-vehicles.md` theo cấu trúc planner đã
+  chuẩn hóa ở telemetry, phản ánh implementation/migration thực tế và ghi bằng
+  chứng smoke/integration test.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Phân biệt rõ bước đã triển khai, bước chỉ từng test thủ công và phần chưa có.
+  - Sửa các contract cũ về `plate_number`/`license_plate`, `team_id`/`fleet_id`,
+    UUID, `PUT`/`PATCH`, HTTP conflict status và timezone.
+  - Làm tài liệu tham chiếu đáng tin cậy cho planner domain CRUD tiếp theo.
+- **Lý do hoãn lại**: Planner vehicles vẫn ở trạng thái “Dự kiến” và phần lớn
+  checklist chưa được cập nhật dù source đã tồn tại; audit hiện tại ưu tiên hoàn
+  thiện planner telemetry và chỉ ghi nhận khoảng thiếu của vehicles.
+- **Liên quan đến planner/feature**: `backend-crud-vehicles.md` (AD-05).
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: Không được đánh dấu test pass chỉ dựa trên source tồn tại.
+  Automated tests đã được theo dõi chung tại mục 16; mục này tập trung vào độ
+  chính xác và traceability của planner.
 
 ---
 
