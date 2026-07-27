@@ -238,6 +238,35 @@
 
 ---
 
+### 17. Observability tập trung cho telemetry ingestion
+
+- **Mô tả ngắn**: Hoàn thiện kênh thu thập log và metrics của telemetry worker
+  để có thể theo dõi bên ngoài process, lưu giữ lịch sử và thiết lập cảnh báo.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Thu thập JSON log từ `stderr` vào hệ thống tập trung như Grafana Loki, ELK
+    hoặc dịch vụ cloud tương đương.
+  - Áp dụng retention, tìm kiếm, dashboard và alert cho lỗi ingest, message bị
+    skip/drop, độ trễ batch và tình trạng worker dừng.
+  - Expose metrics qua HTTP endpoint hoặc Prometheus exporter để hệ thống
+    monitoring scrape được.
+  - Lưu metrics bền vững qua các lần restart và tổng hợp số liệu từ nhiều worker
+    instance.
+- **Lý do hoãn lại**: Bước 13 của MVP mới cung cấp JSON structured logging qua
+  Python `StreamHandler` và counters trong bộ nhớ. Log hiện chỉ xuất ra `stderr`
+  để xem tại terminal hoặc qua `docker logs`; không ghi file, không có log
+  shipping/retention/dashboard/alert. Metrics chưa có endpoint/exporter và reset
+  về 0 khi process hoặc container khởi động lại.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` bước 13-14
+  (AD-02, FM-01, FM-02).
+- **Ngày ghi nhận**: 2026-07-27
+- **Ghi chú thêm**: JSON logging hiện được kích hoạt khi `BatchWorker.start()`
+  chạy. Khi triển khai entrypoint ở bước 14, cần cấu hình logging tại process
+  lifecycle boundary đủ sớm để cả log khởi động/kết nối trước worker cũng tuân
+  theo cùng output contract. Cần chốt backend observability stack trước khi thêm
+  dependency hoặc infrastructure mới.
+
+---
+
 ## Quy tắc cập nhật
 
 1. **Khi nào ghi nhận**: Khi developer hoặc AI agent quyết định bỏ qua/xóa một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm".
