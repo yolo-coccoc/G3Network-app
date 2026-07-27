@@ -673,9 +673,24 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] last_seen_at được cập nhật đúng
-- [ ] Chỉ update khi timestamp mới hơn
-- [ ] Performance tốt với batch update
+- [x] last_seen_at được cập nhật đúng
+- [x] Chỉ update khi timestamp mới hơn
+- [x] Performance tốt với batch update
+
+**Kết quả rà soát (2026-07-27):**
+- `process_batch()` gom timestamp theo `telematic_id` và chỉ truyền một giá trị
+  lớn nhất cho mỗi thiết bị sang `repository.update_telematic_last_seen()` sau
+  khi bulk insert thành công.
+- Repository dùng một câu `UPDATE` với `CASE WHEN` cho toàn bộ thiết bị trong
+  batch; `last_seen_at` chỉ nhận timestamp mới khi giá trị mới lớn hơn giá trị
+  hiện tại hoặc giá trị hiện tại là `NULL`.
+- Smoke test cô lập với ba message của cùng một telematic xác nhận repository
+  update chỉ được gọi một lần và chỉ nhận một tuple cho telematic đó.
+- Giới hạn MVP đã được ghi tại mục 14 của `future.md`: câu `UPDATE` hiện vẫn đổi
+  `updated_at` và row count có thể tính cả row khớp ID dù `last_seen_at` không
+  đổi. Sai lệch này không làm `last_seen_at` lùi thời gian và không chặn bước 12.
+- Chưa chạy lại integration/performance test với PostgreSQL/TimescaleDB trong
+  lượt rà soát này do không có quyền truy cập Docker daemon.
 
 ---
 
