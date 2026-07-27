@@ -726,9 +726,25 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Logging đầy đủ
-- [ ] Error được log đúng level
-- [ ] Metrics được ghi nhận (nếu có)
+- [x] Logging đầy đủ
+- [x] Error được log đúng level
+- [x] Metrics được ghi nhận
+
+**Kết quả thực hiện (2026-07-27):**
+- Bổ sung formatter JSON dùng Python standard library với các field chuẩn
+  `timestamp`, `level`, `logger`, `message`, các structured `extra` fields và
+  traceback khi có exception.
+- Batch worker kích hoạt cấu hình logging theo cách idempotent khi bắt đầu chạy.
+  Luồng bình thường dùng `INFO`, message bị skip/drop hoặc không hợp lệ dùng
+  `WARNING`, lỗi database/process boundary dùng `logger.exception()` ở level
+  `ERROR` rồi raise để worker dừng.
+- Metrics in-memory của MQTT consumer ghi nhận `received`, `valid`, `invalid`,
+  `dropped`; batch worker ghi nhận số batch, `processed`, `skipped`, lỗi message,
+  lỗi batch và tổng thời gian xử lý.
+- Không bổ sung retry, DLQ hoặc persistent queue trong phạm vi MVP; các hạng mục
+  reliability này tiếp tục được theo dõi trong `future.md`.
+- Black, isort, Ruff và mypy đều pass. Smoke test formatter xác nhận output là
+  JSON hợp lệ, timestamp UTC, đúng level/message và giữ nguyên structured fields.
 
 ---
 

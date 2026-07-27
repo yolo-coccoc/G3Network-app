@@ -1,5 +1,5 @@
 """
-Batch worker for telemetry messages.
+Batch worker xử lý các message telemetry.
 
 Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
 
@@ -26,16 +26,31 @@ from datetime import datetime, timezone
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
 from app.domains.telemetry.schemas import TelemetryEnvelope
+from app.libs.common.logging import configure_logging
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
 
 class BatchMetrics:
-    """Simple metrics counter for batch worker."""
+    """
+    Lưu các counter cục bộ của process cho hoạt động xử lý telemetry batch.
+
+    Trong MVP, metric chủ ý chỉ nằm trong bộ nhớ và reset mỗi khi ingestion
+    process khởi động lại. Batch thành công ghi nhận kết quả message và thời gian
+    xử lý; transaction thất bại chỉ tăng counter lỗi batch.
+
+    Attributes:
+        batches_processed_total: Số transaction hoàn thành thành công.
+        messages_processed_total: Số row được insert thành công.
+        messages_skipped_total: Số message bị loại bởi rule mapping nghiệp vụ.
+        message_errors_total: Số message hợp lệ nhưng lỗi khi chuyển đổi DB.
+        batch_processing_time_seconds: Tổng thời gian xử lý các batch thành công.
+        batch_errors_total: Số batch transaction phát sinh exception.
+    """
 
     def __init__(self) -> None:
-        """Initialize metrics counters."""
+        """Khởi tạo toàn bộ metric cục bộ của process bằng không."""
         self.batches_processed_total = 0
         self.messages_processed_total = 0
         self.messages_skipped_total = 0
@@ -51,13 +66,13 @@ class BatchMetrics:
         processing_time: float,
     ) -> None:
         """
-        Record counters and duration for a successful database batch.
+        Ghi nhận các counter và thời gian của một database batch thành công.
 
         Args:
-            processed_count: Messages inserted into the database.
-            skipped_count: Messages skipped by business rules.
-            error_count: Messages that failed conversion.
-            processing_time: Batch processing duration in seconds.
+            processed_count: Số message được insert vào database.
+            skipped_count: Số message bị skip theo rule nghiệp vụ.
+            error_count: Số message lỗi khi chuyển đổi.
+            processing_time: Thời gian xử lý batch tính bằng giây.
         """
         self.batches_processed_total += 1
         self.messages_processed_total += processed_count
@@ -66,16 +81,23 @@ class BatchMetrics:
         self.batch_processing_time_seconds += processing_time
 
     def record_error(self) -> None:
-        """Record a batch error."""
+        """
+        Ghi nhận một batch transaction thất bại.
+
+        Method không đếm lỗi theo từng message vì database failure trong
+        transaction atomic khiến toàn bộ message của batch đều không thành công.
+        """
         self.batch_errors_total += 1
 
 
+# Ingestion process sở hữu một metrics instance trong toàn bộ lifecycle. Counter
+# chủ ý reset khi restart vì persistent metrics nằm ngoài phạm vi MVP.
 batch_metrics = BatchMetrics()
 
 
 class BatchWorker:
     """
-    Batch worker xử lý telemetry messages từ queue.
+    Batch worker xử lý các message telemetry từ queue.
 
     Worker chạy định kỳ và xử lý messages theo batch:
     - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages
@@ -84,9 +106,14 @@ class BatchWorker:
     - Dừng worker khi database gặp lỗi trong phạm vi MVP
 
     Attributes:
-        queue: asyncio.Queue chứa TelemetryMessage
-        batch_size: Số message tối đa trong 1 batch (default 100)
-        flush_interval: Khoảng thời gian flush batch (giây, default 30.0)
+        queue: Queue chứa telemetry envelope đã validate do ingestion process
+            sở hữu.
+        batch_size: Số message tối đa trong một database transaction.
+        flush_interval: Số giây tối đa chờ từ message đầu tiên trước khi flush
+            một batch chưa đầy.
+        _running: Worker có tiếp tục nhận vòng lặp mới hay không.
+        _task: Background task sở hữu việc consume queue, hoặc ``None`` trước
+            khi khởi động.
 
     Example:
         >>> worker = BatchWorker(
@@ -109,9 +136,13 @@ class BatchWorker:
         Khởi tạo batch worker.
 
         Args:
-            queue: asyncio.Queue chứa TelemetryMessage (default module-level queue)
-            batch_size: Số message tối đa trong 1 batch
-            flush_interval: Khoảng thời gian flush batch (giây)
+            queue: Queue cần consume. Dùng ingestion queue cấp module khi bỏ trống.
+            batch_size: Số message tối đa trong mỗi database transaction.
+            flush_interval: Khoảng thời gian tối đa của batch tính bằng giây.
+
+        Side Effects:
+            Lưu quyền sở hữu queue và khởi tạo state lifecycle của worker. Chưa
+            tạo background task hoặc database session cho tới khi gọi ``start``.
         """
         self.queue = queue or message_queue
         self.batch_size = batch_size
@@ -121,11 +152,22 @@ class BatchWorker:
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        """Bắt đầu batch worker."""
+        """
+        Cấu hình logging của process và khởi động task consume queue.
+
+        Gọi method khi worker đang chạy sẽ không thay đổi state và chỉ ghi
+        warning, qua đó ngăn hai task cùng consume một queue.
+
+        Side Effects:
+            Cấu hình root JSON logger dùng chung và tạo một asyncio task.
+        """
         if self._running:
             logger.warning("Batch worker is already running")
             return
 
+        # Khởi tạo logging tại lifecycle boundary thay vì lúc import để việc
+        # import module trong API process hoặc test không gây global side effect.
+        configure_logging()
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
         logger.info(
@@ -145,6 +187,10 @@ class BatchWorker:
 
         Args:
             timeout: Thời gian tối đa đợi worker dừng (giây)
+
+        Side Effects:
+            Ngừng nhận batch window mới, drain message đang có trong queue và chỉ
+            cancel worker task khi hết graceful timeout.
         """
         if self._task is None:
             return
@@ -173,6 +219,11 @@ class BatchWorker:
         1. Đợi message trong queue với timeout = flush_interval
         2. Nếu có message, lấy tối đa batch_size messages
         3. Xử lý batch
+
+        Raises:
+            Exception: Raise lại lỗi bất ngờ khi gom hoặc xử lý batch sau khi đánh
+                dấu worker đã dừng. Hành vi này chủ ý kết thúc telemetry ingestion
+                trong MVP không retry.
         """
         logger.info("Batch worker loop started")
 
@@ -198,18 +249,24 @@ class BatchWorker:
         self, first_message: TelemetryEnvelope
     ) -> list[TelemetryEnvelope]:
         """
-        Collect messages until the batch is full or its time window expires.
+        Gom message cho tới khi batch đầy hoặc hết khoảng thời gian chờ.
 
-        The window starts when the first message arrives. During shutdown, the
-        worker drains only messages already queued instead of waiting for more.
+        Khoảng thời gian bắt đầu khi message đầu tiên tới. Trong lúc shutdown,
+        worker chỉ drain các message đã có trong queue thay vì chờ message mới.
 
         Args:
-            first_message: Message that starts the batch window.
+            first_message: Message bắt đầu khoảng thời gian gom batch.
 
         Returns:
-            Messages collected for one database transaction.
+            Các message được gom cho một database transaction.
+
+        Side Effects:
+            Lấy từng message trả về khỏi ``queue``. Lệnh ``task_done`` tương ứng
+            được hoãn tới khi xử lý transaction hoàn tất.
         """
         messages = [first_message]
+        # Dùng monotonic clock của event loop để việc hiệu chỉnh wall clock không
+        # làm batch window ngắn hoặc dài hơn dự kiến.
         deadline = asyncio.get_running_loop().time() + self.flush_interval
 
         while len(messages) < self.batch_size:
@@ -234,13 +291,25 @@ class BatchWorker:
 
     async def _process_batch(self, messages: Sequence[TelemetryEnvelope]) -> None:
         """
-        Process one batch in a single database transaction.
+        Xử lý một batch trong duy nhất một database transaction.
 
         Args:
-            messages: Danh sách TelemetryMessage cần xử lý
+            messages: Các envelope được xử lý atomic trong một database
+                transaction.
+
+        Raises:
+            Exception: Raise lại lỗi database hoặc service sau khi ghi nhận batch
+                thất bại cùng traceback.
+
+        Side Effects:
+            Commit khi thoát context thành công, rollback khi lỗi, cập nhật metric
+            trong bộ nhớ, xuất structured log và acknowledge mỗi message đã lấy
+            khỏi queue đúng một lần.
         """
         start_time = datetime.now(timezone.utc)
         try:
+            # Worker là transaction boundary: service và repository được
+            # execute/flush nhưng không bao giờ commit hoặc rollback.
             async with async_session_factory.begin() as db:
                 result = await telemetry_service.process_batch(db, messages)
 
@@ -269,5 +338,8 @@ class BatchWorker:
             )
             raise
         finally:
+            # Queue accounting không phụ thuộc database có thành công hay không.
+            # Nếu không giữ invariant này, ``queue.join`` có thể block vô hạn khi
+            # shutdown.
             for _ in messages:
                 self.queue.task_done()

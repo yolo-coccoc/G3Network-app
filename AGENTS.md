@@ -191,10 +191,26 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 - Naming: `snake_case` cho biến/hàm/module, `PascalCase` cho class, hằng số `UPPER_SNAKE_CASE`.
 - Toàn bộ I/O (DB, HTTP, MQTT) dùng **async/await**.
 - Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.
-- Docstring bắt buộc cho service function xử lý nghiệp vụ phức tạp (đối soát vi phạm, tính KPI...).
-- **Comment/Docstring chi tiết cho mọi class và method**:
-  - Mọi class PHẢI có docstring mô tả vai trò và danh sách `Attributes:` (nếu có).
-  - Mọi method PHẢI có docstring mô tả ngắn gọn, danh sách `Args:` và `Returns:` (nếu có tham số/giá trị trả về).
+- **Docstring/comment trong source code phải đầy đủ và giải thích được ý đồ**:
+  - Docstring và comment PHẢI viết bằng tiếng Việt; tên định danh, thuật ngữ kỹ
+    thuật và nội dung bắt buộc theo contract thư viện có thể giữ tiếng Anh.
+  - Mọi module PHẢI có module docstring nêu trách nhiệm, phạm vi và các giới hạn
+    quan trọng của module.
+  - Mọi class PHẢI có docstring mô tả vai trò, lifecycle nếu có, và danh sách
+    `Attributes:` cho toàn bộ state quan trọng.
+  - Mọi function/method, kể cả private method và hàm đơn giản, PHẢI có docstring
+    mô tả hành vi; ghi `Args:`, `Returns:`, `Raises:` và side effect khi các mục
+    đó tồn tại. Service function nghiệp vụ phức tạp phải mô tả thêm rule, transaction
+    boundary và hành vi partial failure.
+  - Comment bắt buộc tại các đoạn logic không hiển nhiên: quyết định kiến trúc,
+    điều kiện cạnh tranh, timeout/shutdown, transaction, thuật toán batch và
+    workaround của thư viện/framework. Comment phải giải thích **vì sao** hoặc
+    invariant cần giữ, không diễn giải lại từng dòng code.
+  - Hằng số/module-level state có ý nghĩa đặc biệt phải có comment giải thích mục
+    đích, ownership và phạm vi lifecycle.
+  - Khi sửa logic hiện có, phải cập nhật docstring/comment liên quan trong cùng
+    thay đổi; docstring sai hoặc cũ được xem là lỗi.
+  - Không thêm comment thừa cho assignment, import hoặc code tự giải thích được.
   - Ví dụ:
     ```python
     class VehicleState(BaseModel):
