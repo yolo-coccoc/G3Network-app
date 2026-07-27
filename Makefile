@@ -16,7 +16,7 @@ help:
 	@echo "Backend:"
 	@echo "  make backend-install - Cài đặt dependencies"
 	@echo "  make backend-dev     - Chạy development server (port 8000)"
-	@echo "  make telemetry-dev   - Chạy telemetry ingestion (health port 8081)"
+	@echo "  make telemetry-dev   - Chạy telemetry ingestion"
 	@echo "  make backend-test    - Chạy tests"
 	@echo ""
 	@echo "Database:"
@@ -65,7 +65,6 @@ backend-dev:
 
 telemetry-dev:
 	@echo "Khởi động telemetry ingestion..."
-	@echo "Health check: http://localhost:8081/health"
 	cd backend && uv run python -m app.domains.telemetry.ingestion.entrypoint
 
 backend-test:

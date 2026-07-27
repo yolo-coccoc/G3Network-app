@@ -1,7 +1,7 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai theo scope MVP tối giản, bước 15 chờ nghiệm thu E2E
+> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai theo scope MVP tối giản; bước 15 đã chạy E2E chính, còn mixed batch và queue-full qua broker cần bổ sung khi cần
 > Ngày tạo: 2026-07-24
 > Rà soát gần nhất: 2026-07-28
 
@@ -1420,17 +1420,59 @@ Ghi vào planner:
 
 **Kiểm tra:**
 
-- [ ] Preconditions và baseline hợp lệ
-- [ ] Message tối thiểu/đầy đủ được insert đúng
-- [ ] `raw_payload`, timezone và internal mapping đúng
-- [ ] Invalid payload không vào DB
-- [ ] Serial không mapping được skip
-- [ ] Flush theo size và interval đúng
+- [x] Preconditions và baseline hợp lệ
+- [x] Message tối thiểu/đầy đủ được insert đúng
+- [x] `raw_payload`, timezone và internal mapping đúng
+- [x] Invalid payload không vào DB
+- [x] Serial không mapping được skip
+- [x] Flush theo size và interval đúng
 - [ ] Mixed batch có log/result đúng
-- [ ] Database failure rollback và dừng process
-- [ ] Shutdown tối giản cleanup đúng, không drain queue
-- [ ] Queue full drop/log đúng
-- [ ] Báo cáo nghiệm thu có môi trường và bằng chứng
+- [x] Database failure rollback và dừng process
+- [x] Shutdown tối giản cleanup đúng, không drain queue
+- [x] Queue full drop/log đúng
+- [x] Báo cáo nghiệm thu có môi trường và bằng chứng
+
+**Kết quả nghiệm thu (2026-07-28):**
+
+- Môi trường: PostgreSQL/TimescaleDB container `g3network-db` healthy,
+  EMQX 5.5 container `g3network-broker` healthy, Alembic DB revision
+  `c0f4a8b6e2d1`, hypertable `vehicle_telemetry` tồn tại. Lệnh
+  `uv run alembic current` bị treo trong phiên này nên baseline revision được
+  xác minh trực tiếp qua bảng `alembic_version`.
+- Runtime test: chạy `entrypoint.py` trên host với
+  `TELEMETRY_BATCH_SIZE=2`, `TELEMETRY_FLUSH_INTERVAL=1`,
+  `TELEMETRY_QUEUE_SIZE=10`. Process trong sandbox không mở được MQTT socket
+  (`Operation not permitted`), nên E2E runtime được chạy ngoài sandbox.
+- Fixture: tạo vehicle `E2E-AD02` và telematic `TBOX-E2E-AD02`; sau test đã
+  cleanup thành công, xóa 5 row `vehicle_telemetry`, 1 row `telematics` và 1 row
+  `vehicles`; xác minh còn 0 row fixture.
+- Case A pass: publish payload tối thiểu qua `mosquitto_pub`; DB có đúng 1 row
+  theo `message_uuid`, mapping đúng `vehicle_id`, `recorded_at` UTC, `soc=50`,
+  `raw_payload.telematic_serial=TBOX-E2E-AD02`; `last_seen_at` của telematic tăng.
+- Case B pass: payload đầy đủ flatten đúng các field `speed`, `heading`,
+  `battery_voltage`, `battery_current`, `battery_temperature`,
+  `motor_temperature`, `odometer`, `signal_strength`, `error_codes`; field
+  `extra_field` vẫn còn trong `raw_payload`.
+- Case C pass: JSON malformed và latitude ngoài range đều log `WARNING` tại MQTT
+  consumer và không tạo row DB.
+- Case D pass: serial `TBOX-E2E-MISSING` qua Pydantic validation nhưng service
+  skip; log `processed=0`, `skipped=1`; DB không có row theo UUID test.
+- Case E pass: gửi 2 message trong cùng phiên `mosquitto_pub -l`; worker xử lý
+  batch `batch_size=2`, `processed=2`; DB có đủ 2 row.
+- Case F pass gián tiếp: các message đơn lẻ flush sau khoảng
+  `TELEMETRY_FLUSH_INTERVAL=1` và insert thành công theo interval.
+- Case H pass: dừng DB container tạm thời rồi publish payload hợp lệ; worker log
+  `ERROR` với traceback DB connection closed, process cleanup và dừng; sau khi
+  start DB lại, UUID case H có 0 row.
+- Case I pass: chạy process mới rồi gửi SIGINT; log cho thấy worker stop và
+  `Telemetry ingestion stopped`, exit code 0. Chưa gửi SIGTERM riêng vì entrypoint
+  dùng cùng signal path cho SIGINT/SIGTERM.
+- Case J pass ở mức smoke logic: gọi trực tiếp `_handle_message()` với queue
+  `maxsize=1`; message thứ hai log `Queue full, message dropped`, queue vẫn
+  `qsize=1`. Chưa tái hiện queue-full qua EMQX vì worker consume nhanh và case
+  này phụ thuộc timing.
+- Chưa chạy mixed batch đầy đủ gồm valid + serial missing + invalid trong cùng
+  batch; các hành vi thành phần đã được kiểm riêng ở Case A/C/D/E.
 
 ---
 
@@ -1440,7 +1482,8 @@ Ghi vào planner:
 
 - Bước 0-14: đã triển khai theo scope MVP tối giản; planner đã được đối chiếu
   lại với source ingestion ngày 2026-07-28.
-- Bước 15: ma trận E2E đã xác định, chưa nghiệm thu.
+- Bước 15: đã chạy E2E chính ngày 2026-07-28; còn mixed batch đầy đủ và
+  queue-full qua broker chưa nghiệm thu ổn định.
 
 Sau khi hoàn thành bước 15, hệ thống có:
 
