@@ -251,18 +251,18 @@
     monitoring scrape được.
   - Lưu metrics bền vững qua các lần restart và tổng hợp số liệu từ nhiều worker
     instance.
-- **Lý do hoãn lại**: Bước 13 của MVP mới cung cấp JSON structured logging qua
-  Python `StreamHandler` và counters trong bộ nhớ. Log hiện chỉ xuất ra `stderr`
-  để xem tại terminal hoặc qua `docker logs`; không ghi file, không có log
-  shipping/retention/dashboard/alert. Metrics chưa có endpoint/exporter và reset
-  về 0 khi process hoặc container khởi động lại.
+- **Lý do hoãn lại**: MVP hiện chỉ cung cấp JSON structured logging qua Python
+  `StreamHandler`. Log hiện chỉ xuất ra `stderr` để xem tại terminal hoặc qua
+  `docker logs`; không ghi file, không có log shipping/retention/dashboard/alert.
+  Metrics/counter trong MQTT consumer và batch worker đã bị bỏ để giữ ingestion
+  tối giản, nên chưa có endpoint/exporter hoặc số liệu process-local.
 - **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` bước 13-14
   (AD-02, FM-01, FM-02).
 - **Ngày ghi nhận**: 2026-07-27
 - **Ghi chú thêm**: Bước 14 đã chuyển JSON logging lên telemetry entrypoint nên
-  log startup/database/MQTT/worker/health/shutdown dùng cùng output contract.
-  Phần còn lại của mục này là log shipping, retention, dashboard/alert và
-  persistent metrics/exporter. Khi triển khai cần tránh gắn handler cũ + JSON
+  log startup/MQTT/worker/shutdown dùng cùng output contract. Phần còn lại của
+  mục này là log shipping, retention, dashboard/alert và thiết kế lại metrics
+  từ đầu nếu cần exporter. Khi triển khai cần tránh gắn handler cũ + JSON
   handler gây output trùng và tránh log cùng traceback ở nhiều boundary nếu
   không bổ sung context mới. Cần chốt backend observability stack trước khi thêm
   dependency hoặc infrastructure mới.
@@ -383,6 +383,32 @@
 - **Ghi chú thêm**: Khi triển khai lại cần dựa trên môi trường deploy thực tế để
   chọn liveness/readiness contract và drain timeout; không khôi phục nguyên xi
   orchestration cũ nếu chưa xác nhận.
+
+---
+
+### 23. Startup probe và lifecycle failure propagation cho telemetry ingestion
+
+- **Mô tả ngắn**: Bổ sung lại kiểm tra dependency lúc startup và API lifecycle rõ
+  ràng để entrypoint theo dõi consumer/worker mà không truy cập private state.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Kiểm tra database bằng shared `async_session_factory` trước khi nhận MQTT để
+    fail fast nếu DB chưa sẵn sàng.
+  - Retrieve exception từ background task để tránh `Task exception was never
+    retrieved` và giúp process thoát khác 0 khi consumer/worker chết bất thường.
+  - Cung cấp public lifecycle API như `BatchWorker.wait()` hoặc cơ chế task handle
+    rõ ràng, thay vì entrypoint truy cập trực tiếp `worker._task`.
+  - Phân biệt shutdown do signal với shutdown do lỗi runtime trong log và exit
+    code.
+- **Lý do hoãn lại**: MVP hiện ưu tiên entrypoint thật ngắn: tạo queue RAM, start
+  consumer/worker, chờ task đầu tiên kết thúc rồi cleanup. Trong demo hiện tại,
+  DB failure vẫn được worker log và process dừng; startup probe và failure
+  propagation chi tiết chưa cần để chứng minh luồng MQTT → DB.
+- **Liên quan đến planner/feature**:
+  `backend-telemetry-ingestion.md` (AD-02), bước 14-15.
+- **Ngày ghi nhận**: 2026-07-28
+- **Ghi chú thêm**: Nên triển khai cùng mục 22 nếu chuẩn bị chạy bằng
+  orchestrator hoặc cần alert/exit code đáng tin cậy. Khi thêm lại, giữ API nhỏ
+  và tránh kéo lại toàn bộ runtime orchestration cũ nếu không cần.
 
 ---
 
