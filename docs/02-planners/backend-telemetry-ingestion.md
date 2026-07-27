@@ -624,10 +624,28 @@ Lưu ý:
 ```
 
 **Kiểm tra:**
-- [ ] Batch được xử lý đúng
-- [ ] Batch lookup hoạt động (1 query cho cả batch)
-- [ ] Telematic validation hoạt động
-- [ ] Logging đầy đủ
+- [x] Batch được xử lý đúng
+- [x] Batch lookup hoạt động (1 query cho cả batch)
+- [x] Telematic validation hoạt động
+- [x] Logging đầy đủ
+
+**Kết quả rà soát (2026-07-27):**
+- `process_batch()` xử lý đúng message hợp lệ, skip telematic không tồn tại hoặc
+  chưa gán xe, và trả về đủ các metric `processed`, `skipped`, `errors`.
+- Danh sách `telematic_serial` được gom duy nhất và gọi
+  `repository.get_telematic_mappings()` đúng một lần cho cả batch.
+- Pydantic validation được thực hiện tại MQTT consumer trước khi message được đưa
+  vào queue; service tiếp tục kiểm tra mapping telematic/vehicle và xử lý lỗi
+  chuyển đổi từng message.
+- Service ghi log `INFO` cho kết quả batch và `WARNING` cho message bị skip. Lỗi
+  database được propagate tới transaction boundary và được batch worker ghi bằng
+  `logger.exception()` trước khi dừng worker, tránh ghi trùng lỗi ở service.
+- Smoke test cô lập đã xác nhận batch gồm một message hợp lệ và một serial không
+  tồn tại cho kết quả `processed=1`, `skipped=1`, `errors=0`, với đúng một lần
+  lookup, bulk insert và update `last_seen_at`.
+- Black, isort, Ruff và mypy đều pass trên các file liên quan. Chưa chạy lại
+  integration test với PostgreSQL/TimescaleDB trong lượt rà soát này do không có
+  quyền truy cập Docker daemon.
 
 ---
 
