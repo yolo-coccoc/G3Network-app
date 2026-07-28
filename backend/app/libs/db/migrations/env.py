@@ -10,7 +10,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.domains.telemetry.models import Telematic, VehicleTelemetry  # noqa: F401
+from app.domains.telematics.models import Telematic  # noqa: F401
+from app.domains.telemetry.models import VehicleTelemetry  # noqa: F401
 from app.domains.vehicles.models import Vehicle  # noqa: F401
 from app.libs.db.base import Base
 

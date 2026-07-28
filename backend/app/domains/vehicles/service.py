@@ -32,6 +32,34 @@ from app.domains.vehicles.schemas import (
 from app.domains.vehicles.types import VehicleStatus
 
 
+async def find_active_vehicle_by_vin(db: AsyncSession, vin: str):
+    """Tìm xe chưa bị xoá theo VIN để domain khác resolve mapping.
+
+    Args:
+        db: Phiên database hiện tại.
+        vin: Số khung cần tìm.
+
+    Returns:
+        Vehicle response hoặc None nếu không tìm thấy.
+    """
+    vehicle = await repo_get_vehicle_by_vin(db, vin)
+    return VehicleResponse.model_validate(vehicle) if vehicle else None
+
+
+async def find_active_vehicle_by_id(db: AsyncSession, vehicle_id: UUID):
+    """Tìm xe chưa bị xoá theo ID để domain khác dựng response.
+
+    Args:
+        db: Phiên database hiện tại.
+        vehicle_id: ID nội bộ của xe.
+
+    Returns:
+        Vehicle response hoặc None nếu không tìm thấy.
+    """
+    vehicle = await repo_get_vehicle_by_id(db, vehicle_id)
+    return VehicleResponse.model_validate(vehicle) if vehicle else None
+
+
 async def create_vehicle(
     db: AsyncSession, vehicle_data: VehicleCreate
 ) -> VehicleResponse:

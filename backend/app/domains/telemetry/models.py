@@ -1,15 +1,13 @@
 """SQLAlchemy models for Telemetry domain."""
 
-import enum
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import (
     BigInteger,
     DateTime,
     Double,
 )
-from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import (
     ForeignKey,
     Index,
@@ -27,97 +25,6 @@ from app.libs.db.base import Base
 def utc_now() -> datetime:
     """Return the current timezone-aware UTC datetime."""
     return datetime.now(timezone.utc)
-
-
-class TelematicStatus(str, enum.Enum):
-    """Telematic device status enum."""
-
-    ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
-    MAINTENANCE = "MAINTENANCE"
-
-
-class Telematic(Base):
-    """Telematic device model representing hardware installed on vehicles.
-
-    Attributes:
-        telematic_id: UUID primary key
-        telematic_serial: Mã vật lý trên thiết bị (unique)
-        vehicle_id: ID xe được gán (nullable, có thể gán sau)
-        status: Trạng thái thiết bị
-        firmware_version: Phiên bản firmware (nullable)
-        last_seen_at: Thời điểm nhận message cuối cùng (nullable)
-        created_at: Thời gian tạo
-        updated_at: Thời gian cập nhật
-    """
-
-    __tablename__ = "telematics"
-
-    # Primary key - UUID
-    telematic_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid4,
-    )
-
-    # Business key - serial number on physical device
-    telematic_serial: Mapped[str] = mapped_column(
-        String(50),
-        unique=True,
-        nullable=False,
-        index=True,
-    )
-
-    # Foreign key to vehicles (nullable - can be assigned later)
-    vehicle_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("vehicles.vehicle_id", ondelete="SET NULL"),
-        nullable=True,
-        index=True,
-    )
-
-    # Status
-    status: Mapped[TelematicStatus] = mapped_column(
-        SQLEnum(TelematicStatus),
-        default=TelematicStatus.ACTIVE,
-        nullable=False,
-        index=True,
-    )
-
-    # Firmware version (nullable)
-    firmware_version: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
-    )
-
-    # Last seen timestamp (updated when receiving message)
-    last_seen_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=utc_now,
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=utc_now,
-        onupdate=utc_now,
-        nullable=False,
-    )
-
-    # Table constraints
-    __table_args__ = (
-        # Each vehicle can have at most 1 telematic device
-        UniqueConstraint("vehicle_id", name="uq_telematics_vehicle_id"),
-    )
-
-    def __repr__(self) -> str:
-        """Return a concise debug representation of the telematic."""
-        return f"<Telematic {self.telematic_serial} ({self.status.value})>"
 
 
 class VehicleTelemetry(Base):

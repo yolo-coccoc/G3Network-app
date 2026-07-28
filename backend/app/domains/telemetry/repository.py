@@ -20,7 +20,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telemetry.models import Telematic, VehicleTelemetry
+from app.domains.telematics.models import Telematic
+from app.domains.telemetry.models import VehicleTelemetry
 
 logger = logging.getLogger(__name__)
 
