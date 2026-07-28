@@ -13,7 +13,6 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TypedDict
-from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +44,6 @@ async def process_batch(
        - Nếu vehicle_id là None: log warning, skip
        - Convert sang DB dict
     4. Bulk insert vào database
-    5. Update last_seen_at cho các telematics
 
     Args:
         db: AsyncSession để thao tác database
@@ -82,9 +80,6 @@ async def process_batch(
     valid_messages = []
     skipped_count = 0
     error_count = 0
-
-    # Track max received_at cho mỗi telematic để update last_seen_at
-    telematic_timestamps: dict[UUID, datetime] = {}
 
     # Thời điểm backend nhận message (cùng 1 timestamp cho cả batch)
     received_at = datetime.now(timezone.utc)
@@ -132,14 +127,6 @@ async def process_batch(
             )
             valid_messages.append(db_dict)
 
-            # Track timestamp để update last_seen_at sau
-            # Lưu MAX received_at cho mỗi telematic
-            if (
-                telematic_id not in telematic_timestamps
-                or received_at > telematic_timestamps[telematic_id]
-            ):
-                telematic_timestamps[telematic_id] = received_at
-
         except (TypeError, ValueError) as error:
             logger.exception(
                 "failed to convert message to DB dict",
@@ -164,17 +151,6 @@ async def process_batch(
                 "rows_inserted": processed_count,
                 "rows_requested": len(valid_messages),
             },
-        )
-
-    # Step 5: Update last_seen_at cho các telematics
-    if telematic_timestamps:
-        telematic_data = list(telematic_timestamps.items())
-        updated_count = await telemetry_repository.update_telematic_last_seen(
-            db, telematic_data
-        )
-        logger.info(
-            "update_telematic_last_seen completed",
-            extra={"telematics_updated": updated_count},
         )
 
     # Log summary

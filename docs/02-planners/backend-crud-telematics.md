@@ -71,7 +71,6 @@ Sử dụng model hiện có `Telematic` và rà soát/bổ sung nếu cần:
   indexed; unique để mỗi xe có tối đa một telematic, nhiều giá trị NULL vẫn hợp lệ.
 - `status`: `active | inactive | maintenance`.
 - `firmware_version`: nullable.
-- `last_seen_at`: timezone-aware nullable, do ingestion cập nhật.
 - `created_at`, `updated_at`: timezone-aware UTC.
 - `deleted_at`: timezone-aware nullable, dùng cho soft delete.
 

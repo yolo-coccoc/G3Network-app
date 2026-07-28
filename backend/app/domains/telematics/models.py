@@ -26,7 +26,6 @@ class Telematic(Base):
         vehicle_id: ID xe được gán, có thể NULL.
         status: Trạng thái vận hành.
         firmware_version: Phiên bản firmware hiện tại.
-        last_seen_at: Lần cuối nhận bản tin telemetry.
         deleted_at: Thời điểm soft delete.
     """
 
@@ -39,7 +38,6 @@ class Telematic(Base):
     )
     status: Mapped[TelematicStatus] = mapped_column(SQLEnum(TelematicStatus), nullable=False, index=True)
     firmware_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -37,7 +37,6 @@ class TelematicResponse(BaseModel):
     vehicle_vin: str | None
     status: TelematicStatus
     firmware_version: str | None
-    last_seen_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
