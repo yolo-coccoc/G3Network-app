@@ -15,11 +15,45 @@ from datetime import datetime, timezone
 from typing import TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 
 import app.domains.telemetry.repository as telemetry_repository
-from app.domains.telemetry.schemas import TelemetryEnvelope
+from app.domains.telemetry.exceptions import TelemetryNotFoundError
+from app.domains.telemetry.schemas import (
+    LatestVehicleTelemetryResponse,
+    TelemetryEnvelope,
+)
+from app.domains.vehicles import service as vehicle_service
 
 logger = logging.getLogger(__name__)
+
+
+async def get_latest_vehicle_telemetry_response(
+    db: AsyncSession, vehicle_id: UUID
+) -> LatestVehicleTelemetryResponse:
+    """Lấy telemetry mới nhất sau khi xác nhận xe còn hoạt động.
+
+    Args:
+        db: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: ID nội bộ của xe cần truy vấn.
+
+    Returns:
+        Schema response chứa bản ghi telemetry mới nhất.
+
+    Raises:
+        TelemetryNotFoundError: Khi xe không tồn tại hoặc chưa có telemetry.
+    """
+    vehicle = await vehicle_service.find_active_vehicle_by_id(db, vehicle_id)
+    if vehicle is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+
+    telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)
+    if telemetry is None:
+        raise TelemetryNotFoundError(
+            f"No telemetry found for vehicle with id '{vehicle_id}'"
+        )
+
+    return LatestVehicleTelemetryResponse.model_validate(telemetry)
 
 
 class BatchResult(TypedDict):

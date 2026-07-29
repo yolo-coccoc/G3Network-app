@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.domains.vehicles.router import router as vehicles_router
 from app.domains.telematics.router import router as telematics_router
+from app.domains.telemetry.router import router as telemetry_router
 from app.libs.common.config import settings
 from app.libs.db.session import close_db
 
@@ -42,3 +43,4 @@ async def health_check() -> dict[str, str]:
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
 app.include_router(telematics_router, prefix="/api/v1/telematics")
+app.include_router(telemetry_router, prefix="/api/v1/telemetry")

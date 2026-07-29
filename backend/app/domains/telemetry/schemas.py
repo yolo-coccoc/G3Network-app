@@ -15,6 +15,46 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
+class LatestVehicleTelemetryResponse(BaseModel):
+    """Dữ liệu telemetry mới nhất trả về cho một xe.
+
+    Attributes:
+        vehicle_id: ID nội bộ của xe.
+        telematic_serial: Serial thiết bị gửi bản tin.
+        recorded_at: Thời điểm thiết bị ghi nhận dữ liệu theo UTC.
+        latitude: Vĩ độ GPS.
+        longitude: Kinh độ GPS.
+        speed: Tốc độ hiện tại, km/h.
+        heading: Hướng di chuyển, độ.
+        soc: Phần trăm pin còn lại.
+        battery_voltage: Điện áp pin, V.
+        battery_current: Dòng điện pin, A.
+        battery_temperature: Nhiệt độ pin, °C.
+        motor_temperature: Nhiệt độ động cơ, °C.
+        odometer: Tổng quãng đường, km.
+        signal_strength: Cường độ tín hiệu, dBm.
+        error_codes: Mã lỗi từ thiết bị.
+    """
+
+    model_config = {"from_attributes": True}
+
+    vehicle_id: UUID
+    telematic_serial: str
+    recorded_at: datetime
+    latitude: float
+    longitude: float
+    speed: float | None
+    heading: float | None
+    soc: float
+    battery_voltage: float | None
+    battery_current: float | None
+    battery_temperature: float | None
+    motor_temperature: float | None
+    odometer: float | None
+    signal_strength: int | None
+    error_codes: dict[str, list[str]] | None
+
+
 class LocationData(BaseModel):
     """
     Dữ liệu vị trí GPS từ telematic.

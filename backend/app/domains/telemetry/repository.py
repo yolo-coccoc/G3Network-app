@@ -24,6 +24,27 @@ from app.domains.telemetry.models import VehicleTelemetry
 logger = logging.getLogger(__name__)
 
 
+async def get_latest_vehicle_telemetry(
+    db: AsyncSession, vehicle_id: UUID
+) -> VehicleTelemetry | None:
+    """Lấy bản ghi telemetry mới nhất của một xe.
+
+    Args:
+        db: Phiên database hiện tại.
+        vehicle_id: ID nội bộ của xe.
+
+    Returns:
+        Bản ghi có `recorded_at` lớn nhất hoặc None nếu chưa có dữ liệu.
+    """
+    result = await db.execute(
+        select(VehicleTelemetry)
+        .where(VehicleTelemetry.vehicle_id == vehicle_id)
+        .order_by(VehicleTelemetry.recorded_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_telematic_mappings(
     db: AsyncSession,
     serials: Sequence[str],
