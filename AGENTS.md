@@ -21,7 +21,8 @@
 | Vehicle App (màn hình trên xe) | **Flutter (Dart)**, build ra APK chạy trên **Android** | đã chốt |
 | Database | **PostgreSQL 16 + TimescaleDB (time-series) + PostGIS (địa lý)** | đã chốt |
 | Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX 5.5** | đã chốt - Lưu ý: EMQX 5.x không dùng file `acl.conf` như EMQX 4.x, ACL được cấu hình qua Dashboard UI hoặc REST API |
-| OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging`** (thư mục `charging/ocpp/`), dùng thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | vì là kết nối WebSocket dài hạn, khác REST API thường, nhưng vẫn chỉ phục vụ domain `charging` nên đặt code cạnh nhau |
+| OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging_stations`** (thư mục `charging_stations/ocpp/`), dùng OCPP 2.0.1 qua thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | Gateway sở hữu kết nối và trạng thái thiết bị; domain `charging_sessions` nhận sự kiện phiên qua public service, không sở hữu WebSocket |
+| Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (hồ sơ trụ, EVSE, connector, trạng thái/OCPP) và **`charging_sessions`** (vòng đời phiên, meter samples) | đã chốt ngày 2026-07-31; không gom lại thành một domain `charging` |
 | Reverse proxy / API Gateway | **Không dùng ở môi trường dev** (mỗi thành phần chạy port riêng trên host, gọi thẳng qua `localhost`) | cân nhắc lại (Traefik/Nginx) khi làm `docker-compose.prod.yml` |
 | State management (Web) | TanStack Query (server state) + Zustand (client state) | đề xuất |
 | UI kit (Web) | Tailwind CSS + shadcn/ui | đề xuất |
@@ -51,11 +52,14 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   │   │   │       ├── mqtt_consumer.py
 │   │   │   │       └── entrypoint.py  # container "telemetry-ingestion" trỏ vào đây
 │   │   │   │
-│   │   │   ├── charging/              # Trụ sạc, phiên sạc, đối soát vi phạm (S-02, AD-03)
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
-│   │   │   │   └── ocpp/              # WebSocket server giao tiếp trụ sạc (OCPP)
+│   │   │   ├── charging_stations/     # Hồ sơ trụ, EVSE/connector, trạng thái và OCPP (AD-03)
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   └── ocpp/              # WebSocket server giao tiếp trụ sạc (OCPP 2.0.1)
 │   │   │   │       ├── ocpp_server.py
-│   │   │   │       └── entrypoint.py  # container "charging-ocpp" trỏ vào đây
+│   │   │   │       └── entrypoint.py  # container "charging-stations-ocpp" trỏ vào đây
+│   │   │   │
+│   │   │   ├── charging_sessions/     # Vòng đời và giám sát phiên sạc (S-02)
+│   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── policy/                # Chính sách sạc/bảo hành (AD-04)
 │   │   │   ├── notifications/         # Cấu hình ngưỡng & kênh thông báo (AD-06)
@@ -80,7 +84,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   ├── src/
 │   │   ├── features/
 │   │   │   ├── vehicles/           # ánh xạ domain vehicles
-│   │   │   ├── charging/           # ánh xạ domain charging + policy
+│   │   │   ├── charging/           # UI tổng hợp API charging_stations + charging_sessions + policy
 │   │   │   ├── fleet/              # ánh xạ domain fleet + drivers
 │   │   │   ├── billing/            # ánh xạ domain billing
 │   │   │   ├── support/            # ánh xạ domain support
@@ -97,7 +101,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   ├── lib/
 │   │   ├── features/               # checkin/, realtime_data/, alerts/, map/, support/, payment/
 │   │   │   # ⚠️ Lưu ý: cấu trúc feature ở đây được giữ nguyên từ bản đầu, CHƯA được rà soát lại
-│   │   │   # cho khớp với domain mới bên backend (vehicles/telemetry/charging...).
+│   │   │   # cho khớp với domain mới bên backend (vehicles/telemetry/charging_stations/charging_sessions...).
 │   │   │   # Cần rà soát khi triển khai tới phần vehicle-app.
 │   │   ├── core/                   # network client, local storage, kết nối cục bộ tới thiết bị telematics
 │   │   └── main.dart
@@ -124,7 +128,8 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 - Mỗi thư mục trong `backend/app/domains/` là **1 bounded context**. Domain này chỉ được gọi sang domain khác qua **`service.py` công khai** của domain đó — **không** import/query chéo trực tiếp `repository.py`/`models.py` của domain khác.
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
-- **`telemetry`** là domain dữ liệu thời gian thực: nhiều domain khác (`charging`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
+- **`telemetry`** là domain dữ liệu thời gian thực của xe: nhiều domain khác (`charging_sessions`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
+- **`charging_stations`** sở hữu hồ sơ Charging Station, EVSE, Connector, trạng thái kết nối và OCPP 2.0.1. OCPP adapter resolve internal identity rồi gọi public service của **`charging_sessions`** bằng event đã chuẩn hóa; `charging_sessions` không import model/repository hoặc payload OCPP nội bộ của `charging_stations`. Giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`, không gọi ngược để tránh dependency cycle.
 - Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENTS.md chỉ nêu nguyên tắc chung ở cấp domain.
 - Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).
 - Khi nền tảng CI/CD được chốt, bổ sung **`import-linter`** để chặn domain A import trực tiếp nội bộ (`repository`/`models`) của domain B. Hiện package/config này chưa được cài đặt, nên review và tìm kiếm import là bước bắt buộc.
@@ -139,7 +144,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 
 | Thành phần | Công cụ |
 |---|---|
-| Backend (`api`, và các entrypoint trong `telemetry/ingestion`, `charging/ocpp`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... |
+| Backend (`api`, và các entrypoint trong `telemetry/ingestion`, `charging_stations/ocpp`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... |
 | Web Portal | `pnpm dev` |
 | Vehicle App | `flutter run` |
 
@@ -360,7 +365,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 ## 6. Database
 
 - 1 instance PostgreSQL duy nhất, bật 2 extension: `timescaledb`, `postgis` (script khởi tạo ở `infra/db/init/`).
-- Bảng dữ liệu time-series (telemetry xe, trạng thái trụ sạc, phiên sạc) tạo dưới dạng **hypertable** (TimescaleDB) để tối ưu truy vấn/nén dữ liệu lịch sử.
+- Bảng dữ liệu time-series (telemetry xe, lịch sử trạng thái/meter samples của trụ và phiên sạc) tạo dưới dạng **hypertable** (TimescaleDB) để tối ưu truy vấn/nén dữ liệu lịch sử. Bảng aggregate `charging_sessions` là bảng quan hệ thông thường; chỉ bảng sample theo thời gian mới là hypertable.
 - Cột vị trí (GPS xe, vị trí trạm sạc, geofence) dùng kiểu `geometry`/`geography` (PostGIS), trừ ngoại lệ MVP đã được planner chốt và ghi trong `future.md`.
 - Naming bảng mặc định là số nhiều, `snake_case` (`vehicles`, `charging_sessions`, `alerts`, `policy_configs`...). Ngoại lệ phải được planner hoặc migration đã chốt ghi rõ; telemetry MVP hiện dùng `vehicle_telemetry`.
 - Migration quản lý bằng Alembic, đặt trong `backend/app/libs/db/migrations/`.

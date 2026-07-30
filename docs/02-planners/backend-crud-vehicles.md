@@ -62,7 +62,8 @@ Tạo hạ tầng database trong thư mục infra/:
 **Lưu ý quan trọng:**
 - Image `postgres:16` mặc định **không có** TimescaleDB và PostGIS
 - Cho development cơ bản (CRUD vehicles), image này đủ dùng
-- Khi cần dùng TimescaleDB/PostGIS (domain telemetry, charging), cần chuyển sang:
+- Khi cần dùng TimescaleDB/PostGIS (domain telemetry, charging_stations,
+  charging_sessions), cần chuyển sang:
   - `timescale/timescaledb-ha:pg16` (có TimescaleDB)
   - `postgis/postgis:16-3.4` (có PostGIS)
   - Hoặc build custom image có cả 2 extensions
