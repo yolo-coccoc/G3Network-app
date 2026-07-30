@@ -57,7 +57,6 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
         index: Chỉ số dùng để tạo vị trí khác nhau giữa các thiết bị.
     """
     odometer = 12500.0 + index * 100
-    soc = 80.0
     while True:
         payload = {
             "message_uuid": str(uuid4()),
@@ -73,10 +72,10 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
                 "odometer": odometer,
             },
             "battery": {
-                "soc": soc,
+                "soc": random.uniform(20.0, 95.0),
                 "voltage": 650.0,
                 "current": -120.0,
-                "temperature": 32.0,
+                "temperature": random.uniform(25.0, 40.0),
             },
             "motor": {"temperature": 45.0},
             "signal": {"strength": -70},
@@ -87,7 +86,6 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
         await client.publish(topic, json.dumps(message.model_dump(mode="json")), qos=0, retain=False)
         print(f"Đã gửi telemetry: {serial}")
         odometer += 0.2
-        soc = max(0.0, soc - 0.01)
         await asyncio.sleep(PUBLISH_INTERVAL_SECONDS)
 
 
