@@ -236,6 +236,18 @@
 - **Ngày ghi nhận**: 2026-07-26
 - **Ghi chú thêm**: Trước khi thiết lập CI/CD phải thêm test dependencies bằng `uv`, sửa `make backend-test` để dùng môi trường đã cài test và xác định ngưỡng coverage.
 
+### 24. Phân chia rõ ràng cấu hình giữa `config.py` và `.env`
+
+- **Mô tả ngắn**: Chuẩn hóa ranh giới giữa schema/cấu hình mặc định trong `backend/app/libs/common/config.py` và giá trị runtime theo môi trường trong `backend/.env`.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - `config.py` là nguồn định nghĩa tên biến, kiểu dữ liệu, validation, giá trị mặc định và cách truy cập cấu hình bằng `Settings`.
+  - `.env` chỉ chứa giá trị thay đổi theo môi trường như database URL, broker connection, credentials và tuning runtime; không chứa business rule hoặc logic ứng dụng.
+  - Mọi source code backend và Alembic truy cập cấu hình qua `app.libs.common.config.settings`, không tự gọi `os.getenv()` hoặc `load_dotenv()`.
+- **Lý do hoãn lại**: MVP hiện đã có `Settings` dùng Pydantic nhưng vẫn còn biến `DEBUG` không khớp với `APP_DEBUG`, `CORS_ORIGINS` trong `.env.example` chưa được khai báo/sử dụng, Alembic có cơ chế đọc `.env` riêng và một số default queue/batch/MQTT còn bị lặp trong source.
+- **Liên quan đến planner/feature**: Cấu hình backend dùng chung; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, AD-02.
+- **Ngày ghi nhận**: 2026-07-30
+- **Ghi chú thêm**: Khi hoàn thiện cần sửa `DEBUG` thành `APP_DEBUG`, rà soát `CORS_ORIGINS`, cho Alembic dùng cùng `Settings`, loại bỏ hoặc xác định rõ các default cấu hình trùng lặp, và không commit giá trị bí mật trong `.env`.
+
 ---
 
 ### 17. Observability tập trung cho telemetry ingestion
