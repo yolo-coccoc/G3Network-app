@@ -11,7 +11,7 @@ import asyncio
 import logging
 import signal
 
-from app.domains.telemetry.ingestion.batch_worker import BatchWorker
+from app.domains.telemetry.ingestion.message_worker import MessageWorker
 from app.domains.telemetry.ingestion.mqtt_consumer import MQTTConsumer
 from app.domains.telemetry.schemas import TelemetryEnvelope
 from app.libs.common.config import settings
@@ -38,11 +38,7 @@ async def run() -> None:
         maxsize=settings.TELEMETRY_QUEUE_SIZE
     )
     consumer = MQTTConsumer(queue=queue)
-    worker = BatchWorker(
-        queue=queue,
-        batch_size=settings.TELEMETRY_BATCH_SIZE,
-        flush_interval=settings.TELEMETRY_FLUSH_INTERVAL,
-    )
+    worker = MessageWorker(queue=queue)
 
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
@@ -61,18 +57,12 @@ async def run() -> None:
                 consumer.start_consuming(), name="telemetry-mqtt-consumer"
             ),
             worker._task,
-            asyncio.create_task(
-                stop_event.wait(), name="telemetry-shutdown-signal"
-            ),
+            asyncio.create_task(stop_event.wait(), name="telemetry-shutdown-signal"),
         ]
 
         logger.info(
             "Telemetry ingestion started",
-            extra={
-                "queue_size": settings.TELEMETRY_QUEUE_SIZE,
-                "batch_size": settings.TELEMETRY_BATCH_SIZE,
-                "flush_interval": settings.TELEMETRY_FLUSH_INTERVAL,
-            },
+            extra={"queue_size": settings.TELEMETRY_QUEUE_SIZE},
         )
 
         _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

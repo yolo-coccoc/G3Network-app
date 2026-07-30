@@ -1,11 +1,11 @@
-"""
-Telemetry repository layer.
+"""Repository truy cập dữ liệu của domain telemetry.
 
 Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
 
-Repository xử lý database operations cho telemetry data:
-- Batch lookup telematic mappings
-- Bulk insert telemetry data
+Module này chứa cả thao tác singular đang dùng cho luồng MVP hiện tại và các
+thao tác batch được giữ lại để tái sử dụng khi throughput thực tế cần tối ưu.
+Repository không sở hữu transaction: entry boundary truyền vào session và
+quyết định commit hoặc rollback.
 """
 
 import logging
@@ -22,6 +22,58 @@ from app.domains.telematics.models import Telematic
 from app.domains.telemetry.models import VehicleTelemetry
 
 logger = logging.getLogger(__name__)
+
+
+async def get_telematic_mapping(
+    db: AsyncSession,
+    serial: str,
+) -> tuple[UUID, UUID] | None:
+    """Lấy mapping của một thiết bị telematic đã được gán vào xe.
+
+    Args:
+        db: Phiên database do entry boundary sở hữu.
+        serial: Serial vật lý của thiết bị cần tra cứu.
+
+    Returns:
+        Tuple ``(telematic_id, vehicle_id)`` nếu thiết bị tồn tại và đã được
+        gán xe; ``None`` nếu không tìm thấy mapping hợp lệ.
+    """
+    result = await db.execute(
+        select(Telematic.telematic_id, Telematic.vehicle_id)
+        .where(Telematic.telematic_serial == serial)
+        .where(Telematic.vehicle_id.isnot(None))
+    )
+    row = result.one_or_none()
+    if row is None:
+        return None
+
+    return row.telematic_id, row.vehicle_id
+
+
+async def insert_telemetry(
+    db: AsyncSession,
+    message: dict[str, object],
+) -> int:
+    """Insert một bản ghi telemetry bằng SQLAlchemy Core.
+
+    Args:
+        db: Phiên database do entry boundary sở hữu.
+        message: Dict dữ liệu đã được service chuyển đổi theo model database.
+
+    Returns:
+        Số row được database báo đã insert.
+
+    Side Effects:
+        Ghi một row vào session hiện tại. Hàm không commit hoặc rollback.
+    """
+    result = cast(
+        CursorResult[Any], await db.execute(insert(VehicleTelemetry).values(message))
+    )
+    logger.debug(
+        "insert_telemetry",
+        extra={"rows_inserted": result.rowcount},
+    )
+    return result.rowcount
 
 
 async def get_latest_vehicle_telemetry(

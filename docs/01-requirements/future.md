@@ -96,7 +96,9 @@
   - Tăng throughput ingest
   - Giảm DB load
   - Latency thấp hơn cho mỗi message
-- **Lý do hoãn lại**: MVP dùng batch lookup (1 query cho cả batch) đã đủ hiệu quả. Cache sẽ thêm khi volume tăng và DB trở thành bottleneck.
+- **Lý do hoãn lại**: Active MVP hiện xử lý từng message và chưa cần thêm cache
+  ngoài lookup đơn giản. Khi bật lại batch path hoặc volume tăng, cache sẽ được
+  đánh giá cùng benchmark để giảm lookup lặp và tải lên DB.
 - **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
 - **Ngày ghi nhận**: 2026-07-25
 - **Ghi chú thêm**: Nếu dùng cache, cần TTL (5-10 phút) và invalidation khi telematic được gán/xóa khỏi vehicle. Cân nhắc Redis nếu cần share cache giữa nhiều worker instance.
@@ -422,6 +424,29 @@
 - **Ghi chú thêm**: Nên triển khai cùng mục 22 nếu chuẩn bị chạy bằng
   orchestrator hoặc cần alert/exit code đáng tin cậy. Khi thêm lại, giữ API nhỏ
   và tránh kéo lại toàn bộ runtime orchestration cũ nếu không cần.
+
+### 25. Batch processing cho telemetry ingestion
+
+- **Mô tả ngắn**: Bật lại đường xử lý telemetry theo batch gồm batch window,
+  batch lookup và bulk insert vào TimescaleDB.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Giảm số transaction và số lần round-trip tới database khi throughput tăng.
+  - Lookup mapping telematic một lần cho nhiều message.
+  - Tận dụng PostgreSQL Core bulk insert để tối ưu hiệu năng ingest.
+  - Cho phép đo và lựa chọn trade-off giữa latency từng message và throughput.
+- **Lý do hoãn lại**: MVP hiện ưu tiên latency thấp, luồng xử lý dễ quan sát và
+  cô lập lỗi theo từng message; volume hiện tại chưa có benchmark chứng minh batch
+  là cần thiết. Batch window cũng tạo độ trễ không cần thiết cho demo.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` Bước 16
+  (AD-02, FM-01, FM-02).
+- **Ngày ghi nhận**: 2026-07-30
+- **Ghi chú thêm**: Code batch vẫn được giữ trong
+  `backend/app/domains/telemetry/ingestion/batch_worker.py`,
+  `telemetry.service.process_batch()`,
+  `telemetry.repository.get_telematic_mappings()` và
+  `telemetry.repository.bulk_insert_telemetry()`, nhưng không được entrypoint
+  active gọi. Trước khi bật lại cần benchmark workload đại diện, chốt
+  transaction/failure semantics, backpressure và cập nhật smoke/E2E tương ứng.
 
 ---
 

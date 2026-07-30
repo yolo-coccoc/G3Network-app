@@ -34,8 +34,8 @@ class Settings(BaseSettings):
         MQTT_WILL_QOS: QoS của MQTT Last Will.
         MQTT_WILL_RETAIN: Có retain MQTT Last Will hay không.
         TELEMETRY_QUEUE_SIZE: Sức chứa in-memory queue.
-        TELEMETRY_BATCH_SIZE: Số message tối đa trong một transaction.
-        TELEMETRY_FLUSH_INTERVAL: Thời gian tối đa chờ batch chưa đầy.
+        TELEMETRY_BATCH_SIZE: Cấu hình batch worker được giữ cho phase tương lai.
+        TELEMETRY_FLUSH_INTERVAL: Cửa sổ batch được giữ cho phase tương lai.
         API_DEFAULT_PAGE: Trang mặc định cho endpoint phân trang.
         API_DEFAULT_PAGE_SIZE: Số bản ghi mặc định mỗi trang.
         API_MAX_PAGE_SIZE: Số bản ghi tối đa mỗi trang.
@@ -73,7 +73,8 @@ class Settings(BaseSettings):
     MQTT_WILL_QOS: int = Field(default=1, ge=0, le=2)
     MQTT_WILL_RETAIN: bool = True
 
-    # Cấu hình queue và batch của telemetry process.
+    # Queue dùng cho luồng từng message hiện tại. Hai setting batch bên dưới
+    # được giữ để implementation batch tương lai vẫn có thể khởi động lại.
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
     TELEMETRY_BATCH_SIZE: int = Field(default=100, ge=1)
     TELEMETRY_FLUSH_INTERVAL: float = Field(default=30.0, gt=0)

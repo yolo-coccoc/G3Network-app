@@ -1,29 +1,34 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đang thực hiện — bước 0-14 đã triển khai theo scope MVP tối giản; bước 15 đã chạy E2E chính, còn mixed batch và queue-full qua broker cần bổ sung khi cần
+> Trạng thái: 🚧 Đang thực hiện — bước 0-15 đã triển khai theo scope MVP; bước 16 chuyển luồng active sang xử lý từng message, còn batch path được giữ cho phase tương lai
 > Ngày tạo: 2026-07-24
-> Rà soát gần nhất: 2026-07-28
+> Rà soát gần nhất: 2026-07-30
 
 ---
 
 ## Tổng quan
 
-Xây dựng hệ thống ingest dữ liệu telemetry từ xe tải điện theo mô hình **batch processing**:
+Xây dựng hệ thống ingest dữ liệu telemetry từ xe tải điện theo mô hình **xử lý từng message**:
 
 **Luồng dữ liệu:**
 ```
-Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Batch Queue → PostgreSQL (TimescaleDB)
+Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Message Queue → Message Worker → PostgreSQL (TimescaleDB)
 ```
 
-**Nguyên lý batch:**
+**Nguyên lý MVP hiện tại:**
 - Telematic publish message liên tục (mỗi 5-10 giây)
 - Backend consume message và đưa vào in-memory queue
-- Batch worker xử lý queue theo batch (mỗi 30 giây hoặc 100 messages)
-- Bulk insert vào database để tối ưu hiệu năng
+- Message worker lấy từng message và xử lý ngay khi có trong queue
+- Mỗi message chạy trong một transaction riêng để giảm độ trễ và cô lập lỗi
+
+**Batch path được giữ lại:**
+- `batch_worker.py`, `process_batch()`, batch lookup và bulk insert không bị xóa
+- Chưa dùng trong entrypoint MVP; việc bật lại phải được benchmark và chốt lại
+  semantics transaction/backpressure trước
 
 **Phạm vi:**
-- Backend Python async (MQTT consumer + batch worker + process entrypoint tối
+- Backend Python async (MQTT consumer + message worker + process entrypoint tối
   giản; không có HTTP runtime/health server trong MVP hiện tại)
 - EMQX broker
 - TimescaleDB hypertable
@@ -45,7 +50,7 @@ Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Batch Queue →
 
 Phạm vi MVP tập trung vào việc chứng minh luồng:
 ```
-Simulator → EMQX → MQTT consumer → asyncio.Queue → batch worker → TimescaleDB
+Simulator → EMQX → MQTT consumer → asyncio.Queue → message worker → TimescaleDB
 ```
 
 ---
@@ -58,12 +63,13 @@ backend/
 │   ├── domains/
 │   │   ├── telemetry/
 │   │   │   ├── models.py           # Telematic, VehicleTelemetry (TimescaleDB)
-│   │   │   ├── repository.py       # Bulk insert, telematic lookup
+│   │   │   ├── repository.py       # Single insert/lookup và batch path tương lai
 │   │   │   ├── schemas.py          # MQTT payload validation
-│   │   │   ├── service.py          # Batch processing logic
+│   │   │   ├── service.py          # Single-message và batch processing logic
 │   │   │   └── ingestion/
 │   │   │       ├── mqtt_consumer.py    # MQTT client, message handler
-│   │   │       ├── batch_worker.py     # Async batch processor
+│   │   │       ├── message_worker.py   # Async single-message processor hiện tại
+│   │   │       ├── batch_worker.py     # Batch processor giữ cho phase tương lai
 │   │   │       └── entrypoint.py       # Process entrypoint tối giản
 │   │   └── vehicles/
 │   │       └── models.py           # Bảng vehicles được FK tham chiếu
@@ -1218,6 +1224,9 @@ Test publish MQTT → queue → batch → TimescaleDB đầy đủ vẫn thuộc
 **Mục tiêu:** Chứng minh luồng MVP thực tế từ MQTT publish đến TimescaleDB, bao
 gồm success path, skip/drop path, transaction failure và process lifecycle.
 
+> Ghi chú: Các case batch trong bước này là bằng chứng của implementation trước
+> Bước 16. Smoke end-to-end cho active single-message path được ghi ở Bước 16.
+
 #### 15.1. Phạm vi và nguyên tắc
 
 - Đây là integration/E2E test chạy với PostgreSQL/TimescaleDB và EMQX thật.
@@ -1476,6 +1485,87 @@ Ghi vào planner:
 
 ---
 
+### Bước 16: Chuyển luồng active sang xử lý từng message
+
+**Mục tiêu:** Bỏ batch window khỏi đường chạy MVP để message được xử lý ngay
+theo thứ tự lấy ra khỏi queue, nhưng giữ toàn bộ implementation batch để có thể
+bật lại khi workload thực tế cần tối ưu throughput.
+
+#### 16.1. Contract và transaction
+
+- Luồng active là:
+  `MQTTConsumer → asyncio.Queue → MessageWorker → process_message → database`.
+- `MessageWorker` lấy đúng một `TelemetryEnvelope` mỗi vòng lặp; không chờ đủ
+  số lượng và không dùng `TELEMETRY_FLUSH_INTERVAL`.
+- Mỗi message có một transaction riêng do worker sở hữu. Thành công thì commit;
+  lỗi database rollback transaction của message hiện tại và dừng worker theo
+  policy MVP không retry.
+- Các message đã commit trước đó vẫn được giữ khi một message sau gặp lỗi.
+  Message còn trong queue khi process dừng vẫn có thể mất vì queue là RAM và MVP
+  không drain queue.
+- `received_at` được tạo riêng cho từng message tại service boundary xử lý.
+- Message không có mapping telematic/vehicle bị skip; lỗi chuyển đổi dữ liệu
+  chỉ tăng `errors` cho message hiện tại. MQTT schema validation vẫn diễn ra ở
+  consumer trước khi enqueue.
+
+#### 16.2. File thay đổi
+
+Tạo:
+
+- `backend/app/domains/telemetry/ingestion/message_worker.py`
+
+Cập nhật:
+
+- `backend/app/domains/telemetry/service.py`: thêm `process_message()` và
+  `MessageResult`.
+- `backend/app/domains/telemetry/repository.py`: thêm singular mapping lookup và
+  insert; giữ nguyên `get_telematic_mappings()`/`bulk_insert_telemetry()`.
+- `backend/app/domains/telemetry/ingestion/entrypoint.py`: dùng
+  `MessageWorker`, không truyền batch size/flush interval vào active worker.
+- `backend/app/libs/common/config.py`, `backend/.env.example`: giữ setting batch
+  cho code tương lai và ghi rõ chúng không thuộc active path.
+- `docs/01-requirements/future.md`: ghi nhận batch processing là thành phần hoãn.
+
+#### 16.3. Bảo toàn batch implementation
+
+- Không xóa hoặc chuyển đổi `batch_worker.py` và `process_batch()` sang wrapper
+  singular; batch path phải còn nguyên để tránh mất implementation đã có.
+- Không xóa các repository batch API. Khi bật lại phải đánh giá lại benchmark,
+  transaction atomicity, backpressure và failure semantics.
+- Rà soát mục cache telematic mapping trong `future.md` để không còn mô tả rằng
+  active MVP đang dùng batch lookup.
+
+#### 16.4. Kiểm tra
+
+- [x] Active entrypoint dùng `MessageWorker` và không còn batch window.
+- [x] Singular service/repository API giữ transaction boundary ở worker.
+- [x] Batch worker/service/repository path vẫn tồn tại và không bị gọi từ entrypoint.
+- [x] `compileall`, Black, isort, Ruff và mypy pass trên các file thay đổi.
+- [x] Smoke test message hợp lệ, mapping bị skip và lỗi database rollback.
+- [x] Smoke test MQTT/entrypoint, shutdown và queue-full không hồi quy policy
+  queue RAM MVP.
+
+**Kết quả thực hiện (2026-07-30):**
+
+- Tạo `MessageWorker` làm active worker; entrypoint không còn truyền hoặc log
+  `TELEMETRY_BATCH_SIZE`/`TELEMETRY_FLUSH_INTERVAL`.
+- `process_message()` thực hiện singular mapping lookup và insert trong
+  transaction do worker sở hữu. Hai message smoke liên tiếp tạo hai transaction
+  riêng; batch APIs vẫn import được và không bị entrypoint gọi.
+- Targeted `compileall`, Black, isort, Ruff và mypy đều pass. Full-repository
+  Black/isort vẫn báo lỗi formatting/import sorting tồn tại trước ở
+  `app/domains/telematics/models.py`, `app/domains/telematics/repository.py` và
+  `app/domains/telemetry/models.py`; không sửa các file ngoài phạm vi.
+- PostgreSQL smoke pass với mapping thật `T00001`: insert, query, raw payload và
+  cleanup đều thành công.
+- MQTT E2E pass với EMQX 5.5: message UUID
+  `0f8b7b0e-7b2f-4d12-9f15-4aa4d7b7a002` được persist với `soc=62.5`, log
+  `processed=1`, sau đó đã xóa row test.
+- Batch implementation vẫn nằm trong `batch_worker.py`, `process_batch()` và
+  repository batch APIs; đã ghi nhận mục 25 trong `future.md`.
+
+---
+
 ## Tổng kết
 
 ### Trạng thái hiện tại
@@ -1484,16 +1574,18 @@ Ghi vào planner:
   lại với source ingestion ngày 2026-07-28.
 - Bước 15: đã chạy E2E chính ngày 2026-07-28; còn mixed batch đầy đủ và
   queue-full qua broker chưa nghiệm thu ổn định.
+- Bước 16: đã chuyển active ingestion sang xử lý từng message ngày 2026-07-30;
+  batch path được giữ lại và ghi nhận trong `future.md`.
 
-Sau khi hoàn thành bước 15, hệ thống có:
+Sau khi hoàn thành bước 16, hệ thống có:
 
 1. **Database**: 2 bảng `telematics` và `vehicle_telemetry` (TimescaleDB hypertable)
 2. **MQTT Broker**: EMQX 5.5 chạy local, QoS 0; chưa cấu hình ACL production
 3. **Backend**:
    - MQTT consumer nhận message từ broker với QoS 0
-   - Batch worker xử lý queue định kỳ (100 messages hoặc 30 giây)
-   - Batch lookup telematic mapping (không dùng cache)
-   - Repository bulk insert vào TimescaleDB
+   - Message worker xử lý tuần tự từng message ngay sau khi lấy khỏi queue
+   - Single lookup và insert cho active MVP
+   - Batch worker, batch lookup và bulk insert được giữ cho phase tương lai
    - Lưu raw_payload JSONB để debug và reprocessing
    - Process entrypoint riêng, signal handling và cleanup tối giản
    - JSON structured logging, không còn process-local metrics
@@ -1510,8 +1602,8 @@ Sau khi hoàn thành bước 15, hệ thống có:
 **Performance/SLA:**
 
 - Chưa có benchmark để cam kết throughput hoặc latency production.
-- Flush interval đặt giới hạn chờ theo batch window trong điều kiện worker/DB
-  bình thường, không phải SLA end-to-end.
+- Batch flush interval không thuộc active path; chỉ có ý nghĩa khi bật lại batch
+  worker trong phase tương lai.
 - TimescaleDB hypertable đã dùng; compression/retention policy chưa được cấu hình.
 - Chỉ công bố con số performance sau khi đo workload đại diện với số xe, tần suất,
   payload size và database resource đã chốt.

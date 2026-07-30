@@ -1,21 +1,19 @@
-"""
-Telemetry service layer.
+"""Service nghiệp vụ của domain telemetry.
 
 Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
 
-Service xử lý business logic cho telemetry data, bao gồm:
-- Batch processing messages từ queue
-- Validation và enrichment
-- Gọi repository để persist data
+Luồng MVP hiện tại xử lý từng message để giảm độ trễ và cô lập transaction.
+Các hàm batch vẫn được giữ nguyên trong module vì phase sau có thể cần tối ưu
+throughput bằng batch lookup và bulk insert.
 """
 
 import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TypedDict
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from uuid import UUID
 
 import app.domains.telemetry.repository as telemetry_repository
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
@@ -57,11 +55,90 @@ async def get_latest_vehicle_telemetry_response(
 
 
 class BatchResult(TypedDict):
-    """Counters returned after processing a telemetry batch."""
+    """Các bộ đếm trả về sau khi xử lý một batch telemetry."""
 
     processed: int
     skipped: int
     errors: int
+
+
+class MessageResult(TypedDict):
+    """Các bộ đếm trả về sau khi xử lý một message telemetry."""
+
+    processed: int
+    skipped: int
+    errors: int
+
+
+async def process_message(
+    db: AsyncSession,
+    envelope: TelemetryEnvelope,
+) -> MessageResult:
+    """Xử lý một message telemetry trong phạm vi session hiện tại.
+
+    Quy tắc nghiệp vụ:
+    - Lookup đúng một mapping theo ``telematic_serial``.
+    - Serial không tồn tại hoặc thiết bị chưa được gán xe sẽ bị skip an toàn.
+    - Message hợp lệ được enrich rồi insert đúng một row.
+    - Lỗi chuyển đổi message chỉ làm message hiện tại tăng ``errors``; lỗi DB
+      được raise để transaction boundary rollback và worker dừng theo policy MVP.
+
+    Args:
+        db: AsyncSession do worker sở hữu transaction.
+        envelope: Message đã được MQTT consumer validate và raw payload gốc.
+
+    Returns:
+        Dict gồm ``processed``, ``skipped`` và ``errors`` cho đúng message đó.
+
+    Raises:
+        Exception: Propagate lỗi database hoặc lỗi bất ngờ để worker rollback.
+
+    Side Effects:
+        Có thể ghi một row vào session và tạo structured log. Hàm không commit
+        hoặc rollback.
+    """
+    message = envelope.message
+    mapping = await telemetry_repository.get_telematic_mapping(
+        db, message.telematic_serial
+    )
+    if mapping is None:
+        logger.warning(
+            "telematic mapping not found, skipping message",
+            extra={
+                "telematic_serial": message.telematic_serial,
+                "message_uuid": str(message.message_uuid),
+            },
+        )
+        return {"processed": 0, "skipped": 1, "errors": 0}
+
+    telematic_id, vehicle_id = mapping
+    try:
+        db_dict = message.to_db_dict(
+            telematic_id,
+            vehicle_id,
+            datetime.now(timezone.utc),
+            envelope.raw_payload,
+        )
+    except (TypeError, ValueError) as error:
+        logger.exception(
+            "failed to convert message to DB dict",
+            extra={
+                "telematic_serial": message.telematic_serial,
+                "message_uuid": str(message.message_uuid),
+                "error": str(error),
+            },
+        )
+        return {"processed": 0, "skipped": 0, "errors": 1}
+
+    processed_count = await telemetry_repository.insert_telemetry(db, db_dict)
+    logger.info(
+        "telemetry message persisted",
+        extra={
+            "message_uuid": str(message.message_uuid),
+            "processed": processed_count,
+        },
+    )
+    return {"processed": processed_count, "skipped": 0, "errors": 0}
 
 
 async def process_batch(
