@@ -24,6 +24,7 @@ from collections.abc import Sequence
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
 from app.domains.telemetry.schemas import TelemetryEnvelope
+from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,6 @@ class BatchWorker:
     Example:
         >>> worker = BatchWorker(
         ...     queue=message_queue,
-        ...     batch_size=100,
-        ...     flush_interval=30.0,
         ... )
         >>> await worker.start()
         >>> # ... running ...
@@ -63,8 +62,8 @@ class BatchWorker:
     def __init__(
         self,
         queue: asyncio.Queue[TelemetryEnvelope] | None = None,
-        batch_size: int = 100,
-        flush_interval: float = 30.0,
+        batch_size: int | None = None,
+        flush_interval: float | None = None,
     ) -> None:
         """
         Khởi tạo batch worker.
@@ -79,8 +78,14 @@ class BatchWorker:
             tạo background task hoặc database session cho tới khi gọi ``start``.
         """
         self.queue = message_queue if queue is None else queue
-        self.batch_size = batch_size
-        self.flush_interval = flush_interval
+        self.batch_size = (
+            settings.TELEMETRY_BATCH_SIZE if batch_size is None else batch_size
+        )
+        self.flush_interval = (
+            settings.TELEMETRY_FLUSH_INTERVAL
+            if flush_interval is None
+            else flush_interval
+        )
 
         self._running = False
         self._task: asyncio.Task[None] | None = None

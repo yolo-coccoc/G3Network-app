@@ -6,16 +6,27 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telematics import service
-from app.domains.telematics.exceptions import TelematicConflictError, TelematicNotFoundError
-from app.domains.telematics.schemas import TelematicCreate, TelematicListResponse, TelematicResponse, TelematicUpdate
+from app.domains.telematics.exceptions import (
+    TelematicConflictError,
+    TelematicNotFoundError,
+)
+from app.domains.telematics.schemas import (
+    TelematicCreate,
+    TelematicListResponse,
+    TelematicResponse,
+    TelematicUpdate,
+)
 from app.domains.telematics.types import TelematicStatus
+from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["telematics"])
 
 
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
-async def create(data: TelematicCreate, db: AsyncSession = Depends(get_db)) -> TelematicResponse:
+async def create(
+    data: TelematicCreate, db: AsyncSession = Depends(get_db)
+) -> TelematicResponse:
     """Tạo thiết bị Telematic."""
     try:
         return await service.create_telematic(db, data)
@@ -24,13 +35,22 @@ async def create(data: TelematicCreate, db: AsyncSession = Depends(get_db)) -> T
 
 
 @router.get("/", response_model=TelematicListResponse)
-async def list_items(page: int = Query(1, ge=1), page_size: int = Query(10, ge=1, le=100), status_filter: TelematicStatus | None = Query(None, alias="status"), db: AsyncSession = Depends(get_db)) -> TelematicListResponse:
+async def list_items(
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    status_filter: TelematicStatus | None = Query(None, alias="status"),
+    db: AsyncSession = Depends(get_db),
+) -> TelematicListResponse:
     """Liệt kê thiết bị chưa bị xoá."""
     return await service.list_telematics(db, page, page_size, status_filter)
 
 
 @router.get("/{telematic_id}", response_model=TelematicResponse)
-async def get(telematic_id: UUID, db: AsyncSession = Depends(get_db)) -> TelematicResponse:
+async def get(
+    telematic_id: UUID, db: AsyncSession = Depends(get_db)
+) -> TelematicResponse:
     """Lấy chi tiết thiết bị."""
     try:
         return await service.get_telematic(db, telematic_id)
@@ -39,7 +59,9 @@ async def get(telematic_id: UUID, db: AsyncSession = Depends(get_db)) -> Telemat
 
 
 @router.patch("/{telematic_id}", response_model=TelematicResponse)
-async def update(telematic_id: UUID, data: TelematicUpdate, db: AsyncSession = Depends(get_db)) -> TelematicResponse:
+async def update(
+    telematic_id: UUID, data: TelematicUpdate, db: AsyncSession = Depends(get_db)
+) -> TelematicResponse:
     """Cập nhật từng phần thiết bị."""
     try:
         return await service.update_telematic(db, telematic_id, data)

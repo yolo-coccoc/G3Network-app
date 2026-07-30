@@ -1,12 +1,12 @@
-"""
-Cấu hình dùng chung của các backend process bằng Pydantic Settings.
+"""Định nghĩa cấu hình dùng chung cho các backend process.
 
-Settings đọc biến môi trường và file ``.env`` tại working directory của process.
-Tên biến được namespace theo component để API, MQTT và telemetry ingestion không
-va chạm khi cùng chạy trên host.
+Module này là nguồn duy nhất định nghĩa tên biến, kiểu dữ liệu, validation và
+giá trị mặc định an toàn. Giá trị phụ thuộc môi trường được nạp từ biến môi
+trường hoặc file ``.env``; module không chứa credential mặc định.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,8 +19,10 @@ class Settings(BaseSettings):
     Attributes:
         APP_NAME: Tên hiển thị của backend.
         APP_VERSION: Phiên bản ứng dụng.
-        APP_DEBUG: Bật SQLAlchemy echo và hành vi debug khi development.
-        DATABASE_URL: Async SQLAlchemy URL tới PostgreSQL.
+        APP_DESCRIPTION: Mô tả hiển thị trong metadata của API.
+        APP_DEBUG: Bật SQLAlchemy echo khi development.
+        APP_LOG_LEVEL: Mức log mặc định cho process dùng structured logging.
+        DATABASE_URL: Async SQLAlchemy URL tới PostgreSQL, bắt buộc từ môi trường.
         MQTT_HOST: Host của EMQX broker.
         MQTT_PORT: Cổng MQTT TCP.
         MQTT_CLIENT_ID: Client identifier của telemetry consumer.
@@ -28,9 +30,15 @@ class Settings(BaseSettings):
         MQTT_PASSWORD: Password MQTT tùy chọn.
         MQTT_QOS: QoS của telemetry subscription trong MVP.
         MQTT_TELEMETRY_TOPIC: Topic pattern nhận telemetry.
+        MQTT_STATUS_TOPIC_TEMPLATE: Mẫu topic MQTT Last Will.
+        MQTT_WILL_QOS: QoS của MQTT Last Will.
+        MQTT_WILL_RETAIN: Có retain MQTT Last Will hay không.
         TELEMETRY_QUEUE_SIZE: Sức chứa in-memory queue.
         TELEMETRY_BATCH_SIZE: Số message tối đa trong một transaction.
         TELEMETRY_FLUSH_INTERVAL: Thời gian tối đa chờ batch chưa đầy.
+        API_DEFAULT_PAGE: Trang mặc định cho endpoint phân trang.
+        API_DEFAULT_PAGE_SIZE: Số bản ghi mặc định mỗi trang.
+        API_MAX_PAGE_SIZE: Số bản ghi tối đa mỗi trang.
     """
 
     model_config = SettingsConfigDict(
@@ -40,17 +48,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Cấu hình chung của application process.
+    # Metadata ứng dụng có mặc định ổn định, còn môi trường có thể override qua .env.
     APP_NAME: str = "G3Network Backend"
     APP_VERSION: str = "0.1.0"
-    APP_DEBUG: bool = True
-
-    # URL dùng asyncpg; mỗi OS process tạo một engine/pool riêng từ URL này.
-    DATABASE_URL: str = (
-        "postgresql+asyncpg://g3network:g3network123@localhost:5432/g3network"
+    APP_DESCRIPTION: str = (
+        "Backend for G3Network - Electric truck driver support system"
     )
+    APP_DEBUG: bool = False
+    APP_LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
-    # Cấu hình kết nối và subscription telemetry tại EMQX.
+    # URL dùng asyncpg; credential phải đến từ môi trường, không để trong source.
+    DATABASE_URL: str = Field(min_length=1)
+
+    # Cấu hình kết nối và subscription telemetry tại EMQX. Các giá trị này có
+    # fallback local để process vẫn có cấu hình hợp lệ khi chỉ cần development.
     MQTT_HOST: str = "localhost"
     MQTT_PORT: int = Field(default=1883, ge=1, le=65535)
     MQTT_CLIENT_ID: str = "g3network-backend"
@@ -58,11 +69,19 @@ class Settings(BaseSettings):
     MQTT_PASSWORD: str | None = None
     MQTT_QOS: int = Field(default=0, ge=0, le=2)
     MQTT_TELEMETRY_TOPIC: str = "g3network/telematics/+/telemetry"
+    MQTT_STATUS_TOPIC_TEMPLATE: str = "g3network/consumers/{client_id}/status"
+    MQTT_WILL_QOS: int = Field(default=1, ge=0, le=2)
+    MQTT_WILL_RETAIN: bool = True
 
     # Cấu hình queue và batch của telemetry process.
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
     TELEMETRY_BATCH_SIZE: int = Field(default=100, ge=1)
     TELEMETRY_FLUSH_INTERVAL: float = Field(default=30.0, gt=0)
+
+    # Chính sách phân trang dùng chung cho các domain có endpoint list.
+    API_DEFAULT_PAGE: int = Field(default=1, ge=1)
+    API_DEFAULT_PAGE_SIZE: int = Field(default=10, ge=1)
+    API_MAX_PAGE_SIZE: int = Field(default=100, ge=1)
 
 
 @lru_cache
@@ -74,7 +93,9 @@ def get_settings() -> Settings:
         Cấu hình đã validate; các lần gọi sau trong cùng process nhận cùng
         instance.
     """
-    return Settings()
+    # Pydantic Settings đọc DATABASE_URL từ env/.env; mypy không suy luận được
+    # nguồn giá trị ngoài constructor nên cần bỏ qua riêng cảnh báo này.
+    return Settings()  # type: ignore[call-arg]
 
 
 # Module-level instance là nguồn cấu hình chung trong một process. Process API và

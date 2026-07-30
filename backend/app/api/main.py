@@ -1,13 +1,13 @@
-"""FastAPI application entry point."""
+"""Điểm khởi tạo ứng dụng FastAPI của backend."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.domains.vehicles.router import router as vehicles_router
 from app.domains.telematics.router import router as telematics_router
 from app.domains.telemetry.router import router as telemetry_router
+from app.domains.vehicles.router import router as vehicles_router
 from app.libs.common.config import settings
 from app.libs.db.session import close_db
 
@@ -24,7 +24,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="Backend for G3Network - Electric truck driver support system",
+    description=settings.APP_DESCRIPTION,
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )

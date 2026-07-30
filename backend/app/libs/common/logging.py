@@ -14,6 +14,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.libs.common.config import settings
+
 # Record mẫu cung cấp tập key built-in chuẩn. Việc loại các key này giúp field
 # truyền qua ``extra`` nằm trực tiếp ở cấp cao nhất của JSON mà không lặp lại các
 # thông tin nội bộ như đường dẫn file, thread ID hoặc tuple tham số.
@@ -85,7 +87,7 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(level: int | None = None) -> None:
     """
     Cấu hình JSON logging idempotent cho một backend process chạy độc lập.
 
@@ -94,13 +96,17 @@ def configure_logging(level: int = logging.INFO) -> None:
     chỉ bảo đảm có đúng một G3Network JSON handler được gắn thêm.
 
     Args:
-        level: Mức log thấp nhất mà root logger phát ra.
+        level: Mức log thấp nhất mà root logger phát ra. Nếu bỏ trống, dùng
+            ``APP_LOG_LEVEL`` từ settings.
 
     Side Effects:
         Cập nhật level của root logger và có thể gắn một stderr stream handler.
     """
     root_logger = logging.getLogger()
-    root_logger.setLevel(level)
+    configured_level = (
+        level if level is not None else getattr(logging, settings.APP_LOG_LEVEL)
+    )
+    root_logger.setLevel(configured_level)
 
     # Lifecycle có thể gọi hàm nhiều lần trong startup test hoặc guarded restart.
     # Marker ngăn một record bị xuất thành nhiều dòng JSON trùng nhau.

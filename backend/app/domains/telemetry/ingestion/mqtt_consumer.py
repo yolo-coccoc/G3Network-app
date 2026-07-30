@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 # Queue mặc định chỉ hỗ trợ cách khởi tạo độc lập. Entrypoint chính sẽ tạo queue
 # riêng theo settings rồi inject cùng instance vào consumer và worker.
-message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(maxsize=10000)
+message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(
+    maxsize=settings.TELEMETRY_QUEUE_SIZE
+)
 
 
 class MQTTConsumer:
@@ -64,13 +66,15 @@ class MQTTConsumer:
             topic_pattern: Topic pattern nhận telemetry.
             queue: Queue đích cho message hợp lệ.
         """
-        self.host = host or settings.MQTT_HOST
-        self.port = port or settings.MQTT_PORT
-        self.client_id = client_id or settings.MQTT_CLIENT_ID
-        self.username = username or settings.MQTT_USERNAME
-        self.password = password or settings.MQTT_PASSWORD
+        self.host = settings.MQTT_HOST if host is None else host
+        self.port = settings.MQTT_PORT if port is None else port
+        self.client_id = settings.MQTT_CLIENT_ID if client_id is None else client_id
+        self.username = settings.MQTT_USERNAME if username is None else username
+        self.password = settings.MQTT_PASSWORD if password is None else password
         self.qos = settings.MQTT_QOS if qos is None else qos
-        self.topic_pattern = topic_pattern or settings.MQTT_TELEMETRY_TOPIC
+        self.topic_pattern = (
+            settings.MQTT_TELEMETRY_TOPIC if topic_pattern is None else topic_pattern
+        )
         self.queue = message_queue if queue is None else queue
 
         self._client: MQTTClient | None = None
@@ -93,10 +97,10 @@ class MQTTConsumer:
         )
 
         will = Will(
-            topic=f"g3network/consumers/{self.client_id}/status",
+            topic=settings.MQTT_STATUS_TOPIC_TEMPLATE.format(client_id=self.client_id),
             payload=b'{"status":"offline"}',
-            qos=1,
-            retain=True,
+            qos=settings.MQTT_WILL_QOS,
+            retain=settings.MQTT_WILL_RETAIN,
         )
         self._client = MQTTClient(
             hostname=self.host,

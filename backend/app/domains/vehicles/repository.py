@@ -10,6 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.vehicles.models import Vehicle
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 
 
 async def create_vehicle(db: AsyncSession, vehicle_data: dict[str, Any]) -> Vehicle:
@@ -84,7 +85,7 @@ async def get_vehicle_by_vin(db: AsyncSession, vin: str) -> Vehicle | None:
 async def get_vehicles(
     db: AsyncSession,
     skip: int = 0,
-    limit: int = 10,
+    limit: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
 ) -> list[Vehicle]:
     """Get list of vehicles with pagination (excluding soft-deleted).

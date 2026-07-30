@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 
 
 class VehicleBase(BaseModel):
@@ -67,4 +68,6 @@ class VehicleListResponse(BaseModel):
     items: list[VehicleResponse] = Field(..., description="Danh sách xe")
     total: int = Field(..., ge=0, description="Tổng số xe")
     page: int = Field(..., ge=1, description="Trang hiện tại")
-    page_size: int = Field(..., ge=1, le=100, description="Số item per trang")
+    page_size: int = Field(
+        ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Số item per trang"
+    )

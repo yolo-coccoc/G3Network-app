@@ -15,6 +15,14 @@ uv run uvicorn app.api.main:app --reload
 uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+## Configuration
+
+Copy `.env.example` to `.env` before running the backend. The shared schema,
+types, validation and safe defaults live in
+`app/libs/common/config.py`; `.env` only supplies values that vary by runtime
+environment, credentials and operational tuning. `DATABASE_URL` is required
+and must not be placed in source code.
+
 ## API Documentation
 
 - Swagger UI: http://localhost:8000/docs

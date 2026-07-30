@@ -30,9 +30,12 @@ from app.domains.vehicles.schemas import (
     VehicleUpdate,
 )
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 
 
-async def find_active_vehicle_by_vin(db: AsyncSession, vin: str):
+async def find_active_vehicle_by_vin(
+    db: AsyncSession, vin: str
+) -> VehicleResponse | None:
     """Tìm xe chưa bị xoá theo VIN để domain khác resolve mapping.
 
     Args:
@@ -46,7 +49,9 @@ async def find_active_vehicle_by_vin(db: AsyncSession, vin: str):
     return VehicleResponse.model_validate(vehicle) if vehicle else None
 
 
-async def find_active_vehicle_by_id(db: AsyncSession, vehicle_id: UUID):
+async def find_active_vehicle_by_id(
+    db: AsyncSession, vehicle_id: UUID
+) -> VehicleResponse | None:
     """Tìm xe chưa bị xoá theo ID để domain khác dựng response.
 
     Args:
@@ -125,8 +130,8 @@ async def get_vehicle(db: AsyncSession, vehicle_id: UUID) -> VehicleResponse:
 
 async def list_vehicles(
     db: AsyncSession,
-    page: int = 1,
-    page_size: int = 10,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
 ) -> VehicleListResponse:
     """List vehicles with pagination.
@@ -142,11 +147,11 @@ async def list_vehicles(
     """
     # Validate pagination
     if page < 1:
-        page = 1
+        page = settings.API_DEFAULT_PAGE
     if page_size < 1:
-        page_size = 10
-    if page_size > 100:
-        page_size = 100
+        page_size = settings.API_DEFAULT_PAGE_SIZE
+    if page_size > settings.API_MAX_PAGE_SIZE:
+        page_size = settings.API_MAX_PAGE_SIZE
 
     skip = (page - 1) * page_size
 

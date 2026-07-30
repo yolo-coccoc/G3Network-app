@@ -17,6 +17,7 @@ from app.domains.vehicles.schemas import (
     VehicleUpdate,
 )
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["vehicles"])
@@ -56,8 +57,13 @@ async def create_vehicle(
     description="Lấy danh sách xe với phân trang và lọc theo trạng thái.",
 )
 async def list_vehicles(
-    page: int = Query(1, ge=1, description="Số trang"),
-    page_size: int = Query(10, ge=1, le=100, description="Số bản ghi mỗi trang"),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Số trang"),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+        description="Số bản ghi mỗi trang",
+    ),
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Lọc theo trạng thái"
     ),

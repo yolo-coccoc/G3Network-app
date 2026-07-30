@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.telematics.types import TelematicStatus
+from app.libs.common.config import settings
 
 
 class TelematicCreate(BaseModel):
@@ -47,4 +48,4 @@ class TelematicListResponse(BaseModel):
     items: list[TelematicResponse]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
-    page_size: int = Field(..., ge=1, le=100)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)

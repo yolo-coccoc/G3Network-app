@@ -1,11 +1,9 @@
-"""Alembic environment configuration for async migrations."""
+"""Cấu hình Alembic cho migration bất đồng bộ của backend."""
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
-from dotenv import load_dotenv
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -13,27 +11,21 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.domains.telematics.models import Telematic  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetry  # noqa: F401
 from app.domains.vehicles.models import Vehicle  # noqa: F401
+from app.libs.common.config import settings
 from app.libs.db.base import Base
 
-# Load .env file from backend directory
-load_dotenv()
-
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# Đối tượng Alembic cung cấp context và cấu hình được đọc từ alembic.ini.
 config = context.config
 
-# Get database URL from environment variable
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+# Dùng cùng Settings với API và worker để không tồn tại nguồn đọc .env thứ hai.
+# ConfigParser dùng interpolation %, nên escape ký tự này trước khi ghi vào ini.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
+# Nạp cấu hình logger của Alembic nếu file ini có phần logging tương ứng.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
+# Metadata dùng cho autogenerate migration.
 target_metadata = Base.metadata
 
 

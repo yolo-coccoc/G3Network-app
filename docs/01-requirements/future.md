@@ -236,17 +236,18 @@
 - **Ngày ghi nhận**: 2026-07-26
 - **Ghi chú thêm**: Trước khi thiết lập CI/CD phải thêm test dependencies bằng `uv`, sửa `make backend-test` để dùng môi trường đã cài test và xác định ngưỡng coverage.
 
-### 24. Phân chia rõ ràng cấu hình giữa `config.py` và `.env`
+### 24. Phân chia rõ ràng cấu hình giữa `config.py` và `.env` — Đã hoàn thành
 
 - **Mô tả ngắn**: Chuẩn hóa ranh giới giữa schema/cấu hình mặc định trong `backend/app/libs/common/config.py` và giá trị runtime theo môi trường trong `backend/.env`.
 - **Tác dụng/Vai trò trong hệ thống**:
   - `config.py` là nguồn định nghĩa tên biến, kiểu dữ liệu, validation, giá trị mặc định và cách truy cập cấu hình bằng `Settings`.
   - `.env` chỉ chứa giá trị thay đổi theo môi trường như database URL, broker connection, credentials và tuning runtime; không chứa business rule hoặc logic ứng dụng.
   - Mọi source code backend và Alembic truy cập cấu hình qua `app.libs.common.config.settings`, không tự gọi `os.getenv()` hoặc `load_dotenv()`.
-- **Lý do hoãn lại**: MVP hiện đã có `Settings` dùng Pydantic nhưng vẫn còn biến `DEBUG` không khớp với `APP_DEBUG`, `CORS_ORIGINS` trong `.env.example` chưa được khai báo/sử dụng, Alembic có cơ chế đọc `.env` riêng và một số default queue/batch/MQTT còn bị lặp trong source.
+- **Lý do hoãn lại**: MVP ban đầu đã có `Settings` dùng Pydantic nhưng vẫn còn biến `DEBUG` không khớp với `APP_DEBUG`, `CORS_ORIGINS` trong `.env.example` chưa được khai báo/sử dụng, Alembic có cơ chế đọc `.env` riêng và một số default queue/batch/MQTT còn bị lặp trong source.
 - **Liên quan đến planner/feature**: Cấu hình backend dùng chung; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, AD-02.
 - **Ngày ghi nhận**: 2026-07-30
-- **Ghi chú thêm**: Khi hoàn thiện cần sửa `DEBUG` thành `APP_DEBUG`, rà soát `CORS_ORIGINS`, cho Alembic dùng cùng `Settings`, loại bỏ hoặc xác định rõ các default cấu hình trùng lặp, và không commit giá trị bí mật trong `.env`.
+- **Ghi chú thêm**: Đã đổi `DEBUG` thành `APP_DEBUG`, loại bỏ `CORS_ORIGINS` chưa có middleware sử dụng, cho Alembic dùng cùng `Settings`, đưa MQTT will và chính sách phân trang dùng chung vào cấu hình, loại bỏ mật khẩu mặc định khỏi `config.py`, và chuẩn hóa các file `.env.example`. `DATABASE_URL` hiện phải được cung cấp từ môi trường; các giá trị còn lại có default an toàn trong `config.py` và có thể override trong `.env`.
+- **Ngày hoàn thành**: 2026-07-30
 
 ---
 
