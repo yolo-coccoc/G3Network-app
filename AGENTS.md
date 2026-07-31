@@ -22,7 +22,7 @@
 | Database | **PostgreSQL 16 + TimescaleDB (time-series) + PostGIS (địa lý)** | đã chốt |
 | Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX 5.5** | đã chốt - Lưu ý: EMQX 5.x không dùng file `acl.conf` như EMQX 4.x, ACL được cấu hình qua Dashboard UI hoặc REST API |
 | OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging_stations`** (thư mục `charging_stations/ocpp/`), dùng OCPP 2.0.1 qua thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | Gateway sở hữu kết nối và trạng thái thiết bị; domain `charging_sessions` nhận sự kiện phiên qua public service, không sở hữu WebSocket |
-| Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (hồ sơ trụ, EVSE, connector, trạng thái/OCPP) và **`charging_sessions`** (vòng đời phiên, meter samples) | đã chốt ngày 2026-07-31; không gom lại thành một domain `charging` |
+| Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (hồ sơ trụ, EVSE, connector, trạng thái/OCPP và transport remote command) và **`charging_sessions`** (vòng đời phiên, meter samples, điều kiện remote control, tính tiền và thanh toán phiên) | đã chốt ngày 2026-07-31, mở rộng phạm vi phiên ngày 2026-07-31; không gom lại thành một domain `charging` |
 | Reverse proxy / API Gateway | **Không dùng ở môi trường dev** (mỗi thành phần chạy port riêng trên host, gọi thẳng qua `localhost`) | cân nhắc lại (Traefik/Nginx) khi làm `docker-compose.prod.yml` |
 | State management (Web) | TanStack Query (server state) + Zustand (client state) | đề xuất |
 | UI kit (Web) | Tailwind CSS + shadcn/ui | đề xuất |
@@ -58,14 +58,14 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   │   │   │       ├── ocpp_server.py
 │   │   │   │       └── entrypoint.py  # container "charging-stations-ocpp" trỏ vào đây
 │   │   │   │
-│   │   │   ├── charging_sessions/     # Vòng đời và giám sát phiên sạc (S-02)
+│   │   │   ├── charging_sessions/     # Vòng đời, giám sát, tính tiền và thanh toán phiên sạc (S-02)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── policy/                # Chính sách sạc/bảo hành (AD-04)
 │   │   │   ├── notifications/         # Cấu hình ngưỡng & kênh thông báo (AD-06)
 │   │   │   ├── drivers/                # Hồ sơ & phân công tài xế (FM-04)
 │   │   │   ├── fleet/                  # Dashboard KPI, báo cáo theo đội xe (FM-01…FM-07)
-│   │   │   ├── billing/                # Gói dịch vụ, thuê bao (AD-09)
+│   │   │   ├── billing/                # Gói dịch vụ, thuê bao hệ thống (AD-09), không sở hữu tiền của phiên sạc
 │   │   │   ├── support/                # CSKH/ticket (AD-07)
 │   │   │   └── scoring/                 # Chấm điểm hành vi lái (AD-08)
 │   │   │
@@ -129,7 +129,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
 - **`telemetry`** là domain dữ liệu thời gian thực của xe: nhiều domain khác (`charging_sessions`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
-- **`charging_stations`** sở hữu hồ sơ Charging Station, EVSE, Connector, trạng thái kết nối và OCPP 2.0.1. OCPP adapter resolve internal identity rồi gọi public service của **`charging_sessions`** bằng event đã chuẩn hóa; `charging_sessions` không import model/repository hoặc payload OCPP nội bộ của `charging_stations`. Giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`, không gọi ngược để tránh dependency cycle.
+- **`charging_stations`** sở hữu hồ sơ Charging Station, EVSE, Connector, trạng thái kết nối, OCPP 2.0.1 và transport cho remote command. **`charging_sessions`** sở hữu vòng đời phiên, điều kiện nghiệp vụ remote start/stop, meter samples, biểu giá áp dụng, số tiền, payment transaction và công nợ của phiên; domain `billing` chỉ sở hữu gói dịch vụ/thuê bao AD-09. OCPP adapter và command API gọi public service của `charging_sessions`; `charging_sessions` không import model/repository hoặc payload OCPP nội bộ của `charging_stations`. Giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`, không gọi ngược để tránh dependency cycle.
 - Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENTS.md chỉ nêu nguyên tắc chung ở cấp domain.
 - Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).
 - Khi nền tảng CI/CD được chốt, bổ sung **`import-linter`** để chặn domain A import trực tiếp nội bộ (`repository`/`models`) của domain B. Hiện package/config này chưa được cài đặt, nên review và tìm kiếm import là bước bắt buộc.

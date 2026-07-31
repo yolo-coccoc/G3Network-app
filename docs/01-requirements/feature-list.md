@@ -97,11 +97,14 @@ Trạng thái: ✅ Đã có | 🚧 Đang làm | 📋 Dự kiến | 💡 Đề xu
 - Actor: Tài xế
 - Trigger: Phiên sạc chuyển trạng thái `completed`
 - Input: session_id, phương thức thanh toán đã lưu hoặc chọn mới
-- Output: Tạo giao dịch thanh toán, session chuyển `paid`
+- Output: Tạo giao dịch thanh toán, `payment_status` của session chuyển `paid`;
+  trạng thái vận hành `completed` của session không bị thay đổi
 - Ràng buộc: Không cho thanh toán khi session chưa `completed`; số tiền tính theo công thức tại `docs/business-rules-billing.md`
 - Trường hợp đặc biệt:
-  - Thanh toán thất bại → session giữ trạng thái `pending_payment`, KHÔNG tự huỷ, tài xế được thử lại
-  - Quá 24h không thanh toán → hệ thống tạo công nợ, khoá tính năng bắt đầu phiên sạc mới (cần admin duyệt mở lại — liên quan mục 3.6)
+  - Thanh toán thất bại → `payment_status = failed`, session không bị huỷ và tài
+    xế được thử lại
+  - Quá 24h không thanh toán → `payment_status = overdue`, hệ thống tạo công nợ,
+    khoá tính năng bắt đầu phiên sạc mới (cần admin duyệt mở lại — liên quan mục 3.6)
 - Trạng thái: 📋
 
 ### 2.5 Thông báo đẩy (push notification)
