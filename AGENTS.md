@@ -22,6 +22,7 @@
 | Database | **PostgreSQL 16 + TimescaleDB (time-series) + PostGIS (địa lý)** | đã chốt |
 | Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX 5.5** | đã chốt - Lưu ý: EMQX 5.x không dùng file `acl.conf` như EMQX 4.x, ACL được cấu hình qua Dashboard UI hoặc REST API |
 | OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging_stations`** (thư mục `charging_stations/ocpp/`), dùng OCPP 2.0.1 qua thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | Gateway sở hữu kết nối và trạng thái thiết bị; domain `charging_sessions` nhận sự kiện phiên qua public service, không sở hữu WebSocket |
+| OCPP security MVP | Development cho phép kết nối OCPP không TLS/không authentication trong môi trường cô lập; production phải chốt security profile riêng trước khi triển khai thật | Không coi dev mode là security profile production hoặc tiêu chí OCPP certification |
 | Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (hồ sơ trụ, EVSE, connector, trạng thái/OCPP và transport remote command) và **`charging_sessions`** (vòng đời phiên, meter samples, điều kiện remote control, tính tiền và thanh toán phiên) | đã chốt ngày 2026-07-31, mở rộng phạm vi phiên ngày 2026-07-31; không gom lại thành một domain `charging` |
 | Reverse proxy / API Gateway | **Không dùng ở môi trường dev** (mỗi thành phần chạy port riêng trên host, gọi thẳng qua `localhost`) | cân nhắc lại (Traefik/Nginx) khi làm `docker-compose.prod.yml` |
 | State management (Web) | TanStack Query (server state) + Zustand (client state) | đề xuất |

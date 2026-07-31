@@ -97,11 +97,75 @@ Chỉ thực hiện Bước 0 của planner charging stations, chưa viết sour
 
 **Kiểm tra:**
 
-- [ ] Không có source/migration/dependency mới.
-- [ ] Topology và security không bị suy đoán.
-- [ ] Các blocking decision đã được người dùng xác nhận và ghi vào planner.
+- [x] Không có source/migration/dependency mới.
+- [x] Topology MVP và security development đã được xác nhận; security production
+      vẫn là policy triển khai riêng.
+- [x] Actor/role remote start/stop đã được xác nhận; các blocking decision của
+      MVP đã được người dùng xác nhận và ghi vào planner.
 
-**Kết quả thực tế:** Chưa thực hiện.
+**Kết quả thực tế:** ✅ Rà source và chốt contract MVP ngày 2026-07-31.
+
+Kết quả rà soát:
+
+- Chưa có package `charging_stations`/`charging_sessions`, model, migration,
+  router, OCPP entrypoint hoặc simulator; có thể thiết kế mới mà không phải
+  migrate dữ liệu charging cũ.
+- `python-ocpp` chưa nằm trong `pyproject.toml`/`uv.lock`; settings hiện chỉ có
+  `APP_`, `DATABASE_URL`, `MQTT_`, `TELEMETRY_` và pagination, chưa có `OCPP_`.
+- FastAPI hiện chỉ mount vehicles, telematics và telemetry. Chưa có domain
+  `identity`, `drivers`, `billing` hoặc payment để tái sử dụng role/idToken.
+- `vehicles.service` đã có public lookup theo UUID/VIN; đây là contract có thể
+  dùng sau khi chốt cách liên kết idToken với xe.
+- Shared `Base`, `get_db` và `async_session_factory` đã tồn tại. OCPP process và
+  worker phải tái sử dụng các thành phần này.
+- Database hiện đã có TimescaleDB/PostGIS qua hạ tầng chung; chưa có schema
+  charging nên migration mới phải bắt đầu sau Alembic head hiện tại.
+
+Phân loại thông tin:
+
+| Mức độ | Thông tin |
+|---|---|
+| Đã chốt cho MVP | Pre-provision; development không TLS/không authentication trong môi trường cô lập; topology `2 EVSE × 1 connector`; RFID làm `idToken`; timeout 30/60 giây; không auto-retry khi không rõ kết quả |
+| Đã chốt remote control | Admin vận hành và tài xế đang được gán xe được điều khiển; Admin được force stop nhưng không force start khi có debt |
+| Chặn production | Production security profile, certificate/credential lifecycle và network boundary |
+| Chỉ chặn test trụ thật | Identity/credential/certificate thật; EVSE/connector ID thật; connector type/công suất; heartbeat/sample interval; offline buffer và semantics event bù |
+
+Các quyết định đã xác nhận:
+
+1. Pre-provision station/topology qua Admin API; `BootNotification` không tự tạo
+   station hoặc EVSE/Connector lạ.
+2. WebSocket path `/ocpp/{ocpp_identity}`.
+3. Development chạy được ở mức thấp nhất: không TLS/không authentication trong
+   môi trường cô lập; không hard-code credential và không đưa certificate thật
+   vào repo. Đây không phải policy production.
+4. Simulator và topology MVP dùng hai EVSE độc lập, mỗi EVSE một connector;
+   topology thật được thay bằng dữ liệu nhà sản xuất khi có.
+5. RFID card là phương thức local authorization; `idToken` từ thẻ map tới
+   driver, driver map tới vehicle qua active shift/assignment, rồi tạo session.
+   Backend lưu hash/reference của card ID, không lưu dữ liệu thẻ nhạy cảm.
+6. Actor remote control: Admin vận hành và tài xế đang được gán xe được điều
+   khiển; Admin được force stop nhưng không force start khi có debt.
+7. Remote command response timeout 30 giây, confirmation timeout 60 giây và
+   không tự retry khi chưa biết trụ đã nhận request hay chưa để tránh lặp lệnh.
+8. Dự kiến trụ có offline buffer; semantics buffer, sequence và replay phải xác
+   nhận lại khi test thiết bị thật.
+
+Các điểm không còn chặn Bước 1-3 nhưng phải chốt trước production/integration:
+
+1. Production chọn TLS + Basic Auth (Security Profile 2) hay mutual TLS
+   (Security Profile 3).
+2. Nhà sản xuất xác nhận offline buffer có giữ `seqNo`/transaction event cũ và
+   gửi replay hay không.
+3. Nhà sản xuất xác nhận connector type, công suất, heartbeat/sample interval và
+   `evseId`/`connectorId` thật.
+
+Về câu hỏi “các hệ thống như Xanh SM làm thế nào”: không có tài liệu kỹ thuật
+công khai đủ để kết luận kiến trúc nội bộ của Xanh SM. Mô hình planner chọn là
+mô hình fleet phổ biến: RFID card nhận diện driver/account; backend kiểm tra
+driver đang được gán vehicle; OCPP station tạo/nhận `TransactionEvent`; session
+lưu cả driver, vehicle, station, EVSE và connector. OCPP 2.0.1 Core có authorization
+và remote control; các implementation được OCA chứng nhận có thể dùng RFID
+ISO 14443/15693, nhưng đó không phải bằng chứng riêng về hệ thống Xanh SM.
 
 ---
 
