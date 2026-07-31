@@ -1,5 +1,11 @@
-"""Business service cho CRUD thiết bị Telematic."""
+"""Business service cho CRUD và public lookup thiết bị Telematic.
 
+Các domain khác, đặc biệt ``telemetry``, chỉ được dùng những hàm public trong
+module này để resolve mapping thiết bị–xe; chúng không được truy cập trực tiếp
+repository hoặc model của ``telematics``.
+"""
+
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -24,6 +30,48 @@ from app.domains.vehicles.service import (
     find_active_vehicle_by_vin,
 )
 from app.libs.common.config import settings
+
+
+async def resolve_mapping_by_serial(
+    db: AsyncSession,
+    serial: str,
+) -> tuple[UUID, UUID] | None:
+    """Resolve một serial telematic thành ID thiết bị và ID xe.
+
+    Args:
+        db: Phiên database do entry boundary sở hữu.
+        serial: Serial vật lý nhận từ message telemetry.
+
+    Returns:
+        Tuple ``(telematic_id, vehicle_id)`` nếu mapping hợp lệ; ``None`` nếu
+        thiết bị chưa tồn tại, đã bị xoá mềm hoặc chưa gán xe.
+
+    Side Effects:
+        Thực hiện truy vấn read-only trong phiên hiện tại; không commit hoặc
+        rollback.
+    """
+    return await repository.get_mapping(db, serial)
+
+
+async def resolve_mappings_by_serial(
+    db: AsyncSession,
+    serials: Sequence[str],
+) -> dict[str, tuple[UUID, UUID]]:
+    """Resolve batch serial telematic thành mapping thiết bị–xe.
+
+    Args:
+        db: Phiên database do entry boundary sở hữu.
+        serials: Các serial vật lý cần tra cứu.
+
+    Returns:
+        Dict ánh xạ serial sang ``(telematic_id, vehicle_id)``; mapping không
+        hợp lệ không xuất hiện trong kết quả.
+
+    Side Effects:
+        Thực hiện một truy vấn read-only trong phiên hiện tại; không commit hoặc
+        rollback.
+    """
+    return await repository.get_mappings(db, serials)
 
 
 async def _response(db: AsyncSession, item: Telematic) -> TelematicResponse:

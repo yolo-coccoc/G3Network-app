@@ -15,6 +15,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.schemas import (
@@ -98,7 +99,7 @@ async def process_message(
         hoặc rollback.
     """
     message = envelope.message
-    mapping = await telemetry_repository.get_telematic_mapping(
+    mapping = await telematics_service.resolve_mapping_by_serial(
         db, message.telematic_serial
     )
     if mapping is None:
@@ -183,7 +184,7 @@ async def process_batch(
 
     # Step 2: Batch lookup telematic mappings (1 query cho cả batch)
     # Returns: {telematic_serial: (telematic_id, vehicle_id)}
-    telematic_mappings = await telemetry_repository.get_telematic_mappings(
+    telematic_mappings = await telematics_service.resolve_mappings_by_serial(
         db, unique_serials
     )
 
@@ -214,7 +215,7 @@ async def process_batch(
         telematic_id, vehicle_id = telematic_mappings[serial]
 
         # Kiểm tra vehicle_id có được gán không
-        # (repository.get_telematic_mappings đã filter vehicle_id IS NOT NULL,
+        # (telematics.service.resolve_mappings_by_serial đã filter vehicle_id IS NOT NULL,
         # nhưng check thêm để chắc chắn)
         if vehicle_id is None:
             logger.warning(

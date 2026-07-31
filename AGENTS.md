@@ -47,6 +47,9 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   │   │   ├── vehicles/              # Hồ sơ tĩnh, provisioning, kích hoạt/hủy kích hoạt (AD-05)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
+│   │   │   ├── telematics/            # Hồ sơ thiết bị telematic và mapping sang xe (AD-02, AD-05)
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │
 │   │   │   ├── telemetry/             # Dữ liệu thời gian thực & lịch sử của xe (AD-02, FM-01, FM-02, AD-08)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py
 │   │   │   │   └── ingestion/         # Nhận dữ liệu telematics qua MQTT (EMQX)
@@ -129,7 +132,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 - Mỗi thư mục trong `backend/app/domains/` là **1 bounded context**. Domain này chỉ được gọi sang domain khác qua **`service.py` công khai** của domain đó — **không** import/query chéo trực tiếp `repository.py`/`models.py` của domain khác.
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
-- **`telemetry`** là domain dữ liệu thời gian thực của xe: nhiều domain khác (`charging_sessions`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử; bản thân `telemetry` chỉ phụ thuộc `vehicles` (để lấy `vehicle_id`/chủ sở hữu, phục vụ phân quyền theo đội).
+- **`telemetry`** là domain dữ liệu thời gian thực của xe: nhiều domain khác (`charging_sessions`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử. Luồng ingestion nhận `telematic_serial` và gọi public service của domain `telematics` để resolve `(telematic_id, vehicle_id)`; không import trực tiếp `telematics.models`/`repository`. Domain `telematics` được phép gọi public service của `vehicles` để resolve và kiểm tra mapping xe.
 - **`charging_stations`** sở hữu hồ sơ Charging Station, EVSE, Connector, trạng thái kết nối, OCPP 2.0.1 và transport cho remote command. **`charging_sessions`** sở hữu vòng đời phiên, điều kiện nghiệp vụ remote start/stop, meter samples, biểu giá áp dụng, số tiền, payment transaction và công nợ của phiên; domain `billing` chỉ sở hữu gói dịch vụ/thuê bao AD-09. OCPP adapter và command API gọi public service của `charging_sessions`; `charging_sessions` không import model/repository hoặc payload OCPP nội bộ của `charging_stations`. Giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`, không gọi ngược để tránh dependency cycle.
 - Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENTS.md chỉ nêu nguyên tắc chung ở cấp domain.
 - Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).

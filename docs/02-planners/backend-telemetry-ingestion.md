@@ -61,8 +61,11 @@ Simulator → EMQX → MQTT consumer → asyncio.Queue → message worker → Ti
 backend/
 ├── app/
 │   ├── domains/
+│   │   ├── telematics/
+│   │   │   ├── models.py           # Hồ sơ thiết bị Telematic vật lý
+│   │   │   └── service.py          # Public lookup serial → thiết bị/xe
 │   │   ├── telemetry/
-│   │   │   ├── models.py           # Telematic, VehicleTelemetry (TimescaleDB)
+│   │   │   ├── models.py           # VehicleTelemetry (TimescaleDB)
 │   │   │   ├── repository.py       # Single insert/lookup và batch path tương lai
 │   │   │   ├── schemas.py          # MQTT payload validation
 │   │   │   ├── service.py          # Single-message và batch processing logic
@@ -90,11 +93,12 @@ infra/
 ```
 
 **Lưu ý về ranh giới domain:**
-- Ingestion, service, repository, schema và model đều thuộc cùng domain
-  `telemetry`, nên được phép gọi/import trực tiếp nhau.
-- Telemetry repository chỉ query model thuộc chính domain telemetry. Mapping
-  `vehicle_id` được lấy từ bảng `telematics`; không query chéo vehicles
-  repository/model trong luồng batch.
+- Ingestion, service, repository, schema và model của dữ liệu đo thuộc domain
+  `telemetry`, nên được phép gọi/import trực tiếp nhau trong domain đó.
+- `telemetry.service` gọi public `telematics.service` để resolve mapping
+  `telematic_serial → (telematic_id, vehicle_id)`. `telemetry.repository` chỉ
+  query/ghi model thuộc chính domain `telemetry`, không import trực tiếp
+  `telematics.models` hoặc `telematics.repository`.
 - Foreign key database từ `telematics`/`vehicle_telemetry` tới `vehicles` bảo vệ
   tính toàn vẹn ở persistence layer.
 - Nếu sau này telemetry cần business validation từ vehicles, chỉ được gọi public
@@ -194,8 +198,8 @@ Lưu ý:
 
 **Kết quả/Quyết định:**
 
-- Model `Telematic` nằm trong domain telemetry vì thiết bị và mapping này phục vụ
-  trực tiếp ingestion.
+- Model `Telematic` thuộc domain `telematics`; ingestion chỉ resolve mapping qua
+  public `telematics.service`, còn domain `telemetry` sở hữu dữ liệu đo.
 - Tên code/DB hiện dùng `telematic_id`, `telematic_serial` và
   `vehicles.vehicle_id`, thay cho tên `id`, `serial`, `vehicles.id` trong prompt
   ban đầu.
@@ -737,8 +741,8 @@ Lưu ý:
 ```
 Cập nhật backend/app/domains/telemetry/repository.py:
 
-1. async def get_telematic_mappings(db: AsyncSession, serials: list[str]) -> dict[str, tuple[UUID, UUID]]:
-   - Query bảng telematics một lần với WHERE serial IN (...)
+1. Public `telematics.service.resolve_mappings_by_serial(db, serials)`:
+   - Domain `telematics` query bảng telematics một lần với WHERE serial IN (...)
    - Trả về dict: {telematic_serial: (telematic_id, vehicle_id)}
    - Dùng SQLAlchemy Core select
 
@@ -770,7 +774,8 @@ Lưu ý:
 
 **Kết quả/Quyết định:**
 
-- `get_telematic_mappings()` thực hiện một `SELECT ... WHERE serial IN (...)` và
+- `telematics.service.resolve_mappings_by_serial()` thực hiện một
+  `SELECT ... WHERE serial IN (...)` và
   chỉ trả thiết bị đã gán `vehicle_id`.
 - `bulk_insert_telemetry()` dùng PostgreSQL Core `insert(...).values(messages)`,
   không dùng ORM `add_all`.
@@ -794,7 +799,7 @@ Cập nhật backend/app/domains/telemetry/service.py:
 
 1. async def process_batch(db: AsyncSession, messages: Sequence[TelemetryEnvelope]) -> BatchResult:
    - Lấy danh sách telematic_serial duy nhất từ batch
-   - Gọi repository.get_telematic_mappings(serials) - 1 query cho cả batch
+   - Gọi `telematics.service.resolve_mappings_by_serial(serials)` - 1 query cho cả batch
    - Với mỗi message:
      + Nếu telematic_serial không tồn tại: log warning, skip message
      + Nếu tồn tại: bổ sung telematic_id và vehicle_id
@@ -830,7 +835,7 @@ Lưu ý:
 - `process_batch()` xử lý đúng message hợp lệ, skip telematic không tồn tại hoặc
   chưa gán xe, và trả về đủ các metric `processed`, `skipped`, `errors`.
 - Danh sách `telematic_serial` được gom duy nhất và gọi
-  `repository.get_telematic_mappings()` đúng một lần cho cả batch.
+  `telematics.service.resolve_mappings_by_serial()` đúng một lần cho cả batch.
 - Pydantic validation được thực hiện tại MQTT consumer trước khi message được đưa
   vào queue; service tiếp tục kiểm tra mapping telematic/vehicle và xử lý lỗi
   chuyển đổi từng message.
@@ -1518,8 +1523,8 @@ Cập nhật:
 
 - `backend/app/domains/telemetry/service.py`: thêm `process_message()` và
   `MessageResult`.
-- `backend/app/domains/telemetry/repository.py`: thêm singular mapping lookup và
-  insert; giữ nguyên `get_telematic_mappings()`/`bulk_insert_telemetry()`.
+- `backend/app/domains/telemetry/repository.py`: chỉ giữ lookup/insert dữ liệu
+  telemetry; mapping singular/batch thuộc public service của `telematics`.
 - `backend/app/domains/telemetry/ingestion/entrypoint.py`: dùng
   `MessageWorker`, không truyền batch size/flush interval vào active worker.
 - `backend/app/libs/common/config.py`, `backend/.env.example`: giữ setting batch
@@ -1530,7 +1535,8 @@ Cập nhật:
 
 - Không xóa hoặc chuyển đổi `batch_worker.py` và `process_batch()` sang wrapper
   singular; batch path phải còn nguyên để tránh mất implementation đã có.
-- Không xóa các repository batch API. Khi bật lại phải đánh giá lại benchmark,
+- Không đưa truy vấn model/repository `telematics` trở lại telemetry. Khi bật lại
+  batch path phải gọi public `telematics.service` và đánh giá benchmark,
   transaction atomicity, backpressure và failure semantics.
 - Rà soát mục cache telematic mapping trong `future.md` để không còn mô tả rằng
   active MVP đang dùng batch lookup.
