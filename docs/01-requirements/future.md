@@ -445,10 +445,30 @@
 - **Ghi chú thêm**: Code batch vẫn được giữ trong
   `backend/app/domains/telemetry/ingestion/batch_worker.py`,
   `telemetry.service.process_batch()`,
-  `telemetry.repository.get_telematic_mappings()` và
+  `telematics.service.resolve_mappings_by_serial()` và
   `telemetry.repository.bulk_insert_telemetry()`, nhưng không được entrypoint
   active gọi. Trước khi bật lại cần benchmark workload đại diện, chốt
   transaction/failure semantics, backpressure và cập nhật smoke/E2E tương ứng.
+
+### 26. Nghiệp vụ mở rộng của charging sessions
+
+- **Mô tả ngắn**: Bổ sung các nghiệp vụ không thuộc MVP lưu trữ phiên sạc gồm
+  authorization RFID/idToken, mapping driver/vehicle, remote start/stop,
+  pricing, payment, webhook, overdue và debt.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Quyết định ai được bắt đầu/dừng phiên và liên kết phiên với người/xe.
+  - Điều khiển phiên từ xa qua transport OCPP của `charging_stations`.
+  - Tính tiền, thu tiền và quản lý công nợ sau khi phiên kết thúc.
+- **Lý do hoãn lại**: MVP hiện chỉ cần `charging_stations` nhận dữ liệu thiết bị
+  và `charging_sessions` lưu event, meter cùng lifecycle phiên; chưa có contract
+  provider, tariff, identity hoặc business rule đủ ổn định để triển khai an toàn.
+- **Liên quan đến planner/feature**: `docs/02-planners/backend-charging.md`,
+  AD-03 và S-02; các mục tính tiền/thanh toán tương ứng trong
+  `docs/01-requirements/feature-list.md`.
+- **Ngày ghi nhận**: 2026-07-31
+- **Ghi chú thêm**: Không tạo bảng `charging_remote_commands`, tariff, payment,
+  debt hoặc authorization placeholder trong MVP. Khi mở lại phải cập nhật
+  planner charging và `AGENTS.md` trước khi code.
 
 ---
 

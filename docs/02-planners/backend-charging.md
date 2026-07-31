@@ -1,373 +1,298 @@
-# Planner: Backend quản lý trụ sạc và phiên sạc
+# Planner: Backend quản lý trụ sạc và lưu trữ phiên sạc
 
-> Mã chức năng: AD-03 và S-02; đối chiếu `docs/01-requirements/feature-list.md`
+> Mã chức năng: AD-03 và phần lifecycle của S-02
 >
-> Trạng thái: 📋 Dự kiến; chưa triển khai source code hoặc migration charging
+> Trạng thái: 📋 MVP rút gọn; chưa triển khai source code hoặc migration charging
 >
-> Ngày tạo/hợp nhất: 2026-07-31
+> Ngày cập nhật: 2026-07-31
 
-Tài liệu này là planner duy nhất cho toàn bộ backend charging. Planner vẫn chia
-thành hai bounded context, nhưng các bước được sắp xếp trong một luồng để tránh
-trùng hoặc bỏ sót dependency giữa hai domain.
+Đây là planner duy nhất cho charging backend. Planner chia thành hai bounded
+context nhưng chỉ mô tả phạm vi MVP đã chốt: quản lý thiết bị/OCPP và nhận, lưu,
+cập nhật dữ liệu phiên sạc.
 
 ## 1. Ranh giới hai domain
 
-### 1.1. `charging_stations` — thiết bị vật lý và OCPP
+### 1.1. `charging_stations`: thiết bị vật lý và OCPP
 
 Sở hữu:
 
 - hồ sơ Charging Station, EVSE và Connector;
-- topology vật lý, capability và trạng thái online/offline;
-- lịch sử trạng thái kỹ thuật và sự kiện thiết bị;
-- WebSocket gateway OCPP 2.0.1, connection registry và dispatcher;
-- bảng `charging_remote_commands`, tức transport/audit của lệnh gửi tới trụ.
+- topology vật lý, capability và trạng thái kỹ thuật;
+- WebSocket gateway OCPP 2.0.1, connection registry và lifecycle kết nối;
+- nhận BootNotification, Heartbeat, StatusNotification, NotifyEvent,
+  TransactionEvent và MeterValues;
+- chuyển dữ liệu OCPP đã chuẩn hóa sang public service của
+  `charging_sessions`.
 
-Không sở hữu vòng đời phiên, điều kiện tài xế/xe, giá, thanh toán hoặc công nợ.
+Trong MVP này chưa triển khai remote start/stop hoặc command transport tới trụ.
 
-### 1.2. `charging_sessions` — vận hành phiên sạc
+### 1.2. `charging_sessions`: dữ liệu và lifecycle phiên sạc
 
 Sở hữu:
 
-- phiên sạc, driver/vehicle mapping và lifecycle;
-- TransactionEvent, meter samples, reconciliation với telemetry xe;
-- rule remote start/stop (quyền, active session, debt, payment method);
-- tariff, pricing snapshot, payment transaction, webhook và công nợ;
-- API giám sát, đối soát và báo cáo tiền phiên.
+- aggregate `charging_sessions`;
+- lịch sử `charging_session_events`;
+- meter samples `charging_session_meter_values`;
+- tạo/cập nhật/kết thúc phiên từ dữ liệu do `charging_stations` gửi;
+- reconciliation và API giám sát phiên.
 
-Không sở hữu WebSocket, OCPP dataclass hoặc repository/model nội bộ của
-`charging_stations`.
+Domain này không làm authorization, pricing, payment, debt hoặc remote-control
+business rule trong MVP. Nó cũng không sở hữu WebSocket/OCPP adapter và không gọi
+ngược `charging_stations`.
 
-### 1.3. Dependency và nguyên tắc chung
+### 1.3. Chiều dữ liệu và public boundary
 
-- Chiều gọi duy nhất: `charging_stations` → public service của
-  `charging_sessions`; không có chiều ngược lại.
-- Adapter OCPP chuyển payload thành primitive/standard-library values trước khi
-  gọi service phiên.
-- UUID là internal primary key cho bảng chính; FK luôn tham chiếu internal ID.
-- PostgreSQL 16 dùng UTC timezone-aware; tiền/điện năng dùng `NUMERIC`/`Decimal`.
-- Bảng aggregate là bảng quan hệ thường; event, meter và status history là
-  TimescaleDB hypertable. Vị trí trụ dùng PostGIS `geography(Point, 4326)`.
-- HTTP boundary/worker sở hữu AsyncSession và commit/rollback; service và
-  repository không commit/rollback.
-- Không hard-code topology hai súng: MVP test dùng `2 EVSE × 1 connector`, nhưng
-  schema phải hỗ trợ N EVSE và N connector.
+```text
+Trụ sạc ⇄ OCPP ⇄ charging_stations → charging_sessions
+```
 
-## 2. Contract và quyết định đã chốt
+- `charging_stations` gọi public service của `charging_sessions` để ingest event
+  và meter.
+- `charging_sessions` trả về kết quả xử lý kỹ thuật nếu caller cần, nhưng không
+  gửi OCPP hoặc command điều khiển ngược cho trụ.
+- Không import chéo `models.py`/`repository.py`; adapter OCPP chỉ truyền
+  primitive/standard-library values và ID nội bộ cần thiết.
+- API orchestration có thể đọc cả hai domain rồi ghép response; đó không phải
+  dependency ngược giữa domain.
 
-- Pre-provision station/topology qua Admin API; `BootNotification` không tự tạo
-  station/EVSE/connector lạ.
+## 2. Phạm vi MVP và phần hoãn
+
+### Trong phạm vi
+
+- Pre-provision station/EVSE/connector qua Admin API.
 - OCPP 2.0.1 qua WebSocket `/ocpp/{ocpp_identity}`.
 - Development có thể không TLS/không authentication trong môi trường cô lập;
-  production phải chốt Security Profile 2 hoặc 3 trước khi triển khai thật.
-- RFID card cung cấp `idToken`; hash/reference của token map tới driver, driver
-  map tới vehicle qua active shift/assignment. Không lưu raw card ID.
-- Remote control: Admin vận hành và tài xế được gán xe; Admin được force stop,
-  nhưng không force start khi còn debt.
-- OCPP response timeout 30 giây, chờ TransactionEvent xác nhận 60 giây; không tự
-  retry khi không biết trụ đã nhận lệnh hay chưa.
-- Dự kiến trụ có offline buffer; sequence/replay phải xác nhận khi test thiết bị
-  thật.
-- `Accepted` của remote command chỉ nghĩa là trụ chấp nhận request, không chứng
-  minh phiên đã bắt đầu/dừng; phải correlate bằng `TransactionEvent`.
-- Payment provider, công thức tariff, rounding, retry và overdue phải được chốt
-  trước khi code phần billing/payment (không tự bịa credential/provider).
+  production security profile chốt sau.
+- MVP topology test: `2 EVSE × 1 connector`; schema hỗ trợ N EVSE/N connector.
+- Lưu trạng thái thiết bị, OCPP technical events, transaction events và meter.
+- Lưu session aggregate, event history, meter history và API monitoring.
+- Timestamp UTC timezone-aware, điện năng canonical Wh, `NUMERIC`/`Decimal`.
+- `charging_sessions` là bảng quan hệ thường; event/meter/status history là
+  TimescaleDB hypertable; location dùng PostGIS geography khi cần.
 
-## 3. Mô hình dữ liệu đích
+### Hoãn khỏi MVP
 
-### 3.1. Domain `charging_stations`
+- Authorization RFID/idToken, mapping driver/vehicle và phân quyền bắt đầu/dừng.
+- Remote start/stop, `charging_remote_commands` và business guard.
+- Tariff, pricing, payment, webhook, overdue và debt.
+- Reservation, smart charging, firmware management, alert delivery.
 
-- `charging_stations`: UUID, unique `ocpp_identity`, metadata, PostGIS location,
-  administrative/connection status, `last_seen_at`, soft delete.
-- `charging_evses`: UUID, station FK, positive `ocpp_evse_id`, availability,
-  status, capability; unique `(station_id, ocpp_evse_id)`.
-- `charging_connectors`: UUID, EVSE FK, positive `ocpp_connector_id`, type/status,
-  capability; unique `(evse_id, ocpp_connector_id)`.
-- `charging_station_status_events`: hypertable theo `recorded_at`, station/
-  EVSE/connector refs, source, status/event, OCPP message ID, sanitized JSONB.
-- `charging_remote_commands`: một dòng cho mỗi remote start/stop request; UUID,
-  command type, topology refs, optional opaque session ref, actor/driver/vehicle
-  refs, idempotency key/fingerprint, state, attempt/response/confirmation times,
-  error. Không lưu raw RFID và không gửi OCPP trong HTTP request.
+Các mục hoãn phải được ghi trong `docs/01-requirements/future.md`; không tạo
+placeholder source hoặc bảng cho chúng trong MVP.
 
-Command state:
+## 3. Mô hình dữ liệu đích trong MVP
 
-```text
-pending → dispatching → accepted → confirmed
-       ↘ rejected       ↘ failed
-       ↘ timed_out       ↘ confirmation_timed_out
-       ↘ cancelled
-```
+### 3.1. `charging_stations`
 
-### 3.2. Domain `charging_sessions`
+- UUID internal ID, unique `ocpp_identity`, metadata, location, administrative
+  status, connection snapshot, `last_seen_at`, timestamps và soft delete.
+- Không tự tạo station/EVSE/connector lạ từ `BootNotification`.
 
-- `charging_sessions`: aggregate quan hệ thường; station/EVSE/connector refs,
-  vehicle/driver refs, OCPP transaction ID, operational/pricing/payment status,
-  meter summary, tariff/pricing snapshot, total/currency.
-- `charging_session_events`: hypertable/audit event bất biến.
-- `charging_session_meter_values`: hypertable, canonical Wh và raw sampled value.
-- `charging_session_start_intents`: serialize remote start theo vehicle/EVSE,
-  idempotency và correlation với command.
-- `charging_tariffs`/versions/assignments: tariff có effective period, version
-  bất biến sau khi được session tham chiếu.
-- `charging_payment_methods`: chỉ provider token/reference và metadata an toàn;
-  không PAN/CVV.
-- `charging_payment_transactions` và immutable payment/webhook events.
-- `charging_debts`: số tiền, due date, trạng thái, resolve/reopen và audit.
+### 3.2. `charging_evses`
 
-Session state tách ba chiều:
+- UUID, station FK, positive `ocpp_evse_id`, availability/status và capability.
+- Unique `(station_id, ocpp_evse_id)`.
 
-```text
-operational: pending → active → ending → completed|interrupted
-pricing:     not_ready → pending → calculated|calculation_failed
-payment:     not_ready → unpaid → processing → paid|failed|overdue
-```
+### 3.3. `charging_connectors`
 
-`paid` không thay đổi operational status. Session completed/interrupted phải giữ
-được pricing snapshot để giải thích số tiền lịch sử.
+- UUID, EVSE FK, positive `ocpp_connector_id`, connector type/status/capability.
+- Unique `(evse_id, ocpp_connector_id)`.
+
+### 3.4. `charging_station_status_events`
+
+Hypertable theo `recorded_at`, lưu station/EVSE/connector refs, source action,
+status/event, OCPP message ID, received time và sanitized raw JSONB.
+
+### 3.5. `charging_sessions`
+
+Bảng aggregate thường, gồm tối thiểu:
+
+- UUID internal ID;
+- station/EVSE/connector IDs;
+- OCPP transaction ID và các timestamp bắt đầu/kết thúc;
+- operational status: `pending | active | ending | completed | interrupted`;
+- meter start/end, energy delivered Wh, reconciliation status/error;
+- created/updated timestamps.
+
+Không thêm pricing/payment/authorization columns trong MVP này.
+
+### 3.6. `charging_session_events` và `charging_session_meter_values`
+
+Hai bảng hypertable/audit history, có idempotency key phù hợp với
+`transaction_id`, `seq_no`, event timestamp và sampled value identity. Duplicate
+hoặc out-of-order event không được làm state lùi.
 
 ## 4. Thứ tự thực hiện
 
-Mỗi bước dưới đây là một prompt độc lập. Chỉ đánh dấu bước hoàn thành sau khi
-chạy kiểm tra và ghi “Kết quả thực tế” vào chính file này.
+Mỗi bước là một prompt độc lập. Chỉ đánh dấu hoàn thành sau khi chạy kiểm tra và
+ghi kết quả thực tế vào file này.
 
-### Bước 0 — Rà hiện trạng và chốt business contract
-
-**Prompt:**
-
-```text
-Đọc AGENTS.md, feature-list.md, future.md và docs/02-planners/backend-charging.md.
-Rà source/migration/config để xác nhận charging chưa có implementation.
-
-Chỉ thực hiện Bước 0, chưa viết source code. Ghi vào planner:
-1. Các quyết định đã chốt về pre-provision, OCPP 2.0.1, topology 2 EVSE × 1
-   connector, RFID/idToken, actor remote control, timeout và offline buffer.
-2. Câu hỏi blocking về payment provider, tariff/currency/rounding, meter
-   reconciliation, retry/overdue/debt, webhook và production security.
-3. Phân biệt thông tin cần trước khi code với thông tin chỉ cần trước khi test
-   trụ thật. Không tự đặt credential, provider hoặc công thức giá.
-```
-
-**Kiểm tra:** không tạo file source/dependency/migration; kết quả rà hiện trạng
-phải chỉ ra rõ chưa có các bảng `charging_sessions` và
-`charging_remote_commands`.
-
-**Kết quả thực tế:** Thiết bị/OCPP MVP đã chốt ngày 2026-07-31; business
-tariff/payment và production security vẫn cần xác nhận trước khi code phần đó.
-
-### Bước 1 — Chốt contract liên domain và schema tổng thể
+### Bước 0 — Rà hiện trạng và chốt scope MVP
 
 **Prompt:**
 
 ```text
-Thực hiện Bước 1 của planner. Chỉ sửa planner/tài liệu contract.
+Đọc AGENTS.md, feature-list.md, future.md và planner này. Rà source/migration/
+config để xác nhận chưa có implementation charging.
 
-Thiết kế chi tiết schema/index/FK/constraint/soft-delete/hypertable cho cả hai
-domain theo mục 3. Chốt:
-1. Primitive public service giữa charging_stations và charging_sessions.
-2. State machine session, pricing, payment và remote command.
-3. Idempotency của OCPP event, remote command, start intent, payment và webhook.
-4. API CRUD topology, status/history, session monitoring, remote command,
-   tariff, payment, debt và reconciliation.
-5. Transaction boundary, partial failure, timeout và HTTP error mapping.
-
-Không tạo source và không để charging_sessions import charging_stations.
+Chỉ thực hiện Bước 0, chưa viết source code. Ghi rõ:
+1. charging_stations sở hữu thiết bị vật lý, OCPP và technical events.
+2. charging_sessions chỉ nhận/lưu/cập nhật session, event và meter từ stations.
+3. Authorization, RFID/driver/vehicle policy, remote control, pricing, payment,
+   overdue và debt đều ngoài scope MVP.
+4. Các thông tin còn thiếu để test trụ thật: identity/credential production,
+   EVSE/connector ID, connector type/công suất, heartbeat/sample interval và
+   offline buffer.
+Không tự đặt credential hoặc business rule ngoài scope.
 ```
 
-**Kiểm tra:** accepted/confirmed được phân biệt; tariff snapshot audit được;
-concurrent start/payment có invariant DB/service; không có dependency cycle.
+**Kết quả thực tế:** Scope MVP rút gọn đã được xác nhận ngày 2026-07-31; không
+code authorization/billing/remote-control business.
 
-**Kết quả thực tế:** Contract topology và remote command đã chốt trong planner
-cũ; cần hợp nhất thành contract ở file này trước khi triển khai.
+### Bước 1 — Chốt contract schema và public service
 
-### Bước 2 — Tạo dependency/config và migration cho hai domain
+**Prompt:**
+
+```text
+Thực hiện Bước 1, chỉ sửa planner/contract.
+1. Chốt fields/constraints/index/FK/soft-delete cho 5 nhóm bảng trong mục 3.
+2. Chốt state machine session và idempotency cho TransactionEvent/MeterValues.
+3. Thiết kế public service của charging_sessions:
+   ingest_transaction_event(...), ingest_meter_values(...),
+   mark_station_interrupted(...) nếu cần.
+4. Quy định adapter OCPP chỉ truyền primitive/standard-library values.
+5. Chốt HTTP API topology/status/history và session monitoring.
+6. Chốt transaction boundary, duplicate/out-of-order, timeout và raw payload
+   redaction.
+Không thêm bảng remote command, tariff, payment hoặc debt.
+```
+
+### Bước 2 — Tạo package, dependency/config và migration
 
 **Prompt:**
 
 ```text
 Thực hiện Bước 2 theo contract Bước 1.
 1. Tạo package charging_stations và charging_sessions với __init__.py chỉ có
-   docstring, types/exceptions/models cần thiết.
-2. Thêm python-ocpp bằng uv, đồng bộ pyproject.toml/uv.lock; settings namespace
-   OCPP_ và PAYMENT_ chỉ sau khi provider/security đã chốt.
-3. Tạo Alembic migration mới cho toàn bộ bảng topology, status event, remote
-   command, session, event, meter, start intent, tariff, payment và debt.
+   docstring, cùng types/exceptions/models cần thiết.
+2. Thêm python-ocpp bằng uv, đồng bộ pyproject.toml/uv.lock.
+3. Tạo Alembic migration cho station/EVSE/connector/status event/session/
+   session event/meter value.
 4. Dùng shared Base/session; UUID, UTC, PostGIS và TimescaleDB đúng contract.
-5. Review upgrade/downgrade, partial unique index, hypertable partition key,
-   FK/soft-delete/cascade và worker-claim index.
-6. Chạy format, lint, type, import và migration smoke test; chưa tạo dữ liệu giả.
+5. Review hypertable partition key, unique/idempotency, FK/soft-delete,
+   upgrade/downgrade và index truy vấn monitoring.
+6. Chạy format/lint/type/import và migration smoke test; không tạo dữ liệu giả.
 ```
 
-### Bước 3 — CRUD station/EVSE/connector và topology API
+### Bước 3 — CRUD station, EVSE, connector
 
 **Prompt:**
 
 ```text
 Thực hiện Bước 3. Tạo schemas/repository/service/router cho CRUD và soft-delete
 station, EVSE, connector. Hỗ trợ N EVSE/N connector, PATCH theo convention,
-validate unique ocpp_identity và topology. Trước deactivate/delete, gọi public
-service charging_sessions để chặn active/ending session; không import model/
-repository domain kia. Chuyển IntegrityError thành domain error, đăng ký router,
-smoke test topology 2 EVSE × 1 connector và chạy static checks.
+validate identity/unique topology, không tự tạo topology từ OCPP. Đăng ký router,
+chạy Swagger smoke test cho topology 2 EVSE × 1 connector và conflict.
 ```
 
-### Bước 4 — Vòng đời session và public ingestion service
+### Bước 4 — Session ingestion service và persistence
 
 **Prompt:**
 
 ```text
 Thực hiện Bước 4 cho charging_sessions. Implement repository/service nhận
 TransactionEvent Started/Updated/Ended và MeterValues bằng primitive values.
-Started tạo/nối session hoặc start intent; Updated/Ended không làm state lùi;
-duplicate/out-of-order/reconnect idempotent; normalize unit về Wh bằng Decimal.
-Expose public has_active_session_for_topology và ingest functions cho domain trụ.
-Service/repository không commit/rollback, không import charging_stations. Test
-duplicate seqNo, meter reset, hai EVSE đồng thời và rollback.
+Started tạo session; Updated/MeterValues append event/sample; Ended chuyển
+ending rồi completed/interrupted theo contract. Duplicate/out-of-order/reconnect
+idempotent, state không lùi, năng lượng normalize về Wh bằng Decimal. Service và
+repository không commit/rollback, không import charging_stations. Test hai EVSE
+đồng thời, duplicate seqNo, meter reset, unknown transaction và rollback.
 ```
 
-### Bước 5 — OCPP WebSocket gateway và connection lifecycle
+### Bước 5 — OCPP WebSocket gateway
 
 **Prompt:**
 
 ```text
-Thực hiện Bước 5 cho charging_stations/ocpp. Tạo ocpp_server.py và entrypoint.py
-dùng python-ocpp v201, chỉ negotiate subprotocol ocpp2.0.1, validate identity,
-registry một connection/station, reconnect và graceful shutdown. Dùng shared
-async_session_factory; không tạo engine/logger riêng. Có simulator connect/reject
-protocol tối thiểu. Cập nhật online/offline có transaction và structured logging.
+Thực hiện Bước 5 cho charging_stations/ocpp. Tạo server/entrypoint dùng
+python-ocpp v201, chỉ negotiate ocpp2.0.1, validate identity, giữ một active
+connection/station, xử lý reconnect và graceful shutdown. Dùng shared session
+factory, structured logging, không tạo engine/logger riêng. Tạo simulator
+connect/reject protocol tối thiểu.
 ```
 
-### Bước 6 — Boot, heartbeat, status và lịch sử thiết bị
+### Bước 6 — Boot, heartbeat, status và technical history
 
 **Prompt:**
 
 ```text
 Thực hiện Bước 6. Implement BootNotification, Heartbeat, StatusNotification và
-NotifyEvent. Boot chỉ cập nhật station đã pre-provision; unknown EVSE/connector
-không tự tạo. Snapshot và charging_station_status_events phải atomic, duplicate/
-out-of-order không làm lùi trạng thái; offline detection lấy timeout từ config.
-Tạo GET status/status-history có filter UTC, pagination ổn định, không trả raw
-payload mặc định. Test unknown topology và DB rollback.
+NotifyEvent. Boot chỉ cập nhật station đã pre-provision; unknown topology không
+tự tạo. Snapshot và status event atomic; duplicate/out-of-order không làm lùi
+timestamp/status; offline detection lấy timeout từ config. Tạo API status và
+status-history có filter UTC/pagination, không trả raw payload mặc định.
 ```
 
-### Bước 7 — Cầu nối OCPP transaction/meter và reconciliation
+### Bước 7 — Bridge OCPP events sang sessions
 
 **Prompt:**
 
 ```text
-Thực hiện Bước 7. OCPP adapter resolve internal topology ID, giữ transactionId,
-seqNo, triggerReason, stoppedReason và meter rồi gọi public charging_sessions
-service; không truyền ocpp.v201 qua boundary. Sau Ended, reconciliation worker
-dùng telemetry.service (nếu mapping đáng tin), tolerance/timeout đã chốt, tính
-meter_start/end/energy bằng Decimal, chuyển completed hoặc interrupted và đặt
-pricing=pending. Test station-only, mismatch, missing Ended, reset và worker
-concurrent.
+Thực hiện Bước 7. OCPP adapter resolve internal station/EVSE/connector IDs,
+giữ transactionId/seqNo/timestamp/meter và gọi public charging_sessions.service.
+Không truyền ocpp.v201 hoặc SQLAlchemy model qua boundary. Chỉ phản hồi OCPP sau
+khi operation persistence thành công theo transaction contract. Test Started,
+Updated, Ended, MeterValues, duplicate, out-of-order, unknown transaction và DB
+rollback. Không triển khai authorize hay remote command.
 ```
 
-### Bước 8 — API giám sát phiên và meter
+### Bước 8 — API giám sát phiên
 
 **Prompt:**
 
 ```text
-Thực hiện Bước 8 cho charging_sessions. Tạo API list/active/detail/meter-values/
-events với filter station, EVSE, connector, vehicle, ba nhóm status và UTC
-range; pagination/cursor ổn định, không N+1. Detail trả energy/pricing/payment/
-reconciliation nhưng không raw payload, token hoặc secret. Áp dụng quyền driver
-chỉ thấy session của mình và Admin theo identity contract; nếu identity chưa có,
-ghi blocker thay vì tự thêm middleware. Chạy smoke tests.
+Thực hiện Bước 8 cho charging_sessions. Implement:
+GET /api/v1/charging-sessions
+GET /api/v1/charging-sessions/active
+GET /api/v1/charging-sessions/{session_id}
+GET /api/v1/charging-sessions/{session_id}/meter-values
+GET /api/v1/charging-sessions/{session_id}/events
+
+Filter station/EVSE/connector/transaction/status/UTC range, pagination ổn định,
+không N+1. Response chỉ chứa session/event/meter/technical reconciliation,
+không có payment/authorization fields. Chạy smoke test empty/filter/pagination.
 ```
 
-### Bước 9 — Tariff và pricing engine
+### Bước 9 — Simulator và nghiệm thu MVP
 
 **Prompt:**
 
 ```text
-Thực hiện Bước 9 sau khi business rules đã được xác nhận. Implement tariff CRUD,
-version/effective period/assignment và resolver; version đã dùng bất biến, không
-overlap. Implement pure pricing engine bằng Decimal nhận Wh, duration, tariff
-snapshot, tax/currency/rounding; lưu line items, formula version, subtotal/tax/
-total atomic. Pricing worker phải idempotent, calculation_failed không tạo payment.
-Test boundary tariff, rounding, zero energy, interrupted và retry.
-```
-
-### Bước 10 — Payment provider, payment transaction và webhook
-
-**Prompt:**
-
-```text
-Thực hiện Bước 10 theo provider đã chốt. Tạo adapter/protocol, không để SDK lan
-vào business service; config PAYMENT_ và secret chỉ qua env. Payment method chỉ
-lưu provider token/reference, không PAN/CVV. Implement tạo/list payment với
-Idempotency-Key, amount/currency lấy từ pricing snapshot, retry tạo attempt mới,
-provider idempotency key và partial-failure recovery. Implement webhook verify
-signature/timestamp trước side effect, dedupe provider event ID, validate amount/
-currency, không cho state lùi. Test success/failure/timeout/duplicate/replay.
-```
-
-### Bước 11 — Remote control: business guard và transport OCPP
-
-**Prompt:**
-
-```text
-Thực hiện Bước 11, chia rõ hai phần nhưng hoàn thành end-to-end:
-
-A. charging_sessions.service expose authorize_remote_start/stop, tạo
-   charging_session_start_intent idempotent, kiểm tra actor, RFID->driver->vehicle,
-   active session, EVSE, debt/payment method và concurrent start; expose
-   correlate_transaction_started/mark_control_result. Không gọi ngược station.
-
-B. charging_stations router ghi charging_remote_commands rồi trả 202; dispatcher
-   claim pending bằng PostgreSQL locking, gửi RequestStartTransaction/
-   RequestStopTransaction, áp dụng timeout 30/60 giây, cập nhật state và correlate
-   TransactionEvent. Cùng idempotency key + payload trả command cũ; payload khác
-   409. Không retry khi kết quả transport không rõ. Test accepted/confirmed,
-   rejected, timeout, reconnect, debt và force stop.
-```
-
-### Bước 12 — Overdue, debt, báo cáo và đối soát
-
-**Prompt:**
-
-```text
-Thực hiện Bước 12. Implement overdue worker tạo charging_debts idempotent theo
-đặc tả đã chốt, khóa remote start khi debt active, resolve/reopen có actor/reason/
-immutable audit. Payment thành công sau overdue xử lý đúng rule, không xóa lịch sử.
-Tạo Admin APIs read-only cho session/payment/debt/reconciliation/revenue; định
-nghĩa timestamp và currency rõ ràng, không cộng khác currency, không lộ secret.
-Test due_at boundary, concurrent worker, manual resolve và quyền.
-```
-
-### Bước 13 — Simulator, integration và nghiệm thu
-
-**Prompt:**
-
-```text
-Thực hiện Bước 13 và nghiệm thu planner duy nhất này.
-1. Simulator OCPP mô phỏng station 2 EVSE × 1 connector, hai phiên đồng thời,
-   Boot/Heartbeat/Status/Notify/Transaction/Meter, remote start/stop, delay,
+Thực hiện Bước 9 và nghiệm thu planner MVP.
+1. Simulator mô phỏng một station có hai EVSE, mỗi EVSE một connector; chạy hai
+   session đồng thời, Boot/Heartbeat/Status/Notify/Transaction/Meter, delay,
    disconnect/reconnect, duplicate và out-of-order.
-2. E2E: remote start -> Started -> meter -> Ended -> reconciliation -> pricing ->
-   payment/webhook; payment failure/retry; overdue/debt/block/unblock; stop
-   accepted/rejected/timeout; interrupted session.
-3. Chạy Black, isort, Ruff, mypy, compile và migration upgrade/downgrade/upgrade.
-4. Dùng rg audit import boundary, __init__.py, HTTPException, commit/rollback,
-   datetime.utcnow, float cho tiền/energy, logger f-string, secret/card/raw
-   payload và TODO/placeholder.
-5. Cập nhật kết quả từng bước với command/evidence; ghi rõ phần chưa test với
-   trụ/provider production và chuyển hạng mục thật sự hoãn vào future.md.
+2. E2E: OCPP Started → session active → MeterValues → Ended → completed hoặc
+   interrupted → API monitoring.
+3. Chạy compileall, Black, isort, Ruff, mypy và migration upgrade/downgrade/
+   upgrade.
+4. Dùng rg audit import chéo models/repositories, HTTPException ngoài router,
+   commit/rollback ngoài boundary, datetime.utcnow, float cho energy và raw
+   secret. Ghi command/evidence/giới hạn test trụ thật.
+5. Không thêm authorization, remote control, pricing, payment hoặc debt; các
+   mục này chỉ được mở bằng planner tương lai riêng.
 ```
 
 ## 5. Tiêu chí hoàn thành
 
-- Hai domain có source và migration riêng, không import nội bộ chéo.
-- Topology hỗ trợ N EVSE/N connector; MVP simulator chạy đúng 2 EVSE × 1 connector.
-- OCPP 2.0.1 lifecycle, status/history, TransactionEvent và meter hoạt động.
-- Session idempotent, reconciliation rõ nguồn sự thật và giám sát được.
-- Remote start/stop durable, phân quyền, debt guard, timeout và correlation đầy đủ.
-- Pricing deterministic có snapshot/audit; payment/webhook không double charge và
-  không lưu dữ liệu thẻ thô.
-- Overdue/debt chặn/mở phiên đúng rule; API báo cáo không lộ secret.
-- Static checks, migration smoke test và E2E có bằng chứng; chưa đánh dấu pass chỉ
-  vì code “có vẻ chạy”.
+- Station/EVSE/connector CRUD và topology hoạt động.
+- OCPP 2.0.1 gateway nhận technical events ổn định.
+- Session được tạo/cập nhật/kết thúc từ event của station một cách idempotent.
+- Meter/status/event history lưu đúng hypertable và query được.
+- Hai EVSE có thể có hai session đồng thời trong simulator.
+- Không có dependency ngược hoặc import nội bộ chéo giữa hai domain.
+- Authorization, remote control business, pricing, payment và debt không xuất
+  hiện trong source/migration MVP.
 
 ## 6. Tài liệu giao thức tham chiếu
 
