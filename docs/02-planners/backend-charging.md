@@ -122,6 +122,348 @@ Hai bảng hypertable/audit history, có idempotency key phù hợp với
 `transaction_id`, `seq_no`, event timestamp và sampled value identity. Duplicate
 hoặc out-of-order event không được làm state lùi.
 
+### 3.7. Contract schema Bước 1 — quy ước chung
+
+- Mọi bảng có internal ID UUID. Với ba bảng history là hypertable, primary key
+  là composite `(internal_id, time_column)` để thỏa điều kiện unique index của
+  TimescaleDB; UUID vẫn là ID nội bộ dùng trong API và log, không dùng business
+  key làm primary key.
+- Tất cả timestamp là `TIMESTAMP WITH TIME ZONE`, được normalize về UTC trước
+  khi validate/persist. Mỗi history record có cả thời điểm phát sinh từ thiết bị
+  (`recorded_at`/`event_occurred_at`/`sampled_at`) và thời điểm server nhận
+  (`received_at`).
+- Giá trị năng lượng và công suất dùng `Decimal` ở Python và `NUMERIC` ở DB;
+  năng lượng canonical là Wh. Không dùng `float` để tính hoặc so sánh energy.
+- Soft-delete chỉ áp dụng cho `charging_stations`, `charging_evses` và
+  `charging_connectors` qua `deleted_at`. Không xóa session hoặc history; mọi
+  foreign key topology/session dùng `ON DELETE RESTRICT`, và thao tác CRUD
+  thông thường không physical-delete record.
+- Unique identity topology bao gồm cả record đã soft-delete để tránh tái sử
+  dụng business identity làm mơ hồ lịch sử; muốn dùng lại topology cũ phải
+  restore record cũ theo contract CRUD sau này.
+- `station_id`, `evse_id` và `connector_id` truyền qua boundary luôn là internal
+  UUID. Adapter OCPP resolve topology trước khi gọi service; không truyền
+  `ocpp.v201` object, Pydantic schema hoặc SQLAlchemy model qua boundary.
+
+### 3.8. Contract fields/constraints/index cho topology
+
+#### `charging_stations`
+
+| Field | Contract |
+|---|---|
+| `station_id` | UUID, primary key |
+| `ocpp_identity` | String không rỗng, tối đa 255 ký tự, unique toàn bảng; giữ nguyên giá trị phân biệt hoa thường để resolve đúng OCPP path |
+| `display_name` | String không rỗng, tối đa 200 ký tự |
+| `manufacturer`, `model`, `serial_number`, `firmware_version` | String nullable, chỉ là metadata kỹ thuật; không dùng làm identity |
+| `location` | PostGIS `geography(Point, 4326)`, nullable; tọa độ phải nằm trong miền latitude/longitude hợp lệ |
+| `administrative_status` | `active \| inactive \| maintenance`, bắt buộc |
+| `connection_status` | `unknown \| connected \| offline`, snapshot kỹ thuật, bắt buộc |
+| `last_seen_at`, `last_boot_at` | UTC-aware, nullable |
+| `created_at`, `updated_at` | UTC-aware, bắt buộc |
+| `deleted_at` | UTC-aware, nullable; station bị soft-delete không được OCPP resolve hoặc trả trong list active |
+
+Index/constraint tối thiểu: unique `ocpp_identity`; index cho
+`(administrative_status, deleted_at)`, `(connection_status, last_seen_at)`,
+`deleted_at`; spatial GiST cho `location` nếu bật truy vấn theo vị trí.
+
+#### `charging_evses`
+
+| Field | Contract |
+|---|---|
+| `evse_id` | UUID, primary key |
+| `station_id` | UUID, FK `charging_stations.station_id`, NOT NULL, `ON DELETE RESTRICT` |
+| `ocpp_evse_id` | Integer dương (`> 0`), NOT NULL |
+| `display_name` | String nullable, tối đa 100 ký tự |
+| `administrative_status` | `active \| inactive`, bắt buộc |
+| `technical_status` | `unknown \| available \| occupied \| unavailable \| faulted`, bắt buộc |
+| `capabilities` | JSONB object, mặc định `{}`, chỉ chứa capability đã chuẩn hóa, không chứa credential |
+| `last_status_at` | UTC-aware, nullable |
+| `created_at`, `updated_at`, `deleted_at` | UTC-aware; `deleted_at` nullable để soft-delete |
+
+Unique `(station_id, ocpp_evse_id)`; index cho `(station_id, deleted_at)` và
+`(technical_status, station_id)`. Service phải kiểm tra EVSE thuộc station
+được truyền khi xử lý event; FK đơn lẻ không đủ biểu diễn ràng buộc topology
+chéo này.
+
+#### `charging_connectors`
+
+| Field | Contract |
+|---|---|
+| `connector_id` | UUID, primary key |
+| `evse_id` | UUID, FK `charging_evses.evse_id`, NOT NULL, `ON DELETE RESTRICT` |
+| `ocpp_connector_id` | Integer dương (`> 0`), NOT NULL |
+| `connector_type` | String nullable, tối đa 100 ký tự; để nullable cho tới khi có dữ liệu trụ thật |
+| `max_power_kw` | `NUMERIC(12,3)` nullable; nếu có thì `> 0` |
+| `administrative_status` | `active \| inactive`, bắt buộc |
+| `technical_status` | `unknown \| available \| occupied \| unavailable \| faulted`, bắt buộc |
+| `capabilities` | JSONB object, mặc định `{}`, không chứa credential |
+| `last_status_at` | UTC-aware, nullable |
+| `created_at`, `updated_at`, `deleted_at` | UTC-aware; `deleted_at` nullable để soft-delete |
+
+Unique `(evse_id, ocpp_connector_id)`; index cho `(evse_id, deleted_at)` và
+`(technical_status, evse_id)`. Connector phải thuộc đúng EVSE của station
+trong cùng operation; không tự tạo connector từ OCPP notification.
+
+### 3.9. Contract fields/constraints/index cho technical history
+
+#### `charging_station_status_events`
+
+| Field | Contract |
+|---|---|
+| `status_event_id` | UUID internal ID |
+| `recorded_at` | UTC-aware, NOT NULL, partition key của hypertable |
+| `station_id` | UUID, FK station, NOT NULL, `ON DELETE RESTRICT` |
+| `evse_id` | UUID, FK EVSE, nullable cho event cấp station |
+| `connector_id` | UUID, FK connector, nullable; nếu có thì `evse_id` cũng bắt buộc |
+| `source_action` | `BootNotification \| Heartbeat \| StatusNotification \| NotifyEvent` |
+| `technical_status` | String nullable; status đã chuẩn hóa nếu message có status |
+| `event_code` | String nullable; mã event đã chuẩn hóa cho `NotifyEvent` |
+| `ocpp_message_id` | String nullable, tối đa 255 ký tự |
+| `idempotency_key` | String không rỗng, tối đa 255 ký tự, do adapter tạo ổn định |
+| `received_at` | UTC-aware, NOT NULL |
+| `sanitized_raw_payload` | JSONB nullable; luôn redacted trước khi lưu |
+
+Primary key là `(status_event_id, recorded_at)`. Unique database tối thiểu là
+`(station_id, idempotency_key, recorded_at)` do hypertable yêu cầu partition
+key nằm trong unique index; service vẫn kiểm tra `idempotency_key` logic để
+phát hiện cùng event được gửi lại với timestamp khác. Index truy vấn gồm
+`(station_id, recorded_at DESC)`, `(evse_id, recorded_at DESC)`,
+`(connector_id, recorded_at DESC)` và `(source_action, recorded_at DESC)`.
+
+#### `charging_session_events`
+
+| Field | Contract |
+|---|---|
+| `event_id` | UUID internal ID |
+| `event_occurred_at` | UTC-aware, NOT NULL, partition key của hypertable |
+| `session_id` | UUID, FK `charging_sessions.session_id`, NOT NULL, `ON DELETE RESTRICT` |
+| `event_type` | `Started \| Updated \| Ended \| Interrupted` |
+| `seq_no` | Integer không âm, NOT NULL; thứ tự logic của TransactionEvent |
+| `end_reason` | `normal \| abnormal \| offline \| unknown`, nullable và chỉ dùng khi Ended/Interrupted |
+| `charging_state` | `pending \| active`, nullable |
+| `idempotency_key` | String không rỗng, được dẫn xuất ổn định từ station/transaction/seq_no |
+| `received_at` | UTC-aware, NOT NULL |
+| `sanitized_raw_payload` | JSONB nullable, đã redacted |
+
+Primary key là `(event_id, event_occurred_at)`. Unique `(session_id, seq_no,
+event_occurred_at)` là lớp DB tối thiểu; service dùng logical key
+`(session_id, seq_no)` và fingerprint payload để xử lý timestamp khác nhau.
+Index `(session_id, event_occurred_at, event_id)` và
+`(session_id, seq_no, event_occurred_at)` phục vụ history/idempotency.
+
+#### `charging_session_meter_values`
+
+| Field | Contract |
+|---|---|
+| `meter_value_id` | UUID internal ID |
+| `sampled_at` | UTC-aware, NOT NULL, partition key của hypertable |
+| `session_id` | UUID, FK `charging_sessions.session_id`, NOT NULL, `ON DELETE RESTRICT` |
+| `measurand` | String không rỗng, tối đa 100 ký tự; MVP chỉ nhận measurand năng lượng đã chuẩn hóa (`energy_import_register` hoặc `energy_import_interval`) |
+| `phase`, `context` | String nullable, tối đa 50 ký tự |
+| `source_value` | `NUMERIC(24,6)`, NOT NULL |
+| `source_unit` | String không rỗng, tối đa 20 ký tự |
+| `value_wh` | `NUMERIC(24,3)`, NOT NULL, giá trị đã normalize về Wh và `>= 0` |
+| `seq_no` | Integer không âm nullable nếu MeterValues không có sequence |
+| `sample_idempotency_key` | String không rỗng, dẫn xuất từ transaction/sample identity |
+| `received_at` | UTC-aware, NOT NULL |
+| `sanitized_raw_payload` | JSONB nullable, đã redacted |
+
+MVP chỉ lưu meter energy phục vụ reconciliation; các measurand công suất,
+dòng điện, điện áp hoặc nhiệt độ không đi vào bảng session meter này. Primary
+key là `(meter_value_id, sampled_at)`. Unique database tối thiểu là
+`(session_id, sample_idempotency_key, sampled_at)`; service dùng logical sample
+identity `(transaction_id, sampled_at, measurand, phase, context)` để nhận diện
+duplicate dù timestamp partition khác nhau. Index `(session_id, sampled_at,
+meter_value_id)` và `(session_id, measurand, sampled_at)`.
+
+### 3.10. Contract fields/constraints/index cho session aggregate
+
+#### `charging_sessions`
+
+| Field | Contract |
+|---|---|
+| `session_id` | UUID, primary key |
+| `station_id` | UUID, FK station, NOT NULL, `ON DELETE RESTRICT` |
+| `evse_id` | UUID, FK EVSE, NOT NULL, `ON DELETE RESTRICT` |
+| `connector_id` | UUID, FK connector, NOT NULL, `ON DELETE RESTRICT` |
+| `ocpp_transaction_id` | String không rỗng, tối đa 255 ký tự |
+| `status` | `pending \| active \| ending \| completed \| interrupted` |
+| `started_at`, `ended_at` | UTC-aware; `started_at` bắt buộc sau Started, `ended_at` nullable |
+| `last_event_at`, `last_meter_at` | UTC-aware nullable; không được lùi |
+| `last_transaction_seq_no` | Integer không âm nullable; không được lùi |
+| `meter_start_wh`, `meter_end_wh`, `energy_delivered_wh` | `NUMERIC(24,3)` nullable; các giá trị có mặt phải `>= 0` |
+| `reconciliation_status` | `pending \| reconciled \| inconsistent \| unavailable` |
+| `reconciliation_error` | String nullable, chỉ mô tả lỗi kỹ thuật đối soát |
+| `created_at`, `updated_at` | UTC-aware, NOT NULL |
+
+Unique `(station_id, ocpp_transaction_id)` bảo đảm reconnect không tạo session
+mới. Index cho `(status, updated_at)`, `(station_id, status)`,
+`(evse_id, status)`, `(connector_id, status)`, `started_at` và `ended_at`.
+Session không có `deleted_at`, pricing, payment, authorization, driver hoặc
+vehicle field trong MVP.
+
+### 3.11. State machine và quy tắc idempotency
+
+State machine operational của session:
+
+```text
+pending ──→ active ──→ ending ──→ completed
+   │           │          └──────→ interrupted
+   └───────────┴─────────────────→ interrupted
+
+completed / interrupted là terminal; event mới chỉ có thể là duplicate/no-op
+hoặc history bị out-of-order, không được mở lại session.
+```
+
+- `Started` lần đầu tạo session theo topology đã resolve. Nếu normalized
+  `charging_state` là `pending` thì session ở `pending`; khi có trạng thái
+  charging hoặc meter hợp lệ thì chuyển `active`.
+- `Updated` và MeterValues không tạo session mới. Chúng append history; chỉ
+  cập nhật aggregate nếu sequence/sample mới hơn theo quy tắc ordering.
+- `Ended` append event, chuyển transient qua `ending` trong cùng transaction rồi
+  chốt `completed` cho `end_reason=normal` hoặc `interrupted` cho
+  `abnormal|offline|unknown`. Nếu meter reset/conflict, vẫn giữ history nhưng
+  đặt `reconciliation_status=inconsistent`; không trừ ngược năng lượng.
+- `mark_station_interrupted` chuyển mọi session `pending|active|ending` của
+  station sang `interrupted`; session terminal không đổi.
+- TransactionEvent logical key là `(station_id, ocpp_transaction_id, seq_no)`.
+  Cùng key và cùng fingerprint là duplicate/no-op, có thể trả ACK thành công;
+  cùng key nhưng payload khác là conflict, không cập nhật aggregate.
+- Meter logical sample identity là
+  `(ocpp_transaction_id, sampled_at, measurand, phase, context)`. Cùng identity
+  và cùng giá trị là duplicate; cùng identity khác giá trị là conflict và đặt
+  reconciliation inconsistent, không ghi đè sample cũ.
+- Event/meter out-of-order vẫn được lưu nếu chưa duplicate, nhưng không được
+  làm lùi `status`, `last_event_at`, `last_meter_at`, sequence hoặc meter end.
+  Reconnect dùng cùng transaction identity để tiếp tục session; MeterValues của
+  transaction chưa tồn tại bị từ chối/ghi nhận `unknown_transaction`, không tự
+  tạo aggregate.
+- Meter register giảm so với sample trước được lưu để audit và đánh dấu
+  `meter_reset_or_decrease`; `energy_delivered_wh` không nhận giá trị âm.
+
+### 3.12. Public service của `charging_sessions`
+
+Đây là public boundary duy nhất để `charging_stations` gọi. Chữ ký dưới đây là
+contract logic, không phải code implementation:
+
+```text
+ingest_transaction_event(
+    db,
+    station_id: UUID,
+    evse_id: UUID,
+    connector_id: UUID,
+    transaction_id: str,
+    event_type: Started | Updated | Ended,
+    seq_no: int,
+    event_occurred_at: datetime,
+    received_at: datetime,
+    charging_state: pending | active | None,
+    end_reason: normal | abnormal | offline | unknown | None,
+    meter_start_wh: Decimal | None,
+    meter_end_wh: Decimal | None,
+    idempotency_key: str,
+    sanitized_raw_payload: JSON object | None,
+) -> TransactionIngestResult
+
+ingest_meter_values(
+    db,
+    station_id: UUID,
+    evse_id: UUID,
+    connector_id: UUID,
+    transaction_id: str,
+    samples: Sequence[MeterSampleInput],
+    received_at: datetime,
+) -> MeterIngestResult
+
+mark_station_interrupted(
+    db,
+    station_id: UUID,
+    interrupted_at: datetime,
+    received_at: datetime,
+    reason: offline | connection_lost | unknown,
+) -> InterruptionResult
+```
+
+`MeterSampleInput` chỉ là dữ liệu chuẩn hóa bằng kiểu standard library:
+`sampled_at`, `measurand`, `phase`, `context`, `source_value`, `source_unit`,
+`value_wh`, `seq_no` và `sample_idempotency_key`. Không nhận `ocpp.v201` type,
+Pydantic model hay ORM object. Kết quả service là immutable standard-library
+result chứa `accepted|duplicate|ignored_out_of_order|conflict|rejected`,
+`session_id`, status hiện tại và số sample/event đã insert; không trả model DB.
+
+Public service không `commit()`/`rollback()`. Caller ở entry boundary sở hữu
+`AsyncSession` và transaction; một lần gọi ingest event hoặc một batch
+`ingest_meter_values` là atomic. Repository được `flush()` để phát hiện FK/
+unique conflict khi cần. DB timeout, serialization/deadlock hoặc lỗi bất ngờ
+phải rollback và propagate; không retry trong service và không ACK OCPP thành
+công trước khi transaction commit.
+
+### 3.13. HTTP API topology/status/history và session monitoring
+
+Prefix chung là `/api/v1`. API topology phục vụ pre-provision và soft-delete:
+
+- `POST/GET /charging-stations` — tạo và liệt kê station; filter
+  `administrative_status`, `connection_status`, `include_deleted` không mở cho
+  API public MVP nếu chưa có authorization.
+- `GET/PATCH/DELETE /charging-stations/{station_id}` — chi tiết, partial update,
+  soft-delete station.
+- `POST/GET /charging-stations/{station_id}/evses` và
+  `GET/PATCH/DELETE /charging-evses/{evse_id}` — CRUD EVSE thuộc station.
+- `POST/GET /charging-evses/{evse_id}/connectors` và
+  `GET/PATCH/DELETE /charging-connectors/{connector_id}` — CRUD connector thuộc
+  EVSE.
+
+API technical status/history:
+
+- `GET /charging-stations/{station_id}/status` trả snapshot station, EVSE và
+  connector; không tạo topology nếu thiếu.
+- `GET /charging-stations/{station_id}/status-history` hỗ trợ filter
+  `evse_id`, `connector_id`, `source_action`, `technical_status`,
+  `from/to` UTC-aware và `page/page_size`.
+
+API session monitoring:
+
+- `GET /charging-sessions`
+- `GET /charging-sessions/active`
+- `GET /charging-sessions/{session_id}`
+- `GET /charging-sessions/{session_id}/meter-values`
+- `GET /charging-sessions/{session_id}/events`
+
+Session list filter theo `station_id`, `evse_id`, `connector_id`,
+`ocpp_transaction_id`, `status`, `started_from/started_to` và
+`updated_from/updated_to`; history filter theo UTC range. List dùng pagination
+`page/page_size`, total và thứ tự ổn định có tie-breaker bằng UUID. Mặc định
+session sort `updated_at DESC, session_id DESC`; event/meter sort theo thời điểm
+phát sinh ASC rồi internal ID. Query phải tránh N+1.
+
+Response public chỉ gồm topology/status/session/event/meter và thông tin
+technical reconciliation. Không trả payment, authorization, driver, vehicle,
+raw payload hoặc credential fields.
+
+### 3.14. Timeout và raw payload redaction
+
+- Các timeout phải là settings namespace charging được chốt khi làm Bước 2,
+  tối thiểu gồm heartbeat/offline timeout, meter stale timeout, OCPP request
+  timeout và giới hạn kích thước payload. Bước 1 không tự đặt giá trị vì
+  heartbeat/sample interval và offline buffer còn thiếu.
+- Station chỉ chuyển `connected` → `offline` khi clock vượt offline timeout từ
+  `last_seen_at`; timeout không tự sinh session và không tự tạo topology.
+  Gateway/lifecycle gọi `mark_station_interrupted` sau khi timeout được xác
+  nhận. Dữ liệu reconnect replay được xử lý bằng idempotency.
+- Adapter phải redact đệ quy các key không phân biệt hoa thường như
+  `password`, `token`, `authorization`, `certificate`, `private_key`, `secret`,
+  `credential`, `id_token` trước khi truyền `sanitized_raw_payload`. Payload
+  vượt giới hạn cấu hình được bỏ qua phần raw, không làm mất event/meter đã
+  chuẩn hóa; không lưu credential để phục vụ debug.
+- Raw payload không xuất hiện trong response mặc định và public API MVP không có
+  chế độ trả raw payload. Log chỉ ghi station/transaction/event identity và
+  metadata đã sanitize, không ghi toàn bộ payload hoặc secret.
+
+**Kết quả thực tế (rà soát ngày 2026-07-31):** Contract Bước 1 đã được chốt
+trong các mục 3.7–3.14. Chưa sửa source code, dependency, config hoặc migration;
+Bước 2 sẽ hiện thực contract này và phải rà lại các constraint TimescaleDB,
+PostGIS, FK, index và kiểu enum trước khi merge.
+
 ## 4. Thứ tự thực hiện
 
 Mỗi bước là một prompt độc lập. Chỉ đánh dấu hoàn thành sau khi chạy kiểm tra và
@@ -146,8 +488,51 @@ Chỉ thực hiện Bước 0, chưa viết source code. Ghi rõ:
 Không tự đặt credential hoặc business rule ngoài scope.
 ```
 
-**Kết quả thực tế:** Scope MVP rút gọn đã được xác nhận ngày 2026-07-31; không
-code authorization/billing/remote-control business.
+**Kết quả thực tế (rà soát ngày 2026-07-31):** Bước 0 đã hoàn tất. Scope MVP
+rút gọn được xác nhận như sau:
+
+1. `charging_stations` sở hữu thiết bị vật lý (station/EVSE/connector),
+   topology, trạng thái kỹ thuật, OCPP 2.0.1 và technical events. Gateway OCPP
+   nằm trong domain này.
+2. `charging_sessions` chỉ nhận dữ liệu đã chuẩn hóa từ
+   `charging_stations` qua public service để tạo/cập nhật/lưu aggregate
+   session, event history và meter history; domain này không sở hữu WebSocket
+   hoặc OCPP adapter.
+3. Authorization, RFID/`idToken`, policy driver/vehicle, remote start/stop và
+   remote-control business, pricing, payment, webhook, overdue và debt đều nằm
+   ngoài scope MVP. `docs/01-requirements/future.md` mục 26 đã ghi nhận các
+   nghiệp vụ này là phần hoãn; không tạo source, migration hoặc placeholder cho
+   chúng.
+
+Các thông tin còn thiếu trước khi test với trụ thật, chưa tự đặt giá trị hoặc
+business rule:
+
+- identity/credential production và security profile xác thực thiết bị; dev
+  isolated có thể dùng kết nối không TLS/không authentication theo quyết định
+  hiện tại, nhưng không suy ra đây là cấu hình production;
+- danh sách `EVSE ID` và `connector ID` thực tế của từng trụ;
+- connector type, công suất định mức và capability tương ứng;
+- heartbeat interval, meter/sample interval và timeout dùng để xác định mất
+  kết nối;
+- chính sách offline buffer: trụ có lưu và gửi bù dữ liệu khi reconnect hay
+  chấp nhận mất dữ liệu trong thời gian offline.
+
+Bằng chứng rà hiện trạng:
+
+- `backend/app/domains/` hiện chỉ có `vehicles`, `telematics` và `telemetry`;
+  chưa có `charging_stations`, `charging_sessions` hoặc `ocpp`.
+- `backend/app/libs/db/migrations/versions/` chỉ có migration cho vehicles,
+  telematics và `vehicle_telemetry`; chưa có bảng/migration charging.
+- `backend/app/api/main.py` chỉ đăng ký router vehicles, telematics và
+  telemetry; chưa có charging router.
+- `backend/pyproject.toml` chưa khai báo `python-ocpp`; cấu hình chung và các
+  file `.env.example` hiện chỉ có biến cho app, database và telemetry/MQTT,
+  chưa có cấu hình charging/OCPP.
+- `git ls-files` và tìm kiếm toàn repo không phát hiện source charging/OCPP;
+  kết quả charging hiện tại chỉ là tài liệu planner, `AGENTS.md` và phần
+  requirements/future liên quan.
+
+Không thay đổi source code, dependency, config hoặc migration trong Bước 0.
 
 ### Bước 1 — Chốt contract schema và public service
 
