@@ -569,6 +569,32 @@ Thực hiện Bước 2 theo contract Bước 1.
 6. Chạy format/lint/type/import và migration smoke test; không tạo dữ liệu giả.
 ```
 
+**Kết quả thực tế (triển khai ngày 2026-08-02):** Bước 2 đã hoàn tất.
+
+- Đã tạo package `charging_stations` và `charging_sessions` với `__init__.py`
+  chỉ có module docstring; thêm `types.py`, `exceptions.py` và `models.py`
+  theo contract. Metadata đã đăng ký đủ bảy bảng: station, EVSE, connector,
+  technical status event, session, session event và meter value.
+- Đã thêm `ocpp>=2.0.0` (tên package PyPI của thư viện MobilityHouse
+  `python-ocpp`) và `geoalchemy2>=0.15.0`; `backend/uv.lock` đã được resolve
+  với `ocpp` 2.1.0. Cấu hình charging dùng namespace `CHARGING_`, gồm timeout
+  heartbeat/offline, meter stale, OCPP request và giới hạn raw payload.
+- Đã tạo migration `b2c7d4e8f901_create_charging_domains.py`: UUID internal ID,
+  UTC-aware timestamp, PostGIS `geography(POINT, 4326)`, Decimal/`NUMERIC`,
+  enum contract value, FK `ON DELETE RESTRICT`, soft-delete topology, check/
+  unique constraint và index phục vụ monitoring. `charging_sessions` là bảng
+  thường; `charging_station_status_events`, `charging_session_events` và
+  `charging_session_meter_values` là hypertable với partition key nằm trong
+  mọi primary/unique index.
+- Đã nạp các model charging vào Alembic metadata. Smoke test trên PostgreSQL
+  + TimescaleDB dev đã chạy thành công: `upgrade head` → `downgrade
+  5e7b1c9d2a44` → `upgrade head`; không tạo dữ liệu giả. Catalog xác nhận đúng
+  bảy bảng, ba hypertable, PostGIS geography và các enum/index/FK tương ứng.
+- Kiểm tra đạt: `compileall`, Black, isort, Ruff và mypy strict. `alembic
+  check` vẫn phát hiện `spatial_ref_sys`, index nội bộ do TimescaleDB sinh và
+  một số index legacy ngoài charging; đây là khác biệt introspection của
+  schema hiện hữu, không phải lỗi upgrade/downgrade của migration mới.
+
 ### Bước 3 — CRUD station, EVSE, connector
 
 **Prompt:**

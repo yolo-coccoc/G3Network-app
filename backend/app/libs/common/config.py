@@ -39,6 +39,15 @@ class Settings(BaseSettings):
         API_DEFAULT_PAGE: Trang mặc định cho endpoint phân trang.
         API_DEFAULT_PAGE_SIZE: Số bản ghi mặc định mỗi trang.
         API_MAX_PAGE_SIZE: Số bản ghi tối đa mỗi trang.
+        CHARGING_HEARTBEAT_TIMEOUT_SECONDS: Khoảng chờ heartbeat tối đa trước
+            khi đánh dấu snapshot kỹ thuật là stale.
+        CHARGING_OFFLINE_TIMEOUT_SECONDS: Khoảng chờ trước khi station chuyển
+            sang offline.
+        CHARGING_METER_STALE_TIMEOUT_SECONDS: Khoảng chờ để coi meter sample
+            là stale trong các bước xử lý charging sau này.
+        CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: Timeout request OCPP.
+        CHARGING_MAX_RAW_PAYLOAD_BYTES: Kích thước tối đa của raw payload sau
+            khi sanitize.
     """
 
     model_config = SettingsConfigDict(
@@ -83,6 +92,14 @@ class Settings(BaseSettings):
     API_DEFAULT_PAGE: int = Field(default=1, ge=1)
     API_DEFAULT_PAGE_SIZE: int = Field(default=10, ge=1)
     API_MAX_PAGE_SIZE: int = Field(default=100, ge=1)
+
+    # Đây là default an toàn cho môi trường development; gateway sẽ dùng cùng
+    # namespace này để các process không tự suy diễn timeout khác nhau.
+    CHARGING_HEARTBEAT_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
+    CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
+    CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
+    CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
+    CHARGING_MAX_RAW_PAYLOAD_BYTES: int = Field(default=65536, ge=1024)
 
 
 @lru_cache
