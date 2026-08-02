@@ -1,45 +1,6 @@
-"""Các enum và value type dùng chung trong domain charging_stations."""
+"""Các kiểu dùng chung của ``charging_stations`` trong MVP lý tưởng.
 
-import enum
-
-
-class StationAdministrativeStatus(str, enum.Enum):
-    """Trạng thái quản trị của charging station."""
-
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-    MAINTENANCE = "maintenance"
-
-
-class StationConnectionStatus(str, enum.Enum):
-    """Snapshot kết nối kỹ thuật gần nhất của station."""
-
-    UNKNOWN = "unknown"
-    CONNECTED = "connected"
-    OFFLINE = "offline"
-
-
-class EvseAdministrativeStatus(str, enum.Enum):
-    """Trạng thái quản trị của EVSE."""
-
-    ACTIVE = "active"
-    INACTIVE = "inactive"
-
-
-class TechnicalStatus(str, enum.Enum):
-    """Trạng thái kỹ thuật chuẩn hóa của EVSE hoặc connector."""
-
-    UNKNOWN = "unknown"
-    AVAILABLE = "available"
-    OCCUPIED = "occupied"
-    UNAVAILABLE = "unavailable"
-    FAULTED = "faulted"
-
-
-# Legacy technical-history type intentionally disabled for the ideal MVP. Station
-# status is assumed always online/active; restore this enum with future.md item 27.
-# class StationSourceAction(str, enum.Enum):
-#     BOOT_NOTIFICATION = "BootNotification"
-#     HEARTBEAT = "Heartbeat"
-#     STATUS_NOTIFICATION = "StatusNotification"
-#     NOTIFY_EVENT = "NotifyEvent"
+Topology active chỉ dùng primitive values. Technical status và các enum
+administrative/connection bị loại khỏi active contract vì thiết bị được giả
+định luôn online và active trong local happy path.
+"""

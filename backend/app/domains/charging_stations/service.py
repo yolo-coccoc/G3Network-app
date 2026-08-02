@@ -9,8 +9,6 @@ Transaction do FastAPI ``get_db`` sở hữu; module này không commit/rollback
 from collections.abc import Mapping
 from uuid import UUID
 
-from geoalchemy2.elements import WKBElement, WKTElement
-from geoalchemy2.shape import to_shape
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,62 +34,20 @@ from app.domains.charging_stations.schemas import (
     EvseListResponse,
     EvseResponse,
     EvseUpdate,
-    LocationInput,
-    LocationResponse,
     StationCreate,
     StationListResponse,
     StationResponse,
     StationUpdate,
 )
-from app.domains.charging_stations.types import (
-    StationAdministrativeStatus,
-    StationConnectionStatus,
-)
 from app.libs.common.config import settings
 
 
-def _location_to_db(location: LocationInput | None) -> WKTElement | None:
-    """Chuyển tọa độ API thành WKT Point đúng thứ tự longitude/latitude."""
-    if location is None:
-        return None
-    return WKTElement(f"POINT({location.longitude} {location.latitude})", srid=4326)
-
-
-def _location_to_response(location: object | None) -> LocationResponse | None:
-    """Chuyển giá trị PostGIS từ ORM thành response latitude/longitude.
-
-    Args:
-        location: WKB/WKT element do GeoAlchemy2 trả về.
-
-    Returns:
-        Tọa độ API hoặc None.
-
-    Raises:
-        ValueError: Nếu database trả về kiểu geometry không được hỗ trợ.
-    """
-    if location is None:
-        return None
-    if not isinstance(location, (WKBElement, WKTElement)):
-        raise ValueError("Giá trị location từ database không hợp lệ")
-    point = to_shape(location)
-    return LocationResponse(latitude=point.y, longitude=point.x)
-
-
 def _station_response(station: ChargingStation) -> StationResponse:
-    """Dựng response station và chuyển đổi location PostGIS."""
+    """Dựng response station từ topology model tối thiểu."""
     return StationResponse(
         station_id=station.station_id,
         ocpp_identity=station.ocpp_identity,
         display_name=station.display_name,
-        manufacturer=station.manufacturer,
-        model=station.model,
-        serial_number=station.serial_number,
-        firmware_version=station.firmware_version,
-        location=_location_to_response(station.location),
-        administrative_status=station.administrative_status,
-        connection_status=station.connection_status,
-        last_seen_at=station.last_seen_at,
-        last_boot_at=station.last_boot_at,
         created_at=station.created_at,
         updated_at=station.updated_at,
         deleted_at=station.deleted_at,
@@ -139,12 +95,6 @@ async def create_station(
             db,
             ocpp_identity=station_data.ocpp_identity,
             display_name=station_data.display_name,
-            manufacturer=station_data.manufacturer,
-            model=station_data.model,
-            serial_number=station_data.serial_number,
-            firmware_version=station_data.firmware_version,
-            location=_location_to_db(station_data.location),
-            administrative_status=station_data.administrative_status,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -158,10 +108,8 @@ async def list_stations(
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-    administrative_status: StationAdministrativeStatus | None = None,
-    connection_status: StationConnectionStatus | None = None,
 ) -> StationListResponse:
-    """Liệt kê station active với filter và pagination giới hạn theo settings."""
+    """Liệt kê station active với pagination giới hạn theo settings."""
     page = max(page, settings.API_DEFAULT_PAGE)
     page_size = min(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
@@ -171,14 +119,8 @@ async def list_stations(
         db,
         offset=offset,
         limit=page_size,
-        administrative_status=administrative_status,
-        connection_status=connection_status,
     )
-    total = await repository.count_stations(
-        db,
-        administrative_status=administrative_status,
-        connection_status=connection_status,
-    )
+    total = await repository.count_stations(db)
     return StationListResponse(
         items=[_station_response(station) for station in stations],
         total=total,
@@ -212,8 +154,6 @@ async def update_station(
         )
 
     update_data = _clean_update_data(station_data.model_dump(exclude_unset=True))
-    if station_data.location is not None:
-        update_data["location"] = _location_to_db(station_data.location)
     if not update_data:
         return _station_response(station)
     try:
@@ -249,10 +189,6 @@ async def create_evse(
             db,
             station_id=station_id,
             ocpp_evse_id=evse_data.ocpp_evse_id,
-            display_name=evse_data.display_name,
-            administrative_status=evse_data.administrative_status,
-            technical_status=evse_data.technical_status,
-            capabilities=evse_data.capabilities,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -350,11 +286,6 @@ async def create_connector(
             db,
             evse_id=evse_id,
             ocpp_connector_id=connector_data.ocpp_connector_id,
-            connector_type=connector_data.connector_type,
-            max_power_kw=connector_data.max_power_kw,
-            administrative_status=connector_data.administrative_status,
-            technical_status=connector_data.technical_status,
-            capabilities=connector_data.capabilities,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(

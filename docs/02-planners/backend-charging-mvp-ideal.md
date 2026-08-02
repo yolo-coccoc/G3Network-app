@@ -113,7 +113,38 @@ debt cần hoãn. Chỉ cập nhật planner/future nếu cần; chưa sửa log
 
 - Scope active và phần hoãn được ghi rõ trong planner và `future.md`.
 - Không tạo thêm bảng cho phần hoãn.
-- Có danh sách file cần giữ source legacy dưới dạng comment.
+- Các thành phần bị loại không còn nằm trong active source; phạm vi khôi phục
+  được ghi rõ trong `future.md`.
+
+**Kết quả thực tế (rà soát ngày 2026-08-02):** Bước 0 đã hoàn tất. Phạm vi
+MVP được chốt như sau:
+
+1. Active path chỉ hỗ trợ topology đã pre-provision (`station`/`EVSE`/
+   `connector`), thiết bị luôn online/active và một phiên đi theo thứ tự
+   `Started → Updated/MeterValues → Ended`.
+2. `charging_stations` sở hữu station, EVSE, connector, OCPP 2.0.1 và việc
+   resolve identity OCPP. Gateway chỉ chuyển primitive values qua public
+   service của `charging_sessions`.
+3. `charging_sessions` sở hữu aggregate session, event lifecycle và meter
+   sample; không sở hữu WebSocket/OCPP, không gọi ngược
+   `charging_stations` và không chứa business rule authorization.
+4. Các nhóm sau được hoãn khỏi active path và đã ghi nhận trong
+   `docs/01-requirements/future.md` mục 26–27: reconnect/connection registry,
+   offline detector và heartbeat/timeout; retry, duplicate/idempotency,
+   out-of-order/conflict và reconciliation; interruption/meter reset;
+   technical status history và raw OCPP payload audit; authorization,
+   RFID/`idToken`, driver/vehicle policy, remote start/stop, pricing, payment,
+   webhook, overdue và debt.
+
+Không thêm bảng, source hoặc placeholder cho các nhóm đã hoãn. Theo quyết định
+ngày 2026-08-02, source legacy không phải contract bắt buộc bảo toàn bằng
+comment và các khối legacy charging đã được xóa khỏi source active. Phạm vi,
+vai trò và điều kiện khôi phục được ghi tại `docs/01-requirements/future.md`
+mục 27–28.
+
+Các file `config.py` và `backend/.env.example` chỉ ghi chú các setting
+production đã hoãn; chúng không tạo active behavior cho MVP. Bước này không
+thay đổi source code, dependency, config, migration hoặc logic active.
 
 ### Bước 1 — Rút gọn model, enum và config active
 
@@ -123,9 +154,10 @@ debt cần hoãn. Chỉ cập nhật planner/future nếu cần; chưa sửa log
 Rút gọn charging models/types/config theo schema mục 2.
 
 Giữ lại sáu bảng active và các cột tối thiểu cho topology, session, event và
-meter. Comment toàn bộ class/enum/field/helper chỉ phục vụ status history,
+meter. Loại khỏi active mọi class/enum/field/helper chỉ phục vụ status history,
 interruption, retry, idempotency, ordering, reconciliation, reconnect và
-timeout; không xóa source legacy. Comment phải ghi rõ lý do hoãn.
+timeout. Không tạo placeholder; lý do hoãn và contract cần khôi phục phải ghi
+trong `future.md`.
 
 Comment các config không còn được đọc trong active path. Không thêm placeholder
 hoặc bảng mới. Cập nhật Alembic metadata để không load model technical status.
@@ -145,8 +177,31 @@ hoặc bảng mới. Cập nhật Alembic metadata để không load model techn
 
 - Metadata chỉ còn sáu bảng active.
 - Không còn import model status history trong Alembic.
-- Source legacy vẫn đọc được trong file dưới dạng comment.
+- Không còn source legacy hoặc import technical status trong active path.
 - Ruff, mypy và compileall không phát hiện lỗi.
+
+**Kết quả thực tế (rà soát ngày 2026-08-02):** Bước 1 đã được triển khai.
+
+- Metadata active có đúng sáu bảng: `charging_stations`, `charging_evses`,
+  `charging_connectors`, `charging_sessions`, `charging_session_events` và
+  `charging_session_meter_values`.
+- Ba bảng topology chỉ còn internal ID, OCPP identity, FK topology, timestamps
+  và `deleted_at`; các field location, capability, device metadata,
+  administrative/technical/connection status và status timestamp đã bị loại
+  khỏi active model.
+- `charging_sessions` chỉ giữ status `active|completed`; event chỉ giữ
+  `Started|Updated|Ended`; meter chỉ giữ `sampled_at`, `session_id` và
+  `value_wh`. Các field reliability không còn thuộc active contract; source
+  legacy không phải API hay persistence contract cần bảo toàn.
+- Alembic chỉ import sáu model active của charging; không import
+  `ChargingStationStatusEvent` hoặc model technical status history.
+- Config active chỉ còn `CHARGING_OCPP_HOST` và `CHARGING_OCPP_PORT`; các
+  heartbeat/offline/retry/raw-payload settings tiếp tục là comment. API
+  topology đã được đồng bộ để không tham chiếu các field đã hoãn.
+- Chưa tạo migration trong Bước 1; chuyển schema database thực tế thuộc Bước 2.
+  Quyết định ngày 2026-08-02 cho phép xóa source legacy đã loại khỏi active;
+  chi tiết các nhóm bị loại và điều kiện khôi phục được ghi tại
+  `docs/01-requirements/future.md` mục 28.
 
 ### Bước 2 — Tạo migration chuyển schema
 

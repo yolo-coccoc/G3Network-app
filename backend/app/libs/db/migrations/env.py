@@ -8,6 +8,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Chỉ nạp sáu model charging active; technical status history không thuộc
+# metadata MVP và source legacy tương ứng chỉ còn ở dạng comment trong domain.
 from app.domains.charging_sessions.models import (  # noqa: F401
     ChargingSession,
     ChargingSessionEvent,

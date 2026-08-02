@@ -485,14 +485,43 @@
 - **Lý do hoãn lại**: Planner mới
   `backend-charging-mvp-ideal.md` cố định điều kiện online/active, message đến
   đúng thứ tự và không duplicate để giảm lượng code cần hiểu trong MVP local.
-  Các source cũ được giữ dưới dạng comment, không được bật lại từng phần lẻ
-  nếu chưa có contract reliability đầy đủ.
+  Các source cũ không còn là contract bắt buộc phải bảo toàn trong source MVP;
+  phần còn sót dưới dạng comment có thể được dọn/xóa. Không được bật lại từng
+  phần lẻ nếu chưa có contract reliability đầy đủ.
 - **Liên quan đến planner/feature**: `backend-charging.md`,
   `backend-charging-mvp-ideal.md`, AD-03 và S-02.
 - **Ngày ghi nhận**: 2026-08-02
 - **Ghi chú thêm**: Khi mở lại cần thiết kế migration cho history/idempotency,
   timeout settings, simulator lỗi mạng và test duplicate/reconnect trước khi
   triển khai production.
+
+### 28. Topology metadata và helper charging bị loại khỏi MVP lý tưởng
+
+- **Mô tả ngắn**: Loại khỏi active model/API các metadata topology không cần cho
+  local happy path gồm thông tin nhà sản xuất/model/serial/firmware/location,
+  administrative status, connection status, technical status, capability,
+  connector type/công suất và các timestamp status/heartbeat; đồng thời loại
+  location helper, status filter và các tham số CRUD tương ứng.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Metadata thiết bị phục vụ quản trị hồ sơ station/EVSE/connector ngoài
+    lifecycle session.
+  - Location/capability/công suất phục vụ bản đồ, tìm trụ phù hợp và policy
+    thiết bị khi tích hợp thiết bị thật.
+  - Administrative/technical/connection snapshot phục vụ monitoring và
+    technical status history, độc lập với `Started → Updated/MeterValues →
+    Ended`.
+- **Lý do hoãn lại**: MVP giả định topology đã pre-provision và station,
+  EVSE, connector luôn online/active; các field này không tham gia resolve
+  identity hoặc lưu lifecycle session. Theo quyết định ngày 2026-08-02, source
+  legacy có thể xóa thay vì phải giữ nguyên dưới dạng comment. Schema/API
+  active chỉ giữ identity, FK topology, timestamps và soft-delete.
+- **Liên quan đến planner/feature**: `backend-charging-mvp-ideal.md` Bước 1–2,
+  `backend-charging.md`, AD-03 và phần lifecycle S-02.
+- **Ngày ghi nhận**: 2026-08-02
+- **Ghi chú thêm**: Khi mở lại phải chốt lại contract thiết bị thật, PostGIS
+  location, capability schema, công suất/connector type, status snapshot và
+  API CRUD/monitoring trước khi tạo migration. Không khôi phục từng field riêng
+  lẻ hoặc tạo bảng/status enum placeholder trong MVP.
 
 ---
 

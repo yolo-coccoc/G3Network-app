@@ -30,12 +30,6 @@ async def create_station(
     *,
     ocpp_identity: str,
     display_name: str,
-    manufacturer: str | None,
-    model: str | None,
-    serial_number: str | None,
-    firmware_version: str | None,
-    location: object | None,
-    administrative_status: object,
 ) -> ChargingStation:
     """Tạo station và flush để phát hiện constraint ngay trong transaction.
 
@@ -43,12 +37,6 @@ async def create_station(
         db: Async session do entry boundary sở hữu.
         ocpp_identity: OCPP identity duy nhất của station.
         display_name: Tên hiển thị.
-        manufacturer: Nhà sản xuất, nullable.
-        model: Model, nullable.
-        serial_number: Serial vật lý, nullable.
-        firmware_version: Firmware, nullable.
-        location: Giá trị geography đã chuẩn hóa hoặc None.
-        administrative_status: Enum trạng thái quản trị.
 
     Returns:
         Station vừa được persistence.
@@ -56,12 +44,6 @@ async def create_station(
     station = ChargingStation(
         ocpp_identity=ocpp_identity,
         display_name=display_name,
-        manufacturer=manufacturer,
-        model=model,
-        serial_number=serial_number,
-        firmware_version=firmware_version,
-        location=location,
-        administrative_status=administrative_status,
     )
     db.add(station)
     await db.flush()
@@ -107,17 +89,9 @@ async def list_stations(
     *,
     offset: int,
     limit: int,
-    administrative_status: object | None,
-    connection_status: object | None,
 ) -> list[ChargingStation]:
-    """Lấy station chưa soft-delete theo filter và thứ tự ổn định."""
+    """Lấy station chưa soft-delete theo thứ tự ổn định."""
     conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
-    if administrative_status is not None:
-        conditions.append(
-            ChargingStation.administrative_status == administrative_status
-        )
-    if connection_status is not None:
-        conditions.append(ChargingStation.connection_status == connection_status)
     result = await db.execute(
         select(ChargingStation)
         .where(and_(*conditions))
@@ -130,18 +104,9 @@ async def list_stations(
 
 async def count_stations(
     db: AsyncSession,
-    *,
-    administrative_status: object | None,
-    connection_status: object | None,
 ) -> int:
-    """Đếm station active theo cùng filter với ``list_stations``."""
+    """Đếm station active."""
     conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
-    if administrative_status is not None:
-        conditions.append(
-            ChargingStation.administrative_status == administrative_status
-        )
-    if connection_status is not None:
-        conditions.append(ChargingStation.connection_status == connection_status)
     result = await db.execute(
         select(func.count(ChargingStation.station_id)).where(and_(*conditions))
     )
@@ -222,19 +187,11 @@ async def create_evse(
     *,
     station_id: UUID,
     ocpp_evse_id: int,
-    display_name: str | None,
-    administrative_status: object,
-    technical_status: object,
-    capabilities: dict[str, object],
 ) -> ChargingEvse:
     """Tạo EVSE và flush constraint/FK trong transaction hiện tại."""
     evse = ChargingEvse(
         station_id=station_id,
         ocpp_evse_id=ocpp_evse_id,
-        display_name=display_name,
-        administrative_status=administrative_status,
-        technical_status=technical_status,
-        capabilities=capabilities,
     )
     db.add(evse)
     await db.flush()
@@ -339,21 +296,11 @@ async def create_connector(
     *,
     evse_id: UUID,
     ocpp_connector_id: int,
-    connector_type: str | None,
-    max_power_kw: object | None,
-    administrative_status: object,
-    technical_status: object,
-    capabilities: dict[str, object],
 ) -> ChargingConnector:
     """Tạo connector và flush constraint/FK trong transaction hiện tại."""
     connector = ChargingConnector(
         evse_id=evse_id,
         ocpp_connector_id=ocpp_connector_id,
-        connector_type=connector_type,
-        max_power_kw=max_power_kw,
-        administrative_status=administrative_status,
-        technical_status=technical_status,
-        capabilities=capabilities,
     )
     db.add(connector)
     await db.flush()

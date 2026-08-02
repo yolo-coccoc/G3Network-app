@@ -27,10 +27,6 @@ from app.domains.charging_stations.schemas import (
     StationResponse,
     StationUpdate,
 )
-from app.domains.charging_stations.types import (
-    StationAdministrativeStatus,
-    StationConnectionStatus,
-)
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -67,21 +63,13 @@ async def list_stations(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
-    administrative_status: StationAdministrativeStatus | None = Query(
-        None, alias="administrative_status"
-    ),
-    connection_status: StationConnectionStatus | None = Query(
-        None, alias="connection_status"
-    ),
     db: AsyncSession = Depends(get_db),
 ) -> StationListResponse:
-    """Liệt kê station active với filter trạng thái và phân trang."""
+    """Liệt kê station active với phân trang."""
     return await charging_service.list_stations(
         db,
         page=page,
         page_size=page_size,
-        administrative_status=administrative_status,
-        connection_status=connection_status,
     )
 
 
