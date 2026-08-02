@@ -470,6 +470,30 @@
   debt hoặc authorization placeholder trong MVP. Khi mở lại phải cập nhật
   planner charging và `AGENTS.md` trước khi code.
 
+### 27. Reliability và technical status path của charging MVP
+
+- **Mô tả ngắn**: Khôi phục các nhánh xử lý không lý tưởng cho charging gồm
+  reconnect, connection registry, offline/heartbeat timeout, retry, duplicate/
+  idempotency, out-of-order event, interruption, reconciliation conflict,
+  technical status history và raw OCPP payload audit.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Bảo vệ lifecycle phiên khi WebSocket hoặc station mất kết nối.
+  - Cho phép replay message, nhận diện duplicate và không làm state lùi.
+  - Theo dõi trạng thái kỹ thuật station/EVSE/connector độc lập với lifecycle
+    transaction.
+  - Giải thích và đối soát meter reset, payload conflict hoặc dữ liệu đến trễ.
+- **Lý do hoãn lại**: Planner mới
+  `backend-charging-mvp-ideal.md` cố định điều kiện online/active, message đến
+  đúng thứ tự và không duplicate để giảm lượng code cần hiểu trong MVP local.
+  Các source cũ được giữ dưới dạng comment, không được bật lại từng phần lẻ
+  nếu chưa có contract reliability đầy đủ.
+- **Liên quan đến planner/feature**: `backend-charging.md`,
+  `backend-charging-mvp-ideal.md`, AD-03 và S-02.
+- **Ngày ghi nhận**: 2026-08-02
+- **Ghi chú thêm**: Khi mở lại cần thiết kế migration cho history/idempotency,
+  timeout settings, simulator lỗi mạng và test duplicate/reconnect trước khi
+  triển khai production.
+
 ---
 
 ## Quy tắc cập nhật

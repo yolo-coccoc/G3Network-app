@@ -33,7 +33,6 @@ from app.domains.charging_stations.types import (
     EvseAdministrativeStatus,
     StationAdministrativeStatus,
     StationConnectionStatus,
-    StationSourceAction,
     TechnicalStatus,
 )
 from app.libs.db.base import Base
@@ -302,94 +301,107 @@ class ChargingConnector(Base):
     )
 
 
-class ChargingStationStatusEvent(Base):
-    """Technical history của station, EVSE hoặc connector.
+# Legacy technical-status history intentionally disabled for the ideal MVP.
+# The old source is kept as a comment because station/EVSE/connector are assumed
+# always online and active. Re-enable the class only with future.md item 27.
+# class ChargingStationStatusEvent(Base):
+#     __tablename__ = "charging_station_status_events"
+#     # recorded_at, topology IDs, source_action, status/event_code,
+#     # idempotency_key, received_at and sanitized_raw_payload belonged to the
+#     # old heartbeat/status/reconnect path.
 
-    Đây là bảng time-series. ``recorded_at`` nằm trong primary key và mọi unique
-    constraint để TimescaleDB chấp nhận partition key trong index.
-
-    Attributes:
-        status_event_id: UUID nội bộ của history record.
-        recorded_at: Thời điểm event phát sinh từ thiết bị và partition key.
-        station_id: Station phát sinh event.
-        evse_id: EVSE liên quan, nullable với event cấp station.
-        connector_id: Connector liên quan, nullable.
-        source_action: Action OCPP đã chuẩn hóa.
-        technical_status: Status kỹ thuật, nullable nếu message không có status.
-        event_code: Mã event đã chuẩn hóa, nullable.
-        ocpp_message_id: Message ID OCPP, nullable.
-        idempotency_key: Identity ổn định do adapter tạo.
-        received_at: Thời điểm backend nhận event.
-        sanitized_raw_payload: Payload đã redact, nullable.
-    """
-
-    __tablename__ = "charging_station_status_events"
-
-    status_event_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
-    )
-    recorded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), primary_key=True, nullable=False
-    )
-    station_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    evse_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("charging_evses.evse_id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    connector_id: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("charging_connectors.connector_id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    source_action: Mapped[StationSourceAction] = mapped_column(
-        SQLEnum(
-            StationSourceAction,
-            name="chargingstationsourceaction",
-            values_callable=enum_values,
-        ),
-        nullable=False,
-    )
-    technical_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    event_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    ocpp_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
-    received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    sanitized_raw_payload: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB, nullable=True
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "connector_id IS NULL OR evse_id IS NOT NULL",
-            name="ck_charging_status_connector_requires_evse",
-        ),
-        UniqueConstraint(
-            "station_id",
-            "idempotency_key",
-            "recorded_at",
-            name="uq_charging_status_station_idempotency_recorded",
-        ),
-        Index(
-            "ix_charging_status_station_recorded",
-            "station_id",
-            desc("recorded_at"),
-        ),
-        Index("ix_charging_status_evse_recorded", "evse_id", desc("recorded_at")),
-        Index(
-            "ix_charging_status_connector_recorded",
-            "connector_id",
-            desc("recorded_at"),
-        ),
-        Index(
-            "ix_charging_status_action_recorded",
-            "source_action",
-            desc("recorded_at"),
-        ),
-    )
+# ---------------------------------------------------------------------------
+# LEGACY COMPONENT (COMMENTED OUT FOR THE IDEAL MVP)
+# ---------------------------------------------------------------------------
+# class ChargingStationStatusEvent(Base):
+#     """Technical history của station, EVSE hoặc connector.
+#
+#     Đây là bảng time-series. ``recorded_at`` nằm trong primary key và mọi unique
+#     constraint để TimescaleDB chấp nhận partition key trong index.
+#
+#     Attributes:
+#         status_event_id: UUID nội bộ của history record.
+#         recorded_at: Thời điểm event phát sinh từ thiết bị và partition key.
+#         station_id: Station phát sinh event.
+#         evse_id: EVSE liên quan, nullable với event cấp station.
+#         connector_id: Connector liên quan, nullable.
+#         source_action: Action OCPP đã chuẩn hóa.
+#         technical_status: Status kỹ thuật, nullable nếu message không có status.
+#         event_code: Mã event đã chuẩn hóa, nullable.
+#         ocpp_message_id: Message ID OCPP, nullable.
+#         idempotency_key: Identity ổn định do adapter tạo.
+#         received_at: Thời điểm backend nhận event.
+#         sanitized_raw_payload: Payload đã redact, nullable.
+#     """
+#
+#     __tablename__ = "charging_station_status_events"
+#
+#     status_event_id: Mapped[UUID] = mapped_column(
+#         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+#     )
+#     recorded_at: Mapped[datetime] = mapped_column(
+#         DateTime(timezone=True), primary_key=True, nullable=False
+#     )
+#     station_id: Mapped[UUID] = mapped_column(
+#         PG_UUID(as_uuid=True),
+#         ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
+#         nullable=False,
+#     )
+#     evse_id: Mapped[UUID | None] = mapped_column(
+#         PG_UUID(as_uuid=True),
+#         ForeignKey("charging_evses.evse_id", ondelete="RESTRICT"),
+#         nullable=True,
+#     )
+#     connector_id: Mapped[UUID | None] = mapped_column(
+#         PG_UUID(as_uuid=True),
+#         ForeignKey("charging_connectors.connector_id", ondelete="RESTRICT"),
+#         nullable=True,
+#     )
+#     source_action: Mapped[StationSourceAction] = mapped_column(
+#         SQLEnum(
+#             StationSourceAction,
+#             name="chargingstationsourceaction",
+#             values_callable=enum_values,
+#         ),
+#         nullable=False,
+#     )
+#     technical_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+#     event_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+#     ocpp_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+#     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+#     received_at: Mapped[datetime] = mapped_column(
+#         DateTime(timezone=True), nullable=False
+#     )
+#     sanitized_raw_payload: Mapped[dict[str, object] | None] = mapped_column(
+#         JSONB, nullable=True
+#     )
+#
+#     __table_args__ = (
+#         CheckConstraint(
+#             "connector_id IS NULL OR evse_id IS NOT NULL",
+#             name="ck_charging_status_connector_requires_evse",
+#         ),
+#         UniqueConstraint(
+#             "station_id",
+#             "idempotency_key",
+#             "recorded_at",
+#             name="uq_charging_status_station_idempotency_recorded",
+#         ),
+#         Index(
+#             "ix_charging_status_station_recorded",
+#             "station_id",
+#             desc("recorded_at"),
+#         ),
+#         Index("ix_charging_status_evse_recorded", "evse_id", desc("recorded_at")),
+#         Index(
+#             "ix_charging_status_connector_recorded",
+#             "connector_id",
+#             desc("recorded_at"),
+#         ),
+#         Index(
+#             "ix_charging_status_action_recorded",
+#             "source_action",
+#             desc("recorded_at"),
+#         ),
+#     )
+#

@@ -36,10 +36,10 @@ class TechnicalStatus(str, enum.Enum):
     FAULTED = "faulted"
 
 
-class StationSourceAction(str, enum.Enum):
-    """Loại message OCPP tạo ra technical history."""
-
-    BOOT_NOTIFICATION = "BootNotification"
-    HEARTBEAT = "Heartbeat"
-    STATUS_NOTIFICATION = "StatusNotification"
-    NOTIFY_EVENT = "NotifyEvent"
+# Legacy technical-history type intentionally disabled for the ideal MVP. Station
+# status is assumed always online/active; restore this enum with future.md item 27.
+# class StationSourceAction(str, enum.Enum):
+#     BOOT_NOTIFICATION = "BootNotification"
+#     HEARTBEAT = "Heartbeat"
+#     STATUS_NOTIFICATION = "StatusNotification"
+#     NOTIFY_EVENT = "NotifyEvent"

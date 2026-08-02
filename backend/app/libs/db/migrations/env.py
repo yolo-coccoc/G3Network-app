@@ -17,7 +17,6 @@ from app.domains.charging_stations.models import (  # noqa: F401
     ChargingConnector,
     ChargingEvse,
     ChargingStation,
-    ChargingStationStatusEvent,
 )
 from app.domains.telematics.models import Telematic  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetry  # noqa: F401
