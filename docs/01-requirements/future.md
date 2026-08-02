@@ -523,6 +523,36 @@
   API CRUD/monitoring trước khi tạo migration. Không khôi phục từng field riêng
   lẻ hoặc tạo bảng/status enum placeholder trong MVP.
 
+### 29. Đánh giá khả năng hợp nhất domain `telematics` vào `vehicles`
+
+- **Mô tả ngắn**: Xem xét đưa hồ sơ thiết bị telematic và mapping thiết bị ↔ xe
+  vào cùng bounded context `vehicles`, tương tự cách `charging_stations` sở
+  hữu toàn bộ topology Station → EVSE → Connector. Đây chỉ là khả năng tái
+  cấu trúc trong tương lai; hiện tại vẫn giữ hai domain độc lập.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - `vehicles` có thể sở hữu hồ sơ xe, thiết bị gắn trên xe và lifecycle
+    mapping trong một service công khai.
+  - Luồng telemetry ingestion có thể resolve serial và vehicle trong cùng một
+    bounded context, giảm một chiều phụ thuộc liên-domain.
+  - Kiến trúc sẽ gọn hơn nếu telematic chỉ là thiết bị phụ thuộc vào xe và
+    không có nghiệp vụ quản lý độc lập.
+- **Lý do hoãn lại**: Hiện tại `telematics` và `vehicles` được tách vì
+  telematic có thể được provision trước, thay thế giữa lifecycle của xe hoặc
+  được quản lý như một thiết bị độc lập; ingestion cũng đang dùng public
+  service của `telematics` để resolve `(telematic_id, vehicle_id)`. Chưa có
+  quyết định rằng MVP chỉ hỗ trợ một telematic cố định cho mỗi xe.
+- **Điều kiện để gộp**: Xác nhận contract mới về số lượng thiết bị trên một
+  xe, provisioning, thay thế/tháo thiết bị, lịch sử mapping, trạng thái thiết
+  bị và quyền sở hữu dữ liệu. Nếu vẫn cần lifecycle thiết bị độc lập hoặc
+  nhiều loại thiết bị, tiếp tục giữ domain riêng.
+- **Việc cần cập nhật trước khi triển khai**: Rà soát `AGENTS.md`, planner
+  backend, `feature-list.md`, dependency rules, public service của
+  `telematics`, luồng MQTT ingestion, schema/repository/model và migration.
+  Không gộp bằng cách chỉ đổi tên thư mục hoặc tạo lớp chuyển tiếp tạm thời.
+- **Liên quan đến planner/feature**: cấu trúc domain backend, AD-02, AD-05 và
+  các planner về telemetry/vehicles/telematics.
+- **Ngày ghi nhận**: 2026-08-03
+
 ---
 
 ## Quy tắc cập nhật
