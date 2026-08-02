@@ -16,6 +16,7 @@ dependencies = [
     "aiomqtt>=2.3.0",
     # Thư viện MobilityHouse có tên package trên PyPI là ``ocpp``.
     "ocpp>=2.0.0",
+    "websockets>=16.0",
     "geoalchemy2>=0.15.0",
     "shapely>=2.0.0",
 ]

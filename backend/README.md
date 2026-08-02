@@ -13,7 +13,18 @@ uv run uvicorn app.api.main:app --reload
 
 # Run with specific host/port
 uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Run the OCPP 2.0.1 gateway in a separate process
+uv run python -m app.domains.charging_stations.ocpp.entrypoint
+
+# Run the minimal OCPP connect/reject simulator from the repository root
+uv run python ../simulator/ocpp_connection_simulator.py
 ```
+
+The OCPP gateway listens on `CHARGING_OCPP_HOST` and
+`CHARGING_OCPP_PORT` (default `0.0.0.0:9000`) and accepts only the
+`ocpp2.0.1` WebSocket subprotocol. The station identity in
+`/ocpp/{ocpp_identity}` must already exist in the charging-stations API.
 
 ## Configuration
 

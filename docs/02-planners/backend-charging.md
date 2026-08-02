@@ -680,6 +680,29 @@ factory, structured logging, không tạo engine/logger riêng. Tạo simulator
 connect/reject protocol tối thiểu.
 ```
 
+**Kết quả thực tế (triển khai ngày 2026-08-02):** Đã hoàn tất gateway OCPP
+2.0.1 tối thiểu và simulator handshake.
+
+- Đã thêm `charging_stations/ocpp/ocpp_server.py` và `entrypoint.py`; gateway
+  bind theo `CHARGING_OCPP_HOST`/`CHARGING_OCPP_PORT`, dùng shared
+  `async_session_factory`, structured logging và `ocpp.v201.ChargePoint`.
+- WebSocket chỉ accept subprotocol `ocpp2.0.1`, path `/ocpp/{ocpp_identity}`
+  phải hợp lệ và identity phải là station đã pre-provision, chưa soft-delete.
+  Identity lạ nhận HTTP 404; protocol sai nhận HTTP 426.
+- Connection registry giữ tối đa một connection active cho mỗi identity.
+  Reconnect đóng connection cũ trước khi handler mới tiếp tục; shutdown đóng
+  listener và các connection active bằng close code 1001.
+- Bước này chưa xử lý BootNotification, Heartbeat, StatusNotification,
+  NotifyEvent, TransactionEvent hoặc MeterValues; các action đó vẫn chờ Bước
+  6–7.
+- Đã thêm `simulator/ocpp_connection_simulator.py` để kiểm tra một identity
+  hợp lệ, identity chưa provision và protocol `ocpp1.6` bị reject.
+- Smoke test runtime với fake repository đạt: connect `ocpp2.0.1`, reconnect
+  thay thế registry, unknown identity HTTP 404 và protocol sai HTTP 426. Docker
+  daemon không truy cập được từ sandbox nên chưa chạy test với PostgreSQL/EMQX
+  thật trong bước này.
+- Kiểm tra đạt: Black, isort, Ruff, mypy strict và compileall.
+
 ### Bước 6 — Boot, heartbeat, status và technical history
 
 **Prompt:**

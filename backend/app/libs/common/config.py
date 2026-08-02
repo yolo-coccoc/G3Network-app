@@ -46,6 +46,8 @@ class Settings(BaseSettings):
         CHARGING_METER_STALE_TIMEOUT_SECONDS: Khoảng chờ để coi meter sample
             là stale trong các bước xử lý charging sau này.
         CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: Timeout request OCPP.
+        CHARGING_OCPP_HOST: Host bind của OCPP WebSocket gateway.
+        CHARGING_OCPP_PORT: Cổng bind của OCPP WebSocket gateway.
         CHARGING_MAX_RAW_PAYLOAD_BYTES: Kích thước tối đa của raw payload sau
             khi sanitize.
     """
@@ -99,6 +101,8 @@ class Settings(BaseSettings):
     CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
     CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
     CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
+    CHARGING_OCPP_HOST: str = "0.0.0.0"
+    CHARGING_OCPP_PORT: int = Field(default=9000, ge=1, le=65535)
     CHARGING_MAX_RAW_PAYLOAD_BYTES: int = Field(default=65536, ge=1024)
 
 
