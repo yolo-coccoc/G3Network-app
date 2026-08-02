@@ -17,6 +17,7 @@ dependencies = [
     # Thư viện MobilityHouse có tên package trên PyPI là ``ocpp``.
     "ocpp>=2.0.0",
     "geoalchemy2>=0.15.0",
+    "shapely>=2.0.0",
 ]
 
 [project.optional-dependencies]

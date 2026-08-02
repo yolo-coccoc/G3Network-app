@@ -606,6 +606,26 @@ validate identity/unique topology, không tự tạo topology từ OCPP. Đăng 
 chạy Swagger smoke test cho topology 2 EVSE × 1 connector và conflict.
 ```
 
+**Kết quả thực tế (triển khai ngày 2026-08-02):** Đã hoàn tất implementation
+Bước 3, chưa tạo commit mới.
+
+- Đã thêm `schemas.py`, `repository.py`, `service.py` và `router.py` cho
+  `charging_stations`; router được đăng ký dưới `/api/v1` với đầy đủ endpoint
+  station, EVSE và connector theo internal UUID.
+- CRUD hỗ trợ pagination, filter trạng thái station, PATCH theo
+  `exclude_unset=True` và quy ước `None` là không cập nhật. Identity OCPP của
+  station, `(station_id, ocpp_evse_id)` và `(evse_id, ocpp_connector_id)` được
+  kiểm tra cả với record đã soft-delete; conflict trả HTTP 409.
+- Parent phải active trước khi tạo/list topology con. Soft-delete station
+  cascade xuống EVSE/connector; soft-delete EVSE cascade xuống connector;
+  không physical-delete history/topology qua API.
+- Swagger/OpenAPI smoke test đã xác nhận 6 route topology. API smoke test
+  rollback/cleanup đã chạy topology 1 station, 2 EVSE, mỗi EVSE 1 connector,
+  duplicate conflict, PATCH và soft-delete; database không còn record test.
+- Kiểm tra đạt: Black, isort, Ruff, mypy strict, compileall và import FastAPI
+  app. `httpx` chỉ được nạp tạm bằng `uv run --with` để smoke test, không thêm
+  vào runtime dependency.
+
 ### Bước 4 — Session ingestion service và persistence
 
 **Prompt:**

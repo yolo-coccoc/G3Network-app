@@ -5,5 +5,13 @@ class ChargingStationNotFoundError(Exception):
     """Không tìm thấy station đang được tham chiếu."""
 
 
+class ChargingEvseNotFoundError(Exception):
+    """Không tìm thấy EVSE đang được tham chiếu."""
+
+
+class ChargingConnectorNotFoundError(Exception):
+    """Không tìm thấy connector đang được tham chiếu."""
+
+
 class ChargingTopologyConflictError(Exception):
     """Topology station, EVSE hoặc connector vi phạm identity đã tồn tại."""
