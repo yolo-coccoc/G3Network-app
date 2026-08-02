@@ -2,158 +2,341 @@
 
 > Mã chức năng: AD-03 và lifecycle cơ bản của S-02
 >
-> Trạng thái: 📋 Planner rút gọn thay thế cho phạm vi triển khai MVP tiếp theo
+> Trạng thái: 📋 Planner triển khai theo từng bước
 >
 > Ngày cập nhật: 2026-08-02
 
-Planner này được viết lại từ `backend-charging.md` cho một MVP local/demo có
-điều kiện vận hành lý tưởng. Planner cũ vẫn được giữ nguyên để tham chiếu đầy
-đủ các nhánh production đã từng được thiết kế.
+Planner này là phiên bản rút gọn của
+[`backend-charging.md`](./backend-charging.md). Planner cũ không bị xóa vì vẫn
+còn mô tả các nhánh production. Planner này chỉ dùng cho MVP local/demo, trong
+đó thiết bị luôn online và phiên sạc luôn chạy đúng luồng.
 
-## 1. Giả định cố định của MVP lý tưởng
+Mỗi bước dưới đây là một đơn vị triển khai độc lập. Không chuyển sang bước kế
+tiếp nếu chưa kiểm tra xong tiêu chí nghiệm thu của bước hiện tại.
 
-- Station, EVSE và connector đã được pre-provision trước khi chạy simulator.
-- Tất cả topology luôn `active` và luôn online trong suốt phiên chạy.
-- Một station chỉ có một WebSocket ổn định trong một process gateway.
-- Một phiên luôn đi theo đúng thứ tự `Started → Updated/MeterValues → Ended`.
+## 1. Giả định và ranh giới cố định
+
+### 1.1. Giả định vận hành
+
+- Station, EVSE và connector đã được pre-provision trước khi simulator chạy.
+- Thiết bị luôn online, active và giữ một WebSocket ổn định.
+- Một phiên luôn đi theo thứ tự `Started → Updated/MeterValues → Ended`.
 - Không có mất kết nối, reconnect, timeout, retry, duplicate, conflict hoặc
   out-of-order message.
-- Mọi TransactionEvent và MeterValues hợp lệ; input sai có thể fail-fast.
-- Không cần authorization, remote control, pricing, payment, debt hoặc driver/
-  vehicle policy.
+- TransactionEvent và MeterValues đều hợp lệ; input sai có thể fail-fast.
+- Không cần authorization, remote control, pricing, payment, debt hoặc
+  driver/vehicle policy.
 
-Các giả định này chỉ dành cho local MVP. Khi bất kỳ giả định nào không còn đúng,
-phải mở lại phần tương ứng trong `future.md` và planner production cũ.
-
-## 2. Ranh giới active
+### 1.2. Ranh giới domain
 
 ```text
 Station simulator ⇄ OCPP 2.0.1 gateway → charging_sessions
 ```
 
-`charging_stations` chỉ giữ topology tối thiểu để resolve:
+- `charging_stations` sở hữu station/EVSE/connector, OCPP gateway và việc
+  resolve identity.
+- `charging_sessions` sở hữu session aggregate, session event và meter sample.
+- Gateway chỉ gọi public service của `charging_sessions`; không import
+  `models.py` hoặc `repository.py` của domain đó.
+- Không thêm bảng hoặc source cho authorization, remote command, pricing,
+  payment, debt hay reliability production.
 
-- `station_id` ↔ `ocpp_identity`;
-- `evse_id` ↔ `ocpp_evse_id`;
-- `connector_id` ↔ `ocpp_connector_id`.
+## 2. Schema active sau khi rút gọn
 
-Gateway chỉ validate handshake, resolve identity và chuyển primitive values sang
-public service của `charging_sessions`. Gateway không sở hữu retry, registry
-reconnect hoặc offline detector.
+MVP giữ sáu bảng active:
 
-## 3. Sáu bảng active
+1. `charging_stations`: `station_id`, `ocpp_identity`, `display_name` và
+   timestamps.
+2. `charging_evses`: `evse_id`, `station_id`, `ocpp_evse_id` và timestamps.
+3. `charging_connectors`: `connector_id`, `evse_id`, `ocpp_connector_id` và
+   timestamps.
+4. `charging_sessions`: topology IDs, `ocpp_transaction_id`, `status`, thời
+   gian bắt đầu/kết thúc, meter đầu/cuối, energy delivered và timestamps.
+5. `charging_session_events`: `event_id`, `event_occurred_at`, `session_id`
+   và `event_type` (`Started | Updated | Ended`).
+6. `charging_session_meter_values`: `meter_value_id`, `sampled_at`,
+   `session_id` và `value_wh`.
 
-MVP giữ sáu bảng; bảng technical status history bị loại khỏi luồng active vì
-thiết bị được giả định luôn online/active.
+`charging_station_status_events` không nằm trong active path vì topology được
+giả định luôn online/active. Những model, enum, helper và nhánh xử lý cũ liên
+quan đến status history, interruption, idempotency, ordering, retry,
+reconciliation, reconnect và timeout phải được comment trong source, không xóa;
+lý do hoãn phải ghi trong `docs/01-requirements/future.md`.
 
-### `charging_stations`
+## 3. Luồng nghiệp vụ active
 
-Giữ `station_id`, `ocpp_identity`, `display_name` và timestamps phục vụ
-pre-provision/resolve. Metadata nhà sản xuất, vị trí, firmware và trạng thái
-connection không tham gia lifecycle phiên.
+### 3.1. `Started`
 
-### `charging_evses`
+1. Gateway resolve `station_id`, `evse_id` và `connector_id` từ identity OCPP.
+2. Gọi `charging_sessions.ingest_transaction_event(...)` với primitive values.
+3. Service tạo một session có `status = active`.
+4. Lưu meter đầu phiên nếu message có giá trị.
+5. Append một event `Started`.
 
-Giữ `evse_id`, `station_id`, `ocpp_evse_id` và timestamps.
+### 3.2. `Updated` và `MeterValues`
 
-### `charging_connectors`
+1. Resolve session theo `session_id` đã có.
+2. `Updated` append event `Updated`.
+3. `MeterValues` append từng sample `value_wh`.
+4. Cập nhật meter cuối và energy delivered theo thứ tự message nhận được.
 
-Giữ `connector_id`, `evse_id`, `ocpp_connector_id` và timestamps.
+### 3.3. `Ended`
 
-### `charging_sessions`
+1. Resolve session đang active.
+2. Cập nhật `ended_at`, meter cuối và energy delivered.
+3. Chuyển thẳng status sang `completed`.
+4. Append một event `Ended`.
 
-Giữ:
+Mỗi TransactionEvent hoặc batch MeterValues chạy trong một transaction atomic.
+`service.py` và `repository.py` không gọi `commit()`/`rollback()`; entry
+boundary sở hữu transaction. Không có nhánh retry, duplicate, idempotency,
+interruption hoặc unknown transaction trong active path.
 
-- internal IDs của station/EVSE/connector;
-- `ocpp_transaction_id`;
-- `status`: chỉ `active | completed`;
-- `started_at`, `ended_at`;
-- `meter_start_wh`, `meter_end_wh`, `energy_delivered_wh`;
-- timestamps tạo/cập nhật.
+## 4. Thứ tự triển khai
 
-Không lưu state `pending`, `ending`, `interrupted`, reconciliation status,
-ordering cache hoặc error message.
+### Bước 0 — Rà hiện trạng và chốt phạm vi MVP
 
-### `charging_session_events`
-
-Chỉ lưu `event_id`, `event_occurred_at`, `session_id` và `event_type` với ba
-giá trị `Started | Updated | Ended`. Không lưu `seq_no`, end reason,
-idempotency key, received time hoặc raw payload.
-
-### `charging_session_meter_values`
-
-Chỉ lưu `meter_value_id`, `sampled_at`, `session_id` và `value_wh`. MVP chỉ có
-một measurand năng lượng canonical là Wh.
-
-## 4. Luồng nghiệp vụ duy nhất
-
-### Started
-
-`TransactionEvent Started` tạo một `charging_sessions` với status `active`,
-ghi meter đầu phiên nếu có và append một event `Started`.
-
-### Updated/MeterValues
-
-`Updated` append event. `MeterValues` append sample và cập nhật
-`meter_end_wh`/`energy_delivered_wh` theo thứ tự nhận được.
-
-### Ended
-
-`Ended` cập nhật `ended_at`, meter cuối phiên, energy delivered, chuyển status
-thẳng sang `completed` và append event `Ended`.
-
-Không có nhánh xử lý duplicate, conflict, retry, interruption hoặc unknown
-transaction. Nếu input không hợp lệ, operation fail và transaction boundary
-rollback toàn bộ operation.
-
-## 5. Public service contract rút gọn
+**Prompt thực hiện:**
 
 ```text
-ingest_transaction_event(
-    db,
-    station_id,
-    evse_id,
-    connector_id,
-    transaction_id,
-    event_type,
-    event_occurred_at,
-    meter_start_wh,
-    meter_end_wh,
-)
+Đọc AGENTS.md, feature-list.md, future.md, planner backend-charging.md và
+planner backend-charging-mvp-ideal.md. Rà source hiện tại của
+charging_stations/charging_sessions.
 
-ingest_meter_values(
-    db,
-    session_id,
-    samples: Sequence[{sampled_at, value_wh}],
-)
+Chốt rằng MVP chỉ hỗ trợ topology đã provision, thiết bị luôn online và luồng
+Started → Updated/MeterValues → Ended. Liệt kê các thành phần reliability,
+technical status history, authorization, remote control, pricing, payment và
+debt cần hoãn. Chỉ cập nhật planner/future nếu cần; chưa sửa logic active.
 ```
 
-Service và repository không commit/rollback. Caller vẫn sở hữu một transaction
-atomic cho từng TransactionEvent hoặc batch MeterValues.
+**Kết quả cần đạt:**
 
-## 6. OCPP gateway và simulator
+- Scope active và phần hoãn được ghi rõ trong planner và `future.md`.
+- Không tạo thêm bảng cho phần hoãn.
+- Có danh sách file cần giữ source legacy dưới dạng comment.
 
-- Gateway chỉ negotiate `ocpp2.0.1`, validate `/ocpp/{ocpp_identity}` và
-  station đã provision.
-- Không giữ `ConnectionRegistry`, không thay connection cũ khi reconnect và
-  không có offline timeout.
-- Simulator chỉ cần connect một station hợp lệ rồi giữ connection trong lúc
-  test handshake. Simulator đầy đủ TransactionEvent/MeterValues sẽ được bổ sung
-  trong bước E2E sau khi public service rút gọn hoàn tất.
+### Bước 1 — Rút gọn model, enum và config active
 
-## 7. Thứ tự triển khai
+**Prompt thực hiện:**
 
-1. Tạo migration rút gọn schema, giữ migration cũ bất biến.
-2. Comment model/enum/helper phục vụ status history, interruption,
-   idempotency, ordering và reconciliation.
-3. Implement service/repository happy path cho Started, Updated, MeterValues,
-   Ended.
-4. Comment nhánh reconnect/failure trong OCPP gateway, giữ handshake cơ bản.
-5. Viết simulator E2E happy path và API monitoring tối thiểu.
-6. Chạy compile, Black, isort, Ruff, mypy và migration upgrade/downgrade.
+```text
+Rút gọn charging models/types/config theo schema mục 2.
 
-## 8. Ngoài phạm vi và đường quay lại
+Giữ lại sáu bảng active và các cột tối thiểu cho topology, session, event và
+meter. Comment toàn bộ class/enum/field/helper chỉ phục vụ status history,
+interruption, retry, idempotency, ordering, reconciliation, reconnect và
+timeout; không xóa source legacy. Comment phải ghi rõ lý do hoãn.
 
-Toàn bộ reliability/production path của planner cũ không bị xóa. Source bị
-loại khỏi active path phải giữ lại dưới dạng comment có lý do; chi tiết các phần
-hoãn nằm trong `docs/01-requirements/future.md`.
+Comment các config không còn được đọc trong active path. Không thêm placeholder
+hoặc bảng mới. Cập nhật Alembic metadata để không load model technical status.
+```
+
+**File/khu vực chính:**
+
+- `backend/app/domains/charging_stations/models.py`
+- `backend/app/domains/charging_stations/types.py`
+- `backend/app/domains/charging_sessions/models.py`
+- `backend/app/domains/charging_sessions/types.py`
+- `backend/app/libs/common/config.py`
+- `backend/app/libs/db/migrations/env.py`
+- `backend/.env.example`
+
+**Tiêu chí nghiệm thu:**
+
+- Metadata chỉ còn sáu bảng active.
+- Không còn import model status history trong Alembic.
+- Source legacy vẫn đọc được trong file dưới dạng comment.
+- Ruff, mypy và compileall không phát hiện lỗi.
+
+### Bước 2 — Tạo migration chuyển schema
+
+**Prompt thực hiện:**
+
+```text
+Tạo một Alembic migration mới để chuyển schema charging hiện tại sang schema
+MVP lý tưởng. Không sửa migration đã merge và không xóa dữ liệu ngoài phạm vi
+đã được xác nhận.
+
+Migration phải loại bỏ bảng technical status history khỏi schema active, bỏ các
+cột reliability khỏi sáu bảng còn lại, giữ UUID/FK/index cần thiết cho topology
+và session, rồi tạo lại hypertable cho session events và meter values nếu DB
+đang dùng TimescaleDB.
+
+Viết upgrade và downgrade đối xứng trong phạm vi migration. Review timezone,
+FK, check/unique constraint, index và thứ tự drop/create trước khi chạy.
+```
+
+**File chính:**
+
+- `backend/app/libs/db/migrations/versions/<revision>_simplify_charging_mvp_ideal.py`
+
+**Tiêu chí nghiệm thu:**
+
+- `alembic heads` chỉ có head mới hợp lệ.
+- `upgrade → downgrade → upgrade` chạy được trên DB dev.
+- Catalog có đúng sáu bảng active và không có bảng status history.
+- Không sửa file migration cũ.
+
+### Bước 3 — Implement session happy path
+
+**Prompt thực hiện:**
+
+```text
+Viết lại charging_sessions repository/service theo luồng happy path.
+
+Implement ingest_transaction_event(...) cho Started, Updated và Ended:
+- Started tạo session active và event Started.
+- Updated append event Updated.
+- Ended cập nhật meter/thời gian, chuyển completed và append event Ended.
+
+Implement ingest_meter_values(...) để append sample Wh và cập nhật meter cuối
+theo thứ tự nhận được. Boundary chỉ nhận UUID, enum, datetime, Decimal và
+Sequence primitive values. Service/repository không commit/rollback và không
+import charging_stations.
+
+Giữ source reliability cũ dưới dạng comment, không đưa retry/idempotency,
+interruption/reconciliation hoặc unknown-transaction branch vào active path.
+```
+
+**File chính:**
+
+- `backend/app/domains/charging_sessions/repository.py`
+- `backend/app/domains/charging_sessions/service.py`
+- `backend/app/domains/charging_sessions/exceptions.py`
+- `backend/app/domains/charging_sessions/types.py`
+
+**Tiêu chí nghiệm thu:**
+
+- Một session đi được đầy đủ `Started → Updated/MeterValues → Ended`.
+- Session kết thúc có `status = completed`, meter cuối và energy delivered.
+- Event và meter sample được lưu cùng transaction với aggregate.
+- Exception làm rollback operation ở entry boundary.
+- Không còn active branch cho retry, duplicate, ordering hoặc interruption.
+
+### Bước 4 — Rút gọn OCPP gateway
+
+**Prompt thực hiện:**
+
+```text
+Giữ OCPP gateway ở mức handshake tối thiểu.
+
+Gateway chỉ bind host/port từ config, accept WebSocket path
+/ocpp/{ocpp_identity}, negotiate ocpp2.0.1 và reject identity chưa
+pre-provision. Giữ một connection ổn định trong process và chuyển primitive
+values sang charging_sessions service.
+
+Comment ConnectionRegistry nâng cao, reconnect replacement, offline detector,
+timeout, retry và shutdown recovery cũ; không xóa source. Không tự tạo
+station/EVSE/connector từ OCPP message.
+```
+
+**File chính:**
+
+- `backend/app/domains/charging_stations/ocpp/ocpp_server.py`
+- `backend/app/domains/charging_stations/ocpp/entrypoint.py`
+- `backend/app/domains/charging_stations/service.py`
+
+**Tiêu chí nghiệm thu:**
+
+- Identity hợp lệ kết nối được bằng subprotocol `ocpp2.0.1`.
+- Identity chưa provision bị từ chối.
+- Gateway không chứa active logic reconnect/timeout/retry.
+- OCPP adapter không truyền ORM model, Pydantic schema hoặc object OCPP qua
+  boundary domain.
+
+### Bước 5 — Viết simulator handshake và happy path
+
+**Prompt thực hiện:**
+
+```text
+Tạo simulator local cho một station đã pre-provision.
+
+Simulator phải:
+1. Kết nối WebSocket với subprotocol ocpp2.0.1.
+2. Gửi TransactionEvent Started cho EVSE/connector hợp lệ.
+3. Gửi một hoặc nhiều MeterValues có value Wh.
+4. Gửi TransactionEvent Updated nếu flow cần event trung gian.
+5. Gửi TransactionEvent Ended.
+6. Đóng kết nối sau khi nhận phản hồi thành công.
+
+Cho phép truyền identity, EVSE ID, connector ID và transaction ID qua
+constructor/CLI. Không thêm delay, retry, duplicate, reconnect, mất mạng hoặc
+random failure vào simulator MVP. Có một case reject identity chưa provision
+để kiểm tra handshake.
+```
+
+**File/khu vực chính:**
+
+- `backend/app/domains/charging_stations/ocpp/simulator/`
+- test/smoke script liên quan nếu đã có convention trong repo
+
+**Tiêu chí nghiệm thu:**
+
+- Một lệnh simulator tạo được session `active` sau Started.
+- Meter sample được lưu đúng `value_wh`.
+- Sau Ended, session chuyển `completed` và có event Ended.
+- Simulator nhận diện được identity hợp lệ và identity không hợp lệ.
+- Không tạo dependency production mới chỉ để chạy simulator.
+
+### Bước 6 — Monitoring tối thiểu và kiểm tra tích hợp
+
+**Prompt thực hiện:**
+
+```text
+Thêm hoặc hoàn thiện API monitoring tối thiểu cho session MVP nếu planner
+hiện tại đã yêu cầu router.
+
+Chỉ expose session, event và meter cần để kiểm tra happy path; không expose
+payment, authorization, debt hoặc raw payload. Chạy smoke test từ simulator
+đến DB và kiểm tra topology/session/event/meter bằng API hoặc SQL read-only.
+```
+
+**Tiêu chí nghiệm thu:**
+
+- Có thể xem session theo ID và xác nhận event/meter đã lưu.
+- Không có N+1 rõ ràng trong endpoint được thêm.
+- Response không chứa các cột đã loại khỏi MVP.
+- Transaction boundary vẫn nằm ở HTTP dependency/worker entrypoint.
+
+### Bước 7 — Review, kiểm tra và ghi nhận phần hoãn
+
+**Prompt thực hiện:**
+
+```text
+Chạy kiểm tra cuối cho toàn bộ thay đổi charging:
+
+1. compileall, Black, isort, Ruff và mypy.
+2. Alembic upgrade/downgrade/upgrade trên DB dev nếu môi trường cho phép.
+3. git diff --check.
+4. rg audit import chéo models/repositories, commit/rollback trong service/
+   repository, HTTPException ngoài router, datetime.utcnow và energy float.
+5. Đối chiếu source bị comment với mục tương ứng trong future.md.
+6. Cập nhật planner bằng kết quả thực tế, giới hạn kiểm thử và commit theo
+   Conventional Commits.
+```
+
+**Tiêu chí hoàn thành planner:**
+
+- Simulator chạy được luồng `Started → MeterValues/Updated → Ended`.
+- DB có đúng sáu bảng active theo mục 2.
+- Không có retry, idempotency, reconnect, timeout hoặc interruption trong
+  active path.
+- Source legacy chỉ bị comment, không bị xóa.
+- `future.md` mô tả đầy đủ tác dụng, lý do hoãn và planner cần mở lại cho từng
+  nhóm reliability/production.
+- Kết quả kiểm tra và giới hạn môi trường được ghi ở cuối bước này.
+
+## 5. Ngoài phạm vi và đường quay lại
+
+Khi hệ thống cần chạy với thiết bị thật hoặc điều kiện không lý tưởng, phải mở
+lại planner production cũ và mục tương ứng trong
+`docs/01-requirements/future.md`. Các nhóm cần thiết kế lại gồm:
+
+- reconnect, connection registry, timeout và offline detection;
+- retry, idempotency, duplicate/conflict và out-of-order event;
+- interruption, reconciliation và meter reset;
+- technical status history;
+- authorization, driver/vehicle policy, remote control, pricing, payment và
+  debt.
+
+Không tự mở lại các nhóm này bằng cách thêm dần placeholder vào source MVP.
