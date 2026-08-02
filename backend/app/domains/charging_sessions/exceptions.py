@@ -7,3 +7,7 @@ class ChargingSessionNotFoundError(Exception):
 
 class ChargingSessionConflictError(Exception):
     """Event hoặc meter có cùng logical identity nhưng payload mâu thuẫn."""
+
+
+class ChargingSessionInputError(Exception):
+    """Dữ liệu chuẩn hóa từ adapter vi phạm contract ingestion."""

@@ -640,6 +640,34 @@ repository không commit/rollback, không import charging_stations. Test hai EVS
 đồng thời, duplicate seqNo, meter reset, unknown transaction và rollback.
 ```
 
+**Kết quả thực tế (triển khai ngày 2026-08-02):** Đã hoàn tất session ingestion
+và persistence trong domain `charging_sessions`.
+
+- Đã thêm `repository.py` và `service.py`, cùng các input/result immutable bằng
+  dataclass trong `types.py`; boundary chỉ nhận UUID, enum, `datetime`,
+  `Decimal`, `Sequence` và dict raw đã sanitize, không import
+  `charging_stations` hoặc kiểu OCPP/Pydantic/ORM từ caller.
+- `Started` tạo aggregate và event; `Updated`/`Ended` append event; Ended đi qua
+  `ending` trong cùng transaction rồi chốt `completed` hoặc `interrupted`.
+  Reconnect dùng lại `(station_id, transaction_id)` và không tạo session mới.
+- TransactionEvent nhận diện duplicate/conflict bằng `(session_id, seq_no)` và
+  fingerprint payload; event out-of-order vẫn lưu audit nhưng không làm lùi
+  state, timestamp hoặc sequence. Terminal session không bị mở lại.
+- MeterValues chỉ nhận hai measurand energy của MVP, normalize `Wh`/`kWh` bằng
+  `Decimal`, append sample idempotent theo logical sample identity. Meter reset,
+  giảm register hoặc payload conflict được lưu/đánh dấu
+  `reconciliation_status=inconsistent` nhưng không làm `energy_delivered_wh`
+  âm. Unknown transaction bị từ chối và không tự tạo aggregate.
+- Đã implement `mark_station_interrupted`, chuyển các session
+  `pending|active|ending` của station sang `interrupted` và append history;
+  session terminal không đổi.
+- Smoke test PostgreSQL dev đạt: hai EVSE có hai session đồng thời, duplicate
+  seq, out-of-order, normalize Wh, meter reset, unknown transaction,
+  interruption và rollback transaction. Dữ liệu test đã được dọn sạch.
+- Kiểm tra phần thay đổi đạt: Black, isort, Ruff, mypy strict và compileall.
+  Chưa thêm HTTP router/session monitoring hoặc OCPP bridge vì thuộc Bước 7–8;
+  chưa thêm migration vì schema Bước 2 đã đủ cho contract này.
+
 ### Bước 5 — OCPP WebSocket gateway
 
 **Prompt:**
