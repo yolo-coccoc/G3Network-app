@@ -32,7 +32,14 @@ _MAX_IDENTITY_LENGTH: Final[int] = 255
 
 
 def parse_ocpp_identity(request_path: str) -> str | None:
-    """Trích xuất OCPP identity từ URL path hợp lệ."""
+    """Trích xuất OCPP identity từ URL path hợp lệ.
+
+    Args:
+        request_path: Request target có thể chứa query string.
+
+    Returns:
+        Identity đã URL-decode hoặc ``None`` nếu path không đúng contract.
+    """
     path = urlsplit(request_path).path
     if not path.startswith(OCPP_PATH_PREFIX):
         return None
@@ -46,7 +53,16 @@ def parse_ocpp_identity(request_path: str) -> str | None:
 
 
 def _http_rejection(status_code: int, reason: str, detail: str) -> Response:
-    """Tạo HTTP response dùng để từ chối WebSocket handshake."""
+    """Tạo HTTP response dùng để từ chối WebSocket handshake.
+
+    Args:
+        status_code: HTTP status trả về cho client.
+        reason: Reason phrase tương ứng với status.
+        detail: Nội dung lỗi dạng text/plain.
+
+    Returns:
+        Response tương thích callback ``process_request`` của websockets.
+    """
     body = f"{detail}\n".encode("utf-8")
     return Response(
         status_code,
@@ -62,16 +78,40 @@ def _http_rejection(status_code: int, reason: str, detail: str) -> Response:
 
 
 def _requested_subprotocols(request: Request) -> set[str]:
-    """Đọc danh sách subprotocol client gửi trong handshake."""
+    """Đọc danh sách subprotocol client gửi trong handshake.
+
+    Args:
+        request: HTTP request của WebSocket handshake.
+
+    Returns:
+        Set subprotocol đã trim; giá trị rỗng bị loại bỏ.
+    """
     header = request.headers.get("Sec-WebSocket-Protocol", "")
     return {item.strip() for item in header.split(",") if item.strip()}
 
 
 class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
-    """Adapter ``python-ocpp`` gắn một WebSocket vào station identity."""
+    """Adapter ``python-ocpp`` gắn WebSocket đã accept vào station identity.
+
+    Attributes:
+        id: Identity station được ``ChargePoint`` dùng khi dispatch OCPP.
+        connection: WebSocket connection do ``websockets`` tạo sau handshake.
+
+    Note:
+        Class hiện chỉ cấu hình logger và giữ extension point cho OCPP action
+        handlers; nó không tự tạo WebSocket connection.
+    """
 
     def __init__(self, identity: str, connection: ServerConnection) -> None:
-        """Khởi tạo adapter OCPP v201 cho connection đã validate."""
+        """Khởi tạo adapter OCPP v201 cho connection đã validate.
+
+        Args:
+            identity: OCPP identity đã được resolve trong database.
+            connection: WebSocket connection đã hoàn tất handshake.
+
+        Side Effects:
+            Khởi tạo state của lớp ``python-ocpp`` và gắn logger gateway.
+        """
         super().__init__(identity, connection, logger=logger)
 
 
@@ -92,16 +132,35 @@ class OCPPServer:
         port: int = settings.CHARGING_OCPP_PORT,
         session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
     ) -> None:
-        """Khởi tạo gateway với shared dependency của backend."""
+        """Khởi tạo gateway với shared dependency của backend.
+
+        Args:
+            host: Địa chỉ bind WebSocket listener.
+            port: Cổng bind WebSocket listener.
+            session_factory: Factory shared để validate station identity.
+
+        Side Effects:
+            Chưa mở socket; listener chỉ được bind khi gọi :meth:`start`.
+        """
         self.host = host
         self.port = port
         self.session_factory = session_factory
         self._server: Server | None = None
 
     async def start(self) -> None:
-        """Mở WebSocket listener chỉ cho OCPP 2.0.1."""
+        """Mở WebSocket listener chỉ cho OCPP 2.0.1.
+
+        Raises:
+            RuntimeError: Nếu listener đã được start trước đó.
+
+        Side Effects:
+            Bind host/port và đăng ký callback xử lý handshake, subprotocol và
+            connection. Server instance được lưu vào ``self._server``.
+        """
         if self._server is not None:
             raise RuntimeError("OCPP gateway is already running")
+        # ``serve`` sở hữu TCP accept và WebSocket handshake; gateway chỉ cung
+        # cấp policy validation cùng callback xử lý connection đã được accept.
         self._server = await serve(
             self._handle_connection,
             self.host,
@@ -117,7 +176,12 @@ class OCPPServer:
         )
 
     async def stop(self) -> None:
-        """Dừng listener và giải phóng socket."""
+        """Dừng listener và giải phóng socket.
+
+        Side Effects:
+            Đóng listener hiện tại và chờ socket được giải phóng. Hàm an toàn
+            khi listener chưa được start.
+        """
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -127,7 +191,20 @@ class OCPPServer:
     async def _process_request(
         self, _connection: ServerConnection, request: Request
     ) -> Response | None:
-        """Validate path, subprotocol và identity trước WebSocket upgrade."""
+        """Validate path, subprotocol và identity trước WebSocket upgrade.
+
+        Args:
+            _connection: Connection tạm do websockets truyền vào callback.
+            request: HTTP request handshake cần kiểm tra.
+
+        Returns:
+            HTTP rejection nếu handshake không hợp lệ; ``None`` để tiếp tục
+            upgrade thành WebSocket.
+
+        Side Effects:
+            Mở một transaction read-only ngắn để resolve station identity và
+            ghi log khi validation/database thất bại.
+        """
         identity = parse_ocpp_identity(request.path)
         if identity is None:
             return _http_rejection(404, "Not Found", "Invalid OCPP station path")
@@ -162,7 +239,15 @@ class OCPPServer:
     def _select_subprotocol(
         _connection: ServerConnection, client_subprotocols: Sequence[Subprotocol]
     ) -> Subprotocol | None:
-        """Chọn duy nhất subprotocol OCPP 2.0.1 được gateway cho phép."""
+        """Chọn duy nhất subprotocol OCPP 2.0.1 được gateway cho phép.
+
+        Args:
+            _connection: Connection đang thương lượng handshake.
+            client_subprotocols: Các protocol client đề xuất.
+
+        Returns:
+            ``ocpp2.0.1`` nếu client đề xuất; ngược lại ``None``.
+        """
         return (
             Subprotocol(OCPP_SUBPROTOCOL)
             if Subprotocol(OCPP_SUBPROTOCOL) in client_subprotocols
@@ -170,7 +255,16 @@ class OCPPServer:
         )
 
     async def _handle_connection(self, connection: ServerConnection) -> None:
-        """Chạy vòng đời một WebSocket sau khi handshake thành công."""
+        """Chạy vòng đời một WebSocket sau khi handshake thành công.
+
+        Args:
+            connection: WebSocket connection đã được websockets accept.
+
+        Side Effects:
+            Tạo adapter ``OCPPChargePoint`` và chờ ``python-ocpp`` đọc message
+            cho tới khi station ngắt kết nối hoặc handler bị hủy. Lỗi handler
+            được log; ``CancelledError`` được giữ nguyên để shutdown hoạt động.
+        """
         request = connection.request
         if request is None:
             await connection.close(code=1008, reason="Missing OCPP request path")
@@ -208,7 +302,16 @@ async def run_server(
     *,
     server_factory: Callable[[], OCPPServer] = OCPPServer,
 ) -> None:
-    """Chạy gateway cho tới khi nhận tín hiệu dừng."""
+    """Chạy gateway cho tới khi nhận tín hiệu dừng.
+
+    Args:
+        stop_event: Event do entrypoint set khi nhận SIGINT/SIGTERM.
+        server_factory: Factory tạo server; injectable để kiểm tra lifecycle.
+
+    Side Effects:
+        Start listener, chờ stop event và luôn stop listener trong ``finally``.
+        Không tự đóng database vì database lifecycle thuộc entrypoint process.
+    """
     server = server_factory()
     await server.start()
     try:

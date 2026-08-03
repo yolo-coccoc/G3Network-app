@@ -19,12 +19,23 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Trả về thời điểm hiện tại với timezone UTC."""
+    """Lấy thời điểm hiện tại theo UTC để làm giá trị mặc định cho model.
+
+    Returns:
+        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+    """
     return datetime.now(timezone.utc)
 
 
 def enum_values(enum_type: type[object]) -> list[str]:
-    """Lấy value của enum để PostgreSQL lưu đúng contract public."""
+    """Lấy value của enum để PostgreSQL lưu đúng contract public.
+
+    Args:
+        enum_type: Enum có các member sở hữu thuộc tính ``value``.
+
+    Returns:
+        Danh sách value theo thứ tự khai báo của enum.
+    """
     return [member.value for member in enum_type]  # type: ignore[attr-defined]
 
 
@@ -113,13 +124,22 @@ class ChargingSession(Base):
 
 
 class ChargingSessionEvent(Base):
-    """History tối thiểu của TransactionEvent dưới dạng hypertable."""
+    """History tối thiểu của TransactionEvent dưới dạng hypertable.
+
+    Attributes:
+        event_id: UUID nội bộ của event.
+        event_occurred_at: Thời điểm event phát sinh và khóa phân vùng thời gian.
+        session_id: UUID aggregate phiên sở hữu event.
+        event_type: Loại ``Started``, ``Updated`` hoặc ``Ended``.
+    """
 
     __tablename__ = "charging_session_events"
 
     event_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
+    # TimescaleDB cần cột thời gian trong khóa để partition hypertable và vẫn
+    # cho phép nhiều event cùng session ở các thời điểm khác nhau.
     event_occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
     )
@@ -147,13 +167,22 @@ class ChargingSessionEvent(Base):
 
 
 class ChargingSessionMeterValue(Base):
-    """Energy sample canonical Wh của session dưới dạng hypertable."""
+    """Energy sample canonical Wh của session dưới dạng hypertable.
+
+    Attributes:
+        meter_value_id: UUID nội bộ của sample.
+        sampled_at: Thời điểm đo và khóa phân vùng thời gian.
+        session_id: UUID aggregate phiên sở hữu sample.
+        value_wh: Giá trị meter đã chuẩn hóa về Wh.
+    """
 
     __tablename__ = "charging_session_meter_values"
 
     meter_value_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
+    # Sample time vừa là chiều truy vấn lịch sử vừa là khóa partition của
+    # hypertable; meter_value_id giữ uniqueness khi hai sample trùng timestamp.
     sampled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
     )

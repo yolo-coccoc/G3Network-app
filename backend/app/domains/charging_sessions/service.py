@@ -27,14 +27,36 @@ from app.domains.charging_sessions.types import (
 
 
 def _utc(value: datetime, field_name: str) -> datetime:
-    """Kiểm tra timestamp aware và normalize về UTC."""
+    """Kiểm tra timestamp aware và normalize về UTC.
+
+    Args:
+        value: Timestamp đầu vào từ adapter hoặc API.
+        field_name: Tên field dùng trong thông báo lỗi.
+
+    Returns:
+        Timestamp có timezone UTC.
+
+    Raises:
+        ChargingSessionInputError: Nếu timestamp thiếu timezone.
+    """
     if value.tzinfo is None or value.utcoffset() is None:
         raise ChargingSessionInputError(f"{field_name} phải có timezone")
     return value.astimezone(timezone.utc)
 
 
 def _energy(value: Decimal | None, field_name: str) -> Decimal | None:
-    """Kiểm tra giá trị energy Decimal không âm."""
+    """Kiểm tra giá trị energy Decimal không âm.
+
+    Args:
+        value: Giá trị năng lượng có thể nullable.
+        field_name: Tên field dùng trong thông báo lỗi.
+
+    Returns:
+        Decimal hữu hạn, không âm hoặc ``None``.
+
+    Raises:
+        ChargingSessionInputError: Nếu giá trị sai kiểu, không hữu hạn hoặc âm.
+    """
     if value is None:
         return None
     if not isinstance(value, Decimal) or not value.is_finite():
@@ -45,7 +67,15 @@ def _energy(value: Decimal | None, field_name: str) -> Decimal | None:
 
 
 def _apply_meter_end(session: ChargingSession, meter_end_wh: Decimal | None) -> None:
-    """Cập nhật meter cuối và energy delivered cho ORM session."""
+    """Cập nhật meter cuối và energy delivered cho ORM session.
+
+    Args:
+        session: Aggregate ORM đang được xử lý trong transaction.
+        meter_end_wh: Meter mới nhất; không thay đổi nếu là ``None``.
+
+    Side Effects:
+        Cập nhật ``meter_end_wh`` và tính lại năng lượng giao nếu có meter đầu.
+    """
     if meter_end_wh is None:
         return
     session.meter_end_wh = meter_end_wh
@@ -65,7 +95,36 @@ async def ingest_transaction_event(
     meter_start_wh: Decimal | None = None,
     meter_end_wh: Decimal | None = None,
 ) -> TransactionIngestResult:
-    """Xử lý Started, Updated hoặc Ended theo happy path."""
+    """Xử lý một TransactionEvent theo lifecycle happy path.
+
+    Rule:
+        ``Started`` tạo aggregate mới; ``Updated`` và ``Ended`` yêu cầu
+        aggregate đã tồn tại, đúng topology và message đến đúng thứ tự. Event
+        luôn được append trước khi aggregate được cập nhật.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        station_id: UUID station phát sinh transaction.
+        evse_id: UUID EVSE của transaction.
+        connector_id: UUID connector của transaction.
+        transaction_id: OCPP transaction identity.
+        event_type: Loại event canonical.
+        event_occurred_at: Thời điểm event, bắt buộc có timezone.
+        meter_start_wh: Meter đầu phiên cho ``Started``.
+        meter_end_wh: Meter mới nhất của ``Updated``/``Ended``.
+
+    Returns:
+        Kết quả gồm session UUID, status hiện tại và số event đã append.
+
+    Raises:
+        ChargingSessionInputError: Nếu input sai contract hoặc topology lệch.
+        ChargingSessionNotFoundError: Nếu event không phải ``Started`` nhưng
+            aggregate chưa tồn tại.
+
+    Side Effects:
+        Tạo hoặc cập nhật aggregate và append event trong transaction hiện tại;
+        không tự commit hoặc rollback.
+    """
     transaction_id = transaction_id.strip()
     if not transaction_id or len(transaction_id) > 255:
         raise ChargingSessionInputError("transaction_id rỗng hoặc vượt quá 255 ký tự")
@@ -120,7 +179,29 @@ async def ingest_meter_values(
     session_id: UUID,
     samples: Sequence[MeterSampleInput],
 ) -> MeterIngestResult:
-    """Lưu các MeterValues theo thứ tự nhận được và cập nhật aggregate."""
+    """Lưu batch MeterValues theo thứ tự nhận được và cập nhật aggregate.
+
+    Rule:
+        MVP giả định samples đến đúng thứ tự và không duplicate; mỗi sample
+        được lưu thành một record và trở thành meter cuối của aggregate.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        session_id: UUID aggregate cần cập nhật.
+        samples: Chuỗi sample đã canonical về Wh.
+
+    Returns:
+        Kết quả gồm session UUID, status và số sample đã nhận.
+
+    Raises:
+        ChargingSessionInputError: Nếu sample thiếu timezone hoặc energy không
+            hợp lệ.
+        ChargingSessionNotFoundError: Nếu aggregate không tồn tại.
+
+    Side Effects:
+        Append các meter sample và cập nhật aggregate trong cùng transaction;
+        lỗi giữa batch được xử lý bởi entry boundary theo atomic transaction.
+    """
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
         raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")

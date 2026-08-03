@@ -1,4 +1,9 @@
-"""HTTP router cho CRUD topology station, EVSE và connector."""
+"""HTTP router cho CRUD topology station, EVSE và connector.
+
+Router chỉ nhận dependency HTTP, gọi public service và chuyển domain
+exception thành status code. Business rule, truy vấn database và transaction
+boundary không nằm trong module này.
+"""
 
 from uuid import UUID
 
@@ -42,7 +47,18 @@ router = APIRouter(tags=["charging-stations"])
 async def create_station(
     station_data: StationCreate, db: AsyncSession = Depends(get_db)
 ) -> StationResponse:
-    """Tạo station đã pre-provision."""
+    """Tạo station đã pre-provision.
+
+    Args:
+        station_data: Payload tạo station đã qua Pydantic validation.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response station vừa tạo.
+
+    Raises:
+        HTTPException: ``409`` nếu OCPP identity đã tồn tại.
+    """
     try:
         return await charging_service.create_station(db, station_data)
     except ChargingTopologyConflictError as error:
@@ -65,7 +81,16 @@ async def list_stations(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> StationListResponse:
-    """Liệt kê station active với phân trang."""
+    """Liệt kê station active với phân trang.
+
+    Args:
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong trang.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response danh sách station.
+    """
     return await charging_service.list_stations(
         db,
         page=page,
@@ -84,7 +109,20 @@ async def create_evse(
     evse_data: EvseCreate,
     db: AsyncSession = Depends(get_db),
 ) -> EvseResponse:
-    """Tạo EVSE thuộc station active."""
+    """Tạo EVSE thuộc station active.
+
+    Args:
+        station_id: UUID station parent.
+        evse_data: Payload identity EVSE.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response EVSE vừa tạo.
+
+    Raises:
+        HTTPException: ``404`` nếu station không tồn tại; ``409`` nếu identity
+            EVSE bị trùng.
+    """
     try:
         return await charging_service.create_evse(db, station_id, evse_data)
     except ChargingStationNotFoundError as error:
@@ -112,7 +150,20 @@ async def list_evses(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> EvseListResponse:
-    """Liệt kê EVSE active thuộc station."""
+    """Liệt kê EVSE active thuộc station.
+
+    Args:
+        station_id: UUID station parent.
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong trang.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response danh sách EVSE.
+
+    Raises:
+        HTTPException: ``404`` nếu station parent không active.
+    """
     try:
         return await charging_service.list_evses(
             db, station_id, page=page, page_size=page_size
@@ -134,7 +185,20 @@ async def create_connector(
     connector_data: ConnectorCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorResponse:
-    """Tạo connector thuộc EVSE active."""
+    """Tạo connector thuộc EVSE active.
+
+    Args:
+        evse_id: UUID EVSE parent.
+        connector_data: Payload identity connector.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response connector vừa tạo.
+
+    Raises:
+        HTTPException: ``404`` nếu EVSE không tồn tại; ``409`` nếu identity
+            connector bị trùng.
+    """
     try:
         return await charging_service.create_connector(db, evse_id, connector_data)
     except ChargingEvseNotFoundError as error:
@@ -162,7 +226,20 @@ async def list_connectors(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorListResponse:
-    """Liệt kê connector active thuộc EVSE."""
+    """Liệt kê connector active thuộc EVSE.
+
+    Args:
+        evse_id: UUID EVSE parent.
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong trang.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response danh sách connector.
+
+    Raises:
+        HTTPException: ``404`` nếu EVSE parent không active.
+    """
     try:
         return await charging_service.list_connectors(
             db, evse_id, page=page, page_size=page_size
@@ -181,7 +258,18 @@ async def list_connectors(
 async def get_station(
     station_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> StationResponse:
-    """Lấy station active theo UUID."""
+    """Lấy station active theo UUID.
+
+    Args:
+        station_id: UUID station cần lấy.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response station.
+
+    Raises:
+        HTTPException: ``404`` nếu station không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.get_station(db, station_id)
     except ChargingStationNotFoundError as error:
@@ -200,7 +288,20 @@ async def update_station(
     station_data: StationUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> StationResponse:
-    """PATCH station với các field được gửi trong request."""
+    """PATCH station với các field được gửi trong request.
+
+    Args:
+        station_id: UUID station cần cập nhật.
+        station_data: Payload PATCH đã qua validation.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response station sau cập nhật.
+
+    Raises:
+        HTTPException: ``404`` nếu station không tồn tại; ``409`` nếu identity
+            mới bị trùng.
+    """
     try:
         return await charging_service.update_station(db, station_id, station_data)
     except ChargingStationNotFoundError as error:
@@ -221,7 +322,18 @@ async def update_station(
 async def delete_station(
     station_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> DeleteResponse:
-    """Soft-delete station và topology con."""
+    """Soft-delete station và topology con.
+
+    Args:
+        station_id: UUID station cần xoá mềm.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response xác nhận soft-delete.
+
+    Raises:
+        HTTPException: ``404`` nếu station không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.delete_station(db, station_id)
     except ChargingStationNotFoundError as error:
@@ -236,7 +348,18 @@ async def delete_station(
     summary="Lấy EVSE",
 )
 async def get_evse(evse_id: UUID, db: AsyncSession = Depends(get_db)) -> EvseResponse:
-    """Lấy EVSE active theo UUID."""
+    """Lấy EVSE active theo UUID.
+
+    Args:
+        evse_id: UUID EVSE cần lấy.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response EVSE.
+
+    Raises:
+        HTTPException: ``404`` nếu EVSE không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.get_evse(db, evse_id)
     except ChargingEvseNotFoundError as error:
@@ -255,7 +378,20 @@ async def update_evse(
     evse_data: EvseUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> EvseResponse:
-    """PATCH EVSE với các field được gửi trong request."""
+    """PATCH EVSE với các field được gửi trong request.
+
+    Args:
+        evse_id: UUID EVSE cần cập nhật.
+        evse_data: Payload PATCH đã qua validation.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response EVSE sau cập nhật.
+
+    Raises:
+        HTTPException: ``404`` nếu EVSE không tồn tại; ``409`` nếu identity mới
+            bị trùng trong station.
+    """
     try:
         return await charging_service.update_evse(db, evse_id, evse_data)
     except ChargingEvseNotFoundError as error:
@@ -276,7 +412,18 @@ async def update_evse(
 async def delete_evse(
     evse_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> DeleteResponse:
-    """Soft-delete EVSE và connector con."""
+    """Soft-delete EVSE và connector con.
+
+    Args:
+        evse_id: UUID EVSE cần xoá mềm.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response xác nhận soft-delete.
+
+    Raises:
+        HTTPException: ``404`` nếu EVSE không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.delete_evse(db, evse_id)
     except ChargingEvseNotFoundError as error:
@@ -293,7 +440,18 @@ async def delete_evse(
 async def get_connector(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ConnectorResponse:
-    """Lấy connector active theo UUID."""
+    """Lấy connector active theo UUID.
+
+    Args:
+        connector_id: UUID connector cần lấy.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response connector.
+
+    Raises:
+        HTTPException: ``404`` nếu connector không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.get_connector(db, connector_id)
     except ChargingConnectorNotFoundError as error:
@@ -312,7 +470,20 @@ async def update_connector(
     connector_data: ConnectorUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> ConnectorResponse:
-    """PATCH connector với các field được gửi trong request."""
+    """PATCH connector với các field được gửi trong request.
+
+    Args:
+        connector_id: UUID connector cần cập nhật.
+        connector_data: Payload PATCH đã qua validation.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response connector sau cập nhật.
+
+    Raises:
+        HTTPException: ``404`` nếu connector không tồn tại; ``409`` nếu identity
+            mới bị trùng trong EVSE.
+    """
     try:
         return await charging_service.update_connector(db, connector_id, connector_data)
     except ChargingConnectorNotFoundError as error:
@@ -333,7 +504,18 @@ async def update_connector(
 async def delete_connector(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> DeleteResponse:
-    """Soft-delete connector."""
+    """Soft-delete connector.
+
+    Args:
+        connector_id: UUID connector cần xoá mềm.
+        db: Async session do dependency ``get_db`` sở hữu.
+
+    Returns:
+        HTTP response xác nhận soft-delete.
+
+    Raises:
+        HTTPException: ``404`` nếu connector không tồn tại hoặc đã xoá.
+    """
     try:
         return await charging_service.delete_connector(db, connector_id)
     except ChargingConnectorNotFoundError as error:

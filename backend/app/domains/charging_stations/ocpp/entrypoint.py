@@ -22,12 +22,16 @@ async def run() -> None:
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
     handled_signals = (signal.SIGINT, signal.SIGTERM)
+    # Signal chỉ đánh thức coroutine chờ event; chính run_server sở hữu việc
+    # đóng listener để mọi connection và socket được shutdown có trật tự.
     for handled_signal in handled_signals:
         event_loop.add_signal_handler(handled_signal, stop_event.set)
 
     try:
         await run_server(stop_event)
     finally:
+        # Database engine là shared resource của process, nên được đóng sau
+        # khi gateway đã dừng và không còn handshake nào cần query station.
         await close_db()
         for handled_signal in handled_signals:
             event_loop.remove_signal_handler(handled_signal)

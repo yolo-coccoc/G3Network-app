@@ -20,7 +20,11 @@ from app.domains.charging_sessions.types import SessionEventType, SessionStatus
 
 
 def utc_now() -> datetime:
-    """Trả về thời điểm hiện tại với timezone UTC."""
+    """Lấy thời điểm UTC dùng khi cập nhật aggregate phiên.
+
+    Returns:
+        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+    """
     return datetime.now(timezone.utc)
 
 
@@ -29,7 +33,16 @@ async def get_session_by_transaction(
     station_id: UUID,
     transaction_id: str,
 ) -> ChargingSession | None:
-    """Tìm session theo station và transaction identity."""
+    """Tìm aggregate theo cặp station và OCPP transaction identity.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        station_id: UUID station phát sinh transaction.
+        transaction_id: Identity transaction do trụ cấp.
+
+    Returns:
+        Aggregate phù hợp hoặc ``None`` nếu chưa có.
+    """
     result = await db.execute(
         select(ChargingSession).where(
             ChargingSession.station_id == station_id,
@@ -42,7 +55,15 @@ async def get_session_by_transaction(
 async def get_session_by_id(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSession | None:
-    """Tìm aggregate theo UUID nội bộ."""
+    """Tìm aggregate theo UUID nội bộ.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        session_id: UUID aggregate cần truy vấn.
+
+    Returns:
+        Aggregate phù hợp hoặc ``None`` nếu không tồn tại.
+    """
     result = await db.execute(
         select(ChargingSession).where(ChargingSession.session_id == session_id)
     )
@@ -59,7 +80,23 @@ async def create_session(
     started_at: datetime,
     meter_start_wh: Decimal | None,
 ) -> ChargingSession:
-    """Tạo session active và flush constraint trong transaction hiện tại."""
+    """Tạo session active và flush constraint trong transaction hiện tại.
+
+    Args:
+        db: Async session hiện tại; repository không commit transaction.
+        station_id: UUID station sở hữu transaction.
+        evse_id: UUID EVSE sở hữu transaction.
+        connector_id: UUID connector đang cấp điện.
+        transaction_id: OCPP transaction identity đã được service chuẩn hóa.
+        started_at: Thời điểm ``Started`` đã normalize về UTC.
+        meter_start_wh: Meter đầu phiên, nullable nếu payload không có.
+
+    Returns:
+        Aggregate active vừa được thêm vào session.
+
+    Side Effects:
+        Thêm record ORM và gọi ``flush`` để lấy UUID/phát hiện constraint.
+    """
     session = ChargingSession(
         station_id=station_id,
         evse_id=evse_id,
@@ -82,7 +119,20 @@ async def insert_event(
     event_occurred_at: datetime,
     event_type: SessionEventType,
 ) -> ChargingSessionEvent:
-    """Append một TransactionEvent history và flush record."""
+    """Append một TransactionEvent history và flush record.
+
+    Args:
+        db: Async session hiện tại; repository không commit transaction.
+        session_id: UUID aggregate sở hữu event.
+        event_occurred_at: Thời điểm event đã normalize về UTC.
+        event_type: Loại TransactionEvent canonical.
+
+    Returns:
+        Event ORM vừa được thêm.
+
+    Side Effects:
+        Thêm history record và gọi ``flush`` trong transaction hiện tại.
+    """
     event = ChargingSessionEvent(
         session_id=session_id,
         event_occurred_at=event_occurred_at,
@@ -100,7 +150,20 @@ async def insert_meter_value(
     sampled_at: datetime,
     value_wh: Decimal,
 ) -> ChargingSessionMeterValue:
-    """Append một energy sample canonical Wh và flush record."""
+    """Append một energy sample canonical Wh và flush record.
+
+    Args:
+        db: Async session hiện tại; repository không commit transaction.
+        session_id: UUID aggregate sở hữu sample.
+        sampled_at: Thời điểm đo đã normalize về UTC.
+        value_wh: Giá trị năng lượng không âm theo Wh.
+
+    Returns:
+        Meter sample ORM vừa được thêm.
+
+    Side Effects:
+        Thêm sample record và gọi ``flush`` trong transaction hiện tại.
+    """
     meter = ChargingSessionMeterValue(
         session_id=session_id,
         sampled_at=sampled_at,

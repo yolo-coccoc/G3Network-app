@@ -14,7 +14,12 @@ from app.libs.common.config import settings
 
 
 class StationCreate(BaseModel):
-    """Dữ liệu tạo station đã pre-provision."""
+    """Dữ liệu tạo station đã pre-provision.
+
+    Attributes:
+        ocpp_identity: Identity station dùng trong OCPP WebSocket path.
+        display_name: Tên hiển thị của station.
+    """
 
     ocpp_identity: str = Field(..., min_length=1, max_length=255)
     display_name: str = Field(..., min_length=1, max_length=200)
@@ -22,7 +27,17 @@ class StationCreate(BaseModel):
     @field_validator("ocpp_identity", "display_name")
     @classmethod
     def validate_required_text(cls, value: str) -> str:
-        """Chuẩn hóa text và từ chối chuỗi chỉ gồm khoảng trắng."""
+        """Chuẩn hóa text bắt buộc và từ chối chuỗi chỉ gồm khoảng trắng.
+
+        Args:
+            value: Text thô từ request.
+
+        Returns:
+            Text đã bỏ khoảng trắng đầu/cuối.
+
+        Raises:
+            ValueError: Nếu text rỗng sau khi chuẩn hóa.
+        """
         normalized = value.strip()
         if not normalized:
             raise ValueError("Giá trị không được rỗng hoặc chỉ chứa khoảng trắng")
@@ -30,7 +45,12 @@ class StationCreate(BaseModel):
 
 
 class StationUpdate(BaseModel):
-    """Các identity station được phép cập nhật một phần."""
+    """Các identity station được phép cập nhật một phần.
+
+    Attributes:
+        ocpp_identity: Identity mới; ``None`` nghĩa là không cập nhật.
+        display_name: Tên mới; ``None`` nghĩa là không cập nhật.
+    """
 
     ocpp_identity: str | None = Field(None, min_length=1, max_length=255)
     display_name: str | None = Field(None, min_length=1, max_length=200)
@@ -38,7 +58,17 @@ class StationUpdate(BaseModel):
     @field_validator("ocpp_identity", "display_name")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
-        """Chuẩn hóa text; ``None`` có nghĩa không cập nhật field."""
+        """Chuẩn hóa text tùy chọn; ``None`` nghĩa là không cập nhật field.
+
+        Args:
+            value: Text thô hoặc ``None`` từ PATCH request.
+
+        Returns:
+            Text đã bỏ khoảng trắng hoặc ``None``.
+
+        Raises:
+            ValueError: Nếu text không rỗng sau khi chuẩn hóa.
+        """
         if value is None:
             return None
         normalized = value.strip()
@@ -48,7 +78,16 @@ class StationUpdate(BaseModel):
 
 
 class StationResponse(BaseModel):
-    """Thông tin station active không chứa technical status hoặc raw payload."""
+    """Thông tin station active không chứa technical status hoặc raw payload.
+
+    Attributes:
+        station_id: UUID nội bộ.
+        ocpp_identity: Identity OCPP duy nhất.
+        display_name: Tên hiển thị.
+        created_at: Thời điểm tạo.
+        updated_at: Thời điểm cập nhật gần nhất.
+        deleted_at: Thời điểm soft-delete, nullable.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -61,7 +100,14 @@ class StationResponse(BaseModel):
 
 
 class StationListResponse(BaseModel):
-    """Danh sách station phân trang."""
+    """Danh sách station phân trang.
+
+    Attributes:
+        items: Các station active ở trang hiện tại.
+        total: Tổng station active.
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong một trang.
+    """
 
     items: list[StationResponse]
     total: int = Field(..., ge=0)
@@ -70,19 +116,36 @@ class StationListResponse(BaseModel):
 
 
 class EvseCreate(BaseModel):
-    """Dữ liệu tạo EVSE thuộc station."""
+    """Dữ liệu tạo EVSE thuộc station.
+
+    Attributes:
+        ocpp_evse_id: ID EVSE dương do station dùng trong OCPP.
+    """
 
     ocpp_evse_id: int = Field(..., gt=0)
 
 
 class EvseUpdate(BaseModel):
-    """Identity OCPP của EVSE được phép cập nhật một phần."""
+    """Identity OCPP của EVSE được phép cập nhật một phần.
+
+    Attributes:
+        ocpp_evse_id: ID mới hoặc ``None`` để không cập nhật.
+    """
 
     ocpp_evse_id: int | None = Field(None, gt=0)
 
 
 class EvseResponse(BaseModel):
-    """Thông tin EVSE thuộc topology đã pre-provision."""
+    """Thông tin EVSE thuộc topology đã pre-provision.
+
+    Attributes:
+        evse_id: UUID nội bộ.
+        station_id: UUID station parent.
+        ocpp_evse_id: ID EVSE trong OCPP.
+        created_at: Thời điểm tạo.
+        updated_at: Thời điểm cập nhật gần nhất.
+        deleted_at: Thời điểm soft-delete, nullable.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,7 +158,14 @@ class EvseResponse(BaseModel):
 
 
 class EvseListResponse(BaseModel):
-    """Danh sách EVSE phân trang."""
+    """Danh sách EVSE phân trang.
+
+    Attributes:
+        items: Các EVSE active ở trang hiện tại.
+        total: Tổng EVSE active của station parent.
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong một trang.
+    """
 
     items: list[EvseResponse]
     total: int = Field(..., ge=0)
@@ -104,19 +174,36 @@ class EvseListResponse(BaseModel):
 
 
 class ConnectorCreate(BaseModel):
-    """Dữ liệu tạo connector thuộc EVSE."""
+    """Dữ liệu tạo connector thuộc EVSE.
+
+    Attributes:
+        ocpp_connector_id: ID connector dương do EVSE dùng trong OCPP.
+    """
 
     ocpp_connector_id: int = Field(..., gt=0)
 
 
 class ConnectorUpdate(BaseModel):
-    """Identity OCPP của connector được phép cập nhật một phần."""
+    """Identity OCPP của connector được phép cập nhật một phần.
+
+    Attributes:
+        ocpp_connector_id: ID mới hoặc ``None`` để không cập nhật.
+    """
 
     ocpp_connector_id: int | None = Field(None, gt=0)
 
 
 class ConnectorResponse(BaseModel):
-    """Thông tin connector thuộc topology đã pre-provision."""
+    """Thông tin connector thuộc topology đã pre-provision.
+
+    Attributes:
+        connector_id: UUID nội bộ.
+        evse_id: UUID EVSE parent.
+        ocpp_connector_id: ID connector trong OCPP.
+        created_at: Thời điểm tạo.
+        updated_at: Thời điểm cập nhật gần nhất.
+        deleted_at: Thời điểm soft-delete, nullable.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -129,7 +216,14 @@ class ConnectorResponse(BaseModel):
 
 
 class ConnectorListResponse(BaseModel):
-    """Danh sách connector phân trang."""
+    """Danh sách connector phân trang.
+
+    Attributes:
+        items: Các connector active ở trang hiện tại.
+        total: Tổng connector active của EVSE parent.
+        page: Số trang bắt đầu từ một.
+        page_size: Số item tối đa trong một trang.
+    """
 
     items: list[ConnectorResponse]
     total: int = Field(..., ge=0)
@@ -138,6 +232,10 @@ class ConnectorListResponse(BaseModel):
 
 
 class DeleteResponse(BaseModel):
-    """Kết quả soft-delete topology."""
+    """Kết quả soft-delete topology.
+
+    Attributes:
+        message: Thông báo nghiệp vụ để trả cho client.
+    """
 
     message: str

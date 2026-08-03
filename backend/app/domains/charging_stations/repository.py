@@ -21,7 +21,11 @@ from app.domains.charging_stations.models import (
 
 
 def utc_now() -> datetime:
-    """Trả về thời điểm soft-delete với timezone UTC."""
+    """Lấy thời điểm UTC dùng cho cập nhật và soft-delete.
+
+    Returns:
+        Thời điểm hiện tại có timezone UTC.
+    """
     return datetime.now(timezone.utc)
 
 
@@ -74,7 +78,17 @@ async def get_station_by_id(
 async def get_station_by_identity(
     db: AsyncSession, ocpp_identity: str, *, include_deleted: bool = True
 ) -> ChargingStation | None:
-    """Tìm station theo OCPP identity, mặc định gồm cả soft-delete để giữ unique."""
+    """Tìm station theo OCPP identity.
+
+    Args:
+        db: Async session hiện tại.
+        ocpp_identity: Business identity cần tra cứu.
+        include_deleted: Có bao gồm record soft-delete hay không. Mặc định là
+            ``True`` để service phát hiện identity không được tái sử dụng.
+
+    Returns:
+        Station phù hợp hoặc ``None``.
+    """
     conditions: list[ColumnElement[bool]] = [
         ChargingStation.ocpp_identity == ocpp_identity
     ]
@@ -90,7 +104,16 @@ async def list_stations(
     offset: int,
     limit: int,
 ) -> list[ChargingStation]:
-    """Lấy station chưa soft-delete theo thứ tự ổn định."""
+    """Lấy station chưa soft-delete theo thứ tự ổn định.
+
+    Args:
+        db: Async session hiện tại.
+        offset: Số record bỏ qua.
+        limit: Số record tối đa trả về.
+
+    Returns:
+        Danh sách station active theo thứ tự tạo giảm dần.
+    """
     conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
     result = await db.execute(
         select(ChargingStation)
@@ -105,7 +128,14 @@ async def list_stations(
 async def count_stations(
     db: AsyncSession,
 ) -> int:
-    """Đếm station active."""
+    """Đếm station active.
+
+    Args:
+        db: Async session hiện tại.
+
+    Returns:
+        Số station chưa soft-delete.
+    """
     conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
     result = await db.execute(
         select(func.count(ChargingStation.station_id)).where(and_(*conditions))
@@ -125,6 +155,9 @@ async def update_station(
 
     Returns:
         Station sau cập nhật hoặc None nếu không còn active.
+
+    Side Effects:
+        Gán field, cập nhật ``updated_at`` và flush; không commit.
     """
     station = await get_station_by_id(db, station_id)
     if station is None:
@@ -163,6 +196,8 @@ async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
     )
     evse_ids = list(evse_result.scalars().all())
     if evse_ids:
+        # Cập nhật connector trước EVSE để giữ topology con nhất quán trong
+        # cùng transaction, kể cả khi caller rollback ở entry boundary.
         await db.execute(
             update(ChargingConnector)
             .where(
@@ -188,7 +223,19 @@ async def create_evse(
     station_id: UUID,
     ocpp_evse_id: int,
 ) -> ChargingEvse:
-    """Tạo EVSE và flush constraint/FK trong transaction hiện tại."""
+    """Tạo EVSE và flush constraint/FK trong transaction hiện tại.
+
+    Args:
+        db: Async session hiện tại.
+        station_id: UUID station parent.
+        ocpp_evse_id: Identity EVSE dương trong station.
+
+    Returns:
+        EVSE ORM vừa persist.
+
+    Side Effects:
+        Thêm record, flush và refresh generated values; không commit.
+    """
     evse = ChargingEvse(
         station_id=station_id,
         ocpp_evse_id=ocpp_evse_id,
@@ -202,7 +249,16 @@ async def create_evse(
 async def get_evse_by_id(
     db: AsyncSession, evse_id: UUID, *, include_deleted: bool = False
 ) -> ChargingEvse | None:
-    """Tìm EVSE theo internal ID, mặc định chỉ resolve record active."""
+    """Tìm EVSE theo internal ID.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE cần truy vấn.
+        include_deleted: Có bao gồm record soft-delete hay không.
+
+    Returns:
+        EVSE phù hợp hoặc ``None``.
+    """
     conditions: list[ColumnElement[bool]] = [ChargingEvse.evse_id == evse_id]
     if not include_deleted:
         conditions.append(ChargingEvse.deleted_at.is_(None))
@@ -217,7 +273,17 @@ async def get_evse_by_identity(
     *,
     include_deleted: bool = True,
 ) -> ChargingEvse | None:
-    """Tìm EVSE theo identity composite station/OCPP ID."""
+    """Tìm EVSE theo identity composite station/OCPP ID.
+
+    Args:
+        db: Async session hiện tại.
+        station_id: UUID station parent.
+        ocpp_evse_id: Identity EVSE trong station.
+        include_deleted: Có bao gồm identity đã soft-delete hay không.
+
+    Returns:
+        EVSE phù hợp hoặc ``None``.
+    """
     conditions: list[ColumnElement[bool]] = [
         ChargingEvse.station_id == station_id,
         ChargingEvse.ocpp_evse_id == ocpp_evse_id,
@@ -231,7 +297,17 @@ async def get_evse_by_identity(
 async def list_evses(
     db: AsyncSession, *, station_id: UUID, offset: int, limit: int
 ) -> list[ChargingEvse]:
-    """Lấy EVSE active của một station theo thứ tự ổn định."""
+    """Lấy EVSE active của một station theo thứ tự ổn định.
+
+    Args:
+        db: Async session hiện tại.
+        station_id: UUID station parent.
+        offset: Số record bỏ qua.
+        limit: Số record tối đa trả về.
+
+    Returns:
+        Danh sách EVSE active.
+    """
     result = await db.execute(
         select(ChargingEvse)
         .where(
@@ -246,7 +322,15 @@ async def list_evses(
 
 
 async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
-    """Đếm EVSE active thuộc một station."""
+    """Đếm EVSE active thuộc một station.
+
+    Args:
+        db: Async session hiện tại.
+        station_id: UUID station parent.
+
+    Returns:
+        Số EVSE active.
+    """
     result = await db.execute(
         select(func.count(ChargingEvse.evse_id)).where(
             ChargingEvse.station_id == station_id,
@@ -259,7 +343,19 @@ async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
 async def update_evse(
     db: AsyncSession, evse_id: UUID, update_data: Mapping[str, object]
 ) -> ChargingEvse | None:
-    """Cập nhật EVSE active bằng các field đã được service kiểm tra."""
+    """Cập nhật EVSE active bằng field đã được service kiểm tra.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE cần cập nhật.
+        update_data: Mapping field đã qua kiểm tra nghiệp vụ.
+
+    Returns:
+        EVSE sau cập nhật hoặc ``None`` nếu không còn active.
+
+    Side Effects:
+        Gán field, cập nhật timestamp, flush và refresh; không commit.
+    """
     evse = await get_evse_by_id(db, evse_id)
     if evse is None:
         return None
@@ -272,7 +368,18 @@ async def update_evse(
 
 
 async def soft_delete_evse(db: AsyncSession, evse_id: UUID) -> bool:
-    """Soft-delete EVSE và connector active thuộc EVSE đó."""
+    """Soft-delete EVSE và connector active thuộc EVSE đó.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE cần xoá mềm.
+
+    Returns:
+        ``True`` nếu EVSE active tồn tại; ``False`` nếu không tìm thấy.
+
+    Side Effects:
+        Cập nhật timestamp của EVSE và connector con rồi flush; không commit.
+    """
     evse = await get_evse_by_id(db, evse_id)
     if evse is None:
         return False
@@ -297,7 +404,19 @@ async def create_connector(
     evse_id: UUID,
     ocpp_connector_id: int,
 ) -> ChargingConnector:
-    """Tạo connector và flush constraint/FK trong transaction hiện tại."""
+    """Tạo connector và flush constraint/FK trong transaction hiện tại.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE parent.
+        ocpp_connector_id: Identity connector dương trong EVSE.
+
+    Returns:
+        Connector ORM vừa persist.
+
+    Side Effects:
+        Thêm record, flush và refresh generated values; không commit.
+    """
     connector = ChargingConnector(
         evse_id=evse_id,
         ocpp_connector_id=ocpp_connector_id,
@@ -311,7 +430,16 @@ async def create_connector(
 async def get_connector_by_id(
     db: AsyncSession, connector_id: UUID, *, include_deleted: bool = False
 ) -> ChargingConnector | None:
-    """Tìm connector theo internal ID, mặc định chỉ resolve active."""
+    """Tìm connector theo internal ID.
+
+    Args:
+        db: Async session hiện tại.
+        connector_id: UUID connector cần truy vấn.
+        include_deleted: Có bao gồm record soft-delete hay không.
+
+    Returns:
+        Connector phù hợp hoặc ``None``.
+    """
     conditions: list[ColumnElement[bool]] = [
         ChargingConnector.connector_id == connector_id
     ]
@@ -328,7 +456,17 @@ async def get_connector_by_identity(
     *,
     include_deleted: bool = True,
 ) -> ChargingConnector | None:
-    """Tìm connector theo identity composite EVSE/OCPP ID."""
+    """Tìm connector theo identity composite EVSE/OCPP ID.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE parent.
+        ocpp_connector_id: Identity connector trong EVSE.
+        include_deleted: Có bao gồm identity đã soft-delete hay không.
+
+    Returns:
+        Connector phù hợp hoặc ``None``.
+    """
     conditions: list[ColumnElement[bool]] = [
         ChargingConnector.evse_id == evse_id,
         ChargingConnector.ocpp_connector_id == ocpp_connector_id,
@@ -342,7 +480,17 @@ async def get_connector_by_identity(
 async def list_connectors(
     db: AsyncSession, *, evse_id: UUID, offset: int, limit: int
 ) -> list[ChargingConnector]:
-    """Lấy connector active của một EVSE theo thứ tự ổn định."""
+    """Lấy connector active của một EVSE theo thứ tự ổn định.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE parent.
+        offset: Số record bỏ qua.
+        limit: Số record tối đa trả về.
+
+    Returns:
+        Danh sách connector active.
+    """
     result = await db.execute(
         select(ChargingConnector)
         .where(
@@ -359,7 +507,15 @@ async def list_connectors(
 
 
 async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
-    """Đếm connector active thuộc một EVSE."""
+    """Đếm connector active thuộc một EVSE.
+
+    Args:
+        db: Async session hiện tại.
+        evse_id: UUID EVSE parent.
+
+    Returns:
+        Số connector active.
+    """
     result = await db.execute(
         select(func.count(ChargingConnector.connector_id)).where(
             ChargingConnector.evse_id == evse_id,
@@ -372,7 +528,19 @@ async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
 async def update_connector(
     db: AsyncSession, connector_id: UUID, update_data: Mapping[str, object]
 ) -> ChargingConnector | None:
-    """Cập nhật connector active bằng các field đã được service kiểm tra."""
+    """Cập nhật connector active bằng field đã được service kiểm tra.
+
+    Args:
+        db: Async session hiện tại.
+        connector_id: UUID connector cần cập nhật.
+        update_data: Mapping field đã qua kiểm tra nghiệp vụ.
+
+    Returns:
+        Connector sau cập nhật hoặc ``None`` nếu không còn active.
+
+    Side Effects:
+        Gán field, cập nhật timestamp, flush và refresh; không commit.
+    """
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:
         return None
@@ -385,7 +553,18 @@ async def update_connector(
 
 
 async def soft_delete_connector(db: AsyncSession, connector_id: UUID) -> bool:
-    """Đánh dấu connector đã xoá mềm mà không physical-delete record."""
+    """Đánh dấu connector đã xoá mềm mà không physical-delete record.
+
+    Args:
+        db: Async session hiện tại.
+        connector_id: UUID connector cần xoá mềm.
+
+    Returns:
+        ``True`` nếu connector active tồn tại; ``False`` nếu không tìm thấy.
+
+    Side Effects:
+        Cập nhật ``deleted_at`` và ``updated_at`` rồi flush; không commit.
+    """
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:
         return False

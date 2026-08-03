@@ -24,7 +24,11 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Trả về thời điểm hiện tại với timezone UTC."""
+    """Lấy thời điểm UTC dùng cho default và soft-delete timestamp.
+
+    Returns:
+        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+    """
     return datetime.now(timezone.utc)
 
 
@@ -38,6 +42,10 @@ class ChargingStation(Base):
         created_at: Thời điểm tạo record.
         updated_at: Thời điểm cập nhật record.
         deleted_at: Thời điểm soft-delete, nullable.
+
+    Invariants:
+        ``ocpp_identity`` là business identity duy nhất và không được tái sử
+        dụng sau soft-delete.
     """
 
     __tablename__ = "charging_stations"
@@ -73,6 +81,9 @@ class ChargingEvse(Base):
         created_at: Thời điểm tạo record.
         updated_at: Thời điểm cập nhật record.
         deleted_at: Thời điểm soft-delete, nullable.
+
+    Invariants:
+        ``ocpp_evse_id`` chỉ duy nhất trong station parent và phải là số dương.
     """
 
     __tablename__ = "charging_evses"
@@ -115,6 +126,10 @@ class ChargingConnector(Base):
         created_at: Thời điểm tạo record.
         updated_at: Thời điểm cập nhật record.
         deleted_at: Thời điểm soft-delete, nullable.
+
+    Invariants:
+        ``ocpp_connector_id`` chỉ duy nhất trong EVSE parent và phải là số
+        dương.
     """
 
     __tablename__ = "charging_connectors"
