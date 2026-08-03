@@ -334,6 +334,22 @@ station/EVSE/connector từ OCPP message.
 - OCPP adapter không truyền ORM model, Pydantic schema hoặc object OCPP qua
   boundary domain.
 
+**Kết quả thực tế (triển khai ngày 2026-08-03):** Đã hoàn tất gateway OCPP
+2.0.1 tối thiểu cho active path.
+
+- Gateway bind `CHARGING_OCPP_HOST`/`CHARGING_OCPP_PORT`, chỉ accept path
+  `/ocpp/{ocpp_identity}` và subprotocol `ocpp2.0.1`; identity phải là station
+  active đã pre-provision.
+- Adapter resolve station/EVSE/connector OCPP thành UUID primitive, chuyển
+  `TransactionEvent` và từng energy sample `MeterValues` sang public service
+  `charging_sessions` trong transaction boundary của gateway.
+- Mapping transaction/session chỉ tồn tại trong từng WebSocket connection và
+  chỉ cập nhật sau khi transaction persistence thành công; không có
+  `ConnectionRegistry`, reconnect replacement, offline detector, timeout,
+  retry hoặc shutdown recovery production.
+- Smoke test với payload dataclass của `python-ocpp` đạt: Started, MeterValues,
+  Ended và kiểm tra boundary chỉ nhận primitive/standard-library values.
+
 ### Bước 5 — Viết simulator handshake và happy path
 
 **Prompt thực hiện:**

@@ -192,6 +192,57 @@ async def get_station(db: AsyncSession, station_id: UUID) -> StationResponse:
     return _station_response(station)
 
 
+async def resolve_ocpp_topology(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    ocpp_evse_id: int,
+    ocpp_connector_id: int,
+) -> tuple[UUID, UUID, UUID]:
+    """Resolve OCPP topology thành internal UUID primitive cho adapter.
+
+    Args:
+        db: Async session do OCPP entry boundary sở hữu.
+        ocpp_identity: Identity station từ WebSocket path.
+        ocpp_evse_id: EVSE ID trong OCPP message.
+        ocpp_connector_id: Connector ID trong OCPP message.
+
+    Returns:
+        Tuple ``(station_id, evse_id, connector_id)`` để truyền sang domain
+        ``charging_sessions`` mà không làm lộ ORM model.
+
+    Raises:
+        ChargingStationNotFoundError: Nếu station chưa pre-provision hoặc đã
+            soft-delete.
+        ChargingEvseNotFoundError: Nếu EVSE không thuộc station active.
+        ChargingConnectorNotFoundError: Nếu connector không thuộc EVSE active.
+    """
+    station = await repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(
+            f"Không tìm thấy station OCPP '{ocpp_identity}'"
+        )
+
+    evse = await repository.get_evse_by_identity(
+        db, station.station_id, ocpp_evse_id, include_deleted=False
+    )
+    if evse is None:
+        raise ChargingEvseNotFoundError(
+            f"Không tìm thấy EVSE OCPP '{ocpp_evse_id}' trong station"
+        )
+
+    connector = await repository.get_connector_by_identity(
+        db, evse.evse_id, ocpp_connector_id, include_deleted=False
+    )
+    if connector is None:
+        raise ChargingConnectorNotFoundError(
+            f"Không tìm thấy connector OCPP '{ocpp_connector_id}' trong EVSE"
+        )
+    return station.station_id, evse.evse_id, connector.connector_id
+
+
 async def update_station(
     db: AsyncSession, station_id: UUID, station_data: StationUpdate
 ) -> StationResponse:
