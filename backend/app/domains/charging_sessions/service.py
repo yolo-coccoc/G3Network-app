@@ -79,6 +79,8 @@ def _apply_meter_end(session: ChargingSession, meter_end_wh: Decimal | None) -> 
         return
     session.meter_end_wh = meter_end_wh
     if session.meter_start_wh is not None:
+        # MVP giả định register tăng đơn điệu; kiểm tra meter reset/decrease
+        # thuộc reliability path và không được tự mở trong service này.
         session.energy_delivered_wh = meter_end_wh - session.meter_start_wh
 
 
@@ -133,6 +135,8 @@ async def ingest_transaction_event(
 
     session: ChargingSession | None
     if event_type == SessionEventType.STARTED:
+        # Duplicate/idempotency và conflict được bảo vệ bởi unique constraint
+        # nhưng chưa có nhánh xử lý riêng trong happy path MVP.
         session = await repository.create_session(
             db,
             station_id=station_id,

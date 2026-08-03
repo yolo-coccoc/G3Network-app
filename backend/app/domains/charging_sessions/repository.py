@@ -43,6 +43,8 @@ async def get_session_by_transaction(
     Returns:
         Aggregate phù hợp hoặc ``None`` nếu chưa có.
     """
+    # Reconnect, unknown-transaction và duplicate resolution là contract
+    # production bị hoãn; repository chỉ cung cấp lookup nguyên thủy cho MVP.
     result = await db.execute(
         select(ChargingSession).where(
             ChargingSession.station_id == station_id,

@@ -285,6 +285,24 @@ interruption/reconciliation hoặc unknown-transaction branch vào active path.
 - Exception làm rollback operation ở entry boundary.
 - Không còn active branch cho retry, duplicate, ordering hoặc interruption.
 
+**Kết quả thực tế (triển khai ngày 2026-08-03):** Đã hoàn tất implementation
+happy path trong `charging_sessions`.
+
+- `ingest_transaction_event(...)` tạo aggregate `active` và event `Started`,
+  append `Updated`, hoặc cập nhật meter/thời gian, chuyển `completed` và
+  append `Ended`.
+- `ingest_meter_values(...)` nhận đúng một `MeterSampleInput` mỗi lần gọi,
+  append sample canonical Wh và cập nhật meter cuối/energy delivered.
+- Repository chỉ `flush()` trong transaction hiện tại; service và repository
+  không `commit()`/`rollback`, không import `charging_stations` và không truyền
+  ORM/Pydantic/OCPP object qua public boundary.
+- Retry, duplicate/idempotency, out-of-order, interruption, reconciliation và
+  unknown transaction không có active branch; lý do hoãn và contract khôi phục
+  được ghi trong `docs/01-requirements/future.md` mục 27–28.
+- Đã kiểm tra smoke bằng fake repository cho luồng
+  `Started → Updated/MeterValues → Ended`; kiểm tra database integration chưa
+  chạy trong bước này vì cần PostgreSQL/TimescaleDB đang hoạt động.
+
 ### Bước 4 — Rút gọn OCPP gateway
 
 **Prompt thực hiện:**
