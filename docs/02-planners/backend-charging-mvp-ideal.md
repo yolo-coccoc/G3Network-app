@@ -233,6 +233,22 @@ FK, check/unique constraint, index và thứ tự drop/create trước khi chạ
 - Catalog có đúng sáu bảng active và không có bảng status history.
 - Không sửa file migration cũ.
 
+**Kết quả thực tế (triển khai ngày 2026-08-03):** Đã hoàn tất migration
+`d8e5f9012345_rebuild_charging_mvp_schema.py` sau migration c7 hiện có.
+
+- Migration giữ nguyên các migration cũ và rebuild có chủ đích sáu bảng
+  charging; dữ liệu của các bảng này bị xóa theo phạm vi đã xác nhận cho local
+  MVP.
+- Schema active có đúng sáu bảng `charging_stations`, `charging_evses`,
+  `charging_connectors`, `charging_sessions`, `charging_session_events` và
+  `charging_session_meter_values`; status history không còn trong catalog.
+- `charging_session_events` và `charging_session_meter_values` được tạo lại
+  thành hypertable; `charging_sessions` vẫn là bảng aggregate quan hệ.
+- Downgrade phục hồi cấu trúc ngay sau c7 và không giả vờ khôi phục dữ liệu đã
+  bị xóa. Smoke test PostgreSQL 16 + TimescaleDB/PostGIS đạt:
+  `upgrade head → downgrade c7 → upgrade head`.
+- `alembic heads` chỉ còn `d8e5f9012345`; migration cũ không bị sửa.
+
 ### Bước 3 — Implement session happy path
 
 **Prompt thực hiện:**
