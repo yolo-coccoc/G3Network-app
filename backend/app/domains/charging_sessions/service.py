@@ -1,10 +1,9 @@
-"""Public service ingest TransactionEvent và MeterValues happy path.
+"""Public service ingest TransactionEvent và từng MeterValues message happy path.
 
 MVP lý tưởng cố định thứ tự message và loại bỏ reliability branching. Caller ở
 entry boundary vẫn sở hữu commit/rollback transaction.
 """
 
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -177,18 +176,19 @@ async def ingest_meter_values(
     db: AsyncSession,
     *,
     session_id: UUID,
-    samples: Sequence[MeterSampleInput],
+    sample: MeterSampleInput,
 ) -> MeterIngestResult:
-    """Lưu batch MeterValues theo thứ tự nhận được và cập nhật aggregate.
+    """Lưu một MeterValues message và cập nhật aggregate.
 
     Rule:
-        MVP giả định samples đến đúng thứ tự và không duplicate; mỗi sample
-        được lưu thành một record và trở thành meter cuối của aggregate.
+        Mỗi lần gọi xử lý đúng một sample. MVP giả định message đến đúng thứ
+        tự và không duplicate; sample hiện tại trở thành meter cuối của
+        aggregate.
 
     Args:
         db: Async session do entry boundary sở hữu.
         session_id: UUID aggregate cần cập nhật.
-        samples: Chuỗi sample đã canonical về Wh.
+        sample: Sample cần canonical về Wh và append vào history.
 
     Returns:
         Kết quả gồm session UUID, status và số sample đã nhận.
@@ -199,30 +199,27 @@ async def ingest_meter_values(
         ChargingSessionNotFoundError: Nếu aggregate không tồn tại.
 
     Side Effects:
-        Append các meter sample và cập nhật aggregate trong cùng transaction;
-        lỗi giữa batch được xử lý bởi entry boundary theo atomic transaction.
+        Append một meter sample và cập nhật aggregate trong cùng transaction;
+        caller phải commit hoặc rollback transaction ở entry boundary.
     """
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
         raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
-    accepted = 0
-    for sample in samples:
-        sampled_at = _utc(sample.sampled_at, "sampled_at")
-        value_wh = _energy(sample.value_wh, "value_wh")
-        if value_wh is None:
-            raise ChargingSessionInputError("value_wh là bắt buộc")
-        await repository.insert_meter_value(
-            db,
-            session_id=session.session_id,
-            sampled_at=sampled_at,
-            value_wh=value_wh,
-        )
-        _apply_meter_end(session, value_wh)
-        accepted += 1
+    sampled_at = _utc(sample.sampled_at, "sampled_at")
+    value_wh = _energy(sample.value_wh, "value_wh")
+    if value_wh is None:
+        raise ChargingSessionInputError("value_wh là bắt buộc")
+    await repository.insert_meter_value(
+        db,
+        session_id=session.session_id,
+        sampled_at=sampled_at,
+        value_wh=value_wh,
+    )
+    _apply_meter_end(session, value_wh)
 
     session.updated_at = repository.utc_now()
     return MeterIngestResult(
         session_id=session.session_id,
         status=session.status,
-        accepted_count=accepted,
+        accepted_count=1,
     )

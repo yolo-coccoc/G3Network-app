@@ -68,12 +68,12 @@ class TransactionIngestResult:
 
 @dataclass(frozen=True, slots=True)
 class MeterIngestResult:
-    """Kết quả xử lý batch MeterValues happy path.
+    """Kết quả xử lý một MeterValues message happy path.
 
     Attributes:
         session_id: UUID aggregate được cập nhật.
         status: Status của aggregate sau batch.
-        accepted_count: Số sample đã persist thành công trong lần gọi này.
+        accepted_count: Số sample đã persist; luôn là một khi gọi thành công.
     """
 
     session_id: UUID

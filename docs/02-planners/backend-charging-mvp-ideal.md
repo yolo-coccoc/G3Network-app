@@ -87,7 +87,8 @@ lý do hoãn phải ghi trong `docs/01-requirements/future.md`.
 3. Chuyển thẳng status sang `completed`.
 4. Append một event `Ended`.
 
-Mỗi TransactionEvent hoặc batch MeterValues chạy trong một transaction atomic.
+Mỗi TransactionEvent hoặc từng MeterValues message chạy trong một transaction
+atomic.
 `service.py` và `repository.py` không gọi `commit()`/`rollback()`; entry
 boundary sở hữu transaction. Không có nhánh retry, duplicate, idempotency,
 interruption hoặc unknown transaction trong active path.
@@ -244,9 +245,9 @@ Implement ingest_transaction_event(...) cho Started, Updated và Ended:
 - Updated append event Updated.
 - Ended cập nhật meter/thời gian, chuyển completed và append event Ended.
 
-Implement ingest_meter_values(...) để append sample Wh và cập nhật meter cuối
-theo thứ tự nhận được. Boundary chỉ nhận UUID, enum, datetime, Decimal và
-Sequence primitive values. Service/repository không commit/rollback và không
+Implement ingest_meter_values(...) để append một sample Wh cho mỗi lần gọi và
+cập nhật meter cuối. Boundary chỉ nhận UUID, enum, datetime, Decimal và một
+MeterSampleInput. Service/repository không commit/rollback và không
 import charging_stations.
 
 Giữ source reliability cũ dưới dạng comment, không đưa retry/idempotency,
@@ -309,7 +310,7 @@ Tạo simulator local cho một station đã pre-provision.
 Simulator phải:
 1. Kết nối WebSocket với subprotocol ocpp2.0.1.
 2. Gửi TransactionEvent Started cho EVSE/connector hợp lệ.
-3. Gửi một hoặc nhiều MeterValues có value Wh.
+3. Gửi từng MeterValues message có một sample value Wh.
 4. Gửi TransactionEvent Updated nếu flow cần event trung gian.
 5. Gửi TransactionEvent Ended.
 6. Đóng kết nối sau khi nhận phản hồi thành công.

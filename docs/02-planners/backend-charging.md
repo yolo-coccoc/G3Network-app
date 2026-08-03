@@ -371,7 +371,7 @@ ingest_meter_values(
     evse_id: UUID,
     connector_id: UUID,
     transaction_id: str,
-    samples: Sequence[MeterSampleInput],
+    sample: MeterSampleInput,
     received_at: datetime,
 ) -> MeterIngestResult
 
@@ -392,8 +392,8 @@ result chứa `accepted|duplicate|ignored_out_of_order|conflict|rejected`,
 `session_id`, status hiện tại và số sample/event đã insert; không trả model DB.
 
 Public service không `commit()`/`rollback()`. Caller ở entry boundary sở hữu
-`AsyncSession` và transaction; một lần gọi ingest event hoặc một batch
-`ingest_meter_values` là atomic. Repository được `flush()` để phát hiện FK/
+`AsyncSession` và transaction; một lần gọi ingest event hoặc một lần gọi
+`ingest_meter_values` cho một sample là atomic. Repository được `flush()` để phát hiện FK/
 unique conflict khi cần. DB timeout, serialization/deadlock hoặc lỗi bất ngờ
 phải rollback và propagate; không retry trong service và không ACK OCPP thành
 công trước khi transaction commit.
