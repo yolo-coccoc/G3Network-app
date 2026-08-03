@@ -553,6 +553,29 @@
   các planner về telemetry/vehicles/telematics.
 - **Ngày ghi nhận**: 2026-08-03
 
+### 30. Operational error handling và observability cho OCPP gateway
+
+- **Mô tả ngắn**: Bổ sung chính sách xử lý lỗi vận hành cho OCPP gateway ngoài
+  happy path, gồm mapping lỗi database khi handshake, response HTTP `503`, log
+  disconnect có close code và telemetry/metric cho lỗi theo station.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Phân biệt station chưa provision, database unavailable và handler failure.
+  - Cung cấp thông tin đủ để vận hành, cảnh báo và điều tra lỗi kết nối thật.
+  - Chuẩn hóa việc đóng hoặc giữ connection sau lỗi thay vì để framework xử lý
+    mặc định.
+- **Lý do hoãn lại**: OCPP MVP giả định station đã pre-provision, database
+  hoạt động, input hợp lệ và WebSocket ổn định. Active path hiện để lỗi
+  database handshake propagate ở process boundary, bỏ response `503` riêng,
+  dùng assertion cho invariant sau handshake và bỏ log chi tiết khi station
+  đóng kết nối bình thường để giữ gateway ngắn và tập trung vào luồng
+  `Started → Updated/MeterValues → Ended`.
+- **Liên quan đến planner/feature**:
+  `docs/02-planners/backend-charging-mvp-ideal.md` Bước 4, AD-03 và S-02.
+- **Ngày ghi nhận**: 2026-08-04
+- **Ghi chú thêm**: Khi triển khai production hoặc reliability path, phải chốt
+  error contract, health/readiness signal, close-code policy, structured
+  metrics/logging và test database outage trước khi bật từng nhánh riêng lẻ.
+
 ---
 
 ## Quy tắc cập nhật

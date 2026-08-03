@@ -27,7 +27,6 @@ from ocpp.v201.enums import (  # type: ignore[import-untyped]
     MeasurandEnumType,
     TransactionEventEnumType,
 )
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.datastructures import Headers
@@ -442,7 +441,7 @@ class OCPPServer:
 
         Side Effects:
             Mở một transaction read-only ngắn để resolve station identity và
-            ghi log khi validation/database thất bại.
+            reject identity chưa được pre-provision.
         """
         identity = parse_ocpp_identity(request.path)
         if identity is None:
@@ -453,18 +452,9 @@ class OCPPServer:
                 "Upgrade Required",
                 f"Required WebSocket subprotocol: {OCPP_SUBPROTOCOL}",
             )
-        try:
-            async with self.session_factory.begin() as db:
-                station = await repository.get_station_by_identity(
-                    db, identity, include_deleted=False
-                )
-        except SQLAlchemyError:
-            logger.exception(
-                "Unable to validate OCPP station identity",
-                extra={"ocpp_identity": identity},
-            )
-            return _http_rejection(
-                503, "Service Unavailable", "Station validation unavailable"
+        async with self.session_factory.begin() as db:
+            station = await repository.get_station_by_identity(
+                db, identity, include_deleted=False
             )
         if station is None:
             logger.warning(
@@ -505,13 +495,11 @@ class OCPPServer:
             được log; ``CancelledError`` được giữ nguyên để shutdown hoạt động.
         """
         request = connection.request
-        if request is None:
-            await connection.close(code=1008, reason="Missing OCPP request path")
-            return
+        # ``process_request`` đã kiểm tra request và path trước khi upgrade;
+        # assertions chỉ ghi lại invariant đó cho type checker ở happy path.
+        assert request is not None, "WebSocket request phải tồn tại sau handshake"
         identity = parse_ocpp_identity(request.path)
-        if identity is None:
-            await connection.close(code=1008, reason="Invalid OCPP station path")
-            return
+        assert identity is not None, "OCPP identity phải hợp lệ sau handshake"
         # ConnectionRegistry, reconnect replacement, offline detector, timeout
         # và retry recovery thuộc production path bị hoãn; MVP giữ state trong
         # đúng connection này và để process boundary sở hữu lifecycle socket.
@@ -522,14 +510,9 @@ class OCPPServer:
         )
         try:
             await charge_point.start()
-        except ConnectionClosed as error:
-            logger.info(
-                "OCPP station disconnected",
-                extra={
-                    "ocpp_identity": identity,
-                    "close_code": error.rcvd.code if error.rcvd else None,
-                },
-            )
+        except ConnectionClosed:
+            # Station đóng kết nối bình thường sau khi happy path nhận ACK.
+            pass
         except asyncio.CancelledError:
             raise
         except Exception:
