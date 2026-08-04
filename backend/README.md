@@ -19,6 +19,9 @@ uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
 # Run the OCPP session happy-path simulator from the repository root
 uv run python ../simulator/ocpp/charging_session_simulator.py
+
+# Provision station, EVSE and connector for the simulator
+uv run python ../simulator/seed_charging_topology.py
 ```
 
 The OCPP gateway listens on `CHARGING_OCPP_HOST` and

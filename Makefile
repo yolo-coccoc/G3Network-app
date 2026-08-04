@@ -1,7 +1,7 @@
 # G3Network - Makefile
 # Các lệnh thường dùng để phát triển
 
-.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-sim backend-test db-migrate db-reset
+.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim backend-test db-migrate db-reset
 
 # Mặc định hiển thị help
 help:
@@ -18,6 +18,7 @@ help:
 	@echo "  make backend-dev     - Chạy development server (port 8000)"
 	@echo "  make telemetry-dev   - Chạy telemetry ingestion"
 	@echo "  make charging-ocpp-dev - Chạy OCPP 2.0.1 gateway (port 9000)"
+	@echo "  make charging-ocpp-seed - Provision station/EVSE/connector simulator"
 	@echo "  make charging-ocpp-sim - Chạy simulator OCPP session happy path"
 	@echo "  make backend-test    - Chạy tests"
 	@echo ""
@@ -72,6 +73,10 @@ telemetry-dev:
 charging-ocpp-dev:
 	@echo "Khởi động OCPP 2.0.1 gateway..."
 	cd backend && uv run python -m app.domains.charging_stations.ocpp.entrypoint
+
+charging-ocpp-seed:
+	@echo "Provision station/EVSE/connector cho OCPP simulator..."
+	cd backend && uv run python ../simulator/seed_charging_topology.py
 
 charging-ocpp-sim:
 	@echo "Chạy simulator OCPP session happy path..."
