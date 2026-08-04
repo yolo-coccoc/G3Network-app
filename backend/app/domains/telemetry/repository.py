@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telemetry.models import VehicleTelemetry
+from app.domains.telemetry.models import VehicleTelemetryModel
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,8 @@ async def insert_telemetry(
         Ghi một row vào session hiện tại. Hàm không commit hoặc rollback.
     """
     result = cast(
-        CursorResult[Any], await db.execute(insert(VehicleTelemetry).values(message))
+        CursorResult[Any],
+        await db.execute(insert(VehicleTelemetryModel).values(message)),
     )
     logger.debug(
         "insert_telemetry",
@@ -51,7 +52,7 @@ async def insert_telemetry(
 
 async def get_latest_vehicle_telemetry(
     db: AsyncSession, vehicle_id: UUID
-) -> VehicleTelemetry | None:
+) -> VehicleTelemetryModel | None:
     """Lấy bản ghi telemetry mới nhất của một xe.
 
     Args:
@@ -62,9 +63,9 @@ async def get_latest_vehicle_telemetry(
         Bản ghi có `recorded_at` lớn nhất hoặc None nếu chưa có dữ liệu.
     """
     result = await db.execute(
-        select(VehicleTelemetry)
-        .where(VehicleTelemetry.vehicle_id == vehicle_id)
-        .order_by(VehicleTelemetry.recorded_at.desc())
+        select(VehicleTelemetryModel)
+        .where(VehicleTelemetryModel.vehicle_id == vehicle_id)
+        .order_by(VehicleTelemetryModel.recorded_at.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -82,7 +83,7 @@ async def bulk_insert_telemetry(
     Args:
         db: AsyncSession để thao tác database
         messages: Danh sách dict, mỗi dict là 1 row data
-                  (output từ TelemetryMessage.to_db_dict())
+                  (output từ TelemetryMessage.to_vehicle_telemetry_values())
 
     Returns:
         Số rows đã insert
@@ -96,7 +97,7 @@ async def bulk_insert_telemetry(
         return 0
 
     # Build insert statement
-    stmt = insert(VehicleTelemetry).values(messages)
+    stmt = insert(VehicleTelemetryModel).values(messages)
 
     # Execute
     result = cast(CursorResult[Any], await db.execute(stmt))

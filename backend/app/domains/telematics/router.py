@@ -11,10 +11,10 @@ from app.domains.telematics.exceptions import (
     TelematicNotFoundError,
 )
 from app.domains.telematics.schemas import (
-    TelematicCreate,
+    TelematicCreateRequest,
     TelematicListResponse,
     TelematicResponse,
-    TelematicUpdate,
+    TelematicUpdateRequest,
 )
 from app.domains.telematics.types import TelematicStatus
 from app.libs.common.config import settings
@@ -25,7 +25,7 @@ router = APIRouter(tags=["telematics"])
 
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
 async def create_telematic_endpoint(
-    telematic_create_request: TelematicCreate,
+    telematic_create_request: TelematicCreateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
     """Tạo thiết bị Telematic."""
@@ -71,7 +71,7 @@ async def get_telematic_endpoint(
 @router.patch("/{telematic_id}", response_model=TelematicResponse)
 async def update_telematic_endpoint(
     telematic_id: UUID,
-    telematic_update_request: TelematicUpdate,
+    telematic_update_request: TelematicUpdateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
     """Cập nhật từng phần thiết bị."""

@@ -19,8 +19,8 @@ import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.schemas import (
-    LatestVehicleTelemetryResponse,
     TelemetryEnvelope,
+    VehicleTelemetryLatestResponse,
 )
 from app.domains.vehicles import service as vehicle_service
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 async def get_latest_vehicle_telemetry_response(
     db: AsyncSession, vehicle_id: UUID
-) -> LatestVehicleTelemetryResponse:
+) -> VehicleTelemetryLatestResponse:
     """Lấy telemetry mới nhất sau khi xác nhận xe còn hoạt động.
 
     Args:
@@ -55,7 +55,7 @@ async def get_latest_vehicle_telemetry_response(
             f"No telemetry found for vehicle with id '{vehicle_id}'"
         )
 
-    return LatestVehicleTelemetryResponse.model_validate(telemetry)
+    return VehicleTelemetryLatestResponse.model_validate(telemetry)
 
 
 class BatchResult(TypedDict):
@@ -115,9 +115,10 @@ async def process_message(
         )
         return {"processed": 0, "skipped": 1, "errors": 0}
 
-    telematic_id, vehicle_id = mapping
+    telematic_id = mapping.telematic_id
+    vehicle_id = mapping.vehicle_id
     try:
-        db_dict = message.to_db_dict(
+        telemetry_values = message.to_vehicle_telemetry_values(
             telematic_id,
             vehicle_id,
             datetime.now(timezone.utc),
@@ -134,7 +135,10 @@ async def process_message(
         )
         return {"processed": 0, "skipped": 0, "errors": 1}
 
-    processed_count = await telemetry_repository.insert_telemetry(db, db_dict)
+    processed_count = await telemetry_repository.insert_telemetry(
+        db,
+        telemetry_values,
+    )
     logger.info(
         "telemetry message persisted",
         extra={
@@ -186,7 +190,7 @@ async def process_batch(
     )
 
     # Step 2: Batch lookup telematic mappings (1 query cho cả batch)
-    # Returns: {telematic_serial: (telematic_id, vehicle_id)}
+    # Mapping đã được chuẩn hóa thành DTO để tránh unpack tuple không rõ nghĩa.
     telematic_mappings = await telematics_service.resolve_mappings_by_serial(
         db, unique_serials
     )
@@ -215,7 +219,9 @@ async def process_batch(
             skipped_count += 1
             continue
 
-        telematic_id, vehicle_id = telematic_mappings[serial]
+        mapping = telematic_mappings[serial]
+        telematic_id = mapping.telematic_id
+        vehicle_id = mapping.vehicle_id
 
         # Kiểm tra vehicle_id có được gán không
         # (telematics.service.resolve_mappings_by_serial đã filter vehicle_id IS NOT NULL,
@@ -234,13 +240,13 @@ async def process_batch(
 
         # Convert message sang DB dict
         try:
-            db_dict = message.to_db_dict(
+            telemetry_values = message.to_vehicle_telemetry_values(
                 telematic_id,
                 vehicle_id,
                 received_at,
                 envelope.raw_payload,
             )
-            valid_messages.append(db_dict)
+            valid_messages.append(telemetry_values)
 
         except (TypeError, ValueError) as error:
             logger.exception(

@@ -17,14 +17,14 @@ from app.domains.telematics.exceptions import (
     TelematicConflictError,
     TelematicNotFoundError,
 )
-from app.domains.telematics.models import Telematic
+from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import (
-    TelematicCreate,
+    TelematicCreateRequest,
     TelematicListResponse,
     TelematicResponse,
-    TelematicUpdate,
+    TelematicUpdateRequest,
 )
-from app.domains.telematics.types import TelematicStatus
+from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 from app.domains.vehicles import service as vehicle_service
 from app.libs.common.config import settings
 
@@ -32,7 +32,7 @@ from app.libs.common.config import settings
 async def resolve_mapping_by_serial(
     db: AsyncSession,
     serial: str,
-) -> tuple[UUID, UUID] | None:
+) -> TelematicVehicleMapping | None:
     """Resolve một serial telematic thành ID thiết bị và ID xe.
 
     Args:
@@ -47,13 +47,13 @@ async def resolve_mapping_by_serial(
         Thực hiện truy vấn read-only trong phiên hiện tại; không commit hoặc
         rollback.
     """
-    return await repository.get_mapping(db, serial)
+    return await repository.find_mapping_by_serial(db, serial)
 
 
 async def resolve_mappings_by_serial(
     db: AsyncSession,
     serials: Sequence[str],
-) -> dict[str, tuple[UUID, UUID]]:
+) -> dict[str, TelematicVehicleMapping]:
     """Resolve batch serial telematic thành mapping thiết bị–xe.
 
     Args:
@@ -68,12 +68,12 @@ async def resolve_mappings_by_serial(
         Thực hiện một truy vấn read-only trong phiên hiện tại; không commit hoặc
         rollback.
     """
-    return await repository.get_mappings(db, serials)
+    return await repository.find_mappings_by_serial(db, serials)
 
 
 async def build_telematic_response(
     db_session: AsyncSession,
-    telematic_record: Telematic,
+    telematic_record: TelematicModel,
 ) -> TelematicResponse:
     """Dựng response telematic và bổ sung VIN hiện tại của xe.
 
@@ -93,7 +93,7 @@ async def build_telematic_response(
 
 
 async def create_telematic(
-    db_session: AsyncSession, telematic_create_request: TelematicCreate
+    db_session: AsyncSession, telematic_create_request: TelematicCreateRequest
 ) -> TelematicResponse:
     """Tạo thiết bị, resolve VIN nếu xe đang tồn tại."""
     if await repository.get_by_serial(
@@ -109,13 +109,14 @@ async def create_telematic(
         )
         vehicle_id = vehicle_reference.vehicle_id if vehicle_reference else None
         if vehicle_id and await db_session.scalar(
-            select(Telematic.telematic_id).where(
-                Telematic.vehicle_id == vehicle_id, Telematic.deleted_at.is_(None)
+            select(TelematicModel.telematic_id).where(
+                TelematicModel.vehicle_id == vehicle_id,
+                TelematicModel.deleted_at.is_(None),
             )
         ):
             raise TelematicConflictError("Xe đã được gán cho telematic khác")
     try:
-        telematic_record = await repository.create(
+        telematic_record = await repository.insert(
             db_session,
             {
                 "telematic_serial": telematic_create_request.telematic_serial,
@@ -149,7 +150,7 @@ async def list_telematics(
     """Lấy danh sách thiết bị có phân trang."""
     page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
     page = max(page, settings.API_DEFAULT_PAGE)
-    telematic_records = await repository.list_items(
+    telematic_records = await repository.list_all(
         db_session,
         (page - 1) * page_size,
         page_size,
@@ -160,7 +161,7 @@ async def list_telematics(
             await build_telematic_response(db_session, telematic_record)
             for telematic_record in telematic_records
         ],
-        total=await repository.count_items(db_session, status),
+        total=await repository.count(db_session, status),
         page=page,
         page_size=page_size,
     )
@@ -169,7 +170,7 @@ async def list_telematics(
 async def update_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
-    telematic_update_request: TelematicUpdate,
+    telematic_update_request: TelematicUpdateRequest,
 ) -> TelematicResponse:
     """Cập nhật thiết bị và resolve lại VIN khi field được gửi."""
     telematic_record = await repository.get_by_id(db_session, telematic_id)
@@ -198,7 +199,7 @@ async def update_telematic(
         if value is not None or key == "vehicle_id"
     }
     try:
-        telematic_record = await repository.update(
+        telematic_record = await repository.update_fields(
             db_session,
             telematic_record,
             values,

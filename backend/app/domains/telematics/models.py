@@ -18,7 +18,7 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Telematic(Base):
+class TelematicModel(Base):
     """Thiết bị Telematic vật lý được lắp trên xe.
 
     Attributes:

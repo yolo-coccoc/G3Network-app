@@ -12,32 +12,42 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telematics.models import Telematic
+from app.domains.telematics.models import TelematicModel
+from app.domains.telematics.types import TelematicVehicleMapping
 
 
-async def get_by_id(db: AsyncSession, telematic_id: UUID) -> Telematic | None:
+async def get_by_id(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+) -> TelematicModel | None:
     """Lấy thiết bị chưa bị soft delete theo ID."""
-    result = await db.execute(
-        select(Telematic).where(
-            Telematic.telematic_id == telematic_id, Telematic.deleted_at.is_(None)
+    query_result = await db_session.execute(
+        select(TelematicModel).where(
+            TelematicModel.telematic_id == telematic_id,
+            TelematicModel.deleted_at.is_(None),
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
 async def get_by_serial(
-    db: AsyncSession, serial: str, include_deleted: bool = False
-) -> Telematic | None:
+    db_session: AsyncSession,
+    serial: str,
+    include_deleted: bool = False,
+) -> TelematicModel | None:
     """Lấy thiết bị theo serial."""
-    stmt = select(Telematic).where(Telematic.telematic_serial == serial)
+    stmt = select(TelematicModel).where(TelematicModel.telematic_serial == serial)
     if not include_deleted:
-        stmt = stmt.where(Telematic.deleted_at.is_(None))
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+        stmt = stmt.where(TelematicModel.deleted_at.is_(None))
+    query_result = await db_session.execute(stmt)
+    return query_result.scalar_one_or_none()
 
 
-async def get_mapping(db: AsyncSession, serial: str) -> tuple[UUID, UUID] | None:
-    """Trả về ID thiết bị và xe cho ingestion.
+async def find_mapping_by_serial(
+    db_session: AsyncSession,
+    serial: str,
+) -> TelematicVehicleMapping | None:
+    """Tìm ánh xạ thiết bị–xe theo serial cho ingestion.
 
     Args:
         db: Phiên database do entry boundary sở hữu.
@@ -47,21 +57,28 @@ async def get_mapping(db: AsyncSession, serial: str) -> tuple[UUID, UUID] | None
         Tuple ``(telematic_id, vehicle_id)`` khi thiết bị còn hoạt động trong
         hệ thống và đã được gán xe; ``None`` nếu chưa có mapping hợp lệ.
     """
-    result = await db.execute(
-        select(Telematic.telematic_id, Telematic.vehicle_id).where(
-            Telematic.telematic_serial == serial,
-            Telematic.deleted_at.is_(None),
-            Telematic.vehicle_id.is_not(None),
+    query_result = await db_session.execute(
+        select(TelematicModel.telematic_id, TelematicModel.vehicle_id).where(
+            TelematicModel.telematic_serial == serial,
+            TelematicModel.deleted_at.is_(None),
+            TelematicModel.vehicle_id.is_not(None),
         )
     )
-    row = result.one_or_none()
-    return (row.telematic_id, row.vehicle_id) if row else None
+    mapping_row = query_result.one_or_none()
+    return (
+        TelematicVehicleMapping(
+            telematic_id=mapping_row.telematic_id,
+            vehicle_id=mapping_row.vehicle_id,
+        )
+        if mapping_row
+        else None
+    )
 
 
-async def get_mappings(
-    db: AsyncSession,
+async def find_mappings_by_serial(
+    db_session: AsyncSession,
     serials: Sequence[str],
-) -> dict[str, tuple[UUID, UUID]]:
+) -> dict[str, TelematicVehicleMapping]:
     """Trả về mapping thiết bị–xe cho nhiều serial trong một truy vấn.
 
     Args:
@@ -76,69 +93,84 @@ async def get_mappings(
     if not unique_serials:
         return {}
 
-    result = await db.execute(
+    query_result = await db_session.execute(
         select(
-            Telematic.telematic_id,
-            Telematic.vehicle_id,
-            Telematic.telematic_serial,
+            TelematicModel.telematic_id,
+            TelematicModel.vehicle_id,
+            TelematicModel.telematic_serial,
         )
-        .where(Telematic.telematic_serial.in_(unique_serials))
-        .where(Telematic.deleted_at.is_(None))
-        .where(Telematic.vehicle_id.is_not(None))
+        .where(TelematicModel.telematic_serial.in_(unique_serials))
+        .where(TelematicModel.deleted_at.is_(None))
+        .where(TelematicModel.vehicle_id.is_not(None))
     )
     return {
-        row.telematic_serial: (row.telematic_id, row.vehicle_id) for row in result.all()
+        row.telematic_serial: TelematicVehicleMapping(
+            telematic_id=row.telematic_id,
+            vehicle_id=row.vehicle_id,
+        )
+        for row in query_result.all()
     }
 
 
-async def list_items(
-    db: AsyncSession, skip: int, limit: int, status: object | None
-) -> list[Telematic]:
+async def list_all(
+    db_session: AsyncSession,
+    skip: int,
+    limit: int,
+    status: object | None,
+) -> list[TelematicModel]:
     """Lấy danh sách thiết bị chưa bị xoá."""
     stmt = (
-        select(Telematic)
-        .where(Telematic.deleted_at.is_(None))
-        .order_by(Telematic.created_at.desc())
+        select(TelematicModel)
+        .where(TelematicModel.deleted_at.is_(None))
+        .order_by(TelematicModel.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
     if status is not None:
-        stmt = stmt.where(Telematic.status == status)
-    return list((await db.execute(stmt)).scalars().all())
+        stmt = stmt.where(TelematicModel.status == status)
+    return list((await db_session.execute(stmt)).scalars().all())
 
 
-async def count_items(db: AsyncSession, status: object | None) -> int:
+async def count(db_session: AsyncSession, status: object | None) -> int:
     """Đếm thiết bị chưa bị xoá."""
     stmt = (
         select(func.count())
-        .select_from(Telematic)
-        .where(Telematic.deleted_at.is_(None))
+        .select_from(TelematicModel)
+        .where(TelematicModel.deleted_at.is_(None))
     )
     if status is not None:
-        stmt = stmt.where(Telematic.status == status)
-    return int((await db.execute(stmt)).scalar_one())
+        stmt = stmt.where(TelematicModel.status == status)
+    return int((await db_session.execute(stmt)).scalar_one())
 
 
-async def create(db: AsyncSession, values: dict[str, object]) -> Telematic:
+async def insert(
+    db_session: AsyncSession,
+    values: dict[str, object],
+) -> TelematicModel:
     """Tạo thiết bị và flush để lấy ID."""
-    item = Telematic(**values)
-    db.add(item)
-    await db.flush()
-    return item
+    telematic_record = TelematicModel(**values)
+    db_session.add(telematic_record)
+    await db_session.flush()
+    return telematic_record
 
 
-async def update(
-    db: AsyncSession, item: Telematic, values: dict[str, object]
-) -> Telematic:
+async def update_fields(
+    db_session: AsyncSession,
+    telematic_record: TelematicModel,
+    values: dict[str, object],
+) -> TelematicModel:
     """Cập nhật các trường đã được service cho phép."""
-    for key, value in values.items():
-        setattr(item, key, value)
-    await db.flush()
-    return item
+    for field_name, value in values.items():
+        setattr(telematic_record, field_name, value)
+    await db_session.flush()
+    return telematic_record
 
 
-async def soft_delete(db: AsyncSession, item: Telematic) -> None:
+async def soft_delete(
+    db_session: AsyncSession,
+    telematic_record: TelematicModel,
+) -> None:
     """Đánh dấu xoá mềm thiết bị."""
-    item.deleted_at = datetime.now(timezone.utc)
-    item.updated_at = item.deleted_at
-    await db.flush()
+    telematic_record.deleted_at = datetime.now(timezone.utc)
+    telematic_record.updated_at = telematic_record.deleted_at
+    await db_session.flush()

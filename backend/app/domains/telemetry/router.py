@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
-from app.domains.telemetry.schemas import LatestVehicleTelemetryResponse
+from app.domains.telemetry.schemas import VehicleTelemetryLatestResponse
 from app.domains.telemetry.service import get_latest_vehicle_telemetry_response
 from app.libs.db.session import get_db
 
@@ -19,12 +19,12 @@ router = APIRouter(tags=["telemetry"])
 
 @router.get(
     "/vehicles/{vehicle_id}/latest",
-    response_model=LatestVehicleTelemetryResponse,
+    response_model=VehicleTelemetryLatestResponse,
     summary="Lấy telemetry mới nhất của xe",
 )
 async def get_latest_vehicle_telemetry(
     vehicle_id: UUID, db: AsyncSession = Depends(get_db)
-) -> LatestVehicleTelemetryResponse:
+) -> VehicleTelemetryLatestResponse:
     """Trả về bản ghi telemetry mới nhất của một xe.
 
     Args:

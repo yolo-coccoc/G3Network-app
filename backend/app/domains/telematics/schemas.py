@@ -1,4 +1,4 @@
-"""Pydantic schemas cho CRUD thiết bị Telematic."""
+"""Pydantic schema cho HTTP API của domain telematics."""
 
 from datetime import datetime
 from uuid import UUID
@@ -9,8 +9,8 @@ from app.domains.telematics.types import TelematicStatus
 from app.libs.common.config import settings
 
 
-class TelematicCreate(BaseModel):
-    """Dữ liệu tạo thiết bị; VIN dùng để resolve vehicle_id."""
+class TelematicCreateRequest(BaseModel):
+    """Dữ liệu request tạo thiết bị; VIN dùng để resolve vehicle_id."""
 
     telematic_serial: str = Field(..., min_length=1, max_length=50)
     vehicle_vin: str | None = Field(None, min_length=17, max_length=17)
@@ -18,8 +18,8 @@ class TelematicCreate(BaseModel):
     firmware_version: str | None = Field(None, max_length=50)
 
 
-class TelematicUpdate(BaseModel):
-    """Dữ liệu cập nhật từng phần của thiết bị."""
+class TelematicUpdateRequest(BaseModel):
+    """Dữ liệu request cập nhật từng phần của thiết bị."""
 
     telematic_serial: str | None = Field(None, min_length=1, max_length=50)
     vehicle_vin: str | None = Field(None, min_length=17, max_length=17)

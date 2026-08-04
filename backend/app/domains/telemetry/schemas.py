@@ -15,7 +15,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
-class LatestVehicleTelemetryResponse(BaseModel):
+class VehicleTelemetryLatestResponse(BaseModel):
     """Dữ liệu telemetry mới nhất trả về cho một xe.
 
     Attributes:
@@ -55,7 +55,7 @@ class LatestVehicleTelemetryResponse(BaseModel):
     error_codes: dict[str, list[str]] | None
 
 
-class LocationData(BaseModel):
+class TelemetryLocationPayload(BaseModel):
     """
     Dữ liệu vị trí GPS từ telematic.
 
@@ -77,7 +77,7 @@ class LocationData(BaseModel):
     }
 
 
-class VehicleState(BaseModel):
+class TelemetryVehicleStatePayload(BaseModel):
     """
     Trạng thái xe từ telematic.
 
@@ -113,7 +113,7 @@ class VehicleState(BaseModel):
     }
 
 
-class BatteryData(BaseModel):
+class TelemetryBatteryPayload(BaseModel):
     """
     Dữ liệu pin từ telematic.
 
@@ -148,7 +148,7 @@ class BatteryData(BaseModel):
     }
 
 
-class MotorData(BaseModel):
+class TelemetryMotorPayload(BaseModel):
     """
     Dữ liệu động cơ từ telematic.
 
@@ -170,7 +170,7 @@ class MotorData(BaseModel):
     }
 
 
-class SignalData(BaseModel):
+class TelemetrySignalPayload(BaseModel):
     """
     Dữ liệu tín hiệu mạng từ telematic.
 
@@ -225,16 +225,25 @@ class TelemetryMessage(BaseModel):
     recorded_at: Annotated[
         datetime, Field(description="Thời điểm telematic ghi nhận dữ liệu (UTC)")
     ]
-    location: Annotated[LocationData, Field(description="Dữ liệu vị trí GPS")]
-    vehicle_state: Annotated[
-        VehicleState | None, Field(default=None, description="Trạng thái xe")
+    location: Annotated[
+        TelemetryLocationPayload,
+        Field(description="Dữ liệu vị trí GPS"),
     ]
-    battery: Annotated[BatteryData, Field(description="Dữ liệu pin")]
+    vehicle_state: Annotated[
+        TelemetryVehicleStatePayload | None,
+        Field(default=None, description="Trạng thái xe"),
+    ]
+    battery: Annotated[
+        TelemetryBatteryPayload,
+        Field(description="Dữ liệu pin"),
+    ]
     motor: Annotated[
-        MotorData | None, Field(default=None, description="Dữ liệu động cơ")
+        TelemetryMotorPayload | None,
+        Field(default=None, description="Dữ liệu động cơ"),
     ]
     signal: Annotated[
-        SignalData | None, Field(default=None, description="Dữ liệu tín hiệu mạng")
+        TelemetrySignalPayload | None,
+        Field(default=None, description="Dữ liệu tín hiệu mạng"),
     ]
     errors: Annotated[
         list[str] | None,
@@ -258,7 +267,7 @@ class TelemetryMessage(BaseModel):
             raise ValueError("recorded_at phải có timezone")
         return value.astimezone(timezone.utc)
 
-    def to_db_dict(
+    def to_vehicle_telemetry_values(
         self,
         telematic_id: UUID,
         vehicle_id: UUID,
@@ -266,7 +275,7 @@ class TelemetryMessage(BaseModel):
         raw_payload: dict[str, object],
     ) -> dict[str, object]:
         """
-        Convert message thành dict phù hợp với VehicleTelemetry model.
+        Chuyển message thành dict phù hợp với VehicleTelemetryModel.
 
         Args:
             telematic_id: UUID của telematic (lookup từ telematic_serial)

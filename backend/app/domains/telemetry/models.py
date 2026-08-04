@@ -25,7 +25,7 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class VehicleTelemetry(Base):
+class VehicleTelemetryModel(Base):
     """Vehicle telemetry data model for time-series storage.
 
     Stores real-time telemetry data from telematic devices installed on vehicles.
@@ -160,4 +160,4 @@ class VehicleTelemetry(Base):
 
     def __repr__(self) -> str:
         """Return a concise debug representation of the telemetry record."""
-        return f"<VehicleTelemetry {self.telematic_serial} @ {self.recorded_at}>"
+        return f"<VehicleTelemetryModel {self.telematic_serial} @ {self.recorded_at}>"
