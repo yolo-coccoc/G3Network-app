@@ -14,6 +14,7 @@ import app.domains.charging_sessions.service as charging_session_service
 from app.domains.charging_sessions.exceptions import ChargingSessionNotFoundError
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
+    ChargingSessionListResponse,
     ChargingSessionMeterValueListResponse,
     ChargingSessionResponse,
 )
@@ -21,6 +22,38 @@ from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-sessions"])
+
+
+@router.get(
+    "/charging-sessions",
+    response_model=ChargingSessionListResponse,
+    summary="Liệt kê charging session",
+)
+async def list_sessions(
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> ChargingSessionListResponse:
+    """Liệt kê session mới nhất trước để lấy session ID monitoring.
+
+    Args:
+        page: Trang bắt đầu từ một.
+        page_size: Số session tối đa trong trang.
+        db: Async session do dependency ``get_db`` sở hữu transaction.
+
+    Returns:
+        Danh sách session phân trang, không chứa raw payload hoặc field ngoài
+        MVP.
+    """
+    return await charging_session_service.list_sessions(
+        db,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get(

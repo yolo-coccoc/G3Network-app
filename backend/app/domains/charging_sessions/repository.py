@@ -72,6 +72,48 @@ async def get_session_by_id(
     return result.scalar_one_or_none()
 
 
+async def list_sessions(
+    db: AsyncSession,
+    *,
+    offset: int,
+    limit: int,
+) -> list[ChargingSession]:
+    """Lấy danh sách aggregate session mới nhất trước.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        offset: Số session bỏ qua.
+        limit: Số session tối đa trả về.
+
+    Returns:
+        Các session được sắp xếp ổn định theo thời điểm tạo giảm dần và UUID
+        giảm dần để dễ tìm session vừa chạy simulator.
+    """
+    result = await db.execute(
+        select(ChargingSession)
+        .order_by(
+            ChargingSession.created_at.desc(),
+            ChargingSession.session_id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_sessions(db: AsyncSession) -> int:
+    """Đếm tổng số aggregate session.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+
+    Returns:
+        Tổng số session trong database.
+    """
+    result = await db.execute(select(func.count(ChargingSession.session_id)))
+    return int(result.scalar() or 0)
+
+
 async def list_session_events(
     db: AsyncSession,
     session_id: UUID,

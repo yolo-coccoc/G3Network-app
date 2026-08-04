@@ -23,6 +23,7 @@ from app.domains.charging_sessions.models import (
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
     ChargingSessionEventResponse,
+    ChargingSessionListResponse,
     ChargingSessionMeterValueListResponse,
     ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
@@ -137,6 +138,41 @@ async def get_session(db: AsyncSession, session_id: UUID) -> ChargingSessionResp
     if session is None:
         raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
     return ChargingSessionResponse.model_validate(session)
+
+
+async def list_sessions(
+    db: AsyncSession,
+    *,
+    page: int,
+    page_size: int,
+) -> ChargingSessionListResponse:
+    """Lấy danh sách session mới nhất cho endpoint monitoring.
+
+    Args:
+        db: Async session do HTTP boundary sở hữu.
+        page: Trang bắt đầu từ một.
+        page_size: Kích thước trang.
+
+    Returns:
+        Danh sách session và metadata phân trang.
+
+    Side Effects:
+        Thực hiện một truy vấn items và một truy vấn count; không load quan hệ
+        ORM nên endpoint không tạo N+1 query và không commit/rollback.
+    """
+    normalized_page, normalized_page_size, offset = _paging(page, page_size)
+    sessions = await repository.list_sessions(
+        db,
+        offset=offset,
+        limit=normalized_page_size,
+    )
+    total = await repository.count_sessions(db)
+    return ChargingSessionListResponse(
+        items=[ChargingSessionResponse.model_validate(session) for session in sessions],
+        total=total,
+        page=normalized_page,
+        page_size=normalized_page_size,
+    )
 
 
 async def list_session_events(

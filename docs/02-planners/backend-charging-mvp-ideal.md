@@ -422,9 +422,11 @@ payment, authorization, debt hoặc raw payload. Chạy smoke test từ simulato
 integration smoke cho happy path.
 
 - Thêm các endpoint read-only:
-  `GET /api/v1/charging-sessions/{session_id}`, `/events` và
-  `/meter-values`; response chỉ chứa aggregate session, lifecycle event và
-  meter canonical Wh, không có raw OCPP/policy/payment field.
+  `GET /api/v1/charging-sessions`,
+  `/api/v1/charging-sessions/{session_id}`, `/events` và `/meter-values`;
+  endpoint list trả session mới nhất trước để lấy `session_id`, response chỉ
+  chứa aggregate session, lifecycle event và meter canonical Wh, không có raw
+  OCPP/policy/payment field.
 - Thêm phân trang ổn định theo timestamp + internal UUID. Event/meter history
   dùng query items/count riêng, không eager-load quan hệ nên không tạo N+1.
 - Khởi động PostgreSQL/TimescaleDB, API và OCPP gateway local; pre-provision

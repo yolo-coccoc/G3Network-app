@@ -50,6 +50,22 @@ class ChargingSessionResponse(BaseModel):
     updated_at: datetime
 
 
+class ChargingSessionListResponse(BaseModel):
+    """Danh sách aggregate session phân trang cho monitoring.
+
+    Attributes:
+        items: Các session mới nhất trong trang hiện tại.
+        total: Tổng số session.
+        page: Trang hiện tại, bắt đầu từ một.
+        page_size: Số item tối đa trong trang.
+    """
+
+    items: list[ChargingSessionResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
 class ChargingSessionEventResponse(BaseModel):
     """Một lifecycle event của session.
 
