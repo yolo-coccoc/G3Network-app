@@ -186,6 +186,12 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 ## 5. Coding Convention
 
 ### 5.1 Backend — Python / FastAPI
+- Quy chuẩn chi tiết về tên class/function/biến, DTO nội bộ, chuyển đổi object,
+  layer boundary và checklist backend xem tại
+  [`docs/03-guides/backend-coding-conventions.md`](./docs/03-guides/backend-coding-conventions.md).
+  Tài liệu này chỉ áp dụng cho `backend/`; các quy tắc backend bên dưới vẫn là
+  nguồn ràng buộc chính cho transaction, database, logging, migration và
+  kiểm tra trước khi hoàn thành task.
 - Quản lý môi trường/dependency bằng **`uv`** (`pyproject.toml` + `uv.lock` là nguồn chân lý duy nhất; không dùng pip/poetry thuần song song).
 - Format: **Black** (line length 88) + **isort**. Không để formatter sửa migration đã merge; khi format toàn repo phải exclude `app/libs/db/migrations/versions/`, còn migration mới phải được format trước khi merge.
 - Lint: **Ruff** (`uv run ruff check`).
