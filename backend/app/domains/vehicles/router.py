@@ -1,4 +1,4 @@
-"""Router layer for Vehicle domain - defines API endpoints."""
+"""FastAPI router cho các endpoint HTTP của domain vehicles."""
 
 from uuid import UUID
 
@@ -11,10 +11,10 @@ from app.domains.vehicles.exceptions import (
     VehicleNotFoundError,
 )
 from app.domains.vehicles.schemas import (
-    VehicleCreate,
+    VehicleCreateRequest,
     VehicleListResponse,
     VehicleResponse,
-    VehicleUpdate,
+    VehicleUpdateRequest,
 )
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
@@ -30,20 +30,24 @@ router = APIRouter(tags=["vehicles"])
     summary="Tạo xe mới",
     description="Tạo một xe mới trong hệ thống. License plate và VIN phải là duy nhất.",
 )
-async def create_vehicle(
-    vehicle_data: VehicleCreate, db: AsyncSession = Depends(get_db)
+async def create_vehicle_endpoint(
+    vehicle_create_request: VehicleCreateRequest,
+    db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Create a new vehicle.
+    """Tạo một xe mới.
 
     Args:
-        vehicle_data: Vehicle creation data
-        db: Database session
+        vehicle_create_request: Dữ liệu request tạo xe.
+        db_session: Phiên database do HTTP boundary sở hữu.
 
     Returns:
         Created vehicle
     """
     try:
-        return await vehicle_service.create_vehicle(db, vehicle_data)
+        return await vehicle_service.create_vehicle(
+            db_session,
+            vehicle_create_request,
+        )
     except VehicleConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
@@ -56,7 +60,7 @@ async def create_vehicle(
     summary="Lấy danh sách xe",
     description="Lấy danh sách xe với phân trang và lọc theo trạng thái.",
 )
-async def list_vehicles(
+async def list_vehicles_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Số trang"),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -67,20 +71,25 @@ async def list_vehicles(
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Lọc theo trạng thái"
     ),
-    db: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db),
 ) -> VehicleListResponse:
-    """List vehicles with pagination.
+    """Lấy danh sách xe có phân trang.
 
     Args:
-        page: Page number
-        page_size: Items per page
-        status_filter: Optional status filter
-        db: Database session
+        page: Số trang.
+        page_size: Số bản ghi mỗi trang.
+        status_filter: Bộ lọc trạng thái nếu có.
+        db_session: Phiên database do HTTP boundary sở hữu.
 
     Returns:
         Paginated list of vehicles
     """
-    return await vehicle_service.list_vehicles(db, page, page_size, status_filter)
+    return await vehicle_service.list_vehicles(
+        db_session,
+        page,
+        page_size,
+        status_filter,
+    )
 
 
 @router.get(
@@ -89,20 +98,22 @@ async def list_vehicles(
     summary="Lấy chi tiết xe",
     description="Lấy thông tin chi tiết của một xe theo ID.",
 )
-async def get_vehicle(
-    vehicle_id: UUID, db: AsyncSession = Depends(get_db)
+async def get_vehicle_endpoint(
+    vehicle_id: UUID,
+    db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Get a vehicle by ID.
+    """Lấy chi tiết một xe theo ID.
 
     Args:
-        vehicle_id: Vehicle ID (UUID)
+        vehicle_id: ID nội bộ của xe.
+        db_session: Phiên database do HTTP boundary sở hữu.
         db: Database session
 
     Returns:
         Vehicle details
     """
     try:
-        return await vehicle_service.get_vehicle(db, vehicle_id)
+        return await vehicle_service.get_vehicle(db_session, vehicle_id)
     except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -115,21 +126,27 @@ async def get_vehicle(
     summary="Cập nhật xe",
     description="Cập nhật thông tin xe. Chỉ cập nhật các trường được cung cấp.",
 )
-async def update_vehicle(
-    vehicle_id: UUID, update_data: VehicleUpdate, db: AsyncSession = Depends(get_db)
+async def update_vehicle_endpoint(
+    vehicle_id: UUID,
+    vehicle_update_request: VehicleUpdateRequest,
+    db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Update a vehicle.
+    """Cập nhật từng phần một xe.
 
     Args:
-        vehicle_id: Vehicle ID (UUID)
-        update_data: Update data
-        db: Database session
+        vehicle_id: ID nội bộ của xe.
+        vehicle_update_request: Dữ liệu request cập nhật xe.
+        db_session: Phiên database do HTTP boundary sở hữu.
 
     Returns:
         Updated vehicle
     """
     try:
-        return await vehicle_service.update_vehicle(db, vehicle_id, update_data)
+        return await vehicle_service.update_vehicle(
+            db_session,
+            vehicle_id,
+            vehicle_update_request,
+        )
     except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -146,20 +163,22 @@ async def update_vehicle(
     summary="Xoá xe",
     description="Soft delete xe. Xe vẫn còn trong database nhưng không hiển thị trong danh sách.",
 )
-async def delete_vehicle(
-    vehicle_id: UUID, db: AsyncSession = Depends(get_db)
+async def soft_delete_vehicle_endpoint(
+    vehicle_id: UUID,
+    db_session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Delete a vehicle (soft delete).
+    """Soft delete một xe.
 
     Args:
-        vehicle_id: Vehicle ID (UUID)
+        vehicle_id: ID nội bộ của xe.
+        db_session: Phiên database do HTTP boundary sở hữu.
         db: Database session
 
     Returns:
         Success message
     """
     try:
-        return await vehicle_service.delete_vehicle(db, vehicle_id)
+        return await vehicle_service.soft_delete_vehicle(db_session, vehicle_id)
     except VehicleNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)

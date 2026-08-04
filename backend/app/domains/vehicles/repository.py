@@ -1,4 +1,4 @@
-"""Repository layer for Vehicle domain - handles database queries."""
+"""Repository truy vấn bảng vehicles, không chứa business rule."""
 
 from datetime import datetime, timezone
 from typing import Any
@@ -8,178 +8,190 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domains.vehicles.models import Vehicle
+from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 
 
-async def create_vehicle(db: AsyncSession, vehicle_data: dict[str, Any]) -> Vehicle:
-    """Create a new vehicle in database.
+async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleModel:
+    """Thêm một bản ghi xe vào database.
 
     Args:
-        db: Async database session
-        vehicle_data: Dictionary containing vehicle fields
+        db_session: Phiên database do entry boundary sở hữu.
+        values: Các field dùng để khởi tạo bản ghi ORM.
 
     Returns:
-        Created Vehicle instance
+        Bản ghi xe vừa được tạo.
     """
-    vehicle = Vehicle(**vehicle_data)
-    db.add(vehicle)
-    await db.flush()
-    await db.refresh(vehicle)
-    return vehicle
+    vehicle_record = VehicleModel(**values)
+    db_session.add(vehicle_record)
+    await db_session.flush()
+    await db_session.refresh(vehicle_record)
+    return vehicle_record
 
 
-async def get_vehicle_by_id(db: AsyncSession, vehicle_id: UUID) -> Vehicle | None:
-    """Get vehicle by ID (excluding soft-deleted).
+async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel | None:
+    """Tìm xe theo ID, loại trừ bản ghi đã soft delete.
 
     Args:
-        db: Async database session
-        vehicle_id: Vehicle internal ID (UUID)
+        db_session: Phiên database hiện tại.
+        vehicle_id: ID nội bộ của xe.
 
     Returns:
-        Vehicle instance or None if not found
+        Bản ghi xe hoặc None nếu không tìm thấy.
     """
-    result = await db.execute(
-        select(Vehicle).where(
-            and_(Vehicle.vehicle_id == vehicle_id, Vehicle.deleted_at.is_(None))
+    query_result = await db_session.execute(
+        select(VehicleModel).where(
+            and_(
+                VehicleModel.vehicle_id == vehicle_id,
+                VehicleModel.deleted_at.is_(None),
+            )
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def get_vehicle_by_plate(db: AsyncSession, license_plate: str) -> Vehicle | None:
-    """Get vehicle by license plate (excluding soft-deleted).
+async def find_by_license_plate(
+    db_session: AsyncSession, license_plate: str
+) -> VehicleModel | None:
+    """Tìm xe theo biển số, loại trừ bản ghi đã soft delete.
 
     Args:
-        db: Async database session
-        license_plate: Vehicle license plate
+        db_session: Phiên database hiện tại.
+        license_plate: Biển số xe.
 
     Returns:
-        Vehicle instance or None if not found
+        Bản ghi xe hoặc None nếu không tìm thấy.
     """
-    result = await db.execute(
-        select(Vehicle).where(
-            and_(Vehicle.license_plate == license_plate, Vehicle.deleted_at.is_(None))
+    query_result = await db_session.execute(
+        select(VehicleModel).where(
+            and_(
+                VehicleModel.license_plate == license_plate,
+                VehicleModel.deleted_at.is_(None),
+            )
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def get_vehicle_by_vin(db: AsyncSession, vin: str) -> Vehicle | None:
-    """Get vehicle by VIN (excluding soft-deleted).
+async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None:
+    """Tìm xe theo VIN, loại trừ bản ghi đã soft delete.
 
     Args:
-        db: Async database session
-        vin: Vehicle Identification Number
+        db_session: Phiên database hiện tại.
+        vin: Số khung của xe.
 
     Returns:
-        Vehicle instance or None if not found
+        Bản ghi xe hoặc None nếu không tìm thấy.
     """
-    result = await db.execute(
-        select(Vehicle).where(and_(Vehicle.vin == vin, Vehicle.deleted_at.is_(None)))
+    query_result = await db_session.execute(
+        select(VehicleModel).where(
+            and_(VehicleModel.vin == vin, VehicleModel.deleted_at.is_(None))
+        )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def get_vehicles(
-    db: AsyncSession,
+async def list_all(
+    db_session: AsyncSession,
     skip: int = 0,
     limit: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
-) -> list[Vehicle]:
-    """Get list of vehicles with pagination (excluding soft-deleted).
+) -> list[VehicleModel]:
+    """Lấy danh sách xe có phân trang, loại trừ bản ghi đã soft delete.
 
     Args:
-        db: Async database session
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        status_filter: Optional status filter
+        db_session: Phiên database hiện tại.
+        skip: Số bản ghi bỏ qua.
+        limit: Số bản ghi tối đa trả về.
+        status_filter: Bộ lọc trạng thái nếu có.
 
     Returns:
-        List of Vehicle instances
+        Danh sách bản ghi xe.
     """
-    conditions: list[ColumnElement[bool]] = [Vehicle.deleted_at.is_(None)]
+    conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
 
     if status_filter:
-        conditions.append(Vehicle.status == status_filter)
+        conditions.append(VehicleModel.status == status_filter)
 
-    result = await db.execute(
-        select(Vehicle)
+    query_result = await db_session.execute(
+        select(VehicleModel)
         .where(and_(*conditions))
-        .order_by(Vehicle.created_at.desc())
+        .order_by(VehicleModel.created_at.desc())
         .offset(skip)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
-async def count_vehicles(
-    db: AsyncSession, status_filter: VehicleStatus | None = None
+async def count(
+    db_session: AsyncSession, status_filter: VehicleStatus | None = None
 ) -> int:
-    """Count total vehicles (excluding soft-deleted).
+    """Đếm tổng số xe, loại trừ bản ghi đã soft delete.
 
     Args:
-        db: Async database session
-        status_filter: Optional status filter
+        db_session: Phiên database hiện tại.
+        status_filter: Bộ lọc trạng thái nếu có.
 
     Returns:
-        Total count of vehicles
+        Tổng số xe.
     """
-    conditions: list[ColumnElement[bool]] = [Vehicle.deleted_at.is_(None)]
+    conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
 
     if status_filter:
-        conditions.append(Vehicle.status == status_filter)
+        conditions.append(VehicleModel.status == status_filter)
 
-    result = await db.execute(
-        select(func.count(Vehicle.vehicle_id)).where(and_(*conditions))
+    query_result = await db_session.execute(
+        select(func.count(VehicleModel.vehicle_id)).where(and_(*conditions))
     )
-    return result.scalar() or 0
+    return query_result.scalar() or 0
 
 
-async def update_vehicle(
-    db: AsyncSession, vehicle_id: UUID, update_data: dict[str, Any]
-) -> Vehicle | None:
-    """Update vehicle fields.
-
-    Args:
-        db: Async database session
-        vehicle_id: Vehicle internal ID (UUID)
-        update_data: Dictionary of fields to update
-
-    Returns:
-        Updated Vehicle instance or None if not found
-    """
-    vehicle = await get_vehicle_by_id(db, vehicle_id)
-    if not vehicle:
-        return None
-
-    for key, value in update_data.items():
-        if hasattr(vehicle, key):
-            setattr(vehicle, key, value)
-
-    vehicle.updated_at = datetime.now(timezone.utc)
-    await db.flush()
-    await db.refresh(vehicle)
-    return vehicle
-
-
-async def soft_delete_vehicle(db: AsyncSession, vehicle_id: UUID) -> Vehicle | None:
-    """Soft delete vehicle by setting deleted_at timestamp.
+async def update_fields(
+    db_session: AsyncSession, vehicle_id: UUID, values: dict[str, Any]
+) -> VehicleModel | None:
+    """Cập nhật các field được chỉ định của xe.
 
     Args:
-        db: Async database session
-        vehicle_id: Vehicle ID (UUID)
+        db_session: Phiên database hiện tại.
+        vehicle_id: ID nội bộ của xe.
+        values: Các field cần cập nhật.
 
     Returns:
-        Soft-deleted Vehicle instance or None if not found
+        Bản ghi xe sau cập nhật hoặc None nếu không tìm thấy.
     """
-    vehicle = await get_vehicle_by_id(db, vehicle_id)
-    if not vehicle:
+    vehicle_record = await get_by_id(db_session, vehicle_id)
+    if not vehicle_record:
         return None
 
-    vehicle.deleted_at = datetime.now(timezone.utc)
-    vehicle.status = VehicleStatus.DECOMMISSIONED
-    await db.flush()
-    await db.refresh(vehicle)
-    return vehicle
+    for field_name, value in values.items():
+        if hasattr(vehicle_record, field_name):
+            setattr(vehicle_record, field_name, value)
+
+    vehicle_record.updated_at = datetime.now(timezone.utc)
+    await db_session.flush()
+    await db_session.refresh(vehicle_record)
+    return vehicle_record
+
+
+async def soft_delete(
+    db_session: AsyncSession, vehicle_id: UUID
+) -> VehicleModel | None:
+    """Soft delete xe bằng cách cập nhật deleted_at và status.
+
+    Args:
+        db_session: Phiên database hiện tại.
+        vehicle_id: ID nội bộ của xe.
+
+    Returns:
+        Bản ghi xe sau khi soft delete hoặc None nếu không tìm thấy.
+    """
+    vehicle_record = await get_by_id(db_session, vehicle_id)
+    if not vehicle_record:
+        return None
+
+    vehicle_record.deleted_at = datetime.now(timezone.utc)
+    vehicle_record.status = VehicleStatus.DECOMMISSIONED
+    await db_session.flush()
+    await db_session.refresh(vehicle_record)
+    return vehicle_record

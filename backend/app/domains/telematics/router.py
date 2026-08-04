@@ -24,47 +24,63 @@ router = APIRouter(tags=["telematics"])
 
 
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
-async def create(
-    data: TelematicCreate, db: AsyncSession = Depends(get_db)
+async def create_telematic_endpoint(
+    telematic_create_request: TelematicCreate,
+    db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
     """Tạo thiết bị Telematic."""
     try:
-        return await service.create_telematic(db, data)
+        return await service.create_telematic(
+            db_session,
+            telematic_create_request,
+        )
     except TelematicConflictError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/", response_model=TelematicListResponse)
-async def list_items(
+async def list_telematics_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
     status_filter: TelematicStatus | None = Query(None, alias="status"),
-    db: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db),
 ) -> TelematicListResponse:
     """Liệt kê thiết bị chưa bị xoá."""
-    return await service.list_telematics(db, page, page_size, status_filter)
+    return await service.list_telematics(
+        db_session,
+        page,
+        page_size,
+        status_filter,
+    )
 
 
 @router.get("/{telematic_id}", response_model=TelematicResponse)
-async def get(
-    telematic_id: UUID, db: AsyncSession = Depends(get_db)
+async def get_telematic_endpoint(
+    telematic_id: UUID,
+    db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
     """Lấy chi tiết thiết bị."""
     try:
-        return await service.get_telematic(db, telematic_id)
+        return await service.get_telematic(db_session, telematic_id)
     except TelematicNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.patch("/{telematic_id}", response_model=TelematicResponse)
-async def update(
-    telematic_id: UUID, data: TelematicUpdate, db: AsyncSession = Depends(get_db)
+async def update_telematic_endpoint(
+    telematic_id: UUID,
+    telematic_update_request: TelematicUpdate,
+    db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
     """Cập nhật từng phần thiết bị."""
     try:
-        return await service.update_telematic(db, telematic_id, data)
+        return await service.update_telematic(
+            db_session,
+            telematic_id,
+            telematic_update_request,
+        )
     except TelematicNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except TelematicConflictError as error:
@@ -72,9 +88,12 @@ async def update(
 
 
 @router.delete("/{telematic_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete(telematic_id: UUID, db: AsyncSession = Depends(get_db)) -> None:
+async def soft_delete_telematic_endpoint(
+    telematic_id: UUID,
+    db_session: AsyncSession = Depends(get_db),
+) -> None:
     """Soft delete thiết bị."""
     try:
-        await service.delete_telematic(db, telematic_id)
+        await service.soft_delete_telematic(db_session, telematic_id)
     except TelematicNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

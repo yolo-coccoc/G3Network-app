@@ -42,8 +42,11 @@ async def get_latest_vehicle_telemetry_response(
     Raises:
         TelemetryNotFoundError: Khi xe không tồn tại hoặc chưa có telemetry.
     """
-    vehicle = await vehicle_service.find_active_vehicle_by_id(db, vehicle_id)
-    if vehicle is None:
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db,
+        vehicle_id,
+    )
+    if vehicle_reference is None:
         raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
     telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)

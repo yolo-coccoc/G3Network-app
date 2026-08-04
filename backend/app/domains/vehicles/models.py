@@ -1,4 +1,4 @@
-"""SQLAlchemy model for Vehicle domain."""
+"""SQLAlchemy ORM model cho hồ sơ xe trong domain vehicles."""
 
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -14,12 +14,12 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Return the current timezone-aware UTC datetime."""
+    """Trả về thời điểm UTC có timezone."""
     return datetime.now(timezone.utc)
 
 
-class Vehicle(Base):
-    """Vehicle model representing electric trucks.
+class VehicleModel(Base):
+    """Bản ghi ORM đại diện cho xe tải điện.
 
     Attributes:
         vehicle_id: Primary key (UUID)
@@ -65,5 +65,5 @@ class Vehicle(Base):
     )
 
     def __repr__(self) -> str:
-        """Return a concise debug representation of the vehicle."""
-        return f"<Vehicle {self.license_plate} ({self.vin})>"
+        """Trả về biểu diễn ngắn gọn để debug bản ghi xe."""
+        return f"<VehicleModel {self.license_plate} ({self.vin})>"

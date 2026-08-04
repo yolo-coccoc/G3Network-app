@@ -22,7 +22,7 @@ from app.domains.charging_stations.models import (  # noqa: F401
 )
 from app.domains.telematics.models import Telematic  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetry  # noqa: F401
-from app.domains.vehicles.models import Vehicle  # noqa: F401
+from app.domains.vehicles.models import VehicleModel  # noqa: F401
 from app.libs.common.config import settings
 from app.libs.db.base import Base
 

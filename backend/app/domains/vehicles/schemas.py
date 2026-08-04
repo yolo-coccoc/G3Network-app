@@ -1,4 +1,4 @@
-"""Pydantic schemas for Vehicle domain."""
+"""Pydantic schema cho HTTP API của domain vehicles."""
 
 from datetime import datetime
 from uuid import UUID
@@ -9,8 +9,8 @@ from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 
 
-class VehicleBase(BaseModel):
-    """Base schema for Vehicle with common fields."""
+class _VehicleInputFields(BaseModel):
+    """Các field dùng chung cho request tạo và cập nhật xe."""
 
     license_plate: str = Field(
         ..., min_length=1, max_length=20, description="Biển số xe"
@@ -29,16 +29,16 @@ class VehicleBase(BaseModel):
     )
 
 
-class VehicleCreate(VehicleBase):
-    """Schema for creating a new vehicle."""
+class VehicleCreateRequest(_VehicleInputFields):
+    """Dữ liệu HTTP request để tạo xe mới."""
 
     fleet_id: str | None = Field(
         None, description="ID đội xe (nullable - có thể chưa phân bổ)"
     )
 
 
-class VehicleUpdate(BaseModel):
-    """Schema for updating a vehicle. All fields are optional."""
+class VehicleUpdateRequest(BaseModel):
+    """Dữ liệu HTTP request để cập nhật từng phần một xe."""
 
     license_plate: str | None = Field(
         None, min_length=1, max_length=20, description="Biển số xe"
@@ -51,8 +51,8 @@ class VehicleUpdate(BaseModel):
     fleet_id: str | None = Field(None, description="ID đội xe")
 
 
-class VehicleResponse(VehicleBase):
-    """Schema for vehicle response."""
+class VehicleResponse(_VehicleInputFields):
+    """Dữ liệu xe trả về qua HTTP API."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,7 +63,7 @@ class VehicleResponse(VehicleBase):
 
 
 class VehicleListResponse(BaseModel):
-    """Schema for paginated list of vehicles."""
+    """Dữ liệu danh sách xe có phân trang trả về qua HTTP API."""
 
     items: list[VehicleResponse] = Field(..., description="Danh sách xe")
     total: int = Field(..., ge=0, description="Tổng số xe")
