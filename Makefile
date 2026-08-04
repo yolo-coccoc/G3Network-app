@@ -80,7 +80,7 @@ charging-ocpp-seed:
 
 charging-ocpp-sim:
 	@echo "Chạy simulator OCPP session happy path..."
-	cd backend && uv run python ../simulator/ocpp/charging_session_simulator.py
+	cd backend && uv run python ../simulator/charging_session_simulator.py
 
 backend-test:
 	@echo "Chạy backend tests..."

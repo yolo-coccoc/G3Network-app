@@ -18,7 +18,7 @@ uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
 uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
 # Run the OCPP session happy-path simulator from the repository root
-uv run python ../simulator/ocpp/charging_session_simulator.py
+uv run python ../simulator/charging_session_simulator.py
 
 # Provision station, EVSE and connector for the simulator
 uv run python ../simulator/seed_charging_topology.py

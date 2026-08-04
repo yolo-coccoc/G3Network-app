@@ -695,7 +695,7 @@ connect/reject protocol tối thiểu.
 - Bước này chưa xử lý BootNotification, Heartbeat, StatusNotification,
   NotifyEvent, TransactionEvent hoặc MeterValues; các action đó vẫn chờ Bước
   6–7.
-- Đã thêm `simulator/ocpp/charging_session_simulator.py` để chạy session happy
+- Đã thêm `simulator/charging_session_simulator.py` để chạy session happy
   path với một identity đã pre-provision.
 - Smoke test runtime với fake repository đạt: connect `ocpp2.0.1`, reconnect
   thay thế registry, unknown identity HTTP 404 và protocol sai HTTP 426. Docker

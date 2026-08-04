@@ -374,7 +374,7 @@ gateway smoke test.
 
 **File/khu vực chính:**
 
-- `simulator/ocpp/`
+- `simulator/`
 - test/smoke script liên quan nếu đã có convention trong repo
 
 **Tiêu chí nghiệm thu:**
@@ -386,7 +386,7 @@ gateway smoke test.
 - Không tạo dependency production mới chỉ để chạy simulator.
 
 **Kết quả thực tế (triển khai ngày 2026-08-04):** Đã hoàn tất simulator OCPP
-happy path tại `simulator/ocpp/charging_session_simulator.py`.
+happy path tại `simulator/charging_session_simulator.py`.
 
 - Simulator kết nối bằng subprotocol `ocpp2.0.1`, gửi `TransactionEvent
   Started`, từng `MeterValues` một sample Wh, `Updated` và `Ended`; mỗi CALL
@@ -395,7 +395,7 @@ happy path tại `simulator/ocpp/charging_session_simulator.py`.
   `SimulatorConfig` hoặc CLI. Connection được đóng sau khi nhận ACK `Ended`.
 - Simulator chỉ chạy happy path với identity đã pre-provision; không có delay,
   retry, duplicate, reconnect, reject hoặc random failure.
-- Code được đặt ngoài backend domain tại `simulator/ocpp/`, dùng các dependency
+- Code được đặt ngoài backend domain tại `simulator/`, dùng các dependency
   đã có trong backend và không thêm dependency production mới.
 
 ### Bước 6 — Monitoring tối thiểu và kiểm tra tích hợp
