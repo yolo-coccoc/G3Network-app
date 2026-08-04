@@ -17,8 +17,8 @@ uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
 # Run the OCPP 2.0.1 gateway in a separate process
 uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
-# Run the minimal OCPP connect/reject simulator from the repository root
-uv run python ../simulator/ocpp_connection_simulator.py
+# Run the OCPP session happy-path simulator from the repository root
+uv run python ../simulator/ocpp/charging_session_simulator.py
 ```
 
 The OCPP gateway listens on `CHARGING_OCPP_HOST` and

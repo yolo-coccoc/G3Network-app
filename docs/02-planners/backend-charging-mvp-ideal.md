@@ -366,14 +366,15 @@ Simulator phải:
 6. Đóng kết nối sau khi nhận phản hồi thành công.
 
 Cho phép truyền identity, EVSE ID, connector ID và transaction ID qua
-constructor/CLI. Không thêm delay, retry, duplicate, reconnect, mất mạng hoặc
-random failure vào simulator MVP. Có một case reject identity chưa provision
-để kiểm tra handshake.
+constructor/CLI. Không thêm delay, retry, duplicate, reconnect, mất mạng,
+random failure hoặc case reject vào simulator MVP. Simulator chỉ chạy happy
+path với identity đã pre-provision; handshake reject được kiểm tra riêng ở
+gateway smoke test.
 ```
 
 **File/khu vực chính:**
 
-- `backend/app/domains/charging_stations/ocpp/simulator/`
+- `simulator/ocpp/`
 - test/smoke script liên quan nếu đã có convention trong repo
 
 **Tiêu chí nghiệm thu:**
@@ -381,8 +382,21 @@ random failure vào simulator MVP. Có một case reject identity chưa provisio
 - Một lệnh simulator tạo được session `active` sau Started.
 - Meter sample được lưu đúng `value_wh`.
 - Sau Ended, session chuyển `completed` và có event Ended.
-- Simulator nhận diện được identity hợp lệ và identity không hợp lệ.
+- Simulator kết nối được với identity hợp lệ đã pre-provision.
 - Không tạo dependency production mới chỉ để chạy simulator.
+
+**Kết quả thực tế (triển khai ngày 2026-08-04):** Đã hoàn tất simulator OCPP
+happy path tại `simulator/ocpp/charging_session_simulator.py`.
+
+- Simulator kết nối bằng subprotocol `ocpp2.0.1`, gửi `TransactionEvent
+  Started`, từng `MeterValues` một sample Wh, `Updated` và `Ended`; mỗi CALL
+  đều chờ phản hồi trước khi đi tiếp.
+- Identity, EVSE ID, connector ID và transaction ID đều truyền được qua
+  `SimulatorConfig` hoặc CLI. Connection được đóng sau khi nhận ACK `Ended`.
+- Simulator chỉ chạy happy path với identity đã pre-provision; không có delay,
+  retry, duplicate, reconnect, reject hoặc random failure.
+- Code được đặt ngoài backend domain tại `simulator/ocpp/`, dùng các dependency
+  đã có trong backend và không thêm dependency production mới.
 
 ### Bước 6 — Monitoring tối thiểu và kiểm tra tích hợp
 
@@ -403,6 +417,26 @@ payment, authorization, debt hoặc raw payload. Chạy smoke test từ simulato
 - Không có N+1 rõ ràng trong endpoint được thêm.
 - Response không chứa các cột đã loại khỏi MVP.
 - Transaction boundary vẫn nằm ở HTTP dependency/worker entrypoint.
+
+**Kết quả thực tế (triển khai ngày 2026-08-04):** Đã hoàn tất API monitoring và
+integration smoke cho happy path.
+
+- Thêm các endpoint read-only:
+  `GET /api/v1/charging-sessions/{session_id}`, `/events` và
+  `/meter-values`; response chỉ chứa aggregate session, lifecycle event và
+  meter canonical Wh, không có raw OCPP/policy/payment field.
+- Thêm phân trang ổn định theo timestamp + internal UUID. Event/meter history
+  dùng query items/count riêng, không eager-load quan hệ nên không tạo N+1.
+- Khởi động PostgreSQL/TimescaleDB, API và OCPP gateway local; pre-provision
+  station/EVSE/connector test, chạy simulator `STEP6-TX-002` qua WebSocket thật.
+- Kết quả DB: session `completed`, meter đầu `1000 Wh`, meter cuối `1500 Wh`,
+  energy delivered `500 Wh`; có 3 event `Started → Updated → Ended` và 2
+  meter sample `1250 Wh`, `1500 Wh`. Cả 3 endpoint monitoring trả đúng dữ liệu.
+- Integration phát hiện và đã sửa tương thích parser `python-ocpp`: nested
+  `transactionInfo`, `evse` và `meterValue` thực tế có thể là mapping thay vì
+  dataclass. Adapter hiện canonicalize hai dạng trước khi ingest.
+- Đã dọn toàn bộ fixture test khỏi PostgreSQL local sau smoke. Chưa kiểm tra
+  production broker/reliability path; các nhóm đó vẫn ngoài phạm vi MVP.
 
 ### Bước 7 — Review, kiểm tra và ghi nhận phần hoãn
 
@@ -427,10 +461,40 @@ Chạy kiểm tra cuối cho toàn bộ thay đổi charging:
 - DB có đúng sáu bảng active theo mục 2.
 - Không có retry, idempotency, reconnect, timeout hoặc interruption trong
   active path.
-- Source legacy chỉ bị comment, không bị xóa.
+- Không có source legacy/reliability chạy trong active path; các giới hạn cần
+  giữ được ghi bằng docstring/comment ở nơi còn invariant, còn source legacy
+  không thuộc contract MVP có thể được loại khỏi active source theo quyết định
+  ở Bước 0.
 - `future.md` mô tả đầy đủ tác dụng, lý do hoãn và planner cần mở lại cho từng
   nhóm reliability/production.
 - Kết quả kiểm tra và giới hạn môi trường được ghi ở cuối bước này.
+
+**Kết quả thực tế (triển khai ngày 2026-08-04):** Đã hoàn tất review và kiểm tra
+cuối cho charging MVP.
+
+- `compileall`, Black, isort, Ruff, mypy strict và `git diff --check` đều đạt.
+  Không có automated test suite trong repo để chạy bằng pytest; đã dùng smoke
+  test OCPP → PostgreSQL/API ở Bước 6 thay cho test tự động.
+- Alembic trên PostgreSQL/TimescaleDB dev đã chạy thành công
+  `d8e5f9012345 (head) → c7d4e8f90123 → d8e5f9012345 (head)`. Trong quá trình
+  kiểm tra phát hiện downgrade thiếu enum legacy; đã bổ sung việc tạo lại enum
+  trước schema c7 trong migration head mới, sau đó kiểm tra lại đạt.
+- Catalog sau khi upgrade có đúng sáu bảng charging active và không có
+  `charging_station_status_events`; Alembic chỉ còn head
+  `d8e5f9012345`.
+- Audit không phát hiện import chéo `models.py`/`repository.py` giữa domain,
+  `commit()`/`rollback()` trong charging service/repository,
+  `HTTPException` ngoài router hoặc `datetime.utcnow()`. Giá trị năng lượng
+  được canonicalize về `Decimal` trước khi chuyển vào session service/database;
+  adapter chỉ dùng kiểu số của thư viện OCPP ở lớp parse.
+- `future.md` đã ghi nhận các nhóm mở lại gồm nghiệp vụ authorization/remote
+  control/pricing/payment/debt, reliability/technical status và operational
+  error handling/observability của OCPP gateway. Active path vẫn chỉ là
+  `Started → Updated/MeterValues → Ended`, không có retry, idempotency,
+  reconnect, timeout hoặc interruption.
+- Giới hạn còn lại: chưa kiểm tra thiết bị thật, outage DB/broker, reliability
+  production hoặc automated regression suite. Đây là các hạng mục ngoài phạm
+  vi planner MVP và phải mở lại planner production trước khi triển khai.
 
 ## 5. Ngoài phạm vi và đường quay lại
 

@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.charging_sessions.models import (
@@ -70,6 +70,104 @@ async def get_session_by_id(
         select(ChargingSession).where(ChargingSession.session_id == session_id)
     )
     return result.scalar_one_or_none()
+
+
+async def list_session_events(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    offset: int,
+    limit: int,
+) -> list[ChargingSessionEvent]:
+    """Lấy lifecycle event của một session theo thứ tự thời gian tăng dần.
+
+    Args:
+        db: Async session hiện tại.
+        session_id: UUID session cần truy vấn.
+        offset: Số event bỏ qua.
+        limit: Số event tối đa trả về.
+
+    Returns:
+        Event history đã phân trang ổn định.
+    """
+    result = await db.execute(
+        select(ChargingSessionEvent)
+        .where(ChargingSessionEvent.session_id == session_id)
+        .order_by(
+            ChargingSessionEvent.event_occurred_at.asc(),
+            ChargingSessionEvent.event_id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_session_events(db: AsyncSession, session_id: UUID) -> int:
+    """Đếm lifecycle event của một session.
+
+    Args:
+        db: Async session hiện tại.
+        session_id: UUID session cần đếm event.
+
+    Returns:
+        Tổng số event của session.
+    """
+    result = await db.execute(
+        select(func.count(ChargingSessionEvent.event_id)).where(
+            ChargingSessionEvent.session_id == session_id
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def list_session_meter_values(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    offset: int,
+    limit: int,
+) -> list[ChargingSessionMeterValue]:
+    """Lấy meter sample của session theo thứ tự thời gian tăng dần.
+
+    Args:
+        db: Async session hiện tại.
+        session_id: UUID session cần truy vấn.
+        offset: Số sample bỏ qua.
+        limit: Số sample tối đa trả về.
+
+    Returns:
+        Meter history đã phân trang ổn định.
+    """
+    result = await db.execute(
+        select(ChargingSessionMeterValue)
+        .where(ChargingSessionMeterValue.session_id == session_id)
+        .order_by(
+            ChargingSessionMeterValue.sampled_at.asc(),
+            ChargingSessionMeterValue.meter_value_id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
+    """Đếm meter sample của một session.
+
+    Args:
+        db: Async session hiện tại.
+        session_id: UUID session cần đếm sample.
+
+    Returns:
+        Tổng số meter sample của session.
+    """
+    result = await db.execute(
+        select(func.count(ChargingSessionMeterValue.meter_value_id)).where(
+            ChargingSessionMeterValue.session_id == session_id
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def create_session(

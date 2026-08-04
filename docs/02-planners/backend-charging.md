@@ -695,8 +695,8 @@ connect/reject protocol tối thiểu.
 - Bước này chưa xử lý BootNotification, Heartbeat, StatusNotification,
   NotifyEvent, TransactionEvent hoặc MeterValues; các action đó vẫn chờ Bước
   6–7.
-- Đã thêm `simulator/ocpp_connection_simulator.py` để kiểm tra một identity
-  hợp lệ, identity chưa provision và protocol `ocpp1.6` bị reject.
+- Đã thêm `simulator/ocpp/charging_session_simulator.py` để chạy session happy
+  path với một identity đã pre-provision.
 - Smoke test runtime với fake repository đạt: connect `ocpp2.0.1`, reconnect
   thay thế registry, unknown identity HTTP 404 và protocol sai HTTP 426. Docker
   daemon không truy cập được từ sandbox nên chưa chạy test với PostgreSQL/EMQX

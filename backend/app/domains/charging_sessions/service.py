@@ -15,7 +15,18 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
 )
-from app.domains.charging_sessions.models import ChargingSession
+from app.domains.charging_sessions.models import (
+    ChargingSession,
+    ChargingSessionEvent,
+    ChargingSessionMeterValue,
+)
+from app.domains.charging_sessions.schemas import (
+    ChargingSessionEventListResponse,
+    ChargingSessionEventResponse,
+    ChargingSessionMeterValueListResponse,
+    ChargingSessionMeterValueResponse,
+    ChargingSessionResponse,
+)
 from app.domains.charging_sessions.types import (
     MeterIngestResult,
     MeterSampleInput,
@@ -23,6 +34,7 @@ from app.domains.charging_sessions.types import (
     SessionStatus,
     TransactionIngestResult,
 )
+from app.libs.common.config import settings
 
 
 def _utc(value: datetime, field_name: str) -> datetime:
@@ -82,6 +94,178 @@ def _apply_meter_end(session: ChargingSession, meter_end_wh: Decimal | None) -> 
         # MVP giả định register tăng đơn điệu; kiểm tra meter reset/decrease
         # thuộc reliability path và không được tự mở trong service này.
         session.energy_delivered_wh = meter_end_wh - session.meter_start_wh
+
+
+def _paging(page: int, page_size: int) -> tuple[int, int, int]:
+    """Chuẩn hóa tham số phân trang monitoring theo settings chung.
+
+    Args:
+        page: Trang caller yêu cầu.
+        page_size: Kích thước trang caller yêu cầu.
+
+    Returns:
+        Tuple ``(page, page_size, offset)`` đã nằm trong giới hạn API.
+    """
+    normalized_page = max(page, settings.API_DEFAULT_PAGE)
+    normalized_page_size = min(
+        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
+    )
+    return (
+        normalized_page,
+        normalized_page_size,
+        (normalized_page - 1) * normalized_page_size,
+    )
+
+
+async def get_session(db: AsyncSession, session_id: UUID) -> ChargingSessionResponse:
+    """Lấy aggregate session cho endpoint monitoring.
+
+    Args:
+        db: Async session do HTTP boundary sở hữu.
+        session_id: UUID aggregate cần xem.
+
+    Returns:
+        Response session chỉ chứa schema active MVP.
+
+    Raises:
+        ChargingSessionNotFoundError: Nếu session không tồn tại.
+
+    Side Effects:
+        Thực hiện một truy vấn aggregate; không commit hoặc rollback.
+    """
+    session = await repository.get_session_by_id(db, session_id)
+    if session is None:
+        raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
+    return ChargingSessionResponse.model_validate(session)
+
+
+async def list_session_events(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    page: int,
+    page_size: int,
+) -> ChargingSessionEventListResponse:
+    """Lấy lifecycle event phân trang cho endpoint monitoring.
+
+    Args:
+        db: Async session do HTTP boundary sở hữu.
+        session_id: UUID session cần xem event.
+        page: Trang bắt đầu từ một.
+        page_size: Kích thước trang.
+
+    Returns:
+        Event response và metadata phân trang.
+
+    Raises:
+        ChargingSessionNotFoundError: Nếu session không tồn tại.
+
+    Side Effects:
+        Thực hiện một lookup session và hai truy vấn event (items/count); không
+        load quan hệ ORM nên endpoint không tạo N+1 query.
+    """
+    await _require_session(db, session_id)
+    normalized_page, normalized_page_size, offset = _paging(page, page_size)
+    events = await repository.list_session_events(
+        db,
+        session_id,
+        offset=offset,
+        limit=normalized_page_size,
+    )
+    total = await repository.count_session_events(db, session_id)
+    return ChargingSessionEventListResponse(
+        items=[_event_response(event) for event in events],
+        total=total,
+        page=normalized_page,
+        page_size=normalized_page_size,
+    )
+
+
+async def list_session_meter_values(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    page: int,
+    page_size: int,
+) -> ChargingSessionMeterValueListResponse:
+    """Lấy meter sample phân trang cho endpoint monitoring.
+
+    Args:
+        db: Async session do HTTP boundary sở hữu.
+        session_id: UUID session cần xem meter.
+        page: Trang bắt đầu từ một.
+        page_size: Kích thước trang.
+
+    Returns:
+        Meter response và metadata phân trang.
+
+    Raises:
+        ChargingSessionNotFoundError: Nếu session không tồn tại.
+
+    Side Effects:
+        Thực hiện một lookup session và hai truy vấn meter (items/count); không
+        load quan hệ ORM nên endpoint không tạo N+1 query.
+    """
+    await _require_session(db, session_id)
+    normalized_page, normalized_page_size, offset = _paging(page, page_size)
+    meter_values = await repository.list_session_meter_values(
+        db,
+        session_id,
+        offset=offset,
+        limit=normalized_page_size,
+    )
+    total = await repository.count_session_meter_values(db, session_id)
+    return ChargingSessionMeterValueListResponse(
+        items=[_meter_value_response(meter) for meter in meter_values],
+        total=total,
+        page=normalized_page,
+        page_size=normalized_page_size,
+    )
+
+
+async def _require_session(db: AsyncSession, session_id: UUID) -> ChargingSession:
+    """Đảm bảo session tồn tại trước khi đọc history.
+
+    Args:
+        db: Async session hiện tại.
+        session_id: UUID session cần kiểm tra.
+
+    Returns:
+        Aggregate session tồn tại.
+
+    Raises:
+        ChargingSessionNotFoundError: Nếu không tìm thấy session.
+    """
+    session = await repository.get_session_by_id(db, session_id)
+    if session is None:
+        raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
+    return session
+
+
+def _event_response(event: ChargingSessionEvent) -> ChargingSessionEventResponse:
+    """Chuyển ORM event thành response schema monitoring.
+
+    Args:
+        event: ORM event đã được repository truy vấn.
+
+    Returns:
+        Event response không chứa raw payload.
+    """
+    return ChargingSessionEventResponse.model_validate(event)
+
+
+def _meter_value_response(
+    meter_value: ChargingSessionMeterValue,
+) -> ChargingSessionMeterValueResponse:
+    """Chuyển ORM meter sample thành response schema monitoring.
+
+    Args:
+        meter_value: ORM meter sample đã được repository truy vấn.
+
+    Returns:
+        Meter response canonical Wh.
+    """
+    return ChargingSessionMeterValueResponse.model_validate(meter_value)
 
 
 async def ingest_transaction_event(

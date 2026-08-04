@@ -7,7 +7,7 @@ reconnect và technical status history nằm ngoài active path.
 
 import asyncio
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Final
@@ -20,7 +20,9 @@ from ocpp.v201 import call_result
 from ocpp.v201.datatypes import (  # type: ignore[import-untyped]
     EVSEType,
     MeterValueType,
+    SampledValueType,
     TransactionType,
+    UnitOfMeasureType,
 )
 from ocpp.v201.enums import (  # type: ignore[import-untyped]
     Action,
@@ -55,6 +57,104 @@ _ENERGY_MEASURANDS: Final[frozenset[str]] = frozenset(
         MeasurandEnumType.energy_active_import_interval.value,
     }
 )
+
+
+def _coerce_transaction_info(
+    value: TransactionType | Mapping[str, object],
+) -> TransactionType:
+    """Chuẩn hóa transaction info nested từ python-ocpp về dataclass.
+
+    Args:
+        value: Dataclass hoặc mapping do phiên bản parser OCPP trả về.
+
+    Returns:
+        ``TransactionType`` có transaction ID primitive.
+
+    Raises:
+        KeyError: Nếu mapping không có ``transaction_id``.
+    """
+    if isinstance(value, TransactionType):
+        return value
+    return TransactionType(transaction_id=str(value["transaction_id"]))
+
+
+def _coerce_evse(value: EVSEType | Mapping[str, object] | None) -> EVSEType | None:
+    """Chuẩn hóa EVSE nested từ parser OCPP về dataclass.
+
+    Args:
+        value: EVSE dataclass, mapping hoặc ``None`` từ OCPP payload.
+
+    Returns:
+        ``EVSEType`` canonical hoặc ``None``.
+
+    Raises:
+        KeyError: Nếu mapping thiếu field bắt buộc ``id``.
+    """
+    if value is None or isinstance(value, EVSEType):
+        return value
+    raw_evse_id = value["id"]
+    assert isinstance(raw_evse_id, (int, str))
+    connector_id = value.get("connector_id")
+    assert connector_id is None or isinstance(connector_id, (int, str))
+    return EVSEType(
+        id=int(raw_evse_id),
+        connector_id=int(connector_id) if connector_id is not None else None,
+    )
+
+
+def _coerce_sampled_value(
+    value: SampledValueType | Mapping[str, object],
+) -> SampledValueType:
+    """Chuẩn hóa sampled value nested về dataclass OCPP.
+
+    Args:
+        value: Sampled value dataclass hoặc mapping từ parser.
+
+    Returns:
+        ``SampledValueType`` có value và unit/measurand primitive.
+
+    Raises:
+        KeyError: Nếu mapping thiếu field ``value``.
+    """
+    if isinstance(value, SampledValueType):
+        return value
+    raw_value = value["value"]
+    assert isinstance(raw_value, (int, float, str))
+    unit_value = value.get("unit_of_measure")
+    unit_of_measure = (
+        UnitOfMeasureType(unit=unit_value.get("unit"))
+        if isinstance(unit_value, Mapping)
+        else None
+    )
+    return SampledValueType(
+        value=float(raw_value),
+        measurand=value.get("measurand"),
+        unit_of_measure=unit_of_measure,
+    )
+
+
+def _coerce_meter_value(
+    value: MeterValueType | Mapping[str, object],
+) -> MeterValueType:
+    """Chuẩn hóa meter value nested về dataclass OCPP.
+
+    Args:
+        value: Meter value dataclass hoặc mapping từ parser.
+
+    Returns:
+        ``MeterValueType`` có sampled values canonical.
+
+    Raises:
+        KeyError: Nếu mapping thiếu ``timestamp`` hoặc ``sampled_value``.
+    """
+    if isinstance(value, MeterValueType):
+        return value
+    sampled_values = value["sampled_value"]
+    assert isinstance(sampled_values, list)
+    return MeterValueType(
+        timestamp=str(value["timestamp"]),
+        sampled_value=[_coerce_sampled_value(item) for item in sampled_values],
+    )
 
 
 def parse_ocpp_identity(request_path: str) -> str | None:
@@ -257,9 +357,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         timestamp: str,
         trigger_reason: object,
         seq_no: int,
-        transaction_info: TransactionType,
-        meter_value: list[MeterValueType] | None = None,
-        evse: EVSEType | None = None,
+        transaction_info: TransactionType | Mapping[str, object],
+        meter_value: list[MeterValueType | Mapping[str, object]] | None = None,
+        evse: EVSEType | Mapping[str, object] | None = None,
         **_: object,
     ) -> call_result.TransactionEvent:
         """Persist TransactionEvent bằng primitive values rồi ACK OCPP.
@@ -269,10 +369,11 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             timestamp: Thời điểm event theo OCPP.
             trigger_reason: Trigger OCPP, hiện chỉ được parse để giữ contract.
             seq_no: Sequence OCPP, chưa thuộc active persistence schema.
-            transaction_info: Transaction dataclass do adapter chuyển thành
-                transaction ID và các primitive cần dùng.
-            meter_value: Meter đầu/cuối tùy event, nếu payload có.
-            evse: EVSE và connector OCPP cần resolve.
+            transaction_info: Transaction dataclass hoặc mapping nested do
+                parser trả về; adapter chuẩn hóa thành transaction ID.
+            meter_value: Meter đầu/cuối tùy event, dạng dataclass hoặc mapping.
+            evse: EVSE và connector OCPP cần resolve, dạng dataclass hoặc
+                mapping.
             **_: Các field OCPP optional không thuộc MVP.
 
         Returns:
@@ -283,18 +384,31 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             chỉ cập nhật mapping EVSE → session sau khi transaction commit.
         """
         del trigger_reason, seq_no
+        normalized_transaction_info = _coerce_transaction_info(transaction_info)
+        normalized_evse = _coerce_evse(evse)
+        normalized_meter_value = (
+            [_coerce_meter_value(value) for value in meter_value]
+            if meter_value
+            else None
+        )
         event_map = {
             TransactionEventEnumType.started: SessionEventType.STARTED,
             TransactionEventEnumType.updated: SessionEventType.UPDATED,
             TransactionEventEnumType.ended: SessionEventType.ENDED,
         }
         session_event = event_map[event_type]
-        samples = self._extract_meter_samples(meter_value or []) if meter_value else []
+        samples = (
+            self._extract_meter_samples(normalized_meter_value or [])
+            if normalized_meter_value
+            else []
+        )
         meter_start_wh = samples[0].value_wh if samples else None
         meter_end_wh = samples[-1].value_wh if samples else None
-        transaction_id = transaction_info.transaction_id
+        transaction_id = normalized_transaction_info.transaction_id
         async with self.session_factory.begin() as db:
-            station_id, evse_id, connector_id = await self._resolve_topology(db, evse)
+            station_id, evse_id, connector_id = await self._resolve_topology(
+                db, normalized_evse
+            )
             result = await charging_sessions_service.ingest_transaction_event(
                 db,
                 station_id=station_id,
@@ -315,25 +429,25 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 ),
             )
         if session_event is SessionEventType.ENDED:
-            if evse is not None:
-                self._session_by_evse.pop(evse.id, None)
+            if normalized_evse is not None:
+                self._session_by_evse.pop(normalized_evse.id, None)
         else:
-            if evse is not None:
-                self._session_by_evse[evse.id] = result.session_id
+            if normalized_evse is not None:
+                self._session_by_evse[normalized_evse.id] = result.session_id
         return call_result.TransactionEvent()
 
     @on(Action.meter_values)  # type: ignore[untyped-decorator]
     async def on_meter_values(
         self,
         evse_id: int,
-        meter_value: list[MeterValueType],
+        meter_value: list[MeterValueType | Mapping[str, object]],
         **_: object,
     ) -> call_result.MeterValues:
         """Persist từng energy sample MeterValues trong một transaction.
 
         Args:
             evse_id: OCPP EVSE ID dùng để tìm session trên connection.
-            meter_value: Nhóm sample cần canonical về Wh.
+            meter_value: Nhóm sample dataclass hoặc mapping cần canonical về Wh.
             **_: Field OCPP optional không thuộc MVP.
 
         Returns:
@@ -343,8 +457,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             Gọi ``ingest_meter_values`` từng sample trên cùng AsyncSession;
             exception làm entry transaction rollback toàn bộ message.
         """
+        normalized_meter_value = [_coerce_meter_value(value) for value in meter_value]
         session_id = self._session_by_evse[evse_id]
-        samples = self._extract_meter_samples(meter_value)
+        samples = self._extract_meter_samples(normalized_meter_value)
         async with self.session_factory.begin() as db:
             for sample in samples:
                 await charging_sessions_service.ingest_meter_values(

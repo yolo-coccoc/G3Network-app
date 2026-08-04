@@ -285,8 +285,47 @@ def _create_active_session_tables() -> None:
 
 def _create_c7_schema() -> None:
     """Khôi phục schema topology/session sau migration c7 để downgrade đối xứng."""
+    _create_c7_enums()
     _create_c7_topology_tables()
     _create_c7_session_tables()
+
+
+def _create_c7_enums() -> None:
+    """Tạo lại các enum mà schema c7 dùng trước khi tạo bảng legacy.
+
+    PostgreSQL yêu cầu type tồn tại trước khi ``CREATE TABLE`` tham chiếu tới
+    type đó. Upgrade đã xóa toàn bộ enum charging, vì vậy downgrade phải dựng
+    lại cả các enum technical/administrative dù chúng không còn trong active
+    schema.
+    """
+    _create_enum(
+        "chargingstationadministrativestatus",
+        "active",
+        "inactive",
+        "maintenance",
+    )
+    _create_enum(
+        "chargingstationconnectionstatus",
+        "unknown",
+        "connected",
+        "offline",
+    )
+    _create_enum("chargingevseadministrativestatus", "active", "inactive")
+    _create_enum(
+        "chargingtechnicalstatus",
+        "unknown",
+        "available",
+        "occupied",
+        "unavailable",
+        "faulted",
+    )
+    _create_enum(
+        "chargingconnectoradministrativestatus",
+        "active",
+        "inactive",
+    )
+    _create_enum("chargingsessionstatus", "active", "completed")
+    _create_enum("chargingsessioneventtype", "Started", "Updated", "Ended")
 
 
 def _create_enum(name: str, *values: str) -> None:

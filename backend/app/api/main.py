@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.domains.charging_sessions.router import router as charging_sessions_router
 from app.domains.charging_stations.router import router as charging_stations_router
 from app.domains.telematics.router import router as telematics_router
 from app.domains.telemetry.router import router as telemetry_router
@@ -46,3 +47,4 @@ app.include_router(vehicles_router, prefix="/api/v1/vehicles")
 app.include_router(telematics_router, prefix="/api/v1/telematics")
 app.include_router(telemetry_router, prefix="/api/v1/telemetry")
 app.include_router(charging_stations_router, prefix="/api/v1")
+app.include_router(charging_sessions_router, prefix="/api/v1")
