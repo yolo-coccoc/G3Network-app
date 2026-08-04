@@ -412,20 +412,28 @@
     fail fast nếu DB chưa sẵn sàng.
   - Retrieve exception từ background task để tránh `Task exception was never
     retrieved` và giúp process thoát khác 0 khi consumer/worker chết bất thường.
-  - Cung cấp public lifecycle API như `BatchWorker.wait()` hoặc cơ chế task handle
-    rõ ràng, thay vì entrypoint truy cập trực tiếp `worker._task`.
+  - Cung cấp public lifecycle API như `MessageWorker.wait()` hoặc cơ chế task
+    handle rõ ràng, thay vì entrypoint truy cập trực tiếp `worker._task`.
   - Phân biệt shutdown do signal với shutdown do lỗi runtime trong log và exit
     code.
 - **Lý do hoãn lại**: MVP hiện ưu tiên entrypoint thật ngắn: tạo queue RAM, start
-  consumer/worker, chờ task đầu tiên kết thúc rồi cleanup. Trong demo hiện tại,
-  DB failure vẫn được worker log và process dừng; startup probe và failure
-  propagation chi tiết chưa cần để chứng minh luồng MQTT → DB.
+  consumer/worker, chờ task đầu tiên kết thúc rồi cleanup. Khi DB/service lỗi,
+  worker vẫn rollback transaction và log traceback, nhưng entrypoint hiện bỏ qua
+  exception của task đã hoàn thành sau `asyncio.wait()`. Vì vậy `run()` có thể
+  cleanup bình thường và process kết thúc với exit code 0, khiến supervisor
+  không biết worker đã chết và không tự restart/alert đúng. Đây là thiếu sót ở
+  lifecycle failure propagation, không phải chủ trương bỏ qua lỗi trong
+  transaction; startup probe và propagation chi tiết được hoãn để giữ luồng
+  MQTT → DB MVP ngắn.
 - **Liên quan đến planner/feature**:
   `backend-telemetry-ingestion.md` (AD-02), bước 14-15.
 - **Ngày ghi nhận**: 2026-07-28
 - **Ghi chú thêm**: Nên triển khai cùng mục 22 nếu chuẩn bị chạy bằng
-  orchestrator hoặc cần alert/exit code đáng tin cậy. Khi thêm lại, giữ API nhỏ
-  và tránh kéo lại toàn bộ runtime orchestration cũ nếu không cần.
+  orchestrator hoặc cần alert/exit code đáng tin cậy. Khi thêm lại, phải đọc
+  `task.exception()` hoặc await task done trong entrypoint, phân biệt signal
+  shutdown với task failure, và kiểm tra cả task consumer lẫn worker. Giữ API
+  lifecycle công khai, tránh truy cập `worker._task`, và không kéo lại toàn bộ
+  runtime orchestration cũ nếu không cần.
 
 ### 25. Batch processing cho telemetry ingestion
 
@@ -523,7 +531,47 @@
   API CRUD/monitoring trước khi tạo migration. Không khôi phục từng field riêng
   lẻ hoặc tạo bảng/status enum placeholder trong MVP.
 
-### 29. Đánh giá khả năng hợp nhất domain `telematics` vào `vehicles`
+### 29. Tối ưu query và chuẩn hóa chất lượng code simulator/telemetry
+
+- **Mô tả ngắn**: Xử lý các khoản technical debt không chặn MVP gồm N+1 query
+  khi dựng response telematic, thống nhất contract `error_codes` giữa payload
+  MQTT/schema/database và siết chặt error handling/type checking trong simulator.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Giảm số query database khi API danh sách telematic phải resolve VIN của
+    nhiều thiết bị; hiện mỗi item có thể phát sinh thêm một query vehicle.
+  - Giữ cùng một biểu diễn lỗi từ telemetry message đến JSONB database và API,
+    tránh việc payload nhận `list[str]` nhưng dữ liệu lưu thành object bọc
+    `{"codes": [...]}` mà không có contract rõ ràng.
+  - Giúp simulator phân biệt lỗi network/HTTP/JSON với lỗi lập trình, đồng thời
+    giữ type của response JSON đủ chính xác để mypy có thể kiểm tra.
+  - Làm dữ liệu simulator có thể cấu hình thay vì phụ thuộc vào prefix device,
+    VIN, địa chỉ API/broker và transaction identity cố định trong source.
+- **Lý do hoãn lại**: MVP local có số lượng thiết bị nhỏ, API list chưa nằm trên
+  hot path ingest và simulator chủ yếu phục vụ smoke test thủ công. Các điểm
+  này không làm sai lifecycle telemetry hiện tại, nhưng sẽ ảnh hưởng latency,
+  khả năng chẩn đoán lỗi và độ tin cậy của test khi số lượng thiết bị tăng.
+  Việc thay đổi `error_codes` cũng có thể cần migration hoặc version hóa API,
+  nên không nên tự ý đổi trong lúc contract MVP chưa được chốt.
+- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02),
+  `backend-crud-telematics.md` (nếu được bổ sung), simulator local và coding
+  convention trong `AGENTS.md`.
+- **Ngày ghi nhận**: 2026-08-04
+- **Ghi chú thêm**:
+  - `telematics.service._response()` hiện gọi lookup vehicle riêng cho từng
+    item trong `list_telematics()`. Khi mở lại, ưu tiên bulk lookup hoặc query
+    projection phù hợp; không để service import trực tiếp repository/model của
+    domain khác nếu giải pháp cần vượt qua boundary domain.
+  - Cần chốt `error_codes` là danh sách mã lỗi, object có field `codes`, hay
+    schema versioned trước khi sửa model/migration/API.
+  - `simulator/telematic_simulator.py` nên bắt các exception cụ thể ở lớp HTTP
+    và JSON; `simulator/seed_simulator_devices.py` nên dùng response schema/type
+    rõ ràng thay cho giá trị `Any` từ `json.loads()`.
+  - Prefix thiết bị, VIN, license plate, API URL, MQTT endpoint và transaction
+    ID nên chuyển thành cấu hình/CLI argument có validation. Khi triển khai
+    phải giữ simulator deterministic khi cần replay và tránh log lộ thông tin
+    nhạy cảm.
+
+### 30. Đánh giá khả năng hợp nhất domain `telematics` vào `vehicles`
 
 - **Mô tả ngắn**: Xem xét đưa hồ sơ thiết bị telematic và mapping thiết bị ↔ xe
   vào cùng bounded context `vehicles`, tương tự cách `charging_stations` sở
@@ -553,7 +601,7 @@
   các planner về telemetry/vehicles/telematics.
 - **Ngày ghi nhận**: 2026-08-03
 
-### 30. Operational error handling và observability cho OCPP gateway
+### 31. Operational error handling và observability cho OCPP gateway
 
 - **Mô tả ngắn**: Bổ sung chính sách xử lý lỗi vận hành cho OCPP gateway ngoài
   happy path, gồm mapping lỗi database khi handshake, response HTTP `503`, log
@@ -575,6 +623,41 @@
 - **Ghi chú thêm**: Khi triển khai production hoặc reliability path, phải chốt
   error contract, health/readiness signal, close-code policy, structured
   metrics/logging và test database outage trước khi bật từng nhánh riêng lẻ.
+
+### 32. Bảo vệ transaction ID bị tái sử dụng sau phiên terminal
+
+- **Mô tả ngắn**: Bổ sung guard cho trường hợp Charging Station gửi lại cùng
+  `transaction_id` sau khi phiên trước đã `completed`, đặc biệt khi simulator
+  hoặc thiết bị thật tái sử dụng ID cho một phiên mới.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Giữ invariant mỗi cặp `(station_id, ocpp_transaction_id)` chỉ đại diện cho
+    một phiên sạc.
+  - Không cho `Started` của phiên mới làm thay đổi aggregate đã hoàn tất hoặc
+    tạo dữ liệu mơ hồ khi database chưa có unique constraint tương ứng.
+  - Không cho `Updated`, `Ended` hoặc `MeterValues` đến muộn cập nhật meter,
+    event và `updated_at` của session terminal.
+- **Lý do hoãn lại**: Charging MVP hiện giả định transaction message đến đúng
+  thứ tự, không duplicate và không reuse ID; active service chưa có đầy đủ
+  nhánh phân biệt duplicate, conflict, stale event và transaction ID bị tái sử
+  dụng. Đã phát hiện simulator có thể gửi `Started` với cùng ID sau khi phiên
+  trước completed, nên cần kiểm tra cả raw OCPP `eventType`, migration thực tế
+  và database constraint trước khi chốt behavior.
+- **Contract cần chốt khi mở lại**:
+  - `Started` với cùng `(station_id, transaction_id)` của session active là
+    duplicate/no-op hoặc conflict tùy fingerprint.
+  - `Started` với cùng key của session terminal phải bị từ chối; phiên mới phải
+    dùng transaction ID mới.
+  - Event và meter của session terminal chỉ được ACK/no-op nếu xác định là
+    duplicate hợp lệ; dữ liệu mới hoặc mâu thuẫn phải bị reject/conflict và
+    không sửa aggregate.
+- **Việc cần cập nhật trước khi triển khai**: Xác nhận unique constraint
+  `uq_charging_sessions_station_transaction` trên database đang chạy, bổ sung
+  test OCPP cho duplicate/reuse sau `Ended`, test terminal guard cho mọi event
+  và meter path, đồng thời log raw event type cùng station/transaction identity
+  ở mức đủ để điều tra mà không ghi raw payload nhạy cảm.
+- **Liên quan đến planner/feature**: `backend-charging.md`,
+  `backend-charging-mvp-ideal.md`, AD-03 và S-02.
+- **Ngày ghi nhận**: 2026-08-04
 
 ---
 

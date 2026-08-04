@@ -61,7 +61,9 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
         payload = {
             "message_uuid": str(uuid4()),
             "telematic_serial": serial,
-            "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "recorded_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "location": {
                 "latitude": START_LATITUDE + random.uniform(-0.001, 0.001),
                 "longitude": START_LONGITUDE + random.uniform(-0.001, 0.001),
@@ -83,7 +85,9 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
         }
         message = TelemetryMessage.model_validate(payload)
         topic = f"g3network/telematics/{serial}/telemetry"
-        await client.publish(topic, json.dumps(message.model_dump(mode="json")), qos=0, retain=False)
+        await client.publish(
+            topic, json.dumps(message.model_dump(mode="json")), qos=0, retain=False
+        )
         print(f"Đã gửi telemetry: {serial}")
         odometer += 0.2
         await asyncio.sleep(PUBLISH_INTERVAL_SECONDS)

@@ -7,8 +7,6 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     Double,
-)
-from sqlalchemy import (
     ForeignKey,
     Index,
     String,

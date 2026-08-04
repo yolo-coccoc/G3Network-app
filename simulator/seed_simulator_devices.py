@@ -36,7 +36,9 @@ def post(path: str, payload: dict[str, object]) -> dict[str, object]:
         with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError) as error:
-        detail = error.read().decode("utf-8") if isinstance(error, HTTPError) else str(error)
+        detail = (
+            error.read().decode("utf-8") if isinstance(error, HTTPError) else str(error)
+        )
         raise RuntimeError(f"POST {path} thất bại: {detail}") from error
 
 
