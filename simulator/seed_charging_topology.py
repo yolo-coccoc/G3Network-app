@@ -13,7 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_API_URL = "http://localhost:8000"
-DEFAULT_IDENTITY = "STEP7-OCPP-001"
+DEFAULT_IDENTITY = "SIM-OCPP-001"
 DEFAULT_DISPLAY_NAME = "Charging Simulator"
 REQUEST_TIMEOUT_SECONDS = 10
 
