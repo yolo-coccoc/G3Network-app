@@ -11,14 +11,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # Chỉ nạp sáu model charging active; technical status history không thuộc
 # metadata MVP và source legacy tương ứng chỉ còn ở dạng comment trong domain.
 from app.domains.charging_sessions.models import (  # noqa: F401
-    ChargingSession,
-    ChargingSessionEvent,
-    ChargingSessionMeterValue,
+    ChargingSessionEventModel,
+    ChargingSessionMeterValueModel,
+    ChargingSessionModel,
 )
 from app.domains.charging_stations.models import (  # noqa: F401
-    ChargingConnector,
-    ChargingEvse,
-    ChargingStation,
+    ChargingConnectorModel,
+    ChargingEvseModel,
+    ChargingStationModel,
 )
 from app.domains.telematics.models import TelematicModel  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetryModel  # noqa: F401

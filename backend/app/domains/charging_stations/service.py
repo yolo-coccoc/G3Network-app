@@ -20,29 +20,31 @@ from app.domains.charging_stations.exceptions import (
     ChargingTopologyConflictError,
 )
 from app.domains.charging_stations.models import (
-    ChargingConnector,
-    ChargingEvse,
-    ChargingStation,
+    ChargingConnectorModel,
+    ChargingEvseModel,
+    ChargingStationModel,
 )
 from app.domains.charging_stations.schemas import (
-    ConnectorCreate,
-    ConnectorListResponse,
-    ConnectorResponse,
-    ConnectorUpdate,
-    DeleteResponse,
-    EvseCreate,
-    EvseListResponse,
-    EvseResponse,
-    EvseUpdate,
-    StationCreate,
-    StationListResponse,
-    StationResponse,
-    StationUpdate,
+    ChargingConnectorCreateRequest,
+    ChargingConnectorListResponse,
+    ChargingConnectorResponse,
+    ChargingConnectorUpdateRequest,
+    ChargingEvseCreateRequest,
+    ChargingEvseListResponse,
+    ChargingEvseResponse,
+    ChargingEvseUpdateRequest,
+    ChargingResourceDeleteResponse,
+    ChargingStationCreateRequest,
+    ChargingStationListResponse,
+    ChargingStationResponse,
+    ChargingStationUpdateRequest,
 )
 from app.libs.common.config import settings
 
 
-def _station_response(station: ChargingStation) -> StationResponse:
+def to_charging_station_response(
+    station: ChargingStationModel,
+) -> ChargingStationResponse:
     """Dựng response station từ topology model tối thiểu.
 
     Args:
@@ -51,7 +53,7 @@ def _station_response(station: ChargingStation) -> StationResponse:
     Returns:
         Schema response không chứa technical metadata.
     """
-    return StationResponse(
+    return ChargingStationResponse(
         station_id=station.station_id,
         ocpp_identity=station.ocpp_identity,
         display_name=station.display_name,
@@ -61,7 +63,7 @@ def _station_response(station: ChargingStation) -> StationResponse:
     )
 
 
-def _evse_response(evse: ChargingEvse) -> EvseResponse:
+def to_charging_evse_response(evse: ChargingEvseModel) -> ChargingEvseResponse:
     """Dựng response EVSE từ ORM model.
 
     Args:
@@ -70,10 +72,12 @@ def _evse_response(evse: ChargingEvse) -> EvseResponse:
     Returns:
         Schema response tương ứng với EVSE.
     """
-    return EvseResponse.model_validate(evse)
+    return ChargingEvseResponse.model_validate(evse)
 
 
-def _connector_response(connector: ChargingConnector) -> ConnectorResponse:
+def to_charging_connector_response(
+    connector: ChargingConnectorModel,
+) -> ChargingConnectorResponse:
     """Dựng response connector từ ORM model.
 
     Args:
@@ -82,10 +86,10 @@ def _connector_response(connector: ChargingConnector) -> ConnectorResponse:
     Returns:
         Schema response tương ứng với connector.
     """
-    return ConnectorResponse.model_validate(connector)
+    return ChargingConnectorResponse.model_validate(connector)
 
 
-def _clean_update_data(data: Mapping[str, object]) -> dict[str, object]:
+def _clean_update_values(data: Mapping[str, object]) -> dict[str, object]:
     """Loại field ``None`` theo convention PATCH của backend.
 
     Args:
@@ -103,9 +107,9 @@ def _clean_update_data(data: Mapping[str, object]) -> dict[str, object]:
     }
 
 
-async def create_station(
-    db: AsyncSession, station_data: StationCreate
-) -> StationResponse:
+async def create_charging_station(
+    db: AsyncSession, station_data: ChargingStationCreateRequest
+) -> ChargingStationResponse:
     """Tạo station mới sau khi kiểm tra OCPP identity toàn bảng.
 
     Args:
@@ -123,7 +127,7 @@ async def create_station(
             f"OCPP identity '{station_data.ocpp_identity}' đã tồn tại"
         )
     try:
-        station = await repository.create_station(
+        station = await repository.create_charging_station(
             db,
             ocpp_identity=station_data.ocpp_identity,
             display_name=station_data.display_name,
@@ -132,15 +136,15 @@ async def create_station(
         raise ChargingTopologyConflictError(
             "OCPP identity của station đã tồn tại"
         ) from error
-    return _station_response(station)
+    return to_charging_station_response(station)
 
 
-async def list_stations(
+async def list_charging_stations(
     db: AsyncSession,
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-) -> StationListResponse:
+) -> ChargingStationListResponse:
     """Liệt kê station active với pagination giới hạn theo settings.
 
     Args:
@@ -159,21 +163,23 @@ async def list_stations(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
     )
     offset = (page - 1) * page_size
-    stations = await repository.list_stations(
+    stations = await repository.list_charging_stations(
         db,
         offset=offset,
         limit=page_size,
     )
     total = await repository.count_stations(db)
-    return StationListResponse(
-        items=[_station_response(station) for station in stations],
+    return ChargingStationListResponse(
+        items=[to_charging_station_response(station) for station in stations],
         total=total,
         page=page,
         page_size=page_size,
     )
 
 
-async def get_station(db: AsyncSession, station_id: UUID) -> StationResponse:
+async def get_charging_station(
+    db: AsyncSession, station_id: UUID
+) -> ChargingStationResponse:
     """Lấy station active theo internal UUID.
 
     Args:
@@ -189,7 +195,7 @@ async def get_station(db: AsyncSession, station_id: UUID) -> StationResponse:
     station = await repository.get_station_by_id(db, station_id)
     if station is None:
         raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
-    return _station_response(station)
+    return to_charging_station_response(station)
 
 
 async def resolve_ocpp_topology(
@@ -243,9 +249,9 @@ async def resolve_ocpp_topology(
     return station.station_id, evse.evse_id, connector.connector_id
 
 
-async def update_station(
-    db: AsyncSession, station_id: UUID, station_data: StationUpdate
-) -> StationResponse:
+async def update_charging_station(
+    db: AsyncSession, station_id: UUID, station_data: ChargingStationUpdateRequest
+) -> ChargingStationResponse:
     """PATCH station và kiểm tra identity conflict trước khi flush.
 
     Args:
@@ -272,21 +278,23 @@ async def update_station(
             f"OCPP identity '{station_data.ocpp_identity}' đã tồn tại"
         )
 
-    update_data = _clean_update_data(station_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(station_data.model_dump(exclude_unset=True))
     if not update_data:
-        return _station_response(station)
+        return to_charging_station_response(station)
     try:
-        updated = await repository.update_station(db, station_id, update_data)
+        updated = await repository.update_charging_station(db, station_id, update_data)
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "OCPP identity của station đã tồn tại"
         ) from error
     if updated is None:
         raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
-    return _station_response(updated)
+    return to_charging_station_response(updated)
 
 
-async def delete_station(db: AsyncSession, station_id: UUID) -> DeleteResponse:
+async def soft_delete_charging_station(
+    db: AsyncSession, station_id: UUID
+) -> ChargingResourceDeleteResponse:
     """Soft-delete station và topology con trong cùng transaction.
 
     Args:
@@ -305,12 +313,12 @@ async def delete_station(db: AsyncSession, station_id: UUID) -> DeleteResponse:
     """
     if not await repository.soft_delete_station(db, station_id):
         raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
-    return DeleteResponse(message="Đã xoá mềm charging station")
+    return ChargingResourceDeleteResponse(message="Đã xoá mềm charging station")
 
 
-async def create_evse(
-    db: AsyncSession, station_id: UUID, evse_data: EvseCreate
-) -> EvseResponse:
+async def create_charging_evse(
+    db: AsyncSession, station_id: UUID, evse_data: ChargingEvseCreateRequest
+) -> ChargingEvseResponse:
     """Tạo EVSE chỉ khi station parent active và identity chưa dùng.
 
     Args:
@@ -332,7 +340,7 @@ async def create_evse(
             f"EVSE ID '{evse_data.ocpp_evse_id}' đã tồn tại trong station"
         )
     try:
-        evse = await repository.create_evse(
+        evse = await repository.create_charging_evse(
             db,
             station_id=station_id,
             ocpp_evse_id=evse_data.ocpp_evse_id,
@@ -341,16 +349,16 @@ async def create_evse(
         raise ChargingTopologyConflictError(
             "EVSE identity đã tồn tại trong station"
         ) from error
-    return _evse_response(evse)
+    return to_charging_evse_response(evse)
 
 
-async def list_evses(
+async def list_charging_evses(
     db: AsyncSession,
     station_id: UUID,
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-) -> EvseListResponse:
+) -> ChargingEvseListResponse:
     """Liệt kê EVSE active thuộc station parent.
 
     Args:
@@ -371,19 +379,19 @@ async def list_evses(
     page_size = min(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
     )
-    evses = await repository.list_evses(
+    evses = await repository.list_charging_evses(
         db, station_id=station_id, offset=(page - 1) * page_size, limit=page_size
     )
     total = await repository.count_evses(db, station_id=station_id)
-    return EvseListResponse(
-        items=[_evse_response(evse) for evse in evses],
+    return ChargingEvseListResponse(
+        items=[to_charging_evse_response(evse) for evse in evses],
         total=total,
         page=page,
         page_size=page_size,
     )
 
 
-async def get_evse(db: AsyncSession, evse_id: UUID) -> EvseResponse:
+async def get_charging_evse(db: AsyncSession, evse_id: UUID) -> ChargingEvseResponse:
     """Lấy EVSE active theo internal UUID.
 
     Args:
@@ -399,12 +407,12 @@ async def get_evse(db: AsyncSession, evse_id: UUID) -> EvseResponse:
     evse = await repository.get_evse_by_id(db, evse_id)
     if evse is None:
         raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
-    return _evse_response(evse)
+    return to_charging_evse_response(evse)
 
 
-async def update_evse(
-    db: AsyncSession, evse_id: UUID, evse_data: EvseUpdate
-) -> EvseResponse:
+async def update_charging_evse(
+    db: AsyncSession, evse_id: UUID, evse_data: ChargingEvseUpdateRequest
+) -> ChargingEvseResponse:
     """PATCH EVSE và giữ unique identity trong parent station.
 
     Args:
@@ -432,21 +440,23 @@ async def update_evse(
         raise ChargingTopologyConflictError(
             f"EVSE ID '{evse_data.ocpp_evse_id}' đã tồn tại trong station"
         )
-    update_data = _clean_update_data(evse_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(evse_data.model_dump(exclude_unset=True))
     if not update_data:
-        return _evse_response(evse)
+        return to_charging_evse_response(evse)
     try:
-        updated = await repository.update_evse(db, evse_id, update_data)
+        updated = await repository.update_charging_evse(db, evse_id, update_data)
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "EVSE identity đã tồn tại trong station"
         ) from error
     if updated is None:
         raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
-    return _evse_response(updated)
+    return to_charging_evse_response(updated)
 
 
-async def delete_evse(db: AsyncSession, evse_id: UUID) -> DeleteResponse:
+async def soft_delete_charging_evse(
+    db: AsyncSession, evse_id: UUID
+) -> ChargingResourceDeleteResponse:
     """Soft-delete EVSE và connector con.
 
     Args:
@@ -464,12 +474,12 @@ async def delete_evse(db: AsyncSession, evse_id: UUID) -> DeleteResponse:
     """
     if not await repository.soft_delete_evse(db, evse_id):
         raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
-    return DeleteResponse(message="Đã xoá mềm EVSE")
+    return ChargingResourceDeleteResponse(message="Đã xoá mềm EVSE")
 
 
-async def create_connector(
-    db: AsyncSession, evse_id: UUID, connector_data: ConnectorCreate
-) -> ConnectorResponse:
+async def create_charging_connector(
+    db: AsyncSession, evse_id: UUID, connector_data: ChargingConnectorCreateRequest
+) -> ChargingConnectorResponse:
     """Tạo connector chỉ khi EVSE parent active và identity chưa dùng.
 
     Args:
@@ -493,7 +503,7 @@ async def create_connector(
             f"Connector ID '{connector_data.ocpp_connector_id}' đã tồn tại trong EVSE"
         )
     try:
-        connector = await repository.create_connector(
+        connector = await repository.create_charging_connector(
             db,
             evse_id=evse_id,
             ocpp_connector_id=connector_data.ocpp_connector_id,
@@ -502,16 +512,16 @@ async def create_connector(
         raise ChargingTopologyConflictError(
             "Connector identity đã tồn tại trong EVSE"
         ) from error
-    return _connector_response(connector)
+    return to_charging_connector_response(connector)
 
 
-async def list_connectors(
+async def list_charging_connectors(
     db: AsyncSession,
     evse_id: UUID,
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-) -> ConnectorListResponse:
+) -> ChargingConnectorListResponse:
     """Liệt kê connector active thuộc EVSE parent.
 
     Args:
@@ -532,19 +542,21 @@ async def list_connectors(
     page_size = min(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
     )
-    connectors = await repository.list_connectors(
+    connectors = await repository.list_charging_connectors(
         db, evse_id=evse_id, offset=(page - 1) * page_size, limit=page_size
     )
     total = await repository.count_connectors(db, evse_id=evse_id)
-    return ConnectorListResponse(
-        items=[_connector_response(connector) for connector in connectors],
+    return ChargingConnectorListResponse(
+        items=[to_charging_connector_response(connector) for connector in connectors],
         total=total,
         page=page,
         page_size=page_size,
     )
 
 
-async def get_connector(db: AsyncSession, connector_id: UUID) -> ConnectorResponse:
+async def get_charging_connector(
+    db: AsyncSession, connector_id: UUID
+) -> ChargingConnectorResponse:
     """Lấy connector active theo internal UUID.
 
     Args:
@@ -562,12 +574,12 @@ async def get_connector(db: AsyncSession, connector_id: UUID) -> ConnectorRespon
         raise ChargingConnectorNotFoundError(
             f"Không tìm thấy connector '{connector_id}'"
         )
-    return _connector_response(connector)
+    return to_charging_connector_response(connector)
 
 
-async def update_connector(
-    db: AsyncSession, connector_id: UUID, connector_data: ConnectorUpdate
-) -> ConnectorResponse:
+async def update_charging_connector(
+    db: AsyncSession, connector_id: UUID, connector_data: ChargingConnectorUpdateRequest
+) -> ChargingConnectorResponse:
     """PATCH connector và giữ unique identity trong parent EVSE.
 
     Args:
@@ -597,11 +609,13 @@ async def update_connector(
         raise ChargingTopologyConflictError(
             f"Connector ID '{connector_data.ocpp_connector_id}' đã tồn tại trong EVSE"
         )
-    update_data = _clean_update_data(connector_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(connector_data.model_dump(exclude_unset=True))
     if not update_data:
-        return _connector_response(connector)
+        return to_charging_connector_response(connector)
     try:
-        updated = await repository.update_connector(db, connector_id, update_data)
+        updated = await repository.update_charging_connector(
+            db, connector_id, update_data
+        )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "Connector identity đã tồn tại trong EVSE"
@@ -610,10 +624,12 @@ async def update_connector(
         raise ChargingConnectorNotFoundError(
             f"Không tìm thấy connector '{connector_id}'"
         )
-    return _connector_response(updated)
+    return to_charging_connector_response(updated)
 
 
-async def delete_connector(db: AsyncSession, connector_id: UUID) -> DeleteResponse:
+async def soft_delete_charging_connector(
+    db: AsyncSession, connector_id: UUID
+) -> ChargingResourceDeleteResponse:
     """Soft-delete connector.
 
     Args:
@@ -633,4 +649,4 @@ async def delete_connector(db: AsyncSession, connector_id: UUID) -> DeleteRespon
         raise ChargingConnectorNotFoundError(
             f"Không tìm thấy connector '{connector_id}'"
         )
-    return DeleteResponse(message="Đã xoá mềm connector")
+    return ChargingResourceDeleteResponse(message="Đã xoá mềm connector")

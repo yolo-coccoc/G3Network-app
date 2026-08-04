@@ -29,7 +29,7 @@ router = APIRouter(tags=["charging-sessions"])
     response_model=ChargingSessionListResponse,
     summary="Liệt kê charging session",
 )
-async def list_sessions(
+async def list_charging_sessions(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -49,7 +49,7 @@ async def list_sessions(
         Danh sách session phân trang, không chứa raw payload hoặc field ngoài
         MVP.
     """
-    return await charging_session_service.list_sessions(
+    return await charging_session_service.list_charging_sessions(
         db,
         page=page,
         page_size=page_size,
@@ -61,7 +61,7 @@ async def list_sessions(
     response_model=ChargingSessionResponse,
     summary="Xem charging session",
 )
-async def get_session(
+async def get_charging_session(
     session_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingSessionResponse:
     """Lấy aggregate session theo UUID nội bộ.
@@ -77,7 +77,7 @@ async def get_session(
         HTTPException: ``404`` nếu session không tồn tại.
     """
     try:
-        return await charging_session_service.get_session(db, session_id)
+        return await charging_session_service.get_charging_session(db, session_id)
     except ChargingSessionNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -89,7 +89,7 @@ async def get_session(
     response_model=ChargingSessionEventListResponse,
     summary="Xem event của charging session",
 )
-async def list_session_events(
+async def list_charging_session_events(
     session_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -114,7 +114,7 @@ async def list_session_events(
         HTTPException: ``404`` nếu session không tồn tại.
     """
     try:
-        return await charging_session_service.list_session_events(
+        return await charging_session_service.list_charging_session_events(
             db,
             session_id,
             page=page,
@@ -131,7 +131,7 @@ async def list_session_events(
     response_model=ChargingSessionMeterValueListResponse,
     summary="Xem meter values của charging session",
 )
-async def list_session_meter_values(
+async def list_charging_session_meter_values(
     session_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -156,7 +156,7 @@ async def list_session_meter_values(
         HTTPException: ``404`` nếu session không tồn tại.
     """
     try:
-        return await charging_session_service.list_session_meter_values(
+        return await charging_session_service.list_charging_session_meter_values(
             db,
             session_id,
             page=page,

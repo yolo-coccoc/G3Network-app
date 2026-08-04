@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.libs.common.config import settings
 
 
-class StationCreate(BaseModel):
+class ChargingStationCreateRequest(BaseModel):
     """Dữ liệu tạo station đã pre-provision.
 
     Attributes:
@@ -44,7 +44,7 @@ class StationCreate(BaseModel):
         return normalized
 
 
-class StationUpdate(BaseModel):
+class ChargingStationUpdateRequest(BaseModel):
     """Các identity station được phép cập nhật một phần.
 
     Attributes:
@@ -77,7 +77,7 @@ class StationUpdate(BaseModel):
         return normalized
 
 
-class StationResponse(BaseModel):
+class ChargingStationResponse(BaseModel):
     """Thông tin station active không chứa technical status hoặc raw payload.
 
     Attributes:
@@ -99,7 +99,7 @@ class StationResponse(BaseModel):
     deleted_at: datetime | None
 
 
-class StationListResponse(BaseModel):
+class ChargingStationListResponse(BaseModel):
     """Danh sách station phân trang.
 
     Attributes:
@@ -109,13 +109,13 @@ class StationListResponse(BaseModel):
         page_size: Số item tối đa trong một trang.
     """
 
-    items: list[StationResponse]
+    items: list[ChargingStationResponse]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
-class EvseCreate(BaseModel):
+class ChargingEvseCreateRequest(BaseModel):
     """Dữ liệu tạo EVSE thuộc station.
 
     Attributes:
@@ -125,7 +125,7 @@ class EvseCreate(BaseModel):
     ocpp_evse_id: int = Field(..., gt=0)
 
 
-class EvseUpdate(BaseModel):
+class ChargingEvseUpdateRequest(BaseModel):
     """Identity OCPP của EVSE được phép cập nhật một phần.
 
     Attributes:
@@ -135,7 +135,7 @@ class EvseUpdate(BaseModel):
     ocpp_evse_id: int | None = Field(None, gt=0)
 
 
-class EvseResponse(BaseModel):
+class ChargingEvseResponse(BaseModel):
     """Thông tin EVSE thuộc topology đã pre-provision.
 
     Attributes:
@@ -157,7 +157,7 @@ class EvseResponse(BaseModel):
     deleted_at: datetime | None
 
 
-class EvseListResponse(BaseModel):
+class ChargingEvseListResponse(BaseModel):
     """Danh sách EVSE phân trang.
 
     Attributes:
@@ -167,13 +167,13 @@ class EvseListResponse(BaseModel):
         page_size: Số item tối đa trong một trang.
     """
 
-    items: list[EvseResponse]
+    items: list[ChargingEvseResponse]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
-class ConnectorCreate(BaseModel):
+class ChargingConnectorCreateRequest(BaseModel):
     """Dữ liệu tạo connector thuộc EVSE.
 
     Attributes:
@@ -183,7 +183,7 @@ class ConnectorCreate(BaseModel):
     ocpp_connector_id: int = Field(..., gt=0)
 
 
-class ConnectorUpdate(BaseModel):
+class ChargingConnectorUpdateRequest(BaseModel):
     """Identity OCPP của connector được phép cập nhật một phần.
 
     Attributes:
@@ -193,7 +193,7 @@ class ConnectorUpdate(BaseModel):
     ocpp_connector_id: int | None = Field(None, gt=0)
 
 
-class ConnectorResponse(BaseModel):
+class ChargingConnectorResponse(BaseModel):
     """Thông tin connector thuộc topology đã pre-provision.
 
     Attributes:
@@ -215,7 +215,7 @@ class ConnectorResponse(BaseModel):
     deleted_at: datetime | None
 
 
-class ConnectorListResponse(BaseModel):
+class ChargingConnectorListResponse(BaseModel):
     """Danh sách connector phân trang.
 
     Attributes:
@@ -225,13 +225,13 @@ class ConnectorListResponse(BaseModel):
         page_size: Số item tối đa trong một trang.
     """
 
-    items: list[ConnectorResponse]
+    items: list[ChargingConnectorResponse]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
-class DeleteResponse(BaseModel):
+class ChargingResourceDeleteResponse(BaseModel):
     """Kết quả soft-delete topology.
 
     Attributes:

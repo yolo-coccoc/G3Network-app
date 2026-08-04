@@ -32,7 +32,7 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class ChargingStation(Base):
+class ChargingStationModel(Base):
     """Hồ sơ station đã được pre-provision trong MVP.
 
     Attributes:
@@ -71,7 +71,7 @@ class ChargingStation(Base):
     )
 
 
-class ChargingEvse(Base):
+class ChargingEvseModel(Base):
     """EVSE thuộc một station đã được pre-provision.
 
     Attributes:
@@ -116,7 +116,7 @@ class ChargingEvse(Base):
     )
 
 
-class ChargingConnector(Base):
+class ChargingConnectorModel(Base):
     """Connector vật lý thuộc một EVSE đã được pre-provision.
 
     Attributes:

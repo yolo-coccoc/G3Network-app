@@ -39,7 +39,7 @@ def enum_values(enum_type: type[object]) -> list[str]:
     return [member.value for member in enum_type]  # type: ignore[attr-defined]
 
 
-class ChargingSession(Base):
+class ChargingSessionModel(Base):
     """Aggregate của một OCPP transaction trong happy path.
 
     Attributes:
@@ -123,7 +123,7 @@ class ChargingSession(Base):
     )
 
 
-class ChargingSessionEvent(Base):
+class ChargingSessionEventModel(Base):
     """History tối thiểu của TransactionEvent dưới dạng hypertable.
 
     Attributes:
@@ -166,7 +166,7 @@ class ChargingSessionEvent(Base):
     )
 
 
-class ChargingSessionMeterValue(Base):
+class ChargingSessionMeterValueModel(Base):
     """Energy sample canonical Wh của session dưới dạng hypertable.
 
     Attributes:

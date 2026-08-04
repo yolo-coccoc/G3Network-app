@@ -16,9 +16,9 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionNotFoundError,
 )
 from app.domains.charging_sessions.models import (
-    ChargingSession,
-    ChargingSessionEvent,
-    ChargingSessionMeterValue,
+    ChargingSessionEventModel,
+    ChargingSessionMeterValueModel,
+    ChargingSessionModel,
 )
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
@@ -78,7 +78,9 @@ def _energy(value: Decimal | None, field_name: str) -> Decimal | None:
     return value
 
 
-def _apply_meter_end(session: ChargingSession, meter_end_wh: Decimal | None) -> None:
+def _apply_charging_session_meter_end(
+    session: ChargingSessionModel, meter_end_wh: Decimal | None
+) -> None:
     """Cập nhật meter cuối và energy delivered cho ORM session.
 
     Args:
@@ -118,7 +120,9 @@ def _paging(page: int, page_size: int) -> tuple[int, int, int]:
     )
 
 
-async def get_session(db: AsyncSession, session_id: UUID) -> ChargingSessionResponse:
+async def get_charging_session(
+    db: AsyncSession, session_id: UUID
+) -> ChargingSessionResponse:
     """Lấy aggregate session cho endpoint monitoring.
 
     Args:
@@ -140,7 +144,7 @@ async def get_session(db: AsyncSession, session_id: UUID) -> ChargingSessionResp
     return ChargingSessionResponse.model_validate(session)
 
 
-async def list_sessions(
+async def list_charging_sessions(
     db: AsyncSession,
     *,
     page: int,
@@ -161,7 +165,7 @@ async def list_sessions(
         ORM nên endpoint không tạo N+1 query và không commit/rollback.
     """
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
-    sessions = await repository.list_sessions(
+    sessions = await repository.list_charging_sessions(
         db,
         offset=offset,
         limit=normalized_page_size,
@@ -175,7 +179,7 @@ async def list_sessions(
     )
 
 
-async def list_session_events(
+async def list_charging_session_events(
     db: AsyncSession,
     session_id: UUID,
     *,
@@ -200,9 +204,9 @@ async def list_session_events(
         Thực hiện một lookup session và hai truy vấn event (items/count); không
         load quan hệ ORM nên endpoint không tạo N+1 query.
     """
-    await _require_session(db, session_id)
+    await require_charging_session(db, session_id)
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
-    events = await repository.list_session_events(
+    events = await repository.list_charging_session_events(
         db,
         session_id,
         offset=offset,
@@ -210,14 +214,14 @@ async def list_session_events(
     )
     total = await repository.count_session_events(db, session_id)
     return ChargingSessionEventListResponse(
-        items=[_event_response(event) for event in events],
+        items=[to_charging_session_event_response(event) for event in events],
         total=total,
         page=normalized_page,
         page_size=normalized_page_size,
     )
 
 
-async def list_session_meter_values(
+async def list_charging_session_meter_values(
     db: AsyncSession,
     session_id: UUID,
     *,
@@ -242,9 +246,9 @@ async def list_session_meter_values(
         Thực hiện một lookup session và hai truy vấn meter (items/count); không
         load quan hệ ORM nên endpoint không tạo N+1 query.
     """
-    await _require_session(db, session_id)
+    await require_charging_session(db, session_id)
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
-    meter_values = await repository.list_session_meter_values(
+    meter_values = await repository.list_charging_session_meter_values(
         db,
         session_id,
         offset=offset,
@@ -252,14 +256,18 @@ async def list_session_meter_values(
     )
     total = await repository.count_session_meter_values(db, session_id)
     return ChargingSessionMeterValueListResponse(
-        items=[_meter_value_response(meter) for meter in meter_values],
+        items=[
+            to_charging_session_meter_value_response(meter) for meter in meter_values
+        ],
         total=total,
         page=normalized_page,
         page_size=normalized_page_size,
     )
 
 
-async def _require_session(db: AsyncSession, session_id: UUID) -> ChargingSession:
+async def require_charging_session(
+    db: AsyncSession, session_id: UUID
+) -> ChargingSessionModel:
     """Đảm bảo session tồn tại trước khi đọc history.
 
     Args:
@@ -278,7 +286,9 @@ async def _require_session(db: AsyncSession, session_id: UUID) -> ChargingSessio
     return session
 
 
-def _event_response(event: ChargingSessionEvent) -> ChargingSessionEventResponse:
+def to_charging_session_event_response(
+    event: ChargingSessionEventModel,
+) -> ChargingSessionEventResponse:
     """Chuyển ORM event thành response schema monitoring.
 
     Args:
@@ -290,8 +300,8 @@ def _event_response(event: ChargingSessionEvent) -> ChargingSessionEventResponse
     return ChargingSessionEventResponse.model_validate(event)
 
 
-def _meter_value_response(
-    meter_value: ChargingSessionMeterValue,
+def to_charging_session_meter_value_response(
+    meter_value: ChargingSessionMeterValueModel,
 ) -> ChargingSessionMeterValueResponse:
     """Chuyển ORM meter sample thành response schema monitoring.
 
@@ -353,7 +363,7 @@ async def ingest_transaction_event(
     meter_start = _energy(meter_start_wh, "meter_start_wh")
     meter_end = _energy(meter_end_wh, "meter_end_wh")
 
-    session: ChargingSession | None
+    session: ChargingSessionModel | None
     if event_type == SessionEventType.STARTED:
         # Duplicate/idempotency và conflict được bảo vệ bởi unique constraint
         # nhưng chưa có nhánh xử lý riêng trong happy path MVP.
@@ -383,7 +393,7 @@ async def ingest_transaction_event(
         event_occurred_at=occurred_at,
         event_type=event_type,
     )
-    _apply_meter_end(session, meter_end)
+    _apply_charging_session_meter_end(session, meter_end)
 
     if event_type is SessionEventType.ENDED:
         session.ended_at = occurred_at
@@ -439,7 +449,7 @@ async def ingest_meter_values(
         sampled_at=sampled_at,
         value_wh=value_wh,
     )
-    _apply_meter_end(session, value_wh)
+    _apply_charging_session_meter_end(session, value_wh)
 
     session.updated_at = repository.utc_now()
     return MeterIngestResult(

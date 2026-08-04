@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.charging_stations.models import (
-    ChargingConnector,
-    ChargingEvse,
-    ChargingStation,
+    ChargingConnectorModel,
+    ChargingEvseModel,
+    ChargingStationModel,
 )
 
 
@@ -29,12 +29,12 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def create_station(
+async def create_charging_station(
     db: AsyncSession,
     *,
     ocpp_identity: str,
     display_name: str,
-) -> ChargingStation:
+) -> ChargingStationModel:
     """Tạo station và flush để phát hiện constraint ngay trong transaction.
 
     Args:
@@ -45,7 +45,7 @@ async def create_station(
     Returns:
         Station vừa được persistence.
     """
-    station = ChargingStation(
+    station = ChargingStationModel(
         ocpp_identity=ocpp_identity,
         display_name=display_name,
     )
@@ -57,7 +57,7 @@ async def create_station(
 
 async def get_station_by_id(
     db: AsyncSession, station_id: UUID, *, include_deleted: bool = False
-) -> ChargingStation | None:
+) -> ChargingStationModel | None:
     """Tìm station theo internal ID.
 
     Args:
@@ -68,16 +68,18 @@ async def get_station_by_id(
     Returns:
         Station phù hợp hoặc None.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStation.station_id == station_id]
+    conditions: list[ColumnElement[bool]] = [
+        ChargingStationModel.station_id == station_id
+    ]
     if not include_deleted:
-        conditions.append(ChargingStation.deleted_at.is_(None))
-    result = await db.execute(select(ChargingStation).where(and_(*conditions)))
+        conditions.append(ChargingStationModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingStationModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
 async def get_station_by_identity(
     db: AsyncSession, ocpp_identity: str, *, include_deleted: bool = True
-) -> ChargingStation | None:
+) -> ChargingStationModel | None:
     """Tìm station theo OCPP identity.
 
     Args:
@@ -90,20 +92,20 @@ async def get_station_by_identity(
         Station phù hợp hoặc ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
-        ChargingStation.ocpp_identity == ocpp_identity
+        ChargingStationModel.ocpp_identity == ocpp_identity
     ]
     if not include_deleted:
-        conditions.append(ChargingStation.deleted_at.is_(None))
-    result = await db.execute(select(ChargingStation).where(and_(*conditions)))
+        conditions.append(ChargingStationModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingStationModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
-async def list_stations(
+async def list_charging_stations(
     db: AsyncSession,
     *,
     offset: int,
     limit: int,
-) -> list[ChargingStation]:
+) -> list[ChargingStationModel]:
     """Lấy station chưa soft-delete theo thứ tự ổn định.
 
     Args:
@@ -114,11 +116,14 @@ async def list_stations(
     Returns:
         Danh sách station active theo thứ tự tạo giảm dần.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
+    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
-        select(ChargingStation)
+        select(ChargingStationModel)
         .where(and_(*conditions))
-        .order_by(ChargingStation.created_at.desc(), ChargingStation.station_id.desc())
+        .order_by(
+            ChargingStationModel.created_at.desc(),
+            ChargingStationModel.station_id.desc(),
+        )
         .offset(offset)
         .limit(limit)
     )
@@ -136,16 +141,16 @@ async def count_stations(
     Returns:
         Số station chưa soft-delete.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStation.deleted_at.is_(None)]
+    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
-        select(func.count(ChargingStation.station_id)).where(and_(*conditions))
+        select(func.count(ChargingStationModel.station_id)).where(and_(*conditions))
     )
     return int(result.scalar() or 0)
 
 
-async def update_station(
+async def update_charging_station(
     db: AsyncSession, station_id: UUID, update_data: Mapping[str, object]
-) -> ChargingStation | None:
+) -> ChargingStationModel | None:
     """Cập nhật station active bằng các field đã được service lọc.
 
     Args:
@@ -189,9 +194,9 @@ async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
 
     now = utc_now()
     evse_result = await db.execute(
-        select(ChargingEvse.evse_id).where(
-            ChargingEvse.station_id == station_id,
-            ChargingEvse.deleted_at.is_(None),
+        select(ChargingEvseModel.evse_id).where(
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
         )
     )
     evse_ids = list(evse_result.scalars().all())
@@ -199,16 +204,16 @@ async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
         # Cập nhật connector trước EVSE để giữ topology con nhất quán trong
         # cùng transaction, kể cả khi caller rollback ở entry boundary.
         await db.execute(
-            update(ChargingConnector)
+            update(ChargingConnectorModel)
             .where(
-                ChargingConnector.evse_id.in_(evse_ids),
-                ChargingConnector.deleted_at.is_(None),
+                ChargingConnectorModel.evse_id.in_(evse_ids),
+                ChargingConnectorModel.deleted_at.is_(None),
             )
             .values(deleted_at=now, updated_at=now)
         )
         await db.execute(
-            update(ChargingEvse)
-            .where(ChargingEvse.evse_id.in_(evse_ids))
+            update(ChargingEvseModel)
+            .where(ChargingEvseModel.evse_id.in_(evse_ids))
             .values(deleted_at=now, updated_at=now)
         )
     station.deleted_at = now
@@ -217,12 +222,12 @@ async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
     return True
 
 
-async def create_evse(
+async def create_charging_evse(
     db: AsyncSession,
     *,
     station_id: UUID,
     ocpp_evse_id: int,
-) -> ChargingEvse:
+) -> ChargingEvseModel:
     """Tạo EVSE và flush constraint/FK trong transaction hiện tại.
 
     Args:
@@ -236,7 +241,7 @@ async def create_evse(
     Side Effects:
         Thêm record, flush và refresh generated values; không commit.
     """
-    evse = ChargingEvse(
+    evse = ChargingEvseModel(
         station_id=station_id,
         ocpp_evse_id=ocpp_evse_id,
     )
@@ -248,7 +253,7 @@ async def create_evse(
 
 async def get_evse_by_id(
     db: AsyncSession, evse_id: UUID, *, include_deleted: bool = False
-) -> ChargingEvse | None:
+) -> ChargingEvseModel | None:
     """Tìm EVSE theo internal ID.
 
     Args:
@@ -259,10 +264,10 @@ async def get_evse_by_id(
     Returns:
         EVSE phù hợp hoặc ``None``.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingEvse.evse_id == evse_id]
+    conditions: list[ColumnElement[bool]] = [ChargingEvseModel.evse_id == evse_id]
     if not include_deleted:
-        conditions.append(ChargingEvse.deleted_at.is_(None))
-    result = await db.execute(select(ChargingEvse).where(and_(*conditions)))
+        conditions.append(ChargingEvseModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingEvseModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
@@ -272,7 +277,7 @@ async def get_evse_by_identity(
     ocpp_evse_id: int,
     *,
     include_deleted: bool = True,
-) -> ChargingEvse | None:
+) -> ChargingEvseModel | None:
     """Tìm EVSE theo identity composite station/OCPP ID.
 
     Args:
@@ -285,18 +290,18 @@ async def get_evse_by_identity(
         EVSE phù hợp hoặc ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
-        ChargingEvse.station_id == station_id,
-        ChargingEvse.ocpp_evse_id == ocpp_evse_id,
+        ChargingEvseModel.station_id == station_id,
+        ChargingEvseModel.ocpp_evse_id == ocpp_evse_id,
     ]
     if not include_deleted:
-        conditions.append(ChargingEvse.deleted_at.is_(None))
-    result = await db.execute(select(ChargingEvse).where(and_(*conditions)))
+        conditions.append(ChargingEvseModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingEvseModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
-async def list_evses(
+async def list_charging_evses(
     db: AsyncSession, *, station_id: UUID, offset: int, limit: int
-) -> list[ChargingEvse]:
+) -> list[ChargingEvseModel]:
     """Lấy EVSE active của một station theo thứ tự ổn định.
 
     Args:
@@ -309,12 +314,12 @@ async def list_evses(
         Danh sách EVSE active.
     """
     result = await db.execute(
-        select(ChargingEvse)
+        select(ChargingEvseModel)
         .where(
-            ChargingEvse.station_id == station_id,
-            ChargingEvse.deleted_at.is_(None),
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
         )
-        .order_by(ChargingEvse.created_at.asc(), ChargingEvse.evse_id.asc())
+        .order_by(ChargingEvseModel.created_at.asc(), ChargingEvseModel.evse_id.asc())
         .offset(offset)
         .limit(limit)
     )
@@ -332,17 +337,17 @@ async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
         Số EVSE active.
     """
     result = await db.execute(
-        select(func.count(ChargingEvse.evse_id)).where(
-            ChargingEvse.station_id == station_id,
-            ChargingEvse.deleted_at.is_(None),
+        select(func.count(ChargingEvseModel.evse_id)).where(
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
         )
     )
     return int(result.scalar() or 0)
 
 
-async def update_evse(
+async def update_charging_evse(
     db: AsyncSession, evse_id: UUID, update_data: Mapping[str, object]
-) -> ChargingEvse | None:
+) -> ChargingEvseModel | None:
     """Cập nhật EVSE active bằng field đã được service kiểm tra.
 
     Args:
@@ -385,10 +390,10 @@ async def soft_delete_evse(db: AsyncSession, evse_id: UUID) -> bool:
         return False
     now = utc_now()
     await db.execute(
-        update(ChargingConnector)
+        update(ChargingConnectorModel)
         .where(
-            ChargingConnector.evse_id == evse_id,
-            ChargingConnector.deleted_at.is_(None),
+            ChargingConnectorModel.evse_id == evse_id,
+            ChargingConnectorModel.deleted_at.is_(None),
         )
         .values(deleted_at=now, updated_at=now)
     )
@@ -398,12 +403,12 @@ async def soft_delete_evse(db: AsyncSession, evse_id: UUID) -> bool:
     return True
 
 
-async def create_connector(
+async def create_charging_connector(
     db: AsyncSession,
     *,
     evse_id: UUID,
     ocpp_connector_id: int,
-) -> ChargingConnector:
+) -> ChargingConnectorModel:
     """Tạo connector và flush constraint/FK trong transaction hiện tại.
 
     Args:
@@ -417,7 +422,7 @@ async def create_connector(
     Side Effects:
         Thêm record, flush và refresh generated values; không commit.
     """
-    connector = ChargingConnector(
+    connector = ChargingConnectorModel(
         evse_id=evse_id,
         ocpp_connector_id=ocpp_connector_id,
     )
@@ -429,7 +434,7 @@ async def create_connector(
 
 async def get_connector_by_id(
     db: AsyncSession, connector_id: UUID, *, include_deleted: bool = False
-) -> ChargingConnector | None:
+) -> ChargingConnectorModel | None:
     """Tìm connector theo internal ID.
 
     Args:
@@ -441,11 +446,11 @@ async def get_connector_by_id(
         Connector phù hợp hoặc ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
-        ChargingConnector.connector_id == connector_id
+        ChargingConnectorModel.connector_id == connector_id
     ]
     if not include_deleted:
-        conditions.append(ChargingConnector.deleted_at.is_(None))
-    result = await db.execute(select(ChargingConnector).where(and_(*conditions)))
+        conditions.append(ChargingConnectorModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingConnectorModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
@@ -455,7 +460,7 @@ async def get_connector_by_identity(
     ocpp_connector_id: int,
     *,
     include_deleted: bool = True,
-) -> ChargingConnector | None:
+) -> ChargingConnectorModel | None:
     """Tìm connector theo identity composite EVSE/OCPP ID.
 
     Args:
@@ -468,18 +473,18 @@ async def get_connector_by_identity(
         Connector phù hợp hoặc ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
-        ChargingConnector.evse_id == evse_id,
-        ChargingConnector.ocpp_connector_id == ocpp_connector_id,
+        ChargingConnectorModel.evse_id == evse_id,
+        ChargingConnectorModel.ocpp_connector_id == ocpp_connector_id,
     ]
     if not include_deleted:
-        conditions.append(ChargingConnector.deleted_at.is_(None))
-    result = await db.execute(select(ChargingConnector).where(and_(*conditions)))
+        conditions.append(ChargingConnectorModel.deleted_at.is_(None))
+    result = await db.execute(select(ChargingConnectorModel).where(and_(*conditions)))
     return result.scalar_one_or_none()
 
 
-async def list_connectors(
+async def list_charging_connectors(
     db: AsyncSession, *, evse_id: UUID, offset: int, limit: int
-) -> list[ChargingConnector]:
+) -> list[ChargingConnectorModel]:
     """Lấy connector active của một EVSE theo thứ tự ổn định.
 
     Args:
@@ -492,13 +497,14 @@ async def list_connectors(
         Danh sách connector active.
     """
     result = await db.execute(
-        select(ChargingConnector)
+        select(ChargingConnectorModel)
         .where(
-            ChargingConnector.evse_id == evse_id,
-            ChargingConnector.deleted_at.is_(None),
+            ChargingConnectorModel.evse_id == evse_id,
+            ChargingConnectorModel.deleted_at.is_(None),
         )
         .order_by(
-            ChargingConnector.created_at.asc(), ChargingConnector.connector_id.asc()
+            ChargingConnectorModel.created_at.asc(),
+            ChargingConnectorModel.connector_id.asc(),
         )
         .offset(offset)
         .limit(limit)
@@ -517,17 +523,17 @@ async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
         Số connector active.
     """
     result = await db.execute(
-        select(func.count(ChargingConnector.connector_id)).where(
-            ChargingConnector.evse_id == evse_id,
-            ChargingConnector.deleted_at.is_(None),
+        select(func.count(ChargingConnectorModel.connector_id)).where(
+            ChargingConnectorModel.evse_id == evse_id,
+            ChargingConnectorModel.deleted_at.is_(None),
         )
     )
     return int(result.scalar() or 0)
 
 
-async def update_connector(
+async def update_charging_connector(
     db: AsyncSession, connector_id: UUID, update_data: Mapping[str, object]
-) -> ChargingConnector | None:
+) -> ChargingConnectorModel | None:
     """Cập nhật connector active bằng field đã được service kiểm tra.
 
     Args:

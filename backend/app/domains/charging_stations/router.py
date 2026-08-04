@@ -18,19 +18,19 @@ from app.domains.charging_stations.exceptions import (
     ChargingTopologyConflictError,
 )
 from app.domains.charging_stations.schemas import (
-    ConnectorCreate,
-    ConnectorListResponse,
-    ConnectorResponse,
-    ConnectorUpdate,
-    DeleteResponse,
-    EvseCreate,
-    EvseListResponse,
-    EvseResponse,
-    EvseUpdate,
-    StationCreate,
-    StationListResponse,
-    StationResponse,
-    StationUpdate,
+    ChargingConnectorCreateRequest,
+    ChargingConnectorListResponse,
+    ChargingConnectorResponse,
+    ChargingConnectorUpdateRequest,
+    ChargingEvseCreateRequest,
+    ChargingEvseListResponse,
+    ChargingEvseResponse,
+    ChargingEvseUpdateRequest,
+    ChargingResourceDeleteResponse,
+    ChargingStationCreateRequest,
+    ChargingStationListResponse,
+    ChargingStationResponse,
+    ChargingStationUpdateRequest,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -41,12 +41,12 @@ router = APIRouter(tags=["charging-stations"])
 @router.post(
     "/charging-stations",
     status_code=status.HTTP_201_CREATED,
-    response_model=StationResponse,
+    response_model=ChargingStationResponse,
     summary="Tạo charging station",
 )
-async def create_station(
-    station_data: StationCreate, db: AsyncSession = Depends(get_db)
-) -> StationResponse:
+async def create_charging_station(
+    station_data: ChargingStationCreateRequest, db: AsyncSession = Depends(get_db)
+) -> ChargingStationResponse:
     """Tạo station đã pre-provision.
 
     Args:
@@ -60,7 +60,7 @@ async def create_station(
         HTTPException: ``409`` nếu OCPP identity đã tồn tại.
     """
     try:
-        return await charging_service.create_station(db, station_data)
+        return await charging_service.create_charging_station(db, station_data)
     except ChargingTopologyConflictError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(error)
@@ -69,10 +69,10 @@ async def create_station(
 
 @router.get(
     "/charging-stations",
-    response_model=StationListResponse,
+    response_model=ChargingStationListResponse,
     summary="Liệt kê charging station",
 )
-async def list_stations(
+async def list_charging_stations(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -80,7 +80,7 @@ async def list_stations(
         le=settings.API_MAX_PAGE_SIZE,
     ),
     db: AsyncSession = Depends(get_db),
-) -> StationListResponse:
+) -> ChargingStationListResponse:
     """Liệt kê station active với phân trang.
 
     Args:
@@ -91,7 +91,7 @@ async def list_stations(
     Returns:
         HTTP response danh sách station.
     """
-    return await charging_service.list_stations(
+    return await charging_service.list_charging_stations(
         db,
         page=page,
         page_size=page_size,
@@ -101,14 +101,14 @@ async def list_stations(
 @router.post(
     "/charging-stations/{station_id}/evses",
     status_code=status.HTTP_201_CREATED,
-    response_model=EvseResponse,
+    response_model=ChargingEvseResponse,
     summary="Tạo EVSE thuộc station",
 )
-async def create_evse(
+async def create_charging_evse(
     station_id: UUID,
-    evse_data: EvseCreate,
+    evse_data: ChargingEvseCreateRequest,
     db: AsyncSession = Depends(get_db),
-) -> EvseResponse:
+) -> ChargingEvseResponse:
     """Tạo EVSE thuộc station active.
 
     Args:
@@ -124,7 +124,7 @@ async def create_evse(
             EVSE bị trùng.
     """
     try:
-        return await charging_service.create_evse(db, station_id, evse_data)
+        return await charging_service.create_charging_evse(db, station_id, evse_data)
     except ChargingStationNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -137,10 +137,10 @@ async def create_evse(
 
 @router.get(
     "/charging-stations/{station_id}/evses",
-    response_model=EvseListResponse,
+    response_model=ChargingEvseListResponse,
     summary="Liệt kê EVSE của station",
 )
-async def list_evses(
+async def list_charging_evses(
     station_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -149,7 +149,7 @@ async def list_evses(
         le=settings.API_MAX_PAGE_SIZE,
     ),
     db: AsyncSession = Depends(get_db),
-) -> EvseListResponse:
+) -> ChargingEvseListResponse:
     """Liệt kê EVSE active thuộc station.
 
     Args:
@@ -165,7 +165,7 @@ async def list_evses(
         HTTPException: ``404`` nếu station parent không active.
     """
     try:
-        return await charging_service.list_evses(
+        return await charging_service.list_charging_evses(
             db, station_id, page=page, page_size=page_size
         )
     except ChargingStationNotFoundError as error:
@@ -177,14 +177,14 @@ async def list_evses(
 @router.post(
     "/charging-evses/{evse_id}/connectors",
     status_code=status.HTTP_201_CREATED,
-    response_model=ConnectorResponse,
+    response_model=ChargingConnectorResponse,
     summary="Tạo connector thuộc EVSE",
 )
-async def create_connector(
+async def create_charging_connector(
     evse_id: UUID,
-    connector_data: ConnectorCreate,
+    connector_data: ChargingConnectorCreateRequest,
     db: AsyncSession = Depends(get_db),
-) -> ConnectorResponse:
+) -> ChargingConnectorResponse:
     """Tạo connector thuộc EVSE active.
 
     Args:
@@ -200,7 +200,9 @@ async def create_connector(
             connector bị trùng.
     """
     try:
-        return await charging_service.create_connector(db, evse_id, connector_data)
+        return await charging_service.create_charging_connector(
+            db, evse_id, connector_data
+        )
     except ChargingEvseNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -213,10 +215,10 @@ async def create_connector(
 
 @router.get(
     "/charging-evses/{evse_id}/connectors",
-    response_model=ConnectorListResponse,
+    response_model=ChargingConnectorListResponse,
     summary="Liệt kê connector của EVSE",
 )
-async def list_connectors(
+async def list_charging_connectors(
     evse_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -225,7 +227,7 @@ async def list_connectors(
         le=settings.API_MAX_PAGE_SIZE,
     ),
     db: AsyncSession = Depends(get_db),
-) -> ConnectorListResponse:
+) -> ChargingConnectorListResponse:
     """Liệt kê connector active thuộc EVSE.
 
     Args:
@@ -241,7 +243,7 @@ async def list_connectors(
         HTTPException: ``404`` nếu EVSE parent không active.
     """
     try:
-        return await charging_service.list_connectors(
+        return await charging_service.list_charging_connectors(
             db, evse_id, page=page, page_size=page_size
         )
     except ChargingEvseNotFoundError as error:
@@ -252,12 +254,12 @@ async def list_connectors(
 
 @router.get(
     "/charging-stations/{station_id}",
-    response_model=StationResponse,
+    response_model=ChargingStationResponse,
     summary="Lấy charging station",
 )
-async def get_station(
+async def get_charging_station(
     station_id: UUID, db: AsyncSession = Depends(get_db)
-) -> StationResponse:
+) -> ChargingStationResponse:
     """Lấy station active theo UUID.
 
     Args:
@@ -271,7 +273,7 @@ async def get_station(
         HTTPException: ``404`` nếu station không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.get_station(db, station_id)
+        return await charging_service.get_charging_station(db, station_id)
     except ChargingStationNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -280,14 +282,14 @@ async def get_station(
 
 @router.patch(
     "/charging-stations/{station_id}",
-    response_model=StationResponse,
+    response_model=ChargingStationResponse,
     summary="Cập nhật charging station",
 )
-async def update_station(
+async def update_charging_station(
     station_id: UUID,
-    station_data: StationUpdate,
+    station_data: ChargingStationUpdateRequest,
     db: AsyncSession = Depends(get_db),
-) -> StationResponse:
+) -> ChargingStationResponse:
     """PATCH station với các field được gửi trong request.
 
     Args:
@@ -303,7 +305,9 @@ async def update_station(
             mới bị trùng.
     """
     try:
-        return await charging_service.update_station(db, station_id, station_data)
+        return await charging_service.update_charging_station(
+            db, station_id, station_data
+        )
     except ChargingStationNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -316,12 +320,12 @@ async def update_station(
 
 @router.delete(
     "/charging-stations/{station_id}",
-    response_model=DeleteResponse,
+    response_model=ChargingResourceDeleteResponse,
     summary="Xoá mềm charging station",
 )
-async def delete_station(
+async def soft_delete_charging_station(
     station_id: UUID, db: AsyncSession = Depends(get_db)
-) -> DeleteResponse:
+) -> ChargingResourceDeleteResponse:
     """Soft-delete station và topology con.
 
     Args:
@@ -335,7 +339,7 @@ async def delete_station(
         HTTPException: ``404`` nếu station không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.delete_station(db, station_id)
+        return await charging_service.soft_delete_charging_station(db, station_id)
     except ChargingStationNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -344,10 +348,12 @@ async def delete_station(
 
 @router.get(
     "/charging-evses/{evse_id}",
-    response_model=EvseResponse,
+    response_model=ChargingEvseResponse,
     summary="Lấy EVSE",
 )
-async def get_evse(evse_id: UUID, db: AsyncSession = Depends(get_db)) -> EvseResponse:
+async def get_charging_evse(
+    evse_id: UUID, db: AsyncSession = Depends(get_db)
+) -> ChargingEvseResponse:
     """Lấy EVSE active theo UUID.
 
     Args:
@@ -361,7 +367,7 @@ async def get_evse(evse_id: UUID, db: AsyncSession = Depends(get_db)) -> EvseRes
         HTTPException: ``404`` nếu EVSE không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.get_evse(db, evse_id)
+        return await charging_service.get_charging_evse(db, evse_id)
     except ChargingEvseNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -370,14 +376,14 @@ async def get_evse(evse_id: UUID, db: AsyncSession = Depends(get_db)) -> EvseRes
 
 @router.patch(
     "/charging-evses/{evse_id}",
-    response_model=EvseResponse,
+    response_model=ChargingEvseResponse,
     summary="Cập nhật EVSE",
 )
-async def update_evse(
+async def update_charging_evse(
     evse_id: UUID,
-    evse_data: EvseUpdate,
+    evse_data: ChargingEvseUpdateRequest,
     db: AsyncSession = Depends(get_db),
-) -> EvseResponse:
+) -> ChargingEvseResponse:
     """PATCH EVSE với các field được gửi trong request.
 
     Args:
@@ -393,7 +399,7 @@ async def update_evse(
             bị trùng trong station.
     """
     try:
-        return await charging_service.update_evse(db, evse_id, evse_data)
+        return await charging_service.update_charging_evse(db, evse_id, evse_data)
     except ChargingEvseNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -406,12 +412,12 @@ async def update_evse(
 
 @router.delete(
     "/charging-evses/{evse_id}",
-    response_model=DeleteResponse,
+    response_model=ChargingResourceDeleteResponse,
     summary="Xoá mềm EVSE",
 )
-async def delete_evse(
+async def soft_delete_charging_evse(
     evse_id: UUID, db: AsyncSession = Depends(get_db)
-) -> DeleteResponse:
+) -> ChargingResourceDeleteResponse:
     """Soft-delete EVSE và connector con.
 
     Args:
@@ -425,7 +431,7 @@ async def delete_evse(
         HTTPException: ``404`` nếu EVSE không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.delete_evse(db, evse_id)
+        return await charging_service.soft_delete_charging_evse(db, evse_id)
     except ChargingEvseNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -434,12 +440,12 @@ async def delete_evse(
 
 @router.get(
     "/charging-connectors/{connector_id}",
-    response_model=ConnectorResponse,
+    response_model=ChargingConnectorResponse,
     summary="Lấy connector",
 )
-async def get_connector(
+async def get_charging_connector(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
-) -> ConnectorResponse:
+) -> ChargingConnectorResponse:
     """Lấy connector active theo UUID.
 
     Args:
@@ -453,7 +459,7 @@ async def get_connector(
         HTTPException: ``404`` nếu connector không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.get_connector(db, connector_id)
+        return await charging_service.get_charging_connector(db, connector_id)
     except ChargingConnectorNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -462,14 +468,14 @@ async def get_connector(
 
 @router.patch(
     "/charging-connectors/{connector_id}",
-    response_model=ConnectorResponse,
+    response_model=ChargingConnectorResponse,
     summary="Cập nhật connector",
 )
-async def update_connector(
+async def update_charging_connector(
     connector_id: UUID,
-    connector_data: ConnectorUpdate,
+    connector_data: ChargingConnectorUpdateRequest,
     db: AsyncSession = Depends(get_db),
-) -> ConnectorResponse:
+) -> ChargingConnectorResponse:
     """PATCH connector với các field được gửi trong request.
 
     Args:
@@ -485,7 +491,9 @@ async def update_connector(
             mới bị trùng trong EVSE.
     """
     try:
-        return await charging_service.update_connector(db, connector_id, connector_data)
+        return await charging_service.update_charging_connector(
+            db, connector_id, connector_data
+        )
     except ChargingConnectorNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
@@ -498,12 +506,12 @@ async def update_connector(
 
 @router.delete(
     "/charging-connectors/{connector_id}",
-    response_model=DeleteResponse,
+    response_model=ChargingResourceDeleteResponse,
     summary="Xoá mềm connector",
 )
-async def delete_connector(
+async def soft_delete_charging_connector(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
-) -> DeleteResponse:
+) -> ChargingResourceDeleteResponse:
     """Soft-delete connector.
 
     Args:
@@ -517,7 +525,7 @@ async def delete_connector(
         HTTPException: ``404`` nếu connector không tồn tại hoặc đã xoá.
     """
     try:
-        return await charging_service.delete_connector(db, connector_id)
+        return await charging_service.soft_delete_charging_connector(db, connector_id)
     except ChargingConnectorNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)

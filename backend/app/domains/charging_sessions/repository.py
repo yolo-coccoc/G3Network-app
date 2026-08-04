@@ -12,9 +12,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.charging_sessions.models import (
-    ChargingSession,
-    ChargingSessionEvent,
-    ChargingSessionMeterValue,
+    ChargingSessionEventModel,
+    ChargingSessionMeterValueModel,
+    ChargingSessionModel,
 )
 from app.domains.charging_sessions.types import SessionEventType, SessionStatus
 
@@ -32,7 +32,7 @@ async def get_session_by_transaction(
     db: AsyncSession,
     station_id: UUID,
     transaction_id: str,
-) -> ChargingSession | None:
+) -> ChargingSessionModel | None:
     """Tìm aggregate theo cặp station và OCPP transaction identity.
 
     Args:
@@ -46,9 +46,9 @@ async def get_session_by_transaction(
     # Reconnect, unknown-transaction và duplicate resolution là contract
     # production bị hoãn; repository chỉ cung cấp lookup nguyên thủy cho MVP.
     result = await db.execute(
-        select(ChargingSession).where(
-            ChargingSession.station_id == station_id,
-            ChargingSession.ocpp_transaction_id == transaction_id,
+        select(ChargingSessionModel).where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.ocpp_transaction_id == transaction_id,
         )
     )
     return result.scalar_one_or_none()
@@ -56,7 +56,7 @@ async def get_session_by_transaction(
 
 async def get_session_by_id(
     db: AsyncSession, session_id: UUID
-) -> ChargingSession | None:
+) -> ChargingSessionModel | None:
     """Tìm aggregate theo UUID nội bộ.
 
     Args:
@@ -67,17 +67,19 @@ async def get_session_by_id(
         Aggregate phù hợp hoặc ``None`` nếu không tồn tại.
     """
     result = await db.execute(
-        select(ChargingSession).where(ChargingSession.session_id == session_id)
+        select(ChargingSessionModel).where(
+            ChargingSessionModel.session_id == session_id
+        )
     )
     return result.scalar_one_or_none()
 
 
-async def list_sessions(
+async def list_charging_sessions(
     db: AsyncSession,
     *,
     offset: int,
     limit: int,
-) -> list[ChargingSession]:
+) -> list[ChargingSessionModel]:
     """Lấy danh sách aggregate session mới nhất trước.
 
     Args:
@@ -90,10 +92,10 @@ async def list_sessions(
         giảm dần để dễ tìm session vừa chạy simulator.
     """
     result = await db.execute(
-        select(ChargingSession)
+        select(ChargingSessionModel)
         .order_by(
-            ChargingSession.created_at.desc(),
-            ChargingSession.session_id.desc(),
+            ChargingSessionModel.created_at.desc(),
+            ChargingSessionModel.session_id.desc(),
         )
         .offset(offset)
         .limit(limit)
@@ -110,17 +112,17 @@ async def count_sessions(db: AsyncSession) -> int:
     Returns:
         Tổng số session trong database.
     """
-    result = await db.execute(select(func.count(ChargingSession.session_id)))
+    result = await db.execute(select(func.count(ChargingSessionModel.session_id)))
     return int(result.scalar() or 0)
 
 
-async def list_session_events(
+async def list_charging_session_events(
     db: AsyncSession,
     session_id: UUID,
     *,
     offset: int,
     limit: int,
-) -> list[ChargingSessionEvent]:
+) -> list[ChargingSessionEventModel]:
     """Lấy lifecycle event của một session theo thứ tự thời gian tăng dần.
 
     Args:
@@ -133,11 +135,11 @@ async def list_session_events(
         Event history đã phân trang ổn định.
     """
     result = await db.execute(
-        select(ChargingSessionEvent)
-        .where(ChargingSessionEvent.session_id == session_id)
+        select(ChargingSessionEventModel)
+        .where(ChargingSessionEventModel.session_id == session_id)
         .order_by(
-            ChargingSessionEvent.event_occurred_at.asc(),
-            ChargingSessionEvent.event_id.asc(),
+            ChargingSessionEventModel.event_occurred_at.asc(),
+            ChargingSessionEventModel.event_id.asc(),
         )
         .offset(offset)
         .limit(limit)
@@ -156,20 +158,20 @@ async def count_session_events(db: AsyncSession, session_id: UUID) -> int:
         Tổng số event của session.
     """
     result = await db.execute(
-        select(func.count(ChargingSessionEvent.event_id)).where(
-            ChargingSessionEvent.session_id == session_id
+        select(func.count(ChargingSessionEventModel.event_id)).where(
+            ChargingSessionEventModel.session_id == session_id
         )
     )
     return int(result.scalar() or 0)
 
 
-async def list_session_meter_values(
+async def list_charging_session_meter_values(
     db: AsyncSession,
     session_id: UUID,
     *,
     offset: int,
     limit: int,
-) -> list[ChargingSessionMeterValue]:
+) -> list[ChargingSessionMeterValueModel]:
     """Lấy meter sample của session theo thứ tự thời gian tăng dần.
 
     Args:
@@ -182,11 +184,11 @@ async def list_session_meter_values(
         Meter history đã phân trang ổn định.
     """
     result = await db.execute(
-        select(ChargingSessionMeterValue)
-        .where(ChargingSessionMeterValue.session_id == session_id)
+        select(ChargingSessionMeterValueModel)
+        .where(ChargingSessionMeterValueModel.session_id == session_id)
         .order_by(
-            ChargingSessionMeterValue.sampled_at.asc(),
-            ChargingSessionMeterValue.meter_value_id.asc(),
+            ChargingSessionMeterValueModel.sampled_at.asc(),
+            ChargingSessionMeterValueModel.meter_value_id.asc(),
         )
         .offset(offset)
         .limit(limit)
@@ -205,8 +207,8 @@ async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
         Tổng số meter sample của session.
     """
     result = await db.execute(
-        select(func.count(ChargingSessionMeterValue.meter_value_id)).where(
-            ChargingSessionMeterValue.session_id == session_id
+        select(func.count(ChargingSessionMeterValueModel.meter_value_id)).where(
+            ChargingSessionMeterValueModel.session_id == session_id
         )
     )
     return int(result.scalar() or 0)
@@ -221,7 +223,7 @@ async def create_session(
     transaction_id: str,
     started_at: datetime,
     meter_start_wh: Decimal | None,
-) -> ChargingSession:
+) -> ChargingSessionModel:
     """Tạo session active và flush constraint trong transaction hiện tại.
 
     Args:
@@ -239,7 +241,7 @@ async def create_session(
     Side Effects:
         Thêm record ORM và gọi ``flush`` để lấy UUID/phát hiện constraint.
     """
-    session = ChargingSession(
+    session = ChargingSessionModel(
         station_id=station_id,
         evse_id=evse_id,
         connector_id=connector_id,
@@ -260,7 +262,7 @@ async def insert_event(
     session_id: UUID,
     event_occurred_at: datetime,
     event_type: SessionEventType,
-) -> ChargingSessionEvent:
+) -> ChargingSessionEventModel:
     """Append một TransactionEvent history và flush record.
 
     Args:
@@ -275,7 +277,7 @@ async def insert_event(
     Side Effects:
         Thêm history record và gọi ``flush`` trong transaction hiện tại.
     """
-    event = ChargingSessionEvent(
+    event = ChargingSessionEventModel(
         session_id=session_id,
         event_occurred_at=event_occurred_at,
         event_type=event_type,
@@ -291,7 +293,7 @@ async def insert_meter_value(
     session_id: UUID,
     sampled_at: datetime,
     value_wh: Decimal,
-) -> ChargingSessionMeterValue:
+) -> ChargingSessionMeterValueModel:
     """Append một energy sample canonical Wh và flush record.
 
     Args:
@@ -306,7 +308,7 @@ async def insert_meter_value(
     Side Effects:
         Thêm sample record và gọi ``flush`` trong transaction hiện tại.
     """
-    meter = ChargingSessionMeterValue(
+    meter = ChargingSessionMeterValueModel(
         session_id=session_id,
         sampled_at=sampled_at,
         value_wh=value_wh,
