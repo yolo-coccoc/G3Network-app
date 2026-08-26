@@ -2,13 +2,20 @@
 
 > Mã chức năng: AD-03 và phần lifecycle của S-02
 >
-> Trạng thái: 📋 MVP rút gọn; chưa triển khai source code hoặc migration charging
+> Trạng thái: 🚧 MVP rút gọn đã triển khai; production path và automated test vẫn
+> hoãn
 >
 > Ngày cập nhật: 2026-07-31
 
-Đây là planner duy nhất cho charging backend. Planner chia thành hai bounded
-context nhưng chỉ mô tả phạm vi MVP đã chốt: quản lý thiết bị/OCPP và nhận, lưu,
-cập nhật dữ liệu phiên sạc.
+Planner này mô tả phạm vi charging backend và được thực thi theo phiên bản rút
+gọn tại [`backend-charging-mvp-ideal.md`](./backend-charging-mvp-ideal.md). Source
+hiện tại chỉ cam kết topology pre-provision và happy path local; các yêu cầu
+production trong tài liệu này vẫn là kế hoạch mở rộng.
+
+Các phần “Kết quả thực tế” của những bước cũ bên dưới được giữ làm lịch sử
+quyết định và bằng chứng triển khai. Khi nội dung cũ nói “chưa có source” hoặc
+“chưa triển khai”, đó là trạng thái tại thời điểm ghi nhận; trạng thái hiện tại
+được lấy từ phần đầu file và planner `backend-charging-mvp-ideal.md`.
 
 ## 1. Ranh giới hai domain
 

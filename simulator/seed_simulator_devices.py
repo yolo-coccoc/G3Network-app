@@ -1,6 +1,7 @@
 """Tạo nhanh một bộ vehicle và Telematic cho simulator local."""
 
 import json
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -34,7 +35,8 @@ def post(path: str, payload: dict[str, object]) -> dict[str, object]:
     )
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            return json.loads(response.read().decode("utf-8"))
+            response_data = json.loads(response.read().decode("utf-8"))
+            return cast(dict[str, object], response_data)
     except (HTTPError, URLError) as error:
         detail = (
             error.read().decode("utf-8") if isinstance(error, HTTPError) else str(error)

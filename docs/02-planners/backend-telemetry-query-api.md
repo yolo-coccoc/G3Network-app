@@ -1,7 +1,8 @@
 # Planner: Backend Telemetry Query API
 
 > Mã chức năng: FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 📋 Dự kiến
+> Trạng thái: 🚧 Đã triển khai phạm vi đầu tiên; API mở rộng và automated
+> regression test còn pending
 > Ngày tạo: 2026-07-29
 
 ## 1. Mục tiêu
@@ -45,7 +46,16 @@ model.
   không import trực tiếp `vehicles.repository` hoặc `vehicles.models`.
 - Dùng `Depends(get_db)` làm entry boundary sở hữu session và transaction.
 
-## 4. Phân rã công việc
+## 4. Kết quả triển khai phạm vi đầu tiên
+
+- Đã có repository query bản ghi mới nhất theo `vehicle_id` và `recorded_at`.
+- Đã có service kiểm tra xe active qua public service của `vehicles`.
+- Đã có response schema và endpoint `/api/v1/telemetry/vehicles/{vehicle_id}/latest`.
+- Các API lịch sử, hành trình, tổng hợp và push realtime vẫn chưa triển khai.
+- Automated regression test được tách sang
+  [`backend-automated-tests.md`](./backend-automated-tests.md).
+
+## 5. Phân rã công việc mở rộng
 
 1. Thêm query repository lấy bản ghi mới nhất theo `vehicle_id`.
 2. Thêm service function và domain exception cho trường hợp không có dữ liệu.
@@ -56,7 +66,7 @@ model.
 7. Smoke test: có dữ liệu, nhiều bản ghi, chưa có dữ liệu, xe không tồn tại và
    xe đã soft delete.
 
-## 5. Các API sẽ bổ sung sau
+## 6. Các API sẽ bổ sung sau
 
 Các API sau sẽ được cập nhật vào planner này khi được chốt:
 

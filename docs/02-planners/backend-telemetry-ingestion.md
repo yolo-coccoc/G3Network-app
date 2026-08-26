@@ -1,7 +1,8 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đang thực hiện — bước 0-15 đã triển khai theo scope MVP; bước 16 chuyển luồng active sang xử lý từng message, còn batch path được giữ cho phase tương lai
+> Trạng thái: 🚧 Active MVP source đã triển khai; batch path và automated
+> regression test được hoãn sang phase kế tiếp
 > Ngày tạo: 2026-07-24
 > Rà soát gần nhất: 2026-07-30
 
@@ -26,6 +27,10 @@ Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Message Queue �
 - `batch_worker.py`, `process_batch()`, batch lookup và bulk insert không bị xóa
 - Chưa dùng trong entrypoint MVP; việc bật lại phải được benchmark và chốt lại
   semantics transaction/backpressure trước
+
+Các kết quả nghiệm thu cũ bên dưới có thể nhắc tới revision Alembic trước đây.
+Đó là lịch sử tại thời điểm ghi nhận; graph migration hiện tại là reset/baseline
+`0001` đến `0004` trong planner charging MVP.
 
 **Phạm vi:**
 - Backend Python async (MQTT consumer + message worker + process entrypoint tối

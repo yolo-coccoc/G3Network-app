@@ -1,7 +1,8 @@
 # Planner: Telematic Simulator (AD-02, AD-05)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu telemetry), AD-05 (Quản lý xe và thiết bị)
-> Trạng thái: 📋 Dự kiến
+> Trạng thái: 🚧 Source đã triển khai tại `simulator/`; automated regression test
+> còn theo dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Ngày tạo: 2026-07-28
 
 ## 1. Mục tiêu
@@ -30,8 +31,8 @@ Trong planner này:
 Tạo đúng hai script:
 
 ```text
-scripts/seed_simulator_devices.py   # chạy một lần để tạo vehicles và telematics
-scripts/telematic_simulator.py      # chạy liên tục để publish telemetry
+simulator/seed_simulator_devices.py  # chạy một lần để tạo vehicles và telematics
+simulator/telematic_simulator.py     # chạy liên tục để publish telemetry
 ```
 
 Không bao gồm UI, Docker image riêng, mô phỏng OCPP, mô phỏng command từ backend,
@@ -220,12 +221,12 @@ hiện tại; vì vậy phải seed vehicle trước và gửi đúng VIN khi t�
 
 ## 7. Tiêu chí nghiệm thu
 
-- [ ] Seed script tạo được vehicle qua API.
-- [ ] Seed script tạo được Telematic qua API bằng `vehicle_vin`.
-- [ ] Seed script in đúng mapping serial/VIN/vehicle_id.
-- [ ] Simulator publish đúng topic của từng thiết bị.
-- [ ] Payload validate được bằng `TelemetryMessage`.
-- [ ] Mỗi thiết bị phát message theo interval cấu hình.
-- [ ] Ingestion nhận, enrich và lưu được telemetry vào PostgreSQL.
-- [ ] Ctrl+C dừng simulator không để task MQTT chạy nền.
-- [ ] Không thêm field ngoài contract nếu chưa cập nhật schema/spec tương ứng.
+- [x] Seed script tạo vehicle và Telematic qua API bằng `vehicle_vin`.
+- [x] Seed script in mapping serial/VIN/vehicle_id.
+- [x] Simulator publish đúng topic và QoS 0.
+- [x] Payload validate bằng `TelemetryMessage`.
+- [x] Mỗi thiết bị phát message theo interval cấu hình.
+- [x] Ingestion có thể nhận, enrich và lưu telemetry theo active MVP path.
+- [x] Ctrl+C hủy task MQTT của simulator.
+- [x] Không thêm field ngoài contract telemetry.
+- [ ] Automated regression test được theo dõi trong `backend-automated-tests.md`.

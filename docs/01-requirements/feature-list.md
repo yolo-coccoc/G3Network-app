@@ -176,7 +176,8 @@ Trạng thái: ✅ Đã có | 🚧 Đang làm | 📋 Dự kiến | 💡 Đề xu
 
 ### 3.2 Quản lý tài xế (CRUD)
 - Actor: Admin
-- Trạng thái: ✅
+- Trạng thái: 📋
+- Ghi chú: Chưa có domain `drivers`, API hoặc UI trong repo hiện tại.
 
 ### 3.3 Quản lý xe (CRUD, gán thiết bị)
 - Actor: Admin

@@ -1,7 +1,8 @@
 # Planner: Backend CRUD Telematics (AD-02, AD-05)
 
 > Mã chức năng: AD-02 (Quản lý dữ liệu telematics), AD-05 (Quản lý xe và thiết bị)
-> Trạng thái: 📋 Dự kiến
+> Trạng thái: 🚧 Source đã triển khai; automated regression test còn theo dõi
+> trong [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Ngày tạo: 2026-07-28
 
 ## Phân biệt thuật ngữ bắt buộc
@@ -140,12 +141,12 @@ Prefix đề xuất: `/api/v1/telematics`.
 
 ## Tiêu chí hoàn thành
 
-- [ ] CRUD `/api/v1/telematics` hoạt động qua Swagger, tương tự CRUD vehicles.
-- [ ] Create/update nhận `vehicle_vin` và resolve đúng sang `vehicle_id`.
-- [ ] VIN không tồn tại không làm request thất bại; mapping là NULL.
-- [ ] Không có import trực tiếp `vehicles.repository`/`vehicles.models` từ telemetry.
-- [ ] Soft delete không làm mất dữ liệu telemetry lịch sử.
-- [ ] Migration, formatter, linter, type check và smoke test đã được ghi nhận kết quả.
+- [x] CRUD `/api/v1/telematics` đã có trong source và OpenAPI.
+- [x] Create/update nhận `vehicle_vin` và resolve đúng sang `vehicle_id`.
+- [x] VIN không tồn tại không làm request thất bại; mapping là NULL.
+- [x] Không có import trực tiếp `vehicles.repository`/`vehicles.models` từ telemetry.
+- [x] Soft delete không làm mất dữ liệu telemetry lịch sử theo thiết kế FK.
+- [ ] Automated regression test sẽ hoàn tất theo `backend-automated-tests.md`.
 
 ## Ngoài phạm vi / cần planner riêng
 

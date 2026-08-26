@@ -1,12 +1,17 @@
 # Planner: Backend CRUD Vehicles (AD-05)
 
 > Mã chức năng: AD-05 (Quản lý xe - CRUD, gán thiết bị)
-> Trạng thái: 📋 Dự kiến
+> Trạng thái: 🚧 Source đã triển khai; nghiệm thu tích hợp và automated regression
+> test còn theo dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Ngày tạo: 2026-07-23
 
 ---
 
 ## Tổng quan
+
+Trạng thái trên phản ánh source đã có, không có nghĩa toàn bộ checklist môi
+trường, database và test thủ công bên dưới đã hoàn tất. Những mục chưa chạy được
+trên môi trường hiện tại vẫn giữ `[ ]` để không ghi nhận khống kết quả.
 
 Xây dựng backend API cho quản lý xe (vehicles) với các thao tác CRUD cơ bản:
 - Create: Tạo xe mới

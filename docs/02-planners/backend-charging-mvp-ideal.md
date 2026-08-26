@@ -2,7 +2,8 @@
 
 > Mã chức năng: AD-03 và lifecycle cơ bản của S-02
 >
-> Trạng thái: 📋 Planner triển khai theo từng bước
+> Trạng thái: 🚧 Active source đã hoàn tất; automated regression test còn theo
+> dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
 >
 > Ngày cập nhật: 2026-08-02
 
@@ -62,6 +63,31 @@ giả định luôn online/active. Những model, enum, helper và nhánh xử l
 quan đến status history, interruption, idempotency, ordering, retry,
 reconciliation, reconnect và timeout phải được comment trong source, không xóa;
 lý do hoãn phải ghi trong `docs/01-requirements/future.md`.
+
+### 2.1. Đọc sáu bảng theo cách dễ hiểu
+
+Ba bảng đầu mô tả “trạm có những gì”; ba bảng sau mô tả “một lần sạc diễn ra
+như thế nào”:
+
+| Bảng | Vai trò dễ hiểu | Có phải hypertable? |
+|---|---|---|
+| `charging_stations` | Hồ sơ của cả trạm sạc: mã OCPP, tên hiển thị và thời gian tạo/sửa. | Không |
+| `charging_evses` | Một bộ sạc/EVSE nằm bên trong trạm. Một trạm có thể có nhiều EVSE. | Không |
+| `charging_connectors` | Một đầu cắm thuộc EVSE, dùng để xác định đúng cổng đang sạc. | Không |
+| `charging_sessions` | Một dòng tổng hợp cho một lần sạc, từ lúc bắt đầu đến lúc kết thúc. | Không |
+| `charging_session_events` | Nhật ký các mốc `Started`, `Updated`, `Ended` của phiên sạc. | Có |
+| `charging_session_meter_values` | Các số đo điện năng theo thời gian của phiên sạc, lưu theo Wh. | Có |
+
+Trong toàn database có đúng ba hypertable:
+
+1. `vehicle_telemetry`: số liệu thời gian thực/lịch sử của xe.
+2. `charging_session_events`: lịch sử sự kiện của phiên sạc.
+3. `charging_session_meter_values`: lịch sử số đo điện năng của phiên sạc.
+
+Hypertable chỉ là cách TimescaleDB chia bảng dữ liệu theo thời gian để truy vấn
+lịch sử lớn hiệu quả hơn. Vì vậy `charging_sessions` vẫn là bảng quan hệ thông
+thường: nó giữ “hồ sơ tổng hợp” của phiên, còn hai bảng history mới tăng nhanh
+theo thời gian.
 
 ## 3. Luồng nghiệp vụ active
 
@@ -204,50 +230,54 @@ hoặc bảng mới. Cập nhật Alembic metadata để không load model techn
   chi tiết các nhóm bị loại và điều kiện khôi phục được ghi tại
   `docs/01-requirements/future.md` mục 28.
 
-### Bước 2 — Tạo migration chuyển schema
+### Bước 2 — Dựng migration reset và baseline schema
 
 **Prompt thực hiện:**
 
 ```text
-Tạo một Alembic migration mới để chuyển schema charging hiện tại sang schema
-MVP lý tưởng. Không sửa migration đã merge và không xóa dữ liệu ngoài phạm vi
-đã được xác nhận.
+Vì database đang ở giai đoạn khởi tạo, xóa graph migration cũ và tạo lại graph
+ngắn, bắt đầu bằng migration reset schema ứng dụng. Reset chỉ áp dụng cho
+database local được phép mất dữ liệu; không chạy trên database cần bảo toàn.
 
-Migration phải loại bỏ bảng technical status history khỏi schema active, bỏ các
-cột reliability khỏi sáu bảng còn lại, giữ UUID/FK/index cần thiết cho topology
-và session, rồi tạo lại hypertable cho session events và meter values nếu DB
-đang dùng TimescaleDB.
+Tạo các migration theo thứ tự: reset schema cũ; vehicles/telematics; telemetry
+hypertable; sáu bảng charging active. Hai bảng history charging phải là
+hypertable, còn `charging_sessions` là bảng quan hệ.
 
-Viết upgrade và downgrade đối xứng trong phạm vi migration. Review timezone,
-FK, check/unique constraint, index và thứ tự drop/create trước khi chạy.
+Review timezone, FK, check/unique constraint, index và thứ tự drop/create.
+Downgrade của baseline chỉ cần xóa schema baseline; không khôi phục dữ liệu
+legacy đã bị reset.
 ```
 
 **File chính:**
 
-- `backend/app/libs/db/migrations/versions/<revision>_simplify_charging_mvp_ideal.py`
+- `backend/app/libs/db/migrations/versions/0001_reset_application_schema.py`
+- `backend/app/libs/db/migrations/versions/0002_create_vehicles_and_telematics.py`
+- `backend/app/libs/db/migrations/versions/0003_create_vehicle_telemetry.py`
+- `backend/app/libs/db/migrations/versions/0004_create_charging_mvp_schema.py`
 
 **Tiêu chí nghiệm thu:**
 
-- `alembic heads` chỉ có head mới hợp lệ.
-- `upgrade → downgrade → upgrade` chạy được trên DB dev.
+- `alembic heads` chỉ có `0004_create_charging_mvp_schema`.
+- `upgrade → downgrade → upgrade` chạy được trên database tạm.
 - Catalog có đúng sáu bảng active và không có bảng status history.
-- Không sửa file migration cũ.
+- Reset migration chỉ xóa bảng/type nghiệp vụ, không xóa extension hoặc
+  `alembic_version`.
 
-**Kết quả thực tế (triển khai ngày 2026-08-03):** Đã hoàn tất migration
-`d8e5f9012345_rebuild_charging_mvp_schema.py` sau migration c7 hiện có.
+**Kết quả thực tế (triển khai ngày 2026-08-26):** Đã thay thế graph migration
+cũ bằng bốn migration khởi tạo.
 
-- Migration giữ nguyên các migration cũ và rebuild có chủ đích sáu bảng
-  charging; dữ liệu của các bảng này bị xóa theo phạm vi đã xác nhận cho local
-  MVP.
+- `0001_reset_application_schema` xóa các bảng/type nghiệp vụ cũ theo allowlist;
+  dữ liệu local cũ bị xóa theo quyết định giai đoạn khởi tạo.
+- Ba migration sau tạo vehicles/telematics, `vehicle_telemetry` và sáu bảng
+  charging active.
 - Schema active có đúng sáu bảng `charging_stations`, `charging_evses`,
   `charging_connectors`, `charging_sessions`, `charging_session_events` và
   `charging_session_meter_values`; status history không còn trong catalog.
 - `charging_session_events` và `charging_session_meter_values` được tạo lại
   thành hypertable; `charging_sessions` vẫn là bảng aggregate quan hệ.
-- Downgrade phục hồi cấu trúc ngay sau c7 và không giả vờ khôi phục dữ liệu đã
-  bị xóa. Smoke test PostgreSQL 16 + TimescaleDB/PostGIS đạt:
-  `upgrade head → downgrade c7 → upgrade head`.
-- `alembic heads` chỉ còn `d8e5f9012345`; migration cũ không bị sửa.
+- Downgrade của graph mới xóa schema baseline; không giả vờ khôi phục dữ liệu
+  đã bị reset.
+- `alembic heads` chỉ còn `0004_create_charging_mvp_schema`.
 
 ### Bước 3 — Implement session happy path
 
@@ -477,13 +507,14 @@ cuối cho charging MVP.
 - `compileall`, Black, isort, Ruff, mypy strict và `git diff --check` đều đạt.
   Không có automated test suite trong repo để chạy bằng pytest; đã dùng smoke
   test OCPP → PostgreSQL/API ở Bước 6 thay cho test tự động.
-- Alembic trên PostgreSQL/TimescaleDB dev đã chạy thành công
-  `d8e5f9012345 (head) → c7d4e8f90123 → d8e5f9012345 (head)`. Trong quá trình
-  kiểm tra phát hiện downgrade thiếu enum legacy; đã bổ sung việc tạo lại enum
-  trước schema c7 trong migration head mới, sau đó kiểm tra lại đạt.
+- Alembic graph mới có đúng head `0004_create_charging_mvp_schema`; SQL offline
+  đã sinh đủ bốn bước reset/baseline và không còn tham chiếu revision cũ.
+- Đã kiểm tra catalog/DDL offline của sáu bảng charging active và hai
+  hypertable history; kiểm thử upgrade/downgrade thật trên database tạm vẫn là
+  bước tiếp theo trong planner automated tests.
 - Catalog sau khi upgrade có đúng sáu bảng charging active và không có
   `charging_station_status_events`; Alembic chỉ còn head
-  `d8e5f9012345`.
+  `0004_create_charging_mvp_schema`.
 - Audit không phát hiện import chéo `models.py`/`repository.py` giữa domain,
   `commit()`/`rollback()` trong charging service/repository,
   `HTTPException` ngoài router hoặc `datetime.utcnow()`. Giá trị năng lượng

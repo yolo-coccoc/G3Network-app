@@ -206,7 +206,11 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
   - `exceptions.py` — domain exception thuần Python; router chuyển exception này thành lỗi transport tương ứng.
 - Naming: `snake_case` cho biến/hàm/module, `PascalCase` cho class, hằng số `UPPER_SNAKE_CASE`.
 - Toàn bộ I/O (DB, HTTP, MQTT) dùng **async/await**.
-- Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng, không sửa migration đã merge vào `main`.
+- Migration: **Alembic** (`uv run alembic ...`), mỗi migration có message rõ ràng.
+  Ngoại lệ đã được xác nhận cho giai đoạn khởi tạo hiện tại: xóa graph migration
+  legacy và dựng lại baseline mới bằng reset migration + các migration tạo schema.
+  Sau khi baseline được chốt, migration mới phải bất biến và không sửa migration
+  đã merge vào `main`.
 - **Docstring/comment trong source code phải đầy đủ và giải thích được ý đồ**:
   - Docstring và comment PHẢI viết bằng tiếng Việt; tên định danh, thuật ngữ kỹ
     thuật và nội dung bắt buộc theo contract thư viện có thể giữ tiếng Anh.
@@ -374,6 +378,13 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 ---
 
 ## 6. Database
+
+Trong giai đoạn khởi tạo, database local được phép reset toàn bộ schema nghiệp
+vụ. Graph migration hiện tại gồm `0001_reset_application_schema` và các
+revision baseline tiếp theo cho vehicles/telematics, vehicle telemetry và
+charging MVP. Reset migration chỉ xóa bảng/type do application sở hữu; không
+xóa `alembic_version`, PostGIS, TimescaleDB hoặc object hệ thống. Không dùng
+quy trình reset này cho database có dữ liệu cần bảo toàn.
 
 - 1 instance PostgreSQL duy nhất, bật 2 extension: `timescaledb`, `postgis` (script khởi tạo ở `infra/db/init/`).
 - Bảng dữ liệu time-series (telemetry xe, lịch sử trạng thái/meter samples của trụ và phiên sạc) tạo dưới dạng **hypertable** (TimescaleDB) để tối ưu truy vấn/nén dữ liệu lịch sử. Bảng aggregate `charging_sessions` là bảng quan hệ thông thường; chỉ bảng sample theo thời gian mới là hypertable.
