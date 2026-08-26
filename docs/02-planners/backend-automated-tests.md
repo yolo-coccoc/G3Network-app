@@ -149,7 +149,7 @@ legacy. Toàn bộ migration cũ đã được thay bằng một graph ngắn:
 
 1. `0001_reset_application_schema`: xóa các bảng/type nghiệp vụ cũ trong
    allowlist, giữ `alembic_version` và extension.
-2. `0002_create_vehicles_and_telematics`: tạo hai bảng hồ sơ.
+2. `0002_vehicles_telematics`: tạo hai bảng hồ sơ.
 3. `0003_create_vehicle_telemetry`: tạo telemetry hypertable.
 4. `0004_create_charging_mvp_schema`: tạo sáu bảng charging active, trong đó
    events và meter values là hypertable.
