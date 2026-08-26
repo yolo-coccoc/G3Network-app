@@ -229,14 +229,14 @@
 
 ---
 
-### 16. Automated backend test suite
+### 16. Automated backend test suite mở rộng
 
 - **Mô tả ngắn**: Bổ sung pytest, pytest-asyncio, test fixtures và các test unit/integration cho backend.
 - **Tác dụng/Vai trò trong hệ thống**: Bảo vệ transaction boundary, API validation, repository query, MQTT ingestion, batch window và graceful shutdown khỏi regression.
-- **Lý do hoãn lại**: MVP hiện ưu tiên hoàn thiện luồng chức năng; tạm dùng Ruff, mypy, compile, smoke test và kiểm tra end-to-end thủ công.
+- **Lý do hoãn lại**: Bộ smoke/unit test tối thiểu đã có; phần còn lại gồm integration test với PostgreSQL/TimescaleDB, MQTT/OCPP end-to-end, coverage và test fixture dùng chung được hoãn để tránh làm nặng phase khởi tạo.
 - **Liên quan đến planner/feature**: Toàn bộ backend; ưu tiên `backend-telemetry-ingestion.md` (AD-02) và vehicles AD-05.
 - **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Trước khi thiết lập CI/CD phải thêm test dependencies bằng `uv`, sửa `make backend-test` để dùng môi trường đã cài test và xác định ngưỡng coverage.
+- **Ghi chú thêm**: `pytest`, `pytest-asyncio` và `make backend-test` đã có. Trước khi thiết lập CI/CD cần bổ sung test database cô lập và xác định ngưỡng coverage.
 
 ---
 

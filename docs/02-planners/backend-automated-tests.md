@@ -2,7 +2,8 @@
 
 > Mã chức năng: AD-02, AD-03, AD-05, FM-01, FM-02, S-02
 >
-> Trạng thái: 📋 Sẵn sàng triển khai
+> Trạng thái: 🚧 Đã triển khai bộ test tối thiểu; integration test database còn để
+> ở phase tiếp theo
 >
 > Mục tiêu: tạo một bộ pytest nhỏ, chạy nhanh và bảo vệ các contract quan trọng
 > của backend hiện tại. Planner này không nhằm đạt coverage cao.
@@ -30,7 +31,7 @@ authorization, payment hoặc UI; các nhóm này chưa thuộc MVP active.
 - Không tạo fixture framework phức tạp và không thêm thư viện test mới.
 - Mỗi test kiểm tra một hành vi observable; không kiểm tra implementation detail.
 - Database integration chỉ là một nhóm tùy chọn chạy khi hạ tầng dev sẵn sàng.
-- Tổng số test ban đầu nên giữ khoảng 14–15 test case.
+- Tổng số test ban đầu nên giữ khoảng 14–16 test case.
 
 ## 3. Cách hiểu đúng về số lượng test
 
@@ -175,3 +176,25 @@ legacy.
 - Không xây test harness OCPP end-to-end ngay từ đầu.
 - Không thêm coverage tool, snapshot tool, factory library hoặc Docker test
   framework.
+
+## 9. Kết quả triển khai
+
+Đã tạo 16 test case theo hành vi/contract, phân thành 5 file:
+
+- `backend/tests/test_api_smoke.py`: health endpoint và đăng ký router.
+- `backend/tests/test_schema_smoke.py`: UTC, validation GPS, request schema và
+  quy đổi meter.
+- `backend/tests/test_service_smoke.py`: vehicle, telematic, telemetry và
+  charging lifecycle.
+- `backend/tests/test_worker_smoke.py`: start/stop và propagate lỗi worker.
+- `backend/tests/test_migrations_smoke.py`: migration head và reset allowlist.
+
+Kết quả chạy local:
+
+- `cd backend && uv run pytest`: **16 passed**.
+- Ruff, Black, isort và mypy strict trên backend: **đạt**.
+- Test hiện không cần PostgreSQL, TimescaleDB, EMQX hoặc Docker.
+
+Chưa làm trong lượt này: test upgrade/downgrade thật trên database tạm, query
+repository với PostgreSQL và end-to-end OCPP qua WebSocket. Đây là các test
+integration riêng, chỉ nên bổ sung khi có database test được cô lập.

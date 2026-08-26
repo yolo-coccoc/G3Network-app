@@ -1,8 +1,8 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
 > Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Active MVP source đã triển khai; batch path và automated
-> regression test được hoãn sang phase kế tiếp
+> Trạng thái: 🚧 Active MVP source và automated smoke test tối thiểu đã triển
+> khai; batch path và integration test được hoãn sang phase kế tiếp
 > Ngày tạo: 2026-07-24
 > Rà soát gần nhất: 2026-07-30
 
@@ -1630,7 +1630,8 @@ Sau khi hoàn thành bước 16, hệ thống có:
 - Không có metrics/counter trong ingestion MVP hiện tại
 - Log chưa được thu thập tập trung
 - Chưa có authentication/authorization MQTT production
-- Chưa có automated backend test suite
+- Đã có automated smoke/unit test tối thiểu; integration test với broker và
+  database được hoãn sang phase kế tiếp
 - Các hạng mục hoãn được quản lý tại `docs/01-requirements/future.md`
 
 **Phase tiếp theo:**

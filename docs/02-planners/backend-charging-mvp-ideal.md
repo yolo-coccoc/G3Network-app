@@ -2,8 +2,9 @@
 
 > Mã chức năng: AD-03 và lifecycle cơ bản của S-02
 >
-> Trạng thái: 🚧 Active source đã hoàn tất; automated regression test còn theo
-> dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
+> Trạng thái: 🚧 Active source và automated smoke test tối thiểu đã hoàn tất;
+> integration test còn theo dõi trong
+> [`backend-automated-tests.md`](./backend-automated-tests.md)
 >
 > Ngày cập nhật: 2026-08-02
 
@@ -505,8 +506,8 @@ Chạy kiểm tra cuối cho toàn bộ thay đổi charging:
 cuối cho charging MVP.
 
 - `compileall`, Black, isort, Ruff, mypy strict và `git diff --check` đều đạt.
-  Không có automated test suite trong repo để chạy bằng pytest; đã dùng smoke
-  test OCPP → PostgreSQL/API ở Bước 6 thay cho test tự động.
+  Bộ automated smoke test tối thiểu hiện đã được bổ sung theo
+  [`backend-automated-tests.md`](./backend-automated-tests.md).
 - Alembic graph mới có đúng head `0004_create_charging_mvp_schema`; SQL offline
   đã sinh đủ bốn bước reset/baseline và không còn tham chiếu revision cũ.
 - Đã kiểm tra catalog/DDL offline của sáu bảng charging active và hai

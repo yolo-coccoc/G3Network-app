@@ -1,7 +1,8 @@
 # Planner: Backend CRUD Telematics (AD-02, AD-05)
 
 > Mã chức năng: AD-02 (Quản lý dữ liệu telematics), AD-05 (Quản lý xe và thiết bị)
-> Trạng thái: 🚧 Source đã triển khai; automated regression test còn theo dõi
+> Trạng thái: 🚧 Source đã triển khai; smoke test tối thiểu đã có, CRUD/integration
+> regression test đầy đủ còn theo dõi
 > trong [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Ngày tạo: 2026-07-28
 
