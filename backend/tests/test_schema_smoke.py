@@ -2,13 +2,14 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from ocpp.v201.datatypes import MeterValueType, SampledValueType, UnitOfMeasureType
+from ocpp.v201.enums import MeasurandEnumType
 from pydantic import ValidationError
 
-from app.domains.charging_stations.ocpp.ocpp_server import OCPPChargePoint
+from app.domains.charging_stations.ocpp.ocpp_server import extract_meter_samples
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.schemas import TelemetryMessage
@@ -77,12 +78,19 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
         )
 
 
-def test_ocpp_meter_is_canonicalized_to_wh() -> None:
-    """Meter kWh từ OCPP phải được đổi sang Decimal Wh."""
-    sampled_value = SimpleNamespace(
-        value=Decimal("1.25"),
-        measurand="Energy.Active.Import.Register",
-        unit_of_measure=SimpleNamespace(unit="kWh"),
+def test_ocpp_meter_value_is_kept_without_unit_conversion() -> None:
+    """Giá trị meter OCPP được giữ nguyên, không đổi đơn vị."""
+    meter_value = MeterValueType(
+        timestamp="2026-08-26T10:00:00Z",
+        sampled_value=[
+            SampledValueType(
+                value=1.25,
+                measurand=MeasurandEnumType.energy_active_import_register,
+                unit_of_measure=UnitOfMeasureType(unit="kWh"),
+            )
+        ],
     )
 
-    assert OCPPChargePoint._sample_to_wh(sampled_value) == Decimal("1250.00")
+    samples = extract_meter_samples([meter_value])
+
+    assert samples[0].value_wh == Decimal("1.25")

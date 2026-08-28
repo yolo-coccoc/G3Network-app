@@ -7,7 +7,7 @@ reconnect và technical status history nằm ngoài active path.
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Final
@@ -20,13 +20,10 @@ from ocpp.v201 import call_result
 from ocpp.v201.datatypes import (  # type: ignore[import-untyped]
     EVSEType,
     MeterValueType,
-    SampledValueType,
     TransactionType,
-    UnitOfMeasureType,
 )
 from ocpp.v201.enums import (  # type: ignore[import-untyped]
     Action,
-    MeasurandEnumType,
     TransactionEventEnumType,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -51,110 +48,6 @@ logger = logging.getLogger(__name__)
 OCPP_SUBPROTOCOL: Final[str] = "ocpp2.0.1"
 OCPP_PATH_PREFIX: Final[str] = "/ocpp/"
 _MAX_IDENTITY_LENGTH: Final[int] = 255
-_ENERGY_MEASURANDS: Final[frozenset[str]] = frozenset(
-    {
-        MeasurandEnumType.energy_active_import_register.value,
-        MeasurandEnumType.energy_active_import_interval.value,
-    }
-)
-
-
-def _coerce_transaction_info(
-    value: TransactionType | Mapping[str, object],
-) -> TransactionType:
-    """Chuẩn hóa transaction info nested từ python-ocpp về dataclass.
-
-    Args:
-        value: Dataclass hoặc mapping do phiên bản parser OCPP trả về.
-
-    Returns:
-        ``TransactionType`` có transaction ID primitive.
-
-    Raises:
-        KeyError: Nếu mapping không có ``transaction_id``.
-    """
-    if isinstance(value, TransactionType):
-        return value
-    return TransactionType(transaction_id=str(value["transaction_id"]))
-
-
-def _coerce_evse(value: EVSEType | Mapping[str, object] | None) -> EVSEType | None:
-    """Chuẩn hóa EVSE nested từ parser OCPP về dataclass.
-
-    Args:
-        value: EVSE dataclass, mapping hoặc ``None`` từ OCPP payload.
-
-    Returns:
-        ``EVSEType`` canonical hoặc ``None``.
-
-    Raises:
-        KeyError: Nếu mapping thiếu field bắt buộc ``id``.
-    """
-    if value is None or isinstance(value, EVSEType):
-        return value
-    raw_evse_id = value["id"]
-    assert isinstance(raw_evse_id, (int, str))
-    connector_id = value.get("connector_id")
-    assert connector_id is None or isinstance(connector_id, (int, str))
-    return EVSEType(
-        id=int(raw_evse_id),
-        connector_id=int(connector_id) if connector_id is not None else None,
-    )
-
-
-def _coerce_sampled_value(
-    value: SampledValueType | Mapping[str, object],
-) -> SampledValueType:
-    """Chuẩn hóa sampled value nested về dataclass OCPP.
-
-    Args:
-        value: Sampled value dataclass hoặc mapping từ parser.
-
-    Returns:
-        ``SampledValueType`` có value và unit/measurand primitive.
-
-    Raises:
-        KeyError: Nếu mapping thiếu field ``value``.
-    """
-    if isinstance(value, SampledValueType):
-        return value
-    raw_value = value["value"]
-    assert isinstance(raw_value, (int, float, str))
-    unit_value = value.get("unit_of_measure")
-    unit_of_measure = (
-        UnitOfMeasureType(unit=unit_value.get("unit"))
-        if isinstance(unit_value, Mapping)
-        else None
-    )
-    return SampledValueType(
-        value=float(raw_value),
-        measurand=value.get("measurand"),
-        unit_of_measure=unit_of_measure,
-    )
-
-
-def _coerce_meter_value(
-    value: MeterValueType | Mapping[str, object],
-) -> MeterValueType:
-    """Chuẩn hóa meter value nested về dataclass OCPP.
-
-    Args:
-        value: Meter value dataclass hoặc mapping từ parser.
-
-    Returns:
-        ``MeterValueType`` có sampled values canonical.
-
-    Raises:
-        KeyError: Nếu mapping thiếu ``timestamp`` hoặc ``sampled_value``.
-    """
-    if isinstance(value, MeterValueType):
-        return value
-    sampled_values = value["sampled_value"]
-    assert isinstance(sampled_values, list)
-    return MeterValueType(
-        timestamp=str(value["timestamp"]),
-        sampled_value=[_coerce_sampled_value(item) for item in sampled_values],
-    )
 
 
 def parse_ocpp_identity(request_path: str) -> str | None:
@@ -216,6 +109,97 @@ def _requested_subprotocols(request: Request) -> set[str]:
     return {item.strip() for item in header.split(",") if item.strip()}
 
 
+def parse_ocpp_timestamp(value: str) -> datetime:
+    """Parse timestamp OCPP thành datetime timezone-aware.
+
+    Args:
+        value: Timestamp ISO-8601 trong OCPP payload.
+
+    Returns:
+        Datetime giữ timezone để service chuẩn hóa về UTC.
+
+    Raises:
+        ValueError: Nếu timestamp không có timezone hoặc sai định dạng.
+    """
+    normalized = value.replace("Z", "+00:00")
+    timestamp = datetime.fromisoformat(normalized)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        raise ValueError("OCPP timestamp phải có timezone")
+    return timestamp
+
+
+def extract_meter_samples(
+    meter_values: list[MeterValueType],
+) -> list[MeterSampleInput]:
+    """Đưa các sample trong OCPP message vào input persistence.
+
+    Args:
+        meter_values: Các nhóm sample do ``python-ocpp`` parse.
+
+    Returns:
+        Danh sách sample theo đúng thứ tự payload.
+    """
+    samples: list[MeterSampleInput] = []
+    for meter_value in meter_values:
+        sampled_at = parse_ocpp_timestamp(meter_value.timestamp)
+        for sampled_value in meter_value.sampled_value:
+            samples.append(
+                MeterSampleInput(
+                    sampled_at=sampled_at,
+                    value_wh=Decimal(str(sampled_value.value)),
+                )
+            )
+    return samples
+
+
+async def resolve_ocpp_topology(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    evse: EVSEType | None,
+) -> tuple[UUID, UUID, UUID]:
+    """Resolve EVSE/connector OCPP identity thành UUID primitive.
+
+    Args:
+        db: Async session của action transaction.
+        ocpp_identity: Identity của station OCPP.
+        evse: EVSE object từ OCPP payload.
+
+    Returns:
+        Tuple internal IDs của station, EVSE và connector.
+
+    Raises:
+        ValueError: Nếu payload thiếu EVSE hoặc connector.
+    """
+    if evse is None or evse.connector_id is None:
+        raise ValueError("TransactionEvent phải có EVSE và connector")
+    return await charging_stations_service.resolve_ocpp_topology(
+        db,
+        ocpp_identity=ocpp_identity,
+        ocpp_evse_id=evse.id,
+        ocpp_connector_id=evse.connector_id,
+    )
+
+
+def select_ocpp_subprotocol(
+    _connection: ServerConnection, client_subprotocols: Sequence[Subprotocol]
+) -> Subprotocol | None:
+    """Chọn duy nhất subprotocol OCPP 2.0.1 được gateway cho phép.
+
+    Args:
+        _connection: Connection đang thương lượng handshake.
+        client_subprotocols: Các protocol client đề xuất.
+
+    Returns:
+        ``ocpp2.0.1`` nếu client đề xuất; ngược lại ``None``.
+    """
+    return (
+        Subprotocol(OCPP_SUBPROTOCOL)
+        if Subprotocol(OCPP_SUBPROTOCOL) in client_subprotocols
+        else None
+    )
+
+
 class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
     """Adapter ``python-ocpp`` gắn WebSocket đã accept vào station identity.
 
@@ -250,106 +234,6 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         self.session_factory = session_factory
         self._session_by_evse: dict[int, UUID] = {}
 
-    @staticmethod
-    def _parse_timestamp(value: str) -> datetime:
-        """Parse timestamp OCPP thành datetime timezone-aware.
-
-        Args:
-            value: Timestamp ISO-8601 trong OCPP payload.
-
-        Returns:
-            Datetime giữ timezone để service chuẩn hóa về UTC.
-
-        Raises:
-            ValueError: Nếu timestamp không có timezone hoặc sai định dạng.
-        """
-        normalized = value.replace("Z", "+00:00")
-        timestamp = datetime.fromisoformat(normalized)
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-            raise ValueError("OCPP timestamp phải có timezone")
-        return timestamp
-
-    @staticmethod
-    def _sample_to_wh(sampled_value: object) -> Decimal | None:
-        """Chuẩn hóa một sampled value năng lượng thành Decimal Wh.
-
-        Args:
-            sampled_value: Dataclass sampled value do ``python-ocpp`` parse.
-
-        Returns:
-            Giá trị Wh hoặc ``None`` nếu measurand không thuộc energy active
-            import của MVP.
-
-        Raises:
-            ValueError: Nếu unit không được hỗ trợ trong MVP.
-        """
-        measurand = getattr(sampled_value, "measurand", None)
-        measurand_value = getattr(measurand, "value", measurand)
-        if measurand_value is not None and measurand_value not in _ENERGY_MEASURANDS:
-            return None
-
-        unit_of_measure = getattr(sampled_value, "unit_of_measure", None)
-        unit = getattr(unit_of_measure, "unit", None)
-        unit_value = getattr(unit, "value", unit)
-        value = Decimal(str(getattr(sampled_value, "value")))
-        if unit_value in (None, "Wh"):
-            return value
-        if unit_value == "kWh":
-            return value * Decimal("1000")
-        raise ValueError(f"Đơn vị meter chưa được hỗ trợ: {unit_value}")
-
-    @classmethod
-    def _extract_meter_samples(
-        cls, meter_values: list[MeterValueType]
-    ) -> list[MeterSampleInput]:
-        """Lọc và canonicalize energy samples trong OCPP message.
-
-        Args:
-            meter_values: Các nhóm sample do ``python-ocpp`` parse.
-
-        Returns:
-            Danh sách sample canonical theo đúng thứ tự payload.
-
-        Raises:
-            ValueError: Nếu message không có energy sample hợp lệ.
-        """
-        samples: list[MeterSampleInput] = []
-        for meter_value in meter_values:
-            sampled_at = cls._parse_timestamp(meter_value.timestamp)
-            for sampled_value in meter_value.sampled_value:
-                value_wh = cls._sample_to_wh(sampled_value)
-                if value_wh is not None:
-                    samples.append(
-                        MeterSampleInput(sampled_at=sampled_at, value_wh=value_wh)
-                    )
-        if not samples:
-            raise ValueError("OCPP message không có energy sample hợp lệ")
-        return samples
-
-    async def _resolve_topology(
-        self, db: AsyncSession, evse: EVSEType | None
-    ) -> tuple[UUID, UUID, UUID]:
-        """Resolve EVSE/connector OCPP identity thành UUID primitive.
-
-        Args:
-            db: Async session của action transaction.
-            evse: EVSE object từ OCPP payload.
-
-        Returns:
-            Tuple internal IDs của station, EVSE và connector.
-
-        Raises:
-            ValueError: Nếu payload thiếu EVSE hoặc connector.
-        """
-        if evse is None or evse.connector_id is None:
-            raise ValueError("TransactionEvent phải có EVSE và connector")
-        return await charging_stations_service.resolve_ocpp_topology(
-            db,
-            ocpp_identity=self.id,
-            ocpp_evse_id=evse.id,
-            ocpp_connector_id=evse.connector_id,
-        )
-
     @on(Action.transaction_event)  # type: ignore[untyped-decorator]
     async def on_transaction_event(
         self,
@@ -357,9 +241,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         timestamp: str,
         trigger_reason: object,
         seq_no: int,
-        transaction_info: TransactionType | Mapping[str, object],
-        meter_value: list[MeterValueType | Mapping[str, object]] | None = None,
-        evse: EVSEType | Mapping[str, object] | None = None,
+        transaction_info: TransactionType,
+        meter_value: list[MeterValueType] | None = None,
+        evse: EVSEType | None = None,
         **_: object,
     ) -> call_result.TransactionEvent:
         """Persist TransactionEvent bằng primitive values rồi ACK OCPP.
@@ -369,11 +253,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             timestamp: Thời điểm event theo OCPP.
             trigger_reason: Trigger OCPP, hiện chỉ được parse để giữ contract.
             seq_no: Sequence OCPP, chưa thuộc active persistence schema.
-            transaction_info: Transaction dataclass hoặc mapping nested do
-                parser trả về; adapter chuẩn hóa thành transaction ID.
-            meter_value: Meter đầu/cuối tùy event, dạng dataclass hoặc mapping.
-            evse: EVSE và connector OCPP cần resolve, dạng dataclass hoặc
-                mapping.
+            transaction_info: Transaction dataclass do parser OCPP tạo.
+            meter_value: Meter đầu/cuối tùy event, dạng dataclass OCPP.
+            evse: EVSE và connector OCPP cần resolve.
             **_: Các field OCPP optional không thuộc MVP.
 
         Returns:
@@ -384,30 +266,21 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             chỉ cập nhật mapping EVSE → session sau khi transaction commit.
         """
         del trigger_reason, seq_no
-        normalized_transaction_info = _coerce_transaction_info(transaction_info)
-        normalized_evse = _coerce_evse(evse)
-        normalized_meter_value = (
-            [_coerce_meter_value(value) for value in meter_value]
-            if meter_value
-            else None
-        )
         event_map = {
             TransactionEventEnumType.started: SessionEventType.STARTED,
             TransactionEventEnumType.updated: SessionEventType.UPDATED,
             TransactionEventEnumType.ended: SessionEventType.ENDED,
         }
         session_event = event_map[event_type]
-        samples = (
-            self._extract_meter_samples(normalized_meter_value or [])
-            if normalized_meter_value
-            else []
-        )
+        samples = extract_meter_samples(meter_value) if meter_value else []
         meter_start_wh = samples[0].value_wh if samples else None
         meter_end_wh = samples[-1].value_wh if samples else None
-        transaction_id = normalized_transaction_info.transaction_id
+        transaction_id = transaction_info.transaction_id
         async with self.session_factory.begin() as db:
-            station_id, evse_id, connector_id = await self._resolve_topology(
-                db, normalized_evse
+            station_id, evse_id, connector_id = await resolve_ocpp_topology(
+                db,
+                ocpp_identity=self.id,
+                evse=evse,
             )
             result = await charging_sessions_service.ingest_transaction_event(
                 db,
@@ -416,7 +289,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 connector_id=connector_id,
                 transaction_id=transaction_id,
                 event_type=session_event,
-                event_occurred_at=self._parse_timestamp(timestamp),
+                event_occurred_at=parse_ocpp_timestamp(timestamp),
                 meter_start_wh=(
                     meter_start_wh
                     if session_event is SessionEventType.STARTED
@@ -429,25 +302,25 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 ),
             )
         if session_event is SessionEventType.ENDED:
-            if normalized_evse is not None:
-                self._session_by_evse.pop(normalized_evse.id, None)
+            if evse is not None:
+                self._session_by_evse.pop(evse.id, None)
         else:
-            if normalized_evse is not None:
-                self._session_by_evse[normalized_evse.id] = result.session_id
+            if evse is not None:
+                self._session_by_evse[evse.id] = result.session_id
         return call_result.TransactionEvent()
 
     @on(Action.meter_values)  # type: ignore[untyped-decorator]
     async def on_meter_values(
         self,
         evse_id: int,
-        meter_value: list[MeterValueType | Mapping[str, object]],
+        meter_value: list[MeterValueType],
         **_: object,
     ) -> call_result.MeterValues:
         """Persist từng energy sample MeterValues trong một transaction.
 
         Args:
             evse_id: OCPP EVSE ID dùng để tìm session trên connection.
-            meter_value: Nhóm sample dataclass hoặc mapping cần canonical về Wh.
+            meter_value: Nhóm sample dataclass OCPP cần chuyển về Wh.
             **_: Field OCPP optional không thuộc MVP.
 
         Returns:
@@ -457,9 +330,8 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             Gọi ``ingest_meter_values`` từng sample trên cùng AsyncSession;
             exception làm entry transaction rollback toàn bộ message.
         """
-        normalized_meter_value = [_coerce_meter_value(value) for value in meter_value]
         session_id = self._session_by_evse[evse_id]
-        samples = self._extract_meter_samples(normalized_meter_value)
+        samples = extract_meter_samples(meter_value)
         async with self.session_factory.begin() as db:
             for sample in samples:
                 await charging_sessions_service.ingest_meter_values(
@@ -519,7 +391,7 @@ class OCPPServer:
             self.host,
             self.port,
             subprotocols=[Subprotocol(OCPP_SUBPROTOCOL)],
-            select_subprotocol=self._select_subprotocol,
+            select_subprotocol=select_ocpp_subprotocol,
             process_request=self._process_request,
             logger=logger,
         )
@@ -578,25 +450,6 @@ class OCPPServer:
             )
             return _http_rejection(404, "Not Found", "Unknown OCPP station identity")
         return None
-
-    @staticmethod
-    def _select_subprotocol(
-        _connection: ServerConnection, client_subprotocols: Sequence[Subprotocol]
-    ) -> Subprotocol | None:
-        """Chọn duy nhất subprotocol OCPP 2.0.1 được gateway cho phép.
-
-        Args:
-            _connection: Connection đang thương lượng handshake.
-            client_subprotocols: Các protocol client đề xuất.
-
-        Returns:
-            ``ocpp2.0.1`` nếu client đề xuất; ngược lại ``None``.
-        """
-        return (
-            Subprotocol(OCPP_SUBPROTOCOL)
-            if Subprotocol(OCPP_SUBPROTOCOL) in client_subprotocols
-            else None
-        )
 
     async def _handle_connection(self, connection: ServerConnection) -> None:
         """Chạy vòng đời một WebSocket sau khi handshake thành công.
