@@ -14,18 +14,10 @@ from typing import Final
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
-from ocpp.routing import on  # type: ignore[import-untyped]
-from ocpp.v201 import ChargePoint  # type: ignore[import-untyped]
-from ocpp.v201 import call_result
-from ocpp.v201.datatypes import (  # type: ignore[import-untyped]
-    EVSEType,
-    MeterValueType,
-    TransactionType,
-)
-from ocpp.v201.enums import (  # type: ignore[import-untyped]
-    Action,
-    TransactionEventEnumType,
-)
+from ocpp.routing import on
+from ocpp.v201 import ChargePoint, call_result
+from ocpp.v201.datatypes import EVSEType, MeterValueType, TransactionType
+from ocpp.v201.enums import Action, TransactionEventEnumType
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.datastructures import Headers

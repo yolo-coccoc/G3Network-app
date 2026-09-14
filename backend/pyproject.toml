@@ -58,3 +58,9 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
+
+# Thư viện ``ocpp`` (MobilityHouse) không phân phối type stubs hoặc
+# `py.typed`, nên mypy strict không thể phân tích các module con của nó.
+[[tool.mypy.overrides]]
+module = "ocpp.*"
+ignore_missing_imports = true
