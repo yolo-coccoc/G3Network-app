@@ -29,7 +29,6 @@ from app.domains.charging_stations.schemas import (
     ChargingResourceDeleteResponse,
     ChargingStationCreateRequest,
     ChargingStationListResponse,
-    ChargingStationMapResponse,
     ChargingStationResponse,
     ChargingStationUpdateRequest,
 )
@@ -97,18 +96,6 @@ async def list_charging_stations(
         page=page,
         page_size=page_size,
     )
-
-
-@router.get(
-    "/charging-stations/map",
-    response_model=ChargingStationMapResponse,
-    summary="Lấy station và trạng thái connector cho bản đồ",
-)
-async def get_charging_station_map(
-    db: AsyncSession = Depends(get_db),
-) -> ChargingStationMapResponse:
-    """Trả toàn bộ station active kèm tọa độ và tổng hợp connector."""
-    return await charging_service.get_charging_station_map(db)
 
 
 @router.post(
