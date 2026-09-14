@@ -2,6 +2,21 @@
 
 Trạng thái: ✅ Đã có | 🚧 Đang làm | 📋 Dự kiến | 💡 Đề xuất bổ sung (cần bạn xác nhận có cần không)
 
+## Đối chiếu với backend baseline hiện tại
+
+Danh sách bên dưới mô tả phạm vi sản phẩm theo actor; không phải mọi mục `✅`
+đều đã có API backend trong repo. Tại baseline ngày 2026-09-15, backend đã có:
+
+- CRUD xe và thiết bị telematic, gồm mapping thiết bị với xe.
+- Nhận/lưu telemetry qua MQTT và API đọc telemetry mới nhất của một xe.
+- CRUD topology Station → EVSE → Connector.
+- OCPP 2.0.1, charging session happy path, event và meter value.
+
+Các chức năng chưa có source backend active gồm toàn bộ lịch sử telemetry, bản đồ
+xe/trạm, trạng thái connector tổng hợp, cảnh báo pin/bất thường, push ngưỡng,
+geofence, device health, user/RBAC, policy, thanh toán, notification và frontend.
+Chi tiết phần hoãn xem [`future.md`](./future.md) và các planner tương ứng.
+
 ---
 
 ## 1. App màn hình trên xe (In-vehicle display)

@@ -511,8 +511,9 @@ cuối cho charging MVP.
 - Alembic graph mới có đúng head `0004_create_charging_mvp_schema`; SQL offline
   đã sinh đủ bốn bước reset/baseline và không còn tham chiếu revision cũ.
 - Đã kiểm tra catalog/DDL offline của sáu bảng charging active và hai
-  hypertable history; kiểm thử upgrade/downgrade thật trên database tạm vẫn là
-  bước tiếp theo trong planner automated tests.
+  hypertable history. Test upgrade/downgrade thật trên database tạm đã có trong
+  `test_postgres_integration.py` và chỉ chạy khi bật
+  `RUN_DB_INTEGRATION=1`.
 - Catalog sau khi upgrade có đúng sáu bảng charging active và không có
   `charging_station_status_events`; Alembic chỉ còn head
   `0004_create_charging_mvp_schema`.
@@ -527,8 +528,10 @@ cuối cho charging MVP.
   `Started → Updated/MeterValues → Ended`, không có retry, idempotency,
   reconnect, timeout hoặc interruption.
 - Giới hạn còn lại: chưa kiểm tra thiết bị thật, outage DB/broker, reliability
-  production hoặc automated regression suite. Đây là các hạng mục ngoài phạm
-  vi planner MVP và phải mở lại planner production trước khi triển khai.
+  production hoặc automated OCPP WebSocket regression. Bộ smoke test backend đã
+  có; integration test được bật riêng khi môi trường cho phép. Đây là các hạng
+  mục ngoài phạm vi planner MVP và phải mở lại planner production trước khi
+  triển khai.
 
 ## 5. Ngoài phạm vi và đường quay lại
 

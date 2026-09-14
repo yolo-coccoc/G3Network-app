@@ -2,8 +2,8 @@
 
 > Mã chức năng: AD-02, AD-03, AD-05, FM-01, FM-02, S-02
 >
-> Trạng thái: 🚧 Đã triển khai bộ test tối thiểu; integration test database còn để
-> ở phase tiếp theo
+> Trạng thái: 🚧 Đã triển khai bộ test tối thiểu; PostgreSQL integration test có
+> nhưng skip mặc định nếu chưa bật biến môi trường
 >
 > Mục tiêu: tạo một bộ pytest nhỏ, chạy nhanh và bảo vệ các contract quan trọng
 > của backend hiện tại. Planner này không nhằm đạt coverage cao.
@@ -31,7 +31,8 @@ authorization, payment hoặc UI; các nhóm này chưa thuộc MVP active.
 - Không tạo fixture framework phức tạp và không thêm thư viện test mới.
 - Mỗi test kiểm tra một hành vi observable; không kiểm tra implementation detail.
 - Database integration chỉ là một nhóm tùy chọn chạy khi hạ tầng dev sẵn sàng.
-- Tổng số test ban đầu nên giữ khoảng 14–16 test case.
+- Bộ test hiện tại có 16 test unit/smoke và 2 test PostgreSQL integration; nhóm
+  integration được skip mặc định.
 
 ## 3. Cách hiểu đúng về số lượng test
 
@@ -179,7 +180,8 @@ legacy.
 
 ## 9. Kết quả triển khai
 
-Đã tạo 16 test case theo hành vi/contract, phân thành 5 file:
+Đã tạo 18 test case theo hành vi/contract, phân thành 5 file; trong đó 16 test
+unit/smoke chạy mặc định và 2 test PostgreSQL integration được skip mặc định:
 
 - `backend/tests/test_api_smoke.py`: health endpoint và đăng ký router.
 - `backend/tests/test_schema_smoke.py`: UTC, validation GPS, request schema và
@@ -191,7 +193,7 @@ legacy.
 
 Kết quả chạy local:
 
-- `cd backend && uv run pytest`: **16 passed**.
+- `cd backend && uv run pytest`: **16 passed, 2 skipped**.
 - Ruff, Black, isort và mypy strict trên backend: **đạt**.
 - Test hiện không cần PostgreSQL, TimescaleDB, EMQX hoặc Docker.
 

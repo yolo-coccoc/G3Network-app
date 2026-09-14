@@ -1,7 +1,8 @@
 # G3Network
 
-G3Network là hệ thống hỗ trợ tài xế và quản lý đội xe tải điện. Hệ thống gồm
-backend, dữ liệu xe, trụ sạc OCPP và các simulator để chạy thử tại máy local.
+G3Network là hệ thống hỗ trợ tài xế và quản lý đội xe tải điện. Repo hiện tại
+tập trung vào backend MVP, hạ tầng local và simulator để kiểm thử luồng dữ liệu
+xe và phiên sạc. Web portal và vehicle app chưa có source trong checkout này.
 
 ## Cần chuẩn bị
 
@@ -33,6 +34,20 @@ make db-migrate
 
 `infra-up` khởi động PostgreSQL và EMQX bằng Docker. `db-migrate` tạo/cập nhật
 các bảng database.
+
+### Phạm vi backend hiện tại
+
+- CRUD xe và thiết bị telematic, gồm mapping thiết bị với xe.
+- Nhận telemetry qua MQTT và lưu vào TimescaleDB.
+- API lấy telemetry mới nhất của một xe.
+- CRUD topology Station → EVSE → Connector.
+- OCPP 2.0.1 và lifecycle charging session happy path
+  `Started → Updated/MeterValues → Ended`.
+- API đọc charging session, event và meter value.
+
+Chưa có trong baseline hiện tại: API toàn bộ lịch sử telemetry, bản đồ xe/trạm,
+trạng thái connector tổng hợp, cảnh báo pin/bất thường, push ngưỡng cảnh báo,
+identity/RBAC, policy sạc, thanh toán và frontend.
 
 ### Chạy các thành phần ứng dụng
 
@@ -134,12 +149,11 @@ nếu chưa muốn xoá dữ liệu.
 ## Cấu trúc chính
 
 ```text
-backend/       Backend FastAPI
-infra/         PostgreSQL và EMQX
+backend/       Backend FastAPI và Alembic migrations
+infra/         PostgreSQL/TimescaleDB/PostGIS và EMQX
 simulator/     Simulator dữ liệu xe và trụ sạc
-vehicle-app/   Ứng dụng Flutter trên xe
-web-portal/    Cổng quản trị React
-docs/          Tài liệu yêu cầu và kế hoạch triển khai
+docs/          Tài liệu yêu cầu, kiến trúc và kế hoạch triển khai
+architecture.md Sơ đồ kiến trúc MVP hiện tại
 ```
 
 Xem thêm: [AGENTS.md](./AGENTS.md) và

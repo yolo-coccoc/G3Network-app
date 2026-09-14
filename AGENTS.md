@@ -8,6 +8,18 @@
 - `docs/01-requirements/feature-list.md` - Đặc tả chức năng theo actor, và status
 - `docs/01-requirements/future.md` - Thành phần hoãn lại (bỏ qua tạm thời để sớm hoàn thành MVP)
 
+### Baseline source hiện tại
+
+Repo hiện tại đang ở baseline backend MVP, gồm các domain `vehicles`,
+`telematics`, `telemetry`, `charging_stations` và `charging_sessions`. API
+telemetry hiện chỉ có truy vấn bản ghi mới nhất; chưa có API toàn bộ lịch sử,
+bản đồ, alert hoặc push ngưỡng. Charging active chỉ giữ topology đã
+pre-provision và happy path `Started → Updated/MeterValues → Ended`.
+
+Database đang dùng Alembic head `0004_create_charging_mvp_schema`. Web portal,
+vehicle app, identity/RBAC, driver, notification, policy và các API monitoring
+mở rộng chưa có source active trong repo.
+
 ---
 
 ## 1. Quyết định kỹ thuật đã chọn (rà lại nếu thấy chưa phù hợp)
@@ -21,10 +33,10 @@
 | Vehicle App (màn hình trên xe) | **Flutter (Dart)**, build ra APK chạy trên **Android** | đã chốt |
 | Database | **PostgreSQL 16 + TimescaleDB (time-series) + PostGIS (địa lý)** | đã chốt |
 | Message broker (ingest dữ liệu IoT từ thiết bị telematics) | **EMQX 5.5** | đã chốt - Lưu ý: EMQX 5.x không dùng file `acl.conf` như EMQX 4.x, ACL được cấu hình qua Dashboard UI hoặc REST API |
-| OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging_stations`** (thư mục `charging_stations/ocpp/`), dùng OCPP 2.0.1 qua thư viện `python-ocpp`; chạy container runtime riêng qua `entrypoint.py` riêng | Gateway sở hữu kết nối và trạng thái thiết bị; domain `charging_sessions` nhận sự kiện phiên qua public service, không sở hữu WebSocket |
+| OCPP Gateway (giao tiếp trụ sạc) | Nằm **trong domain `charging_stations`** (thư mục `charging_stations/ocpp/`), dùng OCPP 2.0.1 qua thư viện `python-ocpp`; chạy bằng entrypoint riêng | Gateway sở hữu WebSocket/OCPP lifecycle; domain `charging_sessions` nhận sự kiện phiên qua public service, không sở hữu WebSocket. Technical status production chưa thuộc active MVP |
 | Charging MVP ideal (2026-08-02) | Theo `docs/02-planners/backend-charging-mvp-ideal.md` | Local MVP giả định station/EVSE/connector luôn online/active, message đúng thứ tự và không duplicate; chỉ giữ happy path Started → Updated/MeterValues → Ended. Reliability path được ghi ở `docs/01-requirements/future.md` mục 27 |
 | OCPP security MVP | Development cho phép kết nối OCPP không TLS/không authentication trong môi trường cô lập; production phải chốt security profile riêng trước khi triển khai thật | Không coi dev mode là security profile production hoặc tiêu chí OCPP certification |
-| Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (hồ sơ trụ, EVSE, connector, trạng thái/OCPP) và **`charging_sessions`** (nhận/lưu event, meter samples và lifecycle phiên) | MVP charging hiện chỉ quản lý thiết bị/OCPP và lưu phiên; authorization, remote control business, pricing, payment và debt được hoãn; không gom lại thành một domain `charging` |
+| Ranh giới nghiệp vụ sạc | Tách **`charging_stations`** (topology trụ, EVSE, connector và OCPP) và **`charging_sessions`** (nhận/lưu event, meter samples và lifecycle phiên) | MVP charging hiện chỉ quản lý topology pre-provision/OCPP và lưu phiên happy path; technical status, authorization, remote control business, pricing, payment và debt được hoãn; không gom lại thành một domain `charging` |
 | Reverse proxy / API Gateway | **Không dùng ở môi trường dev** (mỗi thành phần chạy port riêng trên host, gọi thẳng qua `localhost`) | cân nhắc lại (Traefik/Nginx) khi làm `docker-compose.prod.yml` |
 | State management (Web) | TanStack Query (server state) + Zustand (client state) | đề xuất |
 | UI kit (Web) | Tailwind CSS + shadcn/ui | đề xuất |
@@ -35,7 +47,7 @@
 
 ## 2. Cấu trúc thư mục (Monorepo)
 
-Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web-portal/`** — 2 phần được tổ chức theo **domain nghiệp vụ** (bounded context), thay vì chia theo layer kỹ thuật chung. File/domain thuộc planner chưa hoàn thành có thể chưa tồn tại trong source hiện tại; không tạo placeholder chỉ để khớp cây thư mục. `vehicle-app/`, `infra/`, `docs/` giữ nguyên vị trí như một monorepo thông thường.
+Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web-portal/`** — 2 phần được tổ chức theo **domain nghiệp vụ** (bounded context), thay vì chia theo layer kỹ thuật chung. File/domain thuộc planner chưa hoàn thành có thể chưa tồn tại trong source hiện tại; không tạo placeholder chỉ để khớp cây thư mục. Trong checkout hiện tại chỉ có source active cho `backend/`, `infra/`, `simulator/` và `docs/`; `web-portal/` và `vehicle-app/` vẫn là cấu trúc mục tiêu, chưa có source.
 
 ```
 .
@@ -57,7 +69,7 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 │   │   │   │       ├── mqtt_consumer.py
 │   │   │   │       └── entrypoint.py  # container "telemetry-ingestion" trỏ vào đây
 │   │   │   │
-│   │   │   ├── charging_stations/     # Hồ sơ trụ, EVSE/connector, trạng thái và OCPP (AD-03)
+│   │   │   ├── charging_stations/     # Topology trụ, EVSE/connector và OCPP (AD-03)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │   └── ocpp/              # WebSocket server giao tiếp trụ sạc (OCPP 2.0.1)
 │   │   │   │       ├── ocpp_server.py
@@ -133,8 +145,8 @@ Cấu trúc mục tiêu dưới đây tập trung vào **`backend/`** và **`web
 - Mỗi thư mục trong `backend/app/domains/` là **1 bounded context**. Domain này chỉ được gọi sang domain khác qua **`service.py` công khai** của domain đó — **không** import/query chéo trực tiếp `repository.py`/`models.py` của domain khác.
   - Quy tắc này chỉ áp dụng **giữa các domain khác nhau**. Việc gọi trực tiếp giữa các file **trong cùng 1 domain** là hợp lệ (VD: `telemetry/ingestion/mqtt_consumer.py` gọi thẳng `telemetry/repository.py` — cùng nằm trong domain `telemetry`, không vi phạm quy tắc).
 - **`identity`** là domain nền tảng: mọi domain khác được phép phụ thuộc vào nó (qua `service.py`), bản thân nó không phụ thuộc ngược lại domain nào.
-- **`telemetry`** là domain dữ liệu thời gian thực của xe: nhiều domain khác (`charging_sessions`, `fleet`, `notifications`, `scoring`) phụ thuộc vào nó để lấy dữ liệu realtime/lịch sử. Luồng ingestion nhận `telematic_serial` và gọi public service của domain `telematics` để resolve `(telematic_id, vehicle_id)`; không import trực tiếp `telematics.models`/`repository`. Domain `telematics` được phép gọi public service của `vehicles` để resolve và kiểm tra mapping xe.
-- **`charging_stations`** sở hữu hồ sơ Charging Station, EVSE, Connector, trạng thái kỹ thuật và OCPP 2.0.1. **`charging_sessions`** chỉ nhận dữ liệu đã chuẩn hóa từ OCPP để lưu event, meter và lifecycle phiên; không sở hữu WebSocket/OCPP adapter và không gọi ngược `charging_stations`. OCPP adapter gọi public service của `charging_sessions`; giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`. Authorization, RFID/driver/vehicle policy, remote control business, pricing, payment và debt nằm ngoài MVP và phải được ghi trong `future.md` trước khi mở lại.
+- **`telemetry`** là domain dữ liệu thời gian thực và lịch sử lưu trữ của xe: nhiều domain khác có thể phụ thuộc vào public service của domain này khi các API query tương lai được chốt. Luồng ingestion nhận `telematic_serial` và gọi public service của domain `telematics` để resolve `(telematic_id, vehicle_id)`; không import trực tiếp `telematics.models`/`repository`. Domain `telematics` được phép gọi public service của `vehicles` để resolve và kiểm tra mapping xe.
+- **`charging_stations`** sở hữu topology Charging Station, EVSE, Connector và OCPP 2.0.1. **`charging_sessions`** chỉ nhận dữ liệu đã chuẩn hóa từ OCPP để lưu event, meter và lifecycle phiên; không sở hữu WebSocket/OCPP adapter và không gọi ngược `charging_stations`. OCPP adapter gọi public service của `charging_sessions`; giữ chiều phụ thuộc một chiều `charging_stations → charging_sessions`. Technical status history, authorization, RFID/driver/vehicle policy, remote control business, pricing, payment và debt nằm ngoài MVP và phải được ghi trong `future.md` trước khi mở lại.
 - Các chiều phụ thuộc chi tiết khác giữa từng chức năng cụ thể **không liệt kê lại ở đây** — đã có đầy đủ trong cột "Phụ thuộc" của `docs/01-requirements/feature-list.md`; AGENTS.md chỉ nêu nguyên tắc chung ở cấp domain.
 - Domain mới được thêm vào phải tham chiếu đúng mã chức năng trong `docs/01-requirements/feature-list.md` (VD: `AD-03`, `D-05`).
 - Khi nền tảng CI/CD được chốt, bổ sung **`import-linter`** để chặn domain A import trực tiếp nội bộ (`repository`/`models`) của domain B. Hiện package/config này chưa được cài đặt, nên review và tìm kiếm import là bước bắt buộc.
@@ -306,7 +318,7 @@ Chi tiết cài đặt và chạy nhanh xem tại [README.md](./README.md).
 
 1. Tìm pattern tương tự đang tồn tại ở domain/entrypoint khác.
 2. Không tạo engine, session factory, config hoặc logger riêng nếu shared implementation đã có.
-3. Chạy Black, isort, Ruff và mypy. Trong MVP hiện chưa có automated test suite; phải chạy smoke test phù hợp cho phần thay đổi và ghi rõ phạm vi đã kiểm tra. Khi test suite được bổ sung, mọi test liên quan phải chạy trước khi hoàn thành task.
+3. Chạy Black, isort, Ruff và mypy cùng test suite hiện có. Backend hiện đã có automated smoke test và hai PostgreSQL integration test được skip mặc định; phải ghi rõ phạm vi test đã chạy và lý do nếu test integration không chạy.
 4. Kiểm tra `__init__.py` chỉ chứa docstring.
 5. Không để placeholder/TODO cho thành phần chắc chắn cần về sau; chuyển sang `docs/01-requirements/future.md`.
 6. Review migration về timezone, FK, index, constraint, PostGIS/TimescaleDB, upgrade và downgrade.
@@ -386,10 +398,10 @@ charging MVP. Reset migration chỉ xóa bảng/type do application sở hữu; 
 xóa `alembic_version`, PostGIS, TimescaleDB hoặc object hệ thống. Không dùng
 quy trình reset này cho database có dữ liệu cần bảo toàn.
 
-- 1 instance PostgreSQL duy nhất, bật 2 extension: `timescaledb`, `postgis` (script khởi tạo ở `infra/db/init/`).
-- Bảng dữ liệu time-series (telemetry xe, lịch sử trạng thái/meter samples của trụ và phiên sạc) tạo dưới dạng **hypertable** (TimescaleDB) để tối ưu truy vấn/nén dữ liệu lịch sử. Bảng aggregate `charging_sessions` là bảng quan hệ thông thường; chỉ bảng sample theo thời gian mới là hypertable.
-- Cột vị trí (GPS xe, vị trí trạm sạc, geofence) dùng kiểu `geometry`/`geography` (PostGIS), trừ ngoại lệ MVP đã được planner chốt và ghi trong `future.md`.
-- Naming bảng mặc định là số nhiều, `snake_case` (`vehicles`, `charging_sessions`, `alerts`, `policy_configs`...). Ngoại lệ phải được planner hoặc migration đã chốt ghi rõ; telemetry MVP hiện dùng `vehicle_telemetry`.
+- 1 instance PostgreSQL duy nhất, bật `timescaledb`, `postgis` và `uuid-ossp` (script khởi tạo ở `infra/db/init/`).
+- Bảng dữ liệu time-series hiện tại gồm telemetry xe, event phiên sạc và meter sample phiên sạc; cả ba được tạo dưới dạng **hypertable** (TimescaleDB). Bảng aggregate `charging_sessions` và topology station/EVSE/connector là bảng quan hệ thông thường.
+- PostGIS được bật cho hướng mở rộng địa lý, nhưng baseline hiện tại chưa có cột vị trí station, API bản đồ hoặc geofence. `vehicle_telemetry` hiện lưu latitude/longitude theo contract ingestion MVP.
+- Naming bảng mặc định là số nhiều, `snake_case` (`vehicles`, `charging_sessions`, `vehicle_telemetry`...). Không tạo bảng `alerts`, `policy_configs` hoặc bảng domain tương lai khi chưa có contract được xác nhận.
 - Migration quản lý bằng Alembic, đặt trong `backend/app/libs/db/migrations/`.
 
 ---

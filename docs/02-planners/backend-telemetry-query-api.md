@@ -1,8 +1,8 @@
 # Planner: Backend Telemetry Query API
 
 > Mã chức năng: FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đã triển khai phạm vi đầu tiên; API mở rộng và automated
-> regression test còn pending
+> Trạng thái: 🚧 Đã triển khai API latest ở phạm vi MVP; API history/map/alert
+> mở rộng chưa có source
 > Ngày tạo: 2026-07-29
 
 ## 1. Mục tiêu
@@ -12,7 +12,7 @@ Xây dựng lớp HTTP API chỉ đọc dữ liệu đã được lưu trong b�
 tương lai; không xử lý MQTT ingestion, không ghi telemetry và không quản lý hồ
 sơ thiết bị telematic.
 
-Phạm vi đầu tiên chỉ gồm API lấy bản ghi telemetry mới nhất của một xe.
+Phạm vi active hiện tại chỉ gồm API lấy bản ghi telemetry mới nhất của một xe.
 
 ## 2. API trong scope hiện tại
 
@@ -51,7 +51,8 @@ model.
 - Đã có repository query bản ghi mới nhất theo `vehicle_id` và `recorded_at`.
 - Đã có service kiểm tra xe active qua public service của `vehicles`.
 - Đã có response schema và endpoint `/api/v1/telemetry/vehicles/{vehicle_id}/latest`.
-- Các API lịch sử, hành trình, tổng hợp và push realtime vẫn chưa triển khai.
+- Các API toàn bộ lịch sử, hành trình, bản đồ, tổng hợp, alert và push realtime
+  vẫn chưa triển khai.
 - Automated regression test được tách sang
   [`backend-automated-tests.md`](./backend-automated-tests.md).
 

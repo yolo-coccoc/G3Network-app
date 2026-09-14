@@ -15,18 +15,7 @@
 
 ## Danh sách thành phần đã hoãn
 
-### 1. [Tên thành phần]
-
-- **Mô tả ngắn**: 
-- **Tác dụng/Vai trò trong hệ thống**: 
-- **Lý do hoãn lại**: 
-- **Liên quan đến planner/feature**: (VD: `backend-telemetry-ingestion.md`, `AD-03`)
-- **Ngày ghi nhận**: YYYY-MM-DD
-- **Ghi chú thêm**: (nếu có)
-
----
-
-## Ví dụ mẫu
+Các mục bên dưới là quyết định hoãn thực tế của repo, không phải placeholder.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
 
@@ -658,6 +647,28 @@
 - **Liên quan đến planner/feature**: `backend-charging.md`,
   `backend-charging-mvp-ideal.md`, AD-03 và S-02.
 - **Ngày ghi nhận**: 2026-08-04
+
+### 33. API monitoring và cảnh báo telemetry mở rộng
+
+- **Mô tả ngắn**: Bổ sung API đọc toàn bộ lịch sử telemetry, bản đồ xe/trạm,
+  trạng thái connector tổng hợp, cảnh báo pin/bất thường và cơ chế push ngưỡng
+  cảnh báo tới thiết bị.
+- **Tác dụng/Vai trò trong hệ thống**:
+  - Cung cấp dữ liệu lịch sử cho dashboard và truy vết hành trình.
+  - Tổng hợp trạng thái đội xe, trạm sạc và connector cho màn hình vận hành.
+  - Phát hiện SOC/nhiệt độ pin bất thường, chống lặp cảnh báo và đồng bộ cấu
+    hình cảnh báo với telematic.
+- **Lý do hoãn lại**: Baseline hiện tại chỉ cần ingestion telemetry và API đọc
+  bản ghi mới nhất của một xe. Chưa có contract ổn định cho query lịch sử,
+  snapshot connector, notification, ACK từ thiết bị hoặc quyền truy cập theo
+  đội xe; không tạo alert table, API hoặc MQTT command placeholder trong MVP.
+- **Liên quan đến planner/feature**: `backend-telemetry-query-api.md`,
+  `backend-telemetry-ingestion.md`, FM-01, FM-02 và mục 3.1/3.7/4.5 trong
+  `docs/01-requirements/feature-list.md`.
+- **Ngày ghi nhận**: 2026-09-15
+- **Ghi chú thêm**: Khi mở lại, cần chốt riêng phạm vi history/map/connector và
+  lifecycle alert trước khi tạo migration. Không suy ra rằng các API này đã có
+  chỉ vì dữ liệu telemetry đã được lưu trong TimescaleDB.
 
 ---
 

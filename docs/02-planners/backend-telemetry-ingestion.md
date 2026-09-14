@@ -37,7 +37,9 @@ Các kết quả nghiệm thu cũ bên dưới có thể nhắc tới revision A
   giản; không có HTTP runtime/health server trong MVP hiện tại)
 - EMQX broker
 - TimescaleDB hypertable
-- Chưa bao gồm: API query telemetry, frontend dashboard
+- Không mô tả các API query telemetry; phần active hiện chỉ có endpoint latest
+  riêng trong planner `backend-telemetry-query-api.md`. Frontend dashboard chưa
+  có source.
 
 **Giả định và giới hạn MVP:**
 - MQTT sử dụng QoS 0 (fire-and-forget)
@@ -1636,7 +1638,7 @@ Sau khi hoàn thành bước 16, hệ thống có:
 
 **Phase tiếp theo:**
 
-- API query telemetry (realtime + history)
+- API query telemetry mở rộng (history, map, aggregate và realtime dashboard)
 - Tầng aggregate/throttle và cơ chế đẩy realtime cho dashboard
 - Real-time alerting
 - Dashboard frontend

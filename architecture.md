@@ -1,107 +1,93 @@
+# Kiến trúc G3Network — MVP hiện tại
+
+Repo hiện tại là một backend monorepo MVP. Sơ đồ dưới đây mô tả các thành phần
+đang có trong source và hạ tầng local; Kafka, Redis, API Gateway, portal và
+vehicle app chỉ là hướng mở rộng, chưa phải thành phần active.
+
 ```mermaid
-flowchart TB
-    %% ================= TÁC NHÂN BÊN NGOÀI (EXTERNAL ACTORS) =================
-    subgraph ExternalActors ["Tác nhân bên ngoài - Thiết bị Phần cứng"]
-        EV_HW["🚗 Phần cứng Xe Điện\n(Cảm biến, PIN/BMS, Định vị GPS)"]
-        EVSE_HW["⚡ Phần cứng Trụ Sạc\n(Mạch công suất, Công tơ điện, Đầu đọc RFID)"]
-        User["👤 Người dùng / Tài xế / Quản trị viên"]
-    end
+flowchart LR
+    Vehicle["Thiết bị telematic trên xe"]
+    Station["Trụ sạc OCPP 2.0.1"]
+    Broker["EMQX 5.5\nMQTT"]
+    Ingestion["Telemetry ingestion\nMQTT consumer + worker"]
+    OCPP["charging_stations/ocpp\nWebSocket gateway"]
+    API["FastAPI API"]
+    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions"]
+    DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
 
-    %% ================= HỆ THỐNG PHẦN MỀM (THE SYSTEM) =================
-    
-    subgraph VehicleSoftware ["Phần mềm trên Xe"]
-        EV_OS["📱 Telematics Client App\n(Đọc dữ liệu CAN bus, gửi lên Server)"]
-    end
+    Vehicle -->|MQTT telemetry| Broker
+    Broker --> Ingestion
+    Ingestion -->|vehicle_telemetry| DB
 
-    subgraph ChargerSoftware ["Phần mềm trên Trụ sạc"]
-        EVSE_OS["🔌 OCPP Client Core\n(Điều khiển cấp điện, giao tiếp Server)"]
-    end
+    Station <-->|OCPP 2.0.1| OCPP
+    OCPP -->|session event + meter| Domains
+    Domains -->|charging data| DB
 
-    subgraph UserApps ["Giao diện Người dùng & Trang web"]
-        AppDriver["📱 App Di Động (Người lái xe)"]
-        WebApp["💻 Web Quản trị Tổng\n(Giám sát đội xe, Cảnh báo, Thống kê)"]
-    end
-
-    subgraph ServerSystem ["Hệ thống Máy chủ (Server Cloud Backend)"]
-        
-        %% API / Connection Gateways
-        subgraph Gateways ["Lớp Cổng Giao Tiếp"]
-            IoTGW["📡 IoT Gateway (MQTT/AMQP)"]
-            OCPPGW["🔌 CSMS / OCPP Gateway (Websocket)"]
-            APIGW["🌐 API Gateway (REST/GraphQL)"]
-        end
-
-        %% Message Broker
-        subgraph Broker ["Hàng đợi thông điệp"]
-            Kafka{{"📨 Kafka / RabbitMQ<br>Đồng bộ & phân phối sự kiện realtime"}}
-        end
-
-        %% Microservices
-        subgraph CoreServices ["Lớp Dịch Vụ Cốt Lõi"]
-            VehicleSvc["🚙 Vehicle Telematics Service\n(Xử lý SOC, SOH, ODO, Lỗi, GPS)"]
-            ChargingSvc["🔋 Charging Management Service\n(Giám sát trạng thái, Điều khiển sạc)"]
-            SessionSvc["⏱️ Session & Billing Service\n(Quản lý phiên sạc, Tính cước sạc)"]
-            FraudSvc["🛡️ Fraud & Anomaly Service\n(Đối chiếu dữ liệu chéo Xe & Trụ sạc)"]
-            UserSvc["👤 Identity & Access Service\n(Xác thực tài khoản, Thẻ RFID)"]
-            ReportSvc["📊 Dashboard & Map Service\n(Bản đồ trực quan, Tổng hợp báo cáo)"]
-        end
-
-        %% Databases
-        subgraph Databases ["Lớp Lưu Trữ Dữ Liệu"]
-            TSDB[("📈 Time-Series DB\n(Lịch sử Telematics, Hành trình xe)")]
-            RDBMS[("🗄️ Relational DB (PostgreSQL)\n(Hóa đơn, User, Danh mục trụ, Cảnh báo)")]
-            Cache[("⚡ Redis Cache\n(Trạng thái online/offline, Session sạc)")]
-        end
-    end
-
-    %% ================= LUỒNG TƯƠNG TÁC DỮ LIỆU (CONNECTIONS) =================
-    
-    %% Tương tác phần cứng với phần mềm nhúng đầu cuối
-    EV_HW <-->|"Đọc thông số PIN/BMS qua cổng CAN"| EV_OS
-    EVSE_HW <-->|"Đọc chỉ số điện / Kích hoạt rơ-le sạc"| EVSE_OS
-    
-    %% Kết nối từ Thiết bị lên Server
-    EV_OS --"Gửi Telemetry (30s/lần)"--> IoTGW
-    EVSE_OS <-->|"Giao tiếp Websocket (OCPP 1.6/2.0.1)"| OCPPGW
-    
-    %% Phân phối thông điệp qua Broker
-    IoTGW --> Kafka
-    OCPPGW --> Kafka
-
-    %% Tương tác của Người dùng với các Ứng dụng/Web
-    User -->|"Tương tác vật lý & xem màn hình"| EV_OS
-    User -->|"Sử dụng App di động"| AppDriver
-    User -->|"Sử dụng Trình duyệt Web"| WebApp
-
-    %% App kết nối qua API Gateway
-    AppDriver --> APIGW
-    WebApp --> APIGW
-
-    %% Định tuyến từ Gateway vào Microservices
-    APIGW --> UserSvc
-    APIGW --> SessionSvc
-    APIGW --> ChargingSvc
-    APIGW --> ReportSvc
-    APIGW --> VehicleSvc
-
-    %% Xử lý hướng sự kiện từ Kafka
-    Kafka -- "Consume Dữ liệu Xe" --> VehicleSvc
-    Kafka -- "Consume Dữ liệu Trụ" --> ChargingSvc
-    Kafka -- "Đối chiếu kép Xe & Trụ" --> FraudSvc
-
-    %% Tương tác giữa các dịch vụ & Lưu trữ
-    VehicleSvc --> TSDB
-    VehicleSvc --> Cache
-    ChargingSvc --> Cache
-    ChargingSvc --> RDBMS
-    SessionSvc --> RDBMS
-    UserSvc --> RDBMS
-    ReportSvc -. "Truy vấn tổng hợp" .-> TSDB
-    ReportSvc -. "Truy vấn tổng hợp" .-> RDBMS
-    FraudSvc -. "Lưu vết vi phạm / Cảnh báo" .-> RDBMS
-
-    %% Luồng nghiệp vụ đặc thù
-    SessionSvc -- "Yêu cầu Start/Stop sạc" --> ChargingSvc
-    ChargingSvc -- "Gửi lệnh điều khiển" --> OCPPGW
-    OCPPGW <-->|"Truyền tải bản tin điều khiển"| EVSE_OS
+    API --> Domains
+    Domains -->|CRUD/query| DB
 ```
+
+## Thành phần đang có
+
+### Backend API
+
+FastAPI đăng ký các domain:
+
+- `vehicles`: CRUD xe và soft delete.
+- `telematics`: CRUD thiết bị và mapping thiết bị với xe.
+- `telemetry`: nhận dữ liệu qua service ingestion và đọc telemetry mới nhất của
+  một xe.
+- `charging_stations`: CRUD topology Station → EVSE → Connector và OCPP
+  2.0.1 gateway.
+- `charging_sessions`: lưu aggregate session, lifecycle event và meter value.
+
+API process chạy riêng bằng Uvicorn. Telemetry ingestion và OCPP gateway có
+entrypoint riêng, cùng dùng shared database/session configuration.
+
+### Database
+
+Development dùng một PostgreSQL 16 container với các extension:
+
+- TimescaleDB cho `vehicle_telemetry`, `charging_session_events` và
+  `charging_session_meter_values`.
+- PostGIS được bật sẵn cho các chức năng địa lý trong tương lai; baseline hiện
+  chưa có API bản đồ hoặc geofence.
+- `uuid-ossp` cho database local.
+
+Alembic baseline hiện tại gồm:
+
+```text
+0001_reset_application_schema
+0002_vehicles_telematics
+0003_create_vehicle_telemetry
+0004_create_charging_mvp_schema
+```
+
+Charging MVP chỉ hỗ trợ topology đã pre-provision và happy path:
+
+```text
+Started → Updated/MeterValues → Ended
+```
+
+### Hạ tầng local
+
+`infra/docker-compose.yml` chỉ khởi động hai service:
+
+- `db`: PostgreSQL/TimescaleDB/PostGIS trên port `5432`.
+- `broker`: EMQX trên port `1883`, dashboard `18083`.
+
+Backend chạy trực tiếp trên host bằng `uv`; không có API Gateway hoặc reverse
+proxy trong môi trường development.
+
+## Các phần chưa có trong MVP
+
+- User, authentication, RBAC và driver.
+- API toàn bộ lịch sử telemetry, bản đồ xe/trạm và aggregate dashboard.
+- Trạng thái connector tổng hợp và technical status history.
+- Cảnh báo pin, bất thường pin, chống lặp cảnh báo và push ngưỡng cảnh báo.
+- Geofence, device health, policy sạc, payment, billing và notification.
+- Web portal, vehicle app, observability tập trung và production reliability.
+
+Các hạng mục chắc chắn cần trong tương lai phải được ghi tại
+[`docs/01-requirements/future.md`](docs/01-requirements/future.md), không tạo
+placeholder trong source active.

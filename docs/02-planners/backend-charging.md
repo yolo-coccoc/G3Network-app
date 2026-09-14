@@ -2,8 +2,8 @@
 
 > Mã chức năng: AD-03 và phần lifecycle của S-02
 >
-> Trạng thái: 🚧 MVP rút gọn đã triển khai; production path và automated test vẫn
-> hoãn
+> Trạng thái: 🚧 MVP rút gọn đã triển khai; automated smoke test đã có,
+> PostgreSQL/OCPP integration và production path vẫn hoãn
 >
 > Ngày cập nhật: 2026-07-31
 
@@ -17,6 +17,12 @@ quyết định và bằng chứng triển khai. Khi nội dung cũ nói “chư
 “chưa triển khai”, đó là trạng thái tại thời điểm ghi nhận; trạng thái hiện tại
 được lấy từ phần đầu file và planner `backend-charging-mvp-ideal.md`.
 
+> **Nguồn chân lý cho source hiện tại:** chỉ có topology pre-provision, OCPP
+> 2.0.1, session aggregate, lifecycle event, meter value và các API đọc session.
+> Các mô tả về technical status, capability, location, reconciliation và
+> production reliability ở phần dưới là thiết kế mở rộng, chưa phải contract
+> active của repo.
+
 ## 1. Ranh giới hai domain
 
 ### 1.1. `charging_stations`: thiết bị vật lý và OCPP
@@ -24,10 +30,11 @@ quyết định và bằng chứng triển khai. Khi nội dung cũ nói “chư
 Sở hữu:
 
 - hồ sơ Charging Station, EVSE và Connector;
-- topology vật lý, capability và trạng thái kỹ thuật;
-- WebSocket gateway OCPP 2.0.1, connection registry và lifecycle kết nối;
-- nhận BootNotification, Heartbeat, StatusNotification, NotifyEvent,
-  TransactionEvent và MeterValues;
+- topology vật lý trong active MVP; capability và technical status là phần mở
+  rộng;
+- WebSocket gateway OCPP 2.0.1 và lifecycle happy path; connection registry và
+  reliability path là phần mở rộng;
+- nhận các message OCPP cần cho happy path `TransactionEvent` và `MeterValues`;
 - chuyển dữ liệu OCPP đã chuẩn hóa sang public service của
   `charging_sessions`.
 
@@ -41,7 +48,8 @@ Sở hữu:
 - lịch sử `charging_session_events`;
 - meter samples `charging_session_meter_values`;
 - tạo/cập nhật/kết thúc phiên từ dữ liệu do `charging_stations` gửi;
-- reconciliation và API giám sát phiên.
+- API đọc session, lifecycle event và meter value; reconciliation là phần mở
+  rộng.
 
 Domain này không làm authorization, pricing, payment, debt hoặc remote-control
 business rule trong MVP. Nó cũng không sở hữu WebSocket/OCPP adapter và không gọi
@@ -71,11 +79,11 @@ Trụ sạc ⇄ OCPP ⇄ charging_stations → charging_sessions
 - Development có thể không TLS/không authentication trong môi trường cô lập;
   production security profile chốt sau.
 - MVP topology test: `2 EVSE × 1 connector`; schema hỗ trợ N EVSE/N connector.
-- Lưu trạng thái thiết bị, OCPP technical events, transaction events và meter.
-- Lưu session aggregate, event history, meter history và API monitoring.
+- Lưu topology đã pre-provision, transaction events và meter.
+- Lưu session aggregate, event history, meter history và API đọc session.
 - Timestamp UTC timezone-aware, điện năng canonical Wh, `NUMERIC`/`Decimal`.
-- `charging_sessions` là bảng quan hệ thường; event/meter/status history là
-  TimescaleDB hypertable; location dùng PostGIS geography khi cần.
+- `charging_sessions` là bảng quan hệ thường; event/meter history là
+  TimescaleDB hypertable. Location/PostGIS chưa thuộc active schema.
 
 ### Hoãn khỏi MVP
 
