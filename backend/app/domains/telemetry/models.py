@@ -1,28 +1,116 @@
 """SQLAlchemy models for Telemetry domain."""
 
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
     DateTime,
     Double,
+)
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import (
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     literal_column,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domains.telemetry.types import TelemetryAlertStatus, TelemetryAlertType
 from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Return the current timezone-aware UTC datetime."""
+    """Trả về thời điểm hiện tại dưới dạng datetime UTC có timezone."""
     return datetime.now(timezone.utc)
+
+
+def enum_values(enum_type: type[object]) -> list[str]:
+    """Lấy value của enum để PostgreSQL lưu đúng contract public.
+
+    Args:
+        enum_type: Enum có các member sở hữu thuộc tính ``value``.
+
+    Returns:
+        Danh sách value theo thứ tự khai báo.
+    """
+    return [member.value for member in enum_type]  # type: ignore[attr-defined]
+
+
+class TelemetryAlertModel(Base):
+    """Cảnh báo pin sinh từ một bản ghi telemetry.
+
+    Chỉ duy trì tối đa một cảnh báo ``open`` cho mỗi cặp xe và loại cảnh báo.
+    Khi dữ liệu trở lại bình thường, bản ghi được chuyển sang ``resolved`` để
+    một đợt bất thường mới có thể tạo cảnh báo mới.
+
+    Attributes:
+        alert_id: ID nội bộ của cảnh báo.
+        vehicle_id: Xe phát sinh cảnh báo.
+        alert_type: Loại pin thấp hoặc pin bất thường.
+        status: Trạng thái mở hoặc đã xử lý.
+        severity: Mức độ cố định của cảnh báo MVP.
+        triggered_at: Thời điểm telemetry kích hoạt cảnh báo.
+        resolved_at: Thời điểm điều kiện đã hết, nullable.
+        payload: Các giá trị telemetry dùng để điều tra.
+        created_at: Thời điểm tạo bản ghi cảnh báo.
+    """
+
+    __tablename__ = "telemetry_alerts"
+
+    alert_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    vehicle_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("vehicles.vehicle_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    alert_type: Mapped[TelemetryAlertType] = mapped_column(
+        SQLEnum(
+            TelemetryAlertType,
+            name="telemetryalerttype",
+            values_callable=enum_values,
+        ),
+        nullable=False,
+    )
+    status: Mapped[TelemetryAlertStatus] = mapped_column(
+        SQLEnum(
+            TelemetryAlertStatus,
+            name="telemetryalertstatus",
+            values_callable=enum_values,
+        ),
+        nullable=False,
+        default=TelemetryAlertStatus.OPEN,
+    )
+    severity: Mapped[int] = mapped_column(Integer, nullable=False)
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB(), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+    __table_args__ = (
+        Index("ix_telemetry_alerts_vehicle_time", "vehicle_id", "triggered_at"),
+        Index(
+            "uq_telemetry_alerts_open",
+            "vehicle_id",
+            "alert_type",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+    )
 
 
 class VehicleTelemetryModel(Base):

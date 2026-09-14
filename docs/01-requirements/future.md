@@ -503,18 +503,18 @@
   timeout settings, simulator lỗi mạng và test duplicate/reconnect trước khi
   triển khai production.
 
-### 28. Topology metadata và helper charging bị loại khỏi MVP lý tưởng
+### 28. Topology technical metadata và helper charging bị loại khỏi MVP lý tưởng
 
 - **Mô tả ngắn**: Loại khỏi active model/API các metadata topology không cần cho
-  local happy path gồm thông tin nhà sản xuất/model/serial/firmware/location,
+  local happy path gồm thông tin nhà sản xuất/model/serial/firmware,
   administrative status, connection status, technical status, capability,
   connector type/công suất và các timestamp status/heartbeat; đồng thời loại
   location helper, status filter và các tham số CRUD tương ứng.
 - **Tác dụng/Vai trò trong hệ thống**:
   - Metadata thiết bị phục vụ quản trị hồ sơ station/EVSE/connector ngoài
     lifecycle session.
-  - Location/capability/công suất phục vụ bản đồ, tìm trụ phù hợp và policy
-    thiết bị khi tích hợp thiết bị thật.
+  - Capability/công suất phục vụ tìm trụ phù hợp và policy thiết bị khi tích
+    hợp thiết bị thật; API bản đồ MVP chỉ cần lat/lng station cơ bản.
   - Administrative/technical/connection snapshot phục vụ monitoring và
     technical status history, độc lập với `Started → Updated/MeterValues →
     Ended`.
@@ -522,7 +522,8 @@
   EVSE, connector luôn online/active; các field này không tham gia resolve
   identity hoặc lưu lifecycle session. Theo quyết định ngày 2026-08-02, source
   legacy có thể xóa thay vì phải giữ nguyên dưới dạng comment. Schema/API
-  active chỉ giữ identity, FK topology, timestamps và soft-delete.
+  active chỉ giữ identity, tọa độ station tối thiểu, FK topology, timestamps
+  và soft-delete.
 - **Liên quan đến planner/feature**: `backend-charging-mvp-ideal.md` Bước 1–2,
   `backend-charging.md`, AD-03 và phần lifecycle S-02.
 - **Ngày ghi nhận**: 2026-08-02
@@ -658,6 +659,20 @@
 - **Liên quan đến planner/feature**: `backend-charging.md`,
   `backend-charging-mvp-ideal.md`, AD-03 và S-02.
 - **Ngày ghi nhận**: 2026-08-04
+
+### 33. Cấu hình ngưỡng và mở rộng luật cảnh báo pin
+
+- **Mô tả ngắn**: Chuyển ngưỡng SOC 20% và nhiệt độ pin 55°C từ hằng số MVP sang
+  cấu hình theo xe/đội; bổ sung luật sụt áp, mã lỗi BMS, notification và trạng
+  thái acknowledged.
+- **Tác dụng/Vai trò trong hệ thống**: Cho phép vận hành điều chỉnh ngưỡng theo
+  loại xe/tuyến đường và xử lý đầy đủ vòng đời cảnh báo.
+- **Lý do hoãn lại**: MVP chỉ cần một ngưỡng cố định, anti-repeat bằng một alert
+  open cho mỗi xe/loại và API đọc/push alert; chưa có identity/user/notification
+  contract đủ ổn định. API push hiện chỉ gửi 20% và chưa nhận ACK từ thiết bị.
+- **Liên quan đến planner/feature**: AD-02, FM-01, FM-02 và mục 4.5
+  `docs/01-requirements/feature-list.md`.
+- **Ngày ghi nhận**: 2026-09-14
 
 ---
 

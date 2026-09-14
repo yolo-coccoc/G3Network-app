@@ -252,9 +252,59 @@ async def test_telemetry_service_persists_mapped_message(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
 
+    async def skip_alert_evaluation(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(telemetry_service, "sync_battery_alerts", skip_alert_evaluation)
+
     result = await telemetry_service.process_message(_db(), _telemetry_envelope())
 
     assert result == {"processed": 1, "skipped": 0, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_telemetry_service_pushes_battery_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Service publish đúng topic và ngưỡng cố định tới thiết bị của xe."""
+    vehicle_id = uuid4()
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(),
+        vehicle_id=vehicle_id,
+        telematic_serial="TBOX-TEST-001",
+    )
+    published: dict[str, object] = {}
+
+    async def resolve_mapping(db: AsyncSession, value: UUID) -> TelematicVehicleMapping:
+        return mapping
+
+    async def publish_json(
+        publisher: object, topic: str, payload: dict[str, object]
+    ) -> None:
+        published["topic"] = topic
+        published["payload"] = payload
+
+    monkeypatch.setattr(
+        telematics_public_service,
+        "resolve_mapping_by_vehicle_id",
+        resolve_mapping,
+    )
+    monkeypatch.setattr(
+        telemetry_service.telemetry_publisher.MQTTPublisher,
+        "publish_json",
+        publish_json,
+    )
+
+    response = await telemetry_service.push_battery_threshold_to_vehicle(
+        _db(), vehicle_id
+    )
+
+    assert response.threshold_percent == 20
+    assert published["topic"] == (
+        "g3network/telematics/TBOX-TEST-001/config/battery-threshold"
+    )
+    payload = cast(dict[str, object], published["payload"])
+    assert payload["threshold_percent"] == 20
 
 
 @pytest.mark.asyncio

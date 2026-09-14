@@ -93,6 +93,21 @@ async def resolve_vehicle_reference_by_id(
     return to_vehicle_reference(vehicle_record) if vehicle_record else None
 
 
+async def list_active_vehicle_references(
+    db_session: AsyncSession,
+) -> list[VehicleReference]:
+    """Trả về DTO tối thiểu của toàn bộ xe active cho domain telemetry.
+
+    Args:
+        db_session: Phiên database do entry boundary sở hữu.
+
+    Returns:
+        Danh sách ``VehicleReference`` không chứa ORM model.
+    """
+    vehicle_records = await vehicle_repository.list_all_active(db_session)
+    return [to_vehicle_reference(record) for record in vehicle_records]
+
+
 async def create_vehicle(
     db_session: AsyncSession,
     vehicle_create_request: VehicleCreateRequest,

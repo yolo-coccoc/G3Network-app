@@ -47,8 +47,8 @@ Station simulator ⇄ OCPP 2.0.1 gateway → charging_sessions
 
 MVP giữ sáu bảng active:
 
-1. `charging_stations`: `station_id`, `ocpp_identity`, `display_name` và
-   timestamps.
+1. `charging_stations`: `station_id`, `ocpp_identity`, `display_name`, tọa độ
+   nullable và timestamps.
 2. `charging_evses`: `evse_id`, `station_id`, `ocpp_evse_id` và timestamps.
 3. `charging_connectors`: `connector_id`, `evse_id`, `ocpp_connector_id` và
    timestamps.
@@ -64,6 +64,10 @@ giả định luôn online/active. Những model, enum, helper và nhánh xử l
 quan đến status history, interruption, idempotency, ordering, retry,
 reconciliation, reconnect và timeout phải được comment trong source, không xóa;
 lý do hoãn phải ghi trong `docs/01-requirements/future.md`.
+
+API monitoring station hiện tổng hợp connector ``available``/``charging`` từ
+topology và charging session active; chưa lưu technical status chi tiết của
+connector.
 
 ### 2.1. Đọc sáu bảng theo cách dễ hiểu
 
@@ -508,14 +512,14 @@ cuối cho charging MVP.
 - `compileall`, Black, isort, Ruff, mypy strict và `git diff --check` đều đạt.
   Bộ automated smoke test tối thiểu hiện đã được bổ sung theo
   [`backend-automated-tests.md`](./backend-automated-tests.md).
-- Alembic graph mới có đúng head `0004_create_charging_mvp_schema`; SQL offline
-  đã sinh đủ bốn bước reset/baseline và không còn tham chiếu revision cũ.
+- Alembic graph mới có head `0005_create_monitoring_api_schema`; SQL offline đã
+  sinh đủ các bước reset/baseline/monitoring và không còn tham chiếu revision cũ.
 - Đã kiểm tra catalog/DDL offline của sáu bảng charging active và hai
   hypertable history; kiểm thử upgrade/downgrade thật trên database tạm vẫn là
   bước tiếp theo trong planner automated tests.
-- Catalog sau khi upgrade có đúng sáu bảng charging active và không có
+- Catalog sau khi upgrade có topology, session và `telemetry_alerts`; không có
   `charging_station_status_events`; Alembic chỉ còn head
-  `0004_create_charging_mvp_schema`.
+  `0005_create_monitoring_api_schema`.
 - Audit không phát hiện import chéo `models.py`/`repository.py` giữa domain,
   `commit()`/`rollback()` trong charging service/repository,
   `HTTPException` ngoài router hoặc `datetime.utcnow()`. Giá trị năng lượng

@@ -179,6 +179,21 @@ async def list_charging_sessions(
     )
 
 
+async def get_active_connector_counts_by_station(
+    db: AsyncSession, station_ids: list[UUID]
+) -> dict[UUID, int]:
+    """Expose số connector charging cho domain station tổng hợp trạng thái.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        station_ids: Các station cần tổng hợp.
+
+    Returns:
+        Mapping station ID tới số connector có session active.
+    """
+    return await repository.count_active_connectors_by_station(db, station_ids)
+
+
 async def list_charging_session_events(
     db: AsyncSession,
     session_id: UUID,

@@ -1,8 +1,8 @@
 # Planner: Backend Telemetry Query API
 
 > Mã chức năng: FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đã triển khai phạm vi đầu tiên; API mở rộng và automated
-> regression test còn pending
+> Trạng thái: ✅ Đã triển khai phạm vi MVP backend; API query mở rộng khác vẫn
+> để phase sau
 > Ngày tạo: 2026-07-29
 
 ## 1. Mục tiêu
@@ -12,7 +12,8 @@ Xây dựng lớp HTTP API chỉ đọc dữ liệu đã được lưu trong b�
 tương lai; không xử lý MQTT ingestion, không ghi telemetry và không quản lý hồ
 sơ thiết bị telematic.
 
-Phạm vi đầu tiên chỉ gồm API lấy bản ghi telemetry mới nhất của một xe.
+Phạm vi MVP gồm telemetry mới nhất, toàn bộ lịch sử telemetry, bản đồ xe và
+danh sách cảnh báo pin sinh trực tiếp trong luồng ingest.
 
 ## 2. API trong scope hiện tại
 
@@ -46,16 +47,36 @@ model.
   không import trực tiếp `vehicles.repository` hoặc `vehicles.models`.
 - Dùng `Depends(get_db)` làm entry boundary sở hữu session và transaction.
 
-## 4. Kết quả triển khai phạm vi đầu tiên
+## 4. API MVP đã triển khai
+
+```http
+GET /api/v1/telemetry/vehicles/{vehicle_id}/history
+GET /api/v1/telemetry/vehicles/map
+GET /api/v1/telemetry/alerts?vehicle_id={vehicle_id}&status={status}
+POST /api/v1/telemetry/vehicles/{vehicle_id}/battery-threshold/push
+```
+
+- History trả toàn bộ record của xe theo thời gian tăng dần, chưa có
+  `limit`/`from`/`to` theo quyết định MVP.
+- Vehicle map trả một marker cho mọi xe active; xe chưa có telemetry vẫn xuất
+  hiện với tọa độ nullable.
+- Alert gồm `battery_low` ở SOC `<= 20%` và `battery_anomaly` khi nhiệt độ pin
+  `>= 55°C`. Mỗi xe chỉ có một alert mở cho mỗi loại; dữ liệu bình thường sẽ
+  resolve alert mở để lần bất thường sau có thể tạo lại.
+- Endpoint push publish payload `battery_alert_threshold` với ngưỡng cố định
+  `20%` tới topic `g3network/telematics/{telematic_serial}/config/battery-threshold`.
+  Message dùng QoS 1 và retain; MVP chưa có ACK từ thiết bị.
+
+## 5. Kết quả triển khai
 
 - Đã có repository query bản ghi mới nhất theo `vehicle_id` và `recorded_at`.
 - Đã có service kiểm tra xe active qua public service của `vehicles`.
 - Đã có response schema và endpoint `/api/v1/telemetry/vehicles/{vehicle_id}/latest`.
-- Các API lịch sử, hành trình, tổng hợp và push realtime vẫn chưa triển khai.
+- Các API hành trình, tổng hợp và push realtime vẫn chưa triển khai.
 - Automated regression test được tách sang
   [`backend-automated-tests.md`](./backend-automated-tests.md).
 
-## 5. Phân rã công việc mở rộng
+## 6. Phân rã công việc mở rộng
 
 1. Thêm query repository lấy bản ghi mới nhất theo `vehicle_id`.
 2. Thêm service function và domain exception cho trường hợp không có dữ liệu.
@@ -66,11 +87,10 @@ model.
 7. Smoke test: có dữ liệu, nhiều bản ghi, chưa có dữ liệu, xe không tồn tại và
    xe đã soft delete.
 
-## 6. Các API sẽ bổ sung sau
+## 7. Các API sẽ bổ sung sau
 
 Các API sau sẽ được cập nhật vào planner này khi được chốt:
 
-- lịch sử telemetry theo khoảng thời gian;
 - lịch sử hành trình GPS;
 - dữ liệu tổng hợp theo ngày/ca lái;
 - trạng thái tổng hợp cho dashboard;

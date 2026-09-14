@@ -11,20 +11,37 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import TypedDict
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from aiomqtt import MqttError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telematics.service as telematics_service
+import app.domains.telemetry.publisher as telemetry_publisher
 import app.domains.telemetry.repository as telemetry_repository
-from app.domains.telemetry.exceptions import TelemetryNotFoundError
-from app.domains.telemetry.schemas import (
-    TelemetryEnvelope,
-    VehicleTelemetryLatestResponse,
+import app.domains.vehicles.service as vehicle_service
+from app.domains.telemetry.exceptions import (
+    TelemetryNotFoundError,
+    TelemetryPublishError,
 )
-from app.domains.vehicles import service as vehicle_service
+from app.domains.telemetry.schemas import (
+    BatteryThresholdPushResponse,
+    TelemetryAlertListResponse,
+    TelemetryAlertResponse,
+    TelemetryEnvelope,
+    VehicleTelemetryHistoryResponse,
+    VehicleTelemetryLatestResponse,
+    VehicleTelemetryMapItemResponse,
+    VehicleTelemetryMapResponse,
+)
+from app.domains.telemetry.types import TelemetryAlertStatus, TelemetryAlertType
+from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Ngưỡng cố định của MVP; khi có màn hình cấu hình sẽ chuyển thành policy riêng.
+BATTERY_LOW_THRESHOLD_PERCENT = 20
+BATTERY_ANOMALY_TEMPERATURE_CELSIUS = 55
 
 
 async def get_latest_vehicle_telemetry_response(
@@ -56,6 +73,220 @@ async def get_latest_vehicle_telemetry_response(
         )
 
     return VehicleTelemetryLatestResponse.model_validate(telemetry)
+
+
+async def get_vehicle_telemetry_history_response(
+    db: AsyncSession, vehicle_id: UUID
+) -> VehicleTelemetryHistoryResponse:
+    """Lấy toàn bộ lịch sử telemetry sau khi xác nhận xe tồn tại.
+
+    Args:
+        db: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: ID nội bộ của xe cần truy vấn.
+
+    Returns:
+        Toàn bộ telemetry theo thời gian tăng dần.
+
+    Raises:
+        TelemetryNotFoundError: Khi xe không tồn tại.
+    """
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, vehicle_id
+    )
+    if vehicle_reference is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+
+    telemetry = await telemetry_repository.list_vehicle_telemetry_history(
+        db, vehicle_id
+    )
+    return VehicleTelemetryHistoryResponse(
+        items=[
+            VehicleTelemetryLatestResponse.model_validate(item) for item in telemetry
+        ],
+        total=len(telemetry),
+    )
+
+
+async def get_vehicle_telemetry_map_response(
+    db: AsyncSession,
+) -> VehicleTelemetryMapResponse:
+    """Lấy xe active kèm telemetry mới nhất để hiển thị trên bản đồ.
+
+    Args:
+        db: Phiên database do HTTP boundary sở hữu.
+
+    Returns:
+        Một item cho mọi xe active; xe chưa có telemetry vẫn được trả về với
+        các trường vị trí nullable.
+    """
+    vehicle_references = await vehicle_service.list_active_vehicle_references(db)
+    latest_telemetry = await telemetry_repository.list_latest_vehicle_telemetry(
+        db, [reference.vehicle_id for reference in vehicle_references]
+    )
+    telemetry_by_vehicle = {item.vehicle_id: item for item in latest_telemetry}
+
+    items = []
+    for reference in vehicle_references:
+        telemetry = telemetry_by_vehicle.get(reference.vehicle_id)
+        items.append(
+            VehicleTelemetryMapItemResponse(
+                vehicle_id=reference.vehicle_id,
+                vin=reference.vin,
+                latitude=telemetry.latitude if telemetry else None,
+                longitude=telemetry.longitude if telemetry else None,
+                soc=telemetry.soc if telemetry else None,
+                speed=telemetry.speed if telemetry else None,
+                recorded_at=telemetry.recorded_at if telemetry else None,
+            )
+        )
+    return VehicleTelemetryMapResponse(items=items, total=len(items))
+
+
+async def push_battery_threshold_to_vehicle(
+    db: AsyncSession,
+    vehicle_id: UUID,
+) -> BatteryThresholdPushResponse:
+    """Publish ngưỡng cảnh báo pin MVP tới telematic của xe.
+
+    Args:
+        db: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: ID nội bộ của xe cần nhận command.
+
+    Returns:
+        Thông tin command đã publish thành công.
+
+    Raises:
+        TelemetryNotFoundError: Khi xe chưa có mapping telematic.
+        TelemetryPublishError: Khi MQTT broker không nhận được command.
+    """
+    mapping = await telematics_service.resolve_mapping_by_vehicle_id(db, vehicle_id)
+    if mapping is None or mapping.telematic_serial is None:
+        raise TelemetryNotFoundError(
+            f"No telematic mapping found for vehicle with id '{vehicle_id}'"
+        )
+
+    topic = settings.MQTT_BATTERY_THRESHOLD_TOPIC_TEMPLATE.format(
+        telematic_serial=mapping.telematic_serial
+    )
+    published_at = datetime.now(timezone.utc)
+    payload = {
+        "type": "battery_alert_threshold",
+        "version": 1,
+        "message_id": str(uuid4()),
+        "threshold_percent": BATTERY_LOW_THRESHOLD_PERCENT,
+        "published_at": published_at.isoformat(),
+    }
+    try:
+        await telemetry_publisher.MQTTPublisher().publish_json(topic, payload)
+    except MqttError as error:
+        raise TelemetryPublishError(
+            f"Không publish được ngưỡng pin tới telematic '{mapping.telematic_serial}'"
+        ) from error
+
+    return BatteryThresholdPushResponse(
+        vehicle_id=vehicle_id,
+        telematic_serial=mapping.telematic_serial,
+        threshold_percent=BATTERY_LOW_THRESHOLD_PERCENT,
+        topic=topic,
+        published_at=published_at,
+    )
+
+
+async def list_telemetry_alerts_response(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID | None = None,
+    status_filter: TelemetryAlertStatus | None = None,
+) -> TelemetryAlertListResponse:
+    """Liệt kê cảnh báo pin đã sinh từ telemetry.
+
+    Args:
+        db: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: Lọc theo xe nếu có.
+        status_filter: Lọc theo trạng thái nếu có.
+
+    Returns:
+        Danh sách cảnh báo theo thời điểm mới nhất.
+    """
+    alerts = await telemetry_repository.list_telemetry_alerts(
+        db,
+        vehicle_id=vehicle_id,
+        status_filter=status_filter,
+    )
+    return TelemetryAlertListResponse(
+        items=[TelemetryAlertResponse.model_validate(alert) for alert in alerts],
+        total=len(alerts),
+    )
+
+
+async def sync_battery_alerts(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    recorded_at: datetime,
+    soc: float,
+    battery_temperature: float | None,
+) -> None:
+    """Đồng bộ hai cảnh báo pin từ telemetry vừa được ghi nhận.
+
+    Cảnh báo chỉ được mở một lần khi điều kiện bắt đầu và chỉ resolve khi
+    điều kiện hết. Unique partial index ở database giữ invariant này ngay cả
+    khi có nhiều worker cùng xử lý.
+
+    Args:
+        db: Phiên database của cùng transaction ingest telemetry.
+        vehicle_id: Xe phát sinh dữ liệu.
+        recorded_at: Thời điểm telemetry.
+        soc: State of Charge hiện tại.
+        battery_temperature: Nhiệt độ pin, nullable.
+
+    Side Effects:
+        Tạo hoặc resolve các bản ghi cảnh báo; không commit hoặc rollback.
+    """
+    low_payload: dict[str, object] = {
+        "soc": soc,
+        "threshold_percent": BATTERY_LOW_THRESHOLD_PERCENT,
+    }
+    if soc <= BATTERY_LOW_THRESHOLD_PERCENT:
+        await telemetry_repository.open_telemetry_alert(
+            db,
+            vehicle_id=vehicle_id,
+            alert_type=TelemetryAlertType.BATTERY_LOW,
+            severity=2,
+            triggered_at=recorded_at,
+            payload=low_payload,
+        )
+    else:
+        await telemetry_repository.resolve_telemetry_alert(
+            db,
+            vehicle_id=vehicle_id,
+            alert_type=TelemetryAlertType.BATTERY_LOW,
+            resolved_at=recorded_at,
+        )
+
+    if battery_temperature is None:
+        return
+
+    anomaly_payload: dict[str, object] = {
+        "battery_temperature": battery_temperature,
+        "threshold_celsius": BATTERY_ANOMALY_TEMPERATURE_CELSIUS,
+    }
+    if battery_temperature >= BATTERY_ANOMALY_TEMPERATURE_CELSIUS:
+        await telemetry_repository.open_telemetry_alert(
+            db,
+            vehicle_id=vehicle_id,
+            alert_type=TelemetryAlertType.BATTERY_ANOMALY,
+            severity=3,
+            triggered_at=recorded_at,
+            payload=anomaly_payload,
+        )
+    else:
+        await telemetry_repository.resolve_telemetry_alert(
+            db,
+            vehicle_id=vehicle_id,
+            alert_type=TelemetryAlertType.BATTERY_ANOMALY,
+            resolved_at=recorded_at,
+        )
 
 
 class BatchResult(TypedDict):
@@ -139,6 +370,14 @@ async def process_message(
         db,
         telemetry_values,
     )
+    if processed_count:
+        await sync_battery_alerts(
+            db,
+            vehicle_id=vehicle_id,
+            recorded_at=message.recorded_at,
+            soc=message.battery.soc,
+            battery_temperature=message.battery.temperature,
+        )
     logger.info(
         "telemetry message persisted",
         extra={

@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Double,
     ForeignKey,
     Index,
     Integer,
@@ -39,6 +40,8 @@ class ChargingStationModel(Base):
         station_id: UUID nội bộ.
         ocpp_identity: Identity xuất hiện trong OCPP WebSocket path.
         display_name: Tên hiển thị.
+        latitude: Vĩ độ station, nullable nếu chưa được khai báo.
+        longitude: Kinh độ station, nullable nếu chưa được khai báo.
         created_at: Thời điểm tạo record.
         updated_at: Thời điểm cập nhật record.
         deleted_at: Thời điểm soft-delete, nullable.
@@ -55,6 +58,8 @@ class ChargingStationModel(Base):
     )
     ocpp_identity: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    latitude: Mapped[float | None] = mapped_column(Double(), nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Double(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

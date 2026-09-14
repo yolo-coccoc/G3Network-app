@@ -50,6 +50,22 @@ async def resolve_mapping_by_serial(
     return await repository.find_mapping_by_serial(db, serial)
 
 
+async def resolve_mapping_by_vehicle_id(
+    db: AsyncSession,
+    vehicle_id: UUID,
+) -> TelematicVehicleMapping | None:
+    """Resolve xe thành mapping thiết bị kèm serial MQTT.
+
+    Args:
+        db: Phiên database do entry boundary sở hữu.
+        vehicle_id: ID nội bộ của xe.
+
+    Returns:
+        Mapping thiết bị–xe nếu xe đã được gán telematic active.
+    """
+    return await repository.find_mapping_by_vehicle_id(db, vehicle_id)
+
+
 async def resolve_mappings_by_serial(
     db: AsyncSession,
     serials: Sequence[str],

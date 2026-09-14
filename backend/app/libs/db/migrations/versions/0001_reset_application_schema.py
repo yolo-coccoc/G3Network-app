@@ -23,6 +23,7 @@ _APPLICATION_TABLES = (
     "charging_evses",
     "charging_stations",
     "vehicle_telemetry",
+    "telemetry_alerts",
     "telematics",
     "vehicles",
 )
@@ -41,6 +42,8 @@ _APPLICATION_ENUMS = (
     "chargingendreason",
     "chargingstate",
     "chargingstationsourceaction",
+    "telemetryalertstatus",
+    "telemetryalerttype",
 )
 
 

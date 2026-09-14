@@ -116,6 +116,34 @@ async def count_sessions(db: AsyncSession) -> int:
     return int(result.scalar() or 0)
 
 
+async def count_active_connectors_by_station(
+    db: AsyncSession, station_ids: list[UUID]
+) -> dict[UUID, int]:
+    """Đếm connector đang có session active theo station.
+
+    Args:
+        db: Async session do entry boundary sở hữu.
+        station_ids: Các station cần tổng hợp.
+
+    Returns:
+        Mapping ``station_id -> số connector đang charging``.
+    """
+    if not station_ids:
+        return {}
+    result = await db.execute(
+        select(
+            ChargingSessionModel.station_id,
+            func.count(func.distinct(ChargingSessionModel.connector_id)),
+        )
+        .where(
+            ChargingSessionModel.station_id.in_(station_ids),
+            ChargingSessionModel.status == SessionStatus.ACTIVE,
+        )
+        .group_by(ChargingSessionModel.station_id)
+    )
+    return {row[0]: int(row[1]) for row in result.all()}
+
+
 async def list_charging_session_events(
     db: AsyncSession,
     session_id: UUID,

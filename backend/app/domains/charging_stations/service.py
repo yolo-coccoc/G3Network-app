@@ -12,7 +12,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.charging_stations import repository
+import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.repository as repository
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
@@ -28,6 +29,7 @@ from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
     ChargingConnectorResponse,
+    ChargingConnectorStatusSummary,
     ChargingConnectorUpdateRequest,
     ChargingEvseCreateRequest,
     ChargingEvseListResponse,
@@ -36,7 +38,9 @@ from app.domains.charging_stations.schemas import (
     ChargingResourceDeleteResponse,
     ChargingStationCreateRequest,
     ChargingStationListResponse,
+    ChargingStationMapResponse,
     ChargingStationResponse,
+    ChargingStationSummaryResponse,
     ChargingStationUpdateRequest,
 )
 from app.libs.common.config import settings
@@ -57,9 +61,36 @@ def to_charging_station_response(
         station_id=station.station_id,
         ocpp_identity=station.ocpp_identity,
         display_name=station.display_name,
+        latitude=station.latitude,
+        longitude=station.longitude,
         created_at=station.created_at,
         updated_at=station.updated_at,
         deleted_at=station.deleted_at,
+    )
+
+
+def to_charging_station_summary_response(
+    station: ChargingStationModel,
+    total_connectors: int,
+    charging_connectors: int,
+) -> ChargingStationSummaryResponse:
+    """Dựng station response cùng tổng hợp connector.
+
+    Args:
+        station: ORM station active.
+        total_connectors: Tổng connector active của station.
+        charging_connectors: Connector đang có session active.
+
+    Returns:
+        Station response có số connector available và charging.
+    """
+    return ChargingStationSummaryResponse(
+        **to_charging_station_response(station).model_dump(),
+        connector_status=ChargingConnectorStatusSummary(
+            total=total_connectors,
+            available=max(total_connectors - charging_connectors, 0),
+            charging=charging_connectors,
+        ),
     )
 
 
@@ -131,6 +162,8 @@ async def create_charging_station(
             db,
             ocpp_identity=station_data.ocpp_identity,
             display_name=station_data.display_name,
+            latitude=station_data.latitude,
+            longitude=station_data.longitude,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -163,18 +196,47 @@ async def list_charging_stations(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
     )
     offset = (page - 1) * page_size
-    stations = await repository.list_charging_stations(
+    station_summaries = await repository.list_station_connector_summaries(
         db,
         offset=offset,
         limit=page_size,
     )
     total = await repository.count_stations(db)
+    charging_counts = (
+        await charging_sessions_service.get_active_connector_counts_by_station(
+            db, [station.station_id for station, _ in station_summaries]
+        )
+    )
     return ChargingStationListResponse(
-        items=[to_charging_station_response(station) for station in stations],
+        items=[
+            to_charging_station_summary_response(
+                station, connector_total, charging_counts.get(station.station_id, 0)
+            )
+            for station, connector_total in station_summaries
+        ],
         total=total,
         page=page,
         page_size=page_size,
     )
+
+
+async def get_charging_station_map(
+    db: AsyncSession,
+) -> ChargingStationMapResponse:
+    """Lấy toàn bộ station active cùng tọa độ và trạng thái connector."""
+    station_summaries = await repository.list_station_connector_summaries(db)
+    charging_counts = (
+        await charging_sessions_service.get_active_connector_counts_by_station(
+            db, [station.station_id for station, _ in station_summaries]
+        )
+    )
+    items = [
+        to_charging_station_summary_response(
+            station, connector_total, charging_counts.get(station.station_id, 0)
+        )
+        for station, connector_total in station_summaries
+    ]
+    return ChargingStationMapResponse(items=items, total=len(items))
 
 
 async def get_charging_station(

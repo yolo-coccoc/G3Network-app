@@ -34,6 +34,8 @@ async def create_charging_station(
     *,
     ocpp_identity: str,
     display_name: str,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> ChargingStationModel:
     """Tạo station và flush để phát hiện constraint ngay trong transaction.
 
@@ -41,6 +43,8 @@ async def create_charging_station(
         db: Async session do entry boundary sở hữu.
         ocpp_identity: OCPP identity duy nhất của station.
         display_name: Tên hiển thị.
+        latitude: Vĩ độ station, nullable.
+        longitude: Kinh độ station, nullable.
 
     Returns:
         Station vừa được persistence.
@@ -48,6 +52,8 @@ async def create_charging_station(
     station = ChargingStationModel(
         ocpp_identity=ocpp_identity,
         display_name=display_name,
+        latitude=latitude,
+        longitude=longitude,
     )
     db.add(station)
     await db.flush()
@@ -146,6 +152,61 @@ async def count_stations(
         select(func.count(ChargingStationModel.station_id)).where(and_(*conditions))
     )
     return int(result.scalar() or 0)
+
+
+async def list_station_connector_summaries(
+    db: AsyncSession,
+    *,
+    offset: int = 0,
+    limit: int | None = None,
+) -> list[tuple[ChargingStationModel, int]]:
+    """Lấy station cùng tổng connector active.
+
+    Args:
+        db: Async session hiện tại.
+        offset: Số station bỏ qua.
+        limit: Số station tối đa; ``None`` để lấy toàn bộ cho bản đồ.
+
+    Returns:
+        Tuple gồm ``(station, total_connectors)``.
+    """
+    total_connectors = (
+        select(
+            ChargingEvseModel.station_id.label("station_id"),
+            func.count(ChargingConnectorModel.connector_id).label("total"),
+        )
+        .join(
+            ChargingConnectorModel,
+            ChargingConnectorModel.evse_id == ChargingEvseModel.evse_id,
+        )
+        .where(
+            ChargingEvseModel.deleted_at.is_(None),
+            ChargingConnectorModel.deleted_at.is_(None),
+        )
+        .group_by(ChargingEvseModel.station_id)
+        .subquery()
+    )
+    statement = (
+        select(
+            ChargingStationModel,
+            func.coalesce(total_connectors.c.total, 0),
+        )
+        .outerjoin(
+            total_connectors,
+            total_connectors.c.station_id == ChargingStationModel.station_id,
+        )
+        .where(ChargingStationModel.deleted_at.is_(None))
+        .order_by(
+            ChargingStationModel.created_at.desc(),
+            ChargingStationModel.station_id.desc(),
+        )
+        .offset(offset)
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+
+    result = await db.execute(statement)
+    return [(row[0], int(row[1])) for row in result.all()]
 
 
 async def update_charging_station(

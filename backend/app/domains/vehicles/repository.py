@@ -124,6 +124,23 @@ async def list_all(
     return list(query_result.scalars().all())
 
 
+async def list_all_active(db_session: AsyncSession) -> list[VehicleModel]:
+    """Lấy toàn bộ xe active không phân trang cho các API bản đồ.
+
+    Args:
+        db_session: Phiên database do entry boundary sở hữu.
+
+    Returns:
+        Danh sách xe chưa soft delete theo thời điểm tạo giảm dần.
+    """
+    query_result = await db_session.execute(
+        select(VehicleModel)
+        .where(VehicleModel.deleted_at.is_(None))
+        .order_by(VehicleModel.created_at.desc(), VehicleModel.vehicle_id.desc())
+    )
+    return list(query_result.scalars().all())
+
+
 async def count(
     db_session: AsyncSession, status_filter: VehicleStatus | None = None
 ) -> int:

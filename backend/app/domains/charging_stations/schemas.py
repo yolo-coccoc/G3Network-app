@@ -1,8 +1,8 @@
-"""Pydantic schemas cho topology charging đã pre-provision.
+"""Pydantic schemas cho topology và API monitoring charging.
 
-MVP lý tưởng chỉ expose identity OCPP, internal IDs và timestamps cần để kiểm
-tra topology. Location, capability, technical status và thông tin thiết bị
-được hoãn cùng technical status path; không đưa chúng vào HTTP contract active.
+MVP expose identity OCPP, tọa độ station, internal IDs, trạng thái connector
+tổng hợp và timestamps cần để kiểm tra topology. Technical status chi tiết của
+thiết bị vẫn nằm ngoài contract hiện tại.
 """
 
 from datetime import datetime
@@ -19,10 +19,14 @@ class ChargingStationCreateRequest(BaseModel):
     Attributes:
         ocpp_identity: Identity station dùng trong OCPP WebSocket path.
         display_name: Tên hiển thị của station.
+        latitude: Vĩ độ station, nullable nếu chưa có dữ liệu.
+        longitude: Kinh độ station, nullable nếu chưa có dữ liệu.
     """
 
     ocpp_identity: str = Field(..., min_length=1, max_length=255)
     display_name: str = Field(..., min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
 
     @field_validator("ocpp_identity", "display_name")
     @classmethod
@@ -50,10 +54,14 @@ class ChargingStationUpdateRequest(BaseModel):
     Attributes:
         ocpp_identity: Identity mới; ``None`` nghĩa là không cập nhật.
         display_name: Tên mới; ``None`` nghĩa là không cập nhật.
+        latitude: Vĩ độ mới; ``None`` nghĩa là không cập nhật.
+        longitude: Kinh độ mới; ``None`` nghĩa là không cập nhật.
     """
 
     ocpp_identity: str | None = Field(None, min_length=1, max_length=255)
     display_name: str | None = Field(None, min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
 
     @field_validator("ocpp_identity", "display_name")
     @classmethod
@@ -84,6 +92,8 @@ class ChargingStationResponse(BaseModel):
         station_id: UUID nội bộ.
         ocpp_identity: Identity OCPP duy nhất.
         display_name: Tên hiển thị.
+        latitude: Vĩ độ station, nullable.
+        longitude: Kinh độ station, nullable.
         created_at: Thời điểm tạo.
         updated_at: Thời điểm cập nhật gần nhất.
         deleted_at: Thời điểm soft-delete, nullable.
@@ -94,6 +104,8 @@ class ChargingStationResponse(BaseModel):
     station_id: UUID
     ocpp_identity: str
     display_name: str
+    latitude: float | None
+    longitude: float | None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -109,10 +121,40 @@ class ChargingStationListResponse(BaseModel):
         page_size: Số item tối đa trong một trang.
     """
 
-    items: list[ChargingStationResponse]
+    items: list["ChargingStationSummaryResponse"]
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
+class ChargingConnectorStatusSummary(BaseModel):
+    """Tổng hợp connector theo trạng thái sử dụng trong MVP.
+
+    ``charging`` được tính từ charging session active; các connector còn lại
+    được xem là ``available`` theo giả định topology local luôn online.
+
+    Attributes:
+        total: Tổng connector active của station.
+        available: Connector chưa có session active.
+        charging: Connector đang có session active.
+    """
+
+    total: int = Field(..., ge=0)
+    available: int = Field(..., ge=0)
+    charging: int = Field(..., ge=0)
+
+
+class ChargingStationSummaryResponse(ChargingStationResponse):
+    """Station kèm tổng hợp trạng thái connector."""
+
+    connector_status: ChargingConnectorStatusSummary
+
+
+class ChargingStationMapResponse(BaseModel):
+    """Danh sách station active phục vụ màn hình bản đồ."""
+
+    items: list[ChargingStationSummaryResponse]
+    total: int = Field(..., ge=0)
 
 
 class ChargingEvseCreateRequest(BaseModel):

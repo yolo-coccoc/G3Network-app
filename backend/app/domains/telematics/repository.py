@@ -69,6 +69,7 @@ async def find_mapping_by_serial(
         TelematicVehicleMapping(
             telematic_id=mapping_row.telematic_id,
             vehicle_id=mapping_row.vehicle_id,
+            telematic_serial=serial,
         )
         if mapping_row
         else None
@@ -110,6 +111,41 @@ async def find_mappings_by_serial(
         )
         for row in query_result.all()
     }
+
+
+async def find_mapping_by_vehicle_id(
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+) -> TelematicVehicleMapping | None:
+    """Tìm thiết bị đang gán cho một xe.
+
+    Args:
+        db_session: Phiên database do entry boundary sở hữu.
+        vehicle_id: ID nội bộ của xe.
+
+    Returns:
+        Mapping thiết bị–xe kèm serial để dựng topic MQTT, hoặc ``None``.
+    """
+    query_result = await db_session.execute(
+        select(
+            TelematicModel.telematic_id,
+            TelematicModel.vehicle_id,
+            TelematicModel.telematic_serial,
+        ).where(
+            TelematicModel.vehicle_id == vehicle_id,
+            TelematicModel.deleted_at.is_(None),
+        )
+    )
+    mapping_row = query_result.one_or_none()
+    return (
+        TelematicVehicleMapping(
+            telematic_id=mapping_row.telematic_id,
+            vehicle_id=mapping_row.vehicle_id,
+            telematic_serial=mapping_row.telematic_serial,
+        )
+        if mapping_row
+        else None
+    )
 
 
 async def list_all(

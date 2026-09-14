@@ -20,7 +20,9 @@ class TelematicVehicleMapping:
     Attributes:
         telematic_id: ID nội bộ của thiết bị.
         vehicle_id: ID nội bộ của xe được gán.
+        telematic_serial: Serial thiết bị, nullable khi chỉ resolve mapping cũ.
     """
 
     telematic_id: UUID
     vehicle_id: UUID
+    telematic_serial: str | None = None

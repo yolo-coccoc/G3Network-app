@@ -31,6 +31,10 @@ class Settings(BaseSettings):
         MQTT_QOS: QoS của telemetry subscription trong MVP.
         MQTT_TELEMETRY_TOPIC: Topic pattern nhận telemetry.
         MQTT_STATUS_TOPIC_TEMPLATE: Mẫu topic MQTT Last Will.
+        MQTT_COMMAND_CLIENT_ID: Client identifier riêng cho API gửi lệnh.
+        MQTT_COMMAND_QOS: QoS dùng khi gửi cấu hình tới thiết bị.
+        MQTT_COMMAND_RETAIN: Có giữ lại cấu hình mới nhất trên broker hay không.
+        MQTT_BATTERY_THRESHOLD_TOPIC_TEMPLATE: Mẫu topic cấu hình ngưỡng pin.
         MQTT_WILL_QOS: QoS của MQTT Last Will.
         MQTT_WILL_RETAIN: Có retain MQTT Last Will hay không.
         TELEMETRY_QUEUE_SIZE: Sức chứa in-memory queue.
@@ -72,6 +76,12 @@ class Settings(BaseSettings):
     MQTT_QOS: int = Field(default=0, ge=0, le=2)
     MQTT_TELEMETRY_TOPIC: str = "g3network/telematics/+/telemetry"
     MQTT_STATUS_TOPIC_TEMPLATE: str = "g3network/consumers/{client_id}/status"
+    MQTT_COMMAND_CLIENT_ID: str = "g3network-backend-command-api"
+    MQTT_COMMAND_QOS: int = Field(default=1, ge=0, le=2)
+    MQTT_COMMAND_RETAIN: bool = True
+    MQTT_BATTERY_THRESHOLD_TOPIC_TEMPLATE: str = (
+        "g3network/telematics/{telematic_serial}/config/battery-threshold"
+    )
     MQTT_WILL_QOS: int = Field(default=1, ge=0, le=2)
     MQTT_WILL_RETAIN: bool = True
 

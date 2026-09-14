@@ -14,6 +14,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.domains.telemetry.types import TelemetryAlertStatus, TelemetryAlertType
+
 
 class VehicleTelemetryLatestResponse(BaseModel):
     """Dữ liệu telemetry mới nhất trả về cho một xe.
@@ -53,6 +55,102 @@ class VehicleTelemetryLatestResponse(BaseModel):
     odometer: float | None
     signal_strength: int | None
     error_codes: dict[str, list[str]] | None
+
+
+class VehicleTelemetryHistoryResponse(BaseModel):
+    """Toàn bộ lịch sử telemetry của một xe.
+
+    Attributes:
+        items: Các bản ghi theo thứ tự thời gian tăng dần.
+        total: Số bản ghi được trả về.
+    """
+
+    items: list[VehicleTelemetryLatestResponse]
+    total: int = Field(..., ge=0)
+
+
+class VehicleTelemetryMapItemResponse(BaseModel):
+    """Vị trí và trạng thái gần nhất của một xe trên bản đồ.
+
+    Các trường telemetry nullable để vẫn hiển thị xe chưa từng gửi dữ liệu.
+
+    Attributes:
+        vehicle_id: ID nội bộ của xe.
+        vin: Số khung của xe.
+        latitude: Vĩ độ gần nhất, nullable nếu chưa có telemetry.
+        longitude: Kinh độ gần nhất, nullable nếu chưa có telemetry.
+        soc: Phần trăm pin gần nhất, nullable nếu chưa có telemetry.
+        speed: Tốc độ gần nhất, nullable nếu chưa có telemetry.
+        recorded_at: Thời điểm telemetry gần nhất, nullable nếu chưa có dữ liệu.
+    """
+
+    vehicle_id: UUID
+    vin: str
+    latitude: float | None
+    longitude: float | None
+    soc: float | None
+    speed: float | None
+    recorded_at: datetime | None
+
+
+class VehicleTelemetryMapResponse(BaseModel):
+    """Danh sách toàn bộ xe và vị trí telemetry gần nhất."""
+
+    items: list[VehicleTelemetryMapItemResponse]
+    total: int = Field(..., ge=0)
+
+
+class BatteryThresholdPushResponse(BaseModel):
+    """Kết quả publish ngưỡng pin cố định tới thiết bị telematic.
+
+    Attributes:
+        vehicle_id: ID xe được gán cho thiết bị.
+        telematic_serial: Serial thiết bị nhận command.
+        threshold_percent: Ngưỡng pin đã publish.
+        topic: Topic MQTT đã sử dụng.
+        published_at: Thời điểm backend publish command.
+    """
+
+    vehicle_id: UUID
+    telematic_serial: str
+    threshold_percent: float
+    topic: str
+    published_at: datetime
+
+
+class TelemetryAlertResponse(BaseModel):
+    """Cảnh báo pin được sinh từ telemetry.
+
+    Attributes:
+        alert_id: ID nội bộ của cảnh báo.
+        vehicle_id: Xe phát sinh cảnh báo.
+        alert_type: Loại cảnh báo.
+        status: Trạng thái mở hoặc đã resolve.
+        severity: Mức độ cố định trong MVP.
+        triggered_at: Thời điểm kích hoạt.
+        resolved_at: Thời điểm kết thúc điều kiện, nullable.
+        payload: Giá trị telemetry tại thời điểm cảnh báo.
+        created_at: Thời điểm tạo record.
+    """
+
+    model_config = {"from_attributes": True}
+
+    alert_id: UUID
+    vehicle_id: UUID
+    alert_type: TelemetryAlertType
+    status: TelemetryAlertStatus
+    severity: int
+    triggered_at: datetime
+    resolved_at: datetime | None
+    payload: dict[str, object]
+    created_at: datetime
+
+
+class TelemetryAlertListResponse(BaseModel):
+    """Danh sách cảnh báo pin."""
+
+    items: list[TelemetryAlertResponse]
+    total: int = Field(..., ge=0)
 
 
 class TelemetryLocationPayload(BaseModel):
