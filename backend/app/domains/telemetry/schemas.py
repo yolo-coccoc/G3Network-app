@@ -15,6 +15,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.libs.common.geo import coordinates_to_location
+
 
 class VehicleTelemetryLatestResponse(BaseModel):
     """Latest telemetry data returned for a vehicle.
@@ -35,9 +37,14 @@ class VehicleTelemetryLatestResponse(BaseModel):
         odometer: Total distance traveled, km.
         signal_strength: Signal strength, dBm.
         error_codes: Error codes from the device.
-    """
 
-    model_config = {"from_attributes": True}
+    Note:
+        No longer built via ``model_validate(orm_obj, from_attributes=True)``
+        - the ORM model stores GPS as a single ``location`` geography point,
+        which doesn't line up 1:1 with this schema's plain latitude/
+        longitude fields. See
+        ``telemetry.service.to_vehicle_telemetry_latest_response``.
+    """
 
     vehicle_id: UUID
     telematic_serial: str
@@ -350,8 +357,9 @@ class TelemetryMessage(BaseModel):
             "vehicle_id": vehicle_id,
             "recorded_at": self.recorded_at,
             "received_at": received_at,
-            "latitude": self.location.latitude,
-            "longitude": self.location.longitude,
+            "location": coordinates_to_location(
+                self.location.latitude, self.location.longitude
+            ),
             "speed": vehicle_state_dict.get("speed") if vehicle_state_dict else None,
             "heading": (
                 vehicle_state_dict.get("heading") if vehicle_state_dict else None

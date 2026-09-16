@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
-import app.domains.charging_stations.service as charging_stations_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telematics.service as telematics_public_service
@@ -28,10 +27,12 @@ from app.domains.charging_sessions.types import (
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
+from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import VehicleReference, VehicleStatus
+from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 
 
 def _db() -> AsyncSession:
@@ -333,23 +334,63 @@ async def test_charging_service_runs_started_meter_ended_flow(
     assert inserted_meters == [Decimal("1500")]
 
 
-def test_charging_station_location_round_trips_through_postgis_conversion() -> None:
+def test_geo_location_round_trips_through_postgis_conversion() -> None:
     """Latitude/longitude survive the PostGIS geography conversion round trip.
 
     Regression guard for the x/y (longitude/latitude) ordering Shapely and
     PostGIS both expect - a swapped pair would still "work" (no exception)
-    but silently store the wrong location.
+    but silently store the wrong location. Shared by charging_stations and
+    telemetry, so this test covers both domains' storage.
     """
-    location = charging_stations_service._coordinates_to_location(10.762622, 106.660172)
+    location = coordinates_to_location(10.762622, 106.660172)
 
-    latitude, longitude = charging_stations_service._location_to_coordinates(location)
+    latitude, longitude = location_to_coordinates(location)
 
     assert latitude == pytest.approx(10.762622)
     assert longitude == pytest.approx(106.660172)
 
 
-def test_charging_station_location_conversion_handles_missing_coordinates() -> None:
+def test_geo_location_conversion_handles_missing_coordinates() -> None:
     """No location, or a partially-missing pair, converts to/from ``None``."""
-    assert charging_stations_service._coordinates_to_location(None, None) is None
-    assert charging_stations_service._coordinates_to_location(10.762622, None) is None
-    assert charging_stations_service._location_to_coordinates(None) == (None, None)
+    assert coordinates_to_location(None, None) is None
+    assert coordinates_to_location(10.762622, None) is None
+    assert location_to_coordinates(None) == (None, None)
+
+
+def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
+    """to_vehicle_telemetry_latest_response() exposes lat/lon from the stored geography.
+
+    Regression guard for the vehicle_telemetry storage unification
+    (future.md item 9): the response contract (plain latitude/longitude)
+    stays the same even though the ORM model now stores a single
+    ``location`` point instead.
+    """
+    now = datetime.now(timezone.utc)
+    record = VehicleTelemetryModel(
+        message_id=1,
+        message_uuid=uuid4(),
+        telematic_id=uuid4(),
+        telematic_serial="TBOX-TEST-001",
+        vehicle_id=uuid4(),
+        recorded_at=now,
+        received_at=now,
+        location=coordinates_to_location(10.762622, 106.660172),
+        speed=None,
+        heading=None,
+        soc=80.0,
+        battery_voltage=None,
+        battery_current=None,
+        battery_temperature=None,
+        motor_temperature=None,
+        odometer=None,
+        signal_strength=None,
+        error_codes=None,
+        raw_payload={},
+    )
+
+    response = telemetry_service.to_vehicle_telemetry_latest_response(record)
+
+    assert response.latitude == pytest.approx(10.762622)
+    assert response.longitude == pytest.approx(106.660172)
+    assert response.vehicle_id == record.vehicle_id
+    assert response.soc == 80.0

@@ -3,6 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from geoalchemy2 import Geography
+from geoalchemy2.elements import WKBElement
 from sqlalchemy import (
     BigInteger,
     DateTime,
@@ -39,8 +41,10 @@ class VehicleTelemetryModel(Base):
         vehicle_id: UUID foreign key to vehicles table
         recorded_at: Timestamp when telematic recorded the data
         received_at: Timestamp when backend received the message
-        latitude: GPS latitude coordinate
-        longitude: GPS longitude coordinate
+        location: GPS location as a PostGIS geography point (SRID 4326).
+            No spatial index (unlike `charging_stations.location`) - this is
+            a high-frequency hypertable write path and nothing currently
+            runs a spatial query against it; add one if/when that changes.
         speed: Vehicle speed in km/h
         heading: Direction of travel in degrees (0-360), nullable
         soc: State of Charge percentage (0-100)
@@ -103,9 +107,13 @@ class VehicleTelemetryModel(Base):
         default=utc_now,
     )
 
-    # GPS data
-    latitude: Mapped[float] = mapped_column(Double(), nullable=False)
-    longitude: Mapped[float] = mapped_column(Double(), nullable=False)
+    # GPS data - stored as PostGIS geography, no spatial index (see class
+    # docstring). spatial_index=False also avoids GeoAlchemy2's automatic
+    # DDL hook creating an unwanted index of its own.
+    location: Mapped[WKBElement] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326, spatial_index=False),
+        nullable=False,
+    )
 
     # Motion data
     speed: Mapped[float | None] = mapped_column(

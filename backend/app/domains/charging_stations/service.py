@@ -11,9 +11,6 @@ from collections.abc import Mapping
 from decimal import Decimal
 from uuid import UUID
 
-from geoalchemy2.elements import WKBElement
-from geoalchemy2.shape import from_shape, to_shape
-from shapely.geometry import Point
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,46 +43,7 @@ from app.domains.charging_stations.schemas import (
 )
 from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 from app.libs.common.config import settings
-
-
-def _location_to_coordinates(
-    location: WKBElement | None,
-) -> tuple[float | None, float | None]:
-    """Convert a stored PostGIS geography point into (latitude, longitude).
-
-    Args:
-        location: Geography point read back from the ORM, or ``None``.
-
-    Returns:
-        ``(latitude, longitude)``, or ``(None, None)`` if no location is set.
-    """
-    if location is None:
-        return None, None
-    point = to_shape(location)
-    return point.y, point.x
-
-
-def _coordinates_to_location(
-    latitude: float | None, longitude: float | None
-) -> WKBElement | None:
-    """Convert a (latitude, longitude) pair into a PostGIS geography point.
-
-    Args:
-        latitude: Latitude in decimal degrees, or ``None``.
-        longitude: Longitude in decimal degrees, or ``None``.
-
-    Returns:
-        A geography point ready to persist, or ``None`` if either coordinate
-        is missing.
-
-    Note:
-        Callers validate that latitude/longitude are provided together (see
-        ``ChargingStationCreateRequest``/``ChargingStationUpdateRequest``);
-        this function only guards against a partially-missing pair.
-    """
-    if latitude is None or longitude is None:
-        return None
-    return from_shape(Point(longitude, latitude), srid=4326)
+from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 
 
 def to_charging_station_response(
@@ -105,7 +63,7 @@ def to_charging_station_response(
     Returns:
         Response schema including directory metadata and connector count.
     """
-    latitude, longitude = _location_to_coordinates(station.location)
+    latitude, longitude = location_to_coordinates(station.location)
     return ChargingStationResponse(
         station_id=station.station_id,
         ocpp_identity=station.ocpp_identity,
@@ -208,7 +166,7 @@ async def create_charging_station(
             db,
             ocpp_identity=station_data.ocpp_identity,
             display_name=station_data.display_name,
-            location=_coordinates_to_location(
+            location=coordinates_to_location(
                 station_data.latitude, station_data.longitude
             ),
             power_rating_kw=power_rating_kw,
@@ -388,7 +346,7 @@ async def update_charging_station(
     # needs a float->Decimal conversion - both handled separately from the
     # generic _clean_update_values pass above.
     if station_data.latitude is not None and station_data.longitude is not None:
-        update_data["location"] = _coordinates_to_location(
+        update_data["location"] = coordinates_to_location(
             station_data.latitude, station_data.longitude
         )
     if station_data.power_rating_kw is not None:

@@ -19,13 +19,60 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
+from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.vehicles import service as vehicle_service
+from app.libs.common.geo import location_to_coordinates
 
 logger = logging.getLogger(__name__)
+
+
+def to_vehicle_telemetry_latest_response(
+    telemetry: VehicleTelemetryModel,
+) -> VehicleTelemetryLatestResponse:
+    """Build the latest-telemetry response from the ORM model.
+
+    Pure mapping only, no I/O. Built explicitly (rather than
+    ``VehicleTelemetryLatestResponse.model_validate(telemetry,
+    from_attributes=True)``) because the ORM model stores GPS as a single
+    ``location`` geography point while the response still exposes plain
+    ``latitude``/``longitude`` fields - the two no longer line up 1:1 by
+    attribute name.
+
+    Args:
+        telemetry: Telemetry ORM object queried by the repository.
+
+    Returns:
+        Response schema with latitude/longitude decoded from ``location``.
+    """
+    latitude, longitude = location_to_coordinates(telemetry.location)
+    # location_to_coordinates()'s return type is generic (Optional, since
+    # charging_stations.location can be null) - vehicle_telemetry.location
+    # is NOT NULL, so this pair is never actually missing; the assertion
+    # documents that invariant for both mypy and a future reader.
+    assert (
+        latitude is not None and longitude is not None
+    ), "vehicle_telemetry.location is NOT NULL"
+    return VehicleTelemetryLatestResponse(
+        vehicle_id=telemetry.vehicle_id,
+        telematic_serial=telemetry.telematic_serial,
+        recorded_at=telemetry.recorded_at,
+        latitude=latitude,
+        longitude=longitude,
+        speed=telemetry.speed,
+        heading=telemetry.heading,
+        soc=telemetry.soc,
+        battery_voltage=telemetry.battery_voltage,
+        battery_current=telemetry.battery_current,
+        battery_temperature=telemetry.battery_temperature,
+        motor_temperature=telemetry.motor_temperature,
+        odometer=telemetry.odometer,
+        signal_strength=telemetry.signal_strength,
+        error_codes=telemetry.error_codes,
+    )
 
 
 async def get_latest_vehicle_telemetry_response(
@@ -57,7 +104,7 @@ async def get_latest_vehicle_telemetry_response(
             f"No telemetry found for vehicle with id '{vehicle_id}'"
         )
 
-    return VehicleTelemetryLatestResponse.model_validate(telemetry)
+    return to_vehicle_telemetry_latest_response(telemetry)
 
 
 class BatchResult(TypedDict):

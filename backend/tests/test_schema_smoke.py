@@ -2,9 +2,11 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import cast
 from uuid import uuid4
 
 import pytest
+from geoalchemy2.elements import WKBElement
 from ocpp.v201.datatypes import MeterValueType, SampledValueType, UnitOfMeasureType
 from ocpp.v201.enums import MeasurandEnumType
 from pydantic import ValidationError
@@ -16,6 +18,7 @@ from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.geo import location_to_coordinates
 
 
 def _valid_telemetry_payload() -> dict[str, object]:
@@ -47,6 +50,30 @@ def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
     invalid_location["location"] = {"latitude": 100, "longitude": 106.7}
     with pytest.raises(ValidationError):
         TelemetryMessage.model_validate(invalid_location)
+
+
+def test_telemetry_message_stores_location_as_geography_not_lat_lon() -> None:
+    """to_vehicle_telemetry_values() outputs a PostGIS point, not lat/lon columns.
+
+    Regression guard for the vehicle_telemetry storage unification
+    (future.md item 9) - the dict must match VehicleTelemetryModel's
+    location column, not the old latitude/longitude columns.
+    """
+    message = TelemetryMessage.model_validate(_valid_telemetry_payload())
+
+    values = message.to_vehicle_telemetry_values(
+        uuid4(),
+        uuid4(),
+        datetime.now(timezone.utc),
+        {},
+    )
+
+    assert "latitude" not in values
+    assert "longitude" not in values
+    location = cast(WKBElement, values["location"])
+    latitude, longitude = location_to_coordinates(location)
+    assert latitude == pytest.approx(10.8)
+    assert longitude == pytest.approx(106.7)
 
 
 def test_charging_station_request_rejects_partial_location() -> None:
