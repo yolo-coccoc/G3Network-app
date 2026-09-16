@@ -38,8 +38,9 @@ FastAPI registers the following domains:
 - `telematics`: device CRUD and mapping devices to vehicles.
 - `telemetry`: receiving data via the ingestion service and reading a
   vehicle's latest telemetry.
-- `charging_stations`: Station → EVSE → Connector topology CRUD and the OCPP
-  2.0.1 gateway.
+- `charging_stations`: Station → EVSE → Connector topology CRUD, station
+  directory metadata (location, power rating, connector standard, operating
+  hours, maintenance status), and the OCPP 2.0.1 gateway.
 - `charging_sessions`: storing the session aggregate, lifecycle events and
   meter values.
 
@@ -54,8 +55,10 @@ extensions:
 
 - TimescaleDB for `vehicle_telemetry`, `charging_session_events` and
   `charging_session_meter_values`.
-- PostGIS enabled in preparation for future geospatial features; the current
-  baseline has no map or geofence API yet.
+- PostGIS: used for `charging_stations.location` (a `geography(Point, 4326)`
+  column, F-C1); the rest is still in preparation for future geospatial
+  features — there's no map/geofence *search* API (radius query, filtering)
+  yet, only storage and CRUD.
 - `uuid-ossp` for the local database.
 
 The current Alembic baseline consists of:
@@ -65,6 +68,7 @@ The current Alembic baseline consists of:
 0002_vehicles_telematics
 0003_create_vehicle_telemetry
 0004_create_charging_mvp_schema
+0005_station_directory_fields
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:

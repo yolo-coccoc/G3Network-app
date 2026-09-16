@@ -559,6 +559,16 @@ The items below are actual deferral decisions made in the repo, not placeholders
   snapshot, and CRUD/monitoring API must all be settled before creating a
   migration. Do not restore individual fields piecemeal or create a
   placeholder table/status enum in the MVP.
+- **Partial resolution (2026-09-17)**: the *directory/descriptive* subset —
+  location (PostGIS geography), power rating, connector standard, operating
+  hours, and maintenance status — is now implemented on `charging_stations`
+  per F-C1 (migration `0005_station_directory_fields`), as simple
+  station-level aggregate fields rather than modeled per EVSE/connector.
+  Everything else this item covers remains deferred, unchanged:
+  manufacturer/model/serial/firmware, administrative/connection/technical
+  status (live OCPP-derived state — that's item 27's reliability path), the
+  capability schema, and the location/status *search* helpers (radius
+  search, status filter).
 
 ### 29. Query optimization and code-quality cleanup for simulator/telemetry
 
@@ -732,6 +742,33 @@ The items below are actual deferral decisions made in the repo, not placeholders
   history/map/connector and the alert lifecycle must be settled separately
   before creating a migration. Do not assume these APIs already exist just
   because telemetry data is already stored in TimescaleDB.
+
+### 34. Batched connector-count query for the station directory list endpoint
+
+- **Short description**: `charging_stations` list endpoint (F-C1) computes
+  `connector_count` with one query per station on the page (via
+  `repository.count_connectors_by_station_id`), instead of one
+  grouped/batched query for the whole page.
+- **Purpose/role in the system**: A grouped query (group by station, `IN`
+  over the page's station IDs) would return every station's connector count
+  in a single round-trip instead of N, reducing DB load and latency as the
+  number of stations per page and request volume grow.
+- **Reason for deferral**: A batched version was written and then explicitly
+  reverted per request — this MVP's station count is small, the list
+  endpoint isn't on any hot path, and batching mechanisms across the backend
+  should be added only when throughput actually needs them (same principle
+  already applied to telematics' mapping lookup, item 5, and its list-query
+  N+1, item 29). Adding batching ahead of an actual need adds complexity and
+  a second code path to maintain for no current benefit.
+- **Related planner/feature**: F-C1, `charging_stations/repository.py`,
+  `charging_stations/service.py::list_charging_stations`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming this work, reintroduce a
+  `count_connectors_by_station_ids(db, station_ids) -> dict[UUID, int]`
+  repository function (grouped query, `station_id IN (...)`, `GROUP BY
+  station_id`, filling in `0` for stations with no active connectors) and
+  have `list_charging_stations` call it once instead of looping per station.
+  Benchmark first rather than assuming it's needed.
 
 ---
 

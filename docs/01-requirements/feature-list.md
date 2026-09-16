@@ -327,10 +327,10 @@ carries its original PRD code so you can trace it back.
   hours, maintenance status; CRUD; map view
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
-- **Status:** 🚧 In progress — bare topology CRUD exists (`ocpp_identity`, EVSE/connector IDs,
-  `display_name`, timestamps only); GPS, power rating, connector count, CCS2 standard, operating
-  hours, maintenance status, and map view are not in the model/schema at all (deliberately
-  deferred — see `future.md` item 28)
+- **Status:** ✅ Done — station records carry GPS (PostGIS geography), power rating, a computed
+  connector count, connector standard, operating hours, and maintenance status, plus full CRUD
+  (migration `0005_station_directory_fields`). "Map view" is satisfied by exposing lat/lon in the
+  API response; actual map rendering is a frontend concern (F-D1, out of this repo)
 
 ### F-C5 Station-level energy output
 - **Actor:** G3 Energy operations

@@ -41,7 +41,9 @@ the database tables.
 - Vehicle and telematic device CRUD, including mapping devices to vehicles.
 - Receiving telemetry over MQTT and storing it in TimescaleDB.
 - API for reading a vehicle's latest telemetry.
-- Station → EVSE → Connector topology CRUD.
+- Station → EVSE → Connector topology CRUD, including station directory
+  metadata (location, power rating, connector standard, operating hours,
+  maintenance status).
 - OCPP 2.0.1 and the charging session happy-path lifecycle
   `Started → Updated/MeterValues → Ended`.
 - API for reading charging sessions, events and meter values.

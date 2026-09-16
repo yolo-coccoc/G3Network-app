@@ -53,8 +53,11 @@ Station simulator ⇄ OCPP 2.0.1 gateway → charging_sessions
 
 The MVP keeps six active tables:
 
-1. `charging_stations`: `station_id`, `ocpp_identity`, `display_name`, and
-   timestamps.
+1. `charging_stations`: `station_id`, `ocpp_identity`, `display_name`,
+   `location` (PostGIS geography), `power_rating_kw`, `connector_standard`,
+   `operating_hours`, `maintenance_status`, and timestamps (F-C1, migration
+   `0005_station_directory_fields`). `connector_count` is computed at read
+   time, not stored.
 2. `charging_evses`: `evse_id`, `station_id`, `ocpp_evse_id`, and timestamps.
 3. `charging_connectors`: `connector_id`, `evse_id`, `ocpp_connector_id`,
    and timestamps.

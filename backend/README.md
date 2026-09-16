@@ -9,7 +9,9 @@ management system.
 - Receiving telemetry over MQTT and storing it in PostgreSQL/TimescaleDB.
 - `GET /api/v1/telemetry/vehicles/{vehicle_id}/latest` for reading a
   vehicle's latest telemetry.
-- `charging_stations` → EVSE → connector topology CRUD.
+- `charging_stations` → EVSE → connector topology CRUD, including station
+  directory metadata (location, power rating, connector standard, operating
+  hours, maintenance status).
 - OCPP 2.0.1 gateway and the charging session happy-path lifecycle.
 - API for reading charging sessions, events and meter values.
 
