@@ -55,10 +55,12 @@ extensions:
 
 - TimescaleDB for `vehicle_telemetry`, `charging_session_events` and
   `charging_session_meter_values`.
-- PostGIS: used for `charging_stations.location` (a `geography(Point, 4326)`
-  column, F-C1); the rest is still in preparation for future geospatial
-  features — there's no map/geofence *search* API (radius query, filtering)
-  yet, only storage and CRUD.
+- PostGIS: used for `charging_stations.location` (F-C1) and
+  `vehicle_telemetry.location` (both `geography(Point, 4326)` columns) —
+  `charging_stations.location` has a GIST index, `vehicle_telemetry.location`
+  deliberately doesn't (high-frequency write path, no spatial query need
+  yet). There's still no map/geofence *search* API (radius query, filtering)
+  — only storage and CRUD.
 - `uuid-ossp` for the local database.
 
 The current Alembic baseline consists of:
@@ -69,6 +71,7 @@ The current Alembic baseline consists of:
 0003_create_vehicle_telemetry
 0004_create_charging_mvp_schema
 0005_station_directory_fields
+0006_telemetry_location_geo
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:

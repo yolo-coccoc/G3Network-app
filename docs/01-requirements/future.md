@@ -139,7 +139,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 
 ---
 
-### 9. PostGIS Geography for telemetry location
+### 9. PostGIS Geography for telemetry location — Resolved
 
 - **Short description**: Replace the two `latitude`/`longitude` columns with a `geography(Point, 4326)` column, or add a synced geography column.
 - **Purpose/role in the system**: Supports spatial indexing, radius queries, geofencing, and efficient trip history.
@@ -147,6 +147,10 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1, F-A5)
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Needs a migration of existing data and a decision between geometry and geography before implementation.
+- **Resolution (2026-09-17)**: `vehicle_telemetry.location` is now `geography(Point, 4326)` (migration `0006_telemetry_location_geo`), matching `charging_stations.location` (F-C1) — settling the two open decisions this item recorded:
+  - **Geography, not geometry** — same choice as `charging_stations`, correct for real-world GPS distance calculations.
+  - **No spatial index** — unlike `charging_stations.location`, this column has no GIST index. `vehicle_telemetry` is a high-frequency hypertable write path (every 5-10s per vehicle) and nothing currently runs a spatial query against it (no map/geofence API yet); an index adds real write-side cost for a capability nothing uses yet. Add one later if/when an actual spatial query need shows up.
+  - The MQTT wire contract and the HTTP response contract (`latitude`/`longitude`) are unchanged — only internal storage and the read/write mapping code changed. The conversion helpers moved to a shared `app/libs/common/geo.py` (`coordinates_to_location`/`location_to_coordinates`), used by both `charging_stations` and `telemetry` now.
 
 ---
 

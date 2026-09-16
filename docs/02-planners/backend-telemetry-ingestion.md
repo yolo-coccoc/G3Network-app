@@ -276,8 +276,13 @@ Notes:
   partition key.
 - `message_uuid` only has an index, not unique in the MVP; advanced duplicate
   detection has been recorded in `future.md`.
-- `latitude`/`longitude` use `DOUBLE PRECISION`; a PostGIS upgrade is deferred
-  and recorded in `future.md`.
+- `latitude`/`longitude` used `DOUBLE PRECISION` at this step; a PostGIS
+  upgrade was deferred and recorded in `future.md` item 9. **Update
+  (2026-09-17): implemented** — the table now stores a single `location`
+  `geography(Point, 4326)` column instead (migration
+  `0006_telemetry_location_geo`); see `future.md` item 9's resolution note
+  for the current schema. The MQTT wire contract above (`location.latitude`/
+  `location.longitude`) is unaffected.
 - `raw_payload` keeps the parsed JSON object before Pydantic normalizes/drops
   fields, to support later audit and reprocessing.
 - `speed` and `heading` are nullable to accept devices that do not send motion

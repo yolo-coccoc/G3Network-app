@@ -23,7 +23,7 @@ For technical depth (components, diagram, database, infra), see
 
 ## Database
 
-Current Alembic head: `0005_station_directory_fields`.
+Current Alembic head: `0006_telemetry_location_geo`.
 
 ## Not built yet
 
