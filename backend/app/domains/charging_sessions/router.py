@@ -29,7 +29,7 @@ router = APIRouter(tags=["charging-sessions"])
     response_model=ChargingSessionListResponse,
     summary="List charging sessions",
 )
-async def list_charging_sessions(
+async def list_charging_sessions_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -62,7 +62,7 @@ async def list_charging_sessions(
     response_model=ChargingSessionResponse,
     summary="View a charging session",
 )
-async def get_charging_session(
+async def get_charging_session_endpoint(
     session_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingSessionResponse:
     """Get the session aggregate by internal UUID.
@@ -92,7 +92,7 @@ async def get_charging_session(
     response_model=ChargingSessionEventListResponse,
     summary="View events of a charging session",
 )
-async def list_charging_session_events(
+async def list_charging_session_events_endpoint(
     session_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -135,7 +135,7 @@ async def list_charging_session_events(
     response_model=ChargingSessionMeterValueListResponse,
     summary="View meter values of a charging session",
 )
-async def list_charging_session_meter_values(
+async def list_charging_session_meter_values_endpoint(
     session_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(

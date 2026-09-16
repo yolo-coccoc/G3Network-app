@@ -44,7 +44,7 @@ router = APIRouter(tags=["charging-stations"])
     response_model=ChargingStationResponse,
     summary="Create a charging station",
 )
-async def create_charging_station(
+async def create_charging_station_endpoint(
     station_data: ChargingStationCreateRequest, db: AsyncSession = Depends(get_db)
 ) -> ChargingStationResponse:
     """Create a pre-provisioned station.
@@ -72,7 +72,7 @@ async def create_charging_station(
     response_model=ChargingStationListResponse,
     summary="List charging stations",
 )
-async def list_charging_stations(
+async def list_charging_stations_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -104,7 +104,7 @@ async def list_charging_stations(
     response_model=ChargingEvseResponse,
     summary="Create an EVSE belonging to a station",
 )
-async def create_charging_evse(
+async def create_charging_evse_endpoint(
     station_id: UUID,
     evse_data: ChargingEvseCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -140,7 +140,7 @@ async def create_charging_evse(
     response_model=ChargingEvseListResponse,
     summary="List EVSEs of a station",
 )
-async def list_charging_evses(
+async def list_charging_evses_endpoint(
     station_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -180,7 +180,7 @@ async def list_charging_evses(
     response_model=ChargingConnectorResponse,
     summary="Create a connector belonging to an EVSE",
 )
-async def create_charging_connector(
+async def create_charging_connector_endpoint(
     evse_id: UUID,
     connector_data: ChargingConnectorCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -218,7 +218,7 @@ async def create_charging_connector(
     response_model=ChargingConnectorListResponse,
     summary="List connectors of an EVSE",
 )
-async def list_charging_connectors(
+async def list_charging_connectors_endpoint(
     evse_id: UUID,
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
@@ -257,7 +257,7 @@ async def list_charging_connectors(
     response_model=ChargingStationResponse,
     summary="Get a charging station",
 )
-async def get_charging_station(
+async def get_charging_station_endpoint(
     station_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingStationResponse:
     """Get an active station by UUID.
@@ -285,7 +285,7 @@ async def get_charging_station(
     response_model=ChargingStationResponse,
     summary="Update a charging station",
 )
-async def update_charging_station(
+async def update_charging_station_endpoint(
     station_id: UUID,
     station_data: ChargingStationUpdateRequest,
     db: AsyncSession = Depends(get_db),
@@ -323,7 +323,7 @@ async def update_charging_station(
     response_model=ChargingResourceDeleteResponse,
     summary="Soft-delete a charging station",
 )
-async def soft_delete_charging_station(
+async def soft_delete_charging_station_endpoint(
     station_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a station and its child topology.
@@ -351,7 +351,7 @@ async def soft_delete_charging_station(
     response_model=ChargingEvseResponse,
     summary="Get an EVSE",
 )
-async def get_charging_evse(
+async def get_charging_evse_endpoint(
     evse_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingEvseResponse:
     """Get an active EVSE by UUID.
@@ -379,7 +379,7 @@ async def get_charging_evse(
     response_model=ChargingEvseResponse,
     summary="Update an EVSE",
 )
-async def update_charging_evse(
+async def update_charging_evse_endpoint(
     evse_id: UUID,
     evse_data: ChargingEvseUpdateRequest,
     db: AsyncSession = Depends(get_db),
@@ -415,7 +415,7 @@ async def update_charging_evse(
     response_model=ChargingResourceDeleteResponse,
     summary="Soft-delete an EVSE",
 )
-async def soft_delete_charging_evse(
+async def soft_delete_charging_evse_endpoint(
     evse_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete an EVSE and its child connectors.
@@ -443,7 +443,7 @@ async def soft_delete_charging_evse(
     response_model=ChargingConnectorResponse,
     summary="Get a connector",
 )
-async def get_charging_connector(
+async def get_charging_connector_endpoint(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingConnectorResponse:
     """Get an active connector by UUID.
@@ -472,7 +472,7 @@ async def get_charging_connector(
     response_model=ChargingConnectorResponse,
     summary="Update a connector",
 )
-async def update_charging_connector(
+async def update_charging_connector_endpoint(
     connector_id: UUID,
     connector_data: ChargingConnectorUpdateRequest,
     db: AsyncSession = Depends(get_db),
@@ -510,7 +510,7 @@ async def update_charging_connector(
     response_model=ChargingResourceDeleteResponse,
     summary="Soft-delete a connector",
 )
-async def soft_delete_charging_connector(
+async def soft_delete_charging_connector_endpoint(
     connector_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a connector.
