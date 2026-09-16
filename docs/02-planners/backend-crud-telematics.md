@@ -1,156 +1,184 @@
 # Planner: Backend CRUD Telematics (AD-02, AD-05)
 
-> Mã chức năng: AD-02 (Quản lý dữ liệu telematics), AD-05 (Quản lý xe và thiết bị)
-> Trạng thái: 🚧 Source đã triển khai; smoke test tối thiểu đã có, CRUD/integration
-> regression test đầy đủ còn theo dõi
-> trong [`backend-automated-tests.md`](./backend-automated-tests.md)
-> Ngày tạo: 2026-07-28
+> Feature code: AD-02 (Telematics data management), AD-05 (Vehicle and device management)
+> Status: 🚧 Source implemented; a minimal smoke test exists, full CRUD/integration
+> regression tests are still tracked
+> in [`backend-automated-tests.md`](./backend-automated-tests.md)
+> Created: 2026-07-28
 
-## Phân biệt thuật ngữ bắt buộc
+## Required terminology distinction
 
-- **Telematic**: thiết bị vật lý (TBOX) được lắp trên xe, có serial riêng,
-  firmware, trạng thái hoạt động và mapping tới một vehicle.
-- **Telemetry**: bản ghi/bản tin dữ liệu mà một Telematic gửi đi, ví dụ vị trí,
-  tốc độ, pin và thời điểm đo. Telemetry không phải là thiết bị và có thể có
-  nhiều bản ghi từ cùng một Telematic.
+- **Telematic**: a physical device (TBOX) installed on a vehicle, with its own
+  serial, firmware, operating status, and mapping to a vehicle.
+- **Telemetry**: the data record/message sent by a Telematic, e.g. position,
+  speed, battery, and the time it was measured. Telemetry is not a device and
+  a single Telematic can produce many records.
 
-CRUD trong planner này chỉ quản lý **Telematic** (thiết bị vật lý). Domain
-`telemetry` chỉ xử lý các bản tin/bản ghi telemetry do thiết bị gửi qua MQTT và
-không sở hữu CRUD hồ sơ thiết bị.
+The CRUD in this planner manages only the **Telematic** (physical device). The
+`telemetry` domain only handles data messages/records sent by devices over
+MQTT and does not own CRUD for the device record.
 
-## Tổng quan
+## Overview
 
-Xây dựng CRUD API cho thiết bị Telematic trong domain `telematics`, **tương tự
-CRUD `vehicles`**. API phục vụ quản lý hồ sơ và provisioning thủ công trước khi
-thiết bị gửi các bản tin telemetry qua MQTT.
+Build a CRUD API for the Telematic device in the `telematics` domain, **similar
+to the `vehicles` CRUD**. The API serves record management and manual
+provisioning before the device starts sending telemetry messages over MQTT.
 
-Phạm vi:
+Scope:
 
-- Chỉ backend FastAPI, triển khai theo cùng cách tiếp cận và mức phạm vi với
-  planner `backend-crud-vehicles.md`, kiểm thử qua Swagger UI.
-- Create, list, get detail, update và soft delete telematics.
-- Khi tạo hoặc cập nhật, client nhập `vehicle_vin`; backend tìm xe theo VIN và lưu
-  `vehicles.vehicle_id` vào `telematics.vehicle_id`.
-- Nếu VIN không tìm thấy, vẫn tạo/cập nhật thiết bị với `vehicle_id = NULL`.
-- Không bao gồm frontend, API gán/tháo thiết bị riêng, MQTT command hoặc bulk import.
+- Backend FastAPI only, implemented with the same approach and scope level as
+  the `backend-crud-vehicles.md` planner, tested via Swagger UI.
+- Create, list, get detail, update, and soft delete telematics.
+- When creating or updating, the client provides `vehicle_vin`; the backend
+  looks up the vehicle by VIN and stores `vehicles.vehicle_id` into
+  `telematics.vehicle_id`.
+- If the VIN is not found, the device is still created/updated with
+  `vehicle_id = NULL`.
+- Not included: frontend, a dedicated attach/detach device API, MQTT commands,
+  or bulk import.
 
-## Quyết định nghiệp vụ
+## Business decisions
 
-1. `telematic_serial` là business identifier của thiết bị và bắt buộc unique.
-2. `vehicle_vin` là input thuận tiện cho API, không lưu lặp trong bảng `telematics`.
-   Response trả lại VIN hiện tại bằng cách đọc từ vehicle tương ứng.
-3. VIN không tồn tại không phải lỗi validation; thiết bị được tạo ở trạng thái chưa
-   gán xe (`vehicle_id = NULL`). VIN rỗng/null cũng cho kết quả tương tự.
-4. Nếu VIN tìm thấy nhưng xe đã bị soft delete, coi như không tìm thấy và để
-   `vehicle_id = NULL`.
-5. Nếu một VIN hợp lệ đã gắn với telematic khác, trả lỗi conflict; không tự tháo
-   thiết bị cũ. Constraint unique trên `telematics.vehicle_id` vẫn là lớp bảo vệ cuối.
-6. Update `vehicle_vin` sẽ resolve lại mapping. Không gửi field này nghĩa là giữ
-   mapping hiện tại; gửi `null` nghĩa là tháo mapping trong phạm vi CRUD này.
-7. Delete là soft delete để không làm hỏng lịch sử telemetry; ingestion và các API
-   list/detail mặc định bỏ qua thiết bị đã xoá.
+1. `telematic_serial` is the device's business identifier and must be unique.
+2. `vehicle_vin` is a convenience input for the API and is not duplicated in
+   the `telematics` table. The response returns the current VIN by reading it
+   from the corresponding vehicle.
+3. A VIN that does not exist is not a validation error; the device is created
+   in an unassigned state (`vehicle_id = NULL`). An empty/null VIN produces the
+   same result.
+4. If the VIN is found but the vehicle has been soft deleted, treat it as not
+   found and leave `vehicle_id = NULL`.
+5. If a valid VIN is already attached to another telematic, return a conflict
+   error; do not automatically detach the old device. The unique constraint on
+   `telematics.vehicle_id` remains the last line of protection.
+6. Updating `vehicle_vin` re-resolves the mapping. Not sending this field means
+   keeping the current mapping; sending `null` means detaching the mapping
+   within the scope of this CRUD.
+7. Delete is a soft delete so as not to break telemetry history; ingestion and
+   the list/detail APIs ignore deleted devices by default.
 
-## Ranh giới domain và transaction
+## Domain boundaries and transactions
 
-- Code CRUD nằm tại `backend/app/domains/telematics/`. Domain `telemetry` chỉ chịu
-  trách nhiệm dữ liệu đo đạc và MQTT ingestion.
-- `telematics.service` được phép gọi public function của `vehicles.service` để tìm xe
-  theo VIN. Không import `vehicles.repository` hoặc `vehicles.models`.
-- `telemetry.service`/ingestion gọi public service của `telematics` để resolve
-  `telematic_serial`; không import `telematics.repository` hoặc `telematics.models`.
-- Router chỉ xử lý HTTP và chuyển domain exception thành status code.
-- Service/repository không gọi `commit()`/`rollback()`; `Depends(get_db)` sở hữu
-  transaction cho request.
-- Create/update mapping VIN và telematic phải atomic trong cùng transaction.
+- CRUD code lives in `backend/app/domains/telematics/`. The `telemetry` domain
+  is responsible only for measurement data and MQTT ingestion.
+- `telematics.service` is allowed to call public functions of
+  `vehicles.service` to look up a vehicle by VIN. It must not import
+  `vehicles.repository` or `vehicles.models`.
+- `telemetry.service`/ingestion calls the public service of `telematics` to
+  resolve `telematic_serial`; it must not import `telematics.repository` or
+  `telematics.models`.
+- The router handles only HTTP concerns and translates domain exceptions into
+  status codes.
+- Service/repository must not call `commit()`/`rollback()`; `Depends(get_db)`
+  owns the transaction for the request.
+- Creating/updating the VIN-to-telematic mapping must be atomic within the
+  same transaction.
 
-## Thiết kế dữ liệu
+## Data design
 
-Sử dụng model hiện có `Telematic` và rà soát/bổ sung nếu cần:
+Use the existing `Telematic` model and review/extend it as needed:
 
 - `telematic_id`: UUID primary key.
 - `telematic_serial`: `VARCHAR(50)`, unique, not null, indexed.
-- `vehicle_id`: UUID nullable, FK tới `vehicles.vehicle_id`, `ON DELETE SET NULL`,
-  indexed; unique để mỗi xe có tối đa một telematic, nhiều giá trị NULL vẫn hợp lệ.
+- `vehicle_id`: UUID nullable, FK to `vehicles.vehicle_id`, `ON DELETE SET NULL`,
+  indexed; unique so each vehicle has at most one telematic, while multiple
+  NULL values remain valid.
 - `status`: `active | inactive | maintenance`.
 - `firmware_version`: nullable.
 - `created_at`, `updated_at`: timezone-aware UTC.
-- `deleted_at`: timezone-aware nullable, dùng cho soft delete.
+- `deleted_at`: timezone-aware nullable, used for soft delete.
 
-Không tạo migration mới nếu schema hiện tại đã đáp ứng đầy đủ; nếu thiếu
-`deleted_at`, tạo migration riêng với upgrade/downgrade và rà soát ảnh hưởng tới
-ingestion lookup.
+Do not create a new migration if the current schema already satisfies these
+requirements; if `deleted_at` is missing, create a separate migration with
+upgrade/downgrade and review its impact on ingestion lookups.
 
 ## API contract
 
-Prefix đề xuất: `/api/v1/telematics`.
+Suggested prefix: `/api/v1/telematics`.
 
 - `POST /telematics`
   - Request: `telematic_serial`, `vehicle_vin?`, `status`, `firmware_version?`.
-  - Resolve VIN; VIN không tồn tại vẫn trả `201` với `vehicle_id = null`.
-  - Serial trùng: `409`.
-  - VIN đã gắn thiết bị khác: `409`.
+  - Resolve the VIN; a VIN that does not exist still returns `201` with
+    `vehicle_id = null`.
+  - Duplicate serial: `409`.
+  - VIN already attached to another device: `409`.
 - `GET /telematics?page=1&page_size=20&status=...`
-  - Chỉ trả bản ghi chưa soft delete, có pagination và total.
+  - Returns only non-soft-deleted records, with pagination and total.
 - `GET /telematics/{telematic_id}`
-  - Trả `telematic_id`, serial, status, firmware, `vehicle_id`, `vehicle_vin`, timestamps.
+  - Returns `telematic_id`, serial, status, firmware, `vehicle_id`,
+    `vehicle_vin`, timestamps.
 - `PATCH /telematics/{telematic_id}`
-  - Partial update theo `exclude_unset=True`.
-  - `vehicle_vin: null` tháo mapping; VIN không tìm thấy đặt mapping về NULL.
-  - Không cho sửa `telematic_id`; xử lý conflict serial/VIN bằng domain error.
+  - Partial update using `exclude_unset=True`.
+  - `vehicle_vin: null` detaches the mapping; a VIN that is not found sets the
+    mapping to NULL.
+  - `telematic_id` cannot be edited; serial/VIN conflicts are handled as
+    domain errors.
 - `DELETE /telematics/{telematic_id}`
-  - Set `deleted_at`, không xoá lịch sử `vehicle_telemetry`; trả `204`.
+  - Sets `deleted_at`, does not delete `vehicle_telemetry` history; returns
+    `204`.
 
-## Danh sách bước triển khai
+## Implementation step list
 
-### Bước 1: Rà soát model và migration
+### Step 1: Review the model and migration
 
-- Kiểm tra model `Telematic`, FK, unique constraint, timezone và `deleted_at`.
-- Bổ sung migration chỉ cho phần còn thiếu; không sửa migration đã merge.
-- Xác nhận `vehicle_id` nullable và `ON DELETE SET NULL`.
+- Check the `Telematic` model, FK, unique constraint, timezone handling, and
+  `deleted_at`.
+- Add a migration only for what is missing; do not modify already-merged
+  migrations.
+- Confirm `vehicle_id` is nullable and `ON DELETE SET NULL`.
 
-### Bước 2: Mở public lookup service của vehicles
+### Step 2: Expose a public lookup service from vehicles
 
-- Thêm function public kiểu `get_active_vehicle_id_by_vin(...)` trong
-  `vehicles/service.py` hoặc contract tương đương đã có.
-- Function chỉ trả vehicle identity phù hợp hoặc `None`, không phụ thuộc FastAPI.
-- Không để telemetry truy cập trực tiếp repository/model nội bộ của vehicles.
+- Add a public function such as `get_active_vehicle_id_by_vin(...)` in
+  `vehicles/service.py` or an equivalent existing contract.
+- The function should return only the appropriate vehicle identity or `None`,
+  with no dependency on FastAPI.
+- Do not let telemetry access the internal repository/model of vehicles
+  directly.
 
-### Bước 3: Implement schemas, repository và service telematics
+### Step 3: Implement telematics schemas, repository, and service
 
-- Tạo package `backend/app/domains/telematics/` theo đúng pattern CRUD của domain
-  `vehicles`: `router.py`, `service.py`, `repository.py`, `schemas.py`, `models.py`
-  và `exceptions.py` khi cần.
-- Tạo/cập nhật schemas Create, Update, Response, ListResponse và examples.
-- Repository hỗ trợ list/count/detail, create, update, soft delete; không chứa policy.
-- Service resolve VIN, kiểm tra conflict, lọc bản ghi đã xoá và giữ transaction boundary.
-- Cập nhật docstring/comment tiếng Việt theo AGENTS.md.
+- Create the `backend/app/domains/telematics/` package following the same CRUD
+  pattern as the `vehicles` domain: `router.py`, `service.py`,
+  `repository.py`, `schemas.py`, `models.py`, and `exceptions.py` as needed.
+- Create/update the Create, Update, Response, ListResponse schemas and
+  examples.
+- The repository supports list/count/detail, create, update, soft delete;
+  contains no policy logic.
+- The service resolves the VIN, checks for conflicts, filters out deleted
+  records, and preserves the transaction boundary.
+- Update Vietnamese docstrings/comments per CLAUDE.md.
 
-### Bước 4: Implement router và đăng ký API
+### Step 4: Implement the router and register the API
 
-- Tạo endpoint với tags `telematics` và status code đúng contract.
-- Đăng ký router trong `app/api/main.py`.
-- Bảo đảm `__init__.py` chỉ có module docstring.
+- Create endpoints with the `telematics` tag and the correct status codes per
+  the contract.
+- Register the router in `app/api/main.py`.
+- Ensure `__init__.py` contains only a module docstring.
 
-### Bước 5: Kiểm tra và nghiệm thu
+### Step 5: Verification and acceptance
 
-- Chạy Black, isort, Ruff và mypy bằng `uv`.
-- Smoke test tối thiểu: tạo với VIN hợp lệ, VIN không tồn tại, null VIN, conflict,
-  update đổi/tháo VIN, list/detail và soft delete.
-- Xác nhận ingestion không resolve lại VIN và vẫn nhận được `vehicle_id = NULL` khi
-  thiết bị chưa được gán xe.
-- Kiểm tra import boundary giữa `telemetry` và `vehicles` bằng review/`rg`.
+- Run Black, isort, Ruff, and mypy via `uv`.
+- Minimal smoke test: create with a valid VIN, a nonexistent VIN, a null VIN,
+  conflict, update to change/detach the VIN, list/detail, and soft delete.
+- Confirm ingestion does not re-resolve the VIN and still receives
+  `vehicle_id = NULL` when the device has not been assigned to a vehicle.
+- Check the import boundary between `telemetry` and `vehicles` via review/`rg`.
 
-## Tiêu chí hoàn thành
+## Completion criteria
 
-- [x] CRUD `/api/v1/telematics` đã có trong source và OpenAPI.
-- [x] Create/update nhận `vehicle_vin` và resolve đúng sang `vehicle_id`.
-- [x] VIN không tồn tại không làm request thất bại; mapping là NULL.
-- [x] Không có import trực tiếp `vehicles.repository`/`vehicles.models` từ telemetry.
-- [x] Soft delete không làm mất dữ liệu telemetry lịch sử theo thiết kế FK.
-- [ ] Automated regression test sẽ hoàn tất theo `backend-automated-tests.md`.
+- [x] `/api/v1/telematics` CRUD exists in the source and OpenAPI.
+- [x] Create/update accept `vehicle_vin` and correctly resolve it to
+      `vehicle_id`.
+- [x] A nonexistent VIN does not fail the request; the mapping is NULL.
+- [x] No direct import of `vehicles.repository`/`vehicles.models` from
+      telemetry.
+- [x] Soft delete does not lose historical telemetry data, by FK design.
+- [ ] Automated regression tests will be completed per
+      `backend-automated-tests.md`.
 
-## Ngoài phạm vi / cần planner riêng
+## Out of scope / needs its own planner
 
-- API attach/detach chuyên biệt với audit và phân quyền.
-- Tự động provision từ MQTT hoặc đồng bộ serial từ thiết bị.
-- Bulk import, firmware management, command và cache mapping.
+- A dedicated attach/detach API with audit and authorization.
+- Automatic provisioning from MQTT or syncing serials from devices.
+- Bulk import, firmware management, commands, and mapping cache.

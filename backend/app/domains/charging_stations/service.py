@@ -1,9 +1,10 @@
-"""Business service cho CRUD và soft-delete topology charging.
+"""Business service for charging topology CRUD and soft-delete.
 
-Service là nơi giữ các invariant pre-provision: station phải tồn tại trước EVSE,
-EVSE phải thuộc station trước connector, identity topology không được tái sử
-dụng kể cả khi record cũ đã soft-delete, và OCPP không được tự tạo topology.
-Transaction do FastAPI ``get_db`` sở hữu; module này không commit/rollback.
+The service is where pre-provisioning invariants are enforced: a station must
+exist before an EVSE, an EVSE must belong to a station before a connector,
+topology identities must not be reused even after the old record was
+soft-deleted, and OCPP must not create topology on its own. The transaction
+is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 from collections.abc import Mapping
@@ -45,13 +46,13 @@ from app.libs.common.config import settings
 def to_charging_station_response(
     station: ChargingStationModel,
 ) -> ChargingStationResponse:
-    """Dựng response station từ topology model tối thiểu.
+    """Build a station response from the minimal topology model.
 
     Args:
-        station: ORM station đã được repository truy vấn hoặc tạo.
+        station: Station ORM object queried or created by the repository.
 
     Returns:
-        Schema response không chứa technical metadata.
+        Response schema without technical metadata.
     """
     return ChargingStationResponse(
         station_id=station.station_id,
@@ -64,13 +65,13 @@ def to_charging_station_response(
 
 
 def to_charging_evse_response(evse: ChargingEvseModel) -> ChargingEvseResponse:
-    """Dựng response EVSE từ ORM model.
+    """Build an EVSE response from the ORM model.
 
     Args:
-        evse: ORM EVSE đã được repository truy vấn hoặc tạo.
+        evse: EVSE ORM object queried or created by the repository.
 
     Returns:
-        Schema response tương ứng với EVSE.
+        Response schema corresponding to the EVSE.
     """
     return ChargingEvseResponse.model_validate(evse)
 
@@ -78,29 +79,31 @@ def to_charging_evse_response(evse: ChargingEvseModel) -> ChargingEvseResponse:
 def to_charging_connector_response(
     connector: ChargingConnectorModel,
 ) -> ChargingConnectorResponse:
-    """Dựng response connector từ ORM model.
+    """Build a connector response from the ORM model.
 
     Args:
-        connector: ORM connector đã được repository truy vấn hoặc tạo.
+        connector: Connector ORM object queried or created by the
+            repository.
 
     Returns:
-        Schema response tương ứng với connector.
+        Response schema corresponding to the connector.
     """
     return ChargingConnectorResponse.model_validate(connector)
 
 
 def _clean_update_values(data: Mapping[str, object]) -> dict[str, object]:
-    """Loại field ``None`` theo convention PATCH của backend.
+    """Drop ``None`` fields per the backend's PATCH convention.
 
     Args:
-        data: Mapping từ ``model_dump(exclude_unset=True)``.
+        data: Mapping from ``model_dump(exclude_unset=True)``.
 
     Returns:
-        Mapping chỉ còn field có giá trị cần cập nhật.
+        Mapping containing only the fields with values to update.
 
     Note:
-        Domain này chưa có contract riêng cho việc xóa giá trị nullable bằng
-        ``null``; vì vậy ``None`` được hiểu là không cập nhật.
+        This domain has no dedicated contract yet for clearing a nullable
+        value with ``null``; therefore ``None`` is treated as "do not
+        update".
     """
     return {
         field_name: value for field_name, value in data.items() if value is not None
@@ -110,21 +113,22 @@ def _clean_update_values(data: Mapping[str, object]) -> dict[str, object]:
 async def create_charging_station(
     db: AsyncSession, station_data: ChargingStationCreateRequest
 ) -> ChargingStationResponse:
-    """Tạo station mới sau khi kiểm tra OCPP identity toàn bảng.
+    """Create a new station after checking the OCPP identity table-wide.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_data: Dữ liệu station đã qua Pydantic validation.
+        db: Async session owned by the HTTP boundary.
+        station_data: Station data, already Pydantic-validated.
 
     Returns:
-        Station response vừa tạo.
+        The newly created station response.
 
     Raises:
-        ChargingTopologyConflictError: Nếu identity đã tồn tại, kể cả soft-delete.
+        ChargingTopologyConflictError: If the identity already exists, even
+            if soft-deleted.
     """
     if await repository.get_station_by_identity(db, station_data.ocpp_identity):
         raise ChargingTopologyConflictError(
-            f"OCPP identity '{station_data.ocpp_identity}' đã tồn tại"
+            f"OCPP identity '{station_data.ocpp_identity}' already exists"
         )
     try:
         station = await repository.create_charging_station(
@@ -134,7 +138,7 @@ async def create_charging_station(
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "OCPP identity của station đã tồn tại"
+            "Station OCPP identity already exists"
         ) from error
     return to_charging_station_response(station)
 
@@ -145,18 +149,19 @@ async def list_charging_stations(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingStationListResponse:
-    """Liệt kê station active với pagination giới hạn theo settings.
+    """List active stations with pagination bounded by settings.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        page: Trang bắt đầu từ một; giá trị thấp hơn được clamp về mặc định.
-        page_size: Kích thước trang được clamp theo settings.
+        db: Async session owned by the HTTP boundary.
+        page: Page number starting at one; lower values are clamped to the
+            default.
+        page_size: Page size, clamped according to settings.
 
     Returns:
-        Danh sách station và metadata phân trang.
+        List of stations and pagination metadata.
 
     Side Effects:
-        Thực hiện hai truy vấn đọc; không commit hoặc rollback.
+        Performs two read queries; does not commit or rollback.
     """
     page = max(page, settings.API_DEFAULT_PAGE)
     page_size = min(
@@ -180,21 +185,22 @@ async def list_charging_stations(
 async def get_charging_station(
     db: AsyncSession, station_id: UUID
 ) -> ChargingStationResponse:
-    """Lấy station active theo internal UUID.
+    """Get an active station by internal UUID.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_id: UUID station cần truy vấn.
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station to query.
 
     Returns:
-        Response station active.
+        The active station response.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station không tồn tại hoặc đã xoá mềm.
+        ChargingStationNotFoundError: If the station does not exist or was
+            soft-deleted.
     """
     station = await repository.get_station_by_id(db, station_id)
     if station is None:
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     return to_charging_station_response(station)
 
 
@@ -205,38 +211,38 @@ async def resolve_ocpp_topology(
     ocpp_evse_id: int,
     ocpp_connector_id: int,
 ) -> tuple[UUID, UUID, UUID]:
-    """Resolve OCPP topology thành internal UUID primitive cho adapter.
+    """Resolve OCPP topology into internal UUID primitives for the adapter.
 
     Args:
-        db: Async session do OCPP entry boundary sở hữu.
-        ocpp_identity: Identity station từ WebSocket path.
-        ocpp_evse_id: EVSE ID trong OCPP message.
-        ocpp_connector_id: Connector ID trong OCPP message.
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+        ocpp_evse_id: EVSE ID in the OCPP message.
+        ocpp_connector_id: Connector ID in the OCPP message.
 
     Returns:
-        Tuple ``(station_id, evse_id, connector_id)`` để truyền sang domain
-        ``charging_sessions`` mà không làm lộ ORM model.
+        Tuple ``(station_id, evse_id, connector_id)`` to pass to the
+        ``charging_sessions`` domain without exposing the ORM model.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station chưa pre-provision hoặc đã
-            soft-delete.
-        ChargingEvseNotFoundError: Nếu EVSE không thuộc station active.
-        ChargingConnectorNotFoundError: Nếu connector không thuộc EVSE active.
+        ChargingStationNotFoundError: If the station has not been
+            pre-provisioned or was soft-deleted.
+        ChargingEvseNotFoundError: If the EVSE does not belong to an active
+            station.
+        ChargingConnectorNotFoundError: If the connector does not belong to
+            an active EVSE.
     """
     station = await repository.get_station_by_identity(
         db, ocpp_identity, include_deleted=False
     )
     if station is None:
-        raise ChargingStationNotFoundError(
-            f"Không tìm thấy station OCPP '{ocpp_identity}'"
-        )
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
 
     evse = await repository.get_evse_by_identity(
         db, station.station_id, ocpp_evse_id, include_deleted=False
     )
     if evse is None:
         raise ChargingEvseNotFoundError(
-            f"Không tìm thấy EVSE OCPP '{ocpp_evse_id}' trong station"
+            f"OCPP EVSE '{ocpp_evse_id}' not found in station"
         )
 
     connector = await repository.get_connector_by_identity(
@@ -244,7 +250,7 @@ async def resolve_ocpp_topology(
     )
     if connector is None:
         raise ChargingConnectorNotFoundError(
-            f"Không tìm thấy connector OCPP '{ocpp_connector_id}' trong EVSE"
+            f"OCPP connector '{ocpp_connector_id}' not found in EVSE"
         )
     return station.station_id, evse.evse_id, connector.connector_id
 
@@ -252,30 +258,32 @@ async def resolve_ocpp_topology(
 async def update_charging_station(
     db: AsyncSession, station_id: UUID, station_data: ChargingStationUpdateRequest
 ) -> ChargingStationResponse:
-    """PATCH station và kiểm tra identity conflict trước khi flush.
+    """PATCH a station and check for identity conflicts before flushing.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_id: UUID station cần cập nhật.
-        station_data: Các field PATCH đã qua Pydantic validation.
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station to update.
+        station_data: PATCH fields, already Pydantic-validated.
 
     Returns:
-        Response station sau cập nhật.
+        The updated station response.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station không tồn tại hoặc đã xoá.
-        ChargingTopologyConflictError: Nếu identity mới đã được sử dụng.
+        ChargingStationNotFoundError: If the station does not exist or was
+            deleted.
+        ChargingTopologyConflictError: If the new identity is already in
+            use.
     """
     station = await repository.get_station_by_id(db, station_id)
     if station is None:
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     if (
         station_data.ocpp_identity is not None
         and station_data.ocpp_identity != station.ocpp_identity
         and await repository.get_station_by_identity(db, station_data.ocpp_identity)
     ):
         raise ChargingTopologyConflictError(
-            f"OCPP identity '{station_data.ocpp_identity}' đã tồn tại"
+            f"OCPP identity '{station_data.ocpp_identity}' already exists"
         )
 
     update_data = _clean_update_values(station_data.model_dump(exclude_unset=True))
@@ -285,59 +293,61 @@ async def update_charging_station(
         updated = await repository.update_charging_station(db, station_id, update_data)
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "OCPP identity của station đã tồn tại"
+            "Station OCPP identity already exists"
         ) from error
     if updated is None:
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     return to_charging_station_response(updated)
 
 
 async def soft_delete_charging_station(
     db: AsyncSession, station_id: UUID
 ) -> ChargingResourceDeleteResponse:
-    """Soft-delete station và topology con trong cùng transaction.
+    """Soft-delete a station and its child topology within the same transaction.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_id: UUID station cần xoá mềm.
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station to soft-delete.
 
     Returns:
-        Thông báo soft-delete thành công.
+        Confirmation message for the soft-delete.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station không tồn tại hoặc đã xoá.
+        ChargingStationNotFoundError: If the station does not exist or was
+            deleted.
 
     Side Effects:
-        Đánh dấu station, EVSE và connector con bằng ``deleted_at``; không
-        physical-delete record và không tự commit.
+        Marks the station, its EVSEs, and its connectors with
+        ``deleted_at``; does not physically delete records and does not
+        commit on its own.
     """
     if not await repository.soft_delete_station(db, station_id):
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
-    return ChargingResourceDeleteResponse(message="Đã xoá mềm charging station")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    return ChargingResourceDeleteResponse(message="Charging station soft-deleted")
 
 
 async def create_charging_evse(
     db: AsyncSession, station_id: UUID, evse_data: ChargingEvseCreateRequest
 ) -> ChargingEvseResponse:
-    """Tạo EVSE chỉ khi station parent active và identity chưa dùng.
+    """Create an EVSE only if the parent station is active and the identity is unused.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_id: UUID station parent.
-        evse_data: Identity EVSE đã qua validation.
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the parent station.
+        evse_data: EVSE identity, already validated.
 
     Returns:
-        Response EVSE vừa tạo.
+        The newly created EVSE response.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station parent không active.
-        ChargingTopologyConflictError: Nếu identity EVSE đã tồn tại.
+        ChargingStationNotFoundError: If the parent station is not active.
+        ChargingTopologyConflictError: If the EVSE identity already exists.
     """
     if await repository.get_station_by_id(db, station_id) is None:
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     if await repository.get_evse_by_identity(db, station_id, evse_data.ocpp_evse_id):
         raise ChargingTopologyConflictError(
-            f"EVSE ID '{evse_data.ocpp_evse_id}' đã tồn tại trong station"
+            f"EVSE ID '{evse_data.ocpp_evse_id}' already exists in station"
         )
     try:
         evse = await repository.create_charging_evse(
@@ -347,7 +357,7 @@ async def create_charging_evse(
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "EVSE identity đã tồn tại trong station"
+            "EVSE identity already exists in station"
         ) from error
     return to_charging_evse_response(evse)
 
@@ -359,22 +369,22 @@ async def list_charging_evses(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingEvseListResponse:
-    """Liệt kê EVSE active thuộc station parent.
+    """List active EVSEs belonging to the parent station.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        station_id: UUID station parent.
-        page: Trang bắt đầu từ một.
-        page_size: Kích thước trang bị giới hạn bởi settings.
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the parent station.
+        page: Page number starting at one.
+        page_size: Page size, bounded by settings.
 
     Returns:
-        Danh sách EVSE và metadata phân trang.
+        List of EVSEs and pagination metadata.
 
     Raises:
-        ChargingStationNotFoundError: Nếu station parent không active.
+        ChargingStationNotFoundError: If the parent station is not active.
     """
     if await repository.get_station_by_id(db, station_id) is None:
-        raise ChargingStationNotFoundError(f"Không tìm thấy station '{station_id}'")
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     page = max(page, settings.API_DEFAULT_PAGE)
     page_size = min(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
@@ -392,44 +402,46 @@ async def list_charging_evses(
 
 
 async def get_charging_evse(db: AsyncSession, evse_id: UUID) -> ChargingEvseResponse:
-    """Lấy EVSE active theo internal UUID.
+    """Get an active EVSE by internal UUID.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        evse_id: UUID EVSE cần truy vấn.
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the EVSE to query.
 
     Returns:
-        Response EVSE active.
+        The active EVSE response.
 
     Raises:
-        ChargingEvseNotFoundError: Nếu EVSE không tồn tại hoặc đã xoá.
+        ChargingEvseNotFoundError: If the EVSE does not exist or was
+            deleted.
     """
     evse = await repository.get_evse_by_id(db, evse_id)
     if evse is None:
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     return to_charging_evse_response(evse)
 
 
 async def update_charging_evse(
     db: AsyncSession, evse_id: UUID, evse_data: ChargingEvseUpdateRequest
 ) -> ChargingEvseResponse:
-    """PATCH EVSE và giữ unique identity trong parent station.
+    """PATCH an EVSE while keeping its identity unique within the parent station.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        evse_id: UUID EVSE cần cập nhật.
-        evse_data: Các field PATCH đã qua validation.
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the EVSE to update.
+        evse_data: PATCH fields, already validated.
 
     Returns:
-        Response EVSE sau cập nhật.
+        The updated EVSE response.
 
     Raises:
-        ChargingEvseNotFoundError: Nếu EVSE không active.
-        ChargingTopologyConflictError: Nếu identity mới trùng trong station.
+        ChargingEvseNotFoundError: If the EVSE is not active.
+        ChargingTopologyConflictError: If the new identity conflicts within
+            the station.
     """
     evse = await repository.get_evse_by_id(db, evse_id)
     if evse is None:
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     if (
         evse_data.ocpp_evse_id is not None
         and evse_data.ocpp_evse_id != evse.ocpp_evse_id
@@ -438,7 +450,7 @@ async def update_charging_evse(
         )
     ):
         raise ChargingTopologyConflictError(
-            f"EVSE ID '{evse_data.ocpp_evse_id}' đã tồn tại trong station"
+            f"EVSE ID '{evse_data.ocpp_evse_id}' already exists in station"
         )
     update_data = _clean_update_values(evse_data.model_dump(exclude_unset=True))
     if not update_data:
@@ -447,60 +459,62 @@ async def update_charging_evse(
         updated = await repository.update_charging_evse(db, evse_id, update_data)
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "EVSE identity đã tồn tại trong station"
+            "EVSE identity already exists in station"
         ) from error
     if updated is None:
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     return to_charging_evse_response(updated)
 
 
 async def soft_delete_charging_evse(
     db: AsyncSession, evse_id: UUID
 ) -> ChargingResourceDeleteResponse:
-    """Soft-delete EVSE và connector con.
+    """Soft-delete an EVSE and its child connectors.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        evse_id: UUID EVSE cần xoá mềm.
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the EVSE to soft-delete.
 
     Returns:
-        Thông báo soft-delete thành công.
+        Confirmation message for the soft-delete.
 
     Raises:
-        ChargingEvseNotFoundError: Nếu EVSE không active.
+        ChargingEvseNotFoundError: If the EVSE is not active.
 
     Side Effects:
-        Đánh dấu EVSE và connector con, không physical-delete và không commit.
+        Marks the EVSE and its child connectors; does not physically delete
+        and does not commit.
     """
     if not await repository.soft_delete_evse(db, evse_id):
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
-    return ChargingResourceDeleteResponse(message="Đã xoá mềm EVSE")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+    return ChargingResourceDeleteResponse(message="EVSE soft-deleted")
 
 
 async def create_charging_connector(
     db: AsyncSession, evse_id: UUID, connector_data: ChargingConnectorCreateRequest
 ) -> ChargingConnectorResponse:
-    """Tạo connector chỉ khi EVSE parent active và identity chưa dùng.
+    """Create a connector only if the parent EVSE is active and the identity is unused.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        evse_id: UUID EVSE parent.
-        connector_data: Identity connector đã qua validation.
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the parent EVSE.
+        connector_data: Connector identity, already validated.
 
     Returns:
-        Response connector vừa tạo.
+        The newly created connector response.
 
     Raises:
-        ChargingEvseNotFoundError: Nếu EVSE parent không active.
-        ChargingTopologyConflictError: Nếu identity connector đã tồn tại.
+        ChargingEvseNotFoundError: If the parent EVSE is not active.
+        ChargingTopologyConflictError: If the connector identity already
+            exists.
     """
     if await repository.get_evse_by_id(db, evse_id) is None:
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     if await repository.get_connector_by_identity(
         db, evse_id, connector_data.ocpp_connector_id
     ):
         raise ChargingTopologyConflictError(
-            f"Connector ID '{connector_data.ocpp_connector_id}' đã tồn tại trong EVSE"
+            f"Connector ID '{connector_data.ocpp_connector_id}' already exists in EVSE"
         )
     try:
         connector = await repository.create_charging_connector(
@@ -510,7 +524,7 @@ async def create_charging_connector(
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "Connector identity đã tồn tại trong EVSE"
+            "Connector identity already exists in EVSE"
         ) from error
     return to_charging_connector_response(connector)
 
@@ -522,22 +536,22 @@ async def list_charging_connectors(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingConnectorListResponse:
-    """Liệt kê connector active thuộc EVSE parent.
+    """List active connectors belonging to the parent EVSE.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        evse_id: UUID EVSE parent.
-        page: Trang bắt đầu từ một.
-        page_size: Kích thước trang bị giới hạn bởi settings.
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the parent EVSE.
+        page: Page number starting at one.
+        page_size: Page size, bounded by settings.
 
     Returns:
-        Danh sách connector và metadata phân trang.
+        List of connectors and pagination metadata.
 
     Raises:
-        ChargingEvseNotFoundError: Nếu EVSE parent không active.
+        ChargingEvseNotFoundError: If the parent EVSE is not active.
     """
     if await repository.get_evse_by_id(db, evse_id) is None:
-        raise ChargingEvseNotFoundError(f"Không tìm thấy EVSE '{evse_id}'")
+        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     page = max(page, settings.API_DEFAULT_PAGE)
     page_size = min(
         max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
@@ -557,48 +571,46 @@ async def list_charging_connectors(
 async def get_charging_connector(
     db: AsyncSession, connector_id: UUID
 ) -> ChargingConnectorResponse:
-    """Lấy connector active theo internal UUID.
+    """Get an active connector by internal UUID.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        connector_id: UUID connector cần truy vấn.
+        db: Async session owned by the HTTP boundary.
+        connector_id: UUID of the connector to query.
 
     Returns:
-        Response connector active.
+        The active connector response.
 
     Raises:
-        ChargingConnectorNotFoundError: Nếu connector không tồn tại hoặc đã xoá.
+        ChargingConnectorNotFoundError: If the connector does not exist or
+            was deleted.
     """
     connector = await repository.get_connector_by_id(db, connector_id)
     if connector is None:
-        raise ChargingConnectorNotFoundError(
-            f"Không tìm thấy connector '{connector_id}'"
-        )
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return to_charging_connector_response(connector)
 
 
 async def update_charging_connector(
     db: AsyncSession, connector_id: UUID, connector_data: ChargingConnectorUpdateRequest
 ) -> ChargingConnectorResponse:
-    """PATCH connector và giữ unique identity trong parent EVSE.
+    """PATCH a connector while keeping its identity unique within the parent EVSE.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        connector_id: UUID connector cần cập nhật.
-        connector_data: Các field PATCH đã qua validation.
+        db: Async session owned by the HTTP boundary.
+        connector_id: UUID of the connector to update.
+        connector_data: PATCH fields, already validated.
 
     Returns:
-        Response connector sau cập nhật.
+        The updated connector response.
 
     Raises:
-        ChargingConnectorNotFoundError: Nếu connector không active.
-        ChargingTopologyConflictError: Nếu identity mới trùng trong EVSE.
+        ChargingConnectorNotFoundError: If the connector is not active.
+        ChargingTopologyConflictError: If the new identity conflicts within
+            the EVSE.
     """
     connector = await repository.get_connector_by_id(db, connector_id)
     if connector is None:
-        raise ChargingConnectorNotFoundError(
-            f"Không tìm thấy connector '{connector_id}'"
-        )
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     if (
         connector_data.ocpp_connector_id is not None
         and connector_data.ocpp_connector_id != connector.ocpp_connector_id
@@ -607,7 +619,7 @@ async def update_charging_connector(
         )
     ):
         raise ChargingTopologyConflictError(
-            f"Connector ID '{connector_data.ocpp_connector_id}' đã tồn tại trong EVSE"
+            f"Connector ID '{connector_data.ocpp_connector_id}' already exists in EVSE"
         )
     update_data = _clean_update_values(connector_data.model_dump(exclude_unset=True))
     if not update_data:
@@ -618,35 +630,32 @@ async def update_charging_connector(
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
-            "Connector identity đã tồn tại trong EVSE"
+            "Connector identity already exists in EVSE"
         ) from error
     if updated is None:
-        raise ChargingConnectorNotFoundError(
-            f"Không tìm thấy connector '{connector_id}'"
-        )
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return to_charging_connector_response(updated)
 
 
 async def soft_delete_charging_connector(
     db: AsyncSession, connector_id: UUID
 ) -> ChargingResourceDeleteResponse:
-    """Soft-delete connector.
+    """Soft-delete a connector.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        connector_id: UUID connector cần xoá mềm.
+        db: Async session owned by the HTTP boundary.
+        connector_id: UUID of the connector to soft-delete.
 
     Returns:
-        Thông báo soft-delete thành công.
+        Confirmation message for the soft-delete.
 
     Raises:
-        ChargingConnectorNotFoundError: Nếu connector không active.
+        ChargingConnectorNotFoundError: If the connector is not active.
 
     Side Effects:
-        Đánh dấu ``deleted_at`` trong transaction hiện tại; không tự commit.
+        Marks ``deleted_at`` within the current transaction; does not commit
+        on its own.
     """
     if not await repository.soft_delete_connector(db, connector_id):
-        raise ChargingConnectorNotFoundError(
-            f"Không tìm thấy connector '{connector_id}'"
-        )
-    return ChargingResourceDeleteResponse(message="Đã xoá mềm connector")
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
+    return ChargingResourceDeleteResponse(message="Connector soft-deleted")

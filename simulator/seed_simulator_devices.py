@@ -1,11 +1,11 @@
-"""Tạo nhanh một bộ vehicle và Telematic cho simulator local."""
+"""Quickly create a set of vehicles and Telematics for the local simulator."""
 
 import json
 from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-# Chỉ cần sửa block này khi muốn tạo bộ dữ liệu simulator khác.
+# Only edit this block when you want to generate a different simulator dataset.
 API_BASE_URL = "http://localhost:8000"
 DEVICE_COUNT = 1
 TELEMATIC_SERIAL_PREFIX = "TBOX-SIM-"
@@ -15,17 +15,17 @@ REQUEST_TIMEOUT_SECONDS = 10
 
 
 def post(path: str, payload: dict[str, object]) -> dict[str, object]:
-    """Gửi một POST JSON tới API và trả về response JSON.
+    """Send a JSON POST to the API and return the JSON response.
 
     Args:
-        path: Đường dẫn API tương đối.
-        payload: Nội dung JSON request.
+        path: Relative API path.
+        payload: JSON request content.
 
     Returns:
-        Nội dung JSON response.
+        JSON response content.
 
     Raises:
-        RuntimeError: Khi API không thể gọi hoặc trả lỗi HTTP.
+        RuntimeError: When the API call fails or returns an HTTP error.
     """
     request = Request(
         f"{API_BASE_URL}{path}",
@@ -41,11 +41,11 @@ def post(path: str, payload: dict[str, object]) -> dict[str, object]:
         detail = (
             error.read().decode("utf-8") if isinstance(error, HTTPError) else str(error)
         )
-        raise RuntimeError(f"POST {path} thất bại: {detail}") from error
+        raise RuntimeError(f"POST {path} failed: {detail}") from error
 
 
 def main() -> None:
-    """Tạo vehicle trước rồi tạo Telematic bằng VIN tương ứng."""
+    """Create the vehicle first, then create the Telematic with the matching VIN."""
     for index in range(1, DEVICE_COUNT + 1):
         suffix = f"{index:05d}"
         vin = f"{VIN_PREFIX}{suffix}"
@@ -70,7 +70,7 @@ def main() -> None:
             },
         )
         print(
-            f"Đã tạo {telematic['telematic_serial']} -> "
+            f"Created {telematic['telematic_serial']} -> "
             f"vehicle_id={vehicle['vehicle_id']} -> VIN={vin}"
         )
 

@@ -34,6 +34,9 @@ infra/.env
 *.swp
 *.swo
 
+# === AI AGENT (private rulebook, subagents, memory — not shared via git) ===
+.claude/
+
 # === OS ===
 .DS_Store
 Thumbs.db

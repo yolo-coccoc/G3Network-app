@@ -1,0 +1,60 @@
+# CLAUDE.md — Electric Truck Driver Support System
+
+> Orientation document for AI coding agents and developers working in this
+> monorepo. The project already has code under active development. When code,
+> planners, requirements, and this document disagree, determine the most
+> recent decision — don't default to copying an existing pattern if it
+> violates convention. Update the relevant document (this file, or a detail
+> file under `.claude/rules/`) once a decision is confirmed.
+
+- `docs/00-status/overview.md` - Current repo status: what's actually
+  implemented (source of truth for progress; requirement docs below are
+  reference/intent, not status)
+- `docs/00-status/architecture.md` - Technical documentation: components,
+  diagram, database, infra
+- `docs/01-requirements/feature-list.md` - Feature spec by actor, with status
+- `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner)
+
+---
+
+## Detailed documentation
+
+This file only holds general direction and the rules that always apply.
+Details for each topic live under `.claude/rules/` — open the right file when
+a task touches that topic, no need to read them all every time. The
+`.claude/` directory is not committed to git (see `repo-conventions.md`); it
+exists locally only to guide the agent.
+
+| Topic | File | Read when |
+|---|---|---|
+| Finalized tech decisions (backend/infra) | [tech-decisions.md](./.claude/rules/tech-decisions.md) | You need to know/confirm a platform choice, or evaluate a new technology |
+| Directory structure (backend/infra as it exists) | [directory-structure.md](./.claude/rules/directory-structure.md) | Before creating a new file/directory, or unsure where a domain/module belongs |
+| Domain boundaries (backend) | [domain-boundaries.md](./.claude/rules/domain-boundaries.md) | Adding a new domain, or calling across two domains |
+| Development environment | [dev-environment.md](./.claude/rules/dev-environment.md) | Running/starting a local service, adjusting environment variables |
+| Backend convention — naming/DTO/mapping | [backend-coding-conventions.md](./.claude/rules/backend-coding-conventions.md) | Naming classes/functions/variables, distinguishing Request/Response/DTO/value object |
+| Backend convention — transaction/time/layer/worker | [backend-runtime-conventions.md](./.claude/rules/backend-runtime-conventions.md) | Writing service/repository code, managing session/transaction, background workers, checklist before finishing a backend task |
+| Repo-wide conventions | [repo-conventions.md](./.claude/rules/repo-conventions.md) | Commit, branch, PR, secrets, deferring/removing a component |
+| Database | [database.md](./.claude/rules/database.md) | Writing/reviewing a migration, changing the schema |
+| Open questions | [open-questions.md](./.claude/rules/open-questions.md) | Touching an area that's not yet decided (CI/CD, secrets management, vehicle-app protocol) |
+| Collaboration conventions | [collaboration-conventions.md](./.claude/rules/collaboration-conventions.md) | Every prompt — not backend-task-scoped like the rest of this table |
+
+`web-portal/` and `vehicle-app/` have no active source yet — they'll get
+their own conventions once the first task for that part starts; don't write
+them in advance.
+
+---
+
+## Always-applicable rules
+
+- For every prompt, regardless of topic, follow
+  [collaboration-conventions.md](./.claude/rules/collaboration-conventions.md).
+- Before starting any backend task, read
+  [repo-conventions.md](./.claude/rules/repo-conventions.md) and
+  [domain-boundaries.md](./.claude/rules/domain-boundaries.md) — both are short
+  and apply to every task regardless of topic (unlike the other files in the
+  table above, which you only need to open when the task touches that specific
+  topic).
+
+Standing rules (behavioral or coding) belong here or under `.claude/rules/`
+— never in auto-memory. See "Where rules live" in
+[collaboration-conventions.md](./.claude/rules/collaboration-conventions.md).

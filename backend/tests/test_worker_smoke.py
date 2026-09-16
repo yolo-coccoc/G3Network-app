@@ -1,4 +1,4 @@
-"""Smoke test lifecycle và chính sách dừng của MessageWorker."""
+"""Smoke test for MessageWorker's lifecycle and shutdown policy."""
 
 import asyncio
 from typing import cast
@@ -11,7 +11,7 @@ from app.domains.telemetry.schemas import TelemetryEnvelope
 
 @pytest.mark.asyncio
 async def test_message_worker_starts_and_stops_with_empty_queue() -> None:
-    """Worker tạo task và dừng được khi queue không có message."""
+    """The worker creates a task and can stop when the queue is empty."""
     worker = MessageWorker(asyncio.Queue[TelemetryEnvelope]())
 
     await worker.start()
@@ -25,7 +25,7 @@ async def test_message_worker_starts_and_stops_with_empty_queue() -> None:
 async def test_message_worker_propagates_processing_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Worker dừng và propagate lỗi persistence/service theo policy MVP."""
+    """The worker stops and propagates a persistence/service error per MVP policy."""
     worker = MessageWorker(asyncio.Queue[TelemetryEnvelope]())
 
     async def fail_processing(envelope: TelemetryEnvelope) -> None:

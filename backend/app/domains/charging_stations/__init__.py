@@ -1,1 +1,1 @@
-"""Bounded context quản lý trạm sạc, topology và trạng thái kỹ thuật."""
+"""Bounded context for managing charging stations, topology, and technical status."""

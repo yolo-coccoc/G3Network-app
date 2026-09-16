@@ -1,4 +1,4 @@
-"""Giả lập các Telematic publish telemetry liên tục qua MQTT."""
+"""Simulate Telematics continuously publishing telemetry over MQTT."""
 
 import asyncio
 import json
@@ -11,7 +11,7 @@ import aiomqtt
 
 from app.domains.telemetry.schemas import TelemetryMessage
 
-# Chỉ cần sửa block này để đổi API, broker, tọa độ hoặc chu kỳ gửi.
+# Only edit this block to change the API, broker, coordinates, or send interval.
 API_BASE_URL = "http://localhost:8000"
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
@@ -24,13 +24,13 @@ REQUEST_TIMEOUT_SECONDS = 10
 
 
 def get_telematic_serials() -> list[str]:
-    """Lấy serial của các Telematic hiện có từ API CRUD.
+    """Get the serials of existing Telematics from the CRUD API.
 
     Returns:
-        Danh sách serial thiết bị chưa bị soft delete.
+        List of device serials that have not been soft-deleted.
 
     Raises:
-        RuntimeError: Khi API không truy cập được hoặc trả response lỗi.
+        RuntimeError: When the API is unreachable or returns an error response.
     """
     request = Request(
         f"{API_BASE_URL}/api/v1/telematics/?page=1&page_size=100",
@@ -40,21 +40,21 @@ def get_telematic_serials() -> list[str]:
         with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as error:
-        raise RuntimeError(f"Không lấy được danh sách Telematic: {error}") from error
+        raise RuntimeError(f"Failed to get the Telematic list: {error}") from error
 
     serials = [item["telematic_serial"] for item in payload["items"]]
     if not serials:
-        raise RuntimeError("API không trả về Telematic nào để mô phỏng")
+        raise RuntimeError("API did not return any Telematics to simulate")
     return serials
 
 
 async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) -> None:
-    """Sinh và publish telemetry cho một Telematic.
+    """Generate and publish telemetry for a single Telematic.
 
     Args:
-        client: MQTT client đã kết nối.
-        serial: Serial của thiết bị giả lập.
-        index: Chỉ số dùng để tạo vị trí khác nhau giữa các thiết bị.
+        client: Connected MQTT client.
+        serial: Serial of the simulated device.
+        index: Index used to give each device a different position.
     """
     odometer = 12500.0 + index * 100
     while True:
@@ -88,15 +88,15 @@ async def publish_for_device(client: aiomqtt.Client, serial: str, index: int) ->
         await client.publish(
             topic, json.dumps(message.model_dump(mode="json")), qos=0, retain=False
         )
-        print(f"Đã gửi telemetry: {serial}")
+        print(f"Sent telemetry: {serial}")
         odometer += 0.2
         await asyncio.sleep(PUBLISH_INTERVAL_SECONDS)
 
 
 async def main() -> None:
-    """Kết nối broker và chạy task cho tất cả thiết bị."""
+    """Connect to the broker and run a task for every device."""
     serials = get_telematic_serials()
-    print(f"Tìm thấy {len(serials)} Telematic: {', '.join(serials)}")
+    print(f"Found {len(serials)} Telematics: {', '.join(serials)}")
     async with aiomqtt.Client(
         hostname=MQTT_HOST,
         port=MQTT_PORT,
@@ -120,4 +120,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Đã dừng simulator")
+        print("Stopped simulator")

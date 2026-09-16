@@ -1,4 +1,4 @@
-"""Integration test PostgreSQL cho migration baseline và repository telemetry."""
+"""PostgreSQL integration test for the baseline migrations and telemetry repository."""
 
 import os
 import subprocess
@@ -27,22 +27,22 @@ from app.libs.common.config import settings
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DB_INTEGRATION") != "1",
-    reason="Đặt RUN_DB_INTEGRATION=1 để chạy test PostgreSQL integration",
+    reason="Set RUN_DB_INTEGRATION=1 to run the PostgreSQL integration test",
 )
 
 
 def _backend_root() -> Path:
-    """Trả về thư mục backend chứa alembic.ini."""
+    """Return the backend directory containing alembic.ini."""
     return Path(__file__).resolve().parents[1]
 
 
 def _quote_identifier(identifier: str) -> str:
-    """Quote tên database do test tự sinh trước khi đưa vào câu lệnh SQL."""
+    """Quote a test-generated database name before putting it into a SQL statement."""
     return '"' + identifier.replace('"', '""') + '"'
 
 
 def _database_connection_kwargs(database: str) -> dict[str, object]:
-    """Chuyển DATABASE_URL thành tham số kết nối asyncpg tới một database."""
+    """Convert DATABASE_URL into asyncpg connection parameters for one database."""
     url = make_url(settings.DATABASE_URL)
     return {
         "database": database,
@@ -54,7 +54,7 @@ def _database_connection_kwargs(database: str) -> dict[str, object]:
 
 
 async def _create_database(database: str) -> None:
-    """Tạo database tạm và bật extension cần cho migration Timescale/PostGIS."""
+    """Create a temporary database and enable the extensions needed by the Timescale/PostGIS migration."""
     connection = await asyncpg.connect(**_database_connection_kwargs("postgres"))
     try:
         await connection.execute(f"CREATE DATABASE {_quote_identifier(database)}")
@@ -70,7 +70,7 @@ async def _create_database(database: str) -> None:
 
 
 async def _drop_database(database: str) -> None:
-    """Đóng connection còn sót và xóa database tạm sau test."""
+    """Close any leftover connections and drop the temporary database after the test."""
     connection = await asyncpg.connect(**_database_connection_kwargs("postgres"))
     try:
         await connection.execute(
@@ -89,7 +89,7 @@ async def _drop_database(database: str) -> None:
 
 
 def _run_alembic(database_url: str, *arguments: str) -> None:
-    """Chạy một command Alembic với DATABASE_URL của database tạm."""
+    """Run an Alembic command with the temporary database's DATABASE_URL."""
     alembic = Path(sys.executable).with_name("alembic")
     environment = os.environ | {"DATABASE_URL": database_url}
     result = subprocess.run(
@@ -103,7 +103,7 @@ def _run_alembic(database_url: str, *arguments: str) -> None:
     )
     if result.returncode != 0:
         raise AssertionError(
-            f"Alembic {' '.join(arguments)} thất bại:\n"
+            f"Alembic {' '.join(arguments)} failed:\n"
             f"stdout:\n{result.stdout}\n"
             f"stderr:\n{result.stderr}"
         )
@@ -111,7 +111,7 @@ def _run_alembic(database_url: str, *arguments: str) -> None:
 
 @pytest_asyncio.fixture
 async def temporary_database() -> AsyncIterator[str]:
-    """Dựng database tạm, kiểm tra upgrade/downgrade/upgrade rồi dọn sạch."""
+    """Spin up a temporary database, verify upgrade/downgrade/upgrade, then clean up."""
     database = f"g3network_test_{uuid4().hex[:12]}"
     base_url = make_url(settings.DATABASE_URL)
     database_url = base_url.set(database=database).render_as_string(hide_password=False)
@@ -119,9 +119,11 @@ async def temporary_database() -> AsyncIterator[str]:
     try:
         await _create_database(database)
     except (OSError, asyncpg.PostgresConnectionError) as error:
-        pytest.skip(f"PostgreSQL không sẵn sàng cho integration test: {error}")
+        pytest.skip(f"PostgreSQL is not ready for the integration test: {error}")
     except asyncpg.InsufficientPrivilegeError as error:
-        pytest.skip(f"User PostgreSQL không có quyền tạo database test: {error}")
+        pytest.skip(
+            f"PostgreSQL user lacks privilege to create a test database: {error}"
+        )
 
     try:
         _run_alembic(database_url, "upgrade", "head")
@@ -136,7 +138,7 @@ async def temporary_database() -> AsyncIterator[str]:
 async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
     temporary_database: str,
 ) -> None:
-    """Baseline có thể dựng, xóa và dựng lại trên database PostgreSQL tạm."""
+    """The baseline can be built, torn down, and rebuilt on a temporary PostgreSQL database."""
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     try:
         async with engine.connect() as connection:
@@ -166,7 +168,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
 async def test_telemetry_repository_round_trip_rolls_back(
     temporary_database: str,
 ) -> None:
-    """Repository ghi và đọc telemetry thật, sau đó transaction rollback sạch."""
+    """The repository writes and reads real telemetry, then the transaction rolls back cleanly."""
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False

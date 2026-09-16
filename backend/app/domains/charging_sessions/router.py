@@ -1,8 +1,8 @@
-"""HTTP router read-only cho monitoring charging session MVP.
+"""Read-only HTTP router for the charging session monitoring MVP.
 
-Router chỉ nhận HTTP dependency, gọi public monitoring service và chuyển domain
-exception thành status code. Không expose raw OCPP payload hoặc command
-transport trong bước này.
+The router only accepts HTTP dependencies, calls the public monitoring
+service and converts domain exceptions into status codes. It does not
+expose raw OCPP payloads or command transport at this stage.
 """
 
 from uuid import UUID
@@ -27,7 +27,7 @@ router = APIRouter(tags=["charging-sessions"])
 @router.get(
     "/charging-sessions",
     response_model=ChargingSessionListResponse,
-    summary="Liệt kê charging session",
+    summary="List charging sessions",
 )
 async def list_charging_sessions(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
@@ -38,16 +38,17 @@ async def list_charging_sessions(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionListResponse:
-    """Liệt kê session mới nhất trước để lấy session ID monitoring.
+    """List sessions newest first, to obtain session IDs for monitoring.
 
     Args:
-        page: Trang bắt đầu từ một.
-        page_size: Số session tối đa trong trang.
-        db: Async session do dependency ``get_db`` sở hữu transaction.
+        page: The page, starting at one.
+        page_size: The maximum number of sessions in the page.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
 
     Returns:
-        Danh sách session phân trang, không chứa raw payload hoặc field ngoài
-        MVP.
+        A paginated list of sessions, containing no raw payloads or fields
+        outside the MVP.
     """
     return await charging_session_service.list_charging_sessions(
         db,
@@ -59,22 +60,24 @@ async def list_charging_sessions(
 @router.get(
     "/charging-sessions/{session_id}",
     response_model=ChargingSessionResponse,
-    summary="Xem charging session",
+    summary="View a charging session",
 )
 async def get_charging_session(
     session_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> ChargingSessionResponse:
-    """Lấy aggregate session theo UUID nội bộ.
+    """Get the session aggregate by internal UUID.
 
     Args:
-        session_id: UUID session cần xem.
-        db: Async session do dependency ``get_db`` sở hữu transaction.
+        session_id: UUID of the session to view.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
 
     Returns:
-        Session response không chứa raw payload hoặc field ngoài MVP.
+        A session response containing no raw payloads or fields outside the
+        MVP.
 
     Raises:
-        HTTPException: ``404`` nếu session không tồn tại.
+        HTTPException: ``404`` if the session does not exist.
     """
     try:
         return await charging_session_service.get_charging_session(db, session_id)
@@ -87,7 +90,7 @@ async def get_charging_session(
 @router.get(
     "/charging-sessions/{session_id}/events",
     response_model=ChargingSessionEventListResponse,
-    summary="Xem event của charging session",
+    summary="View events of a charging session",
 )
 async def list_charging_session_events(
     session_id: UUID,
@@ -99,19 +102,20 @@ async def list_charging_session_events(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionEventListResponse:
-    """Lấy lifecycle event của session theo thứ tự thời gian tăng dần.
+    """Get the session's lifecycle events in ascending time order.
 
     Args:
-        session_id: UUID session cần xem event.
-        page: Trang bắt đầu từ một.
-        page_size: Số event tối đa trong trang.
-        db: Async session do dependency ``get_db`` sở hữu transaction.
+        session_id: UUID of the session whose events to view.
+        page: The page, starting at one.
+        page_size: The maximum number of events in the page.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
 
     Returns:
-        Event history phân trang.
+        A paginated event history.
 
     Raises:
-        HTTPException: ``404`` nếu session không tồn tại.
+        HTTPException: ``404`` if the session does not exist.
     """
     try:
         return await charging_session_service.list_charging_session_events(
@@ -129,7 +133,7 @@ async def list_charging_session_events(
 @router.get(
     "/charging-sessions/{session_id}/meter-values",
     response_model=ChargingSessionMeterValueListResponse,
-    summary="Xem meter values của charging session",
+    summary="View meter values of a charging session",
 )
 async def list_charging_session_meter_values(
     session_id: UUID,
@@ -141,19 +145,20 @@ async def list_charging_session_meter_values(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionMeterValueListResponse:
-    """Lấy meter sample canonical Wh của session theo thời gian tăng dần.
+    """Get the session's canonical Wh meter samples in ascending time order.
 
     Args:
-        session_id: UUID session cần xem meter.
-        page: Trang bắt đầu từ một.
-        page_size: Số sample tối đa trong trang.
-        db: Async session do dependency ``get_db`` sở hữu transaction.
+        session_id: UUID of the session whose meter to view.
+        page: The page, starting at one.
+        page_size: The maximum number of samples in the page.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
 
     Returns:
-        Meter history phân trang.
+        A paginated meter history.
 
     Raises:
-        HTTPException: ``404`` nếu session không tồn tại.
+        HTTPException: ``404`` if the session does not exist.
     """
     try:
         return await charging_session_service.list_charging_session_meter_values(

@@ -1,8 +1,9 @@
-"""WebSocket gateway tối thiểu cho OCPP 2.0.1.
+"""Minimal WebSocket gateway for OCPP 2.0.1.
 
-Gateway chỉ validate path, subprotocol và identity station đã pre-provision,
-sau đó giữ một connection ổn định trong process. Reliability production,
-reconnect và technical status history nằm ngoài active path.
+The gateway only validates the path, subprotocol, and identity of a
+pre-provisioned station, then keeps one stable connection within the
+process. Production reliability, reconnect, and technical status history
+are outside the active path.
 """
 
 import asyncio
@@ -43,13 +44,14 @@ _MAX_IDENTITY_LENGTH: Final[int] = 255
 
 
 def parse_ocpp_identity(request_path: str) -> str | None:
-    """Trích xuất OCPP identity từ URL path hợp lệ.
+    """Extract the OCPP identity from a valid URL path.
 
     Args:
-        request_path: Request target có thể chứa query string.
+        request_path: Request target, which may contain a query string.
 
     Returns:
-        Identity đã URL-decode hoặc ``None`` nếu path không đúng contract.
+        The URL-decoded identity, or ``None`` if the path does not match the
+        contract.
     """
     path = urlsplit(request_path).path
     if not path.startswith(OCPP_PATH_PREFIX):
@@ -64,15 +66,16 @@ def parse_ocpp_identity(request_path: str) -> str | None:
 
 
 def _http_rejection(status_code: int, reason: str, detail: str) -> Response:
-    """Tạo HTTP response dùng để từ chối WebSocket handshake.
+    """Create an HTTP response used to reject a WebSocket handshake.
 
     Args:
-        status_code: HTTP status trả về cho client.
-        reason: Reason phrase tương ứng với status.
-        detail: Nội dung lỗi dạng text/plain.
+        status_code: HTTP status returned to the client.
+        reason: Reason phrase matching the status.
+        detail: Error content as text/plain.
 
     Returns:
-        Response tương thích callback ``process_request`` của websockets.
+        A response compatible with the websockets ``process_request``
+        callback.
     """
     body = f"{detail}\n".encode("utf-8")
     return Response(
@@ -89,47 +92,49 @@ def _http_rejection(status_code: int, reason: str, detail: str) -> Response:
 
 
 def _requested_subprotocols(request: Request) -> set[str]:
-    """Đọc danh sách subprotocol client gửi trong handshake.
+    """Read the list of subprotocols the client sent in the handshake.
 
     Args:
-        request: HTTP request của WebSocket handshake.
+        request: HTTP request of the WebSocket handshake.
 
     Returns:
-        Set subprotocol đã trim; giá trị rỗng bị loại bỏ.
+        A set of trimmed subprotocols; empty values are dropped.
     """
     header = request.headers.get("Sec-WebSocket-Protocol", "")
     return {item.strip() for item in header.split(",") if item.strip()}
 
 
 def parse_ocpp_timestamp(value: str) -> datetime:
-    """Parse timestamp OCPP thành datetime timezone-aware.
+    """Parse an OCPP timestamp into a timezone-aware datetime.
 
     Args:
-        value: Timestamp ISO-8601 trong OCPP payload.
+        value: ISO-8601 timestamp in the OCPP payload.
 
     Returns:
-        Datetime giữ timezone để service chuẩn hóa về UTC.
+        A datetime keeping its timezone so the service can normalize it to
+        UTC.
 
     Raises:
-        ValueError: Nếu timestamp không có timezone hoặc sai định dạng.
+        ValueError: If the timestamp has no timezone or has an invalid
+            format.
     """
     normalized = value.replace("Z", "+00:00")
     timestamp = datetime.fromisoformat(normalized)
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-        raise ValueError("OCPP timestamp phải có timezone")
+        raise ValueError("OCPP timestamp must have a timezone")
     return timestamp
 
 
 def extract_meter_samples(
     meter_values: list[MeterValueType],
 ) -> list[MeterSampleInput]:
-    """Đưa các sample trong OCPP message vào input persistence.
+    """Convert the samples in an OCPP message into persistence input.
 
     Args:
-        meter_values: Các nhóm sample do ``python-ocpp`` parse.
+        meter_values: Groups of samples parsed by ``python-ocpp``.
 
     Returns:
-        Danh sách sample theo đúng thứ tự payload.
+        List of samples in the same order as the payload.
     """
     samples: list[MeterSampleInput] = []
     for meter_value in meter_values:
@@ -150,21 +155,21 @@ async def resolve_ocpp_topology(
     ocpp_identity: str,
     evse: EVSEType | None,
 ) -> tuple[UUID, UUID, UUID]:
-    """Resolve EVSE/connector OCPP identity thành UUID primitive.
+    """Resolve the OCPP EVSE/connector identity into UUID primitives.
 
     Args:
-        db: Async session của action transaction.
-        ocpp_identity: Identity của station OCPP.
-        evse: EVSE object từ OCPP payload.
+        db: Async session of the action transaction.
+        ocpp_identity: Identity of the OCPP station.
+        evse: EVSE object from the OCPP payload.
 
     Returns:
-        Tuple internal IDs của station, EVSE và connector.
+        Tuple of internal IDs for the station, EVSE, and connector.
 
     Raises:
-        ValueError: Nếu payload thiếu EVSE hoặc connector.
+        ValueError: If the payload is missing the EVSE or connector.
     """
     if evse is None or evse.connector_id is None:
-        raise ValueError("TransactionEvent phải có EVSE và connector")
+        raise ValueError("TransactionEvent must have an EVSE and connector")
     return await charging_stations_service.resolve_ocpp_topology(
         db,
         ocpp_identity=ocpp_identity,
@@ -176,14 +181,14 @@ async def resolve_ocpp_topology(
 def select_ocpp_subprotocol(
     _connection: ServerConnection, client_subprotocols: Sequence[Subprotocol]
 ) -> Subprotocol | None:
-    """Chọn duy nhất subprotocol OCPP 2.0.1 được gateway cho phép.
+    """Select the only OCPP 2.0.1 subprotocol the gateway allows.
 
     Args:
-        _connection: Connection đang thương lượng handshake.
-        client_subprotocols: Các protocol client đề xuất.
+        _connection: Connection currently negotiating the handshake.
+        client_subprotocols: Protocols proposed by the client.
 
     Returns:
-        ``ocpp2.0.1`` nếu client đề xuất; ngược lại ``None``.
+        ``ocpp2.0.1`` if the client proposed it; otherwise ``None``.
     """
     return (
         Subprotocol(OCPP_SUBPROTOCOL)
@@ -193,17 +198,20 @@ def select_ocpp_subprotocol(
 
 
 class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
-    """Adapter ``python-ocpp`` gắn WebSocket đã accept vào station identity.
+    """``python-ocpp`` adapter attaching an accepted WebSocket to a station identity.
 
     Attributes:
-        id: Identity station được ``ChargePoint`` dùng khi dispatch OCPP.
-        connection: WebSocket connection do ``websockets`` tạo sau handshake.
-        session_factory: Shared factory dùng cho mỗi operation persistence.
-        _session_by_evse: Mapping OCPP EVSE ID sang session UUID cho MeterValues.
+        id: Station identity used by ``ChargePoint`` when dispatching OCPP.
+        connection: WebSocket connection created by ``websockets`` after the
+            handshake.
+        session_factory: Shared factory used for each persistence operation.
+        _session_by_evse: Mapping from OCPP EVSE ID to session UUID, for
+            MeterValues.
 
     Note:
-        Class nhận OCPP action sau handshake, chuyển payload thành primitive
-        values và không tự tạo WebSocket connection.
+        The class receives OCPP actions after the handshake, converts the
+        payload into primitive values, and does not create the WebSocket
+        connection itself.
     """
 
     def __init__(
@@ -212,15 +220,17 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         connection: ServerConnection,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Khởi tạo adapter OCPP v201 cho connection đã validate.
+        """Initialize the OCPP v201 adapter for an already validated connection.
 
         Args:
-            identity: OCPP identity đã được resolve trong database.
-            connection: WebSocket connection đã hoàn tất handshake.
-            session_factory: Shared factory sở hữu transaction cho action handler.
+            identity: OCPP identity already resolved in the database.
+            connection: WebSocket connection that completed the handshake.
+            session_factory: Shared factory owning the transaction for the
+                action handler.
 
         Side Effects:
-            Khởi tạo state của lớp ``python-ocpp`` và gắn logger gateway.
+            Initializes the ``python-ocpp`` base class state and attaches
+            the gateway logger.
         """
         super().__init__(identity, connection, logger=logger)
         self.session_factory = session_factory
@@ -238,24 +248,29 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         evse: EVSEType | None = None,
         **_: object,
     ) -> call_result.TransactionEvent:
-        """Persist TransactionEvent bằng primitive values rồi ACK OCPP.
+        """Persist a TransactionEvent using primitive values, then ACK the OCPP call.
 
         Args:
-            event_type: ``Started``, ``Updated`` hoặc ``Ended``.
-            timestamp: Thời điểm event theo OCPP.
-            trigger_reason: Trigger OCPP, hiện chỉ được parse để giữ contract.
-            seq_no: Sequence OCPP, chưa thuộc active persistence schema.
-            transaction_info: Transaction dataclass do parser OCPP tạo.
-            meter_value: Meter đầu/cuối tùy event, dạng dataclass OCPP.
-            evse: EVSE và connector OCPP cần resolve.
-            **_: Các field OCPP optional không thuộc MVP.
+            event_type: ``Started``, ``Updated``, or ``Ended``.
+            timestamp: Time of the event per OCPP.
+            trigger_reason: OCPP trigger, currently only parsed to preserve
+                the contract.
+            seq_no: OCPP sequence number, not yet part of the active
+                persistence schema.
+            transaction_info: Transaction dataclass produced by the OCPP
+                parser.
+            meter_value: Start/end meter values depending on the event, as
+                OCPP dataclasses.
+            evse: OCPP EVSE and connector to resolve.
+            **_: Optional OCPP fields not part of the MVP.
 
         Returns:
-            Response rỗng hợp lệ cho TransactionEvent.
+            A valid empty response for TransactionEvent.
 
         Side Effects:
-            Gọi public service ``charging_sessions`` trong transaction atomic;
-            chỉ cập nhật mapping EVSE → session sau khi transaction commit.
+            Calls the public ``charging_sessions`` service within an atomic
+            transaction; the EVSE -> session mapping is only updated after
+            the transaction commits.
         """
         del trigger_reason, seq_no
         event_map = {
@@ -308,19 +323,21 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         meter_value: list[MeterValueType],
         **_: object,
     ) -> call_result.MeterValues:
-        """Persist từng energy sample MeterValues trong một transaction.
+        """Persist each MeterValues energy sample within one transaction.
 
         Args:
-            evse_id: OCPP EVSE ID dùng để tìm session trên connection.
-            meter_value: Nhóm sample dataclass OCPP cần chuyển về Wh.
-            **_: Field OCPP optional không thuộc MVP.
+            evse_id: OCPP EVSE ID used to look up the session on this
+                connection.
+            meter_value: Groups of OCPP dataclass samples to convert to Wh.
+            **_: Optional OCPP fields not part of the MVP.
 
         Returns:
-            Response rỗng hợp lệ cho MeterValues.
+            A valid empty response for MeterValues.
 
         Side Effects:
-            Gọi ``ingest_meter_values`` từng sample trên cùng AsyncSession;
-            exception làm entry transaction rollback toàn bộ message.
+            Calls ``ingest_meter_values`` for each sample on the same
+            AsyncSession; an exception rolls back the entire message's
+            entry transaction.
         """
         session_id = self._session_by_evse[evse_id]
         samples = extract_meter_samples(meter_value)
@@ -333,13 +350,14 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
 
 
 class OCPPServer:
-    """Lifecycle và handshake policy của OCPP WebSocket gateway.
+    """Lifecycle and handshake policy of the OCPP WebSocket gateway.
 
     Attributes:
-        host: Địa chỉ bind lấy từ charging settings.
-        port: Cổng bind lấy từ charging settings.
-        session_factory: Shared async session factory để resolve station.
-        _server: WebSocket server sau khi start thành công.
+        host: Bind address taken from charging settings.
+        port: Bind port taken from charging settings.
+        session_factory: Shared async session factory used to resolve
+            stations.
+        _server: WebSocket server after it has started successfully.
     """
 
     def __init__(
@@ -349,15 +367,17 @@ class OCPPServer:
         port: int = settings.CHARGING_OCPP_PORT,
         session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
     ) -> None:
-        """Khởi tạo gateway với shared dependency của backend.
+        """Initialize the gateway with the backend's shared dependencies.
 
         Args:
-            host: Địa chỉ bind WebSocket listener.
-            port: Cổng bind WebSocket listener.
-            session_factory: Factory shared để validate station identity.
+            host: Bind address for the WebSocket listener.
+            port: Bind port for the WebSocket listener.
+            session_factory: Shared factory used to validate station
+                identity.
 
         Side Effects:
-            Chưa mở socket; listener chỉ được bind khi gọi :meth:`start`.
+            Does not open a socket yet; the listener is only bound when
+            :meth:`start` is called.
         """
         self.host = host
         self.port = port
@@ -365,19 +385,21 @@ class OCPPServer:
         self._server: Server | None = None
 
     async def start(self) -> None:
-        """Mở WebSocket listener chỉ cho OCPP 2.0.1.
+        """Open the WebSocket listener for OCPP 2.0.1 only.
 
         Raises:
-            RuntimeError: Nếu listener đã được start trước đó.
+            RuntimeError: If the listener was already started.
 
         Side Effects:
-            Bind host/port và đăng ký callback xử lý handshake, subprotocol và
-            connection. Server instance được lưu vào ``self._server``.
+            Binds host/port and registers callbacks handling the handshake,
+            subprotocol, and connection. The server instance is stored in
+            ``self._server``.
         """
         if self._server is not None:
             raise RuntimeError("OCPP gateway is already running")
-        # ``serve`` sở hữu TCP accept và WebSocket handshake; gateway chỉ cung
-        # cấp policy validation cùng callback xử lý connection đã được accept.
+        # ``serve`` owns the TCP accept and WebSocket handshake; the gateway
+        # only supplies the validation policy and the callback that handles
+        # an already accepted connection.
         self._server = await serve(
             self._handle_connection,
             self.host,
@@ -393,11 +415,11 @@ class OCPPServer:
         )
 
     async def stop(self) -> None:
-        """Dừng listener và giải phóng socket.
+        """Stop the listener and release the socket.
 
         Side Effects:
-            Đóng listener hiện tại và chờ socket được giải phóng. Hàm an toàn
-            khi listener chưa được start.
+            Closes the current listener and waits for the socket to be
+            released. Safe to call when the listener has not been started.
         """
         if self._server is not None:
             self._server.close()
@@ -408,19 +430,21 @@ class OCPPServer:
     async def _process_request(
         self, _connection: ServerConnection, request: Request
     ) -> Response | None:
-        """Validate path, subprotocol và identity trước WebSocket upgrade.
+        """Validate the path, subprotocol, and identity before the WebSocket upgrade.
 
         Args:
-            _connection: Connection tạm do websockets truyền vào callback.
-            request: HTTP request handshake cần kiểm tra.
+            _connection: Temporary connection passed into the callback by
+                websockets.
+            request: HTTP handshake request to validate.
 
         Returns:
-            HTTP rejection nếu handshake không hợp lệ; ``None`` để tiếp tục
-            upgrade thành WebSocket.
+            An HTTP rejection if the handshake is invalid; ``None`` to
+            continue the upgrade to WebSocket.
 
         Side Effects:
-            Mở một transaction read-only ngắn để resolve station identity và
-            reject identity chưa được pre-provision.
+            Opens a short read-only transaction to resolve the station
+            identity and rejects an identity that has not been
+            pre-provisioned.
         """
         identity = parse_ocpp_identity(request.path)
         if identity is None:
@@ -444,25 +468,28 @@ class OCPPServer:
         return None
 
     async def _handle_connection(self, connection: ServerConnection) -> None:
-        """Chạy vòng đời một WebSocket sau khi handshake thành công.
+        """Run the lifecycle of one WebSocket after a successful handshake.
 
         Args:
-            connection: WebSocket connection đã được websockets accept.
+            connection: WebSocket connection accepted by websockets.
 
         Side Effects:
-            Tạo adapter ``OCPPChargePoint`` và chờ ``python-ocpp`` đọc message
-            cho tới khi station ngắt kết nối hoặc handler bị hủy. Lỗi handler
-            được log; ``CancelledError`` được giữ nguyên để shutdown hoạt động.
+            Creates an ``OCPPChargePoint`` adapter and waits for
+            ``python-ocpp`` to read messages until the station disconnects
+            or the handler is cancelled. Handler errors are logged;
+            ``CancelledError`` is re-raised so shutdown keeps working.
         """
         request = connection.request
-        # ``process_request`` đã kiểm tra request và path trước khi upgrade;
-        # assertions chỉ ghi lại invariant đó cho type checker ở happy path.
-        assert request is not None, "WebSocket request phải tồn tại sau handshake"
+        # ``process_request`` already validated the request and path before
+        # the upgrade; the assertions only record that invariant for the
+        # type checker on the happy path.
+        assert request is not None, "WebSocket request must exist after the handshake"
         identity = parse_ocpp_identity(request.path)
-        assert identity is not None, "OCPP identity phải hợp lệ sau handshake"
-        # ConnectionRegistry, reconnect replacement, offline detector, timeout
-        # và retry recovery thuộc production path bị hoãn; MVP giữ state trong
-        # đúng connection này và để process boundary sở hữu lifecycle socket.
+        assert identity is not None, "OCPP identity must be valid after the handshake"
+        # ConnectionRegistry, reconnect replacement, offline detector,
+        # timeout, and retry recovery belong to the production path and are
+        # deferred; the MVP keeps state on this exact connection and lets
+        # the process boundary own the socket lifecycle.
         charge_point = OCPPChargePoint(identity, connection, self.session_factory)
         logger.info(
             "OCPP station connected",
@@ -471,7 +498,8 @@ class OCPPServer:
         try:
             await charge_point.start()
         except ConnectionClosed:
-            # Station đóng kết nối bình thường sau khi happy path nhận ACK.
+            # The station closed the connection normally after the happy
+            # path received the ACK.
             pass
         except asyncio.CancelledError:
             raise
@@ -487,15 +515,17 @@ async def run_server(
     *,
     server_factory: Callable[[], OCPPServer] = OCPPServer,
 ) -> None:
-    """Chạy gateway cho tới khi nhận tín hiệu dừng.
+    """Run the gateway until it receives a stop signal.
 
     Args:
-        stop_event: Event do entrypoint set khi nhận SIGINT/SIGTERM.
-        server_factory: Factory tạo server; injectable để kiểm tra lifecycle.
+        stop_event: Event set by the entrypoint on SIGINT/SIGTERM.
+        server_factory: Factory that creates the server; injectable to test
+            the lifecycle.
 
     Side Effects:
-        Start listener, chờ stop event và luôn stop listener trong ``finally``.
-        Không tự đóng database vì database lifecycle thuộc entrypoint process.
+        Starts the listener, waits for the stop event, and always stops the
+        listener in a ``finally`` block. Does not close the database itself,
+        since the database lifecycle belongs to the entrypoint process.
     """
     server = server_factory()
     await server.start()

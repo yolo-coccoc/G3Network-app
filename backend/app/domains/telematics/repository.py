@@ -1,8 +1,8 @@
-"""Repository truy vấn bảng thiết bị Telematic.
+"""Repository for querying the Telematic device table.
 
-Repository này chỉ được gọi từ service của domain ``telematics``. Các domain
-khác phải dùng public service để không phụ thuộc trực tiếp vào model hoặc câu
-SQL nội bộ của domain này.
+This repository must only be called from the ``telematics`` domain's service.
+Other domains must use the public service so they do not depend directly on
+this domain's model or internal SQL.
 """
 
 from collections.abc import Sequence
@@ -20,7 +20,7 @@ async def get_by_id(
     db_session: AsyncSession,
     telematic_id: UUID,
 ) -> TelematicModel | None:
-    """Lấy thiết bị chưa bị soft delete theo ID."""
+    """Get a device that has not been soft-deleted, by ID."""
     query_result = await db_session.execute(
         select(TelematicModel).where(
             TelematicModel.telematic_id == telematic_id,
@@ -35,7 +35,7 @@ async def get_by_serial(
     serial: str,
     include_deleted: bool = False,
 ) -> TelematicModel | None:
-    """Lấy thiết bị theo serial."""
+    """Get a device by serial."""
     stmt = select(TelematicModel).where(TelematicModel.telematic_serial == serial)
     if not include_deleted:
         stmt = stmt.where(TelematicModel.deleted_at.is_(None))
@@ -47,15 +47,16 @@ async def find_mapping_by_serial(
     db_session: AsyncSession,
     serial: str,
 ) -> TelematicVehicleMapping | None:
-    """Tìm ánh xạ thiết bị–xe theo serial cho ingestion.
+    """Find a device-vehicle mapping by serial for ingestion.
 
     Args:
-        db: Phiên database do entry boundary sở hữu.
-        serial: Serial vật lý của thiết bị cần tra cứu.
+        db: Database session owned by the entry boundary.
+        serial: Physical serial of the device to look up.
 
     Returns:
-        Tuple ``(telematic_id, vehicle_id)`` khi thiết bị còn hoạt động trong
-        hệ thống và đã được gán xe; ``None`` nếu chưa có mapping hợp lệ.
+        Tuple ``(telematic_id, vehicle_id)`` when the device is still active
+        in the system and has been assigned a vehicle; ``None`` if there is
+        no valid mapping.
     """
     query_result = await db_session.execute(
         select(TelematicModel.telematic_id, TelematicModel.vehicle_id).where(
@@ -79,15 +80,16 @@ async def find_mappings_by_serial(
     db_session: AsyncSession,
     serials: Sequence[str],
 ) -> dict[str, TelematicVehicleMapping]:
-    """Trả về mapping thiết bị–xe cho nhiều serial trong một truy vấn.
+    """Return device-vehicle mappings for multiple serials in a single query.
 
     Args:
-        db: Phiên database do entry boundary sở hữu.
-        serials: Các serial vật lý cần tra cứu.
+        db: Database session owned by the entry boundary.
+        serials: Physical serials to look up.
 
     Returns:
-        Dict ánh xạ ``telematic_serial`` sang ``(telematic_id, vehicle_id)``.
-        Thiết bị không tồn tại, đã soft delete hoặc chưa được gán xe bị loại.
+        Dict mapping ``telematic_serial`` to ``(telematic_id, vehicle_id)``.
+        Devices that do not exist, have been soft-deleted, or have not been
+        assigned a vehicle are excluded.
     """
     unique_serials = list(set(serials))
     if not unique_serials:
@@ -118,7 +120,7 @@ async def list_all(
     limit: int,
     status: object | None,
 ) -> list[TelematicModel]:
-    """Lấy danh sách thiết bị chưa bị xoá."""
+    """Get the list of devices that have not been deleted."""
     stmt = (
         select(TelematicModel)
         .where(TelematicModel.deleted_at.is_(None))
@@ -132,7 +134,7 @@ async def list_all(
 
 
 async def count(db_session: AsyncSession, status: object | None) -> int:
-    """Đếm thiết bị chưa bị xoá."""
+    """Count devices that have not been deleted."""
     stmt = (
         select(func.count())
         .select_from(TelematicModel)
@@ -147,7 +149,7 @@ async def insert(
     db_session: AsyncSession,
     values: dict[str, object],
 ) -> TelematicModel:
-    """Tạo thiết bị và flush để lấy ID."""
+    """Create a device and flush to obtain its ID."""
     telematic_record = TelematicModel(**values)
     db_session.add(telematic_record)
     await db_session.flush()
@@ -159,7 +161,7 @@ async def update_fields(
     telematic_record: TelematicModel,
     values: dict[str, object],
 ) -> TelematicModel:
-    """Cập nhật các trường đã được service cho phép."""
+    """Update the fields the service has allowed."""
     for field_name, value in values.items():
         setattr(telematic_record, field_name, value)
     await db_session.flush()
@@ -170,7 +172,7 @@ async def soft_delete(
     db_session: AsyncSession,
     telematic_record: TelematicModel,
 ) -> None:
-    """Đánh dấu xoá mềm thiết bị."""
+    """Mark a device as soft-deleted."""
     telematic_record.deleted_at = datetime.now(timezone.utc)
     telematic_record.updated_at = telematic_record.deleted_at
     await db_session.flush()

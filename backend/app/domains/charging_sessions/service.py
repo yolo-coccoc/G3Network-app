@@ -1,7 +1,8 @@
-"""Public service ingest TransactionEvent và từng MeterValues message happy path.
+"""Public service ingesting TransactionEvent and individual MeterValues messages, happy path.
 
-MVP lý tưởng cố định thứ tự message và loại bỏ reliability branching. Caller ở
-entry boundary vẫn sở hữu commit/rollback transaction.
+The ideal MVP assumes a fixed message order and removes reliability
+branching. The caller at the entry boundary still owns commit/rollback of
+the transaction.
 """
 
 from datetime import datetime, timezone
@@ -39,75 +40,79 @@ from app.libs.common.config import settings
 
 
 def _utc(value: datetime, field_name: str) -> datetime:
-    """Kiểm tra timestamp aware và normalize về UTC.
+    """Check that the timestamp is timezone-aware and normalize it to UTC.
 
     Args:
-        value: Timestamp đầu vào từ adapter hoặc API.
-        field_name: Tên field dùng trong thông báo lỗi.
+        value: The input timestamp from the adapter or API.
+        field_name: The field name used in the error message.
 
     Returns:
-        Timestamp có timezone UTC.
+        A timestamp with UTC timezone.
 
     Raises:
-        ChargingSessionInputError: Nếu timestamp thiếu timezone.
+        ChargingSessionInputError: If the timestamp lacks a timezone.
     """
     if value.tzinfo is None or value.utcoffset() is None:
-        raise ChargingSessionInputError(f"{field_name} phải có timezone")
+        raise ChargingSessionInputError(f"{field_name} must have a timezone")
     return value.astimezone(timezone.utc)
 
 
 def _energy(value: Decimal | None, field_name: str) -> Decimal | None:
-    """Kiểm tra giá trị energy Decimal không âm.
+    """Check that the energy value is a non-negative Decimal.
 
     Args:
-        value: Giá trị năng lượng có thể nullable.
-        field_name: Tên field dùng trong thông báo lỗi.
+        value: The energy value, which may be nullable.
+        field_name: The field name used in the error message.
 
     Returns:
-        Decimal hữu hạn, không âm hoặc ``None``.
+        A finite, non-negative Decimal, or ``None``.
 
     Raises:
-        ChargingSessionInputError: Nếu giá trị sai kiểu, không hữu hạn hoặc âm.
+        ChargingSessionInputError: If the value has the wrong type, is not
+            finite, or is negative.
     """
     if value is None:
         return None
     if not isinstance(value, Decimal) or not value.is_finite():
-        raise ChargingSessionInputError(f"{field_name} phải là Decimal hữu hạn")
+        raise ChargingSessionInputError(f"{field_name} must be a finite Decimal")
     if value < 0:
-        raise ChargingSessionInputError(f"{field_name} không được âm")
+        raise ChargingSessionInputError(f"{field_name} must not be negative")
     return value
 
 
 def _apply_charging_session_meter_end(
     session: ChargingSessionModel, meter_end_wh: Decimal | None
 ) -> None:
-    """Cập nhật meter cuối và energy delivered cho ORM session.
+    """Update the final meter reading and energy delivered on the ORM session.
 
     Args:
-        session: Aggregate ORM đang được xử lý trong transaction.
-        meter_end_wh: Meter mới nhất; không thay đổi nếu là ``None``.
+        session: The ORM aggregate being processed in the transaction.
+        meter_end_wh: The latest meter reading; no change is made if this is
+            ``None``.
 
     Side Effects:
-        Cập nhật ``meter_end_wh`` và tính lại năng lượng giao nếu có meter đầu.
+        Updates ``meter_end_wh`` and recomputes the energy delivered if a
+        start meter reading is present.
     """
     if meter_end_wh is None:
         return
     session.meter_end_wh = meter_end_wh
     if session.meter_start_wh is not None:
-        # MVP giả định register tăng đơn điệu; kiểm tra meter reset/decrease
-        # thuộc reliability path và không được tự mở trong service này.
+        # The MVP assumes the register increases monotonically; checking for
+        # meter reset/decrease belongs to the reliability path and must not
+        # be opened up on its own in this service.
         session.energy_delivered_wh = meter_end_wh - session.meter_start_wh
 
 
 def _paging(page: int, page_size: int) -> tuple[int, int, int]:
-    """Chuẩn hóa tham số phân trang monitoring theo settings chung.
+    """Normalize monitoring pagination parameters against shared settings.
 
     Args:
-        page: Trang caller yêu cầu.
-        page_size: Kích thước trang caller yêu cầu.
+        page: The page requested by the caller.
+        page_size: The page size requested by the caller.
 
     Returns:
-        Tuple ``(page, page_size, offset)`` đã nằm trong giới hạn API.
+        A ``(page, page_size, offset)`` tuple already within API limits.
     """
     normalized_page = max(page, settings.API_DEFAULT_PAGE)
     normalized_page_size = min(
@@ -123,24 +128,24 @@ def _paging(page: int, page_size: int) -> tuple[int, int, int]:
 async def get_charging_session(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSessionResponse:
-    """Lấy aggregate session cho endpoint monitoring.
+    """Get the session aggregate for the monitoring endpoint.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        session_id: UUID aggregate cần xem.
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the aggregate to view.
 
     Returns:
-        Response session chỉ chứa schema active MVP.
+        A session response containing only the active MVP schema.
 
     Raises:
-        ChargingSessionNotFoundError: Nếu session không tồn tại.
+        ChargingSessionNotFoundError: If the session does not exist.
 
     Side Effects:
-        Thực hiện một truy vấn aggregate; không commit hoặc rollback.
+        Performs one aggregate query; does not commit or roll back.
     """
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
-        raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
+        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
     return ChargingSessionResponse.model_validate(session)
 
 
@@ -150,19 +155,20 @@ async def list_charging_sessions(
     page: int,
     page_size: int,
 ) -> ChargingSessionListResponse:
-    """Lấy danh sách session mới nhất cho endpoint monitoring.
+    """Get the list of most recent sessions for the monitoring endpoint.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        page: Trang bắt đầu từ một.
-        page_size: Kích thước trang.
+        db: The async session owned by the HTTP boundary.
+        page: The page, starting at one.
+        page_size: The page size.
 
     Returns:
-        Danh sách session và metadata phân trang.
+        The list of sessions and pagination metadata.
 
     Side Effects:
-        Thực hiện một truy vấn items và một truy vấn count; không load quan hệ
-        ORM nên endpoint không tạo N+1 query và không commit/rollback.
+        Performs one items query and one count query; no ORM relationships
+        are loaded, so the endpoint creates no N+1 queries and does not
+        commit/roll back.
     """
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
     sessions = await repository.list_charging_sessions(
@@ -186,23 +192,24 @@ async def list_charging_session_events(
     page: int,
     page_size: int,
 ) -> ChargingSessionEventListResponse:
-    """Lấy lifecycle event phân trang cho endpoint monitoring.
+    """Get paginated lifecycle events for the monitoring endpoint.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        session_id: UUID session cần xem event.
-        page: Trang bắt đầu từ một.
-        page_size: Kích thước trang.
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session whose events to view.
+        page: The page, starting at one.
+        page_size: The page size.
 
     Returns:
-        Event response và metadata phân trang.
+        The event response and pagination metadata.
 
     Raises:
-        ChargingSessionNotFoundError: Nếu session không tồn tại.
+        ChargingSessionNotFoundError: If the session does not exist.
 
     Side Effects:
-        Thực hiện một lookup session và hai truy vấn event (items/count); không
-        load quan hệ ORM nên endpoint không tạo N+1 query.
+        Performs one session lookup and two event queries (items/count); no
+        ORM relationships are loaded, so the endpoint creates no N+1
+        queries.
     """
     await require_charging_session(db, session_id)
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
@@ -228,23 +235,24 @@ async def list_charging_session_meter_values(
     page: int,
     page_size: int,
 ) -> ChargingSessionMeterValueListResponse:
-    """Lấy meter sample phân trang cho endpoint monitoring.
+    """Get paginated meter samples for the monitoring endpoint.
 
     Args:
-        db: Async session do HTTP boundary sở hữu.
-        session_id: UUID session cần xem meter.
-        page: Trang bắt đầu từ một.
-        page_size: Kích thước trang.
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session whose meter to view.
+        page: The page, starting at one.
+        page_size: The page size.
 
     Returns:
-        Meter response và metadata phân trang.
+        The meter response and pagination metadata.
 
     Raises:
-        ChargingSessionNotFoundError: Nếu session không tồn tại.
+        ChargingSessionNotFoundError: If the session does not exist.
 
     Side Effects:
-        Thực hiện một lookup session và hai truy vấn meter (items/count); không
-        load quan hệ ORM nên endpoint không tạo N+1 query.
+        Performs one session lookup and two meter queries (items/count); no
+        ORM relationships are loaded, so the endpoint creates no N+1
+        queries.
     """
     await require_charging_session(db, session_id)
     normalized_page, normalized_page_size, offset = _paging(page, page_size)
@@ -268,34 +276,34 @@ async def list_charging_session_meter_values(
 async def require_charging_session(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSessionModel:
-    """Đảm bảo session tồn tại trước khi đọc history.
+    """Ensure the session exists before reading its history.
 
     Args:
-        db: Async session hiện tại.
-        session_id: UUID session cần kiểm tra.
+        db: The current async session.
+        session_id: UUID of the session to check.
 
     Returns:
-        Aggregate session tồn tại.
+        The existing session aggregate.
 
     Raises:
-        ChargingSessionNotFoundError: Nếu không tìm thấy session.
+        ChargingSessionNotFoundError: If the session is not found.
     """
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
-        raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
+        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
     return session
 
 
 def to_charging_session_event_response(
     event: ChargingSessionEventModel,
 ) -> ChargingSessionEventResponse:
-    """Chuyển ORM event thành response schema monitoring.
+    """Convert an ORM event into the monitoring response schema.
 
     Args:
-        event: ORM event đã được repository truy vấn.
+        event: The ORM event already queried by the repository.
 
     Returns:
-        Event response không chứa raw payload.
+        An event response containing no raw payload.
     """
     return ChargingSessionEventResponse.model_validate(event)
 
@@ -303,13 +311,13 @@ def to_charging_session_event_response(
 def to_charging_session_meter_value_response(
     meter_value: ChargingSessionMeterValueModel,
 ) -> ChargingSessionMeterValueResponse:
-    """Chuyển ORM meter sample thành response schema monitoring.
+    """Convert an ORM meter sample into the monitoring response schema.
 
     Args:
-        meter_value: ORM meter sample đã được repository truy vấn.
+        meter_value: The ORM meter sample already queried by the repository.
 
     Returns:
-        Meter response canonical Wh.
+        A canonical Wh meter response.
     """
     return ChargingSessionMeterValueResponse.model_validate(meter_value)
 
@@ -326,47 +334,54 @@ async def ingest_transaction_event(
     meter_start_wh: Decimal | None = None,
     meter_end_wh: Decimal | None = None,
 ) -> TransactionIngestResult:
-    """Xử lý một TransactionEvent theo lifecycle happy path.
+    """Process one TransactionEvent according to the happy-path lifecycle.
 
     Rule:
-        ``Started`` tạo aggregate mới; ``Updated`` và ``Ended`` yêu cầu
-        aggregate đã tồn tại, đúng topology và message đến đúng thứ tự. Event
-        luôn được append trước khi aggregate được cập nhật.
+        ``Started`` creates a new aggregate; ``Updated`` and ``Ended``
+        require the aggregate to already exist, with matching topology and
+        messages arriving in the correct order. The event is always
+        appended before the aggregate is updated.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        station_id: UUID station phát sinh transaction.
-        evse_id: UUID EVSE của transaction.
-        connector_id: UUID connector của transaction.
-        transaction_id: OCPP transaction identity.
-        event_type: Loại event canonical.
-        event_occurred_at: Thời điểm event, bắt buộc có timezone.
-        meter_start_wh: Meter đầu phiên cho ``Started``.
-        meter_end_wh: Meter mới nhất của ``Updated``/``Ended``.
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the station that raised the transaction.
+        evse_id: UUID of the transaction's EVSE.
+        connector_id: UUID of the transaction's connector.
+        transaction_id: The OCPP transaction identity.
+        event_type: The canonical event type.
+        event_occurred_at: The event time; must have a timezone.
+        meter_start_wh: The meter reading at the start of the session, for
+            ``Started``.
+        meter_end_wh: The latest meter reading, for ``Updated``/``Ended``.
 
     Returns:
-        Kết quả gồm session UUID, status hiện tại và số event đã append.
+        A result containing the session UUID, current status and number of
+        events appended.
 
     Raises:
-        ChargingSessionInputError: Nếu input sai contract hoặc topology lệch.
-        ChargingSessionNotFoundError: Nếu event không phải ``Started`` nhưng
-            aggregate chưa tồn tại.
+        ChargingSessionInputError: If the input violates the contract or
+            the topology does not match.
+        ChargingSessionNotFoundError: If the event is not ``Started`` but
+            the aggregate does not yet exist.
 
     Side Effects:
-        Tạo hoặc cập nhật aggregate và append event trong transaction hiện tại;
-        không tự commit hoặc rollback.
+        Creates or updates the aggregate and appends an event in the
+        current transaction; does not commit or roll back on its own.
     """
     transaction_id = transaction_id.strip()
     if not transaction_id or len(transaction_id) > 255:
-        raise ChargingSessionInputError("transaction_id rỗng hoặc vượt quá 255 ký tự")
+        raise ChargingSessionInputError(
+            "transaction_id is empty or exceeds 255 characters"
+        )
     occurred_at = _utc(event_occurred_at, "event_occurred_at")
     meter_start = _energy(meter_start_wh, "meter_start_wh")
     meter_end = _energy(meter_end_wh, "meter_end_wh")
 
     session: ChargingSessionModel | None
     if event_type == SessionEventType.STARTED:
-        # Duplicate/idempotency và conflict được bảo vệ bởi unique constraint
-        # nhưng chưa có nhánh xử lý riêng trong happy path MVP.
+        # Duplicate/idempotency and conflict handling are protected by the
+        # unique constraint but have no dedicated branch in the MVP happy
+        # path yet.
         session = await repository.create_session(
             db,
             station_id=station_id,
@@ -382,10 +397,10 @@ async def ingest_transaction_event(
         )
         if session is None:
             raise ChargingSessionNotFoundError(
-                f"Transaction '{transaction_id}' chưa có Started"
+                f"Transaction '{transaction_id}' has no Started yet"
             )
         if session.evse_id != evse_id or session.connector_id != connector_id:
-            raise ChargingSessionInputError("Topology của transaction không khớp")
+            raise ChargingSessionInputError("Transaction topology does not match")
 
     await repository.insert_event(
         db,
@@ -412,37 +427,39 @@ async def ingest_meter_values(
     session_id: UUID,
     sample: MeterSampleInput,
 ) -> MeterIngestResult:
-    """Lưu một MeterValues message và cập nhật aggregate.
+    """Store one MeterValues message and update the aggregate.
 
     Rule:
-        Mỗi lần gọi xử lý đúng một sample. MVP giả định message đến đúng thứ
-        tự và không duplicate; sample hiện tại trở thành meter cuối của
-        aggregate.
+        Each call processes exactly one sample. The MVP assumes messages
+        arrive in order and without duplicates; the current sample becomes
+        the aggregate's final meter reading.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        session_id: UUID aggregate cần cập nhật.
-        sample: Sample cần canonical về Wh và append vào history.
+        db: The async session owned by the entry boundary.
+        session_id: UUID of the aggregate to update.
+        sample: The sample to canonicalize to Wh and append to the history.
 
     Returns:
-        Kết quả gồm session UUID, status và số sample đã nhận.
+        A result containing the session UUID, status and number of samples
+        accepted.
 
     Raises:
-        ChargingSessionInputError: Nếu sample thiếu timezone hoặc energy không
-            hợp lệ.
-        ChargingSessionNotFoundError: Nếu aggregate không tồn tại.
+        ChargingSessionInputError: If the sample lacks a timezone or the
+            energy value is invalid.
+        ChargingSessionNotFoundError: If the aggregate does not exist.
 
     Side Effects:
-        Append một meter sample và cập nhật aggregate trong cùng transaction;
-        caller phải commit hoặc rollback transaction ở entry boundary.
+        Appends a meter sample and updates the aggregate in the same
+        transaction; the caller must commit or roll back the transaction at
+        the entry boundary.
     """
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
-        raise ChargingSessionNotFoundError(f"Không tìm thấy session '{session_id}'")
+        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
     sampled_at = _utc(sample.sampled_at, "sampled_at")
     value_wh = _energy(sample.value_wh, "value_wh")
     if value_wh is None:
-        raise ChargingSessionInputError("value_wh là bắt buộc")
+        raise ChargingSessionInputError("value_wh is required")
     await repository.insert_meter_value(
         db,
         session_id=session.session_id,

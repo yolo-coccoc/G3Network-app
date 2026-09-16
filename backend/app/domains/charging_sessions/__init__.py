@@ -1,1 +1,1 @@
-"""Bounded context lưu aggregate, event và meter history của phiên sạc."""
+"""Bounded context storing the charging session aggregate, event and meter history."""

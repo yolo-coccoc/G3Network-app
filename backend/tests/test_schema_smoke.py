@@ -1,4 +1,4 @@
-"""Smoke test cho validation schema và canonical value của backend."""
+"""Smoke test for the backend's schema validation and canonical values."""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -18,7 +18,7 @@ from app.domains.vehicles.types import VehicleStatus
 
 
 def _valid_telemetry_payload() -> dict[str, object]:
-    """Tạo payload tối thiểu hợp lệ cho schema telemetry."""
+    """Create a minimal valid payload for the telemetry schema."""
     return {
         "message_uuid": str(uuid4()),
         "telematic_serial": "TBOX-TEST-001",
@@ -29,14 +29,14 @@ def _valid_telemetry_payload() -> dict[str, object]:
 
 
 def test_telemetry_timestamp_is_normalized_to_utc() -> None:
-    """Timestamp có timezone phải được chuyển về UTC."""
+    """A timestamp with a timezone must be converted to UTC."""
     message = TelemetryMessage.model_validate(_valid_telemetry_payload())
 
     assert message.recorded_at == datetime(2026, 8, 26, 3, 0, tzinfo=timezone.utc)
 
 
 def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
-    """Schema từ chối timestamp không timezone và GPS ngoài range."""
+    """The schema rejects a timezone-naive timestamp and an out-of-range GPS location."""
     naive_payload = _valid_telemetry_payload()
     naive_payload["recorded_at"] = "2026-08-26T10:00:00"
     with pytest.raises(ValidationError):
@@ -49,7 +49,7 @@ def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
 
 
 def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
-    """Vehicle và telematic request nhận dữ liệu hợp lệ, reject VIN sai."""
+    """Vehicle and telematic requests accept valid data and reject an invalid VIN."""
     vehicle = VehicleCreateRequest(
         license_plate="TEST-001",
         vin="1HGBH41JXMN109186",
@@ -79,7 +79,7 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
 
 
 def test_ocpp_meter_value_is_kept_without_unit_conversion() -> None:
-    """Giá trị meter OCPP được giữ nguyên, không đổi đơn vị."""
+    """An OCPP meter value is kept as-is, with no unit conversion."""
     meter_value = MeterValueType(
         timestamp="2026-08-26T10:00:00Z",
         sampled_value=[

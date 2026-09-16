@@ -14,7 +14,7 @@ dependencies = [
     "alembic>=1.13.0",
     "python-dotenv>=1.0.0",
     "aiomqtt>=2.3.0",
-    # Thư viện MobilityHouse có tên package trên PyPI là ``ocpp``.
+    # The MobilityHouse library's package name on PyPI is ``ocpp``.
     "ocpp>=2.0.0",
     "websockets>=16.0",
     "geoalchemy2>=0.15.0",
@@ -59,8 +59,8 @@ strict = true
 warn_return_any = true
 warn_unused_ignores = true
 
-# Thư viện ``ocpp`` (MobilityHouse) không phân phối type stubs hoặc
-# `py.typed`, nên mypy strict không thể phân tích các module con của nó.
+# The ``ocpp`` library (MobilityHouse) does not ship type stubs or
+# `py.typed`, so mypy strict cannot analyze its submodules.
 [[tool.mypy.overrides]]
 module = "ocpp.*"
 ignore_missing_imports = true

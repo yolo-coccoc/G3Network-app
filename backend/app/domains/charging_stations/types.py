@@ -1,6 +1,6 @@
-"""Các kiểu dùng chung của ``charging_stations`` trong MVP lý tưởng.
+"""Shared types for ``charging_stations`` in the ideal MVP.
 
-Topology active chỉ dùng primitive values. Technical status và các enum
-administrative/connection bị loại khỏi active contract vì thiết bị được giả
-định luôn online và active trong local happy path.
+The active topology uses only primitive values. Technical status and the
+administrative/connection enums are excluded from the active contract because
+devices are assumed to always be online and active in the local happy path.
 """

@@ -1,11 +1,11 @@
-"""Repository truy cập dữ liệu của domain telemetry.
+"""Data access repository for the telemetry domain.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Module này chứa cả thao tác singular đang dùng cho luồng MVP hiện tại và các
-thao tác batch được giữ lại để tái sử dụng khi throughput thực tế cần tối ưu.
-Repository không sở hữu transaction: entry boundary truyền vào session và
-quyết định commit hoặc rollback.
+This module contains both the singular operations used by the current MVP
+flow and the batch operations kept for reuse when real throughput needs
+optimization. The repository does not own the transaction: the entry
+boundary passes in the session and decides whether to commit or roll back.
 """
 
 import logging
@@ -27,17 +27,19 @@ async def insert_telemetry(
     db: AsyncSession,
     message: dict[str, object],
 ) -> int:
-    """Insert một bản ghi telemetry bằng SQLAlchemy Core.
+    """Insert a single telemetry record using SQLAlchemy Core.
 
     Args:
-        db: Phiên database do entry boundary sở hữu.
-        message: Dict dữ liệu đã được service chuyển đổi theo model database.
+        db: Database session owned by the entry boundary.
+        message: Data dict already converted by the service to match the
+            database model.
 
     Returns:
-        Số row được database báo đã insert.
+        Number of rows the database reports as inserted.
 
     Side Effects:
-        Ghi một row vào session hiện tại. Hàm không commit hoặc rollback.
+        Writes one row into the current session. The function does not
+        commit or roll back.
     """
     result = cast(
         CursorResult[Any],
@@ -53,14 +55,15 @@ async def insert_telemetry(
 async def get_latest_vehicle_telemetry(
     db: AsyncSession, vehicle_id: UUID
 ) -> VehicleTelemetryModel | None:
-    """Lấy bản ghi telemetry mới nhất của một xe.
+    """Get the latest telemetry record for a vehicle.
 
     Args:
-        db: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        Bản ghi có `recorded_at` lớn nhất hoặc None nếu chưa có dữ liệu.
+        The record with the largest `recorded_at`, or None if there is no
+        data yet.
     """
     result = await db.execute(
         select(VehicleTelemetryModel)
@@ -76,22 +79,23 @@ async def bulk_insert_telemetry(
     messages: Sequence[dict[str, object]],
 ) -> int:
     """
-    Bulk insert telemetry data vào database.
+    Bulk insert telemetry data into the database.
 
-    Dùng SQLAlchemy Core insert (không phải ORM add_all) để tối ưu performance.
+    Uses SQLAlchemy Core insert (not ORM add_all) to optimize performance.
 
     Args:
-        db: AsyncSession để thao tác database
-        messages: Danh sách dict, mỗi dict là 1 row data
-                  (output từ TelemetryMessage.to_vehicle_telemetry_values())
+        db: AsyncSession used to operate on the database
+        messages: List of dicts, each dict is 1 row of data
+                  (output from TelemetryMessage.to_vehicle_telemetry_values())
 
     Returns:
-        Số rows đã insert
+        Number of rows inserted
 
     Note:
-        - Không dùng ORM add_all vì chậm với batch lớn
-        - Dùng Core insert với values() để tận dụng bulk insert của PostgreSQL
-        - Entry boundary sở hữu transaction và commit/rollback
+        - Does not use ORM add_all because it is slow for large batches
+        - Uses Core insert with values() to take advantage of PostgreSQL's
+          bulk insert
+        - The entry boundary owns the transaction and commit/rollback
     """
     if not messages:
         return 0

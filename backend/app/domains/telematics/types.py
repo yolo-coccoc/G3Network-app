@@ -1,4 +1,4 @@
-"""Các kiểu dữ liệu và DTO nội bộ trong domain telematics."""
+"""Internal data types and DTOs in the telematics domain."""
 
 import enum
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from uuid import UUID
 
 
 class TelematicStatus(str, enum.Enum):
-    """Trạng thái vận hành của thiết bị Telematic."""
+    """Operating status of a Telematic device."""
 
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -15,11 +15,11 @@ class TelematicStatus(str, enum.Enum):
 
 @dataclass(frozen=True)
 class TelematicVehicleMapping:
-    """Ánh xạ một thiết bị telematic đang hoạt động sang một xe.
+    """Mapping of an active telematic device to a vehicle.
 
     Attributes:
-        telematic_id: ID nội bộ của thiết bị.
-        vehicle_id: ID nội bộ của xe được gán.
+        telematic_id: Internal ID of the device.
+        vehicle_id: Internal ID of the assigned vehicle.
     """
 
     telematic_id: UUID

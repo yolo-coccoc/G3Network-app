@@ -1,11 +1,12 @@
-"""Worker xử lý từng message telemetry trong queue.
+"""Worker that processes telemetry messages from the queue one at a time.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Worker này là luồng active của telemetry ingestion MVP: mỗi lần lấy một
-``TelemetryEnvelope`` khỏi queue, worker mở một transaction, gọi service xử lý
-message và commit ngay khi operation thành công. Implementation batch cũ nằm
-ở ``batch_worker.py`` và không thuộc lifecycle của process hiện tại.
+This worker is the active flow of the telemetry ingestion MVP: each time it
+takes a ``TelemetryEnvelope`` off the queue, the worker opens a transaction,
+calls the service to process the message, and commits as soon as the
+operation succeeds. The old batch implementation lives in
+``batch_worker.py`` and is not part of the current process lifecycle.
 """
 
 import asyncio
@@ -20,37 +21,38 @@ logger = logging.getLogger(__name__)
 
 
 class MessageWorker:
-    """Worker consume và persist từng telemetry envelope.
+    """Worker that consumes and persists each telemetry envelope.
 
     Attributes:
-        queue: Queue chứa envelope đã được MQTT consumer validate.
-        _running: Cho biết vòng lặp consume có tiếp tục nhận message hay không.
-        _task: Background task sở hữu vòng lặp consume, hoặc ``None`` trước khi
-            worker được khởi động.
+        queue: Queue holding envelopes validated by the MQTT consumer.
+        _running: Whether the consume loop should keep accepting messages.
+        _task: Background task that owns the consume loop, or ``None`` before
+            the worker is started.
     """
 
     def __init__(self, queue: asyncio.Queue[TelemetryEnvelope] | None = None) -> None:
-        """Khởi tạo worker và nhận quyền sử dụng queue được truyền vào.
+        """Initialize the worker and take ownership of the passed-in queue.
 
         Args:
-            queue: Queue cần consume. Dùng queue mặc định cấp module khi bỏ
-                trống.
+            queue: Queue to consume from. Uses the default module-level queue
+                when left empty.
 
         Side Effects:
-            Khởi tạo state lifecycle trong memory; chưa tạo task hoặc database
-            session cho tới khi gọi ``start``.
+            Initializes in-memory lifecycle state; no task or database
+            session is created until ``start`` is called.
         """
         self.queue = message_queue if queue is None else queue
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        """Khởi động background task xử lý từng message trong queue.
+        """Start the background task that processes each message in the queue.
 
-        Gọi lại khi worker đang chạy chỉ ghi warning và không tạo task thứ hai.
+        Calling this again while the worker is running only logs a warning
+        and does not create a second task.
 
         Side Effects:
-            Tạo một asyncio task sở hữu vòng lặp consume.
+            Creates an asyncio task that owns the consume loop.
         """
         if self._running:
             logger.warning("Message worker is already running")
@@ -64,12 +66,12 @@ class MessageWorker:
         logger.info("Message worker started")
 
     async def stop(self) -> None:
-        """Dừng worker ngay và bỏ qua message còn lại trong queue RAM.
+        """Stop the worker immediately and discard remaining messages in the in-RAM queue.
 
         Side Effects:
-            Hủy background task. Nếu transaction đang chạy, context manager
-            session sẽ rollback; message chưa lấy khỏi queue không được drain
-            theo policy MVP.
+            Cancels the background task. If a transaction is running, the
+            session context manager rolls back; messages not yet taken off
+            the queue are not drained, per MVP policy.
         """
         if self._task is None:
             return
@@ -81,15 +83,17 @@ class MessageWorker:
         logger.info("Message worker stopped")
 
     async def _run_loop(self) -> None:
-        """Lấy và xử lý tuần tự từng message cho tới khi worker dừng.
+        """Take and process messages sequentially, one at a time, until the worker stops.
 
         Raises:
-            Exception: Raise lại lỗi bất ngờ hoặc lỗi database sau khi đánh dấu
-                worker dừng, để entrypoint kết thúc process theo policy MVP.
+            Exception: Re-raises unexpected or database errors after marking
+                the worker as stopped, so the entrypoint can end the process
+                per MVP policy.
 
         Side Effects:
-            Lấy từng envelope khỏi queue và gọi transaction boundary cho mỗi
-            message; message còn lại không bị drain khi worker dừng.
+            Takes each envelope off the queue and invokes the transaction
+            boundary for each message; remaining messages are not drained
+            when the worker stops.
         """
         logger.info("Message worker loop started")
 
@@ -102,21 +106,22 @@ class MessageWorker:
                 raise
 
     async def _process_message(self, envelope: TelemetryEnvelope) -> None:
-        """Xử lý một envelope trong một transaction độc lập.
+        """Process one envelope within its own independent transaction.
 
         Args:
-            envelope: Message đã được consumer validate.
+            envelope: Message already validated by the consumer.
 
         Raises:
-            Exception: Raise lại lỗi service/database sau khi log traceback.
+            Exception: Re-raises service/database errors after logging the
+                traceback.
 
         Side Effects:
-            Commit transaction nếu service thành công; rollback khi có exception
-            và ghi summary structured log cho message.
+            Commits the transaction if the service succeeds; rolls back on
+            exception and emits a summary structured log for the message.
         """
         try:
-            # Worker là transaction boundary; service/repository chỉ execute,
-            # không tự commit hoặc rollback.
+            # The worker is the transaction boundary; the service/repository
+            # only execute, never commit or roll back on their own.
             async with async_session_factory.begin() as db:
                 result = await telemetry_service.process_message(db, envelope)
 

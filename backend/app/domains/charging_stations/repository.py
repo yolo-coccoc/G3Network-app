@@ -1,8 +1,9 @@
-"""Repository bất đồng bộ cho topology charging station.
+"""Asynchronous repository for charging station topology.
 
-Repository chỉ truy vấn và flush dữ liệu; không commit hoặc rollback transaction.
-Các kiểm tra thuộc ranh giới nghiệp vụ như parent tồn tại, conflict identity và
-cascade soft-delete được service điều phối bằng các hàm công khai ở đây.
+The repository only queries and flushes data; it does not commit or roll back
+the transaction. Checks belonging to the business boundary — such as parent
+existence, identity conflicts, and cascading soft-delete — are orchestrated
+by the service via the public functions here.
 """
 
 from collections.abc import Mapping
@@ -21,10 +22,10 @@ from app.domains.charging_stations.models import (
 
 
 def utc_now() -> datetime:
-    """Lấy thời điểm UTC dùng cho cập nhật và soft-delete.
+    """Get the UTC timestamp used for updates and soft-deletes.
 
     Returns:
-        Thời điểm hiện tại có timezone UTC.
+        The current time with UTC timezone.
     """
     return datetime.now(timezone.utc)
 
@@ -35,15 +36,15 @@ async def create_charging_station(
     ocpp_identity: str,
     display_name: str,
 ) -> ChargingStationModel:
-    """Tạo station và flush để phát hiện constraint ngay trong transaction.
+    """Create a station and flush to surface constraint violations within the transaction.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        ocpp_identity: OCPP identity duy nhất của station.
-        display_name: Tên hiển thị.
+        db: Async session owned by the entry boundary.
+        ocpp_identity: Unique OCPP identity of the station.
+        display_name: Display name.
 
     Returns:
-        Station vừa được persistence.
+        The station that was just persisted.
     """
     station = ChargingStationModel(
         ocpp_identity=ocpp_identity,
@@ -58,15 +59,15 @@ async def create_charging_station(
 async def get_station_by_id(
     db: AsyncSession, station_id: UUID, *, include_deleted: bool = False
 ) -> ChargingStationModel | None:
-    """Tìm station theo internal ID.
+    """Find a station by internal ID.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID nội bộ.
-        include_deleted: Có cho phép resolve record soft-delete hay không.
+        db: Current async session.
+        station_id: Internal UUID.
+        include_deleted: Whether to allow resolving a soft-deleted record.
 
     Returns:
-        Station phù hợp hoặc None.
+        The matching station, or None.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingStationModel.station_id == station_id
@@ -80,16 +81,17 @@ async def get_station_by_id(
 async def get_station_by_identity(
     db: AsyncSession, ocpp_identity: str, *, include_deleted: bool = True
 ) -> ChargingStationModel | None:
-    """Tìm station theo OCPP identity.
+    """Find a station by OCPP identity.
 
     Args:
-        db: Async session hiện tại.
-        ocpp_identity: Business identity cần tra cứu.
-        include_deleted: Có bao gồm record soft-delete hay không. Mặc định là
-            ``True`` để service phát hiện identity không được tái sử dụng.
+        db: Current async session.
+        ocpp_identity: Business identity to look up.
+        include_deleted: Whether to include soft-deleted records. Defaults to
+            ``True`` so the service can detect that an identity must not be
+            reused.
 
     Returns:
-        Station phù hợp hoặc ``None``.
+        The matching station, or ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingStationModel.ocpp_identity == ocpp_identity
@@ -106,15 +108,15 @@ async def list_charging_stations(
     offset: int,
     limit: int,
 ) -> list[ChargingStationModel]:
-    """Lấy station chưa soft-delete theo thứ tự ổn định.
+    """Get non-soft-deleted stations in a stable order.
 
     Args:
-        db: Async session hiện tại.
-        offset: Số record bỏ qua.
-        limit: Số record tối đa trả về.
+        db: Current async session.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
 
     Returns:
-        Danh sách station active theo thứ tự tạo giảm dần.
+        List of active stations ordered by creation time descending.
     """
     conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
@@ -133,13 +135,13 @@ async def list_charging_stations(
 async def count_stations(
     db: AsyncSession,
 ) -> int:
-    """Đếm station active.
+    """Count active stations.
 
     Args:
-        db: Async session hiện tại.
+        db: Current async session.
 
     Returns:
-        Số station chưa soft-delete.
+        Number of non-soft-deleted stations.
     """
     conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
@@ -151,18 +153,18 @@ async def count_stations(
 async def update_charging_station(
     db: AsyncSession, station_id: UUID, update_data: Mapping[str, object]
 ) -> ChargingStationModel | None:
-    """Cập nhật station active bằng các field đã được service lọc.
+    """Update an active station using fields already filtered by the service.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station cần cập nhật.
-        update_data: Mapping chỉ chứa field được phép update.
+        db: Current async session.
+        station_id: UUID of the station to update.
+        update_data: Mapping containing only fields allowed to be updated.
 
     Returns:
-        Station sau cập nhật hoặc None nếu không còn active.
+        The updated station, or None if it is no longer active.
 
     Side Effects:
-        Gán field, cập nhật ``updated_at`` và flush; không commit.
+        Assigns fields, updates ``updated_at``, and flushes; does not commit.
     """
     station = await get_station_by_id(db, station_id)
     if station is None:
@@ -176,17 +178,18 @@ async def update_charging_station(
 
 
 async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
-    """Soft-delete station và toàn bộ EVSE/connector active thuộc station.
+    """Soft-delete a station and all active EVSEs/connectors that belong to it.
 
-    Cascade chỉ cập nhật ``deleted_at``; không physical-delete history hoặc
-    topology record để giữ business identity và foreign key cho audit.
+    The cascade only updates ``deleted_at``; it does not physically delete
+    history or topology records, preserving business identity and foreign
+    keys for audit purposes.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station cần xoá mềm.
+        db: Current async session.
+        station_id: UUID of the station to soft-delete.
 
     Returns:
-        True nếu station active tồn tại và đã được đánh dấu; False nếu không có.
+        True if an active station existed and was marked; False otherwise.
     """
     station = await get_station_by_id(db, station_id)
     if station is None:
@@ -201,8 +204,9 @@ async def soft_delete_station(db: AsyncSession, station_id: UUID) -> bool:
     )
     evse_ids = list(evse_result.scalars().all())
     if evse_ids:
-        # Cập nhật connector trước EVSE để giữ topology con nhất quán trong
-        # cùng transaction, kể cả khi caller rollback ở entry boundary.
+        # Update connectors before EVSEs to keep the child topology consistent
+        # within the same transaction, even if the caller rolls back at the
+        # entry boundary.
         await db.execute(
             update(ChargingConnectorModel)
             .where(
@@ -228,18 +232,19 @@ async def create_charging_evse(
     station_id: UUID,
     ocpp_evse_id: int,
 ) -> ChargingEvseModel:
-    """Tạo EVSE và flush constraint/FK trong transaction hiện tại.
+    """Create an EVSE and flush constraints/FKs within the current transaction.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station parent.
-        ocpp_evse_id: Identity EVSE dương trong station.
+        db: Current async session.
+        station_id: UUID of the parent station.
+        ocpp_evse_id: Positive EVSE identity within the station.
 
     Returns:
-        EVSE ORM vừa persist.
+        The EVSE ORM object that was just persisted.
 
     Side Effects:
-        Thêm record, flush và refresh generated values; không commit.
+        Adds the record, flushes, and refreshes generated values; does not
+        commit.
     """
     evse = ChargingEvseModel(
         station_id=station_id,
@@ -254,15 +259,15 @@ async def create_charging_evse(
 async def get_evse_by_id(
     db: AsyncSession, evse_id: UUID, *, include_deleted: bool = False
 ) -> ChargingEvseModel | None:
-    """Tìm EVSE theo internal ID.
+    """Find an EVSE by internal ID.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE cần truy vấn.
-        include_deleted: Có bao gồm record soft-delete hay không.
+        db: Current async session.
+        evse_id: UUID of the EVSE to query.
+        include_deleted: Whether to include soft-deleted records.
 
     Returns:
-        EVSE phù hợp hoặc ``None``.
+        The matching EVSE, or ``None``.
     """
     conditions: list[ColumnElement[bool]] = [ChargingEvseModel.evse_id == evse_id]
     if not include_deleted:
@@ -278,16 +283,16 @@ async def get_evse_by_identity(
     *,
     include_deleted: bool = True,
 ) -> ChargingEvseModel | None:
-    """Tìm EVSE theo identity composite station/OCPP ID.
+    """Find an EVSE by its composite station/OCPP ID identity.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station parent.
-        ocpp_evse_id: Identity EVSE trong station.
-        include_deleted: Có bao gồm identity đã soft-delete hay không.
+        db: Current async session.
+        station_id: UUID of the parent station.
+        ocpp_evse_id: EVSE identity within the station.
+        include_deleted: Whether to include soft-deleted identities.
 
     Returns:
-        EVSE phù hợp hoặc ``None``.
+        The matching EVSE, or ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingEvseModel.station_id == station_id,
@@ -302,16 +307,16 @@ async def get_evse_by_identity(
 async def list_charging_evses(
     db: AsyncSession, *, station_id: UUID, offset: int, limit: int
 ) -> list[ChargingEvseModel]:
-    """Lấy EVSE active của một station theo thứ tự ổn định.
+    """Get active EVSEs of a station in a stable order.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station parent.
-        offset: Số record bỏ qua.
-        limit: Số record tối đa trả về.
+        db: Current async session.
+        station_id: UUID of the parent station.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
 
     Returns:
-        Danh sách EVSE active.
+        List of active EVSEs.
     """
     result = await db.execute(
         select(ChargingEvseModel)
@@ -327,14 +332,14 @@ async def list_charging_evses(
 
 
 async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
-    """Đếm EVSE active thuộc một station.
+    """Count active EVSEs belonging to a station.
 
     Args:
-        db: Async session hiện tại.
-        station_id: UUID station parent.
+        db: Current async session.
+        station_id: UUID of the parent station.
 
     Returns:
-        Số EVSE active.
+        Number of active EVSEs.
     """
     result = await db.execute(
         select(func.count(ChargingEvseModel.evse_id)).where(
@@ -348,18 +353,19 @@ async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
 async def update_charging_evse(
     db: AsyncSession, evse_id: UUID, update_data: Mapping[str, object]
 ) -> ChargingEvseModel | None:
-    """Cập nhật EVSE active bằng field đã được service kiểm tra.
+    """Update an active EVSE using fields already validated by the service.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE cần cập nhật.
-        update_data: Mapping field đã qua kiểm tra nghiệp vụ.
+        db: Current async session.
+        evse_id: UUID of the EVSE to update.
+        update_data: Mapping of fields that passed business validation.
 
     Returns:
-        EVSE sau cập nhật hoặc ``None`` nếu không còn active.
+        The updated EVSE, or ``None`` if it is no longer active.
 
     Side Effects:
-        Gán field, cập nhật timestamp, flush và refresh; không commit.
+        Assigns fields, updates the timestamp, flushes, and refreshes; does
+        not commit.
     """
     evse = await get_evse_by_id(db, evse_id)
     if evse is None:
@@ -373,17 +379,18 @@ async def update_charging_evse(
 
 
 async def soft_delete_evse(db: AsyncSession, evse_id: UUID) -> bool:
-    """Soft-delete EVSE và connector active thuộc EVSE đó.
+    """Soft-delete an EVSE and its active connectors.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE cần xoá mềm.
+        db: Current async session.
+        evse_id: UUID of the EVSE to soft-delete.
 
     Returns:
-        ``True`` nếu EVSE active tồn tại; ``False`` nếu không tìm thấy.
+        ``True`` if an active EVSE existed; ``False`` if not found.
 
     Side Effects:
-        Cập nhật timestamp của EVSE và connector con rồi flush; không commit.
+        Updates the timestamp of the EVSE and its child connectors, then
+        flushes; does not commit.
     """
     evse = await get_evse_by_id(db, evse_id)
     if evse is None:
@@ -409,18 +416,19 @@ async def create_charging_connector(
     evse_id: UUID,
     ocpp_connector_id: int,
 ) -> ChargingConnectorModel:
-    """Tạo connector và flush constraint/FK trong transaction hiện tại.
+    """Create a connector and flush constraints/FKs within the current transaction.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE parent.
-        ocpp_connector_id: Identity connector dương trong EVSE.
+        db: Current async session.
+        evse_id: UUID of the parent EVSE.
+        ocpp_connector_id: Positive connector identity within the EVSE.
 
     Returns:
-        Connector ORM vừa persist.
+        The connector ORM object that was just persisted.
 
     Side Effects:
-        Thêm record, flush và refresh generated values; không commit.
+        Adds the record, flushes, and refreshes generated values; does not
+        commit.
     """
     connector = ChargingConnectorModel(
         evse_id=evse_id,
@@ -435,15 +443,15 @@ async def create_charging_connector(
 async def get_connector_by_id(
     db: AsyncSession, connector_id: UUID, *, include_deleted: bool = False
 ) -> ChargingConnectorModel | None:
-    """Tìm connector theo internal ID.
+    """Find a connector by internal ID.
 
     Args:
-        db: Async session hiện tại.
-        connector_id: UUID connector cần truy vấn.
-        include_deleted: Có bao gồm record soft-delete hay không.
+        db: Current async session.
+        connector_id: UUID of the connector to query.
+        include_deleted: Whether to include soft-deleted records.
 
     Returns:
-        Connector phù hợp hoặc ``None``.
+        The matching connector, or ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingConnectorModel.connector_id == connector_id
@@ -461,16 +469,16 @@ async def get_connector_by_identity(
     *,
     include_deleted: bool = True,
 ) -> ChargingConnectorModel | None:
-    """Tìm connector theo identity composite EVSE/OCPP ID.
+    """Find a connector by its composite EVSE/OCPP ID identity.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE parent.
-        ocpp_connector_id: Identity connector trong EVSE.
-        include_deleted: Có bao gồm identity đã soft-delete hay không.
+        db: Current async session.
+        evse_id: UUID of the parent EVSE.
+        ocpp_connector_id: Connector identity within the EVSE.
+        include_deleted: Whether to include soft-deleted identities.
 
     Returns:
-        Connector phù hợp hoặc ``None``.
+        The matching connector, or ``None``.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingConnectorModel.evse_id == evse_id,
@@ -485,16 +493,16 @@ async def get_connector_by_identity(
 async def list_charging_connectors(
     db: AsyncSession, *, evse_id: UUID, offset: int, limit: int
 ) -> list[ChargingConnectorModel]:
-    """Lấy connector active của một EVSE theo thứ tự ổn định.
+    """Get active connectors of an EVSE in a stable order.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE parent.
-        offset: Số record bỏ qua.
-        limit: Số record tối đa trả về.
+        db: Current async session.
+        evse_id: UUID of the parent EVSE.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
 
     Returns:
-        Danh sách connector active.
+        List of active connectors.
     """
     result = await db.execute(
         select(ChargingConnectorModel)
@@ -513,14 +521,14 @@ async def list_charging_connectors(
 
 
 async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
-    """Đếm connector active thuộc một EVSE.
+    """Count active connectors belonging to an EVSE.
 
     Args:
-        db: Async session hiện tại.
-        evse_id: UUID EVSE parent.
+        db: Current async session.
+        evse_id: UUID of the parent EVSE.
 
     Returns:
-        Số connector active.
+        Number of active connectors.
     """
     result = await db.execute(
         select(func.count(ChargingConnectorModel.connector_id)).where(
@@ -534,18 +542,19 @@ async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
 async def update_charging_connector(
     db: AsyncSession, connector_id: UUID, update_data: Mapping[str, object]
 ) -> ChargingConnectorModel | None:
-    """Cập nhật connector active bằng field đã được service kiểm tra.
+    """Update an active connector using fields already validated by the service.
 
     Args:
-        db: Async session hiện tại.
-        connector_id: UUID connector cần cập nhật.
-        update_data: Mapping field đã qua kiểm tra nghiệp vụ.
+        db: Current async session.
+        connector_id: UUID of the connector to update.
+        update_data: Mapping of fields that passed business validation.
 
     Returns:
-        Connector sau cập nhật hoặc ``None`` nếu không còn active.
+        The updated connector, or ``None`` if it is no longer active.
 
     Side Effects:
-        Gán field, cập nhật timestamp, flush và refresh; không commit.
+        Assigns fields, updates the timestamp, flushes, and refreshes; does
+        not commit.
     """
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:
@@ -559,17 +568,18 @@ async def update_charging_connector(
 
 
 async def soft_delete_connector(db: AsyncSession, connector_id: UUID) -> bool:
-    """Đánh dấu connector đã xoá mềm mà không physical-delete record.
+    """Mark a connector as soft-deleted without physically deleting the record.
 
     Args:
-        db: Async session hiện tại.
-        connector_id: UUID connector cần xoá mềm.
+        db: Current async session.
+        connector_id: UUID of the connector to soft-delete.
 
     Returns:
-        ``True`` nếu connector active tồn tại; ``False`` nếu không tìm thấy.
+        ``True`` if an active connector existed; ``False`` if not found.
 
     Side Effects:
-        Cập nhật ``deleted_at`` và ``updated_at`` rồi flush; không commit.
+        Updates ``deleted_at`` and ``updated_at``, then flushes; does not
+        commit.
     """
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:

@@ -1,17 +1,17 @@
-"""Ngoại lệ nghiệp vụ của domain charging_stations."""
+"""Business exceptions for the charging_stations domain."""
 
 
 class ChargingStationNotFoundError(Exception):
-    """Không tìm thấy station đang được tham chiếu."""
+    """The referenced station was not found."""
 
 
 class ChargingEvseNotFoundError(Exception):
-    """Không tìm thấy EVSE đang được tham chiếu."""
+    """The referenced EVSE was not found."""
 
 
 class ChargingConnectorNotFoundError(Exception):
-    """Không tìm thấy connector đang được tham chiếu."""
+    """The referenced connector was not found."""
 
 
 class ChargingTopologyConflictError(Exception):
-    """Topology station, EVSE hoặc connector vi phạm identity đã tồn tại."""
+    """Station, EVSE, or connector topology violates an existing identity."""

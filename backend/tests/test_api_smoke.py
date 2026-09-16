@@ -1,4 +1,4 @@
-"""Smoke test cho điểm vào FastAPI và các router đang được đăng ký."""
+"""Smoke test for the FastAPI entry point and its registered routers."""
 
 import pytest
 
@@ -6,7 +6,7 @@ from app.api.main import app, health_check
 
 
 def test_openapi_registers_current_backend_routes() -> None:
-    """OpenAPI phải có các nhóm route chính của backend hiện tại."""
+    """OpenAPI must expose the main route groups of the current backend."""
     paths = app.openapi()["paths"]
 
     assert "/health" in paths
@@ -19,7 +19,7 @@ def test_openapi_registers_current_backend_routes() -> None:
 
 @pytest.mark.asyncio
 async def test_health_endpoint_returns_healthy_status() -> None:
-    """Health check trả trạng thái healthy mà không cần database."""
+    """The health check returns a healthy status without needing a database."""
     response = await health_check()
 
     assert response["status"] == "healthy"

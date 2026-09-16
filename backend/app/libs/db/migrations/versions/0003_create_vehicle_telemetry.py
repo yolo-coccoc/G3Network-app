@@ -1,4 +1,4 @@
-"""Tạo hypertable vehicle_telemetry cho dữ liệu chuỗi thời gian của xe."""
+"""Create the vehicle_telemetry hypertable for vehicle time-series data."""
 
 from collections.abc import Sequence
 
@@ -13,7 +13,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Tạo bảng telemetry, index truy vấn và hypertable TimescaleDB."""
+    """Create the telemetry table, query indexes, and the TimescaleDB hypertable."""
     op.create_table(
         "vehicle_telemetry",
         sa.Column("message_id", sa.BigInteger(), autoincrement=True, nullable=False),
@@ -64,5 +64,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Xóa hypertable telemetry và các index của nó."""
+    """Drop the telemetry hypertable and its indexes."""
     op.drop_table("vehicle_telemetry")

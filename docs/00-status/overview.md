@@ -1,0 +1,29 @@
+# Repo Status
+
+Short summary of what's actually implemented right now. This is the source
+of truth for **progress** — unlike `docs/01-requirements/`, which describes
+intended features and can be revised independently of what's actually built.
+For technical depth (components, diagram, database, infra), see
+[architecture.md](./architecture.md).
+
+## Domains
+
+| Domain | Status |
+|---|---|
+| `vehicles` | CRUD and soft delete. |
+| `telematics` | Device CRUD, mapping devices to vehicles. |
+| `telemetry` | Ingests via MQTT; API only returns the **latest** record per vehicle — no history, map, or alert API yet. |
+| `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway. Assumes pre-provisioned, always-online topology. |
+| `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. No retry, out-of-order handling, or DLQ. |
+
+## Database
+
+Current Alembic head: `0004_create_charging_mvp_schema`.
+
+## Not built yet
+
+Web portal, vehicle app, identity/RBAC, driver, notification, policy,
+billing/payment, and extended monitoring (full telemetry history, map,
+alerts, threshold pushes) have no active source in the repo. See
+[`docs/01-requirements/future.md`](../01-requirements/future.md) for the
+full list of deferred components and why.

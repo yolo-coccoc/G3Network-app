@@ -1,7 +1,8 @@
-"""Router HTTP đọc dữ liệu telemetry của xe.
+"""HTTP router for reading vehicle telemetry data.
 
-Module này chỉ chuyển request thành lời gọi service và chuyển ngoại lệ nghiệp
-vụ thành HTTP status code; không chứa truy vấn database hoặc business logic.
+This module only turns requests into service calls and maps business
+exceptions to HTTP status codes; it contains no database queries or
+business logic.
 """
 
 from uuid import UUID
@@ -20,22 +21,22 @@ router = APIRouter(tags=["telemetry"])
 @router.get(
     "/vehicles/{vehicle_id}/latest",
     response_model=VehicleTelemetryLatestResponse,
-    summary="Lấy telemetry mới nhất của xe",
+    summary="Get the latest telemetry for a vehicle",
 )
 async def get_latest_vehicle_telemetry(
     vehicle_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> VehicleTelemetryLatestResponse:
-    """Trả về bản ghi telemetry mới nhất của một xe.
+    """Return the latest telemetry record for a vehicle.
 
     Args:
-        vehicle_id: ID nội bộ của xe.
-        db: Phiên database do dependency quản lý.
+        vehicle_id: Internal ID of the vehicle.
+        db: Database session managed by the dependency.
 
     Returns:
-        Bản ghi telemetry mới nhất.
+        The latest telemetry record.
 
     Raises:
-        HTTPException: Khi xe không tồn tại hoặc chưa có telemetry.
+        HTTPException: When the vehicle does not exist or has no telemetry yet.
     """
     try:
         return await get_latest_vehicle_telemetry_response(db, vehicle_id)

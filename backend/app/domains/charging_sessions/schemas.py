@@ -1,7 +1,8 @@
-"""Pydantic response schemas cho monitoring charging session MVP.
+"""Pydantic response schemas for the charging session monitoring MVP.
 
-Schema chỉ expose aggregate session, lifecycle event và meter sample canonical
-Wh. Không đưa raw OCPP payload, authorization, payment hoặc debt vào contract.
+The schemas only expose the session aggregate, lifecycle events and
+canonical Wh meter samples. Raw OCPP payloads, authorization, payment or
+debt are not part of the contract.
 """
 
 from datetime import datetime
@@ -15,22 +16,23 @@ from app.libs.common.config import settings
 
 
 class ChargingSessionResponse(BaseModel):
-    """Thông tin aggregate session cần cho monitoring happy path.
+    """Session aggregate information needed for happy-path monitoring.
 
     Attributes:
-        session_id: UUID nội bộ của aggregate.
-        station_id: UUID station sở hữu transaction.
-        evse_id: UUID EVSE sở hữu transaction.
-        connector_id: UUID connector cấp điện.
-        ocpp_transaction_id: Transaction identity do trụ cấp.
-        status: ``active`` hoặc ``completed``.
-        started_at: Thời điểm Started.
-        ended_at: Thời điểm Ended, nullable khi active.
-        meter_start_wh: Meter đầu phiên.
-        meter_end_wh: Meter cuối cùng.
-        energy_delivered_wh: Chênh lệch meter đầu/cuối.
-        created_at: Thời điểm tạo aggregate.
-        updated_at: Thời điểm cập nhật cuối.
+        session_id: Internal UUID of the aggregate.
+        station_id: UUID of the station that owns the transaction.
+        evse_id: UUID of the EVSE that owns the transaction.
+        connector_id: UUID of the connector delivering power.
+        ocpp_transaction_id: The transaction identity issued by the station.
+        status: ``active`` or ``completed``.
+        started_at: The time of Started.
+        ended_at: The time of Ended, nullable while active.
+        meter_start_wh: The meter reading at the start of the session.
+        meter_end_wh: The final meter reading.
+        energy_delivered_wh: The difference between the start/end meter
+            readings.
+        created_at: The time the aggregate was created.
+        updated_at: The time of the last update.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -51,13 +53,13 @@ class ChargingSessionResponse(BaseModel):
 
 
 class ChargingSessionListResponse(BaseModel):
-    """Danh sách aggregate session phân trang cho monitoring.
+    """A paginated list of session aggregates for monitoring.
 
     Attributes:
-        items: Các session mới nhất trong trang hiện tại.
-        total: Tổng số session.
-        page: Trang hiện tại, bắt đầu từ một.
-        page_size: Số item tối đa trong trang.
+        items: The most recent sessions in the current page.
+        total: The total number of sessions.
+        page: The current page, starting at one.
+        page_size: The maximum number of items in the page.
     """
 
     items: list[ChargingSessionResponse]
@@ -67,13 +69,13 @@ class ChargingSessionListResponse(BaseModel):
 
 
 class ChargingSessionEventResponse(BaseModel):
-    """Một lifecycle event của session.
+    """One lifecycle event of a session.
 
     Attributes:
-        event_id: UUID nội bộ event.
-        event_occurred_at: Thời điểm event phát sinh.
-        session_id: UUID session sở hữu event.
-        event_type: ``Started``, ``Updated`` hoặc ``Ended``.
+        event_id: Internal UUID of the event.
+        event_occurred_at: The time the event occurred.
+        session_id: UUID of the session that owns the event.
+        event_type: ``Started``, ``Updated`` or ``Ended``.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -85,13 +87,13 @@ class ChargingSessionEventResponse(BaseModel):
 
 
 class ChargingSessionMeterValueResponse(BaseModel):
-    """Một meter sample canonical Wh của session.
+    """One canonical Wh meter sample of a session.
 
     Attributes:
-        meter_value_id: UUID nội bộ sample.
-        sampled_at: Thời điểm lấy mẫu.
-        session_id: UUID session sở hữu sample.
-        value_wh: Giá trị energy theo Wh.
+        meter_value_id: Internal UUID of the sample.
+        sampled_at: The time the sample was taken.
+        session_id: UUID of the session that owns the sample.
+        value_wh: The energy value in Wh.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -103,13 +105,13 @@ class ChargingSessionMeterValueResponse(BaseModel):
 
 
 class ChargingSessionEventListResponse(BaseModel):
-    """Danh sách event phân trang cho một session.
+    """A paginated list of events for a session.
 
     Attributes:
-        items: Event trong trang hiện tại.
-        total: Tổng số event của session.
-        page: Trang hiện tại, bắt đầu từ một.
-        page_size: Số item tối đa trong trang.
+        items: The events in the current page.
+        total: The total number of events for the session.
+        page: The current page, starting at one.
+        page_size: The maximum number of items in the page.
     """
 
     items: list[ChargingSessionEventResponse]
@@ -119,13 +121,13 @@ class ChargingSessionEventListResponse(BaseModel):
 
 
 class ChargingSessionMeterValueListResponse(BaseModel):
-    """Danh sách meter sample phân trang cho một session.
+    """A paginated list of meter samples for a session.
 
     Attributes:
-        items: Meter sample trong trang hiện tại.
-        total: Tổng số sample của session.
-        page: Trang hiện tại, bắt đầu từ một.
-        page_size: Số item tối đa trong trang.
+        items: The meter samples in the current page.
+        total: The total number of samples for the session.
+        page: The current page, starting at one.
+        page_size: The maximum number of items in the page.
     """
 
     items: list[ChargingSessionMeterValueResponse]

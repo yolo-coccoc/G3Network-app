@@ -1,4 +1,4 @@
-"""Entrypoint process cho OCPP 2.0.1 WebSocket gateway."""
+"""Entrypoint process for the OCPP 2.0.1 WebSocket gateway."""
 
 import asyncio
 import logging
@@ -12,26 +12,28 @@ logger = logging.getLogger(__name__)
 
 
 async def run() -> None:
-    """Khởi động gateway và dừng graceful khi nhận SIGINT/SIGTERM.
+    """Start the gateway and shut down gracefully on SIGINT/SIGTERM.
 
     Side Effects:
-        Bind WebSocket listener, đăng ký signal handler và đóng shared database
-        engine sau khi gateway dừng.
+        Binds the WebSocket listener, registers signal handlers, and closes
+        the shared database engine after the gateway stops.
     """
     configure_logging()
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
     handled_signals = (signal.SIGINT, signal.SIGTERM)
-    # Signal chỉ đánh thức coroutine chờ event; chính run_server sở hữu việc
-    # đóng listener để mọi connection và socket được shutdown có trật tự.
+    # The signal only wakes up the coroutine waiting on the event; run_server
+    # itself owns closing the listener so every connection and socket shuts
+    # down in an orderly way.
     for handled_signal in handled_signals:
         event_loop.add_signal_handler(handled_signal, stop_event.set)
 
     try:
         await run_server(stop_event)
     finally:
-        # Database engine là shared resource của process, nên được đóng sau
-        # khi gateway đã dừng và không còn handshake nào cần query station.
+        # The database engine is a shared resource of the process, so it is
+        # closed only after the gateway has stopped and no handshake still
+        # needs to query a station.
         await close_db()
         for handled_signal in handled_signals:
             event_loop.remove_signal_handler(handled_signal)
@@ -39,7 +41,7 @@ async def run() -> None:
 
 
 def main() -> None:
-    """Chạy event loop cho OCPP gateway và trả mã lỗi khi process thất bại."""
+    """Run the event loop for the OCPP gateway and return an error code on failure."""
     try:
         asyncio.run(run())
     except KeyboardInterrupt:

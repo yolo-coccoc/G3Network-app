@@ -1,4 +1,4 @@
-"""SQLAlchemy model cho thiết bị Telematic vật lý."""
+"""SQLAlchemy model for the physical Telematic device."""
 
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -14,20 +14,20 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Trả về thời điểm UTC có timezone."""
+    """Return the current UTC time with timezone info."""
     return datetime.now(timezone.utc)
 
 
 class TelematicModel(Base):
-    """Thiết bị Telematic vật lý được lắp trên xe.
+    """Physical Telematic device installed on a vehicle.
 
     Attributes:
-        telematic_id: ID nội bộ của thiết bị.
-        telematic_serial: Serial duy nhất in trên thiết bị.
-        vehicle_id: ID xe được gán, có thể NULL.
-        status: Trạng thái vận hành.
-        firmware_version: Phiên bản firmware hiện tại.
-        deleted_at: Thời điểm soft delete.
+        telematic_id: Internal ID of the device.
+        telematic_serial: Unique serial printed on the device.
+        vehicle_id: ID of the assigned vehicle, may be NULL.
+        status: Operating status.
+        firmware_version: Current firmware version.
+        deleted_at: Soft-delete timestamp.
     """
 
     __tablename__ = "telematics"

@@ -1,9 +1,9 @@
-"""Ngoại lệ nghiệp vụ của domain charging_sessions."""
+"""Business exceptions for the charging_sessions domain."""
 
 
 class ChargingSessionNotFoundError(Exception):
-    """Không tìm thấy aggregate phiên sạc được tham chiếu."""
+    """The referenced charging session aggregate was not found."""
 
 
 class ChargingSessionInputError(Exception):
-    """Dữ liệu chuẩn hóa từ adapter vi phạm contract ingestion."""
+    """Data normalized from the adapter violates the ingestion contract."""

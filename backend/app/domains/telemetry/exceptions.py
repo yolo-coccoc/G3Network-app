@@ -1,5 +1,5 @@
-"""Ngoại lệ nghiệp vụ của domain telemetry."""
+"""Business exceptions for the telemetry domain."""
 
 
 class TelemetryNotFoundError(Exception):
-    """Không tìm thấy xe hoặc telemetry tương ứng."""
+    """Raised when the vehicle or its corresponding telemetry cannot be found."""

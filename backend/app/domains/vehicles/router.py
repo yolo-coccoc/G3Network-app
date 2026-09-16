@@ -1,4 +1,4 @@
-"""FastAPI router cho các endpoint HTTP của domain vehicles."""
+"""FastAPI router for the HTTP endpoints of the vehicles domain."""
 
 from uuid import UUID
 
@@ -27,18 +27,18 @@ router = APIRouter(tags=["vehicles"])
     "/",
     status_code=status.HTTP_201_CREATED,
     response_model=VehicleResponse,
-    summary="Tạo xe mới",
-    description="Tạo một xe mới trong hệ thống. License plate và VIN phải là duy nhất.",
+    summary="Create a new vehicle",
+    description="Create a new vehicle in the system. License plate and VIN must be unique.",
 )
 async def create_vehicle_endpoint(
     vehicle_create_request: VehicleCreateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Tạo một xe mới.
+    """Create a new vehicle.
 
     Args:
-        vehicle_create_request: Dữ liệu request tạo xe.
-        db_session: Phiên database do HTTP boundary sở hữu.
+        vehicle_create_request: Request data for creating the vehicle.
+        db_session: Database session owned by the HTTP boundary.
 
     Returns:
         Created vehicle
@@ -57,29 +57,29 @@ async def create_vehicle_endpoint(
 @router.get(
     "/",
     response_model=VehicleListResponse,
-    summary="Lấy danh sách xe",
-    description="Lấy danh sách xe với phân trang và lọc theo trạng thái.",
+    summary="Get the list of vehicles",
+    description="Get the list of vehicles with pagination and status filtering.",
 )
 async def list_vehicles_endpoint(
-    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Số trang"),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
-        description="Số bản ghi mỗi trang",
+        description="Number of records per page",
     ),
     status_filter: VehicleStatus | None = Query(
-        None, alias="status", description="Lọc theo trạng thái"
+        None, alias="status", description="Filter by status"
     ),
     db_session: AsyncSession = Depends(get_db),
 ) -> VehicleListResponse:
-    """Lấy danh sách xe có phân trang.
+    """Get a paginated list of vehicles.
 
     Args:
-        page: Số trang.
-        page_size: Số bản ghi mỗi trang.
-        status_filter: Bộ lọc trạng thái nếu có.
-        db_session: Phiên database do HTTP boundary sở hữu.
+        page: Page number.
+        page_size: Number of records per page.
+        status_filter: Status filter, if any.
+        db_session: Database session owned by the HTTP boundary.
 
     Returns:
         Paginated list of vehicles
@@ -95,18 +95,18 @@ async def list_vehicles_endpoint(
 @router.get(
     "/{vehicle_id}",
     response_model=VehicleResponse,
-    summary="Lấy chi tiết xe",
-    description="Lấy thông tin chi tiết của một xe theo ID.",
+    summary="Get vehicle details",
+    description="Get detailed information about a vehicle by ID.",
 )
 async def get_vehicle_endpoint(
     vehicle_id: UUID,
     db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Lấy chi tiết một xe theo ID.
+    """Get the details of a vehicle by ID.
 
     Args:
-        vehicle_id: ID nội bộ của xe.
-        db_session: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: Internal ID of the vehicle.
+        db_session: Database session owned by the HTTP boundary.
         db: Database session
 
     Returns:
@@ -123,20 +123,20 @@ async def get_vehicle_endpoint(
 @router.patch(
     "/{vehicle_id}",
     response_model=VehicleResponse,
-    summary="Cập nhật xe",
-    description="Cập nhật thông tin xe. Chỉ cập nhật các trường được cung cấp.",
+    summary="Update a vehicle",
+    description="Update vehicle information. Only the provided fields are updated.",
 )
 async def update_vehicle_endpoint(
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> VehicleResponse:
-    """Cập nhật từng phần một xe.
+    """Partially update a vehicle.
 
     Args:
-        vehicle_id: ID nội bộ của xe.
-        vehicle_update_request: Dữ liệu request cập nhật xe.
-        db_session: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: Internal ID of the vehicle.
+        vehicle_update_request: Request data for updating the vehicle.
+        db_session: Database session owned by the HTTP boundary.
 
     Returns:
         Updated vehicle
@@ -160,18 +160,18 @@ async def update_vehicle_endpoint(
 @router.delete(
     "/{vehicle_id}",
     status_code=status.HTTP_200_OK,
-    summary="Xoá xe",
-    description="Soft delete xe. Xe vẫn còn trong database nhưng không hiển thị trong danh sách.",
+    summary="Delete a vehicle",
+    description="Soft-delete a vehicle. The vehicle remains in the database but is not shown in the list.",
 )
 async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
     db_session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Soft delete một xe.
+    """Soft-delete a vehicle.
 
     Args:
-        vehicle_id: ID nội bộ của xe.
-        db_session: Phiên database do HTTP boundary sở hữu.
+        vehicle_id: Internal ID of the vehicle.
+        db_session: Database session owned by the HTTP boundary.
         db: Database session
 
     Returns:

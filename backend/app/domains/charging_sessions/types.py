@@ -1,8 +1,8 @@
-"""Các kiểu dữ liệu tối thiểu của charging_sessions MVP lý tưởng.
+"""Minimal data types for the ideal charging_sessions MVP.
 
-MVP giả định message đến đúng thứ tự, không duplicate và không gián đoạn. Vì
-vậy module chỉ giữ status active/completed, ba loại TransactionEvent và một
-meter sample canonical Wh.
+The MVP assumes messages arrive in order, without duplicates and without
+interruption. Because of this the module only keeps the active/completed
+status, three TransactionEvent types and one canonical Wh meter sample.
 """
 
 import enum
@@ -13,11 +13,11 @@ from uuid import UUID
 
 
 class SessionStatus(str, enum.Enum):
-    """Trạng thái lifecycle duy nhất của phiên trong happy path.
+    """The single lifecycle status of a session in the happy path.
 
     Attributes:
-        ACTIVE: Phiên đã bắt đầu nhưng chưa nhận ``Ended``.
-        COMPLETED: Phiên đã nhận ``Ended`` và có ``ended_at``.
+        ACTIVE: The session has started but has not yet received ``Ended``.
+        COMPLETED: The session has received ``Ended`` and has ``ended_at``.
     """
 
     ACTIVE = "active"
@@ -25,12 +25,12 @@ class SessionStatus(str, enum.Enum):
 
 
 class SessionEventType(str, enum.Enum):
-    """Ba TransactionEvent được lưu trong MVP lý tưởng.
+    """The three TransactionEvent types stored in the ideal MVP.
 
     Attributes:
-        STARTED: Bắt đầu transaction và tạo aggregate.
-        UPDATED: Cập nhật transaction đang active.
-        ENDED: Kết thúc transaction và chuyển aggregate sang completed.
+        STARTED: Starts the transaction and creates the aggregate.
+        UPDATED: Updates a transaction that is currently active.
+        ENDED: Ends the transaction and moves the aggregate to completed.
     """
 
     STARTED = "Started"
@@ -40,11 +40,11 @@ class SessionEventType(str, enum.Enum):
 
 @dataclass(frozen=True, slots=True)
 class MeterSampleInput:
-    """Một mẫu năng lượng đã canonical về Wh.
+    """An energy sample already canonicalized to Wh.
 
     Attributes:
-        sampled_at: Thời điểm sample phát sinh, có timezone.
-        value_wh: Giá trị năng lượng theo Wh.
+        sampled_at: The time the sample occurred, timezone-aware.
+        value_wh: The energy value in Wh.
     """
 
     sampled_at: datetime
@@ -53,12 +53,12 @@ class MeterSampleInput:
 
 @dataclass(frozen=True, slots=True)
 class TransactionIngestResult:
-    """Kết quả xử lý một TransactionEvent happy path.
+    """The result of processing one TransactionEvent in the happy path.
 
     Attributes:
-        session_id: UUID aggregate đã tạo hoặc cập nhật.
-        status: Status sau khi xử lý event.
-        event_count: Số event được append trong lần gọi này.
+        session_id: The UUID of the aggregate created or updated.
+        status: The status after processing the event.
+        event_count: The number of events appended in this call.
     """
 
     session_id: UUID
@@ -68,12 +68,13 @@ class TransactionIngestResult:
 
 @dataclass(frozen=True, slots=True)
 class MeterIngestResult:
-    """Kết quả xử lý một MeterValues message happy path.
+    """The result of processing one MeterValues message in the happy path.
 
     Attributes:
-        session_id: UUID aggregate được cập nhật.
-        status: Status của aggregate sau batch.
-        accepted_count: Số sample đã persist; luôn là một khi gọi thành công.
+        session_id: The UUID of the aggregate that was updated.
+        status: The aggregate's status after the batch.
+        accepted_count: The number of samples persisted; always one on a
+            successful call.
     """
 
     session_id: UUID

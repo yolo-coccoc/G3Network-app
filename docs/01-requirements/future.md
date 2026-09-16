@@ -1,680 +1,743 @@
-# Future Components — Thành phần hoãn lại
+# Future Components — Deferred Components
 
-> File này lưu những thành phần/lớp/tech/component tạm thời bị bỏ qua ở thời điểm hiện tại để sớm hoàn thành MVP.
-> Mỗi khi bỏ qua một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm", hãy ghi nhận vào đây.
-
----
-
-## Mục đích
-
-- Tránh đặt placeholder rải rác trong source code (gây nhiễu, khó bảo trì)
-- Giữ một nguồn chân lý tập trung về những gì đã hoãn lại
-- Dễ dàng rà soát khi bắt đầu phase tiếp theo
+> This file records components/layers/tech/components temporarily skipped at this time in order to complete the MVP sooner.
+> Whenever a component is skipped for the reason "not needed right now, but will definitely need to be added later," record it here.
 
 ---
 
-## Danh sách thành phần đã hoãn
+## Purpose
 
-Các mục bên dưới là quyết định hoãn thực tế của repo, không phải placeholder.
+- Avoid scattering placeholders throughout the source code (creates noise, hard to maintain)
+- Keep a single centralized source of truth for what has been deferred
+- Make it easy to review when starting the next phase
+
+---
+
+## List of deferred components
+
+The items below are actual deferral decisions made in the repo, not placeholders.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
 
-- **Mô tả ngắn**: Layer trung gian giữa frontend và backend, xử lý routing, rate limiting, authentication tại edge.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Bảo vệ backend khỏi các request độc hại
-  - Giảm tải cho backend bằng caching tại edge
-  - Centralized logging và monitoring cho tất cả API calls
+- **Short description**: An intermediary layer between frontend and backend, handling routing, rate limiting, and authentication at the edge.
+- **Purpose/role in the system**:
+  - Protect the backend from malicious requests
+  - Reduce backend load via edge caching
+  - Centralized logging and monitoring for all API calls
   - SSL termination
-- **Lý do hoãn lại**: Môi trường dev không cần — frontend gọi thẳng vào backend qua localhost. Sẽ cân nhắc khi làm `docker-compose.prod.yml`.
-- **Liên quan đến planner/feature**: Không liên quan trực tiếp đến feature cụ thể, là thành phần hạ tầng chung.
-- **Ngày ghi nhận**: 2026-07-24
-- **Ghi chú thêm**: Đã có đề xuất trong AGENTS.md Mục 1 (Reverse proxy / API Gateway).
+- **Reason for deferral**: Not needed in the dev environment — the frontend calls the backend directly via localhost. Will be reconsidered when building `docker-compose.prod.yml`.
+- **Related planner/feature**: Not directly related to a specific feature; a general infrastructure component.
+- **Date recorded**: 2026-07-24
+- **Additional notes**: Already proposed in CLAUDE.md Section 1 (Reverse proxy / API Gateway).
 
 ---
 
-### 2. MQTT QoS 1+ với Retry và Duplicate Detection
+### 2. MQTT QoS 1+ with Retry and Duplicate Detection
 
-- **Mô tả ngắn**: Nâng cấp MQTT từ QoS 0 lên QoS 1 hoặc QoS 2, kèm theo retry logic và duplicate detection mechanism.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Đảm bảo message được deliver ít nhất một lần (QoS 1) hoặc đúng một lần (QoS 2)
-  - Retry tự động khi network failure hoặc broker unavailable
-  - Duplicate detection để tránh insert trùng message vào database
-  - Zero data loss khi network hoặc process gặp lỗi
-- **Lý do hoãn lại**: MVP tập trung chứng minh luồng hoạt động cơ bản với giả định network lý tưởng. QoS 0 đủ để test end-to-end flow. Retry và duplicate detection sẽ thêm khi triển khai production.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Cần cân nhắc trade-off giữa reliability và performance. QoS 1+ sẽ tăng latency và giảm throughput.
+- **Short description**: Upgrade MQTT from QoS 0 to QoS 1 or QoS 2, along with retry logic and a duplicate detection mechanism.
+- **Purpose/role in the system**:
+  - Ensure messages are delivered at least once (QoS 1) or exactly once (QoS 2)
+  - Automatic retry on network failure or broker unavailability
+  - Duplicate detection to avoid inserting duplicate messages into the database
+  - Zero data loss when the network or process encounters an error
+- **Reason for deferral**: The MVP focuses on proving the basic flow works, assuming an ideal network. QoS 0 is enough to test the end-to-end flow. Retry and duplicate detection will be added during production rollout.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput.
 
 ---
 
 ### 3. Dead-Letter Queue (DLQ)
 
-- **Mô tả ngắn**: Hàng đợi lưu các message không thể xử lý sau nhiều lần retry, để điều tra và xử lý thủ công sau.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Không mất message khi có lỗi nghiêm trọng (parse error, validation error, DB schema mismatch)
-  - Cho phép replay message sau khi fix bug hoặc update schema
-  - Audit trail để debug production issue
-  - Tách biệt message lỗi khỏi luồng chính để không ảnh hưởng performance
-- **Lý do hoãn lại**: MVP không cần DLQ vì volume thấp và có thể debug qua log. Sẽ thêm khi scale lên production với volume cao.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Có thể implement DLQ bằng file JSON (đơn giản) hoặc DB table (query được). Cần có cleanup policy (xóa sau 7-30 ngày).
+- **Short description**: A queue storing messages that could not be processed after multiple retries, for later investigation and manual handling.
+- **Purpose/role in the system**:
+  - No message loss on serious errors (parse error, validation error, DB schema mismatch)
+  - Allows replaying messages after fixing a bug or updating the schema
+  - Audit trail for debugging production issues
+  - Separates failed messages from the main flow so performance is unaffected
+- **Reason for deferral**: The MVP doesn't need a DLQ because volume is low and debugging can be done via logs. Will be added when scaling to production with high volume.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: The DLQ could be implemented with a JSON file (simple) or a DB table (queryable). Needs a cleanup policy (delete after 7-30 days).
 
 ---
 
 ### 4. Persistent Queue
 
-- **Mô tả ngắn**: Queue được lưu trên disk thay vì in-memory, đảm bảo không mất message khi process crash hoặc restart.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Survive process restart hoặc crash
-  - Không mất message đang trong queue khi deploy mới
-  - Cho phép queue lớn hơn RAM capacity
-  - Replay message từ queue khi cần
-- **Lý do hoãn lại**: MVP dùng asyncio.Queue in-memory đủ cho demo. Process crash sẽ mất message trong queue, nhưng chấp nhận được với QoS 0. Sẽ thêm persistent queue (SQLite, Redis, hoặc Kafka) khi cần reliability cao hơn.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Cân nhắc giữa SQLite (đơn giản, local), Redis (nhanh, cần thêm infra), hoặc Kafka (scale tốt, phức tạp).
+- **Short description**: A queue stored on disk instead of in-memory, ensuring no message loss on process crash or restart.
+- **Purpose/role in the system**:
+  - Survive process restart or crash
+  - No loss of messages still in the queue when deploying a new version
+  - Allows a queue larger than RAM capacity
+  - Replay messages from the queue when needed
+- **Reason for deferral**: The MVP uses an in-memory asyncio.Queue, which is enough for the demo. A process crash will lose messages in the queue, but that's acceptable with QoS 0. A persistent queue (SQLite, Redis, or Kafka) will be added when higher reliability is needed.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: Weigh SQLite (simple, local), Redis (fast, needs extra infra), or Kafka (scales well, complex).
 
 ---
 
-### 5. Cache Layer cho Telematic Mapping
+### 5. Cache Layer for Telematic Mapping
 
-- **Mô tả ngắn**: In-memory cache (Redis hoặc dict) lưu mapping telematic_serial → (telematic_id, vehicle_id) để tránh query DB mỗi batch.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Giảm số lượng DB query từ N queries/batch xuống 1 query/batch (hoặc 0 nếu cache hit)
-  - Tăng throughput ingest
-  - Giảm DB load
-  - Latency thấp hơn cho mỗi message
-- **Lý do hoãn lại**: Active MVP hiện xử lý từng message và chưa cần thêm cache
-  ngoài lookup đơn giản. Khi bật lại batch path hoặc volume tăng, cache sẽ được
-  đánh giá cùng benchmark để giảm lookup lặp và tải lên DB.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Nếu dùng cache, cần TTL (5-10 phút) và invalidation khi telematic được gán/xóa khỏi vehicle. Cân nhắc Redis nếu cần share cache giữa nhiều worker instance.
+- **Short description**: An in-memory cache (Redis or dict) storing the telematic_serial → (telematic_id, vehicle_id) mapping to avoid querying the DB on every batch.
+- **Purpose/role in the system**:
+  - Reduces the number of DB queries from N queries/batch to 1 query/batch (or 0 on a cache hit)
+  - Increases ingest throughput
+  - Reduces DB load
+  - Lower latency per message
+- **Reason for deferral**: The active MVP currently processes messages one at a time and doesn't need anything beyond a simple lookup. When the batch path is re-enabled or volume increases, caching will be evaluated together with a benchmark to reduce repeated lookups and DB load.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: If a cache is used, it needs a TTL (5-10 minutes) and invalidation when a telematic is assigned to/removed from a vehicle. Consider Redis if the cache needs to be shared across multiple worker instances.
 
 ---
 
-### 6. Unique Constraint cho message_uuid
+### 6. Unique Constraint for message_uuid
 
-- **Mô tả ngắn**: Thêm unique constraint vào cột message_uuid trong bảng vehicle_telemetry để đảm bảo không có duplicate message.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Ngăn chặn insert duplicate message (cùng message_uuid)
-  - Database-level guarantee (không phụ thuộc application logic)
-  - Hỗ trợ idempotency khi retry
-- **Lý do hoãn lại**: TimescaleDB yêu cầu unique constraint phải chứa partition key (recorded_at). Constraint (message_uuid, recorded_at) không ngăn duplicate nếu message bị retry với recorded_at khác. Cần logic duplicate detection phức tạp hơn (VD: separate table tracking processed message_uuid). Sẽ thêm khi implement QoS 1+.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Có thể dùng bảng riêng `processed_messages` để track message_uuid đã xử lý, với TTL (VD: 24h) để không bị tràn.
-
----
-
-### 7. Duplicate Detection Nâng Cao
-
-- **Mô tả ngắn**: Logic phát hiện và xử lý duplicate message phức tạp hơn, không chỉ dựa vào unique constraint database.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Detect duplicate ngay trước insert (không đợi DB constraint violation)
-  - Hỗ trợ idempotency cho retry logic
-  - Xử lý edge case: message retry với recorded_at khác
-  - Có thể ignore duplicate hoặc update existing record
-- **Lý do hoãn lại**: MVP dùng QoS 0 nên không có retry, không cần duplicate detection. Sẽ thêm khi nâng lên QoS 1+.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Có thể implement bằng:
-  - Bloom filter trong memory (nhanh, có false positive)
-  - Bảng processed_messages với TTL
-  - Redis SET với EXPIRE
+- **Short description**: Add a unique constraint on the message_uuid column in the vehicle_telemetry table to guarantee no duplicate messages.
+- **Purpose/role in the system**:
+  - Prevents inserting duplicate messages (same message_uuid)
+  - Database-level guarantee (not dependent on application logic)
+  - Supports idempotency on retry
+- **Reason for deferral**: TimescaleDB requires a unique constraint to include the partition key (recorded_at). A (message_uuid, recorded_at) constraint doesn't prevent duplicates if a message is retried with a different recorded_at. More complex duplicate detection logic is needed (e.g., a separate table tracking processed message_uuid). Will be added when QoS 1+ is implemented.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: Could use a dedicated `processed_messages` table to track processed message_uuid values, with a TTL (e.g., 24h) to avoid unbounded growth.
 
 ---
 
-### 8. Exponential Backoff cho Retry
+### 7. Advanced Duplicate Detection
 
-- **Mô tả ngắn**: Logic retry với delay tăng dần theo cấp số nhân (1s, 2s, 4s, 8s...) khi gặp lỗi transient.
-- **Tác dụng/Vai trò trong hệ thống**: 
-  - Tránh spam retry khi DB hoặc broker down
-  - Giảm load lên hệ thống đang gặp sự cố
-  - Tăng cơ hội thành công khi hệ thống recover
-  - Circuit breaker pattern để fail fast
-- **Lý do hoãn lại**: MVP không có retry logic. Batch worker sẽ dừng khi gặp lỗi, cần restart thủ công. Sẽ thêm retry với exponential backoff khi cần reliability cao hơn.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
-- **Ngày ghi nhận**: 2026-07-25
-- **Ghi chú thêm**: Cần config max retry (VD: 3-5 lần) và max backoff (VD: 60s). Sau khi hết retry, đưa vào DLQ.
-
----
-
-### 9. PostGIS Geography cho vị trí telemetry
-
-- **Mô tả ngắn**: Thay hai cột `latitude`/`longitude` bằng cột `geography(Point, 4326)` hoặc bổ sung cột geography được đồng bộ.
-- **Tác dụng/Vai trò trong hệ thống**: Hỗ trợ spatial index, truy vấn bán kính, geofence và lịch sử hành trình hiệu quả.
-- **Lý do hoãn lại**: Planner telemetry MVP đã chốt lưu tọa độ bằng hai cột `DOUBLE PRECISION` để chứng minh luồng ingest trước.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Cần migration dữ liệu hiện có và chốt geometry hay geography trước khi triển khai.
+- **Short description**: More sophisticated logic for detecting and handling duplicate messages, not relying solely on the database unique constraint.
+- **Purpose/role in the system**:
+  - Detects duplicates right before insert (without waiting for a DB constraint violation)
+  - Supports idempotency for retry logic
+  - Handles the edge case of a message retried with a different recorded_at
+  - Can ignore the duplicate or update the existing record
+- **Reason for deferral**: The MVP uses QoS 0, so there is no retry and no need for duplicate detection. Will be added when upgrading to QoS 1+.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: Could be implemented via:
+  - An in-memory Bloom filter (fast, has false positives)
+  - A processed_messages table with a TTL
+  - A Redis SET with EXPIRE
 
 ---
 
-### 10. Foreign key từ vehicles đến fleet
+### 8. Exponential Backoff for Retry
 
-- **Mô tả ngắn**: Chuyển `vehicles.fleet_id` sang UUID internal ID và tạo foreign key đến bảng thuộc domain fleet.
-- **Tác dụng/Vai trò trong hệ thống**: Bảo đảm toàn vẹn phân công xe theo đội và tuân thủ quy tắc foreign key luôn tham chiếu internal ID.
-- **Lý do hoãn lại**: Domain và bảng fleet chưa được triển khai; không đặt relationship placeholder trong source trước khi có model đích.
-- **Liên quan đến planner/feature**: FM-01…FM-07
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Khi triển khai fleet phải có migration chuyển dữ liệu `String(36)` hiện tại sang UUID và thêm constraint.
-
----
-
-### 11. Import-linter trong CI
-
-- **Mô tả ngắn**: Cấu hình `import-linter` để kiểm tra tự động ranh giới import giữa các bounded context.
-- **Tác dụng/Vai trò trong hệ thống**: Ngăn domain import trực tiếp `models.py`/`repository.py` của domain khác và biến convention kiến trúc thành ràng buộc CI.
-- **Lý do hoãn lại**: Nền tảng CI/CD chưa được lựa chọn và package/config import-linter chưa tồn tại trong backend.
-- **Liên quan đến planner/feature**: Quy tắc kiến trúc chung trong `AGENTS.md`.
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Khi triển khai cần thêm dependency bằng `uv`, contract cấu hình và job CI tương ứng.
+- **Short description**: Retry logic with an exponentially increasing delay (1s, 2s, 4s, 8s...) on transient errors.
+- **Purpose/role in the system**:
+  - Avoids retry spam when the DB or broker is down
+  - Reduces load on a system that is already having issues
+  - Increases the chance of success once the system recovers
+  - Circuit breaker pattern to fail fast
+- **Reason for deferral**: The MVP has no retry logic. The batch worker stops on error and needs a manual restart. Retry with exponential backoff will be added when higher reliability is needed.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Date recorded**: 2026-07-25
+- **Additional notes**: Needs a max retry config (e.g., 3-5 attempts) and a max backoff (e.g., 60s). After retries are exhausted, route to the DLQ.
 
 ---
 
-### 12. Alembic filter cho object do PostGIS/TimescaleDB quản lý
+### 9. PostGIS Geography for telemetry location
 
-- **Mô tả ngắn**: Thêm `include_object` vào Alembic để bỏ qua `spatial_ref_sys` và index nội bộ do TimescaleDB tạo.
-- **Tác dụng/Vai trò trong hệ thống**: Giúp `alembic check` và autogenerate chỉ phản ánh schema do application quản lý, tránh sinh migration xóa object của extension.
-- **Lý do hoãn lại**: MVP chưa chốt CI/CD và migration hiện được review/chạy thủ công; Alembic head hiện vẫn đúng.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02), cấu hình database chung.
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Trước khi bật `alembic check` trong CI hoặc dùng autogenerate cho migration mới, hạng mục này phải được hoàn thành.
-
----
-
-### 13. Đối chiếu telematic serial giữa MQTT topic và payload
-
-- **Mô tả ngắn**: Parse `{telematic_serial}` từ MQTT topic và reject message nếu không khớp `telematic_serial` trong JSON payload.
-- **Tác dụng/Vai trò trong hệ thống**: Ngăn message bị gán nhầm thiết bị khi topic và payload không đồng nhất, đồng thời hỗ trợ kiểm soát danh tính device.
-- **Lý do hoãn lại**: MVP giả định telematic publish đúng topic và payload theo đặc tả.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Nên triển khai cùng authentication/authorization MQTT trước môi trường production.
+- **Short description**: Replace the two `latitude`/`longitude` columns with a `geography(Point, 4326)` column, or add a synced geography column.
+- **Purpose/role in the system**: Supports spatial indexing, radius queries, geofencing, and efficient trip history.
+- **Reason for deferral**: The telemetry MVP planner decided to store coordinates using two `DOUBLE PRECISION` columns to prove out the ingest flow first.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Needs a migration of existing data and a decision between geometry and geography before implementation.
 
 ---
 
-### 14. Chính xác hóa cập nhật `telematics.last_seen_at`
+### 10. Foreign key from vehicles to fleet
 
-- **Mô tả ngắn**: Chỉ cập nhật `last_seen_at`, `updated_at` và row count khi timestamp mới thực sự lớn hơn giá trị hiện tại.
-- **Tác dụng/Vai trò trong hệ thống**: Giữ `updated_at` đúng ngữ nghĩa và làm metric/log `telematics_updated` phản ánh số thiết bị thực sự thay đổi.
-- **Lý do hoãn lại**: Sai lệch hiện tại chỉ ảnh hưởng metadata/log, không làm `last_seen_at` lùi thời gian và không chặn luồng ingest MVP.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Cần cân nhắc batch SQL phù hợp để vẫn giữ một lần update cho cả batch.
-
----
-
-### 15. Phân biệt telematic không tồn tại và chưa gán xe
-
-- **Mô tả ngắn**: Batch lookup trả đủ thiết bị kể cả `vehicle_id` null để service log/metric riêng hai trạng thái provisioning.
-- **Tác dụng/Vai trò trong hệ thống**: Giúp vận hành phân biệt serial không hợp lệ với thiết bị hợp lệ nhưng chưa được gán xe.
-- **Lý do hoãn lại**: Cả hai trường hợp đều được skip an toàn trong MVP và chưa có dashboard vận hành provisioning.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02), AD-05.
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: Khi triển khai cần đổi return type mapping thành `tuple[UUID, UUID | None]` và bổ sung metric riêng.
+- **Short description**: Convert `vehicles.fleet_id` to a UUID internal ID and create a foreign key to the table owned by the fleet domain.
+- **Purpose/role in the system**: Ensures the integrity of vehicle-to-fleet assignment and complies with the rule that foreign keys must always reference internal IDs.
+- **Reason for deferral**: The fleet domain and table haven't been implemented yet; no relationship placeholder should be added in source before the target model exists.
+- **Related planner/feature**: FM-01…FM-07
+- **Date recorded**: 2026-07-26
+- **Additional notes**: When fleet is implemented, a migration is needed to convert the current `String(36)` data to UUID and add the constraint.
 
 ---
 
-### 16. Automated backend test suite mở rộng
+### 11. Import-linter in CI
 
-- **Mô tả ngắn**: Bổ sung pytest, pytest-asyncio, test fixtures và các test unit/integration cho backend.
-- **Tác dụng/Vai trò trong hệ thống**: Bảo vệ transaction boundary, API validation, repository query, MQTT ingestion, batch window và graceful shutdown khỏi regression.
-- **Lý do hoãn lại**: Bộ smoke/unit test tối thiểu đã có; phần còn lại gồm integration test với PostgreSQL/TimescaleDB, MQTT/OCPP end-to-end, coverage và test fixture dùng chung được hoãn để tránh làm nặng phase khởi tạo.
-- **Liên quan đến planner/feature**: Toàn bộ backend; ưu tiên `backend-telemetry-ingestion.md` (AD-02) và vehicles AD-05.
-- **Ngày ghi nhận**: 2026-07-26
-- **Ghi chú thêm**: `pytest`, `pytest-asyncio` và `make backend-test` đã có. Trước khi thiết lập CI/CD cần bổ sung test database cô lập và xác định ngưỡng coverage.
-
----
-
-### 24. Phân chia rõ ràng cấu hình giữa `config.py` và `.env` — Đã hoàn thành
-
-- **Mô tả ngắn**: Chuẩn hóa ranh giới giữa schema/cấu hình mặc định trong `backend/app/libs/common/config.py` và giá trị runtime theo môi trường trong `backend/.env`.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - `config.py` là nguồn định nghĩa tên biến, kiểu dữ liệu, validation, giá trị mặc định và cách truy cập cấu hình bằng `Settings`.
-  - `.env` chỉ chứa giá trị thay đổi theo môi trường như database URL, broker connection, credentials và tuning runtime; không chứa business rule hoặc logic ứng dụng.
-  - Mọi source code backend và Alembic truy cập cấu hình qua `app.libs.common.config.settings`, không tự gọi `os.getenv()` hoặc `load_dotenv()`.
-- **Lý do hoãn lại**: MVP ban đầu đã có `Settings` dùng Pydantic nhưng vẫn còn biến `DEBUG` không khớp với `APP_DEBUG`, `CORS_ORIGINS` trong `.env.example` chưa được khai báo/sử dụng, Alembic có cơ chế đọc `.env` riêng và một số default queue/batch/MQTT còn bị lặp trong source.
-- **Liên quan đến planner/feature**: Cấu hình backend dùng chung; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, AD-02.
-- **Ngày ghi nhận**: 2026-07-30
-- **Ghi chú thêm**: Đã đổi `DEBUG` thành `APP_DEBUG`, loại bỏ `CORS_ORIGINS` chưa có middleware sử dụng, cho Alembic dùng cùng `Settings`, đưa MQTT will và chính sách phân trang dùng chung vào cấu hình, loại bỏ mật khẩu mặc định khỏi `config.py`, và chuẩn hóa các file `.env.example`. `DATABASE_URL` hiện phải được cung cấp từ môi trường; các giá trị còn lại có default an toàn trong `config.py` và có thể override trong `.env`.
-- **Ngày hoàn thành**: 2026-07-30
+- **Short description**: Configure `import-linter` to automatically check import boundaries between bounded contexts.
+- **Purpose/role in the system**: Prevents a domain from directly importing another domain's `models.py`/`repository.py` and turns the architectural convention into a CI constraint.
+- **Reason for deferral**: The CI/CD platform hasn't been chosen yet, and the import-linter package/config doesn't exist in the backend yet.
+- **Related planner/feature**: General architecture rules in `CLAUDE.md`.
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Implementation requires adding the dependency via `uv`, a config contract, and the corresponding CI job.
 
 ---
 
-### 17. Observability tập trung cho telemetry ingestion
+### 12. Alembic filter for objects managed by PostGIS/TimescaleDB
 
-- **Mô tả ngắn**: Hoàn thiện kênh thu thập log và metrics của telemetry worker
-  để có thể theo dõi bên ngoài process, lưu giữ lịch sử và thiết lập cảnh báo.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Thu thập JSON log từ `stderr` vào hệ thống tập trung như Grafana Loki, ELK
-    hoặc dịch vụ cloud tương đương.
-  - Áp dụng retention, tìm kiếm, dashboard và alert cho lỗi ingest, message bị
-    skip/drop, độ trễ batch và tình trạng worker dừng.
-  - Expose metrics qua HTTP endpoint hoặc Prometheus exporter để hệ thống
-    monitoring scrape được.
-  - Lưu metrics bền vững qua các lần restart và tổng hợp số liệu từ nhiều worker
-    instance.
-- **Lý do hoãn lại**: MVP hiện chỉ cung cấp JSON structured logging qua Python
-  `StreamHandler`. Log hiện chỉ xuất ra `stderr` để xem tại terminal hoặc qua
-  `docker logs`; không ghi file, không có log shipping/retention/dashboard/alert.
-  Metrics/counter trong MQTT consumer và batch worker đã bị bỏ để giữ ingestion
-  tối giản, nên chưa có endpoint/exporter hoặc số liệu process-local.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` bước 13-14
+- **Short description**: Add `include_object` to Alembic to skip `spatial_ref_sys` and internal indexes created by TimescaleDB.
+- **Purpose/role in the system**: Makes `alembic check` and autogenerate reflect only the schema managed by the application, avoiding migrations that would drop extension-owned objects.
+- **Reason for deferral**: The MVP hasn't settled on CI/CD yet and migrations are currently reviewed/run manually; the Alembic head is still correct.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02), general database configuration.
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Before enabling `alembic check` in CI or using autogenerate for a new migration, this item must be completed.
+
+---
+
+### 13. Reconciling telematic serial between MQTT topic and payload
+
+- **Short description**: Parse `{telematic_serial}` from the MQTT topic and reject the message if it doesn't match the `telematic_serial` in the JSON payload.
+- **Purpose/role in the system**: Prevents a message from being attributed to the wrong device when the topic and payload disagree, and helps control device identity.
+- **Reason for deferral**: The MVP assumes the telematic publishes to the correct topic and payload per spec.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Should be implemented alongside MQTT authentication/authorization before the production environment.
+
+---
+
+### 14. Making the `telematics.last_seen_at` update precise
+
+- **Short description**: Only update `last_seen_at`, `updated_at`, and the row count when the new timestamp is actually greater than the current value.
+- **Purpose/role in the system**: Keeps `updated_at` semantically correct and makes the `telematics_updated` metric/log reflect the number of devices that actually changed.
+- **Reason for deferral**: The current discrepancy only affects metadata/logs; it doesn't move `last_seen_at` backward and doesn't block the MVP ingest flow.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Need to consider a suitable batch SQL approach that still keeps a single update per batch.
+
+---
+
+### 15. Distinguishing a nonexistent telematic from one not yet assigned to a vehicle
+
+- **Short description**: Batch lookup returns every device including those with a null `vehicle_id`, so the service can log/report metrics for the two provisioning states separately.
+- **Purpose/role in the system**: Helps operations distinguish an invalid serial from a valid device that just hasn't been assigned to a vehicle yet.
+- **Reason for deferral**: Both cases are safely skipped in the MVP, and there's no provisioning operations dashboard yet.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02), AD-05.
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Implementation requires changing the mapping return type to `tuple[UUID, UUID | None]` and adding a dedicated metric.
+
+---
+
+### 16. Expanded automated backend test suite
+
+- **Short description**: Add pytest, pytest-asyncio, test fixtures, and unit/integration tests for the backend.
+- **Purpose/role in the system**: Protects transaction boundaries, API validation, repository queries, MQTT ingestion, the batch window, and graceful shutdown from regressions.
+- **Reason for deferral**: A minimal smoke/unit test suite already exists; the rest — integration tests against PostgreSQL/TimescaleDB, MQTT/OCPP end-to-end tests, coverage, and shared test fixtures — is deferred to avoid weighing down the initial phase.
+- **Related planner/feature**: The whole backend; priority on `backend-telemetry-ingestion.md` (AD-02) and vehicles AD-05.
+- **Date recorded**: 2026-07-26
+- **Additional notes**: `pytest`, `pytest-asyncio`, and `make backend-test` are already in place. Before setting up CI/CD, an isolated test database needs to be added and a coverage threshold decided.
+
+---
+
+### 24. Clear separation of configuration between `config.py` and `.env` — Completed
+
+- **Short description**: Standardize the boundary between the schema/default configuration in `backend/app/libs/common/config.py` and the environment-specific runtime values in `backend/.env`.
+- **Purpose/role in the system**:
+  - `config.py` is the source of truth for variable names, data types, validation, default values, and how configuration is accessed via `Settings`.
+  - `.env` only holds values that change per environment, such as the database URL, broker connection, credentials, and runtime tuning; it holds no business rules or application logic.
+  - All backend source code and Alembic access configuration via `app.libs.common.config.settings`, without calling `os.getenv()` or `load_dotenv()` directly.
+- **Reason for deferral**: The initial MVP already had a Pydantic-based `Settings`, but there was still a `DEBUG` variable that didn't match `APP_DEBUG`, an undeclared/unused `CORS_ORIGINS` in `.env.example`, Alembic had its own separate mechanism for reading `.env`, and some queue/batch/MQTT defaults were duplicated in source.
+- **Related planner/feature**: Shared backend configuration; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, AD-02.
+- **Date recorded**: 2026-07-30
+- **Additional notes**: `DEBUG` was renamed to `APP_DEBUG`, the unused `CORS_ORIGINS` (no middleware consumed it) was removed, Alembic was switched to use the same `Settings`, the MQTT will and shared pagination policy were moved into configuration, the default password was removed from `config.py`, and the `.env.example` files were standardized. `DATABASE_URL` must now be provided from the environment; the remaining values have safe defaults in `config.py` and can be overridden in `.env`.
+- **Date completed**: 2026-07-30
+
+---
+
+### 17. Centralized observability for telemetry ingestion
+
+- **Short description**: Complete the log and metrics collection pipeline for
+  the telemetry worker so it can be monitored outside the process, with
+  history retention and alerting.
+- **Purpose/role in the system**:
+  - Collect JSON logs from `stderr` into a centralized system such as Grafana
+    Loki, ELK, or an equivalent cloud service.
+  - Apply retention, search, dashboards, and alerts for ingest errors,
+    skipped/dropped messages, batch latency, and worker-stopped conditions.
+  - Expose metrics via an HTTP endpoint or Prometheus exporter so a monitoring
+    system can scrape them.
+  - Persist metrics durably across restarts and aggregate figures from
+    multiple worker instances.
+- **Reason for deferral**: The MVP currently only provides JSON structured
+  logging via Python's `StreamHandler`. Logs are only written to `stderr` for
+  viewing in the terminal or via `docker logs`; there's no file logging, and
+  no log shipping/retention/dashboard/alerting. Metrics/counters in the MQTT
+  consumer and batch worker were removed to keep ingestion minimal, so there
+  is no endpoint/exporter or process-local figures yet.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` steps 13-14
   (AD-02, FM-01, FM-02).
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Bước 14 đã chuyển JSON logging lên telemetry entrypoint nên
-  log startup/MQTT/worker/shutdown dùng cùng output contract. Phần còn lại của
-  mục này là log shipping, retention, dashboard/alert và thiết kế lại metrics
-  từ đầu nếu cần exporter. Khi triển khai cần tránh gắn handler cũ + JSON
-  handler gây output trùng và tránh log cùng traceback ở nhiều boundary nếu
-  không bổ sung context mới. Cần chốt backend observability stack trước khi thêm
-  dependency hoặc infrastructure mới.
+- **Date recorded**: 2026-07-27
+- **Additional notes**: Step 14 moved JSON logging up to the telemetry
+  entrypoint, so startup/MQTT/worker/shutdown logs now share the same output
+  contract. What remains under this item is log shipping, retention,
+  dashboards/alerting, and redesigning metrics from scratch if an exporter is
+  needed. When implementing, avoid attaching both the old handler and the JSON
+  handler (which would duplicate output), and avoid logging the same traceback
+  at multiple boundaries without adding new context. The backend observability
+  stack must be decided before adding any new dependency or infrastructure.
 
 ---
 
-### 18. API gán/tháo thiết bị telematic cho vehicle
+### 18. API to assign/unassign a telematic device for a vehicle
 
-- **Mô tả ngắn**: Bổ sung use case provisioning để Admin gán, đổi hoặc tháo một
-  telematic khỏi vehicle; hiện telemetry đã có bảng `telematics`, foreign key và
-  unique constraint nhưng domain vehicles chưa có API nghiệp vụ tương ứng.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Hoàn thành phần “gán thiết bị” của chức năng Quản lý xe.
-  - Bảo đảm một vehicle có tối đa một telematic và ngăn một thiết bị bị gán sai.
-  - Cho phép vận hành ingestion mà không phải insert/update mapping bằng SQL thủ
-    công.
-  - Có contract rõ cho replace/unassign, conflict và thiết bị/xe không tồn tại.
-- **Lý do hoãn lại**: Vehicles CRUD MVP ban đầu loại provisioning khỏi phạm vi;
-  telemetry ingestion mới chỉ cần mapping tồn tại để lookup và chưa xây Admin
-  workflow quản lý thiết bị.
-- **Liên quan đến planner/feature**: `backend-crud-vehicles.md`,
+- **Short description**: Add the provisioning use case allowing an Admin to
+  assign, change, or remove a telematic from a vehicle; telemetry already has
+  the `telematics` table, foreign key, and unique constraint, but the vehicles
+  domain has no corresponding business API yet.
+- **Purpose/role in the system**:
+  - Completes the "assign device" part of the Vehicle Management feature.
+  - Ensures a vehicle has at most one telematic and prevents a device from
+    being assigned incorrectly.
+  - Allows operating ingestion without having to insert/update the mapping via
+    manual SQL.
+  - Has a clear contract for replace/unassign, conflicts, and nonexistent
+    device/vehicle.
+- **Reason for deferral**: The initial vehicles CRUD MVP excluded
+  provisioning from scope; telemetry ingestion currently only needs the
+  mapping to exist for lookup, and no Admin workflow for device management has
+  been built yet.
+- **Related planner/feature**: `backend-crud-vehicles.md`,
   `backend-telemetry-ingestion.md` (AD-05, AD-02).
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Vì model/repository telematic thuộc domain telemetry,
-  vehicles không được import trực tiếp các module nội bộ này. Trước khi triển
-  khai cần chốt router/use-case owner; nếu vehicles điều phối thì phải gọi public
-  API trong `telemetry/service.py`. Operation phải atomic và chuyển unique/FK
-  `IntegrityError` thành domain conflict rõ ràng.
+- **Date recorded**: 2026-07-27
+- **Additional notes**: Since the telematic model/repository belongs to the
+  telemetry domain, vehicles must not import these internal modules directly.
+  Before implementing, decide the router/use-case owner; if vehicles
+  orchestrates it, it must call the public API in `telemetry/service.py`. The
+  operation must be atomic and must translate unique/FK `IntegrityError` into
+  a clear domain conflict.
 
 ---
 
-### 19. Structured logging, request metrics và health thực chất cho API process
+### 19. Structured logging, request metrics, and a real health check for the API process
 
-- **Mô tả ngắn**: Áp dụng output contract logging/observability đã hình thành ở
-  telemetry cho FastAPI API process và các domain HTTP như vehicles.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Cấu hình JSON logging tại FastAPI lifespan/process boundary để startup,
-    shutdown, router/service/repository error dùng cùng format.
-  - Ghi structured context cho request/operation quan trọng mà không log dữ liệu
-    nhạy cảm.
-  - Có counters/latency/error metrics cho CRUD/API thay vì chỉ access log.
-  - Làm health/readiness phản ánh database và lifecycle thay vì luôn trả
-    `{"status": "healthy"}` khi Python process còn chạy.
-- **Lý do hoãn lại**: Bước 13 mới triển khai formatter và process-local metrics
-  cho telemetry worker. `app.api.main` hiện chưa gọi `configure_logging()`;
-  vehicles chưa có structured operation logs/metrics và `/health` không xác minh
-  dependency hoặc readiness.
-- **Liên quan đến planner/feature**: `backend-crud-vehicles.md`, API backend nói
-  chung và mục 17 của `future.md`.
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Cần chốt ranh giới giữa access log, business audit log và
-  application error log để tránh log trùng. Có thể tách `/live` và `/ready` khi
-  deploy bằng orchestrator; không query dependency nặng trên mỗi health request.
-
----
-
-### 20. Chuẩn hóa tài liệu source và OpenAPI examples của domain vehicles
-
-- **Mô tả ngắn**: Rà soát module/class/function docstring, comment và schema
-  examples của vehicles theo convention mới trong `AGENTS.md`.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Docstring/comment tiếng Việt mô tả đúng business rule, transaction ownership,
-    exception và partial update.
-  - `VehicleCreate`, `VehicleUpdate`, response/list schema có ví dụ nhất quán để
-    Swagger và planner dùng làm contract.
-  - Loại mô tả cũ/sai như tên field, HTTP method hoặc behavior không còn khớp
-    implementation.
-- **Lý do hoãn lại**: Domain vehicles được triển khai trước khi convention
-  docstring/comment chi tiết bằng tiếng Việt được chốt. Nhiều docstring hiện còn
-  ngắn và bằng tiếng Anh; `json_schema_extra` examples đã bị lược bỏ trong lịch
-  sử trong khi telemetry schemas đã có examples chi tiết.
-- **Liên quan đến planner/feature**: `backend-crud-vehicles.md` (AD-05), quy tắc
-  coding convention trong `AGENTS.md`.
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Đây là documentation debt, không thay đổi API behavior. Khi
-  thực hiện phải đối chiếu source hiện tại làm nguồn chân lý và không khôi phục
-  example cũ nếu field/enum đã đổi.
+- **Short description**: Apply the logging/observability output contract
+  already established for telemetry to the FastAPI API process and HTTP
+  domains such as vehicles.
+- **Purpose/role in the system**:
+  - Configure JSON logging at the FastAPI lifespan/process boundary so
+    startup, shutdown, and router/service/repository errors share the same
+    format.
+  - Record structured context for important requests/operations without
+    logging sensitive data.
+  - Provide counters/latency/error metrics for CRUD/API instead of just an
+    access log.
+  - Make health/readiness reflect the database and lifecycle instead of always
+    returning `{"status": "healthy"}` as long as the Python process is
+    running.
+- **Reason for deferral**: Step 13 only implemented the formatter and
+  process-local metrics for the telemetry worker. `app.api.main` doesn't call
+  `configure_logging()` yet; vehicles has no structured operation logs/metrics,
+  and `/health` doesn't verify dependencies or readiness.
+- **Related planner/feature**: `backend-crud-vehicles.md`, the API backend in
+  general, and item 17 of `future.md`.
+- **Date recorded**: 2026-07-27
+- **Additional notes**: Need to settle the boundary between access logs,
+  business audit logs, and application error logs to avoid duplicate logging.
+  `/live` and `/ready` could be split when deployed via an orchestrator; avoid
+  querying heavy dependencies on every health request.
 
 ---
 
-### 21. Đồng bộ planner và bằng chứng nghiệm thu domain vehicles
+### 20. Standardizing source documentation and OpenAPI examples for the vehicles domain
 
-- **Mô tả ngắn**: Viết lại `backend-crud-vehicles.md` theo cấu trúc planner đã
-  chuẩn hóa ở telemetry, phản ánh implementation/migration thực tế và ghi bằng
-  chứng smoke/integration test.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Phân biệt rõ bước đã triển khai, bước chỉ từng test thủ công và phần chưa có.
-  - Sửa các contract cũ về `plate_number`/`license_plate`, `team_id`/`fleet_id`,
-    UUID, `PUT`/`PATCH`, HTTP conflict status và timezone.
-  - Làm tài liệu tham chiếu đáng tin cậy cho planner domain CRUD tiếp theo.
-- **Lý do hoãn lại**: Planner vehicles vẫn ở trạng thái “Dự kiến” và phần lớn
-  checklist chưa được cập nhật dù source đã tồn tại; audit hiện tại ưu tiên hoàn
-  thiện planner telemetry và chỉ ghi nhận khoảng thiếu của vehicles.
-- **Liên quan đến planner/feature**: `backend-crud-vehicles.md` (AD-05).
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Không được đánh dấu test pass chỉ dựa trên source tồn tại.
-  Automated tests đã được theo dõi chung tại mục 16; mục này tập trung vào độ
-  chính xác và traceability của planner.
-
----
-
-### 22. Health/readiness và graceful drain cho telemetry ingestion
-
-- **Mô tả ngắn**: Bổ sung lại endpoint health/readiness và cơ chế ngừng nhận
-  MQTT rồi drain queue có timeout cho telemetry ingestion khi hệ thống cần vận
-  hành production.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Cho orchestrator biết process đã sẵn sàng nhận dữ liệu và phát hiện
-    consumer/worker bị lỗi.
-  - Giảm mất telemetry đã nhận vào queue khi deploy hoặc shutdown có kế hoạch.
-  - Cung cấp shutdown timeout và trạng thái lifecycle rõ ràng.
-- **Lý do hoãn lại**: MVP chủ ý giữ process, task và queue hoàn toàn trong RAM,
-  chấp nhận mất dữ liệu còn trong queue khi dừng để lifecycle và batch worker
-  đơn giản hơn.
-- **Liên quan đến planner/feature**:
-  `backend-telemetry-ingestion.md` (AD-02), bước 14.
-- **Ngày ghi nhận**: 2026-07-27
-- **Ghi chú thêm**: Khi triển khai lại cần dựa trên môi trường deploy thực tế để
-  chọn liveness/readiness contract và drain timeout; không khôi phục nguyên xi
-  orchestration cũ nếu chưa xác nhận.
+- **Short description**: Review vehicles' module/class/function docstrings,
+  comments, and schema examples against the new convention in `CLAUDE.md`.
+- **Purpose/role in the system**:
+  - Vietnamese docstrings/comments accurately describe business rules,
+    transaction ownership, exceptions, and partial updates.
+  - `VehicleCreate`, `VehicleUpdate`, and response/list schemas have
+    consistent examples for Swagger and planners to use as a contract.
+  - Removes outdated/incorrect descriptions such as field names, HTTP methods,
+    or behavior that no longer match the implementation.
+- **Reason for deferral**: The vehicles domain was implemented before the
+  detailed Vietnamese docstring/comment convention was finalized. Many
+  docstrings are currently short and in English; `json_schema_extra` examples
+  were dropped at some point in history, while telemetry schemas already have
+  detailed examples.
+- **Related planner/feature**: `backend-crud-vehicles.md` (AD-05), the coding
+  convention rules in `CLAUDE.md`.
+- **Date recorded**: 2026-07-27
+- **Additional notes**: This is documentation debt, not an API behavior
+  change. When doing this work, use the current source as the source of truth
+  and do not restore old examples if a field/enum has changed.
 
 ---
 
-### 23. Startup probe và lifecycle failure propagation cho telemetry ingestion
+### 21. Syncing the planner and acceptance evidence for the vehicles domain
 
-- **Mô tả ngắn**: Bổ sung lại kiểm tra dependency lúc startup và API lifecycle rõ
-  ràng để entrypoint theo dõi consumer/worker mà không truy cập private state.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Kiểm tra database bằng shared `async_session_factory` trước khi nhận MQTT để
-    fail fast nếu DB chưa sẵn sàng.
-  - Retrieve exception từ background task để tránh `Task exception was never
-    retrieved` và giúp process thoát khác 0 khi consumer/worker chết bất thường.
-  - Cung cấp public lifecycle API như `MessageWorker.wait()` hoặc cơ chế task
-    handle rõ ràng, thay vì entrypoint truy cập trực tiếp `worker._task`.
-  - Phân biệt shutdown do signal với shutdown do lỗi runtime trong log và exit
-    code.
-- **Lý do hoãn lại**: MVP hiện ưu tiên entrypoint thật ngắn: tạo queue RAM, start
-  consumer/worker, chờ task đầu tiên kết thúc rồi cleanup. Khi DB/service lỗi,
-  worker vẫn rollback transaction và log traceback, nhưng entrypoint hiện bỏ qua
-  exception của task đã hoàn thành sau `asyncio.wait()`. Vì vậy `run()` có thể
-  cleanup bình thường và process kết thúc với exit code 0, khiến supervisor
-  không biết worker đã chết và không tự restart/alert đúng. Đây là thiếu sót ở
-  lifecycle failure propagation, không phải chủ trương bỏ qua lỗi trong
-  transaction; startup probe và propagation chi tiết được hoãn để giữ luồng
-  MQTT → DB MVP ngắn.
-- **Liên quan đến planner/feature**:
-  `backend-telemetry-ingestion.md` (AD-02), bước 14-15.
-- **Ngày ghi nhận**: 2026-07-28
-- **Ghi chú thêm**: Nên triển khai cùng mục 22 nếu chuẩn bị chạy bằng
-  orchestrator hoặc cần alert/exit code đáng tin cậy. Khi thêm lại, phải đọc
-  `task.exception()` hoặc await task done trong entrypoint, phân biệt signal
-  shutdown với task failure, và kiểm tra cả task consumer lẫn worker. Giữ API
-  lifecycle công khai, tránh truy cập `worker._task`, và không kéo lại toàn bộ
-  runtime orchestration cũ nếu không cần.
+- **Short description**: Rewrite `backend-crud-vehicles.md` following the
+  planner structure already standardized for telemetry, reflecting the actual
+  implementation/migrations and recording smoke/integration test evidence.
+- **Purpose/role in the system**:
+  - Clearly distinguishes steps that are implemented, steps that were only
+    manually tested, and parts that don't exist yet.
+  - Fixes outdated contracts around `plate_number`/`license_plate`,
+    `team_id`/`fleet_id`, UUID, `PUT`/`PATCH`, HTTP conflict status, and
+    timezone.
+  - Makes the document a trustworthy reference for the next CRUD domain
+    planner.
+- **Reason for deferral**: The vehicles planner is still in "Planned" status
+  and most of its checklist hasn't been updated even though the source already
+  exists; the current audit prioritizes finishing the telemetry planner and
+  only records the gap for vehicles.
+- **Related planner/feature**: `backend-crud-vehicles.md` (AD-05).
+- **Date recorded**: 2026-07-27
+- **Additional notes**: Do not mark a test as passing just because the source
+  exists. Automated tests are already tracked collectively under item 16; this
+  item focuses on the accuracy and traceability of the planner.
 
-### 25. Batch processing cho telemetry ingestion
+---
 
-- **Mô tả ngắn**: Bật lại đường xử lý telemetry theo batch gồm batch window,
-  batch lookup và bulk insert vào TimescaleDB.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Giảm số transaction và số lần round-trip tới database khi throughput tăng.
-  - Lookup mapping telematic một lần cho nhiều message.
-  - Tận dụng PostgreSQL Core bulk insert để tối ưu hiệu năng ingest.
-  - Cho phép đo và lựa chọn trade-off giữa latency từng message và throughput.
-- **Lý do hoãn lại**: MVP hiện ưu tiên latency thấp, luồng xử lý dễ quan sát và
-  cô lập lỗi theo từng message; volume hiện tại chưa có benchmark chứng minh batch
-  là cần thiết. Batch window cũng tạo độ trễ không cần thiết cho demo.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` Bước 16
+### 22. Health/readiness and graceful drain for telemetry ingestion
+
+- **Short description**: Re-add the health/readiness endpoint and the
+  mechanism to stop accepting MQTT and drain the queue with a timeout for
+  telemetry ingestion, for when the system needs to run in production.
+- **Purpose/role in the system**:
+  - Lets the orchestrator know the process is ready to receive data and
+    detects a failed consumer/worker.
+  - Reduces loss of telemetry already received into the queue during a
+    planned deploy or shutdown.
+  - Provides a shutdown timeout and a clear lifecycle state.
+- **Reason for deferral**: The MVP deliberately keeps the process, task, and
+  queue entirely in RAM, accepting the loss of data still in the queue on
+  shutdown, to keep the lifecycle and batch worker simpler.
+- **Related planner/feature**:
+  `backend-telemetry-ingestion.md` (AD-02), step 14.
+- **Date recorded**: 2026-07-27
+- **Additional notes**: When re-implementing this, base the
+  liveness/readiness contract and drain timeout on the actual deployment
+  environment; do not restore the old orchestration verbatim without
+  confirming it's still appropriate.
+
+---
+
+### 23. Startup probe and lifecycle failure propagation for telemetry ingestion
+
+- **Short description**: Re-add the startup dependency check and a clear API
+  lifecycle so the entrypoint can monitor the consumer/worker without
+  accessing private state.
+- **Purpose/role in the system**:
+  - Checks the database via the shared `async_session_factory` before
+    accepting MQTT, to fail fast if the DB isn't ready.
+  - Retrieves the exception from the background task to avoid "Task exception
+    was never retrieved" and lets the process exit non-zero when the
+    consumer/worker dies unexpectedly.
+  - Provides a public lifecycle API such as `MessageWorker.wait()` or a clear
+    task-handle mechanism, instead of the entrypoint accessing `worker._task`
+    directly.
+  - Distinguishes signal-triggered shutdown from runtime-failure shutdown in
+    the log and exit code.
+- **Reason for deferral**: The MVP currently prioritizes a very short
+  entrypoint: create the RAM queue, start the consumer/worker, wait for the
+  first task to finish, then clean up. When the DB/service fails, the worker
+  still rolls back the transaction and logs the traceback, but the entrypoint
+  currently ignores the exception of the task that finished after
+  `asyncio.wait()`. So `run()` can clean up normally and the process can exit
+  with code 0, leaving the supervisor unaware the worker died and unable to
+  restart/alert correctly. This is a gap in lifecycle failure propagation, not
+  a deliberate choice to ignore errors within a transaction; the startup probe
+  and detailed propagation are deferred to keep the MVP's MQTT → DB flow
+  short.
+- **Related planner/feature**:
+  `backend-telemetry-ingestion.md` (AD-02), steps 14-15.
+- **Date recorded**: 2026-07-28
+- **Additional notes**: Should be implemented together with item 22 if
+  preparing to run under an orchestrator or if a reliable alert/exit code is
+  needed. When adding this back, read `task.exception()` or await task
+  completion in the entrypoint, distinguish a signal shutdown from a task
+  failure, and check both the consumer task and the worker task. Keep the
+  lifecycle API public, avoid accessing `worker._task`, and don't pull back
+  the entire old runtime orchestration unless necessary.
+
+### 25. Batch processing for telemetry ingestion
+
+- **Short description**: Re-enable the batch-based telemetry processing path,
+  including the batch window, batch lookup, and bulk insert into TimescaleDB.
+- **Purpose/role in the system**:
+  - Reduces the number of transactions and database round-trips as throughput
+    increases.
+  - Looks up the telematic mapping once for many messages.
+  - Leverages PostgreSQL Core bulk insert to optimize ingest performance.
+  - Allows measuring and choosing the trade-off between per-message latency
+    and throughput.
+- **Reason for deferral**: The MVP currently prioritizes low latency, an
+  easy-to-observe processing flow, and per-message error isolation; there's no
+  benchmark yet showing that batching is needed at the current volume. The
+  batch window would also add unnecessary latency for the demo.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` Step 16
   (AD-02, FM-01, FM-02).
-- **Ngày ghi nhận**: 2026-07-30
-- **Ghi chú thêm**: Code batch vẫn được giữ trong
+- **Date recorded**: 2026-07-30
+- **Additional notes**: The batch code is still kept in
   `backend/app/domains/telemetry/ingestion/batch_worker.py`,
   `telemetry.service.process_batch()`,
-  `telematics.service.resolve_mappings_by_serial()` và
-  `telemetry.repository.bulk_insert_telemetry()`, nhưng không được entrypoint
-  active gọi. Trước khi bật lại cần benchmark workload đại diện, chốt
-  transaction/failure semantics, backpressure và cập nhật smoke/E2E tương ứng.
+  `telematics.service.resolve_mappings_by_serial()`, and
+  `telemetry.repository.bulk_insert_telemetry()`, but the active entrypoint
+  doesn't call it. Before re-enabling it, benchmark a representative workload,
+  settle the transaction/failure semantics and backpressure, and update the
+  corresponding smoke/E2E tests.
 
-### 26. Nghiệp vụ mở rộng của charging sessions
+### 26. Extended charging sessions business logic
 
-- **Mô tả ngắn**: Bổ sung các nghiệp vụ không thuộc MVP lưu trữ phiên sạc gồm
-  authorization RFID/idToken, mapping driver/vehicle, remote start/stop,
-  pricing, payment, webhook, overdue và debt.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Quyết định ai được bắt đầu/dừng phiên và liên kết phiên với người/xe.
-  - Điều khiển phiên từ xa qua transport OCPP của `charging_stations`.
-  - Tính tiền, thu tiền và quản lý công nợ sau khi phiên kết thúc.
-- **Lý do hoãn lại**: MVP hiện chỉ cần `charging_stations` nhận dữ liệu thiết bị
-  và `charging_sessions` lưu event, meter cùng lifecycle phiên; chưa có contract
-  provider, tariff, identity hoặc business rule đủ ổn định để triển khai an toàn.
-- **Liên quan đến planner/feature**: `docs/02-planners/backend-charging.md`,
-  AD-03 và S-02; các mục tính tiền/thanh toán tương ứng trong
+- **Short description**: Add business logic that isn't part of the MVP for
+  storing charging sessions, including RFID/idToken authorization,
+  driver/vehicle mapping, remote start/stop, pricing, payment, webhooks,
+  overdue handling, and debt.
+- **Purpose/role in the system**:
+  - Decides who is allowed to start/stop a session and links the session to a
+    person/vehicle.
+  - Controls a session remotely via the `charging_stations` OCPP transport.
+  - Bills, collects payment, and manages debt after a session ends.
+- **Reason for deferral**: The MVP currently only needs `charging_stations` to
+  receive device data and `charging_sessions` to store events, meter values,
+  and session lifecycle; there isn't yet a stable enough provider, tariff, or
+  identity contract, or business rules, to implement this safely.
+- **Related planner/feature**: `docs/02-planners/backend-charging.md`,
+  AD-03 and S-02; the corresponding billing/payment items in
   `docs/01-requirements/feature-list.md`.
-- **Ngày ghi nhận**: 2026-07-31
-- **Ghi chú thêm**: Không tạo bảng `charging_remote_commands`, tariff, payment,
-  debt hoặc authorization placeholder trong MVP. Khi mở lại phải cập nhật
-  planner charging và `AGENTS.md` trước khi code.
+- **Date recorded**: 2026-07-31
+- **Additional notes**: Do not create a `charging_remote_commands`, tariff,
+  payment, debt, or authorization placeholder table in the MVP. When resuming
+  this work, the charging planner and `CLAUDE.md` must be updated before
+  writing code.
 
-### 27. Reliability và technical status path của charging MVP
+### 27. Reliability and technical status path of the charging MVP
 
-- **Mô tả ngắn**: Khôi phục các nhánh xử lý không lý tưởng cho charging gồm
-  reconnect, connection registry, offline/heartbeat timeout, retry, duplicate/
-  idempotency, out-of-order event, interruption, reconciliation conflict,
-  technical status history và raw OCPP payload audit.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Bảo vệ lifecycle phiên khi WebSocket hoặc station mất kết nối.
-  - Cho phép replay message, nhận diện duplicate và không làm state lùi.
-  - Theo dõi trạng thái kỹ thuật station/EVSE/connector độc lập với lifecycle
-    transaction.
-  - Giải thích và đối soát meter reset, payload conflict hoặc dữ liệu đến trễ.
-- **Lý do hoãn lại**: Planner mới
-  `backend-charging-mvp-ideal.md` cố định điều kiện online/active, message đến
-  đúng thứ tự và không duplicate để giảm lượng code cần hiểu trong MVP local.
-  Các source cũ không còn là contract bắt buộc phải bảo toàn trong source MVP;
-  phần còn sót dưới dạng comment có thể được dọn/xóa. Không được bật lại từng
-  phần lẻ nếu chưa có contract reliability đầy đủ.
-- **Liên quan đến planner/feature**: `backend-charging.md`,
-  `backend-charging-mvp-ideal.md`, AD-03 và S-02.
-- **Ngày ghi nhận**: 2026-08-02
-- **Ghi chú thêm**: Khi mở lại cần thiết kế migration cho history/idempotency,
-  timeout settings, simulator lỗi mạng và test duplicate/reconnect trước khi
-  triển khai production.
+- **Short description**: Restore the non-happy-path handling for charging,
+  including reconnect, the connection registry, offline/heartbeat timeout,
+  retry, duplicate/idempotency handling, out-of-order events, interruptions,
+  reconciliation conflicts, technical status history, and raw OCPP payload
+  auditing.
+- **Purpose/role in the system**:
+  - Protects the session lifecycle when the WebSocket or station loses
+    connection.
+  - Allows message replay, duplicate detection, and prevents state from moving
+    backward.
+  - Tracks station/EVSE/connector technical status independently of the
+    transaction lifecycle.
+  - Explains and reconciles meter resets, payload conflicts, or late-arriving
+    data.
+- **Reason for deferral**: The new `backend-charging-mvp-ideal.md` planner
+  fixes the assumptions of online/active status, in-order message arrival, and
+  no duplicates, in order to reduce the amount of code that needs to be
+  understood in the local MVP. The old source is no longer a contract that
+  must be preserved in the MVP source; leftover pieces kept as comments can be
+  cleaned up/removed. Individual pieces must not be re-enabled on their own
+  without a full reliability contract.
+- **Related planner/feature**: `backend-charging.md`,
+  `backend-charging-mvp-ideal.md`, AD-03 and S-02.
+- **Date recorded**: 2026-08-02
+- **Additional notes**: When resuming this work, design the migration for
+  history/idempotency, timeout settings, a network-failure simulator, and
+  duplicate/reconnect tests before going to production.
 
-### 28. Topology metadata và helper charging bị loại khỏi MVP lý tưởng
+### 28. Topology metadata and charging helpers excluded from the ideal MVP
 
-- **Mô tả ngắn**: Loại khỏi active model/API các metadata topology không cần cho
-  local happy path gồm thông tin nhà sản xuất/model/serial/firmware/location,
-  administrative status, connection status, technical status, capability,
-  connector type/công suất và các timestamp status/heartbeat; đồng thời loại
-  location helper, status filter và các tham số CRUD tương ứng.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Metadata thiết bị phục vụ quản trị hồ sơ station/EVSE/connector ngoài
-    lifecycle session.
-  - Location/capability/công suất phục vụ bản đồ, tìm trụ phù hợp và policy
-    thiết bị khi tích hợp thiết bị thật.
-  - Administrative/technical/connection snapshot phục vụ monitoring và
-    technical status history, độc lập với `Started → Updated/MeterValues →
-    Ended`.
-- **Lý do hoãn lại**: MVP giả định topology đã pre-provision và station,
-  EVSE, connector luôn online/active; các field này không tham gia resolve
-  identity hoặc lưu lifecycle session. Theo quyết định ngày 2026-08-02, source
-  legacy có thể xóa thay vì phải giữ nguyên dưới dạng comment. Schema/API
-  active chỉ giữ identity, FK topology, timestamps và soft-delete.
-- **Liên quan đến planner/feature**: `backend-charging-mvp-ideal.md` Bước 1–2,
-  `backend-charging.md`, AD-03 và phần lifecycle S-02.
-- **Ngày ghi nhận**: 2026-08-02
-- **Ghi chú thêm**: Khi mở lại phải chốt lại contract thiết bị thật, PostGIS
-  location, capability schema, công suất/connector type, status snapshot và
-  API CRUD/monitoring trước khi tạo migration. Không khôi phục từng field riêng
-  lẻ hoặc tạo bảng/status enum placeholder trong MVP.
+- **Short description**: Remove from the active model/API the topology
+  metadata not needed for the local happy path, including
+  manufacturer/model/serial/firmware/location info, administrative status,
+  connection status, technical status, capability, connector type/power
+  rating, and status/heartbeat timestamps; also remove the location helper,
+  status filter, and the corresponding CRUD parameters.
+- **Purpose/role in the system**:
+  - Device metadata serves station/EVSE/connector profile administration
+    beyond the session lifecycle.
+  - Location/capability/power rating serve the map, finding a suitable
+    station, and device policy when integrating real devices.
+  - Administrative/technical/connection snapshots serve monitoring and
+    technical status history, independently of `Started →
+    Updated/MeterValues → Ended`.
+- **Reason for deferral**: The MVP assumes topology is pre-provisioned and
+  that station, EVSE, and connector are always online/active; these fields
+  don't participate in resolving identity or storing the session lifecycle.
+  Per the decision on 2026-08-02, legacy source may be deleted instead of
+  having to be kept as comments. The active schema/API only keeps identity,
+  topology FKs, timestamps, and soft-delete.
+- **Related planner/feature**: `backend-charging-mvp-ideal.md` Steps 1-2,
+  `backend-charging.md`, AD-03, and the S-02 lifecycle section.
+- **Date recorded**: 2026-08-02
+- **Additional notes**: When resuming this work, the real-device contract,
+  PostGIS location, capability schema, power rating/connector type, status
+  snapshot, and CRUD/monitoring API must all be settled before creating a
+  migration. Do not restore individual fields piecemeal or create a
+  placeholder table/status enum in the MVP.
 
-### 29. Tối ưu query và chuẩn hóa chất lượng code simulator/telemetry
+### 29. Query optimization and code-quality cleanup for simulator/telemetry
 
-- **Mô tả ngắn**: Xử lý các khoản technical debt không chặn MVP gồm N+1 query
-  khi dựng response telematic, thống nhất contract `error_codes` giữa payload
-  MQTT/schema/database và siết chặt error handling/type checking trong simulator.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Giảm số query database khi API danh sách telematic phải resolve VIN của
-    nhiều thiết bị; hiện mỗi item có thể phát sinh thêm một query vehicle.
-  - Giữ cùng một biểu diễn lỗi từ telemetry message đến JSONB database và API,
-    tránh việc payload nhận `list[str]` nhưng dữ liệu lưu thành object bọc
-    `{"codes": [...]}` mà không có contract rõ ràng.
-  - Giúp simulator phân biệt lỗi network/HTTP/JSON với lỗi lập trình, đồng thời
-    giữ type của response JSON đủ chính xác để mypy có thể kiểm tra.
-  - Làm dữ liệu simulator có thể cấu hình thay vì phụ thuộc vào prefix device,
-    VIN, địa chỉ API/broker và transaction identity cố định trong source.
-- **Lý do hoãn lại**: MVP local có số lượng thiết bị nhỏ, API list chưa nằm trên
-  hot path ingest và simulator chủ yếu phục vụ smoke test thủ công. Các điểm
-  này không làm sai lifecycle telemetry hiện tại, nhưng sẽ ảnh hưởng latency,
-  khả năng chẩn đoán lỗi và độ tin cậy của test khi số lượng thiết bị tăng.
-  Việc thay đổi `error_codes` cũng có thể cần migration hoặc version hóa API,
-  nên không nên tự ý đổi trong lúc contract MVP chưa được chốt.
-- **Liên quan đến planner/feature**: `backend-telemetry-ingestion.md` (AD-02),
-  `backend-crud-telematics.md` (nếu được bổ sung), simulator local và coding
-  convention trong `AGENTS.md`.
-- **Ngày ghi nhận**: 2026-08-04
-- **Ghi chú thêm**:
-  - `telematics.service._response()` hiện gọi lookup vehicle riêng cho từng
-    item trong `list_telematics()`. Khi mở lại, ưu tiên bulk lookup hoặc query
-    projection phù hợp; không để service import trực tiếp repository/model của
-    domain khác nếu giải pháp cần vượt qua boundary domain.
-  - Cần chốt `error_codes` là danh sách mã lỗi, object có field `codes`, hay
-    schema versioned trước khi sửa model/migration/API.
-  - `simulator/telematic_simulator.py` nên bắt các exception cụ thể ở lớp HTTP
-    và JSON; `simulator/seed_simulator_devices.py` nên dùng response schema/type
-    rõ ràng thay cho giá trị `Any` từ `json.loads()`.
-  - Prefix thiết bị, VIN, license plate, API URL, MQTT endpoint và transaction
-    ID nên chuyển thành cấu hình/CLI argument có validation. Khi triển khai
-    phải giữ simulator deterministic khi cần replay và tránh log lộ thông tin
-    nhạy cảm.
+- **Short description**: Address technical debt that doesn't block the MVP,
+  including an N+1 query when building the telematic response, unifying the
+  `error_codes` contract across the MQTT payload/schema/database, and
+  tightening error handling/type checking in the simulator.
+- **Purpose/role in the system**:
+  - Reduces the number of database queries when the telematic list API has to
+    resolve the VIN of many devices; currently each item can trigger an
+    additional vehicle query.
+  - Keeps a single error representation from the telemetry message all the
+    way to the JSONB database and API, avoiding a situation where the payload
+    accepts `list[str]` but the data is stored as an object wrapped in
+    `{"codes": [...]}` without a clear contract.
+  - Helps the simulator distinguish network/HTTP/JSON errors from programming
+    errors, while keeping the JSON response type precise enough for mypy to
+    check.
+  - Makes simulator data configurable instead of depending on a fixed device
+    prefix, VIN, API/broker address, and transaction identity hardcoded in
+    source.
+- **Reason for deferral**: The local MVP has a small number of devices, the
+  list API isn't on the ingest hot path, and the simulator mainly serves
+  manual smoke testing. None of these issues break the current telemetry
+  lifecycle, but they will affect latency, error diagnosability, and test
+  reliability as the number of devices grows. Changing `error_codes` may also
+  require a migration or API versioning, so it shouldn't be changed
+  unilaterally while the MVP contract hasn't been finalized.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02),
+  `backend-crud-telematics.md` (if added), the local simulator, and the coding
+  convention in `CLAUDE.md`.
+- **Date recorded**: 2026-08-04
+- **Additional notes**:
+  - `telematics.service._response()` currently calls a separate vehicle
+    lookup for each item in `list_telematics()`. When resuming this, prefer a
+    bulk lookup or an appropriate query projection; don't let the service
+    directly import another domain's repository/model if the solution needs
+    to cross a domain boundary.
+  - Need to decide whether `error_codes` is a list of error codes, an object
+    with a `codes` field, or a versioned schema, before changing the
+    model/migration/API.
+  - `simulator/telematic_simulator.py` should catch specific exceptions at the
+    HTTP and JSON layers; `simulator/seed_simulator_devices.py` should use a
+    clear response schema/type instead of an `Any` value from `json.loads()`.
+  - The device prefix, VIN, license plate, API URL, MQTT endpoint, and
+    transaction ID should become configuration/CLI arguments with validation.
+    When implementing this, keep the simulator deterministic when replay is
+    needed and avoid logging sensitive information.
 
-### 30. Đánh giá khả năng hợp nhất domain `telematics` vào `vehicles`
+### 30. Assess whether the `telematics` domain can be merged into `vehicles`
 
-- **Mô tả ngắn**: Xem xét đưa hồ sơ thiết bị telematic và mapping thiết bị ↔ xe
-  vào cùng bounded context `vehicles`, tương tự cách `charging_stations` sở
-  hữu toàn bộ topology Station → EVSE → Connector. Đây chỉ là khả năng tái
-  cấu trúc trong tương lai; hiện tại vẫn giữ hai domain độc lập.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - `vehicles` có thể sở hữu hồ sơ xe, thiết bị gắn trên xe và lifecycle
-    mapping trong một service công khai.
-  - Luồng telemetry ingestion có thể resolve serial và vehicle trong cùng một
-    bounded context, giảm một chiều phụ thuộc liên-domain.
-  - Kiến trúc sẽ gọn hơn nếu telematic chỉ là thiết bị phụ thuộc vào xe và
-    không có nghiệp vụ quản lý độc lập.
-- **Lý do hoãn lại**: Hiện tại `telematics` và `vehicles` được tách vì
-  telematic có thể được provision trước, thay thế giữa lifecycle của xe hoặc
-  được quản lý như một thiết bị độc lập; ingestion cũng đang dùng public
-  service của `telematics` để resolve `(telematic_id, vehicle_id)`. Chưa có
-  quyết định rằng MVP chỉ hỗ trợ một telematic cố định cho mỗi xe.
-- **Điều kiện để gộp**: Xác nhận contract mới về số lượng thiết bị trên một
-  xe, provisioning, thay thế/tháo thiết bị, lịch sử mapping, trạng thái thiết
-  bị và quyền sở hữu dữ liệu. Nếu vẫn cần lifecycle thiết bị độc lập hoặc
-  nhiều loại thiết bị, tiếp tục giữ domain riêng.
-- **Việc cần cập nhật trước khi triển khai**: Rà soát `AGENTS.md`, planner
-  backend, `feature-list.md`, dependency rules, public service của
-  `telematics`, luồng MQTT ingestion, schema/repository/model và migration.
-  Không gộp bằng cách chỉ đổi tên thư mục hoặc tạo lớp chuyển tiếp tạm thời.
-- **Liên quan đến planner/feature**: cấu trúc domain backend, AD-02, AD-05 và
-  các planner về telemetry/vehicles/telematics.
-- **Ngày ghi nhận**: 2026-08-03
+- **Short description**: Consider moving the telematic device profile and the
+  device ↔ vehicle mapping into the same `vehicles` bounded context, similar
+  to how `charging_stations` owns the entire Station → EVSE → Connector
+  topology. This is only a possible future restructuring; the two domains
+  currently remain independent.
+- **Purpose/role in the system**:
+  - `vehicles` could own the vehicle profile, the device mounted on the
+    vehicle, and the mapping lifecycle within a single public service.
+  - The telemetry ingestion flow could resolve serial and vehicle within the
+    same bounded context, reducing one cross-domain dependency direction.
+  - The architecture would be simpler if a telematic is just a device
+    dependent on a vehicle with no independent management business logic.
+- **Reason for deferral**: `telematics` and `vehicles` are currently kept
+  separate because a telematic can be provisioned ahead of time, swapped
+  during a vehicle's lifecycle, or managed as an independent device; ingestion
+  is also currently using the public `telematics` service to resolve
+  `(telematic_id, vehicle_id)`. There's no decision yet that the MVP only
+  supports a single fixed telematic per vehicle.
+- **Conditions for merging**: Confirm a new contract for the number of devices
+  per vehicle, provisioning, device replace/unassign, mapping history, device
+  status, and data ownership. If an independent device lifecycle or multiple
+  device types are still needed, keep the domains separate.
+- **Work needed before implementation**: Review `CLAUDE.md`, the backend
+  planners, `feature-list.md`, dependency rules, the `telematics` public
+  service, the MQTT ingestion flow, schema/repository/model, and migrations.
+  Do not merge by simply renaming a directory or creating a temporary
+  forwarding layer.
+- **Related planner/feature**: backend domain structure, AD-02, AD-05, and
+  the telemetry/vehicles/telematics planners.
+- **Date recorded**: 2026-08-03
 
-### 31. Operational error handling và observability cho OCPP gateway
+### 31. Operational error handling and observability for the OCPP gateway
 
-- **Mô tả ngắn**: Bổ sung chính sách xử lý lỗi vận hành cho OCPP gateway ngoài
-  happy path, gồm mapping lỗi database khi handshake, response HTTP `503`, log
-  disconnect có close code và telemetry/metric cho lỗi theo station.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Phân biệt station chưa provision, database unavailable và handler failure.
-  - Cung cấp thông tin đủ để vận hành, cảnh báo và điều tra lỗi kết nối thật.
-  - Chuẩn hóa việc đóng hoặc giữ connection sau lỗi thay vì để framework xử lý
-    mặc định.
-- **Lý do hoãn lại**: OCPP MVP giả định station đã pre-provision, database
-  hoạt động, input hợp lệ và WebSocket ổn định. Active path hiện để lỗi
-  database handshake propagate ở process boundary, bỏ response `503` riêng,
-  dùng assertion cho invariant sau handshake và bỏ log chi tiết khi station
-  đóng kết nối bình thường để giữ gateway ngắn và tập trung vào luồng
-  `Started → Updated/MeterValues → Ended`.
-- **Liên quan đến planner/feature**:
-  `docs/02-planners/backend-charging-mvp-ideal.md` Bước 4, AD-03 và S-02.
-- **Ngày ghi nhận**: 2026-08-04
-- **Ghi chú thêm**: Khi triển khai production hoặc reliability path, phải chốt
-  error contract, health/readiness signal, close-code policy, structured
-  metrics/logging và test database outage trước khi bật từng nhánh riêng lẻ.
+- **Short description**: Add an operational error-handling policy for the
+  OCPP gateway beyond the happy path, including mapping database errors
+  during the handshake, an HTTP `503` response, logging disconnects with the
+  close code, and telemetry/metrics for per-station errors.
+- **Purpose/role in the system**:
+  - Distinguishes an unprovisioned station, database unavailability, and a
+    handler failure.
+  - Provides enough information for operations, alerting, and investigating
+    real connection failures.
+  - Standardizes closing or keeping the connection after an error instead of
+    letting the framework handle it by default.
+- **Reason for deferral**: The OCPP MVP assumes the station is
+  pre-provisioned, the database is up, input is valid, and the WebSocket is
+  stable. The active path currently lets a database handshake error propagate
+  at the process boundary, skips a dedicated `503` response, uses an
+  assertion for the invariant after the handshake, and skips detailed logging
+  when a station closes the connection normally, in order to keep the gateway
+  short and focused on the `Started → Updated/MeterValues → Ended` flow.
+- **Related planner/feature**:
+  `docs/02-planners/backend-charging-mvp-ideal.md` Step 4, AD-03 and S-02.
+- **Date recorded**: 2026-08-04
+- **Additional notes**: When implementing for production or the reliability
+  path, the error contract, health/readiness signal, close-code policy,
+  structured metrics/logging, and a database outage test must all be settled
+  before enabling individual branches one at a time.
 
-### 32. Bảo vệ transaction ID bị tái sử dụng sau phiên terminal
+### 32. Guarding against a transaction ID being reused after a terminal session
 
-- **Mô tả ngắn**: Bổ sung guard cho trường hợp Charging Station gửi lại cùng
-  `transaction_id` sau khi phiên trước đã `completed`, đặc biệt khi simulator
-  hoặc thiết bị thật tái sử dụng ID cho một phiên mới.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Giữ invariant mỗi cặp `(station_id, ocpp_transaction_id)` chỉ đại diện cho
-    một phiên sạc.
-  - Không cho `Started` của phiên mới làm thay đổi aggregate đã hoàn tất hoặc
-    tạo dữ liệu mơ hồ khi database chưa có unique constraint tương ứng.
-  - Không cho `Updated`, `Ended` hoặc `MeterValues` đến muộn cập nhật meter,
-    event và `updated_at` của session terminal.
-- **Lý do hoãn lại**: Charging MVP hiện giả định transaction message đến đúng
-  thứ tự, không duplicate và không reuse ID; active service chưa có đầy đủ
-  nhánh phân biệt duplicate, conflict, stale event và transaction ID bị tái sử
-  dụng. Đã phát hiện simulator có thể gửi `Started` với cùng ID sau khi phiên
-  trước completed, nên cần kiểm tra cả raw OCPP `eventType`, migration thực tế
-  và database constraint trước khi chốt behavior.
-- **Contract cần chốt khi mở lại**:
-  - `Started` với cùng `(station_id, transaction_id)` của session active là
-    duplicate/no-op hoặc conflict tùy fingerprint.
-  - `Started` với cùng key của session terminal phải bị từ chối; phiên mới phải
-    dùng transaction ID mới.
-  - Event và meter của session terminal chỉ được ACK/no-op nếu xác định là
-    duplicate hợp lệ; dữ liệu mới hoặc mâu thuẫn phải bị reject/conflict và
-    không sửa aggregate.
-- **Việc cần cập nhật trước khi triển khai**: Xác nhận unique constraint
-  `uq_charging_sessions_station_transaction` trên database đang chạy, bổ sung
-  test OCPP cho duplicate/reuse sau `Ended`, test terminal guard cho mọi event
-  và meter path, đồng thời log raw event type cùng station/transaction identity
-  ở mức đủ để điều tra mà không ghi raw payload nhạy cảm.
-- **Liên quan đến planner/feature**: `backend-charging.md`,
-  `backend-charging-mvp-ideal.md`, AD-03 và S-02.
-- **Ngày ghi nhận**: 2026-08-04
+- **Short description**: Add a guard for the case where a Charging Station
+  resends the same `transaction_id` after the previous session has already
+  `completed`, especially when the simulator or a real device reuses the ID
+  for a new session.
+- **Purpose/role in the system**:
+  - Preserves the invariant that each `(station_id, ocpp_transaction_id)` pair
+    represents exactly one charging session.
+  - Prevents a new session's `Started` from mutating an already-completed
+    aggregate or creating ambiguous data while the database has no
+    corresponding unique constraint.
+  - Prevents a late-arriving `Updated`, `Ended`, or `MeterValues` from
+    updating the meter, events, and `updated_at` of a terminal session.
+- **Reason for deferral**: The charging MVP currently assumes transaction
+  messages arrive in order, without duplicates, and without ID reuse; the
+  active service doesn't yet have full branches to distinguish duplicates,
+  conflicts, stale events, and a reused transaction ID. It has been observed
+  that the simulator can send `Started` with the same ID after the previous
+  session completed, so the raw OCPP `eventType`, the actual migration, and
+  the database constraint all need review before finalizing the behavior.
+- **Contract to settle when resuming this work**:
+  - A `Started` with the same `(station_id, transaction_id)` as an active
+    session is a duplicate/no-op or a conflict, depending on the fingerprint.
+  - A `Started` with the same key as a terminal session must be rejected; a
+    new session must use a new transaction ID.
+  - Events and meter values for a terminal session may only be
+    ACKed/no-opped if identified as a valid duplicate; new or conflicting
+    data must be rejected/conflicted and must not modify the aggregate.
+- **Work needed before implementation**: Confirm the
+  `uq_charging_sessions_station_transaction` unique constraint on the running
+  database, add OCPP tests for duplicate/reuse after `Ended`, add terminal
+  guard tests for every event and meter path, and log the raw event type
+  along with the station/transaction identity at a level sufficient for
+  investigation without recording sensitive raw payloads.
+- **Related planner/feature**: `backend-charging.md`,
+  `backend-charging-mvp-ideal.md`, AD-03 and S-02.
+- **Date recorded**: 2026-08-04
 
-### 33. API monitoring và cảnh báo telemetry mở rộng
+### 33. Expanded telemetry monitoring and alerting API
 
-- **Mô tả ngắn**: Bổ sung API đọc toàn bộ lịch sử telemetry, bản đồ xe/trạm,
-  trạng thái connector tổng hợp, cảnh báo pin/bất thường và cơ chế push ngưỡng
-  cảnh báo tới thiết bị.
-- **Tác dụng/Vai trò trong hệ thống**:
-  - Cung cấp dữ liệu lịch sử cho dashboard và truy vết hành trình.
-  - Tổng hợp trạng thái đội xe, trạm sạc và connector cho màn hình vận hành.
-  - Phát hiện SOC/nhiệt độ pin bất thường, chống lặp cảnh báo và đồng bộ cấu
-    hình cảnh báo với telematic.
-- **Lý do hoãn lại**: Baseline hiện tại chỉ cần ingestion telemetry và API đọc
-  bản ghi mới nhất của một xe. Chưa có contract ổn định cho query lịch sử,
-  snapshot connector, notification, ACK từ thiết bị hoặc quyền truy cập theo
-  đội xe; không tạo alert table, API hoặc MQTT command placeholder trong MVP.
-- **Liên quan đến planner/feature**: `backend-telemetry-query-api.md`,
-  `backend-telemetry-ingestion.md`, FM-01, FM-02 và mục 3.1/3.7/4.5 trong
+- **Short description**: Add an API to read the full telemetry history, a
+  vehicle/station map, aggregated connector status, battery/anomaly alerts,
+  and a mechanism to push alert thresholds to devices.
+- **Purpose/role in the system**:
+  - Provides historical data for dashboards and trip tracing.
+  - Aggregates fleet, charging station, and connector status for an
+    operations screen.
+  - Detects abnormal SOC/battery temperature, prevents duplicate alerts, and
+    syncs alert configuration with the telematic.
+- **Reason for deferral**: The current baseline only needs telemetry
+  ingestion and an API to read a vehicle's latest record. There's no stable
+  contract yet for history queries, connector snapshots, notifications,
+  device ACKs, or fleet-based access control; no alert table, API, or MQTT
+  command placeholder should be created in the MVP.
+- **Related planner/feature**: `backend-telemetry-query-api.md`,
+  `backend-telemetry-ingestion.md`, FM-01, FM-02, and items 3.1/3.7/4.5 in
   `docs/01-requirements/feature-list.md`.
-- **Ngày ghi nhận**: 2026-09-15
-- **Ghi chú thêm**: Khi mở lại, cần chốt riêng phạm vi history/map/connector và
-  lifecycle alert trước khi tạo migration. Không suy ra rằng các API này đã có
-  chỉ vì dữ liệu telemetry đã được lưu trong TimescaleDB.
+- **Date recorded**: 2026-09-15
+- **Additional notes**: When resuming this work, the scope of
+  history/map/connector and the alert lifecycle must be settled separately
+  before creating a migration. Do not assume these APIs already exist just
+  because telemetry data is already stored in TimescaleDB.
 
 ---
 
-## Quy tắc cập nhật
+## Update rules
 
-1. **Khi nào ghi nhận**: Khi developer hoặc AI agent quyết định bỏ qua/xóa một thành phần với lý do "hiện tại chưa cần, nhưng sau này chắc chắn phải thêm".
-2. **Không ghi nhận khi**: Thành phần đó thực sự không cần cho hệ thống (không có kế hoạch thêm trong tương lai).
-3. **Format**: Thêm entry mới theo mẫu trên, đánh số thứ tự tiếp theo.
-4. **Rà soát**: Định kỳ (VD: mỗi sprint) review lại file này để lên kế hoạch triển khai.
+1. **When to record an entry**: When a developer or AI agent decides to skip/remove a component for the reason "not needed right now, but will definitely need to be added later".
+2. **When not to record an entry**: When the component genuinely isn't needed for the system (no plan to add it in the future).
+3. **Format**: Add a new entry following the template above, numbered sequentially.
+4. **Review**: Periodically (e.g., every sprint) review this file to plan implementation.

@@ -1,4 +1,4 @@
-"""Điểm khởi tạo ứng dụng FastAPI của backend."""
+"""Backend FastAPI application entry point."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager

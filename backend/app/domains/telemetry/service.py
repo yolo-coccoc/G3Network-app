@@ -1,10 +1,11 @@
-"""Service nghiệp vụ của domain telemetry.
+"""Business service for the telemetry domain.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Luồng MVP hiện tại xử lý từng message để giảm độ trễ và cô lập transaction.
-Các hàm batch vẫn được giữ nguyên trong module vì phase sau có thể cần tối ưu
-throughput bằng batch lookup và bulk insert.
+The current MVP flow processes each message individually to reduce latency
+and isolate transactions. The batch functions are kept as-is in the module
+because a later phase may need to optimize throughput with batch lookup and
+bulk insert.
 """
 
 import logging
@@ -30,17 +31,18 @@ logger = logging.getLogger(__name__)
 async def get_latest_vehicle_telemetry_response(
     db: AsyncSession, vehicle_id: UUID
 ) -> VehicleTelemetryLatestResponse:
-    """Lấy telemetry mới nhất sau khi xác nhận xe còn hoạt động.
+    """Get the latest telemetry after confirming the vehicle is still active.
 
     Args:
-        db: Phiên database do HTTP boundary sở hữu.
-        vehicle_id: ID nội bộ của xe cần truy vấn.
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to query.
 
     Returns:
-        Schema response chứa bản ghi telemetry mới nhất.
+        Response schema containing the latest telemetry record.
 
     Raises:
-        TelemetryNotFoundError: Khi xe không tồn tại hoặc chưa có telemetry.
+        TelemetryNotFoundError: When the vehicle does not exist or has no
+            telemetry yet.
     """
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
         db,
@@ -59,7 +61,7 @@ async def get_latest_vehicle_telemetry_response(
 
 
 class BatchResult(TypedDict):
-    """Các bộ đếm trả về sau khi xử lý một batch telemetry."""
+    """Counters returned after processing a telemetry batch."""
 
     processed: int
     skipped: int
@@ -67,7 +69,7 @@ class BatchResult(TypedDict):
 
 
 class MessageResult(TypedDict):
-    """Các bộ đếm trả về sau khi xử lý một message telemetry."""
+    """Counters returned after processing a telemetry message."""
 
     processed: int
     skipped: int
@@ -78,28 +80,33 @@ async def process_message(
     db: AsyncSession,
     envelope: TelemetryEnvelope,
 ) -> MessageResult:
-    """Xử lý một message telemetry trong phạm vi session hiện tại.
+    """Process one telemetry message within the current session's scope.
 
-    Quy tắc nghiệp vụ:
-    - Lookup đúng một mapping theo ``telematic_serial``.
-    - Serial không tồn tại hoặc thiết bị chưa được gán xe sẽ bị skip an toàn.
-    - Message hợp lệ được enrich rồi insert đúng một row.
-    - Lỗi chuyển đổi message chỉ làm message hiện tại tăng ``errors``; lỗi DB
-      được raise để transaction boundary rollback và worker dừng theo policy MVP.
+    Business rules:
+    - Look up exactly one mapping by ``telematic_serial``.
+    - A serial that doesn't exist or a device not yet assigned to a vehicle
+      is safely skipped.
+    - A valid message is enriched and then exactly one row is inserted.
+    - A message conversion error only increments ``errors`` for the current
+      message; a DB error is raised so the transaction boundary rolls back
+      and the worker stops per MVP policy.
 
     Args:
-        db: AsyncSession do worker sở hữu transaction.
-        envelope: Message đã được MQTT consumer validate và raw payload gốc.
+        db: AsyncSession whose transaction is owned by the worker.
+        envelope: Message already validated by the MQTT consumer, along with
+            the original raw payload.
 
     Returns:
-        Dict gồm ``processed``, ``skipped`` và ``errors`` cho đúng message đó.
+        Dict with ``processed``, ``skipped`` and ``errors`` for that single
+        message.
 
     Raises:
-        Exception: Propagate lỗi database hoặc lỗi bất ngờ để worker rollback.
+        Exception: Propagates database errors or unexpected errors so the
+            worker can roll back.
 
     Side Effects:
-        Có thể ghi một row vào session và tạo structured log. Hàm không commit
-        hoặc rollback.
+        May write one row into the session and emit a structured log. The
+        function does not commit or roll back.
     """
     message = envelope.message
     mapping = await telematics_service.resolve_mapping_by_serial(
@@ -153,61 +160,62 @@ async def process_batch(
     db: AsyncSession, messages: Sequence[TelemetryEnvelope]
 ) -> BatchResult:
     """
-    Xử lý batch telemetry messages.
+    Process a batch of telemetry messages.
 
     Business logic:
-    1. Lấy danh sách telematic_serial duy nhất từ batch
-    2. Lookup telematic_id và vehicle_id từ repository (batch query)
-    3. Với mỗi message:
-       - Nếu telematic_serial không tồn tại: log warning, skip
-       - Nếu vehicle_id là None: log warning, skip
-       - Convert sang DB dict
-    4. Bulk insert vào database
+    1. Get the list of unique telematic_serial values from the batch
+    2. Look up telematic_id and vehicle_id from the repository (batch query)
+    3. For each message:
+       - If telematic_serial does not exist: log warning, skip
+       - If vehicle_id is None: log warning, skip
+       - Convert to a DB dict
+    4. Bulk insert into the database
 
     Args:
-        db: AsyncSession để thao tác database
-        messages: Danh sách TelemetryMessage cần xử lý
+        db: AsyncSession used to operate on the database
+        messages: List of TelemetryMessage to process
 
     Returns:
-        Dict với keys:
-        - processed: số message processed thành công
-        - skipped: số message bị skip (telematic không tồn tại, vehicle chưa gán)
-        - errors: số message gặp lỗi
+        Dict with keys:
+        - processed: number of messages processed successfully
+        - skipped: number of messages skipped (telematic not found, vehicle
+          not yet assigned)
+        - errors: number of messages that had errors
 
     Note:
-        - Batch lookup: 1 query cho cả batch, không query từng message
-        - Không dùng cache trong MVP
-        - Nếu DB error: raise để batch worker xử lý
+        - Batch lookup: 1 query for the whole batch, not one query per message
+        - No cache used in the MVP
+        - If a DB error occurs: raise so the batch worker can handle it
     """
     if not messages:
         return {"processed": 0, "skipped": 0, "errors": 0}
 
     logger.info("process_batch started", extra={"batch_size": len(messages)})
 
-    # Step 1: Lấy danh sách telematic_serial duy nhất từ batch
+    # Step 1: Get the list of unique telematic_serial values from the batch
     unique_serials = list(
         set(envelope.message.telematic_serial for envelope in messages)
     )
 
-    # Step 2: Batch lookup telematic mappings (1 query cho cả batch)
-    # Mapping đã được chuẩn hóa thành DTO để tránh unpack tuple không rõ nghĩa.
+    # Step 2: Batch lookup telematic mappings (1 query for the whole batch)
+    # The mapping has been normalized into a DTO to avoid unclear tuple unpacking.
     telematic_mappings = await telematics_service.resolve_mappings_by_serial(
         db, unique_serials
     )
 
-    # Step 3: Process từng message
+    # Step 3: Process each message
     valid_messages = []
     skipped_count = 0
     error_count = 0
 
-    # Thời điểm backend nhận message (cùng 1 timestamp cho cả batch)
+    # Timestamp when the backend received the message (same timestamp for the whole batch)
     received_at = datetime.now(timezone.utc)
 
     for envelope in messages:
         message = envelope.message
         serial = message.telematic_serial
 
-        # Kiểm tra telematic_serial có tồn tại trong mapping không
+        # Check whether telematic_serial exists in the mapping
         if serial not in telematic_mappings:
             logger.warning(
                 "telematic_serial not found, skipping message",
@@ -223,9 +231,9 @@ async def process_batch(
         telematic_id = mapping.telematic_id
         vehicle_id = mapping.vehicle_id
 
-        # Kiểm tra vehicle_id có được gán không
-        # (telematics.service.resolve_mappings_by_serial đã filter vehicle_id IS NOT NULL,
-        # nhưng check thêm để chắc chắn)
+        # Check whether vehicle_id has been assigned
+        # (telematics.service.resolve_mappings_by_serial already filters
+        # vehicle_id IS NOT NULL, but check again to be sure)
         if vehicle_id is None:
             logger.warning(
                 "vehicle_id is None for telematic, skipping message",
@@ -238,7 +246,7 @@ async def process_batch(
             skipped_count += 1
             continue
 
-        # Convert message sang DB dict
+        # Convert message to DB dict
         try:
             telemetry_values = message.to_vehicle_telemetry_values(
                 telematic_id,
@@ -260,7 +268,7 @@ async def process_batch(
             error_count += 1
             continue
 
-    # Step 4: Bulk insert vào database
+    # Step 4: Bulk insert into the database
     processed_count = 0
     if valid_messages:
         processed_count = await telemetry_repository.bulk_insert_telemetry(

@@ -1,78 +1,92 @@
 # Planner: Backend Telemetry Query API
 
-> Mã chức năng: FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Đã triển khai API latest ở phạm vi MVP; API history/map/alert
-> mở rộng chưa có source
-> Ngày tạo: 2026-07-29
+> Feature code: FM-01 (Realtime dashboard), FM-02 (Position/status history)
+> Status: 🚧 The latest API has been implemented within MVP scope; the
+> extended history/map/alert APIs have no source yet
+> Created: 2026-07-29
 
-## 1. Mục tiêu
+## 1. Goal
 
-Xây dựng lớp HTTP API chỉ đọc dữ liệu đã được lưu trong bảng
-`vehicle_telemetry`. Planner này là nơi bổ sung các API query telemetry trong
-tương lai; không xử lý MQTT ingestion, không ghi telemetry và không quản lý hồ
-sơ thiết bị telematic.
+Build a read-only HTTP API layer over data already stored in the
+`vehicle_telemetry` table. This planner is where future telemetry query APIs
+will be added; it does not handle MQTT ingestion, does not write telemetry,
+and does not manage telematic device records.
 
-Phạm vi active hiện tại chỉ gồm API lấy bản ghi telemetry mới nhất của một xe.
+The current active scope only includes the API to get the latest telemetry
+record for a vehicle.
 
-## 2. API trong scope hiện tại
+## 2. APIs in current scope
 
-### 2.1. Lấy telemetry mới nhất của một xe
+### 2.1. Get the latest telemetry for a vehicle
 
 ```http
 GET /api/v1/telemetry/vehicles/{vehicle_id}/latest
 ```
 
-Quy tắc:
+Rules:
 
-- Lấy đúng một bản ghi có `recorded_at` lớn nhất theo `vehicle_id`.
-- `vehicle_id` là internal ID của xe; không dùng biển số hoặc
-  `telematic_serial` làm định danh endpoint.
-- Xe không tồn tại hoặc đã soft delete: trả `404` theo domain `vehicles`.
-- Xe tồn tại nhưng chưa có telemetry: trả `404` với lỗi nghiệp vụ rõ ràng.
-- Không tự suy diễn trạng thái online/offline và không tạo dữ liệu mới.
-- Query phải tận dụng index theo `vehicle_id` và `recorded_at DESC`.
+- Fetch exactly one record with the largest `recorded_at` for the given
+  `vehicle_id`.
+- `vehicle_id` is the vehicle's internal ID; the license plate or
+  `telematic_serial` must not be used as the endpoint identifier.
+- Vehicle does not exist or has been soft deleted: return `404` per the
+  `vehicles` domain.
+- Vehicle exists but has no telemetry yet: return `404` with a clear business
+  error.
+- Do not infer online/offline status and do not create new data.
+- The query must make use of the index on `vehicle_id` and
+  `recorded_at DESC`.
 
-Response tối thiểu gồm `vehicle_id`, `telematic_serial`, `recorded_at`, vị trí,
-tốc độ, hướng, SOC, odometer, các trường pin, tín hiệu và mã lỗi đang có trong
-model.
+The minimal response includes `vehicle_id`, `telematic_serial`,
+`recorded_at`, position, speed, heading, SOC, odometer, battery fields, signal,
+and any error codes present in the model.
 
-## 3. Ranh giới triển khai
+## 3. Implementation boundaries
 
-- Router chỉ xử lý HTTP và chuyển domain exception thành status code.
-- Service xử lý use case, không import FastAPI và không commit/rollback.
-- Repository chỉ query model `VehicleTelemetry`, không chứa business logic.
-- Schema response không import SQLAlchemy model.
-- Kiểm tra xe và quyền truy cập thông qua public service của domain `vehicles`;
-  không import trực tiếp `vehicles.repository` hoặc `vehicles.models`.
-- Dùng `Depends(get_db)` làm entry boundary sở hữu session và transaction.
+- The router handles only HTTP concerns and translates domain exceptions into
+  status codes.
+- The service handles the use case, does not import FastAPI, and does not
+  commit/rollback.
+- The repository only queries the `VehicleTelemetry` model, with no business
+  logic.
+- The response schema does not import the SQLAlchemy model.
+- Vehicle existence and access checks go through the public service of the
+  `vehicles` domain; do not import `vehicles.repository` or `vehicles.models`
+  directly.
+- Use `Depends(get_db)` as the entry boundary that owns the session and
+  transaction.
 
-## 4. Kết quả triển khai phạm vi đầu tiên
+## 4. Results of the first implementation phase
 
-- Đã có repository query bản ghi mới nhất theo `vehicle_id` và `recorded_at`.
-- Đã có service kiểm tra xe active qua public service của `vehicles`.
-- Đã có response schema và endpoint `/api/v1/telemetry/vehicles/{vehicle_id}/latest`.
-- Các API toàn bộ lịch sử, hành trình, bản đồ, tổng hợp, alert và push realtime
-  vẫn chưa triển khai.
-- Automated regression test được tách sang
+- A repository query for the latest record by `vehicle_id` and `recorded_at`
+  exists.
+- A service that checks the vehicle is active via the public service of
+  `vehicles` exists.
+- A response schema and the `/api/v1/telemetry/vehicles/{vehicle_id}/latest`
+  endpoint exist.
+- The full history, trip, map, aggregate, alert, and realtime push APIs are
+  not yet implemented.
+- Automated regression tests have been split out to
   [`backend-automated-tests.md`](./backend-automated-tests.md).
 
-## 5. Phân rã công việc mở rộng
+## 5. Extended work breakdown
 
-1. Thêm query repository lấy bản ghi mới nhất theo `vehicle_id`.
-2. Thêm service function và domain exception cho trường hợp không có dữ liệu.
-3. Thêm response schema riêng cho API.
-4. Tạo `backend/app/domains/telemetry/router.py` nếu domain chưa có router.
-5. Đăng ký router trong `app.api.main` với prefix `/api/v1/telemetry`.
-6. Bổ sung kiểm tra quyền theo phạm vi đội xe khi contract identity đã sẵn sàng.
-7. Smoke test: có dữ liệu, nhiều bản ghi, chưa có dữ liệu, xe không tồn tại và
-   xe đã soft delete.
+1. Add a repository query to get the latest record by `vehicle_id`.
+2. Add a service function and a domain exception for the no-data case.
+3. Add a dedicated response schema for the API.
+4. Create `backend/app/domains/telemetry/router.py` if the domain does not
+   have a router yet.
+5. Register the router in `app.api.main` with the prefix `/api/v1/telemetry`.
+6. Add fleet-scope authorization checks once the identity contract is ready.
+7. Smoke test: data present, multiple records, no data yet, vehicle does not
+   exist, and vehicle has been soft deleted.
 
-## 6. Các API sẽ bổ sung sau
+## 6. APIs to be added later
 
-Các API sau sẽ được cập nhật vào planner này khi được chốt:
+The following APIs will be added to this planner once finalized:
 
-- lịch sử telemetry theo khoảng thời gian;
-- lịch sử hành trình GPS;
-- dữ liệu tổng hợp theo ngày/ca lái;
-- trạng thái tổng hợp cho dashboard;
-- cơ chế push realtime nếu quyết định dùng WebSocket hoặc SSE.
+- telemetry history over a time range;
+- GPS trip history;
+- aggregated data by day/shift;
+- aggregated status for the dashboard;
+- realtime push mechanism if WebSocket or SSE is decided on.

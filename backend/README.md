@@ -1,19 +1,20 @@
 # G3Network Backend
 
-Backend FastAPI cho MVP hệ thống hỗ trợ tài xế và quản lý đội xe tải điện.
+Backend FastAPI for the MVP driver assistance and electric truck fleet
+management system.
 
-## Phạm vi hiện tại
+## Current scope
 
-- CRUD `vehicles` và `telematics`, gồm mapping thiết bị với xe.
-- Nhận telemetry qua MQTT và lưu vào PostgreSQL/TimescaleDB.
-- `GET /api/v1/telemetry/vehicles/{vehicle_id}/latest` để đọc telemetry mới
-  nhất của xe.
-- CRUD topology `charging_stations` → EVSE → connector.
-- OCPP 2.0.1 gateway và lifecycle charging session happy path.
-- API đọc charging session, event và meter value.
+- `vehicles` and `telematics` CRUD, including mapping devices to vehicles.
+- Receiving telemetry over MQTT and storing it in PostgreSQL/TimescaleDB.
+- `GET /api/v1/telemetry/vehicles/{vehicle_id}/latest` for reading a
+  vehicle's latest telemetry.
+- `charging_stations` → EVSE → connector topology CRUD.
+- OCPP 2.0.1 gateway and the charging session happy-path lifecycle.
+- API for reading charging sessions, events and meter values.
 
-Các API lịch sử telemetry, bản đồ, alert, device health, policy, user/RBAC và
-frontend chưa thuộc source hiện tại.
+Telemetry history API, map, alerts, device health, policy, user/RBAC and
+frontend are not yet part of the current source.
 
 ## Development
 
@@ -42,7 +43,7 @@ The OCPP gateway listens on `CHARGING_OCPP_HOST` and
 `ocpp2.0.1` WebSocket subprotocol. The station identity in
 `/ocpp/{ocpp_identity}` must already exist in the charging-stations API.
 
-## Kiểm tra
+## Checks
 
 ```bash
 uv run pytest
@@ -52,8 +53,8 @@ uv run isort --check-only .
 uv run mypy .
 ```
 
-Hai test PostgreSQL integration được đánh dấu skip mặc định. Chạy chúng khi
-muốn kiểm tra database tạm:
+Two PostgreSQL integration tests are marked skip by default. Run them when
+you want to test against a real database:
 
 ```bash
 RUN_DB_INTEGRATION=1 uv run pytest tests/test_postgres_integration.py

@@ -1,125 +1,125 @@
-# Planner: Automated tests tối thiểu cho backend hiện có
+# Planner: Minimal automated tests for the current backend
 
-> Mã chức năng: AD-02, AD-03, AD-05, FM-01, FM-02, S-02
+> Feature code: AD-02, AD-03, AD-05, FM-01, FM-02, S-02
 >
-> Trạng thái: 🚧 Đã triển khai bộ test tối thiểu; PostgreSQL integration test có
-> nhưng skip mặc định nếu chưa bật biến môi trường
+> Status: 🚧 A minimal test suite has been implemented; PostgreSQL integration tests exist
+> but are skipped by default unless the environment variable is enabled
 >
-> Mục tiêu: tạo một bộ pytest nhỏ, chạy nhanh và bảo vệ các contract quan trọng
-> của backend hiện tại. Planner này không nhằm đạt coverage cao.
+> Goal: create a small, fast pytest suite that protects the important contracts
+> of the current backend. This planner does not aim for high coverage.
 
-## 1. Phạm vi
+## 1. Scope
 
-Backend hiện có gồm các domain:
+The current backend consists of the following domains:
 
-- `vehicles`: CRUD và soft delete.
-- `telematics`: CRUD, resolve VIN và mapping thiết bị–xe.
-- `telemetry`: validation message, normalize UTC, query latest và ingestion worker.
-- `charging_stations`: topology CRUD và resolve OCPP topology.
+- `vehicles`: CRUD and soft delete.
+- `telematics`: CRUD, VIN resolution, and device-vehicle mapping.
+- `telemetry`: message validation, UTC normalization, latest query, and the ingestion worker.
+- `charging_stations`: topology CRUD and OCPP topology resolution.
 - `charging_sessions`: lifecycle `Started → Updated/MeterValues → Ended`.
-- `charging_stations/ocpp`: parse handshake, timestamp, meter và boundary sang
+- `charging_stations/ocpp`: parses handshake, timestamp, meter, and boundary into
   `charging_sessions`.
-- `app.api.main`: health endpoint và đăng ký router.
+- `app.api.main`: health endpoint and router registration.
 
-Không test reliability production, retry, duplicate detection, reconnect,
-authorization, payment hoặc UI; các nhóm này chưa thuộc MVP active.
+Does not test production reliability, retry, duplicate detection, reconnect,
+authorization, payment, or UI; these groups are not yet part of the active MVP.
 
-## 2. Nguyên tắc đơn giản
+## 2. Principles of simplicity
 
-- Dùng `pytest` và `pytest-asyncio` đã có trong nhóm dependency dev.
-- Ưu tiên unit/smoke test không cần PostgreSQL, EMQX hoặc Docker.
-- Không tạo fixture framework phức tạp và không thêm thư viện test mới.
-- Mỗi test kiểm tra một hành vi observable; không kiểm tra implementation detail.
-- Database integration chỉ là một nhóm tùy chọn chạy khi hạ tầng dev sẵn sàng.
-- Bộ test hiện tại có 16 test unit/smoke và 2 test PostgreSQL integration; nhóm
-  integration được skip mặc định.
+- Use `pytest` and `pytest-asyncio`, already present in the dev dependency group.
+- Prefer unit/smoke tests that do not need PostgreSQL, EMQX, or Docker.
+- Do not create a complex fixture framework and do not add new test libraries.
+- Each test checks one observable behavior; it does not check implementation detail.
+- Database integration is only an optional group that runs when the dev infrastructure is ready.
+- The current test suite has 16 unit/smoke tests and 2 PostgreSQL integration tests; the
+  integration group is skipped by default.
 
-## 3. Cách hiểu đúng về số lượng test
+## 3. Correctly understanding the test count
 
-Test được thiết kế theo hành vi/luồng nghiệp vụ và contract observable, không
-phải mỗi file một test hoặc mỗi method một test.
+Tests are designed around business behaviors/flows and observable contracts, not
+one test per file or one test per method.
 
-Ví dụ với charging:
+Example with charging:
 
 ```text
-OCPP/HTTP input → schema/adapter → service → fake repository → kết quả
+OCPP/HTTP input → schema/adapter → service → fake repository → result
 ```
 
-Một test có thể gọi nhiều method cùng thuộc một luồng `Started` hoặc `Ended`.
-Ngược lại, một method chỉ cần test riêng khi nó có rule quan trọng, ví dụ
-normalize Wh/kWh, từ chối timestamp không có timezone hoặc xử lý lỗi worker.
+A single test can call multiple methods belonging to the same `Started` or `Ended` flow.
+Conversely, a method only needs its own dedicated test when it has an important rule, e.g.
+normalizing Wh/kWh, rejecting a timestamp without a timezone, or handling a worker error.
 
-Vì vậy 10–15 test case là số case hành vi, không phải 10–15 file hay 10–15
-method. Mỗi test chỉ nên kiểm tra một kết quả observable; các helper nội bộ
-không có rule riêng thì không cần test trực tiếp.
+So 10-15 test cases is a count of behavior cases, not 10-15 files or 10-15
+methods. Each test should check only one observable outcome; internal helpers
+without their own rule do not need a direct test.
 
-## 4. Cấu trúc test đề xuất
+## 4. Proposed test structure
 
 ### 4.1. `backend/tests/test_api_smoke.py`
 
-Khoảng 2 test:
+About 2 tests:
 
-1. Ứng dụng tạo được và OpenAPI có `/health`, vehicles, telematics, telemetry,
-   charging stations và charging sessions.
-2. Health endpoint trả `status=healthy` và version hiện tại.
+1. The application can be created and the OpenAPI schema has `/health`, vehicles, telematics, telemetry,
+   charging stations, and charging sessions.
+2. The health endpoint returns `status=healthy` and the current version.
 
-Không gọi database.
+Does not call the database.
 
 ### 4.2. `backend/tests/test_schema_smoke.py`
 
-Khoảng 4 test:
+About 4 tests:
 
-1. `TelemetryMessage` normalize timestamp có timezone về UTC.
-2. `TelemetryMessage` từ chối timestamp không có timezone và payload sai range.
-3. Vehicle/telematic request schema nhận đúng dữ liệu hợp lệ và reject dữ liệu
-   sai contract cơ bản.
-4. Meter OCPP canonicalize Wh/kWh về `Decimal` Wh.
+1. `TelemetryMessage` normalizes a timestamp with a timezone to UTC.
+2. `TelemetryMessage` rejects a timestamp without a timezone and a payload out of range.
+3. Vehicle/telematic request schemas accept valid data correctly and reject data
+   that violates the basic contract.
+4. The OCPP meter canonicalizes Wh/kWh to `Decimal` Wh.
 
 ### 4.3. `backend/tests/test_service_smoke.py`
 
-Khoảng 5 test, dùng fake repository hoặc monkeypatch nhỏ để phủ các luồng
-chính của toàn bộ backend:
+About 5 tests, using a fake repository or a small monkeypatch to cover the main
+flows across the whole backend:
 
-1. Vehicle tạo/cập nhật record hợp lệ qua service.
-2. Vehicle soft-delete không còn xuất hiện trong lookup/list active.
-3. Telematic resolve `vehicle_vin` đúng sang `vehicle_id`, VIN không tồn tại
-   thì mapping là `NULL` theo contract.
-4. Telemetry bỏ qua message không resolve được mapping và persist message hợp
-   lệ đúng một lần.
-5. Charging chạy được `Started → MeterValues/Updated → Ended`, chuyển session
-   sang completed và tính meter cuối/energy delivered.
+1. Vehicle create/update produces a valid record via the service.
+2. A soft-deleted vehicle no longer appears in the active lookup/list.
+3. Telematic resolves `vehicle_vin` correctly to `vehicle_id`; if the VIN does not exist,
+   the mapping is `NULL` per contract.
+4. Telemetry skips a message whose mapping cannot be resolved and persists a valid message
+   exactly once.
+5. Charging can run `Started → MeterValues/Updated → Ended`, transitioning the session
+   to completed and computing the final meter reading/energy delivered.
 
-Test không tạo `AsyncSession` thật nếu không cần; transaction boundary được kiểm
-tra bằng việc service không gọi `commit()`/`rollback()`.
+Tests do not create a real `AsyncSession` unless necessary; the transaction boundary is checked
+by verifying the service does not call `commit()`/`rollback()`.
 
 ### 4.4. `backend/tests/test_worker_smoke.py`
 
-Khoảng 2 test:
+About 2 tests:
 
-1. `MessageWorker` start/stop được khi queue rỗng.
-2. Worker dừng và propagate lỗi persistence theo policy MVP.
+1. `MessageWorker` can start/stop when the queue is empty.
+2. The worker stops and propagates a persistence error per the MVP policy.
 
 ### 4.5. `backend/tests/test_migrations_smoke.py`
 
-Ban đầu chỉ cần 1–2 test tĩnh:
+Initially just 1-2 static tests:
 
-1. Alembic có đúng một head `0004_create_charging_mvp_schema`.
-2. Upgrade offline có đủ bốn bước: reset, vehicles/telematics,
-   vehicle telemetry và charging MVP.
-3. Reset migration chỉ xóa bảng/type nghiệp vụ trong allowlist, không xóa
-   `alembic_version` hoặc extension database.
+1. Alembic has exactly one head, `0004_create_charging_mvp_schema`.
+2. An offline upgrade has all four steps: reset, vehicles/telematics,
+   vehicle telemetry, and charging MVP.
+3. The reset migration only drops business tables/types in the allowlist, not
+   `alembic_version` or the database extensions.
 
-Sau khi có database test riêng, bổ sung một test upgrade/downgrade/upgrade trên
-database tạm. Không chạy rollback trên database dev đang chứa dữ liệu thật.
+Once a dedicated test database is available, add an upgrade/downgrade/upgrade test on a
+temporary database. Do not run a rollback on a dev database that holds real data.
 
-## 5. Tiêu chí hoàn thành
+## 5. Definition of done
 
-- `pytest` thu thập được test source từ Git, không còn kết quả `0 tests`.
-- Bộ test chạy được không cần Docker.
-- Tất cả test case trong phạm vi trên pass.
-- `pytest` được thêm vào lệnh kiểm tra backend trong Makefile nếu không làm thay
-  đổi convention hiện tại.
-- Chạy được:
+- `pytest` collects test sources from Git; no more `0 tests` result.
+- The test suite runs without needing Docker.
+- All test cases in the scope above pass.
+- `pytest` is added to the backend check command in the Makefile if it does not change
+  the current convention.
+- The following runs successfully:
 
 ```bash
 cd backend
@@ -128,75 +128,75 @@ uv run ruff check .
 uv run black --check .
 uv run isort --check-only .
 uv run mypy .
-# Chạy từ backend để import được package app khi kiểm tra simulator.
+# Run from backend so the app package can be imported when checking the simulator.
 uv run mypy ../simulator
 ```
 
-- Ghi rõ test nào cần PostgreSQL/TimescaleDB và test nào chạy unit-only.
+- Clearly note which tests need PostgreSQL/TimescaleDB and which run unit-only.
 
-## 6. Thứ tự triển khai
+## 6. Implementation order
 
-1. Tạo test API/schema/worker không cần hạ tầng.
-2. Tạo fake repository tối giản cho telemetry và charging service.
-3. Hoàn tất migration reset/baseline, sau đó thêm kiểm tra migration tĩnh.
-4. Chạy toàn bộ static checks và cập nhật README/planner bằng kết quả thực tế.
+1. Create API/schema/worker tests that need no infrastructure.
+2. Create a minimal fake repository for the telemetry and charging services.
+3. Complete the migration reset/baseline, then add static migration checks.
+4. Run all static checks and update the README/planner with the actual results.
 
-## 7. Kế hoạch migration reset/baseline
+## 7. Migration reset/baseline plan
 
-### Quyết định áp dụng
+### Decision adopted
 
-Vì database đang ở giai đoạn khởi tạo, không tiếp tục bảo trì chuỗi migration
-legacy. Toàn bộ migration cũ đã được thay bằng một graph ngắn:
+Since the database is still at the initialization stage, the legacy migration
+chain is no longer maintained. All old migrations have been replaced with a short graph:
 
-1. `0001_reset_application_schema`: xóa các bảng/type nghiệp vụ cũ trong
-   allowlist, giữ `alembic_version` và extension.
-2. `0002_vehicles_telematics`: tạo hai bảng hồ sơ.
-3. `0003_create_vehicle_telemetry`: tạo telemetry hypertable.
-4. `0004_create_charging_mvp_schema`: tạo sáu bảng charging active, trong đó
-   events và meter values là hypertable.
+1. `0001_reset_application_schema`: drops old business tables/types in the
+   allowlist, keeping `alembic_version` and extensions.
+2. `0002_vehicles_telematics`: creates the two record tables.
+3. `0003_create_vehicle_telemetry`: creates the telemetry hypertable.
+4. `0004_create_charging_mvp_schema`: creates the six active charging tables, of which
+   events and meter values are hypertables.
 
-### Cách áp dụng cho database local đang có
+### How to apply this to an existing local database
 
-Do graph cũ đã bị xóa, database đang giữ revision cũ không thể tự nhận graph
-mới. Trên database local được phép mất dữ liệu:
+Since the old graph has been removed, a database still holding an old revision cannot recognize the
+new graph on its own. On a local database where data loss is acceptable:
 
-1. Dừng API/worker đang kết nối database.
-2. Xóa bảng `alembic_version` hoặc đưa nó về trạng thái `base` bằng thao tác
-   quản trị database đã được xác nhận.
-3. Chạy `alembic upgrade head`; migration `0001` sẽ xóa schema nghiệp vụ cũ,
-   sau đó ba migration còn lại dựng baseline mới.
-4. Kiểm tra catalog có 9 bảng ứng dụng và 3 hypertable.
+1. Stop the API/worker connected to the database.
+2. Drop the `alembic_version` table or reset it to the `base` state via a confirmed
+   database administration action.
+3. Run `alembic upgrade head`; migration `0001` will drop the old business schema,
+   then the remaining three migrations build the new baseline.
+4. Verify the catalog has 9 application tables and 3 hypertables.
 
-Không chạy quy trình này trên database có dữ liệu cần giữ. Rollback của graph
-mới chỉ dùng để kiểm tra cấu trúc; reset không có ý định khôi phục dữ liệu
-legacy.
+Do not run this process on a database with data that must be kept. The rollback of the
+new graph is only for verifying structure; the reset is not intended to restore legacy
+data.
 
-## 8. Không làm trong planner này
+## 8. Out of scope for this planner
 
-- Không viết test cho web portal hoặc vehicle app vì hai thành phần chưa có source.
-- Không xây test harness OCPP end-to-end ngay từ đầu.
-- Không thêm coverage tool, snapshot tool, factory library hoặc Docker test
+- Does not write tests for the web portal or vehicle app, since these two components have no source yet.
+- Does not build an end-to-end OCPP test harness from the start.
+- Does not add a coverage tool, snapshot tool, factory library, or Docker test
   framework.
 
-## 9. Kết quả triển khai
+## 9. Implementation results
 
-Đã tạo 18 test case theo hành vi/contract, phân thành 5 file; trong đó 16 test
-unit/smoke chạy mặc định và 2 test PostgreSQL integration được skip mặc định:
+18 test cases have been created based on behavior/contract, split across 5 files; of these, 16
+unit/smoke tests run by default and 2 PostgreSQL integration tests are skipped by default:
 
-- `backend/tests/test_api_smoke.py`: health endpoint và đăng ký router.
-- `backend/tests/test_schema_smoke.py`: UTC, validation GPS, request schema và
-  quy đổi meter.
-- `backend/tests/test_service_smoke.py`: vehicle, telematic, telemetry và
+- `backend/tests/test_api_smoke.py`: health endpoint and router registration.
+- `backend/tests/test_schema_smoke.py`: UTC, GPS validation, request schema, and
+  meter conversion.
+- `backend/tests/test_service_smoke.py`: vehicle, telematic, telemetry, and
   charging lifecycle.
-- `backend/tests/test_worker_smoke.py`: start/stop và propagate lỗi worker.
-- `backend/tests/test_migrations_smoke.py`: migration head và reset allowlist.
+- `backend/tests/test_worker_smoke.py`: worker start/stop and error propagation.
+- `backend/tests/test_migrations_smoke.py`: migration head and reset allowlist.
 
-Kết quả chạy local:
+Local run results:
 
 - `cd backend && uv run pytest`: **16 passed, 2 skipped**.
-- Ruff, Black, isort và mypy strict trên backend: **đạt**.
-- Test hiện không cần PostgreSQL, TimescaleDB, EMQX hoặc Docker.
+- Ruff, Black, isort, and strict mypy on the backend: **pass**.
+- Tests currently need no PostgreSQL, TimescaleDB, EMQX, or Docker.
 
-Chưa làm trong lượt này: test upgrade/downgrade thật trên database tạm, query
-repository với PostgreSQL và end-to-end OCPP qua WebSocket. Đây là các test
-integration riêng, chỉ nên bổ sung khi có database test được cô lập.
+Not done in this round: real upgrade/downgrade tests on a temporary database, repository queries
+against PostgreSQL, and end-to-end OCPP over WebSocket. These are separate
+integration tests that should only be added once an isolated test database is available.

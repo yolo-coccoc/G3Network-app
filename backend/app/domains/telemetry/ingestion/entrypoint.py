@@ -1,10 +1,10 @@
-"""Entrypoint tối giản cho tiến trình nhận telemetry qua MQTT.
+"""Minimal entrypoint for the process that receives telemetry over MQTT.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Tiến trình MVP chỉ giữ queue và task trong RAM. Khi nhận tín hiệu dừng hoặc một
-task lỗi, process sẽ ngắt consumer, cancel worker và bỏ qua message còn lại
-trong queue.
+The MVP process keeps the queue and tasks only in RAM. When it receives a
+stop signal or a task fails, the process disconnects the consumer, cancels
+the worker, and discards any remaining messages in the queue.
 """
 
 import asyncio
@@ -22,15 +22,16 @@ logger = logging.getLogger(__name__)
 
 
 async def run() -> None:
-    """Chạy consumer và worker cho tới khi nhận signal hoặc có task thất bại.
+    """Run the consumer and worker until a signal is received or a task fails.
 
     Side Effects:
-        Tạo queue trong RAM, mở kết nối MQTT và đóng tài nguyên khi process dừng.
+        Creates the in-RAM queue, opens the MQTT connection, and closes
+        resources when the process stops.
 
     Raises:
-        RuntimeError: Khi worker không tạo được background task hoặc một task
-            dừng bất thường.
-        Exception: Raise lại lỗi từ consumer hoặc worker.
+        RuntimeError: When the worker fails to create a background task or a
+            task stops unexpectedly.
+        Exception: Re-raises errors from the consumer or worker.
     """
     configure_logging()
 
@@ -78,10 +79,11 @@ async def run() -> None:
 
 
 def main() -> None:
-    """Chạy event loop cho telemetry ingestion và thoát với mã lỗi khi cần.
+    """Run the event loop for telemetry ingestion and exit with an error code when needed.
 
     Side Effects:
-        Tạo event loop cho toàn process và ghi log khi process thất bại.
+        Creates the event loop for the whole process and logs when the
+        process fails.
     """
     try:
         asyncio.run(run())

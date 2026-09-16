@@ -1,4 +1,4 @@
-"""Smoke test cho các service workflow chính của backend."""
+"""Smoke test for the backend's main service workflows."""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -34,12 +34,12 @@ from app.domains.vehicles.types import VehicleReference, VehicleStatus
 
 
 def _db() -> AsyncSession:
-    """Tạo placeholder session cho unit test không truy cập database."""
+    """Create a placeholder session for a unit test that doesn't touch the database."""
     return cast(AsyncSession, object())
 
 
 def _vehicle_record() -> VehicleModel:
-    """Tạo ORM vehicle tối thiểu để service chuyển thành response."""
+    """Create a minimal ORM vehicle for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return VehicleModel(
         vehicle_id=uuid4(),
@@ -56,7 +56,7 @@ def _vehicle_record() -> VehicleModel:
 
 
 def _telematic_record(vehicle_id: UUID) -> TelematicModel:
-    """Tạo ORM telematic tối thiểu đã gán vào một xe."""
+    """Create a minimal ORM telematic already assigned to a vehicle."""
     now = datetime.now(timezone.utc)
     return TelematicModel(
         telematic_id=uuid4(),
@@ -70,7 +70,7 @@ def _telematic_record(vehicle_id: UUID) -> TelematicModel:
 
 
 def _telemetry_envelope() -> TelemetryEnvelope:
-    """Tạo envelope telemetry hợp lệ cho process_message."""
+    """Create a valid telemetry envelope for process_message."""
     message = TelemetryMessage.model_validate(
         {
             "message_uuid": str(uuid4()),
@@ -84,7 +84,7 @@ def _telemetry_envelope() -> TelemetryEnvelope:
 
 
 def _charging_session() -> ChargingSessionModel:
-    """Tạo aggregate session tối thiểu cho charging service test."""
+    """Create a minimal aggregate session for the charging service test."""
     now = datetime.now(timezone.utc)
     return ChargingSessionModel(
         session_id=uuid4(),
@@ -107,7 +107,7 @@ def _charging_session() -> ChargingSessionModel:
 async def test_vehicle_service_creates_vehicle_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Vehicle service tạo response khi không có conflict unique."""
+    """The vehicle service creates a response when there's no unique conflict."""
     record = _vehicle_record()
 
     async def no_existing_plate(db: AsyncSession, value: str) -> None:
@@ -144,7 +144,7 @@ async def test_vehicle_service_creates_vehicle_response(
 async def test_vehicle_service_soft_delete_returns_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Soft delete service trả message khi repository xóa thành công."""
+    """The soft-delete service returns a message when the repository succeeds."""
     record = _vehicle_record()
 
     async def soft_delete(db: AsyncSession, vehicle_id: UUID) -> VehicleModel:
@@ -161,7 +161,7 @@ async def test_vehicle_service_soft_delete_returns_success(
 async def test_telematic_service_resolves_vehicle_vin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Telematic service resolve VIN qua public service vehicles."""
+    """The telematic service resolves the VIN via the vehicles public service."""
     vehicle_id = uuid4()
     record = _telematic_record(vehicle_id)
     reference = VehicleReference(vehicle_id=vehicle_id, vin="1HGBH41JXMN109186")
@@ -218,7 +218,7 @@ async def test_telematic_service_resolves_vehicle_vin(
 async def test_telemetry_service_skips_unmapped_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Telemetry service skip message khi serial chưa có mapping."""
+    """The telemetry service skips a message when the serial has no mapping yet."""
 
     async def no_mapping(db: AsyncSession, serial: str) -> None:
         return None
@@ -236,7 +236,7 @@ async def test_telemetry_service_skips_unmapped_message(
 async def test_telemetry_service_persists_mapped_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Telemetry service enrich và persist đúng một message hợp lệ."""
+    """The telemetry service enriches and persists exactly one valid message."""
     mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
 
     async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
@@ -261,7 +261,7 @@ async def test_telemetry_service_persists_mapped_message(
 async def test_charging_service_runs_started_meter_ended_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Charging service chạy đúng lifecycle Started đến Ended."""
+    """The charging service runs the correct lifecycle from Started to Ended."""
     session = _charging_session()
     now = datetime.now(timezone.utc)
     inserted_events: list[SessionEventType] = []

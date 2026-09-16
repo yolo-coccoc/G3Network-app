@@ -1,4 +1,4 @@
-"""Tạo bảng vehicles và telematics của baseline backend."""
+"""Create the vehicles and telematics tables of the backend baseline."""
 
 from collections.abc import Sequence
 
@@ -12,7 +12,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Tạo bảng xe trước rồi tạo bảng thiết bị có foreign key tới xe."""
+    """Create the vehicles table first, then the telematics table with a foreign key to it."""
     op.create_table(
         "vehicles",
         sa.Column("vehicle_id", sa.UUID(), nullable=False),
@@ -71,7 +71,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Xóa telematics, vehicles và hai enum của baseline."""
+    """Drop telematics, vehicles, and the two baseline enums."""
     op.drop_table("telematics")
     op.drop_table("vehicles")
     op.execute('DROP TYPE IF EXISTS "telematicstatus"')

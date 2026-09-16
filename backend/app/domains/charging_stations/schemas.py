@@ -1,8 +1,9 @@
-"""Pydantic schemas cho topology charging đã pre-provision.
+"""Pydantic schemas for pre-provisioned charging topology.
 
-MVP lý tưởng chỉ expose identity OCPP, internal IDs và timestamps cần để kiểm
-tra topology. Location, capability, technical status và thông tin thiết bị
-được hoãn cùng technical status path; không đưa chúng vào HTTP contract active.
+The ideal MVP only exposes the OCPP identity, internal IDs, and timestamps
+needed to inspect the topology. Location, capability, technical status, and
+device information are deferred alongside the technical status path; they are
+not included in the active HTTP contract.
 """
 
 from datetime import datetime
@@ -14,11 +15,11 @@ from app.libs.common.config import settings
 
 
 class ChargingStationCreateRequest(BaseModel):
-    """Dữ liệu tạo station đã pre-provision.
+    """Data for creating a pre-provisioned station.
 
     Attributes:
-        ocpp_identity: Identity station dùng trong OCPP WebSocket path.
-        display_name: Tên hiển thị của station.
+        ocpp_identity: Station identity used in the OCPP WebSocket path.
+        display_name: Display name of the station.
     """
 
     ocpp_identity: str = Field(..., min_length=1, max_length=255)
@@ -27,29 +28,29 @@ class ChargingStationCreateRequest(BaseModel):
     @field_validator("ocpp_identity", "display_name")
     @classmethod
     def validate_required_text(cls, value: str) -> str:
-        """Chuẩn hóa text bắt buộc và từ chối chuỗi chỉ gồm khoảng trắng.
+        """Normalize required text and reject strings that are blank/whitespace-only.
 
         Args:
-            value: Text thô từ request.
+            value: Raw text from the request.
 
         Returns:
-            Text đã bỏ khoảng trắng đầu/cuối.
+            Text with leading/trailing whitespace stripped.
 
         Raises:
-            ValueError: Nếu text rỗng sau khi chuẩn hóa.
+            ValueError: If the text is empty after normalization.
         """
         normalized = value.strip()
         if not normalized:
-            raise ValueError("Giá trị không được rỗng hoặc chỉ chứa khoảng trắng")
+            raise ValueError("Value must not be empty or contain only whitespace")
         return normalized
 
 
 class ChargingStationUpdateRequest(BaseModel):
-    """Các identity station được phép cập nhật một phần.
+    """Station identity fields allowed for partial update.
 
     Attributes:
-        ocpp_identity: Identity mới; ``None`` nghĩa là không cập nhật.
-        display_name: Tên mới; ``None`` nghĩa là không cập nhật.
+        ocpp_identity: New identity; ``None`` means do not update.
+        display_name: New display name; ``None`` means do not update.
     """
 
     ocpp_identity: str | None = Field(None, min_length=1, max_length=255)
@@ -58,35 +59,35 @@ class ChargingStationUpdateRequest(BaseModel):
     @field_validator("ocpp_identity", "display_name")
     @classmethod
     def normalize_optional_text(cls, value: str | None) -> str | None:
-        """Chuẩn hóa text tùy chọn; ``None`` nghĩa là không cập nhật field.
+        """Normalize optional text; ``None`` means the field is not updated.
 
         Args:
-            value: Text thô hoặc ``None`` từ PATCH request.
+            value: Raw text or ``None`` from the PATCH request.
 
         Returns:
-            Text đã bỏ khoảng trắng hoặc ``None``.
+            Text with whitespace stripped, or ``None``.
 
         Raises:
-            ValueError: Nếu text không rỗng sau khi chuẩn hóa.
+            ValueError: If the text is empty after normalization.
         """
         if value is None:
             return None
         normalized = value.strip()
         if not normalized:
-            raise ValueError("Giá trị không được rỗng hoặc chỉ chứa khoảng trắng")
+            raise ValueError("Value must not be empty or contain only whitespace")
         return normalized
 
 
 class ChargingStationResponse(BaseModel):
-    """Thông tin station active không chứa technical status hoặc raw payload.
+    """Active station information without technical status or raw payload.
 
     Attributes:
-        station_id: UUID nội bộ.
-        ocpp_identity: Identity OCPP duy nhất.
-        display_name: Tên hiển thị.
-        created_at: Thời điểm tạo.
-        updated_at: Thời điểm cập nhật gần nhất.
-        deleted_at: Thời điểm soft-delete, nullable.
+        station_id: Internal UUID.
+        ocpp_identity: Unique OCPP identity.
+        display_name: Display name.
+        created_at: Time created.
+        updated_at: Time of last update.
+        deleted_at: Soft-delete time, nullable.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -100,13 +101,13 @@ class ChargingStationResponse(BaseModel):
 
 
 class ChargingStationListResponse(BaseModel):
-    """Danh sách station phân trang.
+    """Paginated list of stations.
 
     Attributes:
-        items: Các station active ở trang hiện tại.
-        total: Tổng station active.
-        page: Số trang bắt đầu từ một.
-        page_size: Số item tối đa trong một trang.
+        items: Active stations on the current page.
+        total: Total number of active stations.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
     """
 
     items: list[ChargingStationResponse]
@@ -116,35 +117,35 @@ class ChargingStationListResponse(BaseModel):
 
 
 class ChargingEvseCreateRequest(BaseModel):
-    """Dữ liệu tạo EVSE thuộc station.
+    """Data for creating an EVSE belonging to a station.
 
     Attributes:
-        ocpp_evse_id: ID EVSE dương do station dùng trong OCPP.
+        ocpp_evse_id: Positive EVSE ID used by the station in OCPP.
     """
 
     ocpp_evse_id: int = Field(..., gt=0)
 
 
 class ChargingEvseUpdateRequest(BaseModel):
-    """Identity OCPP của EVSE được phép cập nhật một phần.
+    """EVSE OCPP identity allowed for partial update.
 
     Attributes:
-        ocpp_evse_id: ID mới hoặc ``None`` để không cập nhật.
+        ocpp_evse_id: New ID, or ``None`` to leave it unchanged.
     """
 
     ocpp_evse_id: int | None = Field(None, gt=0)
 
 
 class ChargingEvseResponse(BaseModel):
-    """Thông tin EVSE thuộc topology đã pre-provision.
+    """EVSE information within the pre-provisioned topology.
 
     Attributes:
-        evse_id: UUID nội bộ.
-        station_id: UUID station parent.
-        ocpp_evse_id: ID EVSE trong OCPP.
-        created_at: Thời điểm tạo.
-        updated_at: Thời điểm cập nhật gần nhất.
-        deleted_at: Thời điểm soft-delete, nullable.
+        evse_id: Internal UUID.
+        station_id: UUID of the parent station.
+        ocpp_evse_id: EVSE ID in OCPP.
+        created_at: Time created.
+        updated_at: Time of last update.
+        deleted_at: Soft-delete time, nullable.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -158,13 +159,13 @@ class ChargingEvseResponse(BaseModel):
 
 
 class ChargingEvseListResponse(BaseModel):
-    """Danh sách EVSE phân trang.
+    """Paginated list of EVSEs.
 
     Attributes:
-        items: Các EVSE active ở trang hiện tại.
-        total: Tổng EVSE active của station parent.
-        page: Số trang bắt đầu từ một.
-        page_size: Số item tối đa trong một trang.
+        items: Active EVSEs on the current page.
+        total: Total number of active EVSEs for the parent station.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
     """
 
     items: list[ChargingEvseResponse]
@@ -174,35 +175,35 @@ class ChargingEvseListResponse(BaseModel):
 
 
 class ChargingConnectorCreateRequest(BaseModel):
-    """Dữ liệu tạo connector thuộc EVSE.
+    """Data for creating a connector belonging to an EVSE.
 
     Attributes:
-        ocpp_connector_id: ID connector dương do EVSE dùng trong OCPP.
+        ocpp_connector_id: Positive connector ID used by the EVSE in OCPP.
     """
 
     ocpp_connector_id: int = Field(..., gt=0)
 
 
 class ChargingConnectorUpdateRequest(BaseModel):
-    """Identity OCPP của connector được phép cập nhật một phần.
+    """Connector OCPP identity allowed for partial update.
 
     Attributes:
-        ocpp_connector_id: ID mới hoặc ``None`` để không cập nhật.
+        ocpp_connector_id: New ID, or ``None`` to leave it unchanged.
     """
 
     ocpp_connector_id: int | None = Field(None, gt=0)
 
 
 class ChargingConnectorResponse(BaseModel):
-    """Thông tin connector thuộc topology đã pre-provision.
+    """Connector information within the pre-provisioned topology.
 
     Attributes:
-        connector_id: UUID nội bộ.
-        evse_id: UUID EVSE parent.
-        ocpp_connector_id: ID connector trong OCPP.
-        created_at: Thời điểm tạo.
-        updated_at: Thời điểm cập nhật gần nhất.
-        deleted_at: Thời điểm soft-delete, nullable.
+        connector_id: Internal UUID.
+        evse_id: UUID of the parent EVSE.
+        ocpp_connector_id: Connector ID in OCPP.
+        created_at: Time created.
+        updated_at: Time of last update.
+        deleted_at: Soft-delete time, nullable.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -216,13 +217,13 @@ class ChargingConnectorResponse(BaseModel):
 
 
 class ChargingConnectorListResponse(BaseModel):
-    """Danh sách connector phân trang.
+    """Paginated list of connectors.
 
     Attributes:
-        items: Các connector active ở trang hiện tại.
-        total: Tổng connector active của EVSE parent.
-        page: Số trang bắt đầu từ một.
-        page_size: Số item tối đa trong một trang.
+        items: Active connectors on the current page.
+        total: Total number of active connectors for the parent EVSE.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
     """
 
     items: list[ChargingConnectorResponse]
@@ -232,10 +233,10 @@ class ChargingConnectorListResponse(BaseModel):
 
 
 class ChargingResourceDeleteResponse(BaseModel):
-    """Kết quả soft-delete topology.
+    """Result of a topology soft-delete.
 
     Attributes:
-        message: Thông báo nghiệp vụ để trả cho client.
+        message: Business message returned to the client.
     """
 
     message: str

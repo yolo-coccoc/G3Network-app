@@ -1,8 +1,9 @@
-"""Xóa schema nghiệp vụ cũ trước khi dựng lại database MVP.
+"""Drop the old business schema before rebuilding the MVP database.
 
-Migration này chỉ phục vụ giai đoạn khởi tạo local. Nó xóa các bảng và enum
-do các migration cũ của ứng dụng tạo ra, nhưng giữ lại database system,
-extension PostGIS/TimescaleDB và bảng ``alembic_version``.
+This migration only serves the local initialization phase. It drops the
+tables and enums created by the application's old migrations, but keeps the
+system databases, the PostGIS/TimescaleDB extensions, and the
+``alembic_version`` table.
 """
 
 from collections.abc import Sequence
@@ -45,18 +46,20 @@ _APPLICATION_ENUMS = (
 
 
 def upgrade() -> None:
-    """Xóa schema nghiệp vụ cũ để chuẩn bị cho baseline mới."""
-    # CASCADE cần thiết vì schema cũ có foreign key, hypertable và constraint
-    # không còn nằm trong contract mới. Danh sách bảng được cố định trong code.
+    """Drop the old business schema to prepare for the new baseline."""
+    # CASCADE is necessary because the old schema has foreign keys,
+    # hypertables, and constraints that are no longer part of the new
+    # contract. The table list is fixed in code.
     for table_name in _APPLICATION_TABLES:
         op.execute(f'DROP TABLE IF EXISTS "{table_name}" CASCADE')
 
-    # Xóa enum sau bảng để không còn cột nào tham chiếu tới type cũ.
+    # Drop enums after tables so no column still references the old type.
     for enum_name in _APPLICATION_ENUMS:
         op.execute(f'DROP TYPE IF EXISTS "{enum_name}" CASCADE')
 
 
 def downgrade() -> None:
-    """Không khôi phục schema cũ sau khi reset database khởi tạo."""
-    # Reset là điểm bắt đầu của graph mới; các migration sau chịu trách nhiệm
-    # tạo và xóa schema hiện tại theo từng bounded context.
+    """Do not restore the old schema after resetting the initial database."""
+    # The reset is the starting point of the new graph; subsequent migrations
+    # are responsible for creating and dropping the current schema per
+    # bounded context.

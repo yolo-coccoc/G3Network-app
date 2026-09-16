@@ -1,4 +1,4 @@
-"""Repository truy vấn bảng vehicles, không chứa business rule."""
+"""Repository querying the vehicles table; contains no business rules."""
 
 from datetime import datetime, timezone
 from typing import Any
@@ -14,14 +14,14 @@ from app.libs.common.config import settings
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleModel:
-    """Thêm một bản ghi xe vào database.
+    """Insert a vehicle record into the database.
 
     Args:
-        db_session: Phiên database do entry boundary sở hữu.
-        values: Các field dùng để khởi tạo bản ghi ORM.
+        db_session: Database session owned by the entry boundary.
+        values: Fields used to initialize the ORM record.
 
     Returns:
-        Bản ghi xe vừa được tạo.
+        The newly created vehicle record.
     """
     vehicle_record = VehicleModel(**values)
     db_session.add(vehicle_record)
@@ -31,14 +31,14 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleMod
 
 
 async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel | None:
-    """Tìm xe theo ID, loại trừ bản ghi đã soft delete.
+    """Find a vehicle by ID, excluding soft-deleted records.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        Bản ghi xe hoặc None nếu không tìm thấy.
+        The vehicle record, or None if not found.
     """
     query_result = await db_session.execute(
         select(VehicleModel).where(
@@ -54,14 +54,14 @@ async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel 
 async def find_by_license_plate(
     db_session: AsyncSession, license_plate: str
 ) -> VehicleModel | None:
-    """Tìm xe theo biển số, loại trừ bản ghi đã soft delete.
+    """Find a vehicle by license plate, excluding soft-deleted records.
 
     Args:
-        db_session: Phiên database hiện tại.
-        license_plate: Biển số xe.
+        db_session: Current database session.
+        license_plate: License plate of the vehicle.
 
     Returns:
-        Bản ghi xe hoặc None nếu không tìm thấy.
+        The vehicle record, or None if not found.
     """
     query_result = await db_session.execute(
         select(VehicleModel).where(
@@ -75,14 +75,14 @@ async def find_by_license_plate(
 
 
 async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None:
-    """Tìm xe theo VIN, loại trừ bản ghi đã soft delete.
+    """Find a vehicle by VIN, excluding soft-deleted records.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vin: Số khung của xe.
+        db_session: Current database session.
+        vin: VIN (chassis number) of the vehicle.
 
     Returns:
-        Bản ghi xe hoặc None nếu không tìm thấy.
+        The vehicle record, or None if not found.
     """
     query_result = await db_session.execute(
         select(VehicleModel).where(
@@ -98,16 +98,16 @@ async def list_all(
     limit: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
 ) -> list[VehicleModel]:
-    """Lấy danh sách xe có phân trang, loại trừ bản ghi đã soft delete.
+    """Get a paginated list of vehicles, excluding soft-deleted records.
 
     Args:
-        db_session: Phiên database hiện tại.
-        skip: Số bản ghi bỏ qua.
-        limit: Số bản ghi tối đa trả về.
-        status_filter: Bộ lọc trạng thái nếu có.
+        db_session: Current database session.
+        skip: Number of records to skip.
+        limit: Maximum number of records to return.
+        status_filter: Status filter, if any.
 
     Returns:
-        Danh sách bản ghi xe.
+        List of vehicle records.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
 
@@ -127,14 +127,14 @@ async def list_all(
 async def count(
     db_session: AsyncSession, status_filter: VehicleStatus | None = None
 ) -> int:
-    """Đếm tổng số xe, loại trừ bản ghi đã soft delete.
+    """Count the total number of vehicles, excluding soft-deleted records.
 
     Args:
-        db_session: Phiên database hiện tại.
-        status_filter: Bộ lọc trạng thái nếu có.
+        db_session: Current database session.
+        status_filter: Status filter, if any.
 
     Returns:
-        Tổng số xe.
+        Total number of vehicles.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
 
@@ -150,15 +150,15 @@ async def count(
 async def update_fields(
     db_session: AsyncSession, vehicle_id: UUID, values: dict[str, Any]
 ) -> VehicleModel | None:
-    """Cập nhật các field được chỉ định của xe.
+    """Update the specified fields of a vehicle.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
-        values: Các field cần cập nhật.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        values: Fields to update.
 
     Returns:
-        Bản ghi xe sau cập nhật hoặc None nếu không tìm thấy.
+        The updated vehicle record, or None if not found.
     """
     vehicle_record = await get_by_id(db_session, vehicle_id)
     if not vehicle_record:
@@ -177,14 +177,14 @@ async def update_fields(
 async def soft_delete(
     db_session: AsyncSession, vehicle_id: UUID
 ) -> VehicleModel | None:
-    """Soft delete xe bằng cách cập nhật deleted_at và status.
+    """Soft-delete a vehicle by updating deleted_at and status.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        Bản ghi xe sau khi soft delete hoặc None nếu không tìm thấy.
+        The vehicle record after soft delete, or None if not found.
     """
     vehicle_record = await get_by_id(db_session, vehicle_id)
     if not vehicle_record:

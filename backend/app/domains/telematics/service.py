@@ -1,8 +1,8 @@
-"""Business service cho CRUD và public lookup thiết bị Telematic.
+"""Business service for Telematic device CRUD and public lookup.
 
-Các domain khác, đặc biệt ``telemetry``, chỉ được dùng những hàm public trong
-module này để resolve mapping thiết bị–xe; chúng không được truy cập trực tiếp
-repository hoặc model của ``telematics``.
+Other domains, especially ``telemetry``, must only use the public functions in
+this module to resolve device-vehicle mappings; they must not access
+``telematics``' repository or model directly.
 """
 
 from collections.abc import Sequence
@@ -33,18 +33,19 @@ async def resolve_mapping_by_serial(
     db: AsyncSession,
     serial: str,
 ) -> TelematicVehicleMapping | None:
-    """Resolve một serial telematic thành ID thiết bị và ID xe.
+    """Resolve a telematic serial into a device ID and vehicle ID.
 
     Args:
-        db: Phiên database do entry boundary sở hữu.
-        serial: Serial vật lý nhận từ message telemetry.
+        db: Database session owned by the entry boundary.
+        serial: Physical serial received from a telemetry message.
 
     Returns:
-        Tuple ``(telematic_id, vehicle_id)`` nếu mapping hợp lệ; ``None`` nếu
-        thiết bị chưa tồn tại, đã bị xoá mềm hoặc chưa gán xe.
+        Tuple ``(telematic_id, vehicle_id)`` if the mapping is valid; ``None``
+        if the device does not exist, has been soft-deleted, or has not been
+        assigned a vehicle.
 
     Side Effects:
-        Thực hiện truy vấn read-only trong phiên hiện tại; không commit hoặc
+        Performs a read-only query in the current session; does not commit or
         rollback.
     """
     return await repository.find_mapping_by_serial(db, serial)
@@ -54,19 +55,19 @@ async def resolve_mappings_by_serial(
     db: AsyncSession,
     serials: Sequence[str],
 ) -> dict[str, TelematicVehicleMapping]:
-    """Resolve batch serial telematic thành mapping thiết bị–xe.
+    """Resolve a batch of telematic serials into device-vehicle mappings.
 
     Args:
-        db: Phiên database do entry boundary sở hữu.
-        serials: Các serial vật lý cần tra cứu.
+        db: Database session owned by the entry boundary.
+        serials: Physical serials to look up.
 
     Returns:
-        Dict ánh xạ serial sang ``(telematic_id, vehicle_id)``; mapping không
-        hợp lệ không xuất hiện trong kết quả.
+        Dict mapping serial to ``(telematic_id, vehicle_id)``; invalid
+        mappings do not appear in the result.
 
     Side Effects:
-        Thực hiện một truy vấn read-only trong phiên hiện tại; không commit hoặc
-        rollback.
+        Performs a single read-only query in the current session; does not
+        commit or rollback.
     """
     return await repository.find_mappings_by_serial(db, serials)
 
@@ -75,10 +76,11 @@ async def build_telematic_response(
     db_session: AsyncSession,
     telematic_record: TelematicModel,
 ) -> TelematicResponse:
-    """Dựng response telematic và bổ sung VIN hiện tại của xe.
+    """Build a telematic response and add the vehicle's current VIN.
 
-    Việc bổ sung VIN cần gọi public service của domain vehicles, vì domain này
-    không được truy cập trực tiếp repository hoặc ORM model của vehicles.
+    Adding the VIN requires calling the vehicles domain's public service,
+    since this domain must not access the vehicles repository or ORM model
+    directly.
     """
     vin = None
     if telematic_record.vehicle_id:
@@ -95,12 +97,12 @@ async def build_telematic_response(
 async def create_telematic(
     db_session: AsyncSession, telematic_create_request: TelematicCreateRequest
 ) -> TelematicResponse:
-    """Tạo thiết bị, resolve VIN nếu xe đang tồn tại."""
+    """Create a device, resolving the VIN if the vehicle exists."""
     if await repository.get_by_serial(
         db_session,
         telematic_create_request.telematic_serial,
     ):
-        raise TelematicConflictError("Telematic serial đã tồn tại")
+        raise TelematicConflictError("Telematic serial already exists")
     vehicle_id = None
     if telematic_create_request.vehicle_vin:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
@@ -114,7 +116,9 @@ async def create_telematic(
                 TelematicModel.deleted_at.is_(None),
             )
         ):
-            raise TelematicConflictError("Xe đã được gán cho telematic khác")
+            raise TelematicConflictError(
+                "Vehicle is already assigned to another telematic"
+            )
     try:
         telematic_record = await repository.insert(
             db_session,
@@ -126,7 +130,9 @@ async def create_telematic(
             },
         )
     except IntegrityError as error:
-        raise TelematicConflictError("Telematic serial hoặc xe đã tồn tại") from error
+        raise TelematicConflictError(
+            "Telematic serial or vehicle already exists"
+        ) from error
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -134,10 +140,10 @@ async def get_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
 ) -> TelematicResponse:
-    """Lấy chi tiết thiết bị."""
+    """Get device details."""
     telematic_record = await repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
-        raise TelematicNotFoundError("Không tìm thấy telematic")
+        raise TelematicNotFoundError("Telematic not found")
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -147,7 +153,7 @@ async def list_telematics(
     page_size: int,
     status: TelematicStatus | None,
 ) -> TelematicListResponse:
-    """Lấy danh sách thiết bị có phân trang."""
+    """Get the paginated list of devices."""
     page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
     page = max(page, settings.API_DEFAULT_PAGE)
     telematic_records = await repository.list_all(
@@ -172,17 +178,17 @@ async def update_telematic(
     telematic_id: UUID,
     telematic_update_request: TelematicUpdateRequest,
 ) -> TelematicResponse:
-    """Cập nhật thiết bị và resolve lại VIN khi field được gửi."""
+    """Update a device and re-resolve the VIN when the field is sent."""
     telematic_record = await repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
-        raise TelematicNotFoundError("Không tìm thấy telematic")
+        raise TelematicNotFoundError("Telematic not found")
     values = telematic_update_request.model_dump(exclude_unset=True)
     if (
         "telematic_serial" in values
         and values["telematic_serial"] != telematic_record.telematic_serial
         and await repository.get_by_serial(db_session, values["telematic_serial"])
     ):
-        raise TelematicConflictError("Telematic serial đã tồn tại")
+        raise TelematicConflictError("Telematic serial already exists")
     if "vehicle_vin" in values:
         vin = values.pop("vehicle_vin")
         vehicle_reference = (
@@ -205,7 +211,9 @@ async def update_telematic(
             values,
         )
     except IntegrityError as error:
-        raise TelematicConflictError("Xe đã được gán cho telematic khác") from error
+        raise TelematicConflictError(
+            "Vehicle is already assigned to another telematic"
+        ) from error
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -213,8 +221,8 @@ async def soft_delete_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
 ) -> None:
-    """Soft delete thiết bị."""
+    """Soft delete a device."""
     telematic_record = await repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
-        raise TelematicNotFoundError("Không tìm thấy telematic")
+        raise TelematicNotFoundError("Telematic not found")
     await repository.soft_delete(db_session, telematic_record)

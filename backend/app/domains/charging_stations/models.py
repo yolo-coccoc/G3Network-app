@@ -1,8 +1,9 @@
-"""SQLAlchemy models tối thiểu cho topology trạm sạc.
+"""Minimal SQLAlchemy models for charging station topology.
 
-Module chỉ mô tả ba bảng topology active của MVP lý tưởng. Station, EVSE và
-connector đã được pre-provision; technical status, capability và device
-metadata không thuộc persistence contract của bước này.
+The module only describes the three active topology tables of the ideal MVP.
+Stations, EVSEs, and connectors are pre-provisioned; technical status,
+capability, and device metadata are not part of this step's persistence
+contract.
 """
 
 from datetime import datetime, timezone
@@ -24,28 +25,28 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Lấy thời điểm UTC dùng cho default và soft-delete timestamp.
+    """Get the UTC timestamp used for defaults and soft-delete timestamps.
 
     Returns:
-        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+        The current time as a timezone-aware UTC ``datetime``.
     """
     return datetime.now(timezone.utc)
 
 
 class ChargingStationModel(Base):
-    """Hồ sơ station đã được pre-provision trong MVP.
+    """Record of a station pre-provisioned in the MVP.
 
     Attributes:
-        station_id: UUID nội bộ.
-        ocpp_identity: Identity xuất hiện trong OCPP WebSocket path.
-        display_name: Tên hiển thị.
-        created_at: Thời điểm tạo record.
-        updated_at: Thời điểm cập nhật record.
-        deleted_at: Thời điểm soft-delete, nullable.
+        station_id: Internal UUID.
+        ocpp_identity: Identity that appears in the OCPP WebSocket path.
+        display_name: Display name.
+        created_at: Time the record was created.
+        updated_at: Time the record was last updated.
+        deleted_at: Soft-delete time, nullable.
 
     Invariants:
-        ``ocpp_identity`` là business identity duy nhất và không được tái sử
-        dụng sau soft-delete.
+        ``ocpp_identity`` is a unique business identity and must not be
+        reused after a soft-delete.
     """
 
     __tablename__ = "charging_stations"
@@ -72,18 +73,19 @@ class ChargingStationModel(Base):
 
 
 class ChargingEvseModel(Base):
-    """EVSE thuộc một station đã được pre-provision.
+    """An EVSE belonging to a pre-provisioned station.
 
     Attributes:
-        evse_id: UUID nội bộ.
-        station_id: UUID station sở hữu EVSE.
-        ocpp_evse_id: ID EVSE do OCPP sử dụng, dương.
-        created_at: Thời điểm tạo record.
-        updated_at: Thời điểm cập nhật record.
-        deleted_at: Thời điểm soft-delete, nullable.
+        evse_id: Internal UUID.
+        station_id: UUID of the station that owns the EVSE.
+        ocpp_evse_id: EVSE ID used by OCPP, positive.
+        created_at: Time the record was created.
+        updated_at: Time the record was last updated.
+        deleted_at: Soft-delete time, nullable.
 
     Invariants:
-        ``ocpp_evse_id`` chỉ duy nhất trong station parent và phải là số dương.
+        ``ocpp_evse_id`` is only unique within its parent station and must be
+        a positive number.
     """
 
     __tablename__ = "charging_evses"
@@ -117,19 +119,19 @@ class ChargingEvseModel(Base):
 
 
 class ChargingConnectorModel(Base):
-    """Connector vật lý thuộc một EVSE đã được pre-provision.
+    """A physical connector belonging to a pre-provisioned EVSE.
 
     Attributes:
-        connector_id: UUID nội bộ.
-        evse_id: UUID EVSE sở hữu connector.
-        ocpp_connector_id: ID connector do OCPP sử dụng, dương.
-        created_at: Thời điểm tạo record.
-        updated_at: Thời điểm cập nhật record.
-        deleted_at: Thời điểm soft-delete, nullable.
+        connector_id: Internal UUID.
+        evse_id: UUID of the EVSE that owns the connector.
+        ocpp_connector_id: Connector ID used by OCPP, positive.
+        created_at: Time the record was created.
+        updated_at: Time the record was last updated.
+        deleted_at: Soft-delete time, nullable.
 
     Invariants:
-        ``ocpp_connector_id`` chỉ duy nhất trong EVSE parent và phải là số
-        dương.
+        ``ocpp_connector_id`` is only unique within its parent EVSE and must
+        be a positive number.
     """
 
     __tablename__ = "charging_connectors"

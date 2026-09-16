@@ -1,7 +1,7 @@
-"""SQLAlchemy models tối thiểu cho lifecycle phiên sạc happy path.
+"""Minimal SQLAlchemy models for the charging session lifecycle happy path.
 
-Module chỉ lưu aggregate session, TransactionEvent history và energy samples
-canonical Wh của MVP lý tưởng.
+The module only stores the session aggregate, TransactionEvent history and
+canonical Wh energy samples for the ideal MVP.
 """
 
 from datetime import datetime, timezone
@@ -19,43 +19,44 @@ from app.libs.db.base import Base
 
 
 def utc_now() -> datetime:
-    """Lấy thời điểm hiện tại theo UTC để làm giá trị mặc định cho model.
+    """Get the current time in UTC to use as the model's default value.
 
     Returns:
-        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+        The current time as a timezone-aware UTC ``datetime``.
     """
     return datetime.now(timezone.utc)
 
 
 def enum_values(enum_type: type[object]) -> list[str]:
-    """Lấy value của enum để PostgreSQL lưu đúng contract public.
+    """Get the enum values so PostgreSQL stores the correct public contract.
 
     Args:
-        enum_type: Enum có các member sở hữu thuộc tính ``value``.
+        enum_type: An enum whose members carry a ``value`` attribute.
 
     Returns:
-        Danh sách value theo thứ tự khai báo của enum.
+        The list of values in the enum's declaration order.
     """
     return [member.value for member in enum_type]  # type: ignore[attr-defined]
 
 
 class ChargingSessionModel(Base):
-    """Aggregate của một OCPP transaction trong happy path.
+    """Aggregate for one OCPP transaction in the happy path.
 
     Attributes:
-        session_id: UUID nội bộ.
-        station_id: Station sở hữu transaction.
-        evse_id: EVSE sở hữu transaction.
-        connector_id: Connector đang sạc.
-        ocpp_transaction_id: Transaction identity do trụ cấp.
-        status: Chỉ active hoặc completed trong MVP.
-        started_at: Thời điểm Started.
-        ended_at: Thời điểm Ended, nullable khi đang active.
-        meter_start_wh: Meter đầu phiên.
-        meter_end_wh: Meter mới nhất/đầu cuối.
-        energy_delivered_wh: Hiệu giữa meter cuối và meter đầu.
-        created_at: Thời điểm tạo record.
-        updated_at: Thời điểm cập nhật record.
+        session_id: Internal UUID.
+        station_id: The station that owns the transaction.
+        evse_id: The EVSE that owns the transaction.
+        connector_id: The connector currently charging.
+        ocpp_transaction_id: The transaction identity issued by the station.
+        status: Only active or completed in the MVP.
+        started_at: The time of Started.
+        ended_at: The time of Ended, nullable while still active.
+        meter_start_wh: The meter reading at the start of the session.
+        meter_end_wh: The latest/final meter reading.
+        energy_delivered_wh: The difference between the end and start meter
+            readings.
+        created_at: The time the record was created.
+        updated_at: The time the record was last updated.
     """
 
     __tablename__ = "charging_sessions"
@@ -124,13 +125,14 @@ class ChargingSessionModel(Base):
 
 
 class ChargingSessionEventModel(Base):
-    """History tối thiểu của TransactionEvent dưới dạng hypertable.
+    """Minimal TransactionEvent history stored as a hypertable.
 
     Attributes:
-        event_id: UUID nội bộ của event.
-        event_occurred_at: Thời điểm event phát sinh và khóa phân vùng thời gian.
-        session_id: UUID aggregate phiên sở hữu event.
-        event_type: Loại ``Started``, ``Updated`` hoặc ``Ended``.
+        event_id: Internal UUID of the event.
+        event_occurred_at: The time the event occurred; also the time
+            partitioning key.
+        session_id: The UUID of the session aggregate that owns the event.
+        event_type: The type — ``Started``, ``Updated`` or ``Ended``.
     """
 
     __tablename__ = "charging_session_events"
@@ -138,8 +140,9 @@ class ChargingSessionEventModel(Base):
     event_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    # TimescaleDB cần cột thời gian trong khóa để partition hypertable và vẫn
-    # cho phép nhiều event cùng session ở các thời điểm khác nhau.
+    # TimescaleDB needs a time column in the key to partition the hypertable
+    # while still allowing multiple events for the same session at different
+    # times.
     event_occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
     )
@@ -167,13 +170,13 @@ class ChargingSessionEventModel(Base):
 
 
 class ChargingSessionMeterValueModel(Base):
-    """Energy sample canonical Wh của session dưới dạng hypertable.
+    """A canonical Wh energy sample for the session, stored as a hypertable.
 
     Attributes:
-        meter_value_id: UUID nội bộ của sample.
-        sampled_at: Thời điểm đo và khóa phân vùng thời gian.
-        session_id: UUID aggregate phiên sở hữu sample.
-        value_wh: Giá trị meter đã chuẩn hóa về Wh.
+        meter_value_id: Internal UUID of the sample.
+        sampled_at: The time of measurement; also the time partitioning key.
+        session_id: The UUID of the session aggregate that owns the sample.
+        value_wh: The meter reading normalized to Wh.
     """
 
     __tablename__ = "charging_session_meter_values"
@@ -181,8 +184,9 @@ class ChargingSessionMeterValueModel(Base):
     meter_value_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
-    # Sample time vừa là chiều truy vấn lịch sử vừa là khóa partition của
-    # hypertable; meter_value_id giữ uniqueness khi hai sample trùng timestamp.
+    # Sample time is both the axis for historical queries and the
+    # hypertable's partition key; meter_value_id preserves uniqueness when
+    # two samples share a timestamp.
     sampled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
     )

@@ -1,4 +1,4 @@
-"""Pydantic schema cho HTTP API của domain telematics."""
+"""Pydantic schemas for the telematics domain HTTP API."""
 
 from datetime import datetime
 from uuid import UUID
@@ -10,7 +10,7 @@ from app.libs.common.config import settings
 
 
 class TelematicCreateRequest(BaseModel):
-    """Dữ liệu request tạo thiết bị; VIN dùng để resolve vehicle_id."""
+    """Request data to create a device; VIN is used to resolve vehicle_id."""
 
     telematic_serial: str = Field(..., min_length=1, max_length=50)
     vehicle_vin: str | None = Field(None, min_length=17, max_length=17)
@@ -19,7 +19,7 @@ class TelematicCreateRequest(BaseModel):
 
 
 class TelematicUpdateRequest(BaseModel):
-    """Dữ liệu request cập nhật từng phần của thiết bị."""
+    """Request data for a partial update of a device."""
 
     telematic_serial: str | None = Field(None, min_length=1, max_length=50)
     vehicle_vin: str | None = Field(None, min_length=17, max_length=17)
@@ -28,7 +28,7 @@ class TelematicUpdateRequest(BaseModel):
 
 
 class TelematicResponse(BaseModel):
-    """Thông tin thiết bị kèm VIN xe đang được gán."""
+    """Device information including the VIN of the currently assigned vehicle."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -43,7 +43,7 @@ class TelematicResponse(BaseModel):
 
 
 class TelematicListResponse(BaseModel):
-    """Danh sách thiết bị có phân trang."""
+    """Paginated list of devices."""
 
     items: list[TelematicResponse]
     total: int = Field(..., ge=0)

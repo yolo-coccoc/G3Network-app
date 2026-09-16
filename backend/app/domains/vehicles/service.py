@@ -1,8 +1,9 @@
-"""Service nghiệp vụ và public contract của domain vehicles.
+"""Business service and public contract of the vehicles domain.
 
-Module này giữ business rule của hồ sơ xe. Domain khác chỉ được gọi các hàm
-`resolve_*` công khai để nhận DTO nội bộ, không nhận ORM model hoặc HTTP
-response schema của domain vehicles.
+This module holds the business rules for the vehicle record. Other domains
+may only call the public `resolve_*` functions to obtain internal DTOs, and
+must never receive the ORM model or HTTP response schema of the vehicles
+domain.
 """
 
 from uuid import UUID
@@ -27,25 +28,25 @@ from app.libs.common.config import settings
 
 
 def to_vehicle_response(vehicle_record: VehicleModel) -> VehicleResponse:
-    """Chuyển bản ghi ORM xe thành response của HTTP API.
+    """Convert a vehicle ORM record into an HTTP API response.
 
     Args:
-        vehicle_record: Bản ghi xe đã được repository truy vấn hoặc tạo.
+        vehicle_record: Vehicle record queried or created by the repository.
 
     Returns:
-        Dữ liệu response tương ứng với bản ghi xe.
+        Response data corresponding to the vehicle record.
     """
     return VehicleResponse.model_validate(vehicle_record)
 
 
 def to_vehicle_reference(vehicle_record: VehicleModel) -> VehicleReference:
-    """Chuyển bản ghi ORM thành DTO tối thiểu cho domain khác.
+    """Convert an ORM record into a minimal DTO for other domains.
 
     Args:
-        vehicle_record: Bản ghi xe đang hoạt động.
+        vehicle_record: An active vehicle record.
 
     Returns:
-        DTO chứa ID nội bộ và VIN của xe.
+        DTO containing the internal ID and VIN of the vehicle.
     """
     return VehicleReference(
         vehicle_id=vehicle_record.vehicle_id,
@@ -57,17 +58,17 @@ async def resolve_vehicle_reference_by_vin(
     db_session: AsyncSession,
     vin: str,
 ) -> VehicleReference | None:
-    """Tìm xe đang hoạt động theo VIN và trả về DTO nội bộ.
+    """Find an active vehicle by VIN and return its internal DTO.
 
     Args:
-        db_session: Phiên database do entry boundary sở hữu.
-        vin: Số khung cần tra cứu.
+        db_session: Database session owned by the entry boundary.
+        vin: VIN (chassis number) to look up.
 
     Returns:
-        `VehicleReference` nếu tìm thấy xe; ngược lại trả về `None`.
+        `VehicleReference` if the vehicle is found; otherwise `None`.
 
     Side Effects:
-        Chỉ thực hiện truy vấn read-only; không commit hoặc rollback.
+        Performs a read-only query only; does not commit or rollback.
     """
     vehicle_record = await vehicle_repository.find_by_vin(db_session, vin)
     return to_vehicle_reference(vehicle_record) if vehicle_record else None
@@ -77,17 +78,17 @@ async def resolve_vehicle_reference_by_id(
     db_session: AsyncSession,
     vehicle_id: UUID,
 ) -> VehicleReference | None:
-    """Tìm xe đang hoạt động theo ID và trả về DTO nội bộ.
+    """Find an active vehicle by ID and return its internal DTO.
 
     Args:
-        db_session: Phiên database do entry boundary sở hữu.
-        vehicle_id: ID nội bộ của xe.
+        db_session: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        `VehicleReference` nếu tìm thấy xe; ngược lại trả về `None`.
+        `VehicleReference` if the vehicle is found; otherwise `None`.
 
     Side Effects:
-        Chỉ thực hiện truy vấn read-only; không commit hoặc rollback.
+        Performs a read-only query only; does not commit or rollback.
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     return to_vehicle_reference(vehicle_record) if vehicle_record else None
@@ -97,17 +98,17 @@ async def create_vehicle(
     db_session: AsyncSession,
     vehicle_create_request: VehicleCreateRequest,
 ) -> VehicleResponse:
-    """Tạo xe mới sau khi kiểm tra VIN và biển số là duy nhất.
+    """Create a new vehicle after verifying that the VIN and license plate are unique.
 
     Args:
-        db_session: Phiên database do entry boundary sở hữu.
-        vehicle_create_request: Dữ liệu request đã qua Pydantic validation.
+        db_session: Database session owned by the entry boundary.
+        vehicle_create_request: Request data that has passed Pydantic validation.
 
     Returns:
-        Response của xe vừa tạo.
+        Response for the newly created vehicle.
 
     Raises:
-        VehicleConflictError: Khi VIN hoặc biển số đã tồn tại.
+        VehicleConflictError: When the VIN or license plate already exists.
     """
     existing_vehicle_by_plate = await vehicle_repository.find_by_license_plate(
         db_session,
@@ -145,17 +146,17 @@ async def get_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
 ) -> VehicleResponse:
-    """Lấy một xe đang hoạt động theo ID.
+    """Get an active vehicle by ID.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        Response của xe.
+        Response for the vehicle.
 
     Raises:
-        VehicleNotFoundError: Khi xe không tồn tại hoặc đã soft delete.
+        VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     if not vehicle_record:
@@ -170,16 +171,16 @@ async def list_vehicles(
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
 ) -> VehicleListResponse:
-    """Lấy danh sách xe đang hoạt động có phân trang.
+    """Get a paginated list of active vehicles.
 
     Args:
-        db_session: Phiên database hiện tại.
-        page: Số trang, bắt đầu từ 1.
-        page_size: Số xe tối đa trong một trang.
-        status_filter: Bộ lọc trạng thái nếu có.
+        db_session: Current database session.
+        page: Page number, starting from 1.
+        page_size: Maximum number of vehicles per page.
+        status_filter: Status filter, if any.
 
     Returns:
-        Response danh sách xe có phân trang.
+        Paginated vehicle list response.
     """
     page = max(page, settings.API_DEFAULT_PAGE)
     if page_size < 1:
@@ -211,19 +212,19 @@ async def update_vehicle(
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
 ) -> VehicleResponse:
-    """Cập nhật từng phần một xe sau khi kiểm tra các field unique.
+    """Partially update a vehicle after checking the unique fields.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
-        vehicle_update_request: Dữ liệu field cần cập nhật.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        vehicle_update_request: Field data to update.
 
     Returns:
-        Response của xe sau cập nhật.
+        Response for the updated vehicle.
 
     Raises:
-        VehicleNotFoundError: Khi xe không tồn tại hoặc đã soft delete.
-        VehicleConflictError: Khi VIN hoặc biển số mới đã được sử dụng.
+        VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
+        VehicleConflictError: When the new VIN or license plate is already in use.
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     if not vehicle_record:
@@ -284,17 +285,17 @@ async def soft_delete_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
 ) -> dict[str, str]:
-    """Soft delete một xe.
+    """Soft-delete a vehicle.
 
     Args:
-        db_session: Phiên database hiện tại.
-        vehicle_id: ID nội bộ của xe.
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        Thông báo xoá thành công.
+        Success deletion message.
 
     Raises:
-        VehicleNotFoundError: Khi xe không tồn tại hoặc đã soft delete.
+        VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
     """
     vehicle_record = await vehicle_repository.soft_delete(db_session, vehicle_id)
     if not vehicle_record:

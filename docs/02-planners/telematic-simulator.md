@@ -1,13 +1,13 @@
 # Planner: Telematic Simulator (AD-02, AD-05)
 
-> Mã chức năng: AD-02 (Nhận dữ liệu telemetry), AD-05 (Quản lý xe và thiết bị)
-> Trạng thái: 🚧 Source đã triển khai tại `simulator/`; automated regression test
-> còn theo dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
-> Ngày tạo: 2026-07-28
+> Feature code: AD-02 (Telemetry data ingestion), AD-05 (Vehicle and device management)
+> Status: 🚧 Source implemented at `simulator/`; automated regression tests
+> are still tracked in [`backend-automated-tests.md`](./backend-automated-tests.md)
+> Created: 2026-07-28
 
-## 1. Mục tiêu
+## 1. Goal
 
-Tạo simulator tối giản để kiểm thử end-to-end luồng dữ liệu:
+Create a minimal simulator to test the end-to-end data flow:
 
 ```text
 POST vehicles + POST telematics
@@ -19,28 +19,28 @@ POST vehicles + POST telematics
      telemetry-ingestion → PostgreSQL
 ```
 
-Trong planner này:
+In this planner:
 
-- **Telematic** là thiết bị vật lý giả lập, được định danh bằng
+- **Telematic** is the simulated physical device, identified by
   `telematic_serial`.
-- **Telemetry** là bản tin dữ liệu mà thiết bị gửi liên tục qua MQTT.
-- Simulator không tạo dữ liệu trực tiếp trong database và không bypass API/MQTT.
+- **Telemetry** is the data message the device sends continuously over MQTT.
+- The simulator does not create data directly in the database and does not bypass the API/MQTT.
 
-## 2. Phạm vi
+## 2. Scope
 
-Tạo đúng hai script:
+Create exactly two scripts:
 
 ```text
-simulator/seed_simulator_devices.py  # chạy một lần để tạo vehicles và telematics
-simulator/telematic_simulator.py     # chạy liên tục để publish telemetry
+simulator/seed_simulator_devices.py  # run once to create vehicles and telematics
+simulator/telematic_simulator.py     # run continuously to publish telemetry
 ```
 
-Không bao gồm UI, Docker image riêng, mô phỏng OCPP, mô phỏng command từ backend,
-hoặc mô phỏng lỗi mạng nâng cao.
+Does not include a UI, a separate Docker image, OCPP simulation, backend command
+simulation, or advanced network failure simulation.
 
-## 3. Tài liệu và source contract bắt buộc tham chiếu
+## 3. Required reference documents and source contracts
 
-Simulator phải bám các source sau, không tự định nghĩa schema khác:
+The simulator must follow these sources exactly and must not define its own schema:
 
 - Vehicle request: `backend/app/domains/vehicles/schemas.py`, class
   `VehicleCreate`.
@@ -48,34 +48,34 @@ Simulator phải bám các source sau, không tự định nghĩa schema khác:
   `TelematicCreate`.
 - Telematic status: `backend/app/domains/telematics/types.py`, enum
   `TelematicStatus`.
-- Telemetry payload: `backend/app/domains/telemetry/schemas.py`, các class
+- Telemetry payload: `backend/app/domains/telemetry/schemas.py`, classes
   `TelemetryMessage`, `LocationData`, `VehicleState`, `BatteryData`,
   `MotorData`, `SignalData`.
 - Database mapping: `backend/app/domains/telematics/models.py`, class
-  `Telematic`, và `backend/app/domains/vehicles/models.py`, class `Vehicle`.
+  `Telematic`, and `backend/app/domains/vehicles/models.py`, class `Vehicle`.
 - MQTT topic/payload/QoS: `docs/02-planners/mqtt-spec.md`.
-- MQTT runtime settings: `backend/app/libs/common/config.py`, các biến
+- MQTT runtime settings: `backend/app/libs/common/config.py`, variables
   `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_QOS`.
 
-Nếu source schema thay đổi, simulator phải được cập nhật theo source đó trước khi
-đổi payload mẫu trong script.
+If the source schema changes, the simulator must be updated to match that source before
+changing the sample payload in the script.
 
-## 4. Script 1 — seed vehicles và telematics
+## 4. Script 1 — seed vehicles and telematics
 
-### 4.1. Trách nhiệm
+### 4.1. Responsibility
 
-`seed_simulator_devices.py` chạy một lần và thực hiện tuần tự:
+`seed_simulator_devices.py` runs once and performs, in sequence:
 
-1. Tạo một hoặc nhiều vehicle bằng `POST /api/v1/vehicles/`.
-2. Đọc `vin` và `vehicle_id` từ response.
-3. Tạo một Telematic tương ứng bằng `POST /api/v1/telematics/`, gửi
-   `vehicle_vin` để backend resolve thành `vehicle_id`.
-4. In ra bảng mapping `telematic_serial → vehicle_id → VIN` để dùng khi chạy
-   simulator.
+1. Create one or more vehicles via `POST /api/v1/vehicles/`.
+2. Read `vin` and `vehicle_id` from the response.
+3. Create a corresponding Telematic via `POST /api/v1/telematics/`, sending
+   `vehicle_vin` so the backend resolves it to `vehicle_id`.
+4. Print a mapping table of `telematic_serial → vehicle_id → VIN` for use when running
+   the simulator.
 
-### 4.2. Dữ liệu vehicle
+### 4.2. Vehicle data
 
-Mỗi request phải có đủ field theo `VehicleCreate`/`VehicleBase`:
+Each request must include all fields per `VehicleCreate`/`VehicleBase`:
 
 ```json
 {
@@ -89,12 +89,12 @@ Mỗi request phải có đủ field theo `VehicleCreate`/`VehicleBase`:
 }
 ```
 
-VIN phải dài đúng 17 ký tự theo `VehicleCreate`. Script cần tạo VIN và biển số
-không trùng nhau giữa các lần chạy hoặc hỗ trợ prefix/index cấu hình được.
+The VIN must be exactly 17 characters per `VehicleCreate`. The script must generate VINs and license plates
+that do not collide across runs, or support a configurable prefix/index.
 
-### 4.3. Dữ liệu Telematic
+### 4.3. Telematic data
 
-Mỗi request phải theo `TelematicCreate`:
+Each request must follow `TelematicCreate`:
 
 ```json
 {
@@ -105,39 +105,39 @@ Mỗi request phải theo `TelematicCreate`:
 }
 ```
 
-`vehicle_vin` phải đúng VIN vừa tạo. Không dùng `vehicle_id` trong request vì API
-CRUD Telematic nhận VIN và tự resolve FK.
+`vehicle_vin` must match the VIN just created. Do not use `vehicle_id` in the request, because the
+Telematic CRUD API accepts a VIN and resolves the FK itself.
 
-### 4.4. Tính idempotency tối thiểu
+### 4.4. Minimal idempotency
 
-- Mặc định script fail-fast nếu API trả `409`, để tránh âm thầm tạo mapping sai.
-- Có tham số `--prefix` hoặc `--start-index` để tạo bộ serial/VIN mới khi chạy lại.
-- Không xóa dữ liệu cũ và không gọi DELETE tự động.
-- Để dễ chạy cho developer, cấu hình MVP được hard-code tập trung trong một block
-  `CONFIG` ở đầu script, có comment tiếng Việt cho từng giá trị; không bắt buộc
-  truyền command-line arguments.
-- Các giá trị cần sửa trực tiếp gồm `API_BASE_URL`, số lượng thiết bị,
-  `TELEMATIC_SERIAL_PREFIX`, `VIN_PREFIX`, firmware và request timeout. Mặc định
-  dùng `http://localhost:8000`.
+- By default, the script fails fast if the API returns `409`, to avoid silently creating an incorrect mapping.
+- It has a `--prefix` or `--start-index` parameter to create a new set of serials/VINs on a re-run.
+- It does not delete old data and does not call DELETE automatically.
+- To make it easy for developers to run, the MVP configuration is hard-coded centrally in a
+  `CONFIG` block at the top of the script, with Vietnamese-language comments for each value; passing
+  command-line arguments is not required.
+- Values that need to be edited directly include `API_BASE_URL`, the number of devices,
+  `TELEMATIC_SERIAL_PREFIX`, `VIN_PREFIX`, firmware, and the request timeout. The default
+  is `http://localhost:8000`.
 
-## 5. Script 2 — publish telemetry liên tục
+## 5. Script 2 — continuously publish telemetry
 
-### 5.1. Trách nhiệm
+### 5.1. Responsibility
 
-`telematic_simulator.py` đọc danh sách serial đã seed và mở một MQTT client để
-publish liên tục. MVP có thể dùng một process và một task async cho mỗi thiết bị.
+`telematic_simulator.py` reads the list of seeded serials and opens an MQTT client to
+publish continuously. The MVP may use a single process and one async task per device.
 
-Topic của mỗi thiết bị:
+Each device's topic:
 
 ```text
 g3network/telematics/{telematic_serial}/telemetry
 ```
 
-Thiết lập QoS `0`, retain `false`, đúng `docs/02-planners/mqtt-spec.md`.
+Set QoS `0`, retain `false`, exactly as in `docs/02-planners/mqtt-spec.md`.
 
-### 5.2. Payload phải khớp TelemetryMessage
+### 5.2. Payload must match TelemetryMessage
 
-Mỗi bản tin có cấu trúc:
+Each message has the structure:
 
 ```json
 {
@@ -169,24 +169,24 @@ Mỗi bản tin có cấu trúc:
 }
 ```
 
-Quy tắc sinh dữ liệu:
+Data generation rules:
 
-- `message_uuid`: UUID mới cho mỗi message.
-- `telematic_serial`: giữ nguyên serial của task.
-- `recorded_at`: UTC timezone-aware, tăng theo thời gian thực.
-- latitude/longitude: dao động nhỏ quanh tọa độ cấu hình, luôn trong range schema.
-- speed: dao động trong `0..200` km/h.
-- heading: dao động trong `0..360` hoặc `null`.
-- odometer: không giảm giữa các message của cùng thiết bị.
-- battery.soc: dao động trong `0..100`.
-- `errors`: mặc định `[]`; không mô phỏng lỗi kỹ thuật trong MVP.
+- `message_uuid`: a new UUID for each message.
+- `telematic_serial`: keeps the task's own serial.
+- `recorded_at`: UTC timezone-aware, advancing in real time.
+- latitude/longitude: small fluctuations around the configured coordinates, always within the schema range.
+- speed: fluctuates within `0..200` km/h.
+- heading: fluctuates within `0..360` or `null`.
+- odometer: does not decrease between messages from the same device.
+- battery.soc: fluctuates within `0..100`.
+- `errors`: defaults to `[]`; the MVP does not simulate technical errors.
 
-Script nên validate payload bằng `TelemetryMessage.model_validate()` trước khi
-serialize JSON để simulator phát hiện sớm lỗi contract.
+The script should validate the payload with `TelemetryMessage.model_validate()` before
+serializing to JSON, so the simulator detects contract errors early.
 
-### 5.3. Tham số chạy
+### 5.3. Runtime parameters
 
-Đề xuất cấu hình tập trung ở đầu script:
+Proposed configuration centralized at the top of the script:
 
 ```python
 CONFIG = {
@@ -198,35 +198,35 @@ CONFIG = {
 }
 ```
 
-Developer chỉ cần sửa block `CONFIG`, sau đó chạy script không tham số:
+The developer only needs to edit the `CONFIG` block, then run the script with no parameters:
 
 ```bash
 uv run python scripts/telematic_simulator.py
 ```
 
-Có thể hỗ trợ đọc serial từ file JSON do script seed xuất ra, nhưng không bắt buộc
-ở MVP. `Ctrl+C` phải dừng task, disconnect MQTT và thoát sạch.
+It may optionally support reading serials from a JSON file exported by the seed script, but this is not required
+for the MVP. `Ctrl+C` must stop the task, disconnect MQTT, and exit cleanly.
 
-## 6. Thứ tự chạy và điều kiện trước
+## 6. Run order and preconditions
 
-1. Khởi động PostgreSQL, EMQX và API.
-2. Chạy migration mới nhất.
-3. Khởi động telemetry ingestion.
-4. Chạy `seed_simulator_devices.py`.
-5. Chạy `telematic_simulator.py` với các serial đã seed.
-6. Kiểm tra log ingestion và số row trong `vehicle_telemetry`.
+1. Start PostgreSQL, EMQX, and the API.
+2. Run the latest migration.
+3. Start telemetry ingestion.
+4. Run `seed_simulator_devices.py`.
+5. Run `telematic_simulator.py` with the seeded serials.
+6. Check the ingestion logs and the row count in `vehicle_telemetry`.
 
-Nếu Telematic chưa được gán vehicle, ingestion sẽ skip message theo business rule
-hiện tại; vì vậy phải seed vehicle trước và gửi đúng VIN khi tạo Telematic.
+If a Telematic has not been assigned a vehicle, ingestion will skip the message per the current business rule;
+therefore the vehicle must be seeded first and the correct VIN sent when creating the Telematic.
 
-## 7. Tiêu chí nghiệm thu
+## 7. Acceptance criteria
 
-- [x] Seed script tạo vehicle và Telematic qua API bằng `vehicle_vin`.
-- [x] Seed script in mapping serial/VIN/vehicle_id.
-- [x] Simulator publish đúng topic và QoS 0.
-- [x] Payload validate bằng `TelemetryMessage`.
-- [x] Mỗi thiết bị phát message theo interval cấu hình.
-- [x] Ingestion có thể nhận, enrich và lưu telemetry theo active MVP path.
-- [x] Ctrl+C hủy task MQTT của simulator.
-- [x] Không thêm field ngoài contract telemetry.
-- [ ] Automated regression test được theo dõi trong `backend-automated-tests.md`.
+- [x] The seed script creates a vehicle and Telematic via the API using `vehicle_vin`.
+- [x] The seed script prints the serial/VIN/vehicle_id mapping.
+- [x] The simulator publishes to the correct topic with QoS 0.
+- [x] The payload validates against `TelemetryMessage`.
+- [x] Each device emits messages at the configured interval.
+- [x] Ingestion can receive, enrich, and store telemetry via the active MVP path.
+- [x] Ctrl+C cancels the simulator's MQTT task.
+- [x] No fields are added outside the telemetry contract.
+- [ ] Automated regression tests are tracked in `backend-automated-tests.md`.

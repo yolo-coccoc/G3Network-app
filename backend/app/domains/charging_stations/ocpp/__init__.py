@@ -1,1 +1,1 @@
-"""OCPP 2.0.1 gateway của bounded context charging_stations."""
+"""OCPP 2.0.1 gateway for the charging_stations bounded context."""

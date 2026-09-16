@@ -1,10 +1,11 @@
-"""MQTT consumer tối giản cho telemetry ingestion MVP.
+"""Minimal MQTT consumer for telemetry ingestion MVP.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Consumer chỉ làm ba việc: cấu hình MQTT client, nhận payload telemetry và đưa
-message hợp lệ vào queue trong RAM. Payload lỗi hoặc queue đầy được log rồi bỏ
-qua; không có retry, metrics hay DLQ trong phạm vi MVP.
+The consumer does only three things: configure the MQTT client, receive
+telemetry payloads, and put valid messages onto the in-RAM queue. Invalid
+payloads or a full queue are logged and dropped; there is no retry, metrics,
+or DLQ within the MVP scope.
 """
 
 import asyncio
@@ -20,27 +21,28 @@ from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Queue mặc định chỉ hỗ trợ cách khởi tạo độc lập. Entrypoint chính sẽ tạo queue
-# riêng theo settings rồi inject cùng instance vào consumer và worker.
+# The default queue only supports standalone construction. The main
+# entrypoint creates its own queue from settings and injects the same
+# instance into the consumer and worker.
 message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(
     maxsize=settings.TELEMETRY_QUEUE_SIZE
 )
 
 
 class MQTTConsumer:
-    """Consumer đọc telemetry từ MQTT broker và đẩy vào queue trong RAM.
+    """Consumer that reads telemetry from the MQTT broker and pushes it onto the in-RAM queue.
 
     Attributes:
         host: MQTT broker host.
         port: MQTT broker port.
         client_id: MQTT client identifier.
-        username: MQTT username, có thể ``None``.
-        password: MQTT password, có thể ``None``.
-        qos: QoS dùng khi subscribe topic telemetry.
-        topic_pattern: Topic pattern dùng để nhận telemetry.
-        queue: Queue đích cho các telemetry envelope hợp lệ.
-        _client: MQTT client đã được cấu hình, hoặc ``None`` nếu chưa connect.
-        _running: Cờ cho biết vòng lặp consume có nên tiếp tục hay không.
+        username: MQTT username, can be ``None``.
+        password: MQTT password, can be ``None``.
+        qos: QoS used when subscribing to the telemetry topic.
+        topic_pattern: Topic pattern used to receive telemetry.
+        queue: Destination queue for valid telemetry envelopes.
+        _client: The configured MQTT client, or ``None`` if not yet connected.
+        _running: Flag indicating whether the consume loop should continue.
     """
 
     def __init__(
@@ -54,7 +56,7 @@ class MQTTConsumer:
         topic_pattern: str | None = None,
         queue: asyncio.Queue[TelemetryEnvelope] | None = None,
     ) -> None:
-        """Khởi tạo consumer từ settings hoặc giá trị override.
+        """Initialize the consumer from settings or override values.
 
         Args:
             host: MQTT broker host.
@@ -62,9 +64,9 @@ class MQTTConsumer:
             client_id: MQTT client identifier.
             username: MQTT username.
             password: MQTT password.
-            qos: QoS dùng khi subscribe.
-            topic_pattern: Topic pattern nhận telemetry.
-            queue: Queue đích cho message hợp lệ.
+            qos: QoS used when subscribing.
+            topic_pattern: Topic pattern for receiving telemetry.
+            queue: Destination queue for valid messages.
         """
         self.host = settings.MQTT_HOST if host is None else host
         self.port = settings.MQTT_PORT if port is None else port
@@ -81,11 +83,12 @@ class MQTTConsumer:
         self._running = False
 
     async def connect(self) -> None:
-        """Chuẩn bị MQTT client cho vòng lặp consume.
+        """Prepare the MQTT client for the consume loop.
 
         Side Effects:
-            Tạo MQTT client cục bộ cho process và bật cờ cho phép consume loop
-            chạy khi ``start_consuming()`` được gọi.
+            Creates an MQTT client local to the process and sets the flag
+            that lets the consume loop run when ``start_consuming()`` is
+            called.
         """
         logger.info(
             "Connecting to MQTT broker",
@@ -113,19 +116,20 @@ class MQTTConsumer:
         self._running = True
 
     async def disconnect(self) -> None:
-        """Yêu cầu consume loop dừng ở lần kiểm tra kế tiếp.
+        """Ask the consume loop to stop at the next check.
 
         Side Effects:
-            Hạ cờ nhận message mới. MQTT context sẽ tự đóng khi vòng lặp thoát.
+            Clears the flag for accepting new messages. The MQTT context
+            closes itself when the loop exits.
         """
         self._running = False
 
     async def start_consuming(self) -> None:
-        """Mở MQTT connection, subscribe topic và xử lý message liên tục.
+        """Open the MQTT connection, subscribe to the topic, and process messages continuously.
 
         Raises:
-            RuntimeError: Khi chưa gọi ``connect()`` trước đó.
-            MqttError: Khi MQTT connection hoặc consume loop thất bại.
+            RuntimeError: When ``connect()`` has not been called beforehand.
+            MqttError: When the MQTT connection or consume loop fails.
         """
         if self._client is None:
             raise RuntimeError("MQTT client is not configured")
@@ -150,10 +154,10 @@ class MQTTConsumer:
             self._client = None
 
     async def _handle_message(self, message: Message) -> None:
-        """Parse, validate và đưa một MQTT message hợp lệ vào queue.
+        """Parse, validate, and place one valid MQTT message onto the queue.
 
         Args:
-            message: Message nhận từ aiomqtt.
+            message: Message received from aiomqtt.
         """
         try:
             payload_dict = json.loads(message.payload.decode("utf-8"))

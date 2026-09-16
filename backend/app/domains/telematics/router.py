@@ -1,4 +1,4 @@
-"""FastAPI router cho CRUD thiết bị Telematic."""
+"""FastAPI router for Telematic device CRUD."""
 
 from uuid import UUID
 
@@ -28,7 +28,7 @@ async def create_telematic_endpoint(
     telematic_create_request: TelematicCreateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
-    """Tạo thiết bị Telematic."""
+    """Create a Telematic device."""
     try:
         return await service.create_telematic(
             db_session,
@@ -47,7 +47,7 @@ async def list_telematics_endpoint(
     status_filter: TelematicStatus | None = Query(None, alias="status"),
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicListResponse:
-    """Liệt kê thiết bị chưa bị xoá."""
+    """List devices that have not been deleted."""
     return await service.list_telematics(
         db_session,
         page,
@@ -61,7 +61,7 @@ async def get_telematic_endpoint(
     telematic_id: UUID,
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
-    """Lấy chi tiết thiết bị."""
+    """Get device details."""
     try:
         return await service.get_telematic(db_session, telematic_id)
     except TelematicNotFoundError as error:
@@ -74,7 +74,7 @@ async def update_telematic_endpoint(
     telematic_update_request: TelematicUpdateRequest,
     db_session: AsyncSession = Depends(get_db),
 ) -> TelematicResponse:
-    """Cập nhật từng phần thiết bị."""
+    """Partially update a device."""
     try:
         return await service.update_telematic(
             db_session,
@@ -92,7 +92,7 @@ async def soft_delete_telematic_endpoint(
     telematic_id: UUID,
     db_session: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft delete thiết bị."""
+    """Soft delete a device."""
     try:
         await service.soft_delete_telematic(db_session, telematic_id)
     except TelematicNotFoundError as error:

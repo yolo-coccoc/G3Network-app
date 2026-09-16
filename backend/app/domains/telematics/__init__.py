@@ -1,1 +1,1 @@
-"""Domain quản lý thiết bị Telematic vật lý."""
+"""Domain managing physical Telematic devices."""

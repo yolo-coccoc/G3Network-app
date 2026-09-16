@@ -1,57 +1,58 @@
 # G3Network
 
-G3Network là hệ thống hỗ trợ tài xế và quản lý đội xe tải điện. Repo hiện tại
-tập trung vào backend MVP, hạ tầng local và simulator để kiểm thử luồng dữ liệu
-xe và phiên sạc. Web portal và vehicle app chưa có source trong checkout này.
+G3Network is a driver assistance and electric truck fleet management system.
+The current repo focuses on the backend MVP, local infrastructure and
+simulators for testing the vehicle data and charging session flows. The web
+portal and vehicle app have no source in this checkout yet.
 
-## Cần chuẩn bị
+## Prerequisites
 
-- Docker Desktop đang được mở
+- Docker Desktop is running
 - `uv`
 - `make`
 
-Mọi lệnh dưới đây được chạy tại thư mục gốc của dự án:
+All commands below are run from the project root directory:
 
 ```bash
 cd /home/duc/Workspace/G3Network-app
 ```
 
-## 1. Khởi động toàn bộ hệ thống
+## 1. Starting the whole system
 
-### Chạy một lần khi cài đặt lần đầu
+### Run once for initial setup
 
 ```bash
 cp backend/.env.example backend/.env
 make backend-install
 ```
 
-### Khởi động hạ tầng
+### Start the infrastructure
 
 ```bash
 make infra-up
 make db-migrate
 ```
 
-`infra-up` khởi động PostgreSQL và EMQX bằng Docker. `db-migrate` tạo/cập nhật
-các bảng database.
+`infra-up` starts PostgreSQL and EMQX via Docker. `db-migrate` creates/updates
+the database tables.
 
-### Phạm vi backend hiện tại
+### Current backend scope
 
-- CRUD xe và thiết bị telematic, gồm mapping thiết bị với xe.
-- Nhận telemetry qua MQTT và lưu vào TimescaleDB.
-- API lấy telemetry mới nhất của một xe.
-- CRUD topology Station → EVSE → Connector.
-- OCPP 2.0.1 và lifecycle charging session happy path
+- Vehicle and telematic device CRUD, including mapping devices to vehicles.
+- Receiving telemetry over MQTT and storing it in TimescaleDB.
+- API for reading a vehicle's latest telemetry.
+- Station → EVSE → Connector topology CRUD.
+- OCPP 2.0.1 and the charging session happy-path lifecycle
   `Started → Updated/MeterValues → Ended`.
-- API đọc charging session, event và meter value.
+- API for reading charging sessions, events and meter values.
 
-Chưa có trong baseline hiện tại: API toàn bộ lịch sử telemetry, bản đồ xe/trạm,
-trạng thái connector tổng hợp, cảnh báo pin/bất thường, push ngưỡng cảnh báo,
-identity/RBAC, policy sạc, thanh toán và frontend.
+Not yet in the current baseline: full telemetry history API, vehicle/station
+map, aggregate connector status, battery/anomaly alerts, threshold alert
+pushes, identity/RBAC, charging policy, payment and frontend.
 
-### Chạy các thành phần ứng dụng
+### Running the application components
 
-Mỗi lệnh dưới đây chạy ở một Terminal riêng. Giữ các Terminal này hoạt động.
+Each command below runs in its own Terminal. Keep these Terminals running.
 
 Terminal 1 — Backend API:
 
@@ -59,102 +60,107 @@ Terminal 1 — Backend API:
 make backend-dev
 ```
 
-Terminal 2 — Nhận dữ liệu từ thiết bị xe:
+Terminal 2 — Receiving data from vehicle devices:
 
 ```bash
 make telemetry-dev
 ```
 
-Terminal 3 — Cổng kết nối trụ sạc OCPP 2.0.1:
+Terminal 3 — OCPP 2.0.1 charging station gateway:
 
 ```bash
 make charging-ocpp-dev
 ```
 
-Sau khi khởi động xong, hệ thống có các địa chỉ chính:
+Once started, the system exposes these main addresses:
 
-- API và Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
-- Kiểm tra API: [http://localhost:8000/health](http://localhost:8000/health)
-- Kết nối OCPP: `ws://localhost:9000/ocpp/<mã-trụ>`
+- API and Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
+- API health check: [http://localhost:8000/health](http://localhost:8000/health)
+- OCPP connection: `ws://localhost:9000/ocpp/<station-code>`
 - EMQX Dashboard: [http://localhost:18083](http://localhost:18083)
 
-## 2. Chạy các simulator
+## 2. Running the simulators
 
-Simulator chỉ dùng để tạo dữ liệu giả lập, không cần khi kết nối thiết bị xe
-hoặc trụ sạc thật. Backend và EMQX phải đang chạy trước; riêng simulator trụ
-sạc cần chạy thêm OCPP gateway.
+Simulators are only used to generate mock data and are not needed when
+connecting real vehicle devices or charging stations. The backend and EMQX
+must already be running; the charging station simulator additionally needs
+the OCPP gateway running.
 
-### Simulator dữ liệu xe
+### Vehicle data simulator
 
-Mở Terminal mới. Chạy lần đầu để tạo một xe và một thiết bị telematics mẫu:
+Open a new Terminal. Run once to create a sample vehicle and telematics
+device:
 
 ```bash
 cd backend
 uv run python ../simulator/seed_simulator_devices.py
 ```
 
-Sau đó chạy simulator gửi dữ liệu vị trí, tốc độ và pin qua MQTT:
+Then run the simulator that sends location, speed and battery data over MQTT:
 
 ```bash
 uv run python ../simulator/telematic_simulator.py
 ```
 
-Simulator chạy liên tục mỗi 5 giây. Nhấn `Ctrl+C` để dừng.
+The simulator runs continuously every 5 seconds. Press `Ctrl+C` to stop.
 
-### Simulator trụ sạc và phiên sạc
+### Charging station and charging session simulator
 
-Mở Terminal mới tại thư mục gốc. Tạo topology mẫu gồm một station, EVSE và
-connector:
+Open a new Terminal at the project root. Create a sample topology consisting
+of one station, EVSE and connector:
 
 ```bash
 make charging-ocpp-seed
 ```
 
-Topology mẫu có mã trụ `SIM-OCPP-001`, EVSE `1` và connector `1`. Lệnh này chỉ
-cần chạy một lần; nếu gặp lỗi trùng mã thì topology đã tồn tại.
+The sample topology has station code `SIM-OCPP-001`, EVSE `1` and connector
+`1`. This command only needs to run once; a duplicate-code error means the
+topology already exists.
 
-Chạy một phiên sạc giả lập:
+Run a simulated charging session:
 
 ```bash
 make charging-ocpp-sim
 ```
 
-Simulator sẽ kết nối vào gateway và gửi luồng bắt đầu sạc, chỉ số điện, cập
-nhật rồi kết thúc sạc. Kết quả có thể xem trong log hoặc trên các API charging
-trong Swagger.
+The simulator connects to the gateway and sends the start-charging, meter
+value, update and end-charging flow. Results can be viewed in the logs or via
+the charging APIs in Swagger.
 
-### Kết nối trụ sạc thật
+### Connecting a real charging station
 
-Trụ sạc thật cần được khai báo station, EVSE và connector trong Swagger trước,
-sao cho mã OCPP trùng với cấu hình trên thiết bị. Sau đó cấu hình trụ sạc:
+A real charging station must first be registered as a station, EVSE and
+connector in Swagger, with an OCPP code matching the device's configuration.
+Then configure the charging station:
 
 ```text
-OCPP URL:       ws://<địa-chỉ-máy-chạy-backend>:9000/ocpp/<mã-trụ>
+OCPP URL:       ws://<backend-host-address>:9000/ocpp/<station-code>
 Protocol:       ocpp2.0.1
 ```
 
-Trong môi trường local, trụ sạc phải truy cập được máy đang chạy backend.
+In a local environment, the charging station must be able to reach the
+machine running the backend.
 
-## Dừng hệ thống
+## Stopping the system
 
-Nhấn `Ctrl+C` ở các Terminal đang chạy ứng dụng, sau đó dừng Docker:
+Press `Ctrl+C` in the Terminals running the application, then stop Docker:
 
 ```bash
 make infra-down
 ```
 
-Dữ liệu vẫn được giữ lại. Không dùng `make infra-reset` hoặc `make db-reset`
-nếu chưa muốn xoá dữ liệu.
+Data is preserved. Do not use `make infra-reset` or `make db-reset` unless
+you intend to delete the data.
 
-## Cấu trúc chính
+## Main structure
 
 ```text
-backend/       Backend FastAPI và Alembic migrations
-infra/         PostgreSQL/TimescaleDB/PostGIS và EMQX
-simulator/     Simulator dữ liệu xe và trụ sạc
-docs/          Tài liệu yêu cầu, kiến trúc và kế hoạch triển khai
-architecture.md Sơ đồ kiến trúc MVP hiện tại
+backend/       Backend FastAPI and Alembic migrations
+infra/         PostgreSQL/TimescaleDB/PostGIS and EMQX
+simulator/     Vehicle and charging station data simulators
+docs/          Status, requirements, architecture and implementation planning docs
+  00-status/   Current repo status and architecture (source of truth for progress)
 ```
 
-Xem thêm: [AGENTS.md](./AGENTS.md) và
-[danh sách chức năng](./docs/01-requirements/feature-list.md).
+See also: [CLAUDE.md](./CLAUDE.md) and
+[feature list](./docs/01-requirements/feature-list.md).

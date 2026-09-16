@@ -1,4 +1,4 @@
-"""Các kiểu dữ liệu và DTO nội bộ dùng chung trong domain vehicles."""
+"""Shared internal data types and DTOs used within the vehicles domain."""
 
 import enum
 from dataclasses import dataclass
@@ -6,7 +6,7 @@ from uuid import UUID
 
 
 class VehicleStatus(str, enum.Enum):
-    """Các trạng thái vòng đời được hỗ trợ của xe."""
+    """Supported lifecycle statuses of a vehicle."""
 
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -16,11 +16,11 @@ class VehicleStatus(str, enum.Enum):
 
 @dataclass(frozen=True)
 class VehicleReference:
-    """Thông tin tối thiểu để domain khác tham chiếu đến một xe.
+    """Minimal information for other domains to reference a vehicle.
 
     Attributes:
-        vehicle_id: ID nội bộ của xe.
-        vin: Số khung dùng để nhận diện xe trong nghiệp vụ.
+        vehicle_id: Internal ID of the vehicle.
+        vin: VIN (chassis number) used to identify the vehicle in business logic.
     """
 
     vehicle_id: UUID

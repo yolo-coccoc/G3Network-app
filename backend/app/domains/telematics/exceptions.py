@@ -1,13 +1,13 @@
-"""Domain exceptions cho CRUD thiết bị Telematic."""
+"""Domain exceptions for Telematic device CRUD."""
 
 
 class TelematicError(Exception):
-    """Lỗi nghiệp vụ chung của domain Telematic."""
+    """Generic business error for the Telematic domain."""
 
 
 class TelematicNotFoundError(TelematicError):
-    """Không tìm thấy thiết bị Telematic."""
+    """Telematic device not found."""
 
 
 class TelematicConflictError(TelematicError):
-    """Dữ liệu thiết bị hoặc mapping xe bị trùng."""
+    """Device data or vehicle mapping is duplicated."""

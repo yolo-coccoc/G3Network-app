@@ -1,36 +1,37 @@
 # Planner: Backend CRUD Vehicles (AD-05)
 
-> Mã chức năng: AD-05 (Quản lý xe - CRUD, gán thiết bị)
-> Trạng thái: 🚧 Source đã triển khai; nghiệm thu tích hợp và automated regression
-> test còn theo dõi trong [`backend-automated-tests.md`](./backend-automated-tests.md)
-> Ngày tạo: 2026-07-23
+> Feature code: AD-05 (Vehicle management - CRUD, device assignment)
+> Status: 🚧 Source implemented; integration acceptance and automated regression
+> tests are still tracked in [`backend-automated-tests.md`](./backend-automated-tests.md)
+> Created: 2026-07-23
 
 ---
 
-## Tổng quan
+## Overview
 
-Trạng thái trên phản ánh source đã có, không có nghĩa toàn bộ checklist môi
-trường, database và test thủ công bên dưới đã hoàn tất. Những mục chưa chạy được
-trên môi trường hiện tại vẫn giữ `[ ]` để không ghi nhận khống kết quả.
+The status above reflects that the source exists, not that the entire
+environment/database/manual test checklist below has been completed. Items
+that could not yet be run on the current environment are kept as `[ ]` so no
+result is falsely recorded.
 
-Xây dựng backend API cho quản lý xe (vehicles) với các thao tác CRUD cơ bản:
-- Create: Tạo xe mới
-- Read: Xem danh sách xe, chi tiết 1 xe
-- Update: Cập nhật thông tin xe
-- Delete: Xoá xe (soft delete)
+Build a backend API for vehicle management with basic CRUD operations:
+- Create: Create a new vehicle
+- Read: View the vehicle list, view details of one vehicle
+- Update: Update vehicle information
+- Delete: Delete a vehicle (soft delete)
 
-**Phạm vi:**
-- Chỉ backend (FastAPI)
-- Test qua Swagger UI
-- Chưa bao gồm: frontend, gán thiết bị telematics, tích hợp với domain khác
+**Scope:**
+- Backend only (FastAPI)
+- Test via Swagger UI
+- Not included: frontend, telematics device assignment, integration with other domains
 
 ---
 
-## Kiến trúc theo AGENTS.md
+## Architecture per CLAUDE.md
 
 ```
 backend/
-├── app/                        # Source code chính (uv package layout)
+├── app/                        # Main source code (uv package layout)
 │   ├── domains/
 │   │   └── vehicles/
 │   │       ├── router.py      # FastAPI endpoints
@@ -49,145 +50,145 @@ backend/
 
 ---
 
-## Danh sách bước thực hiện
+## Implementation step list
 
-### Bước 0: Khởi tạo hạ tầng database
+### Step 0: Initialize database infrastructure
 
-**Mục tiêu:** Tạo PostgreSQL container với TimescaleDB + PostGIS extensions
+**Goal:** Create a PostgreSQL container with TimescaleDB + PostGIS extensions
 
 **Prompt:**
 ```
-Tạo hạ tầng database trong thư mục infra/:
-1. Tạo docker-compose.yml với service db (PostgreSQL 16)
-2. Tạo thư mục db/init/ với script bật extensions (TimescaleDB, PostGIS, uuid-ossp)
-3. Tạo .env.example với POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
-4. Cập nhật backend/.env.example với DATABASE_URL khớp với infra/.env.example
+Create the database infrastructure in the infra/ directory:
+1. Create docker-compose.yml with a db service (PostgreSQL 16)
+2. Create a db/init/ directory with a script that enables extensions (TimescaleDB, PostGIS, uuid-ossp)
+3. Create .env.example with POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+4. Update backend/.env.example with DATABASE_URL matching infra/.env.example
 ```
 
-**Lưu ý quan trọng:**
-- Image `postgres:16` mặc định **không có** TimescaleDB và PostGIS
-- Cho development cơ bản (CRUD vehicles), image này đủ dùng
-- Khi cần dùng TimescaleDB/PostGIS (domain telemetry, charging_stations,
-  charging_sessions), cần chuyển sang:
-  - `timescale/timescaledb-ha:pg16` (có TimescaleDB)
-  - `postgis/postgis:16-3.4` (có PostGIS)
-  - Hoặc build custom image có cả 2 extensions
+**Important notes:**
+- The `postgres:16` image does **not** come with TimescaleDB and PostGIS by default
+- For basic development (vehicles CRUD), this image is sufficient
+- When TimescaleDB/PostGIS is needed (telemetry, charging_stations,
+  charging_sessions domains), switch to:
+  - `timescale/timescaledb-ha:pg16` (has TimescaleDB)
+  - `postgis/postgis:16-3.4` (has PostGIS)
+  - Or build a custom image with both extensions
 
-**Lệnh chạy:**
+**Commands to run:**
 ```bash
 # Copy .env.example to .env
 cp infra/.env.example infra/.env
 
-# Khởi động container
+# Start the container
 docker compose -f infra/docker-compose.yml up -d
 
-# Kiểm tra container đang chạy
+# Check that the container is running
 docker ps
 
-# Xem logs (nếu cần)
+# View logs (if needed)
 docker compose -f infra/docker-compose.yml logs -f db
 
-# Dừng và xóa container (giữ volume)
+# Stop and remove the container (keep the volume)
 docker compose -f infra/docker-compose.yml down
 
-# Dừng và xóa cả volume (reset database)
+# Stop and remove the container along with the volume (reset the database)
 docker compose -f infra/docker-compose.yml down -v
 ```
 
-**Kiểm tra:**
-- [ ] Container `g3network-db` đang chạy
-- [ ] Port 5432 accessible
-- [ ] Extensions đã được bật trong database
+**Checks:**
+- [ ] The `g3network-db` container is running
+- [ ] Port 5432 is accessible
+- [ ] Extensions are enabled in the database
 
 ---
 
-### Bước 1: Thiết lập môi trường backend
+### Step 1: Set up the backend environment
 
-**Mục tiêu:** Khởi tạo project backend với FastAPI + uv
+**Goal:** Initialize the backend project with FastAPI + uv
 
 **Prompt:**
 ```
-Khởi tạo project backend trong thư mục backend/ với:
+Initialize the backend project in the backend/ directory with:
 - Python 3.12
 - FastAPI
-- uv để quản lý dependency (pyproject.toml + uv.lock)
-- Cấu trúc thư mục theo AGENTS.md:
+- uv for dependency management (pyproject.toml + uv.lock)
+- Directory structure per CLAUDE.md:
   - backend/app/domains/vehicles/
   - backend/app/api/main.py
   - backend/app/libs/db/
-- File .env.example với DATABASE_URL
-- File .gitignore cho Python
+- .env.example file with DATABASE_URL
+- .gitignore file for Python
 ```
 
-**Kiểm tra:**
-- [ ] `uv sync` chạy thành công
-- [ ] `uv run uvicorn api.main:app --reload` khởi động được server
-- [ ] Truy cập `http://localhost:8000/docs` thấy Swagger UI
+**Checks:**
+- [ ] `uv sync` runs successfully
+- [ ] `uv run uvicorn api.main:app --reload` starts the server
+- [ ] Accessing `http://localhost:8000/docs` shows the Swagger UI
 
 ---
 
-### Bước 2: Thiết lập database connection
+### Step 2: Set up the database connection
 
-**Mục tiêu:** Kết nối PostgreSQL, tạo base model
+**Goal:** Connect to PostgreSQL, create the base model
 
 **Prompt:**
 ```
-Thiết lập kết nối database trong backend/app/libs/db/:
-1. Tạo base.py với SQLAlchemy declarative_base
-2. Tạo session management (async session)
-3. Cấu hình database URL từ environment variable
-4. Tạo hàm get_db dependency để inject vào router
+Set up the database connection in backend/app/libs/db/:
+1. Create base.py with a SQLAlchemy declarative_base
+2. Create session management (async session)
+3. Configure the database URL from an environment variable
+4. Create a get_db dependency function to inject into the router
 ```
 
-**Kiểm tra:**
-- [ ] Server khởi động không lỗi khi có DATABASE_URL hợp lệ
-- [ ] Connection pool hoạt động
+**Checks:**
+- [ ] The server starts without errors when DATABASE_URL is valid
+- [ ] The connection pool works
 
 ---
 
-### Bước 3: Tạo models.py (SQLAlchemy)
+### Step 3: Create models.py (SQLAlchemy)
 
-**Mục tiêu:** Định nghĩa bảng `vehicles` trong database
+**Goal:** Define the `vehicles` table in the database
 
 **Prompt:**
 ```
-Tạo backend/app/domains/vehicles/models.py với SQLAlchemy model Vehicle:
+Create backend/app/domains/vehicles/models.py with a SQLAlchemy Vehicle model:
 
-Bảng vehicles:
+vehicles table:
 - id: UUID primary key
-- plate_number: string, unique, not null (biển số xe)
-- make: string, not null (hãng xe: VinFast, Hyundai...)
-- model: string, not null (dòng xe)
-- year: integer (năm sản xuất)
-- vin: string, unique (số khung)
-- battery_capacity_kwh: decimal (dung lượng pin)
-- max_range_km: integer (quãng đường tối đa khi đầy pin)
+- plate_number: string, unique, not null (license plate)
+- make: string, not null (manufacturer: VinFast, Hyundai...)
+- model: string, not null (vehicle model)
+- year: integer (manufacture year)
+- vin: string, unique (VIN / chassis number)
+- battery_capacity_kwh: decimal (battery capacity)
+- max_range_km: integer (maximum range on a full battery)
 - status: enum (active, inactive, maintenance)
-- team_id: UUID foreign key (nullable, để sau tích hợp fleet)
+- team_id: UUID foreign key (nullable, for later fleet integration)
 - created_at: timestamp
 - updated_at: timestamp
 - deleted_at: timestamp (nullable, soft delete)
 
-Lưu ý:
-- Dùng async SQLAlchemy
-- Import base từ libs.db.base
-- Thêm docstring mô tả bảng
+Notes:
+- Use async SQLAlchemy
+- Import base from libs.db.base
+- Add a docstring describing the table
 ```
 
-**Kiểm tra:**
-- [ ] Model không có lỗi syntax
-- [ ] Các trường đúng kiểu dữ liệu
-- [ ] Có docstring đầy đủ
+**Checks:**
+- [ ] The model has no syntax errors
+- [ ] Fields have the correct data types
+- [ ] Has a complete docstring
 
 ---
 
-### Bước 4: Tạo schemas.py (Pydantic)
+### Step 4: Create schemas.py (Pydantic)
 
-**Mục tiêu:** Định nghĩa request/response schemas
+**Goal:** Define request/response schemas
 
 **Prompt:**
 ```
-Tạo backend/app/domains/vehicles/schemas.py với Pydantic models:
+Create backend/app/domains/vehicles/schemas.py with Pydantic models:
 
 1. VehicleBase:
    - plate_number: str
@@ -203,8 +204,8 @@ Tạo backend/app/domains/vehicles/schemas.py với Pydantic models:
    - team_id: UUID | None
 
 3. VehicleUpdate:
-   - Tất cả fields optional
-   - Không cho update plate_number (hoặc cho phép nếu business yêu cầu)
+   - All fields optional
+   - Do not allow updating plate_number (or allow it if the business requires it)
 
 4. VehicleResponse (extends VehicleBase):
    - id: UUID
@@ -218,26 +219,26 @@ Tạo backend/app/domains/vehicles/schemas.py với Pydantic models:
    - page: int
    - page_size: int
 
-Lưu ý:
-- Dùng Pydantic v2
-- Thêm examples cho mỗi schema
-- Thêm docstring
+Notes:
+- Use Pydantic v2
+- Add examples for each schema
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [ ] Các schema không có lỗi syntax
-- [ ] Examples hiển thị đúng trong Swagger
-- [ ] Docstring đầy đủ
+**Checks:**
+- [ ] The schemas have no syntax errors
+- [ ] Examples display correctly in Swagger
+- [ ] Complete docstrings
 
 ---
 
-### Bước 5: Tạo repository.py
+### Step 5: Create repository.py
 
-**Mục tiêu:** Xử lý truy vấn database
+**Goal:** Handle database queries
 
 **Prompt:**
 ```
-Tạo backend/app/domains/vehicles/repository.py với các hàm async:
+Create backend/app/domains/vehicles/repository.py with async functions:
 
 1. create_vehicle(db, vehicle_data) -> Vehicle
 2. get_vehicle_by_id(db, vehicle_id) -> Vehicle | None
@@ -247,243 +248,243 @@ Tạo backend/app/domains/vehicles/repository.py với các hàm async:
 6. update_vehicle(db, vehicle_id, update_data) -> Vehicle | None
 7. soft_delete_vehicle(db, vehicle_id) -> Vehicle | None
 
-Lưu ý:
-- Dùng async session
-- Soft delete: set deleted_at thay vì xoá thật
-- Filter: chỉ lấy record có deleted_at is None
-- Thêm docstring cho mỗi hàm
+Notes:
+- Use an async session
+- Soft delete: set deleted_at instead of actually deleting
+- Filter: only fetch records where deleted_at is None
+- Add a docstring for each function
 ```
 
-**Kiểm tra:**
-- [ ] Các hàm không có lỗi syntax
-- [ ] Type hints đầy đủ
-- [ ] Docstring đầy đủ
+**Checks:**
+- [ ] The functions have no syntax errors
+- [ ] Complete type hints
+- [ ] Complete docstrings
 
 ---
 
-### Bước 6: Tạo service.py
+### Step 6: Create service.py
 
-**Mục tiêu:** Business logic layer
+**Goal:** Business logic layer
 
 **Prompt:**
 ```
-Tạo backend/app/domains/vehicles/service.py với các hàm:
+Create backend/app/domains/vehicles/service.py with the following functions:
 
 1. create_vehicle(db, vehicle_data) -> VehicleResponse
-   - Kiểm tra plate_number đã tồn tại chưa
-   - Nếu trùng, raise HTTPException 400
+   - Check whether plate_number already exists
+   - If duplicate, raise HTTPException 400
 
 2. get_vehicle(db, vehicle_id) -> VehicleResponse
-   - Nếu không tìm thấy, raise HTTPException 404
+   - If not found, raise HTTPException 404
 
 3. list_vehicles(db, page, page_size, status) -> VehicleListResponse
    - Validate page, page_size
-   - Gọi repository để lấy data
+   - Call the repository to fetch data
 
 4. update_vehicle(db, vehicle_id, update_data) -> VehicleResponse
-   - Kiểm tra vehicle tồn tại
-   - Nếu update plate_number, kiểm tra trùng
+   - Check that the vehicle exists
+   - If updating plate_number, check for duplicates
 
 5. delete_vehicle(db, vehicle_id) -> dict
    - Soft delete
-   - Trả về {"message": "Vehicle deleted successfully"}
+   - Return {"message": "Vehicle deleted successfully"}
 
-Lưu ý:
-- Mọi I/O qua repository, KHÔNG query trực tiếp trong service
-- Xử lý business exception
-- Thêm docstring
+Notes:
+- All I/O goes through the repository, do NOT query directly in the service
+- Handle business exceptions
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [ ] Các hàm không có lỗi syntax
-- [ ] Exception handling đúng
-- [ ] Docstring đầy đủ
+**Checks:**
+- [ ] The functions have no syntax errors
+- [ ] Exception handling is correct
+- [ ] Complete docstrings
 
 ---
 
-### Bước 7: Tạo router.py
+### Step 7: Create router.py
 
-**Mục tiêu:** Định nghĩa API endpoints
+**Goal:** Define API endpoints
 
 **Prompt:**
 ```
-Tạo backend/app/domains/vehicles/router.py với FastAPI APIRouter:
+Create backend/app/domains/vehicles/router.py with a FastAPI APIRouter:
 
 Endpoints:
 1. POST /vehicles
-   - Tạo xe mới
+   - Create a new vehicle
    - Request: VehicleCreate
    - Response: VehicleResponse (201)
 
 2. GET /vehicles
-   - Danh sách xe (phân trang)
+   - Vehicle list (paginated)
    - Query params: page, page_size, status
    - Response: VehicleListResponse (200)
 
 3. GET /vehicles/{vehicle_id}
-   - Chi tiết 1 xe
+   - Details of one vehicle
    - Response: VehicleResponse (200)
 
 4. PUT /vehicles/{vehicle_id}
-   - Cập nhật thông tin xe
+   - Update vehicle information
    - Request: VehicleUpdate
    - Response: VehicleResponse (200)
 
 5. DELETE /vehicles/{vehicle_id}
-   - Soft delete xe
+   - Soft delete a vehicle
    - Response: {"message": "..."} (200)
 
-Lưu ý:
-- Dùng async def
-- Inject db session qua Depends(get_db)
-- Thêm tags=["vehicles"] cho Swagger grouping
-- Thêm response_model cho mỗi endpoint
-- Thêm docstring cho mỗi endpoint
+Notes:
+- Use async def
+- Inject the db session via Depends(get_db)
+- Add tags=["vehicles"] for Swagger grouping
+- Add response_model for each endpoint
+- Add a docstring for each endpoint
 ```
 
-**Kiểm tra:**
-- [ ] Router không có lỗi syntax
-- [ ] Swagger hiển thị đúng endpoints
-- [ ] Docstring hiển thị trong Swagger
+**Checks:**
+- [ ] The router has no syntax errors
+- [ ] Swagger displays the endpoints correctly
+- [ ] Docstrings display in Swagger
 
 ---
 
-### Bước 8: Mount router vào main.py
+### Step 8: Mount the router into main.py
 
-**Mục tiêu:** Kết nối router vào app chính
+**Goal:** Connect the router to the main app
 
 **Prompt:**
 ```
-Cập nhật backend/app/api/main.py:
-1. Import router từ domains.vehicles.router
-2. Tạo FastAPI app với title, description
-3. Include router với prefix="/api/v1"
-4. Thêm health check endpoint GET /health
-5. Thêm CORS middleware (cho phép tất cả origins trong dev)
+Update backend/app/api/main.py:
+1. Import the router from domains.vehicles.router
+2. Create the FastAPI app with title, description
+3. Include the router with prefix="/api/v1"
+4. Add a health check endpoint GET /health
+5. Add CORS middleware (allow all origins in dev)
 ```
 
-**Kiểm tra:**
-- [ ] Server khởi động không lỗi
-- [ ] Truy cập `/docs` thấy tất cả endpoints
-- [ ] Health check trả về 200
+**Checks:**
+- [ ] The server starts without errors
+- [ ] Accessing `/docs` shows all endpoints
+- [ ] Health check returns 200
 
 ---
 
-### Bước 9: Tạo Alembic migration
+### Step 9: Create the Alembic migration
 
-**Mục tiêu:** Tạo migration để tạo bảng vehicles
+**Goal:** Create a migration to create the vehicles table
 
 **Prompt:**
 ```
-Thiết lập Alembic và tạo migration đầu tiên:
-1. Init Alembic trong backend/
-2. Cấu hình alembic.ini với database URL từ env
-3. Cấu hình env.py để hỗ trợ async
-4. Import Vehicle model trong env.py
-5. Tạo migration: alembic revision --autogenerate -m "create vehicles table"
-6. Chạy migration: alembic upgrade head
+Set up Alembic and create the first migration:
+1. Init Alembic in backend/
+2. Configure alembic.ini with the database URL from env
+3. Configure env.py to support async
+4. Import the Vehicle model in env.py
+5. Create the migration: alembic revision --autogenerate -m "create vehicles table"
+6. Run the migration: alembic upgrade head
 ```
 
-**Kiểm tra:**
-- [ ] Migration chạy thành công
-- [ ] Bảng vehicles được tạo trong database
-- [ ] Các cột đúng kiểu dữ liệu
+**Checks:**
+- [ ] The migration runs successfully
+- [ ] The vehicles table is created in the database
+- [ ] Columns have the correct data types
 
 ---
 
-### Bước 10: Test CRUD qua Swagger
+### Step 10: Test CRUD via Swagger
 
-**Mục tiêu:** Kiểm tra tất cả endpoints hoạt động
+**Goal:** Verify that all endpoints work
 
 **Prompt:**
 ```
-Không cần code, chỉ test thủ công qua Swagger UI:
+No coding needed, just test manually via Swagger UI:
 
-Test case 1: Tạo xe mới
+Test case 1: Create a new vehicle
 - POST /api/v1/vehicles
 - Body: {"plate_number": "51A-12345", "make": "VinFast", "model": "e34", "year": 2024, "status": "active"}
-- Kiểm tra: 201, trả về vehicle với id
+- Check: 201, returns the vehicle with an id
 
-Test case 2: Lấy danh sách xe
+Test case 2: Get the vehicle list
 - GET /api/v1/vehicles
-- Kiểm tra: 200, trả về danh sách có xe vừa tạo
+- Check: 200, returns a list including the vehicle just created
 
-Test case 3: Lấy chi tiết xe
+Test case 3: Get vehicle details
 - GET /api/v1/vehicles/{id}
-- Kiểm tra: 200, trả về đúng xe
+- Check: 200, returns the correct vehicle
 
-Test case 4: Cập nhật xe
+Test case 4: Update a vehicle
 - PATCH /api/v1/vehicles/{id}
 - Body: {"year": 2025}
-- Kiểm tra: 200, year đã đổi
+- Check: 200, year has changed
 
-Test case 5: Xoá xe
+Test case 5: Delete a vehicle
 - DELETE /api/v1/vehicles/{id}
-- Kiểm tra: 200
-- GET lại danh sách: xe không còn trong danh sách
+- Check: 200
+- Fetch the list again: the vehicle is no longer in the list
 
-Test case 6: Tạo xe trùng biển số
-- POST với plate_number đã tồn tại
-- Kiểm tra: 400, message lỗi rõ ràng
+Test case 6: Create a vehicle with a duplicate plate number
+- POST with a plate_number that already exists
+- Check: 400, clear error message
 ```
 
-**Kiểm tra:**
-- [ ] Tất cả test cases pass
-- [ ] Error responses đúng format
-- [ ] Soft delete hoạt động
+**Checks:**
+- [ ] All test cases pass
+- [ ] Error responses have the correct format
+- [ ] Soft delete works
 
 ---
 
-### Bước 11: Tạo file .md đi kèm
+### Step 11: Create the accompanying .md file
 
-**Mục tiêu:** Tài liệu mô tả cho domain vehicles
+**Goal:** Documentation describing the vehicles domain
 
 **Prompt:**
 ```
-Tạo file backend/app/domains/vehicles/vehicles.md mô tả:
-- Mục đích của domain vehicles
-- Các endpoints và cách sử dụng
-- Các trường trong model Vehicle
-- Lưu ý khi sử dụng (soft delete, validation...)
-- Link đến mã chức năng AD-05 trong feature-list
+Create the file backend/app/domains/vehicles/vehicles.md describing:
+- The purpose of the vehicles domain
+- The endpoints and how to use them
+- The fields in the Vehicle model
+- Notes on usage (soft delete, validation...)
+- A link to feature code AD-05 in the feature list
 ```
 
-**Kiểm tra:**
-- [ ] File .md đầy đủ nội dung
-- [ ] Đặt đúng vị trí
+**Checks:**
+- [ ] The .md file has complete content
+- [ ] Placed in the correct location
 
 ---
 
-## Thứ tự thực hiện khuyến nghị
+## Recommended execution order
 
 ```
-Bước 1 → Bước 2 → Bước 3 → Bước 4 → Bước 5 → Bước 6 → Bước 7 → Bước 8 → Bước 9 → Bước 10 → Bước 11
+Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 → Step 7 → Step 8 → Step 9 → Step 10 → Step 11
 ```
 
-**Lưu ý:**
-- Mỗi bước nên làm riêng biệt, test kỹ trước khi sang bước tiếp
-- Nếu gặp lỗi, dừng và sửa ngay
-- Commit code sau mỗi bước hoàn thành
+**Notes:**
+- Each step should be done separately, with thorough testing before moving to the next
+- If an error occurs, stop and fix it right away
+- Commit code after completing each step
 
 ---
 
-## Checklist tổng kết
+## Summary checklist
 
-Sau khi hoàn thành tất cả bước:
+After completing all steps:
 
-- [ ] Backend chạy ổn định trên `localhost:8000`
-- [ ] Swagger UI hiển thị đầy đủ endpoints tại `/docs`
-- [ ] Database có bảng `vehicles` với đúng schema
-- [ ] CRUD operations hoạt động qua Swagger
-- [ ] Soft delete hoạt động đúng
-- [ ] Validation (plate_number unique) hoạt động
-- [ ] Error responses đúng format
-- [ ] Code có docstring đầy đủ
-- [ ] File .md đi kèm đã tạo
+- [ ] Backend runs stably on `localhost:8000`
+- [ ] Swagger UI shows all endpoints at `/docs`
+- [ ] The database has a `vehicles` table with the correct schema
+- [ ] CRUD operations work via Swagger
+- [ ] Soft delete works correctly
+- [ ] Validation (plate_number unique) works
+- [ ] Error responses have the correct format
+- [ ] Code has complete docstrings
+- [ ] The accompanying .md file has been created
 
 ---
 
-## Ghi chú
+## Notes
 
-- **Chưa bao gồm:** Gán thiết bị telematics, tích hợp với domain fleet/teams, authentication/authorization
-- **Mở rộng sau:** API gán thiết bị, API lấy telemetry của xe, filter theo team_id
+- **Not yet included:** Telematics device assignment, integration with the fleet/teams domain, authentication/authorization
+- **Future extensions:** Device assignment API, API to get a vehicle's telemetry, filtering by team_id

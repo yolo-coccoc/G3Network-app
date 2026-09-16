@@ -1,10 +1,11 @@
 """
 Pydantic schemas for MQTT telemetry message validation.
 
-Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực)
+Feature code: AD-02 (Receive real-time data)
 
-Schema này validate message từ MQTT trước khi đưa vào queue.
-Message được gửi từ thiết bị Telematics, không chứa ID nội bộ hệ thống.
+This schema validates messages from MQTT before they are placed on the queue.
+The message is sent from the Telematics device and does not contain any
+internal system ID.
 """
 
 from dataclasses import dataclass
@@ -16,24 +17,24 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class VehicleTelemetryLatestResponse(BaseModel):
-    """Dữ liệu telemetry mới nhất trả về cho một xe.
+    """Latest telemetry data returned for a vehicle.
 
     Attributes:
-        vehicle_id: ID nội bộ của xe.
-        telematic_serial: Serial thiết bị gửi bản tin.
-        recorded_at: Thời điểm thiết bị ghi nhận dữ liệu theo UTC.
-        latitude: Vĩ độ GPS.
-        longitude: Kinh độ GPS.
-        speed: Tốc độ hiện tại, km/h.
-        heading: Hướng di chuyển, độ.
-        soc: Phần trăm pin còn lại.
-        battery_voltage: Điện áp pin, V.
-        battery_current: Dòng điện pin, A.
-        battery_temperature: Nhiệt độ pin, °C.
-        motor_temperature: Nhiệt độ động cơ, °C.
-        odometer: Tổng quãng đường, km.
-        signal_strength: Cường độ tín hiệu, dBm.
-        error_codes: Mã lỗi từ thiết bị.
+        vehicle_id: Internal ID of the vehicle.
+        telematic_serial: Serial of the device that sent the message.
+        recorded_at: Timestamp when the device recorded the data, in UTC.
+        latitude: GPS latitude.
+        longitude: GPS longitude.
+        speed: Current speed, km/h.
+        heading: Direction of travel, degrees.
+        soc: Remaining battery percentage.
+        battery_voltage: Battery voltage, V.
+        battery_current: Battery current, A.
+        battery_temperature: Battery temperature, °C.
+        motor_temperature: Motor temperature, °C.
+        odometer: Total distance traveled, km.
+        signal_strength: Signal strength, dBm.
+        error_codes: Error codes from the device.
     """
 
     model_config = {"from_attributes": True}
@@ -57,15 +58,17 @@ class VehicleTelemetryLatestResponse(BaseModel):
 
 class TelemetryLocationPayload(BaseModel):
     """
-    Dữ liệu vị trí GPS từ telematic.
+    GPS location data from the telematic device.
 
     Attributes:
-        latitude: Vĩ độ (-90 to 90 độ)
-        longitude: Kinh độ (-180 to 180 độ)
+        latitude: Latitude (-90 to 90 degrees)
+        longitude: Longitude (-180 to 180 degrees)
     """
 
-    latitude: Annotated[float, Field(ge=-90, le=90, description="Vĩ độ (độ)")]
-    longitude: Annotated[float, Field(ge=-180, le=180, description="Kinh độ (độ)")]
+    latitude: Annotated[float, Field(ge=-90, le=90, description="Latitude (degrees)")]
+    longitude: Annotated[
+        float, Field(ge=-180, le=180, description="Longitude (degrees)")
+    ]
 
     model_config = {
         "json_schema_extra": {
@@ -79,16 +82,16 @@ class TelemetryLocationPayload(BaseModel):
 
 class TelemetryVehicleStatePayload(BaseModel):
     """
-    Trạng thái xe từ telematic.
+    Vehicle state from the telematic device.
 
     Attributes:
-        speed: Tốc độ (0-200 km/h)
-        heading: Hướng di chuyển (0-360 độ, nullable). 0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây
-        odometer: Tổng quãng đường đã đi (km)
+        speed: Speed (0-200 km/h)
+        heading: Direction of travel (0-360 degrees, nullable). 0°=North, 90°=East, 180°=South, 270°=West
+        odometer: Total distance traveled (km)
     """
 
     speed: Annotated[
-        float | None, Field(default=None, ge=0, le=200, description="Tốc độ (km/h)")
+        float | None, Field(default=None, ge=0, le=200, description="Speed (km/h)")
     ]
     heading: Annotated[
         float | None,
@@ -96,11 +99,12 @@ class TelemetryVehicleStatePayload(BaseModel):
             default=None,
             ge=0,
             le=360,
-            description="Hướng di chuyển (độ). 0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây",
+            description="Direction of travel (degrees). 0°=North, 90°=East, 180°=South, 270°=West",
         ),
     ]
     odometer: Annotated[
-        float | None, Field(default=None, ge=0, description="Tổng quãng đường (km)")
+        float | None,
+        Field(default=None, ge=0, description="Total distance traveled (km)"),
     ]
 
     model_config = {
@@ -115,27 +119,33 @@ class TelemetryVehicleStatePayload(BaseModel):
 
 class TelemetryBatteryPayload(BaseModel):
     """
-    Dữ liệu pin từ telematic.
+    Battery data from the telematic device.
 
     Attributes:
-        soc: State of Charge - mức pin còn lại (0-100%)
-        voltage: Điện áp pin (V)
-        current: Dòng điện (A). Âm = đang xả, Dương = đang sạc
-        temperature: Nhiệt độ pin (°C)
+        soc: State of Charge - remaining battery level (0-100%)
+        voltage: Battery voltage (V)
+        current: Current (A). Negative = discharging, Positive = charging
+        temperature: Battery temperature (°C)
     """
 
     soc: Annotated[
-        float, Field(ge=0, le=100, description="State of Charge - mức pin còn lại (%)")
+        float,
+        Field(
+            ge=0, le=100, description="State of Charge - remaining battery level (%)"
+        ),
     ]
     voltage: Annotated[
-        float | None, Field(default=None, ge=0, description="Điện áp pin (V)")
+        float | None, Field(default=None, ge=0, description="Battery voltage (V)")
     ]
     current: Annotated[
         float | None,
-        Field(default=None, description="Dòng điện (A). Âm = xả, Dương = sạc"),
+        Field(
+            default=None,
+            description="Current (A). Negative = discharging, Positive = charging",
+        ),
     ]
     temperature: Annotated[
-        float | None, Field(default=None, description="Nhiệt độ pin (°C)")
+        float | None, Field(default=None, description="Battery temperature (°C)")
     ]
 
     model_config = {
@@ -150,14 +160,14 @@ class TelemetryBatteryPayload(BaseModel):
 
 class TelemetryMotorPayload(BaseModel):
     """
-    Dữ liệu động cơ từ telematic.
+    Motor data from the telematic device.
 
     Attributes:
-        temperature: Nhiệt độ động cơ (°C)
+        temperature: Motor temperature (°C)
     """
 
     temperature: Annotated[
-        float | None, Field(default=None, description="Nhiệt độ động cơ (°C)")
+        float | None, Field(default=None, description="Motor temperature (°C)")
     ]
 
     model_config = {
@@ -172,17 +182,17 @@ class TelemetryMotorPayload(BaseModel):
 
 class TelemetrySignalPayload(BaseModel):
     """
-    Dữ liệu tín hiệu mạng từ telematic.
+    Network signal data from the telematic device.
 
     Attributes:
-        strength: Cường độ tín hiệu (dBm). Giá trị âm, càng gần 0 càng mạnh
+        strength: Signal strength (dBm). Negative value, the closer to 0 the stronger
     """
 
     strength: Annotated[
         int | None,
         Field(
             default=None,
-            description="Cường độ tín hiệu (dBm). Giá trị âm, càng gần 0 càng mạnh",
+            description="Signal strength (dBm). Negative value, the closer to 0 the stronger",
         ),
     ]
 
@@ -198,65 +208,76 @@ class TelemetrySignalPayload(BaseModel):
 
 class TelemetryMessage(BaseModel):
     """
-    Message telemetry từ thiết bị Telematics qua MQTT.
+    Telemetry message from a Telematics device via MQTT.
 
-    Message này được gửi từ telematic, không chứa ID nội bộ hệ thống.
-    Backend sẽ bổ sung: message_id, telematic_id, vehicle_id, received_at.
+    This message is sent from the telematic device and does not contain any
+    internal system ID. The backend will add: message_id, telematic_id,
+    vehicle_id, received_at.
 
     Attributes:
-        message_uuid: ID duy nhất cho message, do telematic tạo
-        telematic_serial: Mã serial vật lý của thiết bị (VD: TBOX-VN-000123)
-        recorded_at: Thời điểm telematic ghi nhận dữ liệu (UTC)
-        location: Dữ liệu vị trí GPS
-        vehicle_state: Trạng thái xe (nullable)
-        battery: Dữ liệu pin
-        motor: Dữ liệu động cơ (nullable)
-        signal: Dữ liệu tín hiệu mạng (nullable)
-        errors: Danh sách mã lỗi đang active (nullable)
+        message_uuid: Unique ID for the message, generated by the telematic device
+        telematic_serial: Physical serial code of the device (e.g. TBOX-VN-000123)
+        recorded_at: Timestamp when the telematic device recorded the data (UTC)
+        location: GPS location data
+        vehicle_state: Vehicle state (nullable)
+        battery: Battery data
+        motor: Motor data (nullable)
+        signal: Network signal data (nullable)
+        errors: List of currently active error codes (nullable)
     """
 
     message_uuid: Annotated[
-        UUID, Field(description="ID duy nhất cho message, do telematic tạo")
+        UUID,
+        Field(
+            description="Unique ID for the message, generated by the telematic device"
+        ),
     ]
     telematic_serial: Annotated[
         str,
-        Field(min_length=1, max_length=50, description="Mã serial vật lý của thiết bị"),
+        Field(
+            min_length=1,
+            max_length=50,
+            description="Physical serial code of the device",
+        ),
     ]
     recorded_at: Annotated[
-        datetime, Field(description="Thời điểm telematic ghi nhận dữ liệu (UTC)")
+        datetime,
+        Field(
+            description="Timestamp when the telematic device recorded the data (UTC)"
+        ),
     ]
     location: Annotated[
         TelemetryLocationPayload,
-        Field(description="Dữ liệu vị trí GPS"),
+        Field(description="GPS location data"),
     ]
     vehicle_state: Annotated[
         TelemetryVehicleStatePayload | None,
-        Field(default=None, description="Trạng thái xe"),
+        Field(default=None, description="Vehicle state"),
     ]
     battery: Annotated[
         TelemetryBatteryPayload,
-        Field(description="Dữ liệu pin"),
+        Field(description="Battery data"),
     ]
     motor: Annotated[
         TelemetryMotorPayload | None,
-        Field(default=None, description="Dữ liệu động cơ"),
+        Field(default=None, description="Motor data"),
     ]
     signal: Annotated[
         TelemetrySignalPayload | None,
-        Field(default=None, description="Dữ liệu tín hiệu mạng"),
+        Field(default=None, description="Network signal data"),
     ]
     errors: Annotated[
         list[str] | None,
-        Field(default=None, description="Danh sách mã lỗi đang active"),
+        Field(default=None, description="List of currently active error codes"),
     ]
 
     @field_validator("telematic_serial")
     @classmethod
     def validate_telematic_serial(cls, v: str) -> str:
-        """Validate telematic_serial không được rỗng và không có khoảng trắng thừa."""
+        """Validate that telematic_serial is not empty and has no extra whitespace."""
         v = v.strip()
         if not v:
-            raise ValueError("telematic_serial không được rỗng")
+            raise ValueError("telematic_serial must not be empty")
         return v
 
     @field_validator("recorded_at")
@@ -264,7 +285,7 @@ class TelemetryMessage(BaseModel):
     def validate_recorded_at(cls, value: datetime) -> datetime:
         """Require a timezone and normalize the recorded timestamp to UTC."""
         if value.utcoffset() is None:
-            raise ValueError("recorded_at phải có timezone")
+            raise ValueError("recorded_at must have a timezone")
         return value.astimezone(timezone.utc)
 
     def to_vehicle_telemetry_values(
@@ -275,16 +296,16 @@ class TelemetryMessage(BaseModel):
         raw_payload: dict[str, object],
     ) -> dict[str, object]:
         """
-        Chuyển message thành dict phù hợp với VehicleTelemetryModel.
+        Convert the message into a dict matching VehicleTelemetryModel.
 
         Args:
-            telematic_id: UUID của telematic (lookup từ telematic_serial)
-            vehicle_id: UUID của xe (lookup từ telematic_id)
-            received_at: Thời điểm backend nhận message
-            raw_payload: JSON object nguyên bản trước khi Pydantic normalize
+            telematic_id: UUID of the telematic device (looked up from telematic_serial)
+            vehicle_id: UUID of the vehicle (looked up from telematic_id)
+            received_at: Timestamp when the backend received the message
+            raw_payload: Original JSON object before Pydantic normalization
 
         Returns:
-            Dict với đầy đủ trường để insert vào DB
+            Dict with all fields needed to insert into the DB
         """
         # Build vehicle_state dict
         vehicle_state_dict = None

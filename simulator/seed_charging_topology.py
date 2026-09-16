@@ -1,8 +1,9 @@
-"""Provision topology charging tối thiểu cho simulator OCPP local.
+"""Provision the minimal charging topology for the local OCPP simulator.
 
-Script gọi lần lượt API tạo station, EVSE và connector. Nó không tự tạo lại
-topology đã tồn tại, không retry và không chứa logic nghiệp vụ charging; mỗi
-lần chạy nên dùng một ``ocpp_identity`` mới nếu database đã có identity đó.
+The script calls the station, EVSE, and connector creation APIs in sequence.
+It does not recreate topology that already exists, does not retry, and
+contains no charging business logic; each run should use a new
+``ocpp_identity`` if the database already has that identity.
 """
 
 import argparse
@@ -23,19 +24,19 @@ def post_json(
     path: str,
     payload: Mapping[str, object],
 ) -> dict[str, Any]:
-    """Gửi một POST JSON tới backend và trả về response object.
+    """Send a JSON POST to the backend and return the response object.
 
     Args:
-        api_url: Base URL của backend, không bắt buộc có dấu ``/`` cuối.
-        path: API path tương đối.
-        payload: JSON object gửi trong request body.
+        api_url: Base URL of the backend; a trailing ``/`` is optional.
+        path: Relative API path.
+        payload: JSON object sent in the request body.
 
     Returns:
-        JSON response dạng object.
+        JSON response as an object.
 
     Raises:
-        RuntimeError: Nếu request lỗi, response không phải JSON object hoặc
-            backend trả về HTTP status lỗi.
+        RuntimeError: If the request fails, the response is not a JSON
+            object, or the backend returns an error HTTP status.
     """
     request = Request(
         f"{api_url.rstrip('/')}{path}",
@@ -48,65 +49,65 @@ def post_json(
             raw_response = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         detail = error.read().decode("utf-8")
-        raise RuntimeError(f"POST {path} trả về HTTP {error.code}: {detail}") from error
+        raise RuntimeError(f"POST {path} returned HTTP {error.code}: {detail}") from error
     except URLError as error:
-        raise RuntimeError(f"Không thể gọi POST {path}: {error.reason}") from error
+        raise RuntimeError(f"Could not call POST {path}: {error.reason}") from error
     except json.JSONDecodeError as error:
-        raise RuntimeError(f"POST {path} trả về JSON không hợp lệ") from error
+        raise RuntimeError(f"POST {path} returned invalid JSON") from error
 
     if not isinstance(raw_response, dict):
-        raise RuntimeError(f"POST {path} không trả về JSON object")
+        raise RuntimeError(f"POST {path} did not return a JSON object")
     return raw_response
 
 
 def required_id(response: Mapping[str, Any], field_name: str) -> str:
-    """Lấy internal ID từ response provision và kiểm tra kiểu dữ liệu.
+    """Get an internal ID from the provisioning response and check its type.
 
     Args:
-        response: JSON object trả về bởi API.
-        field_name: Tên field ID cần lấy.
+        response: JSON object returned by the API.
+        field_name: Name of the ID field to retrieve.
 
     Returns:
-        ID dạng chuỗi để đưa vào URL của request kế tiếp.
+        ID as a string, to embed in the URL of the next request.
 
     Raises:
-        RuntimeError: Nếu response thiếu ID hoặc ID không phải chuỗi.
+        RuntimeError: If the response is missing the ID or it is not a string.
     """
     value = response.get(field_name)
     if not isinstance(value, str) or not value:
-        raise RuntimeError(f"Response thiếu {field_name} hợp lệ: {response}")
+        raise RuntimeError(f"Response is missing a valid {field_name}: {response}")
     return value
 
 
 def positive_int(value: str) -> int:
-    """Parse một số nguyên dương cho tham số topology OCPP.
+    """Parse a positive integer for an OCPP topology parameter.
 
     Args:
-        value: Chuỗi số nhận từ CLI.
+        value: Numeric string received from the CLI.
 
     Returns:
-        Số nguyên dương.
+        Positive integer.
 
     Raises:
-        argparse.ArgumentTypeError: Nếu value không phải số nguyên dương.
+        argparse.ArgumentTypeError: If value is not a positive integer.
     """
     try:
         parsed = int(value)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("phải là số nguyên dương") from error
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
     if parsed <= 0:
-        raise argparse.ArgumentTypeError("phải là số nguyên dương")
+        raise argparse.ArgumentTypeError("must be a positive integer")
     return parsed
 
 
 def parse_args() -> argparse.Namespace:
-    """Đọc tham số CLI cho một topology simulator.
+    """Read the CLI parameters for a topology simulator.
 
     Returns:
-        Namespace chứa URL backend, identity và OCPP IDs.
+        Namespace containing the backend URL, identity, and OCPP IDs.
     """
     parser = argparse.ArgumentParser(
-        description="Tạo station, EVSE và connector cho OCPP simulator."
+        description="Create a station, EVSE, and connector for the OCPP simulator."
     )
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--identity", default=DEFAULT_IDENTITY)
@@ -117,7 +118,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Tạo station, EVSE và connector theo đúng thứ tự foreign key."""
+    """Create the station, EVSE, and connector in correct foreign-key order."""
     args = parse_args()
     station = post_json(
         args.api_url,
@@ -143,9 +144,9 @@ def main() -> None:
     )
     connector_id = required_id(connector, "connector_id")
 
-    print(f"Đã provision station: {args.identity} ({station_id})")
-    print(f"Đã provision EVSE: {args.evse_id} ({evse_id})")
-    print(f"Đã provision connector: {args.connector_id} ({connector_id})")
+    print(f"Provisioned station: {args.identity} ({station_id})")
+    print(f"Provisioned EVSE: {args.evse_id} ({evse_id})")
+    print(f"Provisioned connector: {args.connector_id} ({connector_id})")
 
 
 if __name__ == "__main__":

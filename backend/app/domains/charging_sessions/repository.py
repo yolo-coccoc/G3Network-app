@@ -1,7 +1,7 @@
-"""Repository async tối thiểu cho charging session happy path.
+"""Minimal async repository for the charging session happy path.
 
-Repository chỉ truy vấn, tạo và flush aggregate/history; không commit hoặc
-rollback transaction.
+The repository only queries, creates and flushes the aggregate/history; it
+does not commit or roll back the transaction.
 """
 
 from datetime import datetime, timezone
@@ -20,10 +20,10 @@ from app.domains.charging_sessions.types import SessionEventType, SessionStatus
 
 
 def utc_now() -> datetime:
-    """Lấy thời điểm UTC dùng khi cập nhật aggregate phiên.
+    """Get the UTC time used when updating a session aggregate.
 
     Returns:
-        Thời điểm hiện tại dưới dạng ``datetime`` có timezone UTC.
+        The current time as a timezone-aware UTC ``datetime``.
     """
     return datetime.now(timezone.utc)
 
@@ -33,18 +33,19 @@ async def get_session_by_transaction(
     station_id: UUID,
     transaction_id: str,
 ) -> ChargingSessionModel | None:
-    """Tìm aggregate theo cặp station và OCPP transaction identity.
+    """Find the aggregate by station and OCPP transaction identity pair.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        station_id: UUID station phát sinh transaction.
-        transaction_id: Identity transaction do trụ cấp.
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the station that raised the transaction.
+        transaction_id: The transaction identity issued by the station.
 
     Returns:
-        Aggregate phù hợp hoặc ``None`` nếu chưa có.
+        The matching aggregate, or ``None`` if there isn't one yet.
     """
-    # Reconnect, unknown-transaction và duplicate resolution là contract
-    # production bị hoãn; repository chỉ cung cấp lookup nguyên thủy cho MVP.
+    # Reconnect, unknown-transaction and duplicate resolution are production
+    # contracts deferred for later; the repository only provides a primitive
+    # lookup for the MVP.
     result = await db.execute(
         select(ChargingSessionModel).where(
             ChargingSessionModel.station_id == station_id,
@@ -57,14 +58,14 @@ async def get_session_by_transaction(
 async def get_session_by_id(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSessionModel | None:
-    """Tìm aggregate theo UUID nội bộ.
+    """Find the aggregate by internal UUID.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        session_id: UUID aggregate cần truy vấn.
+        db: The async session owned by the entry boundary.
+        session_id: UUID of the aggregate to query.
 
     Returns:
-        Aggregate phù hợp hoặc ``None`` nếu không tồn tại.
+        The matching aggregate, or ``None`` if it does not exist.
     """
     result = await db.execute(
         select(ChargingSessionModel).where(
@@ -80,16 +81,16 @@ async def list_charging_sessions(
     offset: int,
     limit: int,
 ) -> list[ChargingSessionModel]:
-    """Lấy danh sách aggregate session mới nhất trước.
+    """Get the list of session aggregates, newest first.
 
     Args:
-        db: Async session do entry boundary sở hữu.
-        offset: Số session bỏ qua.
-        limit: Số session tối đa trả về.
+        db: The async session owned by the entry boundary.
+        offset: The number of sessions to skip.
+        limit: The maximum number of sessions to return.
 
     Returns:
-        Các session được sắp xếp ổn định theo thời điểm tạo giảm dần và UUID
-        giảm dần để dễ tìm session vừa chạy simulator.
+        Sessions sorted stably by descending creation time and descending
+        UUID, to make it easy to find a session just run by the simulator.
     """
     result = await db.execute(
         select(ChargingSessionModel)
@@ -104,13 +105,13 @@ async def list_charging_sessions(
 
 
 async def count_sessions(db: AsyncSession) -> int:
-    """Đếm tổng số aggregate session.
+    """Count the total number of session aggregates.
 
     Args:
-        db: Async session do entry boundary sở hữu.
+        db: The async session owned by the entry boundary.
 
     Returns:
-        Tổng số session trong database.
+        The total number of sessions in the database.
     """
     result = await db.execute(select(func.count(ChargingSessionModel.session_id)))
     return int(result.scalar() or 0)
@@ -123,16 +124,16 @@ async def list_charging_session_events(
     offset: int,
     limit: int,
 ) -> list[ChargingSessionEventModel]:
-    """Lấy lifecycle event của một session theo thứ tự thời gian tăng dần.
+    """Get the lifecycle events of a session in ascending time order.
 
     Args:
-        db: Async session hiện tại.
-        session_id: UUID session cần truy vấn.
-        offset: Số event bỏ qua.
-        limit: Số event tối đa trả về.
+        db: The current async session.
+        session_id: UUID of the session to query.
+        offset: The number of events to skip.
+        limit: The maximum number of events to return.
 
     Returns:
-        Event history đã phân trang ổn định.
+        The event history, stably paginated.
     """
     result = await db.execute(
         select(ChargingSessionEventModel)
@@ -148,14 +149,14 @@ async def list_charging_session_events(
 
 
 async def count_session_events(db: AsyncSession, session_id: UUID) -> int:
-    """Đếm lifecycle event của một session.
+    """Count the lifecycle events of a session.
 
     Args:
-        db: Async session hiện tại.
-        session_id: UUID session cần đếm event.
+        db: The current async session.
+        session_id: UUID of the session whose events to count.
 
     Returns:
-        Tổng số event của session.
+        The total number of events for the session.
     """
     result = await db.execute(
         select(func.count(ChargingSessionEventModel.event_id)).where(
@@ -172,16 +173,16 @@ async def list_charging_session_meter_values(
     offset: int,
     limit: int,
 ) -> list[ChargingSessionMeterValueModel]:
-    """Lấy meter sample của session theo thứ tự thời gian tăng dần.
+    """Get the meter samples of a session in ascending time order.
 
     Args:
-        db: Async session hiện tại.
-        session_id: UUID session cần truy vấn.
-        offset: Số sample bỏ qua.
-        limit: Số sample tối đa trả về.
+        db: The current async session.
+        session_id: UUID of the session to query.
+        offset: The number of samples to skip.
+        limit: The maximum number of samples to return.
 
     Returns:
-        Meter history đã phân trang ổn định.
+        The meter history, stably paginated.
     """
     result = await db.execute(
         select(ChargingSessionMeterValueModel)
@@ -197,14 +198,14 @@ async def list_charging_session_meter_values(
 
 
 async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
-    """Đếm meter sample của một session.
+    """Count the meter samples of a session.
 
     Args:
-        db: Async session hiện tại.
-        session_id: UUID session cần đếm sample.
+        db: The current async session.
+        session_id: UUID of the session whose samples to count.
 
     Returns:
-        Tổng số meter sample của session.
+        The total number of meter samples for the session.
     """
     result = await db.execute(
         select(func.count(ChargingSessionMeterValueModel.meter_value_id)).where(
@@ -224,22 +225,26 @@ async def create_session(
     started_at: datetime,
     meter_start_wh: Decimal | None,
 ) -> ChargingSessionModel:
-    """Tạo session active và flush constraint trong transaction hiện tại.
+    """Create an active session and flush constraints in the current transaction.
 
     Args:
-        db: Async session hiện tại; repository không commit transaction.
-        station_id: UUID station sở hữu transaction.
-        evse_id: UUID EVSE sở hữu transaction.
-        connector_id: UUID connector đang cấp điện.
-        transaction_id: OCPP transaction identity đã được service chuẩn hóa.
-        started_at: Thời điểm ``Started`` đã normalize về UTC.
-        meter_start_wh: Meter đầu phiên, nullable nếu payload không có.
+        db: The current async session; the repository does not commit the
+            transaction.
+        station_id: UUID of the station that owns the transaction.
+        evse_id: UUID of the EVSE that owns the transaction.
+        connector_id: UUID of the connector currently delivering power.
+        transaction_id: The OCPP transaction identity already normalized by
+            the service.
+        started_at: The ``Started`` time, already normalized to UTC.
+        meter_start_wh: The meter reading at the start of the session,
+            nullable if absent from the payload.
 
     Returns:
-        Aggregate active vừa được thêm vào session.
+        The active aggregate just added to the session.
 
     Side Effects:
-        Thêm record ORM và gọi ``flush`` để lấy UUID/phát hiện constraint.
+        Adds an ORM record and calls ``flush`` to obtain the UUID / detect
+        constraint violations.
     """
     session = ChargingSessionModel(
         station_id=station_id,
@@ -263,19 +268,21 @@ async def insert_event(
     event_occurred_at: datetime,
     event_type: SessionEventType,
 ) -> ChargingSessionEventModel:
-    """Append một TransactionEvent history và flush record.
+    """Append one TransactionEvent history record and flush it.
 
     Args:
-        db: Async session hiện tại; repository không commit transaction.
-        session_id: UUID aggregate sở hữu event.
-        event_occurred_at: Thời điểm event đã normalize về UTC.
-        event_type: Loại TransactionEvent canonical.
+        db: The current async session; the repository does not commit the
+            transaction.
+        session_id: UUID of the aggregate that owns the event.
+        event_occurred_at: The event time, already normalized to UTC.
+        event_type: The canonical TransactionEvent type.
 
     Returns:
-        Event ORM vừa được thêm.
+        The ORM event just added.
 
     Side Effects:
-        Thêm history record và gọi ``flush`` trong transaction hiện tại.
+        Adds a history record and calls ``flush`` in the current
+        transaction.
     """
     event = ChargingSessionEventModel(
         session_id=session_id,
@@ -294,19 +301,21 @@ async def insert_meter_value(
     sampled_at: datetime,
     value_wh: Decimal,
 ) -> ChargingSessionMeterValueModel:
-    """Append một energy sample canonical Wh và flush record.
+    """Append one canonical Wh energy sample and flush it.
 
     Args:
-        db: Async session hiện tại; repository không commit transaction.
-        session_id: UUID aggregate sở hữu sample.
-        sampled_at: Thời điểm đo đã normalize về UTC.
-        value_wh: Giá trị năng lượng không âm theo Wh.
+        db: The current async session; the repository does not commit the
+            transaction.
+        session_id: UUID of the aggregate that owns the sample.
+        sampled_at: The measurement time, already normalized to UTC.
+        value_wh: The non-negative energy value in Wh.
 
     Returns:
-        Meter sample ORM vừa được thêm.
+        The ORM meter sample just added.
 
     Side Effects:
-        Thêm sample record và gọi ``flush`` trong transaction hiện tại.
+        Adds a sample record and calls ``flush`` in the current
+        transaction.
     """
     meter = ChargingSessionMeterValueModel(
         session_id=session_id,

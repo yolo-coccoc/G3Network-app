@@ -1,8 +1,9 @@
-"""Simulator OCPP 2.0.1 cho một phiên sạc local happy path.
+"""OCPP 2.0.1 simulator for a local happy-path charging session.
 
-Simulator này chỉ tạo traffic hợp lệ cho station, EVSE và connector đã
-pre-provision. Nó không mô phỏng retry, duplicate, reconnect, delay hoặc lỗi
-ngẫu nhiên; các nhánh đó thuộc reliability path chưa nằm trong MVP.
+This simulator only generates valid traffic for an already pre-provisioned
+station, EVSE, and connector. It does not simulate retries, duplicates,
+reconnects, delays, or random errors; those branches belong to the
+reliability path, which is not part of the MVP yet.
 """
 
 import argparse
@@ -25,18 +26,18 @@ DEFAULT_METER_VALUES_WH = (Decimal("1250"), Decimal("1500"))
 
 @dataclass(frozen=True, slots=True)
 class SimulatorConfig:
-    """Cấu hình một lần chạy simulator phiên sạc.
+    """Configuration for a single run of the charging session simulator.
 
     Attributes:
-        url: Base WebSocket URL, ví dụ ``ws://localhost:9000``.
-        identity: OCPP identity của station đã pre-provision.
-        evse_id: OCPP EVSE ID hợp lệ của station.
-        connector_id: OCPP connector ID hợp lệ của EVSE.
-        transaction_id: Transaction identity do simulator cấp.
-        meter_start_wh: Meter đầu phiên gửi trong ``Started``.
-        meter_values_wh: Các meter sẽ gửi, mỗi giá trị thành một message
-            ``MeterValues`` riêng.
-        timeout_seconds: Timeout cho toàn bộ flow.
+        url: Base WebSocket URL, e.g. ``ws://localhost:9000``.
+        identity: OCPP identity of the pre-provisioned station.
+        evse_id: Valid OCPP EVSE ID of the station.
+        connector_id: Valid OCPP connector ID of the EVSE.
+        transaction_id: Transaction identity assigned by the simulator.
+        meter_start_wh: Starting meter value sent in ``Started``.
+        meter_values_wh: The meter values to send, each as its own
+            ``MeterValues`` message.
+        timeout_seconds: Timeout for the entire flow.
     """
 
     url: str
@@ -50,31 +51,31 @@ class SimulatorConfig:
 
 
 class OCPPChargingSessionSimulator:
-    """Client OCPP nhỏ gửi một lifecycle session và chờ ACK tuần tự.
+    """A small OCPP client that sends a session lifecycle and waits for ACKs in order.
 
     Attributes:
-        config: Identity, topology và transaction được dùng trong flow.
-        _sequence_number: Sequence number của các TransactionEvent đã gửi.
+        config: Identity, topology, and transaction used in the flow.
+        _sequence_number: Sequence number of the TransactionEvents sent so far.
 
-    Connection chỉ tồn tại trong :meth:`run`; do đó simulator không giữ
-    registry hoặc state để phục hồi sau reconnect.
+    The connection only exists inside :meth:`run`; the simulator therefore
+    keeps no registry or state to recover after a reconnect.
     """
 
     def __init__(self, config: SimulatorConfig) -> None:
-        """Khởi tạo simulator với cấu hình immutable của một session.
+        """Initialize the simulator with the immutable configuration of a session.
 
         Args:
-            config: Cấu hình gateway và topology đã provision.
+            config: Gateway configuration and the provisioned topology.
         """
         self.config = config
         self._sequence_number = 0
 
     @staticmethod
     def _timestamp() -> str:
-        """Tạo timestamp OCPP UTC có timezone và độ chính xác mili-giây.
+        """Build an OCPP UTC timestamp with timezone and millisecond precision.
 
         Returns:
-            Timestamp ISO-8601 kết thúc bằng ``Z``.
+            ISO-8601 timestamp ending in ``Z``.
         """
         return (
             datetime.now(timezone.utc)
@@ -83,10 +84,10 @@ class OCPPChargingSessionSimulator:
         )
 
     def _next_sequence_number(self) -> int:
-        """Tăng và trả sequence number cho TransactionEvent kế tiếp.
+        """Increment and return the sequence number for the next TransactionEvent.
 
         Returns:
-            Sequence number dương theo thứ tự Started, Updated, Ended.
+            Positive sequence number following the Started, Updated, Ended order.
         """
         self._sequence_number += 1
         return self._sequence_number
@@ -99,16 +100,16 @@ class OCPPChargingSessionSimulator:
         meter_wh: Decimal | None = None,
         stopped_reason: str | None = None,
     ) -> dict[str, Any]:
-        """Tạo payload wire cho một TransactionEvent OCPP.
+        """Build the wire payload for an OCPP TransactionEvent.
 
         Args:
-            event_type: ``Started``, ``Updated`` hoặc ``Ended``.
-            trigger_reason: Trigger reason hợp lệ theo OCPP 2.0.1.
-            meter_wh: Meter tùy chọn, được gửi trong transaction event.
-            stopped_reason: Lý do dừng, chỉ dùng cho ``Ended``.
+            event_type: ``Started``, ``Updated``, or ``Ended``.
+            trigger_reason: A trigger reason valid under OCPP 2.0.1.
+            meter_wh: Optional meter value, sent in the transaction event.
+            stopped_reason: Stop reason, used only for ``Ended``.
 
         Returns:
-            Dictionary dùng trực tiếp trong OCPP CALL frame.
+            Dictionary used directly in the OCPP CALL frame.
         """
         transaction_info: dict[str, str] = {"transactionId": self.config.transaction_id}
         if stopped_reason is not None:
@@ -129,17 +130,17 @@ class OCPPChargingSessionSimulator:
         return payload
 
     def _meter_value_payload(self, value_wh: Decimal) -> dict[str, Any]:
-        """Tạo một nhóm meter value chỉ chứa đúng một sample Wh.
+        """Build a meter value group containing exactly one Wh sample.
 
         Args:
-            value_wh: Giá trị energy canonical Wh.
+            value_wh: Canonical energy value in Wh.
 
         Returns:
-            Dictionary ``MeterValueType`` theo wire naming của OCPP.
+            ``MeterValueType`` dictionary following OCPP wire naming.
         """
-        # OCPP schema khai báo SampledValue.value là JSON number. Decimal vẫn
-        # được giữ ở config để tránh làm tròn trước boundary; chỉ chuyển sang
-        # số JSON tại bước serialize wire này.
+        # The OCPP schema declares SampledValue.value as a JSON number. Decimal is
+        # kept in the config to avoid rounding before the boundary; it is only
+        # converted to a JSON number at this wire-serialization step.
         wire_value: int | float
         if value_wh == value_wh.to_integral_value():
             wire_value = int(value_wh)
@@ -163,16 +164,16 @@ class OCPPChargingSessionSimulator:
         action: str,
         payload: dict[str, Any],
     ) -> None:
-        """Gửi một OCPP CALL và yêu cầu CALLRESULT đúng unique ID.
+        """Send an OCPP CALL and wait for the CALLRESULT with the matching unique ID.
 
         Args:
-            websocket: Connection OCPP đã negotiate subprotocol.
-            action: Tên action OCPP.
-            payload: Payload đã dùng wire naming.
+            websocket: OCPP connection that has negotiated the subprotocol.
+            action: OCPP action name.
+            payload: Payload already using wire naming.
 
         Side Effects:
-            Gửi một frame và chờ response tương ứng theo giả định happy path;
-            không retry hoặc tạo nhánh xử lý lỗi.
+            Sends one frame and waits for the corresponding response, assuming
+            the happy path; no retries or error-handling branches.
         """
         unique_id = uuid4().hex
         frame = json.dumps([2, unique_id, action, payload], separators=(",", ":"))
@@ -181,11 +182,12 @@ class OCPPChargingSessionSimulator:
         print(f"ACK action={action} unique_id={unique_id}")
 
     async def run(self) -> None:
-        """Chạy Started → MeterValues → Updated → Ended rồi đóng socket.
+        """Run Started → MeterValues → Updated → Ended, then close the socket.
 
         Side Effects:
-            Tạo một session trên gateway và chờ ACK thành công cho từng CALL.
-            Context manager đóng connection ngay sau ACK của ``Ended``.
+            Creates a session on the gateway and waits for a successful ACK for
+            each CALL. The context manager closes the connection right after
+            the ``Ended`` ACK.
         """
         uri = (
             f"{self.config.url.rstrip('/')}/ocpp/{quote(self.config.identity, safe='')}"
@@ -245,36 +247,36 @@ class OCPPChargingSessionSimulator:
 
 
 def _decimal_argument(value: str) -> Decimal:
-    """Parse một CLI meter thành Decimal hữu hạn không âm.
+    """Parse a CLI meter value into a finite, non-negative Decimal.
 
     Args:
-        value: Chuỗi Decimal từ argparse.
+        value: Decimal string from argparse.
 
     Returns:
-        Giá trị meter Wh.
+        Meter value in Wh.
 
     Raises:
-        argparse.ArgumentTypeError: Nếu chuỗi không phải Decimal hợp lệ.
+        argparse.ArgumentTypeError: If the string is not a valid Decimal.
     """
     try:
         parsed = Decimal(value)
     except InvalidOperation as error:
         raise argparse.ArgumentTypeError(
-            f"Meter không phải Decimal: {value}"
+            f"Meter is not a Decimal: {value}"
         ) from error
     if not parsed.is_finite() or parsed < 0:
-        raise argparse.ArgumentTypeError("Meter phải là Decimal hữu hạn không âm")
+        raise argparse.ArgumentTypeError("Meter must be a finite, non-negative Decimal")
     return parsed
 
 
 def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse các tham số CLI của simulator.
+    """Parse the simulator's CLI arguments.
 
     Args:
-        arguments: Arguments tùy chọn; ``None`` dùng ``sys.argv``.
+        arguments: Optional arguments; ``None`` uses ``sys.argv``.
 
     Returns:
-        Namespace đã được argparse validate.
+        Namespace validated by argparse.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="ws://localhost:9000")
@@ -290,14 +292,14 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         dest="meter_values_wh",
         type=_decimal_argument,
         action="append",
-        help="Có thể lặp lại; mỗi giá trị tạo một message MeterValues.",
+        help="May be repeated; each value creates one MeterValues message.",
     )
     parser.add_argument("--timeout", type=float, default=5.0)
     return parser.parse_args(arguments)
 
 
 async def main(arguments: Sequence[str] | None = None) -> None:
-    """Chạy duy nhất một phiên sạc OCPP happy path."""
+    """Run a single happy-path OCPP charging session."""
     args = _parse_args(arguments)
     config = SimulatorConfig(
         url=args.url,
@@ -316,4 +318,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Đã dừng OCPP charging session simulator")
+        print("Stopped OCPP charging session simulator")

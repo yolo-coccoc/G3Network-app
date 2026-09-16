@@ -1,241 +1,246 @@
 # Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
 
-> Mã chức năng: AD-02 (Nhận dữ liệu thời gian thực), FM-01 (Dashboard realtime), FM-02 (Lịch sử vị trí/trạng thái)
-> Trạng thái: 🚧 Active MVP source và automated smoke test tối thiểu đã triển
-> khai; batch path và integration test được hoãn sang phase kế tiếp
-> Ngày tạo: 2026-07-24
-> Rà soát gần nhất: 2026-07-30
+> Feature code: AD-02 (Real-time data ingestion), FM-01 (Realtime dashboard), FM-02 (Location/status history)
+> Status: 🚧 Active MVP source and minimal automated smoke tests have been
+> deployed; the batch path and integration tests are deferred to the next phase
+> Date created: 2026-07-24
+> Last reviewed: 2026-07-30
 
 ---
 
-## Tổng quan
+## Overview
 
-Xây dựng hệ thống ingest dữ liệu telemetry từ xe tải điện theo mô hình **xử lý từng message**:
+Build a telemetry data ingestion system from electric trucks following the **per-message processing** model:
 
-**Luồng dữ liệu:**
+**Data flow:**
 ```
 Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Message Queue → Message Worker → PostgreSQL (TimescaleDB)
 ```
 
-**Nguyên lý MVP hiện tại:**
-- Telematic publish message liên tục (mỗi 5-10 giây)
-- Backend consume message và đưa vào in-memory queue
-- Message worker lấy từng message và xử lý ngay khi có trong queue
-- Mỗi message chạy trong một transaction riêng để giảm độ trễ và cô lập lỗi
+**Current MVP principle:**
+- Telematic publishes messages continuously (every 5-10 seconds)
+- Backend consumes messages and puts them into an in-memory queue
+- The message worker takes each message and processes it as soon as it is in the queue
+- Each message runs in its own transaction to reduce latency and isolate failures
 
-**Batch path được giữ lại:**
-- `batch_worker.py`, `process_batch()`, batch lookup và bulk insert không bị xóa
-- Chưa dùng trong entrypoint MVP; việc bật lại phải được benchmark và chốt lại
-  semantics transaction/backpressure trước
+**Batch path is retained:**
+- `batch_worker.py`, `process_batch()`, batch lookup and bulk insert are not removed
+- Not used in the MVP entrypoint; re-enabling it must be benchmarked and the
+  transaction/backpressure semantics finalized first
 
-Các kết quả nghiệm thu cũ bên dưới có thể nhắc tới revision Alembic trước đây.
-Đó là lịch sử tại thời điểm ghi nhận; graph migration hiện tại là reset/baseline
-`0001` đến `0004` trong planner charging MVP.
+The old acceptance results below may refer to previous Alembic revisions.
+That is historical at the time it was recorded; the current migration graph is
+the reset/baseline `0001` through `0004` in the charging MVP planner.
 
-**Phạm vi:**
-- Backend Python async (MQTT consumer + message worker + process entrypoint tối
-  giản; không có HTTP runtime/health server trong MVP hiện tại)
+**Scope:**
+- Backend Python async (MQTT consumer + message worker + minimal process
+  entrypoint; no HTTP runtime/health server in the current MVP)
 - EMQX broker
 - TimescaleDB hypertable
-- Không mô tả các API query telemetry; phần active hiện chỉ có endpoint latest
-  riêng trong planner `backend-telemetry-query-api.md`. Frontend dashboard chưa
-  có source.
+- Does not describe telemetry query APIs; the active portion currently only has
+  a separate latest endpoint in the `backend-telemetry-query-api.md` planner.
+  The frontend dashboard has no source yet.
 
-**Giả định và giới hạn MVP:**
-- MQTT sử dụng QoS 0 (fire-and-forget)
-- Giả định message được gửi và nhận một cách lý tưởng
-- Không xử lý retry
-- Không xử lý duplicate detection nâng cao
-- Không có persistent queue
-- Không có dead-letter queue (DLQ)
-- Queue đầy được log warning và drop message; không retry/persist
-- Không bảo đảm zero data loss khi process hoặc database gặp lỗi
-- Không có metrics/counter trong ingestion MVP hiện tại; chỉ dùng structured log
-- Structured log chỉ xuất `stderr`, chưa có log shipping/retention/alert
-- Shutdown không drain queue; message còn trong RAM được phép mất
-- Các lớp reliability sẽ được bổ sung ở phase sau
+**MVP assumptions and limitations:**
+- MQTT uses QoS 0 (fire-and-forget)
+- Assumes messages are sent and received ideally
+- No retry handling
+- No advanced duplicate detection
+- No persistent queue
+- No dead-letter queue (DLQ)
+- A full queue logs a warning and drops the message; no retry/persist
+- No guarantee of zero data loss when the process or database fails
+- No metrics/counters in the current ingestion MVP; only structured logging is used
+- Structured logs are emitted to `stderr` only; no log shipping/retention/alerting yet
+- Shutdown does not drain the queue; messages still in RAM are allowed to be lost
+- Reliability layers will be added in a later phase
 
-Phạm vi MVP tập trung vào việc chứng minh luồng:
+The MVP scope focuses on proving the flow:
 ```
 Simulator → EMQX → MQTT consumer → asyncio.Queue → message worker → TimescaleDB
 ```
 
 ---
 
-## Kiến trúc hiện tại theo AGENTS.md
+## Current architecture per CLAUDE.md
 
 ```
 backend/
 ├── app/
 │   ├── domains/
 │   │   ├── telematics/
-│   │   │   ├── models.py           # Hồ sơ thiết bị Telematic vật lý
-│   │   │   └── service.py          # Public lookup serial → thiết bị/xe
+│   │   │   ├── models.py           # Physical Telematic device record
+│   │   │   └── service.py          # Public serial → device/vehicle lookup
 │   │   ├── telemetry/
 │   │   │   ├── models.py           # VehicleTelemetry (TimescaleDB)
-│   │   │   ├── repository.py       # Single insert/lookup và batch path tương lai
+│   │   │   ├── repository.py       # Single insert/lookup and future batch path
 │   │   │   ├── schemas.py          # MQTT payload validation
-│   │   │   ├── service.py          # Single-message và batch processing logic
+│   │   │   ├── service.py          # Single-message and batch processing logic
 │   │   │   └── ingestion/
 │   │   │       ├── mqtt_consumer.py    # MQTT client, message handler
-│   │   │       ├── message_worker.py   # Async single-message processor hiện tại
-│   │   │       ├── batch_worker.py     # Batch processor giữ cho phase tương lai
-│   │   │       └── entrypoint.py       # Process entrypoint tối giản
+│   │   │       ├── message_worker.py   # Current async single-message processor
+│   │   │       ├── batch_worker.py     # Batch processor kept for a future phase
+│   │   │       └── entrypoint.py       # Minimal process entrypoint
 │   │   └── vehicles/
-│   │       └── models.py           # Bảng vehicles được FK tham chiếu
+│   │       └── models.py           # vehicles table referenced by FK
 │   ├── api/
-│   │   └── main.py                 # API process riêng, không chạy MQTT consumer
+│   │   └── main.py                 # Separate API process, does not run the MQTT consumer
 │   └── libs/
 │       ├── common/
-│       │   ├── config.py           # Settings dùng chung
+│       │   ├── config.py           # Shared settings
 │       │   └── logging.py          # JSON structured logging
 │       └── db/
 │           ├── base.py
-│           └── session.py          # Shared engine/session factory theo process
+│           └── session.py          # Shared engine/session factory per process
 ├── pyproject.toml
 └── uv.lock
 
 infra/
-└── docker-compose.yml              # Chỉ db + broker trong development
+└── docker-compose.yml              # db + broker only in development
 ```
 
-**Lưu ý về ranh giới domain:**
-- Ingestion, service, repository, schema và model của dữ liệu đo thuộc domain
-  `telemetry`, nên được phép gọi/import trực tiếp nhau trong domain đó.
-- `telemetry.service` gọi public `telematics.service` để resolve mapping
-  `telematic_serial → (telematic_id, vehicle_id)`. `telemetry.repository` chỉ
-  query/ghi model thuộc chính domain `telemetry`, không import trực tiếp
-  `telematics.models` hoặc `telematics.repository`.
-- Foreign key database từ `telematics`/`vehicle_telemetry` tới `vehicles` bảo vệ
-  tính toàn vẹn ở persistence layer.
-- Nếu sau này telemetry cần business validation từ vehicles, chỉ được gọi public
-  API trong `vehicles/service.py`.
+**Notes on domain boundaries:**
+- Ingestion, service, repository, schema, and models for measurement data belong
+  to the `telemetry` domain, and are allowed to call/import each other directly
+  within that domain.
+- `telemetry.service` calls the public `telematics.service` to resolve the
+  `telematic_serial → (telematic_id, vehicle_id)` mapping. `telemetry.repository`
+  only queries/writes models that belong to the `telemetry` domain itself, and
+  does not import `telematics.models` or `telematics.repository` directly.
+- The database foreign key from `telematics`/`vehicle_telemetry` to `vehicles`
+  protects integrity at the persistence layer.
+- If telemetry later needs business validation from vehicles, it must only call
+  the public API in `vehicles/service.py`.
 
-## Quy ước dùng planner này làm tài liệu mẫu
+## Conventions for using this planner as a template document
 
-Mỗi bước phải ghi rõ:
+Each step must clearly record:
 
-1. **Mục tiêu và phạm vi**: kết quả cần đạt, phần không thuộc bước.
-2. **Contract/quyết định**: schema, lifecycle, transaction, failure behavior và
-   ownership của tài nguyên.
-3. **File thay đổi**: không tạo placeholder chỉ để khớp cây thư mục.
-4. **Kiểm tra**: tách static check, smoke test và integration/E2E.
-5. **Kết quả thực tế**: implementation cuối cùng có thể khác prompt ban đầu;
-   ghi rõ quyết định mới nhất và giới hạn còn lại.
-6. **Future**: mọi thành phần chắc chắn cần nhưng hoãn phải ghi vào
-   `docs/01-requirements/future.md`, không để TODO trong source.
+1. **Goal and scope**: the outcome to achieve, and what is out of scope for the step.
+2. **Contract/decisions**: schema, lifecycle, transaction, failure behavior, and
+   resource ownership.
+3. **Files changed**: do not create placeholders just to match the directory tree.
+4. **Checks**: separate static checks, smoke tests, and integration/E2E tests.
+5. **Actual outcome**: the final implementation may differ from the original
+   prompt; record the latest decisions and remaining limitations.
+6. **Future**: any component that is definitely needed but deferred must be
+   recorded in `docs/01-requirements/future.md`, not left as a TODO in source.
 
 ---
 
-## Danh sách bước thực hiện
+## List of implementation steps
 
-### Bước 0: Nghiên cứu đặc tả chức năng
+### Step 0: Research the feature specification
 
-**Mục tiêu:** Hiểu rõ yêu cầu nghiệp vụ và kỹ thuật
+**Goal:** Clearly understand the business and technical requirements
 
 **Prompt:**
 ```
-Đọc và tóm tắt các file sau:
-1. docs/01-requirements/feature-list.md - tìm các mục AD-02, FM-01, FM-02
+Read and summarize the following files:
+1. docs/01-requirements/feature-list.md - find the AD-02, FM-01, FM-02 items
 
-Trả lời các câu hỏi:
-- Dữ liệu telemetry gồm những trường nào? (GPS, SOC, speed, voltage...)
-- Tần suất gửi dữ liệu từ xe?
-- Có cần lưu trữ bao lâu?
-- Có cần real-time alert không? (nếu có, sẽ làm ở phase sau)
+Answer the following questions:
+- What fields does telemetry data include? (GPS, SOC, speed, voltage...)
+- How frequently does the vehicle send data?
+- How long does data need to be retained?
+- Is a real-time alert needed? (if so, it will be done in a later phase)
 ```
 
-**Kiểm tra:**
-- [x] Đã chốt contract các trường dữ liệu cần thu thập trong `mqtt-spec.md`
-- [x] Đã ghi rõ giả định tần suất 5-10 giây/message cho MVP
-- [x] Đã xác định phụ thuộc persistence với vehicles và hạ tầng DB/EMQX
-- [x] Đã ghi nhận những thông tin chưa có thay vì tự đặt yêu cầu
+**Checks:**
+- [x] Finalized the contract for the data fields to collect in `mqtt-spec.md`
+- [x] Clearly recorded the 5-10 second/message frequency assumption for the MVP
+- [x] Identified the persistence dependency on vehicles and the DB/EMQX infrastructure
+- [x] Recorded information that is not yet available instead of inventing requirements
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Payload MVP gồm định danh message/device, thời gian ghi nhận, GPS, trạng thái
-  chuyển động, pin, động cơ, tín hiệu và mã lỗi.
-- Tần suất 5-10 giây/message là giả định thiết kế của planner/MQTT spec, chưa
-  phải SLA hoặc volume đã đo từ thiết bị thật.
-- Chưa có yêu cầu retention, số lượng xe cực đại, peak throughput hoặc chính sách
-  TimescaleDB compression. Không dùng các con số chưa xác nhận làm tiêu chí
-  nghiệm thu.
-- Realtime alert, API query và dashboard dùng dữ liệu telemetry nhưng nằm ngoài
-  phạm vi ingestion MVP.
-- `feature-list.md` hiện mô tả chức năng theo mục/actor nhưng không còn dùng trực
-  tiếp các mã `AD-02`, `FM-01`, `FM-02`; planner giữ mã để tương thích với lịch
-  sử tài liệu và cần đối chiếu theo nội dung chức năng thực tế.
+- The MVP payload includes message/device identifiers, recorded time, GPS,
+  motion state, battery, motor, signal, and error codes.
+- A frequency of 5-10 seconds/message is a design assumption of the planner/MQTT
+  spec, not yet an SLA or a volume measured from real devices.
+- There is no requirement yet for retention, maximum number of vehicles, peak
+  throughput, or a TimescaleDB compression policy. Do not use unconfirmed
+  numbers as acceptance criteria.
+- Realtime alerts, query APIs, and the dashboard use telemetry data but are
+  outside the scope of the ingestion MVP.
+- `feature-list.md` currently describes functionality by item/actor and no
+  longer directly uses the codes `AD-02`, `FM-01`, `FM-02`; the planner keeps
+  the codes for compatibility with document history and needs to be
+  cross-checked against actual feature content.
 
 ---
 
-### Bước 1: Thiết kế bảng telematics
+### Step 1: Design the telematics table
 
-**Mục tiêu:** Tạo bảng quản lý thiết bị telematics gắn trên xe
+**Goal:** Create a table to manage telematics devices mounted on vehicles
 
 **Prompt:**
 ```
-Thiết kế bảng telematics trong backend/app/domains/telemetry/models.py:
+Design the telematics table in backend/app/domains/telemetry/models.py:
 
-Bảng telematics:
+telematics table:
 - telematic_id: UUID primary key
-- telematic_serial: VARCHAR(50), unique, not null (mã vật lý trên thiết bị)
-- vehicle_id: UUID foreign key → vehicles.vehicle_id (nullable, có thể gán sau)
+- telematic_serial: VARCHAR(50), unique, not null (physical code on the device)
+- vehicle_id: UUID foreign key → vehicles.vehicle_id (nullable, can be assigned later)
 - status: ENUM ('active', 'inactive', 'maintenance') not null
 - firmware_version: VARCHAR(50), nullable
-- last_seen_at: TIMESTAMPTZ, nullable (cập nhật khi nhận message)
+- last_seen_at: TIMESTAMPTZ, nullable (updated when a message is received)
 - created_at: TIMESTAMPTZ not null
 - updated_at: TIMESTAMPTZ not null
 
-Lưu ý:
-- Dùng async SQLAlchemy 2.0 với Mapped và mapped_column
-- Import base từ libs.db.base
-- Thêm indexes cho serial, vehicle_id
-- Thêm UNIQUE constraint cho vehicle_id (mỗi xe chỉ có tối đa 1 telematic)
-- Thêm docstring
-- Trong code Python, dùng tên rõ nghĩa: telematic_id, telematic_serial
+Notes:
+- Use async SQLAlchemy 2.0 with Mapped and mapped_column
+- Import base from libs.db.base
+- Add indexes for serial, vehicle_id
+- Add a UNIQUE constraint for vehicle_id (each vehicle has at most 1 telematic)
+- Add a docstring
+- In Python code, use meaningful names: telematic_id, telematic_serial
 ```
 
-**Kiểm tra:**
-- [x] Model không có lỗi syntax
-- [x] Có foreign key đến vehicles
-- [x] Có index cho serial và vehicle_id
-- [x] Có UNIQUE constraint cho vehicle_id
-- [x] Timestamp dùng `DateTime(timezone=True)` và UTC timezone-aware
-- [x] Model dùng shared `Base`, không tạo metadata/engine riêng
+**Checks:**
+- [x] The model has no syntax errors
+- [x] Has a foreign key to vehicles
+- [x] Has an index for serial and vehicle_id
+- [x] Has a UNIQUE constraint for vehicle_id
+- [x] Timestamps use `DateTime(timezone=True)` and are UTC timezone-aware
+- [x] The model uses the shared `Base`, without creating its own metadata/engine
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Model `Telematic` thuộc domain `telematics`; ingestion chỉ resolve mapping qua
-  public `telematics.service`, còn domain `telemetry` sở hữu dữ liệu đo.
-- Tên code/DB hiện dùng `telematic_id`, `telematic_serial` và
-  `vehicles.vehicle_id`, thay cho tên `id`, `serial`, `vehicles.id` trong prompt
-  ban đầu.
-- Foreign key dùng `ON DELETE SET NULL`; unique constraint trên `vehicle_id` bảo
-  đảm một xe có tối đa một telematic, còn nhiều row `NULL` vẫn hợp lệ.
-- API provisioning/gán hoặc tháo thiết bị chưa được triển khai trong bước này.
+- The `Telematic` model belongs to the `telematics` domain; ingestion only
+  resolves the mapping via the public `telematics.service`, while the
+  `telemetry` domain owns the measurement data.
+- The code/DB names currently used are `telematic_id`, `telematic_serial`, and
+  `vehicles.vehicle_id`, instead of the `id`, `serial`, `vehicles.id` names in
+  the original prompt.
+- The foreign key uses `ON DELETE SET NULL`; a unique constraint on
+  `vehicle_id` ensures a vehicle has at most one telematic, while multiple
+  `NULL` rows are still valid.
+- The provisioning API to assign or unassign a device has not been implemented
+  in this step.
 
 ---
 
-### Bước 2: Thiết kế bảng vehicle_telemetry (TimescaleDB)
+### Step 2: Design the vehicle_telemetry table (TimescaleDB)
 
-**Mục tiêu:** Tạo hypertable lưu dữ liệu telemetry time-series
+**Goal:** Create a hypertable to store time-series telemetry data
 
 **Prompt:**
 ```
-Thiết kế bảng vehicle_telemetry trong backend/app/domains/telemetry/models.py:
+Design the vehicle_telemetry table in backend/app/domains/telemetry/models.py:
 
-Bảng vehicle_telemetry:
+vehicle_telemetry table:
 - message_id: BIGINT GENERATED BY DEFAULT AS IDENTITY (PK)
-- message_uuid: UUID not null (do telematic tạo)
+- message_uuid: UUID not null (generated by the telematic)
 - telematic_id: UUID not null (foreign key → telematics.telematic_id)
-- telematic_serial: VARCHAR(50) not null (lưu lại để debug, audit)
+- telematic_serial: VARCHAR(50) not null (kept for debugging, auditing)
 - vehicle_id: UUID not null (foreign key → vehicles.vehicle_id)
-- recorded_at: TIMESTAMPTZ not null (thời điểm telematic ghi nhận)
-- received_at: TIMESTAMPTZ not null (thời điểm backend nhận)
+- recorded_at: TIMESTAMPTZ not null (the time the telematic recorded the data)
+- received_at: TIMESTAMPTZ not null (the time the backend received the data)
 - latitude: DOUBLE PRECISION
 - longitude: DOUBLE PRECISION
 - speed: DOUBLE PRECISION (km/h)
-- heading: DOUBLE PRECISION, nullable (độ, 0-360)
+- heading: DOUBLE PRECISION, nullable (degrees, 0-360)
 - soc: DOUBLE PRECISION (State of Charge, %)
 - battery_voltage: DOUBLE PRECISION, nullable (V)
 - battery_current: DOUBLE PRECISION, nullable (A)
@@ -244,127 +249,130 @@ Bảng vehicle_telemetry:
 - odometer: DOUBLE PRECISION, nullable (km)
 - signal_strength: INTEGER, nullable (dBm)
 - error_codes: JSONB, nullable
-- raw_payload: JSONB not null (lưu dữ liệu gốc từ telematic)
+- raw_payload: JSONB not null (stores the raw data from the telematic)
 
-Lưu ý:
-- Dùng TimescaleDB hypertable (partition by recorded_at)
+Notes:
+- Use a TimescaleDB hypertable (partition by recorded_at)
 - Chunk interval: 1 day
-- Primary key: (message_id, recorded_at) - phải chứa partition key
-- Unique constraint: (telematic_id, recorded_at) - một telematic chỉ có 1 message tại 1 thời điểm
-- Index trên (vehicle_id, recorded_at DESC)
-- Index trên message_uuid (để trace, chưa unique trong MVP)
-- Không dùng UUID làm PK (TimescaleDB khuyến nghị BIGINT)
-- Thêm docstring giải thích từng trường
-- heading nullable vì không phải telematic nào cũng cung cấp
-- raw_payload lưu toàn bộ JSON gốc để debug và reprocessing
+- Primary key: (message_id, recorded_at) - must include the partition key
+- Unique constraint: (telematic_id, recorded_at) - a telematic can only have 1 message at 1 point in time
+- Index on (vehicle_id, recorded_at DESC)
+- Index on message_uuid (for tracing, not unique in the MVP)
+- Do not use UUID as PK (TimescaleDB recommends BIGINT)
+- Add a docstring explaining each field
+- heading is nullable because not every telematic provides it
+- raw_payload stores the entire raw JSON for debugging and reprocessing
 ```
 
-**Kiểm tra:**
-- [x] Model không có lỗi syntax
-- [x] Có docstring đầy đủ
-- [x] Primary key chứa recorded_at
-- [x] Unique constraint đúng nghiệp vụ
-- [x] Có raw_payload JSONB
-- [x] Có foreign key/index phục vụ trace và truy vấn theo xe/thời gian
-- [x] Timestamp lưu UTC timezone-aware
+**Checks:**
+- [x] The model has no syntax errors
+- [x] Has a complete docstring
+- [x] The primary key includes recorded_at
+- [x] The unique constraint matches the business rule
+- [x] Has raw_payload JSONB
+- [x] Has foreign keys/indexes to support tracing and querying by vehicle/time
+- [x] Timestamps are stored as UTC timezone-aware
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Hypertable partition theo `recorded_at`, chunk interval một ngày.
-- Composite primary key là `(message_id, recorded_at)` để chứa partition key.
-- `message_uuid` chỉ có index, chưa unique trong MVP; duplicate detection nâng
-  cao đã được ghi trong `future.md`.
-- `latitude`/`longitude` dùng `DOUBLE PRECISION`; nâng cấp PostGIS được hoãn và
-  ghi trong `future.md`.
-- `raw_payload` giữ object JSON đã parse trước khi Pydantic normalize/drop field,
-  phục vụ audit và reprocessing sau này.
-- `speed` và `heading` nullable để chấp nhận thiết bị không gửi trạng thái chuyển
-  động.
+- The hypertable is partitioned by `recorded_at`, with a one-day chunk interval.
+- The composite primary key is `(message_id, recorded_at)` to include the
+  partition key.
+- `message_uuid` only has an index, not unique in the MVP; advanced duplicate
+  detection has been recorded in `future.md`.
+- `latitude`/`longitude` use `DOUBLE PRECISION`; a PostGIS upgrade is deferred
+  and recorded in `future.md`.
+- `raw_payload` keeps the parsed JSON object before Pydantic normalizes/drops
+  fields, to support later audit and reprocessing.
+- `speed` and `heading` are nullable to accept devices that do not send motion
+  state.
 
 ---
 
-### Bước 3: Tạo Alembic migrations
+### Step 3: Create Alembic migrations
 
-**Mục tiêu:** Tạo migration cho `telematics`, `vehicle_telemetry` và hypertable
-TimescaleDB
+**Goal:** Create migrations for `telematics`, `vehicle_telemetry`, and the
+TimescaleDB hypertable
 
 **Prompt:**
 ```
-Tạo Alembic migration trong `backend/app/libs/db/migrations/versions/`:
+Create Alembic migrations in `backend/app/libs/db/migrations/versions/`:
 
 Migration 1: Create telematics table
-- Tạo bảng telematics với đầy đủ constraints, indexes
-- Thêm foreign key đến vehicles
-- Thêm UNIQUE constraint cho vehicle_id
+- Create the telematics table with full constraints, indexes
+- Add a foreign key to vehicles
+- Add a UNIQUE constraint for vehicle_id
 
 Migration 2: Create vehicle_telemetry hypertable
-- Tạo bảng vehicle_telemetry
-- Chuyển thành hypertable: SELECT create_hypertable('vehicle_telemetry', 'recorded_at', chunk_time_interval => INTERVAL '1 day');
-- Tạo indexes
-- Thêm unique constraint (telematic_id, recorded_at)
-- Tạo index cho message_uuid
+- Create the vehicle_telemetry table
+- Convert it to a hypertable: SELECT create_hypertable('vehicle_telemetry', 'recorded_at', chunk_time_interval => INTERVAL '1 day');
+- Create indexes
+- Add a unique constraint (telematic_id, recorded_at)
+- Create an index for message_uuid
 
-Lưu ý:
-- Import models trong env.py
-- Dùng --autogenerate nhưng kiểm tra kỹ migration file
-- Test trên database đang chạy
+Notes:
+- Import models in env.py
+- Use --autogenerate but carefully review the migration file
+- Test against a running database
 ```
 
-**Lệnh chạy:**
+**Commands to run:**
 ```bash
-# Tạo migration
+# Create migration
 cd backend
 uv run alembic revision --autogenerate -m "create telematics table"
 uv run alembic revision --autogenerate -m "create vehicle_telemetry hypertable"
 
-# Chạy migration
+# Run migration
 uv run alembic upgrade head
 
-# Kiểm tra
+# Verify
 docker exec g3network-db psql -U g3network -d g3network -c "\d telematics"
 docker exec g3network-db psql -U g3network -d g3network -c "\d vehicle_telemetry"
 docker exec g3network-db psql -U g3network -d g3network -c "SELECT hypertable_name FROM timescaledb_information.hypertables;"
 ```
 
-**Kiểm tra:**
-- [x] Migration chạy thành công
-- [x] Bảng telematics được tạo
-- [x] Bảng vehicle_telemetry là hypertable
-- [x] Indexes được tạo đúng
-- [x] Unique constraint (telematic_id, recorded_at) tồn tại
-- [x] Upgrade/downgrade và timezone của bảng vehicles đã được rà soát
+**Checks:**
+- [x] Migration runs successfully
+- [x] The telematics table is created
+- [x] The vehicle_telemetry table is a hypertable
+- [x] Indexes are created correctly
+- [x] The unique constraint (telematic_id, recorded_at) exists
+- [x] Upgrade/downgrade and the vehicles table timezone have been reviewed
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Migration thực tế không tách đúng hai file như prompt ban đầu:
-  - `90df58f189f6_create_vehicles_and_telematics_tables.py` tạo `vehicles` và
-    `telematics`.
-  - `70cefd03d3d5_create_vehicle_telemetry_hypertable.py` tạo bảng time-series và
-    chuyển thành hypertable.
-  - `c0f4a8b6e2d1_use_timezone_aware_vehicle_timestamps.py` chuẩn hóa timestamp
-    vehicles sang `TIMESTAMPTZ`.
-- Alembic `env.py` import trực tiếp model cần thiết để metadata đầy đủ; các
-  `__init__.py` không export code.
-- Đã từng chạy migration và kiểm tra hypertable trên database thật. Khi audit lại
-  planner ngày 2026-07-27 không chạy lại vì phiên làm việc không có quyền Docker
-  daemon; trạng thái này không thay đổi kết quả nghiệm thu trước đó.
-- `alembic check` với object do PostGIS/TimescaleDB quản lý vẫn được theo dõi
-  trong `future.md`.
+- The actual migrations were not split into exactly two files as in the
+  original prompt:
+  - `90df58f189f6_create_vehicles_and_telematics_tables.py` creates `vehicles`
+    and `telematics`.
+  - `70cefd03d3d5_create_vehicle_telemetry_hypertable.py` creates the
+    time-series table and converts it to a hypertable.
+  - `c0f4a8b6e2d1_use_timezone_aware_vehicle_timestamps.py` normalizes the
+    vehicles timestamps to `TIMESTAMPTZ`.
+- Alembic `env.py` directly imports the needed models so metadata is complete;
+  the `__init__.py` files do not export code.
+- The migration was previously run and the hypertable verified on a real
+  database. When re-auditing the planner on 2026-07-27, it was not re-run
+  because the work session had no Docker daemon access; this does not change
+  the prior acceptance results.
+- `alembic check` against objects managed by PostGIS/TimescaleDB is still
+  tracked in `future.md`.
 
 ---
 
-### Bước 4: Chốt MQTT topic và payload schema
+### Step 4: Finalize the MQTT topic and payload schema
 
-**Mục tiêu:** Định nghĩa giao thức giao tiếp giữa telematic và backend
+**Goal:** Define the communication protocol between the telematic and the backend
 
 **Prompt:**
 ```
-Tạo file docs/02-planners/mqtt-spec.md với nội dung:
+Create the file docs/02-planners/mqtt-spec.md with the following content:
 
 1. MQTT Topics:
-   - Publish từ telematic: `g3network/telematics/{telematic_serial}/telemetry`
+   - Published by the telematic: `g3network/telematics/{telematic_serial}/telemetry`
    - Telematic status: `g3network/telematics/{telematic_serial}/status`
-   - Backend command: `g3network/telematics/{telematic_serial}/command` (dành cho sau)
+   - Backend command: `g3network/telematics/{telematic_serial}/command` (for later)
 
 2. Payload Schema (JSON):
    {
@@ -399,43 +407,45 @@ Tạo file docs/02-planners/mqtt-spec.md với nội dung:
 
 4. Retain: false
 
-Lưu ý:
-- Giải thích rõ từng trường
-- Nêu rõ đơn vị đo
-- Có ví dụ minh họa
-- Payload KHÔNG chứa: message_id, telematic_id, vehicle_id, received_at (backend bổ sung sau)
-- heading: hướng di chuyển theo góc (0°=Bắc, 90°=Đông, 180°=Nam, 270°=Tây)
+Notes:
+- Clearly explain each field
+- State the unit of measurement
+- Include an illustrative example
+- The payload does NOT contain: message_id, telematic_id, vehicle_id, received_at (added later by the backend)
+- heading: direction of travel as an angle (0°=North, 90°=East, 180°=South, 270°=West)
 ```
 
-**Kiểm tra:**
-- [x] Topic sử dụng telematic_serial (không dùng vehicle_id)
-- [x] Payload có message_uuid (không phải message_id)
-- [x] Payload không chứa ID nội bộ (message_id, telematic_id, vehicle_id)
-- [x] QoS được cấu hình là 0
-- [x] Có ví dụ minh họa
-- [x] Field bắt buộc/nullable, range, đơn vị và nguồn timestamp được mô tả
+**Checks:**
+- [x] The topic uses telematic_serial (not vehicle_id)
+- [x] The payload has message_uuid (not message_id)
+- [x] The payload does not contain internal IDs (message_id, telematic_id, vehicle_id)
+- [x] QoS is configured as 0
+- [x] Has an illustrative example
+- [x] Required/nullable fields, ranges, units, and the timestamp source are described
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- `docs/02-planners/mqtt-spec.md` là contract giao tiếp nguồn cho bước 5 và 7.
-- `recorded_at` do thiết bị cung cấp; backend normalize UTC. `received_at` do
-  backend bổ sung khi process batch theo contract MVP hiện tại.
-- Topic status/command và ACL trong spec chỉ mô tả hướng mở rộng; consumer MVP chỉ
-  subscribe telemetry topic.
-- EMQX 5.x không dùng custom `acl.conf` như thiết kế EMQX 4.x cũ. Authentication,
-  authorization và đối chiếu serial giữa topic/payload đã được hoãn trong
-  `future.md`.
-- Retain là `false`; QoS 0 nên không có delivery guarantee.
+- `docs/02-planners/mqtt-spec.md` is the source communication contract for
+  steps 5 and 7.
+- `recorded_at` is provided by the device; the backend normalizes it to UTC.
+  `received_at` is added by the backend when processing a batch, per the
+  current MVP contract.
+- The status/command topics and ACL in the spec only describe a future
+  direction; the MVP consumer only subscribes to the telemetry topic.
+- EMQX 5.x does not use a custom `acl.conf` the way the old EMQX 4.x design
+  did. Authentication, authorization, and cross-checking the serial between
+  the topic and payload have been deferred in `future.md`.
+- Retain is `false`; with QoS 0 there is no delivery guarantee.
 
 ---
 
-### Bước 5: Viết Pydantic validation schema
+### Step 5: Write the Pydantic validation schema
 
-**Mục tiêu:** Validate message từ MQTT trước khi đưa vào queue
+**Goal:** Validate MQTT messages before putting them into the queue
 
 **Prompt:**
 ```
-Tạo backend/app/domains/telemetry/schemas.py với Pydantic models:
+Create backend/app/domains/telemetry/schemas.py with Pydantic models:
 
 1. LocationData:
    - latitude: float (range -90 to 90)
@@ -470,238 +480,246 @@ Tạo backend/app/domains/telemetry/schemas.py với Pydantic models:
    - errors: list[str] | None
 
 7. TelemetryEnvelope:
-   - message: TelemetryMessage đã validate/normalize
-   - raw_payload: dict JSON nguyên bản sau parse
+   - message: the validated/normalized TelemetryMessage
+   - raw_payload: the original JSON dict after parsing
 
-Lưu ý:
-- Dùng Pydantic v2
-- Thêm validation cho các trường có range
-- Thêm examples
-- Thêm method `to_db_dict(telematic_id, vehicle_id, received_at, raw_payload)` để
-  convert sang dict phù hợp với DB model
-- heading nullable vì không phải telematic nào cũng cung cấp
+Notes:
+- Use Pydantic v2
+- Add validation for fields with a range
+- Add examples
+- Add a `to_db_dict(telematic_id, vehicle_id, received_at, raw_payload)` method
+  to convert to a dict suitable for the DB model
+- heading is nullable because not every telematic provides it
 ```
 
-**Kiểm tra:**
-- [x] Schema không có lỗi syntax
-- [x] Validation đúng range
-- [x] heading có thể null
-- [x] Examples hiển thị tốt trong docs
-- [x] `recorded_at` bắt buộc có timezone và được normalize UTC
-- [x] Raw payload gốc được bảo toàn sau validation
+**Checks:**
+- [x] The schema has no syntax errors
+- [x] Validation ranges are correct
+- [x] heading can be null
+- [x] Examples render well in the docs
+- [x] `recorded_at` is required to have a timezone and is normalized to UTC
+- [x] The original raw payload is preserved after validation
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Dùng Pydantic v2 và `Annotated`/`Field` cho contract range.
-- `TelemetryEnvelope` ghép `TelemetryMessage` đã validate với dict JSON gốc,
-  tránh reconstruct `raw_payload` từ model đã normalize hoặc loại field.
-- Validation diễn ra tại MQTT boundary trước khi queue nhận message. Service nhận
-  envelope hợp lệ và chỉ xử lý mapping/conversion nghiệp vụ.
-- `to_db_dict()` là phép chuyển đổi thuần, không query DB và không quản lý
-  transaction.
+- Uses Pydantic v2 and `Annotated`/`Field` for the range contract.
+- `TelemetryEnvelope` combines the validated `TelemetryMessage` with the
+  original JSON dict, avoiding reconstructing `raw_payload` from the
+  normalized model or a model that dropped fields.
+- Validation happens at the MQTT boundary before the queue receives the
+  message. The service receives a valid envelope and only handles
+  mapping/conversion business logic.
+- `to_db_dict()` is a pure conversion, does not query the DB, and does not
+  manage transactions.
 
 ---
 
-### Bước 6: Dựng EMQX và kiểm tra publish/subscribe thủ công
+### Step 6: Stand up EMQX and manually verify publish/subscribe
 
-**Mục tiêu:** Cài đặt EMQX 5.x broker và test kết nối với QoS 0
+**Goal:** Install the EMQX 5.x broker and test the connection with QoS 0
 
-**Lưu ý quan trọng về EMQX 5.x:**
-- EMQX 5.x **không dùng file `acl.conf`** như EMQX 4.x
-- ACL được cấu hình qua Dashboard UI hoặc REST API
-- File `acl.conf` mặc định vẫn tồn tại nhưng không được dùng để custom rules
-- Đối với MVP, chúng ta sẽ bỏ qua ACL phức tạp và dùng default security
+**Important note about EMQX 5.x:**
+- EMQX 5.x **does not use the `acl.conf` file** like EMQX 4.x
+- ACL is configured via the Dashboard UI or REST API
+- The default `acl.conf` file still exists but is not used for custom rules
+- For the MVP, we will skip complex ACL and use the default security
 
 **Prompt:**
 ```
-Cập nhật infra/docker-compose.yml:
+Update infra/docker-compose.yml:
 
-1. Thêm service broker (EMQX 5.5):
+1. Add a broker service (EMQX 5.5):
    - Image: emqx/emqx:5.5
    - Ports: 1883 (MQTT), 18083 (Dashboard)
    - Environment: EMQX_NAME=g3network-broker, EMQX_HOST=0.0.0.0
-   - Volumes: broker_data, broker_log (không mount ACL file)
+   - Volumes: broker_data, broker_log (do not mount an ACL file)
 
-2. Cập nhật `.env.example` ở root:
+2. Update `.env.example` at the root:
    - MQTT_HOST=localhost
    - MQTT_PORT=1883
    - MQTT_DASHBOARD_PORT=18083
 
-3. Cập nhật backend/app/libs/common/config.py:
-   - Thêm MQTT settings vào Settings class:
+3. Update backend/app/libs/common/config.py:
+   - Add MQTT settings to the Settings class:
      * MQTT_HOST, MQTT_PORT, MQTT_CLIENT_ID
      * MQTT_USERNAME, MQTT_PASSWORD (nullable)
      * MQTT_QOS = 0 (default)
 ```
 
-**Lệnh chạy:**
+**Commands to run:**
 ```bash
-# Khởi động EMQX
+# Start EMQX
 docker compose -f infra/docker-compose.yml up -d broker
 
-# Kiểm tra container
+# Check the container
 docker ps --filter "name=g3network-broker"
 
-# Kiểm tra dashboard
+# Check the dashboard
 open http://localhost:18083
 # Default: admin / public
 
-# Test subscribe (cài mosquitto-clients nếu chưa có)
+# Test subscribe (install mosquitto-clients if not already installed)
 sudo apt install mosquitto-clients
 mosquitto_sub -h localhost -p 1883 -t "g3network/telematics/+/telemetry" -v
 
-# Test publish với QoS 0
+# Test publish with QoS 0
 mosquitto_pub -h localhost -p 1883 -q 0 -t "g3network/telematics/TBOX-VN-000123/telemetry" -m '{"message_uuid":"497f6eca-6276-4993-bfeb-53cbbbba6f08","telematic_serial":"TBOX-VN-000123","recorded_at":"2026-07-24T10:00:00Z","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
 ```
 
-**Kiểm tra:**
-- [x] EMQX service, port, volume và healthcheck đã có trong Compose
-- [x] Dashboard được expose tại http://localhost:18083
-- [x] Subscribe/publish thủ công với QoS 0 đã từng được xác nhận
-- [x] MQTT settings đã được thêm vào config.py và `.env.example`
+**Checks:**
+- [x] The EMQX service, port, volume, and healthcheck are present in Compose
+- [x] The dashboard is exposed at http://localhost:18083
+- [x] Manual subscribe/publish with QoS 0 has been confirmed
+- [x] MQTT settings have been added to config.py and `.env.example`
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Development Compose dùng `emqx/emqx:5.5`, expose MQTT `1883` và dashboard
-  `18083`, có persistent data/log volume và healthcheck.
-- Không mount `acl.conf`; EMQX 5.x authorization sẽ cấu hình qua Dashboard/REST
-  API khi triển khai security phase sau.
-- Backend chạy trên host nên dùng `localhost:1883`; không dùng Docker service name
-  trong `.env.example`.
-- Kiểm tra runtime thủ công đã hoàn thành ở thời điểm triển khai bước 6. Audit
-  tài liệu ngày 2026-07-27 không chạy lại container do không có quyền Docker
-  daemon.
-- Lệnh `sudo apt install` trong prompt chỉ là hướng dẫn môi trường, không phải
-  thay đổi repo hoặc điều kiện để source compile.
+- The development Compose uses `emqx/emqx:5.5`, exposes MQTT `1883` and
+  dashboard `18083`, and has persistent data/log volumes and a healthcheck.
+- No `acl.conf` is mounted; EMQX 5.x authorization will be configured via the
+  Dashboard/REST API when security is implemented in a later phase.
+- The backend runs on the host, so it uses `localhost:1883`; the Docker
+  service name is not used in `.env.example`.
+- Manual runtime verification was completed at the time step 6 was
+  implemented. The 2026-07-27 documentation audit did not re-run the
+  container because that session had no Docker daemon access.
+- The `sudo apt install` command in the prompt is only environment guidance,
+  not a repo change or a condition for the source to compile.
 
 ---
 
-### Bước 7: Viết MQTT client + consumer
+### Step 7: Write the MQTT client + consumer
 
-**Mục tiêu:** Kết nối đến EMQX và nhận message với QoS 0
+**Goal:** Connect to EMQX and receive messages with QoS 0
 
 **Prompt:**
 ```
-Tạo backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
+Create backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
 
-1. Class MQTTConsumer:
+1. MQTTConsumer class:
    - __init__(config: MQTTConfig, message_queue: asyncio.Queue)
-   - async connect() - kết nối đến broker với QoS 0
-   - async subscribe(topic_pattern: str) - subscribe topic
-   - async start_consuming() - vòng lặp nhận message
-   - async disconnect() - ngắt kết nối
+   - async connect() - connect to the broker with QoS 0
+   - async subscribe(topic_pattern: str) - subscribe to a topic
+   - async start_consuming() - message receiving loop
+   - async disconnect() - disconnect
 
 2. Message handling:
-   - Parse JSON payload
-   - Validate bằng TelemetryMessage schema
-   - Nếu hợp lệ: đưa vào asyncio.Queue
-   - Nếu không hợp lệ: log warning, bỏ qua (MVP không có DLQ)
+   - Parse the JSON payload
+   - Validate with the TelemetryMessage schema
+   - If valid: put it into the asyncio.Queue
+   - If invalid: log a warning, skip it (the MVP has no DLQ)
 
 3. Error handling (MVP):
-   - Log lỗi kết nối và để consumer dừng
-   - Không reconnect/retry; ghi nhận reliability nâng cao trong `future.md`
+   - Log connection errors and let the consumer stop
+   - No reconnect/retry; record advanced reliability in `future.md`
 
-4. Dùng thư viện:
-   - gmqtt (async MQTT client) hoặc
-   - aiomqtt (wrapper của paho-mqtt)
+4. Use a library:
+   - gmqtt (async MQTT client), or
+   - aiomqtt (a wrapper around paho-mqtt)
 
-Lưu ý:
-- Mọi I/O phải là async
-- Không block trong message handler
-- Subscribe với QoS 0
-- Thêm docstring và type hints
+Notes:
+- All I/O must be async
+- Do not block inside the message handler
+- Subscribe with QoS 0
+- Add docstrings and type hints
 ```
 
-**Kiểm tra:**
-- [x] Consumer kết nối được đến EMQX
-- [x] Message được parse và validate đúng
-- [x] Message hợp lệ được đưa vào queue
-- [x] Subscribe với QoS 0
-- [x] JSON/Pydantic/MQTT error có failure behavior rõ ràng
+**Checks:**
+- [x] The consumer can connect to EMQX
+- [x] Messages are parsed and validated correctly
+- [x] Valid messages are put into the queue
+- [x] Subscribes with QoS 0
+- [x] JSON/Pydantic/MQTT errors have clear failure behavior
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Chọn `aiomqtt`; không cài đồng thời nhiều MQTT client library.
-- `connect()` hiện chuẩn bị client/config, còn kết nối network và subscribe thật
-  xảy ra khi vào async context trong `start_consuming()`.
-- Payload hợp lệ được đóng gói thành `TelemetryEnvelope`; payload JSON hoặc schema
-  không hợp lệ được log `WARNING` và skip.
-- `MqttError` tại process/task boundary được log kèm traceback rồi raise; MVP
-  không reconnect/retry.
-- Client, topic, credential và QoS lấy từ settings/constructor.
-- Quyết định cập nhật ngày 2026-07-28: bỏ `Metrics`, `is_consuming`,
-  `subscribe()` public method và state `_consuming`. Consumer hiện chỉ còn
-  `connect()`, `start_consuming()`, `disconnect()` và `_handle_message()`.
+- Chose `aiomqtt`; do not install multiple MQTT client libraries at the same time.
+- `connect()` currently prepares the client/config, while the actual network
+  connection and subscription happen when entering the async context inside
+  `start_consuming()`.
+- A valid payload is packaged into a `TelemetryEnvelope`; an invalid JSON
+  payload or schema is logged as `WARNING` and skipped.
+- `MqttError` at the process/task boundary is logged with a traceback and then
+  raised; the MVP does not reconnect/retry.
+- The client, topic, credentials, and QoS come from settings/the constructor.
+- Decision updated 2026-07-28: removed `Metrics`, `is_consuming`, the
+  `subscribe()` public method, and the `_consuming` state. The consumer now
+  only has `connect()`, `start_consuming()`, `disconnect()`, and
+  `_handle_message()`.
 
 ---
 
-### Bước 8: Đưa message hợp lệ vào asyncio.Queue
+### Step 8: Put valid messages into the asyncio.Queue
 
-**Mục tiêu:** Tạo queue trung gian giữa consumer và batch worker
+**Goal:** Create an intermediate queue between the consumer and the batch worker
 
 **Prompt:**
 ```
-Cập nhật backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
+Update backend/app/domains/telemetry/ingestion/mqtt_consumer.py:
 
-1. Tạo module-level queue:
+1. Create a module-level queue:
    message_queue: asyncio.Queue[TelemetryMessage] = asyncio.Queue(maxsize=10000)
 
-2. Trong message handler:
+2. In the message handler:
    - Try: message_queue.put_nowait(validated_message)
-   - Except QueueFull: log warning, increment metric, drop message
+   - Except QueueFull: log a warning, increment a metric, drop the message
 
-3. Thêm metrics (dùng prometheus-client hoặc simple counter):
+3. Add metrics (using prometheus-client or a simple counter):
    - messages_received_total
    - messages_valid_total
    - messages_invalid_total
    - messages_dropped_total (queue full)
 
-4. Hỗ trợ graceful shutdown:
-   - `disconnect()` dừng consuming
-   - Entrypoint chịu trách nhiệm nhận SIGTERM, dừng consumer rồi đợi worker drain queue
+4. Support graceful shutdown:
+   - `disconnect()` stops consuming
+   - The entrypoint is responsible for receiving SIGTERM, stopping the
+     consumer, then waiting for the worker to drain the queue
 ```
 
-**Kiểm tra:**
-- [x] Queue hoạt động đúng
-- [x] Queue full được drop có chủ đích và log warning
-- [x] Consumer có primitive dừng; orchestration toàn process thuộc bước 14
+**Checks:**
+- [x] The queue works correctly
+- [x] A full queue drops messages intentionally and logs a warning
+- [x] The consumer has a stop primitive; whole-process orchestration belongs to step 14
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Queue chứa `TelemetryEnvelope`, không chỉ `TelemetryMessage`, để giữ
+- The queue holds `TelemetryEnvelope`, not just `TelemetryMessage`, to keep
   `raw_payload`.
-- Quyết định cập nhật ngày 2026-07-28: bỏ toàn bộ metrics/counter trong
-  `mqtt_consumer.py`. Không dùng Prometheus dependency và cũng không giữ counter
-  process-local trong MVP.
-- Queue đầy không block callback MQTT: message bị drop và ghi `WARNING`.
-- Module-level queue hiện là default để các component cũ dùng chung. Bước 14 sẽ
-  để entrypoint tạo một queue theo settings và inject cùng instance vào consumer
-  và worker, giúp ownership/lifecycle rõ ràng.
-- Consumer chỉ cung cấp primitive `disconnect`; entrypoint hủy task còn lại khi
-  một task kết thúc trước. Không drain queue trong MVP hiện tại.
+- Decision updated 2026-07-28: removed all metrics/counters in
+  `mqtt_consumer.py`. No Prometheus dependency is used, and no process-local
+  counter is kept in the MVP either.
+- A full queue does not block the MQTT callback: the message is dropped and a
+  `WARNING` is logged.
+- The module-level queue is currently the default so older components can
+  share it. Step 14 will have the entrypoint create a queue based on settings
+  and inject the same instance into the consumer and the worker, making
+  ownership/lifecycle clearer.
+- The consumer only provides the `disconnect` primitive; the entrypoint
+  cancels the remaining task when one task finishes first. The queue is not
+  drained in the current MVP.
 
 ---
 
-### Bước 9: Viết batch worker
+### Step 9: Write the batch worker
 
-**Mục tiêu:** Xử lý queue theo batch định kỳ
+**Goal:** Process the queue in periodic batches
 
 **Prompt:**
 ```
-Tạo backend/app/domains/telemetry/ingestion/batch_worker.py:
+Create backend/app/domains/telemetry/ingestion/batch_worker.py:
 
-1. Class BatchWorker:
+1. BatchWorker class:
    - __init__(queue: asyncio.Queue, batch_size: int = 100, flush_interval: float = 30.0)
-   - async start() - bắt đầu worker
-   - async stop() - dừng worker
+   - async start() - start the worker
+   - async stop() - stop the worker
 
 2. Logic:
-   - Mỗi flush_interval giây HOẶC khi queue có đủ batch_size messages:
-     + Lấy tối đa batch_size messages từ queue
-     + Gọi telemetry.service.process_batch(messages)
-     + Log số lượng processed, time taken
-   - Nếu DB lỗi: rollback toàn batch, log traceback và để worker dừng
-   - MVP không retry và không có dead-letter queue
+   - Every flush_interval seconds OR when the queue has enough batch_size messages:
+     + Take up to batch_size messages from the queue
+     + Call telemetry.service.process_batch(messages)
+     + Log the number processed, time taken
+   - If a DB error occurs: roll back the entire batch, log the traceback, and let the worker stop
+   - The MVP has no retry and no dead-letter queue
 
 3. Metrics:
    - batches_processed_total
@@ -710,223 +728,233 @@ Tạo backend/app/domains/telemetry/ingestion/batch_worker.py:
    - batch_errors_total
 
 4. Graceful shutdown:
-   - Khi stop(), xử lý nốt batch hiện tại
-   - Đợi tối đa 60 giây
+   - On stop(), finish processing the current batch
+   - Wait at most 60 seconds
 
-Lưu ý:
-- Dùng asyncio.wait_for để timeout
-- Thêm docstring và type hints
+Notes:
+- Use asyncio.wait_for for timeouts
+- Add docstrings and type hints
 ```
 
-**Kiểm tra:**
-- [x] Worker chạy định kỳ đúng interval
-- [x] Batch được xử lý khi đủ size
-- [x] DB error làm worker dừng, không retry
-- [x] Worker không dùng `queue.join()`/`task_done()` trong MVP tối giản
-- [x] Mỗi batch chạy trong một transaction atomic
+**Checks:**
+- [x] The worker runs periodically at the correct interval
+- [x] A batch is processed once it reaches the target size
+- [x] A DB error stops the worker, no retry
+- [x] The worker does not use `queue.join()`/`task_done()` in the minimal MVP
+- [x] Each batch runs in one atomic transaction
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- Batch window bắt đầu khi nhận message đầu tiên và dùng monotonic event-loop
-  clock; flush khi đủ size hoặc hết interval.
-- Worker dùng `async_session_factory.begin()`: context commit khi thành công,
-  rollback khi exception; service/repository không commit/rollback.
-- Quyết định cập nhật ngày 2026-07-28: bỏ `BatchMetrics`, `is_running`,
-  `wait()`, drain queue, `queue.join()` và `task_done()`.
-- Khi shutdown, worker bị cancel ngay; transaction đang chạy rollback theo
-  context manager và message còn trong queue RAM được phép mất.
-- DB/service error được log bằng `logger.exception()`, raise lại và làm worker
-  dừng theo policy MVP.
+- The batch window starts when the first message is received and uses the
+  monotonic event-loop clock; it flushes when full or when the interval elapses.
+- The worker uses `async_session_factory.begin()`: the context commits on
+  success and rolls back on exception; the service/repository does not
+  commit/rollback.
+- Decision updated 2026-07-28: removed `BatchMetrics`, `is_running`, `wait()`,
+  queue draining, `queue.join()`, and `task_done()`.
+- On shutdown, the worker is cancelled immediately; the in-flight transaction
+  rolls back via the context manager, and messages still in the RAM queue are
+  allowed to be lost.
+- DB/service errors are logged with `logger.exception()`, re-raised, and stop
+  the worker per MVP policy.
 
 ---
 
-### Bước 10: Viết repository batch lookup và bulk insert
+### Step 10: Write the batch lookup and bulk insert repository
 
-**Mục tiêu:** Insert batch telemetry vào database hiệu quả với batch lookup
+**Goal:** Efficiently insert telemetry batches into the database with batch lookup
 
 **Prompt:**
 ```
-Cập nhật backend/app/domains/telemetry/repository.py:
+Update backend/app/domains/telemetry/repository.py:
 
 1. Public `telematics.service.resolve_mappings_by_serial(db, serials)`:
-   - Domain `telematics` query bảng telematics một lần với WHERE serial IN (...)
-   - Trả về dict: {telematic_serial: (telematic_id, vehicle_id)}
-   - Dùng SQLAlchemy Core select
+   - The `telematics` domain queries the telematics table once with WHERE serial IN (...)
+   - Returns a dict: {telematic_serial: (telematic_id, vehicle_id)}
+   - Uses SQLAlchemy Core select
 
 2. async def bulk_insert_telemetry(db: AsyncSession, messages: list[dict]) -> int:
-   - Dùng SQLAlchemy Core insert (không phải ORM):
+   - Use SQLAlchemy Core insert (not the ORM):
      stmt = insert(VehicleTelemetry).values(messages)
      result = await db.execute(stmt)
-   - Trả về số rows inserted
+   - Return the number of rows inserted
 
 3. async def update_telematic_last_seen(db: AsyncSession, telematic_data: list[tuple[UUID, datetime]]) -> None:
-   - Update last_seen_at cho nhiều telematics cùng lúc
-   - Chỉ update nếu timestamp mới lớn hơn giá trị hiện tại
-   - Dùng batch update với CASE WHEN hoặc execute nhiều update
+   - Update last_seen_at for multiple telematics at once
+   - Only update if the new timestamp is greater than the current value
+   - Use a batch update with CASE WHEN or execute multiple updates
 
-Lưu ý:
-- Dùng async session
-- Worker entry boundary sở hữu transaction và commit/rollback toàn batch
-- Repository/service không gọi commit hoặc rollback
-- Bulk insert phải dùng Core API, không dùng ORM add_all (chậm)
-- Batch lookup: 1 query cho cả batch, không query từng message
-- Thêm docstring
+Notes:
+- Use an async session
+- The worker entry boundary owns the transaction and commits/rolls back the whole batch
+- The repository/service must not call commit or rollback
+- Bulk insert must use the Core API, not ORM add_all (slow)
+- Batch lookup: 1 query for the whole batch, not one query per message
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [x] Batch lookup hoạt động đúng
-- [x] Bulk insert hoạt động
-- [x] Cấu trúc query dùng một lookup, một bulk insert và một batch update
-- [x] Transaction được commit đúng
+**Checks:**
+- [x] The batch lookup works correctly
+- [x] The bulk insert works
+- [x] The query structure uses one lookup, one bulk insert, and one batch update
+- [x] The transaction is committed correctly
 
-**Kết quả/Quyết định:**
+**Outcome/Decisions:**
 
-- `telematics.service.resolve_mappings_by_serial()` thực hiện một
-  `SELECT ... WHERE serial IN (...)` và
-  chỉ trả thiết bị đã gán `vehicle_id`.
-- `bulk_insert_telemetry()` dùng PostgreSQL Core `insert(...).values(messages)`,
-  không dùng ORM `add_all`.
-- `update_telematic_last_seen()` dùng một `UPDATE ... CASE` cho các thiết bị của
-  batch.
-- Repository không commit/rollback; transaction thực tế được commit bởi worker
-  context sau khi service hoàn tất.
-- Đã smoke test call count và dữ liệu truyền giữa service/repository. Chưa có
-  benchmark đáng tin cậy để khẳng định throughput cho 100+ record hoặc
-  messages/second; performance phải đo bằng workload ở môi trường đại diện.
+- `telematics.service.resolve_mappings_by_serial()` performs one
+  `SELECT ... WHERE serial IN (...)` and only returns devices that already
+  have a `vehicle_id` assigned.
+- `bulk_insert_telemetry()` uses PostgreSQL Core `insert(...).values(messages)`,
+  not ORM `add_all`.
+- `update_telematic_last_seen()` uses a single `UPDATE ... CASE` for the
+  devices in the batch.
+- The repository does not commit/rollback; the transaction is actually
+  committed by the worker context after the service finishes.
+- Smoke tests have verified call counts and data passed between the
+  service/repository. There is no reliable benchmark yet to claim throughput
+  for 100+ records or messages/second; performance must be measured with a
+  workload on a representative environment.
 
 ---
 
-### Bước 11: Viết service process_batch
+### Step 11: Write the process_batch service
 
-**Mục tiêu:** Business logic xử lý batch message với batch lookup
+**Goal:** Business logic to process a batch of messages with batch lookup
 
 **Prompt:**
 ```
-Cập nhật backend/app/domains/telemetry/service.py:
+Update backend/app/domains/telemetry/service.py:
 
 1. async def process_batch(db: AsyncSession, messages: Sequence[TelemetryEnvelope]) -> BatchResult:
-   - Lấy danh sách telematic_serial duy nhất từ batch
-   - Gọi `telematics.service.resolve_mappings_by_serial(serials)` - 1 query cho cả batch
-   - Với mỗi message:
-     + Nếu telematic_serial không tồn tại: log warning, skip message
-     + Nếu tồn tại: bổ sung telematic_id và vehicle_id
-   - Tạo received_at = datetime.now(timezone.utc)
-   - Convert message và raw payload sang DB dict
-   - Gọi repository.bulk_insert_telemetry()
-   - Gọi repository.update_telematic_last_seen() với MAX(received_at) của từng telematic
-   - Trả về {"processed": count, "skipped": count, "errors": count}
+   - Get the list of unique telematic_serial values from the batch
+   - Call `telematics.service.resolve_mappings_by_serial(serials)` - 1 query for the whole batch
+   - For each message:
+     + If telematic_serial does not exist: log a warning, skip the message
+     + If it exists: add telematic_id and vehicle_id
+   - Create received_at = datetime.now(timezone.utc)
+   - Convert the message and raw payload to a DB dict
+   - Call repository.bulk_insert_telemetry()
+   - Call repository.update_telematic_last_seen() with MAX(received_at) for each telematic
+   - Return {"processed": count, "skipped": count, "errors": count}
 
 2. Error handling:
-   - Nếu DB error: raise để transaction rollback và batch worker dừng
-   - Nếu validation error: log và skip message đó
+   - If a DB error occurs: raise so the transaction rolls back and the batch worker stops
+   - If a validation error occurs: log and skip that message
 
 3. Logging:
-   - Log INFO khi batch processed thành công
-   - Log WARNING khi có message bị skip
-   - Log ERROR khi DB error
+   - Log INFO when a batch is processed successfully
+   - Log WARNING when a message is skipped
+   - Log ERROR on a DB error
 
-Lưu ý:
-- Gọi repository, KHÔNG query trực tiếp
-- Batch lookup: 1 query cho cả batch, không query từng message
-- Không dùng cache trong MVP
-- Thêm docstring
+Notes:
+- Call the repository, do NOT query directly
+- Batch lookup: 1 query for the whole batch, not one query per message
+- No cache in the MVP
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [x] Batch được xử lý đúng
-- [x] Batch lookup hoạt động (1 query cho cả batch)
-- [x] Telematic validation hoạt động
-- [x] Logging đầy đủ
+**Checks:**
+- [x] The batch is processed correctly
+- [x] The batch lookup works (1 query for the whole batch)
+- [x] Telematic validation works
+- [x] Logging is complete
 
-**Kết quả rà soát (2026-07-27):**
-- `process_batch()` xử lý đúng message hợp lệ, skip telematic không tồn tại hoặc
-  chưa gán xe, và trả về đủ các metric `processed`, `skipped`, `errors`.
-- Danh sách `telematic_serial` được gom duy nhất và gọi
-  `telematics.service.resolve_mappings_by_serial()` đúng một lần cho cả batch.
-- Pydantic validation được thực hiện tại MQTT consumer trước khi message được đưa
-  vào queue; service tiếp tục kiểm tra mapping telematic/vehicle và xử lý lỗi
-  chuyển đổi từng message.
-- Service ghi log `INFO` cho kết quả batch và `WARNING` cho message bị skip. Lỗi
-  database được propagate tới transaction boundary và được batch worker ghi bằng
-  `logger.exception()` trước khi dừng worker.
-- Smoke test cô lập đã xác nhận batch gồm một message hợp lệ và một serial không
-  tồn tại cho kết quả `processed=1`, `skipped=1`, `errors=0`, với đúng một lần
-  lookup, bulk insert và update `last_seen_at`.
-- Black, isort, Ruff và mypy đều pass trên các file liên quan. Chưa chạy lại
-  integration test với PostgreSQL/TimescaleDB trong lượt rà soát này do không có
-  quyền truy cập Docker daemon.
-- `received_at` hiện được tạo một lần tại thời điểm service xử lý batch, nên mọi
-  message trong batch dùng cùng timestamp. Đây là contract MVP hiện tại, không
-  phải timestamp chính xác tại lúc MQTT callback nhận từng message.
-- Mapping repository lọc thiết bị chưa gán xe, nên service không phân biệt được
-  “serial không tồn tại” và “telematic tồn tại nhưng chưa gán”; giới hạn này đã
-  được ghi trong `future.md`.
+**Review outcome (2026-07-27):**
+- `process_batch()` correctly processes valid messages, skips telematics that
+  do not exist or have no vehicle assigned, and returns the full set of
+  `processed`, `skipped`, `errors` metrics.
+- The list of `telematic_serial` values is deduplicated, and
+  `telematics.service.resolve_mappings_by_serial()` is called exactly once
+  for the whole batch.
+- Pydantic validation is performed at the MQTT consumer before the message is
+  put into the queue; the service continues by checking the
+  telematic/vehicle mapping and handling per-message conversion errors.
+- The service logs `INFO` for the batch result and `WARNING` for skipped
+  messages. Database errors are propagated to the transaction boundary and
+  logged by the batch worker with `logger.exception()` before the worker stops.
+- An isolated smoke test confirmed that a batch with one valid message and one
+  non-existent serial produces `processed=1`, `skipped=1`, `errors=0`, with
+  exactly one lookup, bulk insert, and `last_seen_at` update.
+- Black, isort, Ruff, and mypy all pass on the related files. The integration
+  test with PostgreSQL/TimescaleDB was not re-run in this review pass due to
+  lack of Docker daemon access.
+- `received_at` is currently generated once at the time the service processes
+  the batch, so every message in the batch uses the same timestamp. This is
+  the current MVP contract, not the exact timestamp of when the MQTT callback
+  received each message.
+- The mapping repository filters out devices that have not been assigned a
+  vehicle, so the service cannot distinguish between "serial does not exist"
+  and "telematic exists but is not assigned"; this limitation has been
+  recorded in `future.md`.
 
 ---
 
-### Bước 12: Cập nhật telematic last_seen
+### Step 12: Update the telematic's last_seen
 
-**Mục tiêu:** Cập nhật thời điểm telematic hoạt động lần cuối
+**Goal:** Update the telematic's last-active time
 
 **Prompt:**
 ```
-Cập nhật backend/app/domains/telemetry/service.py:
+Update backend/app/domains/telemetry/service.py:
 
-1. Trong process_batch(), sau khi bulk insert:
-   - Nhóm message theo telematic_id
-   - Lấy MAX(received_at) của từng telematic
-   - Gọi repository.update_telematic_last_seen([(telematic_id, max_received_at), ...])
+1. In process_batch(), after the bulk insert:
+   - Group messages by telematic_id
+   - Get MAX(received_at) for each telematic
+   - Call repository.update_telematic_last_seen([(telematic_id, max_received_at), ...])
 
 2. Repository update:
-   - Chỉ update nếu timestamp mới lớn hơn giá trị hiện tại
-   - Dùng batch update để tối ưu
+   - Only update if the new timestamp is greater than the current value
+   - Use a batch update for efficiency
 
-Lưu ý:
-- Không update từng message riêng lẻ
-- Chỉ update với MAX(received_at) của batch
-- Thêm docstring
+Notes:
+- Do not update each message individually
+- Only update with the MAX(received_at) of the batch
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [x] last_seen_at được cập nhật đúng
-- [x] Chỉ update khi timestamp mới hơn
-- [x] Một batch chỉ phát sinh một repository update cho các telematic liên quan
+**Checks:**
+- [x] last_seen_at is updated correctly
+- [x] Only updates when the new timestamp is more recent
+- [x] A batch produces exactly one repository update for the relevant telematics
 
-**Kết quả rà soát (2026-07-27):**
-- `process_batch()` gom timestamp theo `telematic_id` và chỉ truyền một giá trị
-  lớn nhất cho mỗi thiết bị sang `repository.update_telematic_last_seen()` sau
-  khi bulk insert thành công.
-- Repository dùng một câu `UPDATE` với `CASE WHEN` cho toàn bộ thiết bị trong
-  batch; `last_seen_at` chỉ nhận timestamp mới khi giá trị mới lớn hơn giá trị
-  hiện tại hoặc giá trị hiện tại là `NULL`.
-- Smoke test cô lập với ba message của cùng một telematic xác nhận repository
-  update chỉ được gọi một lần và chỉ nhận một tuple cho telematic đó.
-- Giới hạn MVP đã được ghi tại mục 14 của `future.md`: câu `UPDATE` hiện vẫn đổi
-  `updated_at` và row count có thể tính cả row khớp ID dù `last_seen_at` không
-  đổi. Sai lệch này không làm `last_seen_at` lùi thời gian và không chặn bước 12.
-- Chưa chạy lại integration/performance test với PostgreSQL/TimescaleDB trong
-  lượt rà soát này do không có quyền truy cập Docker daemon.
+**Review outcome (2026-07-27):**
+- `process_batch()` groups timestamps by `telematic_id` and passes only the
+  single maximum value for each device to
+  `repository.update_telematic_last_seen()` after the bulk insert succeeds.
+- The repository uses a single `UPDATE` statement with `CASE WHEN` for all
+  devices in the batch; `last_seen_at` only receives the new timestamp when
+  the new value is greater than the current value or the current value is
+  `NULL`.
+- An isolated smoke test with three messages from the same telematic confirmed
+  the repository update is called only once and receives only one tuple for
+  that telematic.
+- An MVP limitation has been recorded in item 14 of `future.md`: the `UPDATE`
+  statement still changes `updated_at`, and the row count may include rows
+  matched by ID even when `last_seen_at` did not change. This discrepancy does
+  not cause `last_seen_at` to move backward and does not block step 12.
+- The integration/performance test with PostgreSQL/TimescaleDB was not re-run
+  in this review pass due to lack of Docker daemon access.
 
 ---
 
-### Bước 13: Thêm logging cơ bản (MVP không có retry/DLQ)
+### Step 13: Add basic logging (MVP has no retry/DLQ)
 
-**Mục tiêu:** Logging đầy đủ để debug (MVP không có retry/DLQ)
+**Goal:** Complete logging for debugging (MVP has no retry/DLQ)
 
 **Prompt:**
 ```
-Cập nhật backend/app/domains/telemetry/ingestion/batch_worker.py:
+Update backend/app/domains/telemetry/ingestion/batch_worker.py:
 
 1. Logging:
-   - Dùng Python logging module
-   - Log format: JSON với timestamp, level, message, extra fields
-   - Log level: INFO cho normal, WARNING cho skip, ERROR cho failure
+   - Use the Python logging module
+   - Log format: JSON with timestamp, level, message, extra fields
+   - Log level: INFO for normal, WARNING for skip, ERROR for failure
 
 2. Error handling (MVP):
-   - Nếu DB error: log ERROR, raise exception (batch worker sẽ dừng)
-   - Không có retry logic phức tạp trong MVP
-   - Không có dead-letter queue trong MVP
-   - Các lớp reliability sẽ được bổ sung ở phase sau
+   - If a DB error occurs: log ERROR, raise the exception (the batch worker will stop)
+   - No complex retry logic in the MVP
+   - No dead-letter queue in the MVP
+   - Reliability layers will be added in a later phase
 
 3. Metrics (optional):
    - messages_received_total
@@ -934,134 +962,137 @@ Cập nhật backend/app/domains/telemetry/ingestion/batch_worker.py:
    - messages_skipped_total
    - batch_processing_time_seconds
 
-Lưu ý:
-- MVP tập trung vào việc chứng minh luồng hoạt động
-- Retry, DLQ, persistent queue sẽ được ghi nhận vào future.md
-- Thêm docstring
+Notes:
+- The MVP focuses on proving the flow works
+- Retry, DLQ, persistent queue will be recorded in future.md
+- Add a docstring
 ```
 
-**Kiểm tra:**
-- [x] Logging đầy đủ
-- [x] Error được log đúng level
-- [x] Không còn metrics/counter trong ingestion MVP tối giản
+**Checks:**
+- [x] Logging is complete
+- [x] Errors are logged at the correct level
+- [x] No metrics/counters remain in the minimal ingestion MVP
 
-**Kết quả thực hiện (2026-07-27):**
-- Bổ sung formatter JSON dùng Python standard library với các field chuẩn
-  `timestamp`, `level`, `logger`, `message`, các structured `extra` fields và
-  traceback khi có exception.
-- Batch worker kích hoạt cấu hình logging theo cách idempotent khi bắt đầu chạy.
-  Luồng bình thường dùng `INFO`, message bị skip/drop hoặc không hợp lệ dùng
-  `WARNING`, lỗi database/process boundary dùng `logger.exception()` ở level
-  `ERROR` rồi raise để worker dừng.
-- Quyết định cập nhật ngày 2026-07-28: bỏ metrics/counter trong MQTT consumer và
-  batch worker. Ingestion MVP chỉ log các event quan trọng và summary batch
-  gồm `batch_size`, `processed`, `skipped`, `errors`.
-- Không bổ sung retry, DLQ hoặc persistent queue trong phạm vi MVP; các hạng mục
-  reliability này tiếp tục được theo dõi trong `future.md`.
-- Tại thời điểm triển khai logging ngày 2026-07-27, Black, isort, Ruff và mypy
-  đều pass. Sau các thay đổi tối giản ngày 2026-07-28, cần chạy lại static
-  checks đầy đủ khi môi trường dependency có `ruff`.
-- `configure_logging()` chỉ cấu hình cách xuất các `LogRecord` hiện có, không tự
-  sinh business event mới. Handler ghi JSON một dòng ra `stderr`.
-- `configure_logging()` hiện được gọi tại entrypoint thay vì trong worker để mọi
-  log startup/MQTT/worker/shutdown dùng cùng format.
-- Centralized observability và persistent metrics đã được chuyển sang
+**Implementation outcome (2026-07-27):**
+- Added a JSON formatter using the Python standard library with the standard
+  fields `timestamp`, `level`, `logger`, `message`, structured `extra` fields,
+  and a traceback when there is an exception.
+- The batch worker enables the logging configuration idempotently at startup.
+  The normal flow uses `INFO`, skipped/dropped or invalid messages use
+  `WARNING`, and database/process boundary errors use `logger.exception()` at
+  `ERROR` level and then raise to stop the worker.
+- Decision updated 2026-07-28: removed metrics/counters in the MQTT consumer
+  and batch worker. The ingestion MVP now only logs important events and a
+  batch summary consisting of `batch_size`, `processed`, `skipped`, `errors`.
+- No retry, DLQ, or persistent queue was added within the MVP scope; these
+  reliability items continue to be tracked in `future.md`.
+- At the time logging was implemented on 2026-07-27, Black, isort, Ruff, and
+  mypy all passed. After the minimal changes on 2026-07-28, full static
+  checks need to be re-run once the dependency environment has `ruff`.
+- `configure_logging()` only configures how existing `LogRecord`s are
+  emitted; it does not generate new business events on its own. The handler
+  writes single-line JSON to `stderr`.
+- `configure_logging()` is now called at the entrypoint instead of inside the
+  worker so all startup/MQTT/worker/shutdown logs use the same format.
+- Centralized observability and persistent metrics have been moved to
   `future.md`.
 
 ---
 
-### Bước 14: Tách telemetry ingestion thành process riêng
+### Step 14: Split telemetry ingestion into a separate process
 
-> **Quyết định MVP cập nhật ngày 2026-07-28:** ingestion process được tối giản
-> mạnh: bỏ `runtime.py`, `health.py`, HTTP health server, database startup probe,
-> graceful drain, `BatchMetrics`, MQTT metrics, `BatchWorker.is_running`,
-> `BatchWorker.wait()`, `MQTTConsumer.is_consuming` và `MQTTConsumer.subscribe()`.
-> `entrypoint.py` trực tiếp khởi tạo queue RAM, consumer và worker. Khi một task
-> kết thúc hoặc nhận SIGINT/SIGTERM, entrypoint cancel task còn lại rồi cleanup.
-> Message còn trong queue RAM được phép mất trong phạm vi MVP.
+> **MVP decision updated 2026-07-28:** the ingestion process was heavily
+> simplified: removed `runtime.py`, `health.py`, the HTTP health server, the
+> database startup probe, graceful drain, `BatchMetrics`, MQTT metrics,
+> `BatchWorker.is_running`, `BatchWorker.wait()`, `MQTTConsumer.is_consuming`,
+> and `MQTTConsumer.subscribe()`. `entrypoint.py` directly initializes the RAM
+> queue, the consumer, and the worker. When a task finishes or SIGINT/SIGTERM
+> is received, the entrypoint cancels the remaining task and cleans up.
+> Messages still in the RAM queue are allowed to be lost within the MVP scope.
 
-**Mục tiêu:** Chạy telemetry ingestion độc lập với API server bằng process
-entrypoint tối giản. Trong môi trường development, process chạy trực tiếp trên
-host theo convention của `AGENTS.md`; đóng gói container production chưa nằm
-trong phạm vi bước này.
+**Goal:** Run telemetry ingestion independently of the API server using a
+minimal process entrypoint. In the development environment, the process runs
+directly on the host per the convention in `CLAUDE.md`; packaging a production
+container is not within the scope of this step.
 
-#### 14.1. Phạm vi thay đổi
+#### 14.1. Scope of changes
 
-Tạo:
+Create:
 
 - `backend/app/domains/telemetry/ingestion/entrypoint.py`
 
-Cập nhật:
+Update:
 
 - `backend/app/domains/telemetry/ingestion/batch_worker.py`
 - `backend/app/domains/telemetry/ingestion/mqtt_consumer.py`
 - `backend/app/libs/common/config.py`
 - `.env.example`
 - `Makefile`
-- `README.md` nếu cần đồng bộ hướng dẫn chạy
+- `README.md` if the run instructions need to be kept in sync
 
-Không thay đổi trong bước này:
+Not changed in this step:
 
-- `infra/docker-compose.yml`: development Compose tiếp tục chỉ chạy `db` và
-  `broker`.
-- `infra/docker-compose.prod.yml` và Dockerfile production.
-- Retry/reconnect, DLQ, persistent queue, metrics exporter hoặc health endpoint.
-- Business logic trong telemetry service/repository.
+- `infra/docker-compose.yml`: the development Compose continues to run only
+  `db` and `broker`.
+- `infra/docker-compose.prod.yml` and the production Dockerfile.
+- Retry/reconnect, DLQ, persistent queue, metrics exporter, or health endpoint.
+- Business logic in the telemetry service/repository.
 
-#### 14.2. Entrypoint và ownership lifecycle
+#### 14.2. Entrypoint and lifecycle ownership
 
-Entrypoint là điểm bắt đầu và component duy nhất điều phối lifecycle của
-telemetry ingestion process:
+The entrypoint is the starting point and the only component that orchestrates
+the lifecycle of the telemetry ingestion process:
 
 ```text
 main()
   └─ asyncio.run(run())
-       ├─ cấu hình JSON logging
-       ├─ đăng ký SIGINT/SIGTERM
-       ├─ tạo shared asyncio.Queue
-       ├─ tạo MQTTConsumer và BatchWorker dùng cùng queue
-       ├─ khởi động MQTT consumer và batch worker
-       └─ chờ signal hoặc task đầu tiên kết thúc
+       ├─ configure JSON logging
+       ├─ register SIGINT/SIGTERM
+       ├─ create a shared asyncio.Queue
+       ├─ create MQTTConsumer and BatchWorker using the same queue
+       ├─ start the MQTT consumer and the batch worker
+       └─ wait for a signal or for the first task to finish
 ```
 
-Yêu cầu:
+Requirements:
 
-- Có `main()` đồng bộ gọi `asyncio.run(run())`.
-- Không thực hiện network I/O tại import time.
-- Entrypoint cancel các task còn lại khi một task kết thúc trước.
-- MVP tối giản không còn phân biệt shutdown signal với consumer/worker tự dừng;
-  process đi cleanup chung.
-- Khi startup/runtime lỗi, cleanup vẫn phải đóng database pool và các component
-  đã khởi động trước đó.
+- Has a synchronous `main()` that calls `asyncio.run(run())`.
+- No network I/O at import time.
+- The entrypoint cancels the remaining tasks when one task finishes first.
+- The minimal MVP no longer distinguishes a shutdown signal from the
+  consumer/worker stopping on its own; the process goes through a shared cleanup.
+- On startup/runtime error, cleanup must still close the database pool and
+  any components already started.
 
-#### 14.3. Cấu hình logging tại process boundary
+#### 14.3. Logging configuration at the process boundary
 
-- Chuyển lời gọi `configure_logging()` từ `BatchWorker.start()` lên đầu
-  entrypoint, trước MQTT connection.
-- Entrypoint sở hữu cấu hình log cấp process; `BatchWorker` chỉ sở hữu batching
-  và transaction.
-- Mọi log startup, MQTT, worker và shutdown phải tuân theo cùng
-  JSON output contract từ bước 13.
-- `configure_logging()` tiếp tục idempotent nhưng không dựa vào worker để kích
-  hoạt.
+- Move the `configure_logging()` call from `BatchWorker.start()` to the top of
+  the entrypoint, before the MQTT connection.
+- The entrypoint owns process-level log configuration; `BatchWorker` only owns
+  batching and transactions.
+- All startup, MQTT, worker, and shutdown logs must follow the same JSON
+  output contract from step 13.
+- `configure_logging()` remains idempotent but no longer relies on the worker
+  to trigger it.
 
 #### 14.4. Database lifecycle
 
-- Không còn database startup probe trong entrypoint MVP.
-- Batch worker dùng `async_session_factory.begin()` để mỗi batch nằm trong một
-  transaction atomic.
-- Không dùng `get_db()` vì đây là async-generator dependency dành cho HTTP
-  request lifecycle của FastAPI.
-- `close_db()` vẫn chạy trong cleanup để dispose shared engine/pool của process
-  telemetry nếu worker đã mở kết nối.
+- No database startup probe remains in the MVP entrypoint.
+- The batch worker uses `async_session_factory.begin()` so each batch sits in
+  one atomic transaction.
+- `get_db()` is not used because it is an async-generator dependency meant for
+  FastAPI's HTTP request lifecycle.
+- `close_db()` still runs during cleanup to dispose of the telemetry process's
+  shared engine/pool if the worker had opened a connection.
 
-Mỗi OS process vẫn có engine, pool và factory riêng trong bộ nhớ. “Shared
-factory” ở đây có nghĩa mọi component **trong cùng telemetry process** dùng
-factory chuẩn từ `app.libs.db.session`, không tự tạo pool thứ hai.
+Each OS process still has its own engine, pool, and factory in memory. "Shared
+factory" here means every component **within the same telemetry process**
+uses the standard factory from `app.libs.db.session`, without creating a
+second pool of its own.
 
 #### 14.5. Runtime configuration
 
-Thêm các setting có namespace:
+Add namespaced settings:
 
 ```env
 TELEMETRY_QUEUE_SIZE=10000
@@ -1069,30 +1100,32 @@ TELEMETRY_BATCH_SIZE=100
 TELEMETRY_FLUSH_INTERVAL=30
 ```
 
-Ý nghĩa:
+Meaning:
 
-- `TELEMETRY_QUEUE_SIZE`: số envelope tối đa trong in-memory queue.
-- `TELEMETRY_BATCH_SIZE`: số message tối đa trong một database transaction.
-- `TELEMETRY_FLUSH_INTERVAL`: số giây tối đa chờ batch chưa đầy.
-- Không còn `TELEMETRY_HEALTH_HOST`, `TELEMETRY_HEALTH_PORT` hoặc
-  `TELEMETRY_SHUTDOWN_TIMEOUT` trong MVP hiện tại.
+- `TELEMETRY_QUEUE_SIZE`: the maximum number of envelopes in the in-memory queue.
+- `TELEMETRY_BATCH_SIZE`: the maximum number of messages in one database transaction.
+- `TELEMETRY_FLUSH_INTERVAL`: the maximum number of seconds to wait for an
+  incomplete batch.
+- `TELEMETRY_HEALTH_HOST`, `TELEMETRY_HEALTH_PORT`, and
+  `TELEMETRY_SHUTDOWN_TIMEOUT` no longer exist in the current MVP.
 
-Entrypoint tạo đúng một queue và truyền cùng instance cho consumer và worker:
+The entrypoint creates exactly one queue and passes the same instance to the
+consumer and the worker:
 
 ```text
 MQTTConsumer ──put──▶ shared queue ──get──▶ BatchWorker
 ```
 
-#### 14.6. API tối giản của BatchWorker và MQTTConsumer
+#### 14.6. Minimal API of BatchWorker and MQTTConsumer
 
-`BatchWorker` hiện chỉ cung cấp:
+`BatchWorker` now only provides:
 
 ```python
 async def start() -> None: ...
 async def stop() -> None: ...
 ```
 
-`MQTTConsumer` hiện chỉ cung cấp:
+`MQTTConsumer` now only provides:
 
 ```python
 async def connect() -> None: ...
@@ -1100,175 +1133,184 @@ async def start_consuming() -> None: ...
 async def disconnect() -> None: ...
 ```
 
-Quyết định hiện hành:
+Current decisions:
 
-- Không còn `BatchWorker.is_running`, `BatchWorker.wait()` hoặc
-  `MQTTConsumer.is_consuming`.
-- Không còn `MQTTConsumer.subscribe()` public method; subscribe telemetry topic
-  diễn ra trực tiếp trong `start_consuming()`.
-- Entrypoint hiện truy cập `worker._task` sau `start()` để đưa task worker vào
-  danh sách chờ. Đây là trade-off được chấp nhận cho MVP tối giản; nếu sau này
-  cần lifecycle API sạch hơn thì chuyển vào phase observability/runtime.
+- `BatchWorker.is_running`, `BatchWorker.wait()`, and
+  `MQTTConsumer.is_consuming` no longer exist.
+- The `MQTTConsumer.subscribe()` public method no longer exists; subscribing
+  to the telemetry topic happens directly inside `start_consuming()`.
+- The entrypoint now accesses `worker._task` after `start()` to add the
+  worker task to the wait list. This is an accepted trade-off for the minimal
+  MVP; if a cleaner lifecycle API is needed later, move it into the
+  observability/runtime phase.
 
-#### 14.7. Theo dõi task tối giản
+#### 14.7. Minimal task tracking
 
-Entrypoint chờ đồng thời:
+The entrypoint waits concurrently on:
 
 - SIGINT/SIGTERM.
-- MQTT consumer task.
-- Background task của `BatchWorker`.
+- The MQTT consumer task.
+- The `BatchWorker`'s background task.
 
-Dùng `asyncio.wait(..., return_when=FIRST_COMPLETED)` hoặc cơ chế tương đương.
+Uses `asyncio.wait(..., return_when=FIRST_COMPLETED)` or an equivalent mechanism.
 
-Hành vi:
+Behavior:
 
-- Task nào hoàn thành trước cũng làm process đi vào cleanup.
-- Các task còn lại bị cancel; queue không được drain.
-- Exception từ task đã hoàn thành không còn được phân tích riêng trong entrypoint
-  MVP tối giản. Nếu task lỗi trước khi `asyncio.wait()` trả về và exception không
-  được retrieve, đây là giới hạn đã chấp nhận để giữ code ngắn; logging lỗi chính
-  vẫn nằm trong consumer/worker boundary.
+- Whichever task completes first drives the process into cleanup.
+- The remaining tasks are cancelled; the queue is not drained.
+- An exception from an already-completed task is no longer analyzed
+  separately in the minimal MVP entrypoint. If a task fails before
+  `asyncio.wait()` returns and the exception is not retrieved, this is an
+  accepted limitation to keep the code short; the primary error logging still
+  lives at the consumer/worker boundary.
 
 #### 14.8. Health check
 
-Không có health endpoint trong ingestion MVP hiện tại. HTTP health/readiness cho
-process riêng đã được chuyển sang `docs/01-requirements/future.md`.
+There is no health endpoint in the current ingestion MVP. HTTP health/readiness
+for the separate process has been moved to `docs/01-requirements/future.md`.
 
-#### 14.9. Shutdown tối giản
+#### 14.9. Minimal shutdown
 
-Thứ tự hiện tại:
+Current order:
 
 ```text
-1. Một task kết thúc hoặc SIGINT/SIGTERM được nhận
-2. Entrypoint cancel các task còn pending
-3. Gọi consumer.disconnect()
-4. Gọi worker.stop() để cancel worker task
-5. Gọi close_db()
-6. Gỡ signal handler và process thoát
+1. A task finishes, or SIGINT/SIGTERM is received
+2. The entrypoint cancels the remaining pending tasks
+3. Call consumer.disconnect()
+4. Call worker.stop() to cancel the worker task
+5. Call close_db()
+6. Remove signal handlers and the process exits
 ```
 
-Invariant:
+Invariants:
 
-- Không drain queue, không `queue.join()` và không `task_done()`.
-- Transaction đang chạy rollback khi task bị cancel hoặc exception xảy ra.
-- Message còn trong queue RAM được phép mất.
-- MVP không retry/reconnect/DLQ.
+- No queue draining, no `queue.join()`, and no `task_done()`.
+- An in-flight transaction rolls back when a task is cancelled or an exception occurs.
+- Messages still in the RAM queue are allowed to be lost.
+- The MVP does not retry/reconnect/DLQ.
 
-#### 14.10. Lệnh development
+#### 14.10. Development command
 
-Thêm Makefile target và cập nhật `make help`:
+Add a Makefile target and update `make help`:
 
 ```bash
 make telemetry-dev
 ```
 
-Target chạy:
+The target runs:
 
 ```bash
 cd backend && uv run python -m app.domains.telemetry.ingestion.entrypoint
 ```
 
-Lệnh trực tiếp tương đương:
+Equivalent direct command:
 
 ```bash
 cd backend
 uv run python -m app.domains.telemetry.ingestion.entrypoint
 ```
 
-#### 14.11. Kiểm tra và nghiệm thu
+#### 14.11. Checks and acceptance
 
 Static checks:
 
-- Black, isort, Ruff và mypy toàn backend.
+- Black, isort, Ruff, and mypy across the whole backend.
 - `git diff --check`.
-- Kiểm tra mọi docstring/comment mới bằng tiếng Việt theo `AGENTS.md`.
+- Check that every new docstring/comment is in Vietnamese per `CLAUDE.md`.
 
-Smoke test lifecycle:
+Lifecycle smoke test:
 
-- Shared queue được truyền cho cả consumer và worker.
-- `entrypoint.py` tạo consumer task, worker task và shutdown signal task.
-- `asyncio.wait(..., FIRST_COMPLETED)` làm process đi cleanup khi task đầu tiên
-  kết thúc.
-- SIGTERM/SIGINT kích hoạt cleanup tối giản.
-- `close_db()` luôn được gọi.
-- JSON logging được cấu hình trước log startup đầu tiên.
+- The shared queue is passed to both the consumer and the worker.
+- `entrypoint.py` creates a consumer task, a worker task, and a shutdown
+  signal task.
+- `asyncio.wait(..., FIRST_COMPLETED)` drives the process into cleanup when
+  the first task finishes.
+- SIGTERM/SIGINT triggers minimal cleanup.
+- `close_db()` is always called.
+- JSON logging is configured before the first startup log.
 
-Integration khi hạ tầng khả dụng:
+Integration when infrastructure is available:
 
 ```bash
 make infra-up
 make telemetry-dev
 ```
 
-Test publish MQTT → queue → batch → TimescaleDB đầy đủ vẫn thuộc bước 15.
+The full MQTT publish → queue → batch → TimescaleDB test still belongs to step 15.
 
-**Kiểm tra:**
+**Checks:**
 
-- [x] Entrypoint chạy độc lập trên host
-- [x] Logging được cấu hình tại process boundary
-- [x] Không còn database startup probe trong MVP tối giản
-- [x] Consumer và worker dùng chung một queue
-- [x] Public lifecycle API thừa đã được bỏ
-- [x] Health check đã được bỏ khỏi source và chuyển sang future
-- [x] SIGINT/SIGTERM cleanup tối giản
-- [x] Smoke check `compileall` pass cho các file ingestion
-- [x] Makefile/README hướng dẫn chạy được đồng bộ
+- [x] The entrypoint runs independently on the host
+- [x] Logging is configured at the process boundary
+- [x] No database startup probe remains in the minimal MVP
+- [x] The consumer and worker share the same queue
+- [x] Redundant public lifecycle API has been removed
+- [x] The health check has been removed from source and moved to future
+- [x] Minimal SIGINT/SIGTERM cleanup
+- [x] The `compileall` smoke check passes for the ingestion files
+- [x] The Makefile/README run instructions are kept in sync
 
-**Kết quả thực hiện (2026-07-28):**
+**Implementation outcome (2026-07-28):**
 
-- `entrypoint.py` là process boundary tối giản cho logging, signal, queue,
-  MQTT consumer, batch worker và database cleanup.
-- `health.py` và `runtime.py` đã bị xóa khỏi source.
-- Entrypoint tạo một queue theo `TELEMETRY_QUEUE_SIZE` rồi inject cùng instance
-  vào consumer/worker. Chỉ còn setting queue, batch size và flush interval.
-- `BatchWorker` bỏ `BatchMetrics`, `is_running`, `wait()`, drain queue,
-  `queue.join()` và `task_done()`.
-- `MQTTConsumer` bỏ `Metrics`, `is_consuming`, `subscribe()` public method và
-  `_consuming`; consumer hiện chỉ consume, validate và enqueue.
-- Smoke check hiện tại đã chạy `compileall` cho các file ingestion. Ruff không
-  chạy được trong môi trường hiện tại vì `uv` không tìm thấy binary/module
-  `ruff`; cần chạy lại static checks đầy đủ khi môi trường dependency sẵn sàng.
+- `entrypoint.py` is the minimal process boundary for logging, signals, the
+  queue, the MQTT consumer, the batch worker, and database cleanup.
+- `health.py` and `runtime.py` have been removed from source.
+- The entrypoint creates one queue based on `TELEMETRY_QUEUE_SIZE` and injects
+  the same instance into the consumer/worker. Only the queue, batch size, and
+  flush interval settings remain.
+- `BatchWorker` removed `BatchMetrics`, `is_running`, `wait()`, queue
+  draining, `queue.join()`, and `task_done()`.
+- `MQTTConsumer` removed `Metrics`, `is_consuming`, the `subscribe()` public
+  method, and `_consuming`; the consumer now only consumes, validates, and
+  enqueues.
+- The current smoke check has run `compileall` for the ingestion files. Ruff
+  could not run in the current environment because `uv` could not find the
+  `ruff` binary/module; full static checks need to be re-run once the
+  dependency environment is ready.
 
 ---
 
-### Bước 15: Test end-to-end
+### Step 15: End-to-end test
 
-**Mục tiêu:** Chứng minh luồng MVP thực tế từ MQTT publish đến TimescaleDB, bao
-gồm success path, skip/drop path, transaction failure và process lifecycle.
+**Goal:** Prove the actual MVP flow from MQTT publish to TimescaleDB, covering
+the success path, the skip/drop path, transaction failure, and process lifecycle.
 
-> Ghi chú: Các case batch trong bước này là bằng chứng của implementation trước
-> Bước 16. Smoke end-to-end cho active single-message path được ghi ở Bước 16.
+> Note: The batch cases in this step are evidence of the implementation prior
+> to Step 16. The end-to-end smoke test for the active single-message path is
+> recorded in Step 16.
 
-#### 15.1. Phạm vi và nguyên tắc
+#### 15.1. Scope and principles
 
-- Đây là integration/E2E test chạy với PostgreSQL/TimescaleDB và EMQX thật.
-- Không thêm retry/DLQ/persistent queue chỉ để làm test pass.
-- Mỗi case phải dùng `message_uuid` và `recorded_at` riêng để tránh unique
-  constraint làm sai kết quả.
-- Ghi lại lệnh, thời điểm, input, log liên quan, query xác minh và kết quả
-  pass/fail. Không chỉ đánh dấu checkbox dựa trên quan sát chung.
-- QoS 0 và queue RAM không cho phép khẳng định “không mất message” trong mọi
-  failure. Shutdown MVP không drain queue; E2E chỉ cần chứng minh process cleanup
-  được và dữ liệu còn trong RAM có thể bị bỏ qua.
+- This is an integration/E2E test run against real PostgreSQL/TimescaleDB and EMQX.
+- Do not add retry/DLQ/persistent queue just to make the test pass.
+- Each case must use its own `message_uuid` and `recorded_at` to avoid the
+  unique constraint skewing the result.
+- Record the command, the time, the input, relevant logs, the verification
+  query, and the pass/fail result. Do not just check a box based on a general
+  observation.
+- QoS 0 and the RAM queue do not allow claiming "no message loss" under every
+  failure. The MVP shutdown does not drain the queue; the E2E test only needs
+  to prove the process can clean up, and data still in RAM may be disregarded.
 
 #### 15.2. Preconditions
 
-- `db` và `broker` healthy.
-- Alembic đang ở `head`; `vehicle_telemetry` xuất hiện trong
+- `db` and `broker` are healthy.
+- Alembic is at `head`; `vehicle_telemetry` appears in
   `timescaledb_information.hypertables`.
-- Có một vehicle chưa soft-delete.
-- Có một telematic active gán đúng vehicle đó.
-- Có một serial không tồn tại để test skip.
-- Telemetry entrypoint bước 14 đang chạy trên host.
-- Biết rõ batch size/flush interval đang dùng trong `.env`.
+- There is a vehicle that has not been soft-deleted.
+- There is an active telematic assigned to that vehicle.
+- There is a non-existent serial to test the skip path.
+- The step-14 telemetry entrypoint is running on the host.
+- The batch size/flush interval currently in use in `.env` is known.
 
-Nếu chưa có seed script chính thức, có thể insert fixture bằng SQL thủ công nhưng
-phải ghi rõ ID/serial và cleanup sau test; không đưa credential thật vào tài liệu.
+If there is no official seed script yet, fixtures may be inserted with manual
+SQL, but the ID/serial must be recorded and cleaned up after the test; do not
+put real credentials into the document.
 
-#### 15.3. Baseline kiểm tra trước test
+#### 15.3. Baseline check before testing
 
 ```bash
-# Hạ tầng và migration
+# Infrastructure and migration
 docker compose -f infra/docker-compose.yml ps
 cd backend && uv run alembic current
 
@@ -1277,11 +1319,11 @@ docker exec g3network-db psql -U g3network -d g3network \
   -c "SELECT hypertable_name FROM timescaledb_information.hypertables WHERE hypertable_name = 'vehicle_telemetry';"
 ```
 
-#### 15.4. Ma trận test
+#### 15.4. Test matrix
 
-##### Case A — Message hợp lệ tối thiểu
+##### Case A — Minimal valid message
 
-Publish payload hợp lệ với telematic đã gán xe:
+Publish a valid payload with a telematic already assigned to a vehicle:
 
 ```bash
 mosquitto_pub -h localhost -p 1883 -q 0 \
@@ -1289,17 +1331,18 @@ mosquitto_pub -h localhost -p 1883 -q 0 \
   -m '{"message_uuid":"<uuid-case-a>","telematic_serial":"TBOX-VN-000123","recorded_at":"<utc-case-a>","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
 ```
 
-Pass khi:
+Passes when:
 
-- Consumer tăng received/valid và không log validation warning.
-- Sau tối đa flush interval, có đúng một row theo `message_uuid`.
-- Internal `telematic_id`/`vehicle_id` khớp fixture.
-- `recorded_at` và `received_at` là timezone-aware; `received_at` không sớm hơn
-  thời điểm test hợp lý.
-- `raw_payload` bằng object JSON gửi vào, không chứa internal ID backend.
-- `last_seen_at` của telematic tăng.
+- The consumer increments received/valid and does not log a validation warning.
+- After at most one flush interval, there is exactly one row matching `message_uuid`.
+- The internal `telematic_id`/`vehicle_id` matches the fixture.
+- `recorded_at` and `received_at` are timezone-aware; `received_at` is not
+  earlier than a reasonable test time.
+- `raw_payload` equals the JSON object sent, and does not contain internal
+  backend IDs.
+- The telematic's `last_seen_at` has increased.
 
-Query xác minh:
+Verification query:
 
 ```bash
 docker exec g3network-db psql -U g3network -d g3network \
@@ -1309,301 +1352,324 @@ docker exec g3network-db psql -U g3network -d g3network \
   -c "SELECT telematic_id, telematic_serial, vehicle_id, last_seen_at FROM telematics WHERE telematic_serial = 'TBOX-VN-000123';"
 ```
 
-##### Case B — Payload đầy đủ và raw payload
+##### Case B — Full payload and raw payload
 
-Publish đủ vehicle state, battery, motor, signal, errors và thêm một field chưa
-được Pydantic model hóa.
+Publish full vehicle state, battery, motor, signal, errors, and add one field
+not yet modeled by Pydantic.
 
-Pass khi:
+Passes when:
 
-- Các field đã model hóa được flatten đúng sang column.
-- Field chưa model hóa không trở thành column nhưng vẫn còn nguyên trong
+- Fields that are modeled are flattened correctly to columns.
+- The unmodeled field does not become a column but remains intact in
   `raw_payload`.
-- Error codes được lưu đúng JSON contract.
+- Error codes are stored per the JSON contract.
 
-##### Case C — JSON/schema không hợp lệ
+##### Case C — Invalid JSON/schema
 
-Thực hiện riêng:
+Run separately:
 
-- JSON malformed.
-- Thiếu `battery.soc`.
-- Latitude ngoài range.
-- `recorded_at` không có timezone.
+- Malformed JSON.
+- Missing `battery.soc`.
+- Latitude out of range.
+- `recorded_at` without a timezone.
 
-Pass khi mỗi message:
+Passes when, for each message:
 
-- Log `WARNING` có topic/error context.
-- Không vào queue và không tạo row DB.
-- Worker/process vẫn hoạt động.
+- A `WARNING` is logged with topic/error context.
+- It does not enter the queue and no DB row is created.
+- The worker/process keeps running.
 
-##### Case D — Serial không có mapping hợp lệ
+##### Case D — Serial without a valid mapping
 
-Publish payload hợp lệ với serial không tồn tại hoặc thiết bị chưa gán xe.
+Publish a valid payload with a serial that does not exist, or a device not
+yet assigned to a vehicle.
 
-Pass khi:
+Passes when:
 
-- Message qua MQTT/Pydantic validation nhưng service skip.
-- Không tạo row telemetry.
-- Batch result tăng `skipped`.
-- Transaction vẫn commit các message hợp lệ khác trong cùng batch.
+- The message passes MQTT/Pydantic validation but the service skips it.
+- No telemetry row is created.
+- The batch result increments `skipped`.
+- The transaction still commits the other valid messages in the same batch.
 
-MVP hiện không phân biệt log/metric giữa serial không tồn tại và telematic chưa
-gán xe; giới hạn này đã nằm trong `future.md`.
+The MVP currently does not distinguish log/metric between a non-existent
+serial and a telematic without a vehicle assigned; this limitation is already
+in `future.md`.
 
-##### Case E — Flush theo batch size
+##### Case E — Flush by batch size
 
-Publish đúng `TELEMETRY_BATCH_SIZE` message hợp lệ với UUID/timestamp khác nhau
-trong thời gian ngắn hơn flush interval.
+Publish exactly `TELEMETRY_BATCH_SIZE` valid messages with distinct
+UUID/timestamp values within a time shorter than the flush interval.
 
-Pass khi:
+Passes when:
 
-- Batch xử lý ngay khi đủ size, không đợi hết interval.
-- Số row insert bằng số message hợp lệ.
-- Repository không phát sinh query mapping theo từng message.
-- Log summary có đúng `batch_size`, `processed`, `skipped`, `errors`.
+- The batch is processed as soon as it reaches the target size, without
+  waiting for the interval.
+- The number of rows inserted equals the number of valid messages.
+- The repository does not issue a mapping query per message.
+- The summary log has the correct `batch_size`, `processed`, `skipped`, `errors`.
 
-##### Case F — Flush theo interval
+##### Case F — Flush by interval
 
-Publish ít hơn batch size rồi ngừng gửi.
+Publish fewer than the batch size, then stop sending.
 
-Pass khi:
+Passes when:
 
-- Batch flush sau khoảng `TELEMETRY_FLUSH_INTERVAL` tính từ message đầu tiên.
-- Không yêu cầu độ chính xác tuyệt đối theo milliseconds; ghi sai số quan sát.
-- Không busy-loop khi queue rỗng.
+- The batch flushes after roughly `TELEMETRY_FLUSH_INTERVAL` from the first message.
+- Millisecond-level precision is not required; record the observed deviation.
+- No busy-looping while the queue is empty.
 
 ##### Case G — Mixed batch
 
-Trong cùng batch gửi message hợp lệ, serial không mapping và payload invalid.
+Within the same batch, send a valid message, an unmapped serial, and an
+invalid payload.
 
-Pass khi:
+Passes when:
 
-- Payload invalid bị loại trước queue.
-- Message không mapping được service skip.
-- Message hợp lệ vẫn insert.
-- Counters phản ánh đúng định nghĩa, không dùng tổng received làm processed.
+- The invalid payload is rejected before the queue.
+- The unmapped message is skipped by the service.
+- The valid message is still inserted.
+- Counters reflect their exact definitions, not using total received as processed.
 
 ##### Case H — Database failure
 
-Sau khi worker đã chạy, tạo một batch rồi làm database unavailable trước khi
-flush hoặc dùng failure injection an toàn trong môi trường test.
+After the worker is running, build up a batch and then make the database
+unavailable before it flushes, or use safe failure injection in the test
+environment.
 
-Pass khi:
+Passes when:
 
-- Toàn batch rollback, không có partial insert/last_seen update.
-- Log `ERROR` có traceback và batch context.
-- Worker/process dừng theo MVP.
-- Không retry và không đưa message vào DLQ.
+- The whole batch rolls back, with no partial insert/last_seen update.
+- An `ERROR` is logged with a traceback and batch context.
+- The worker/process stops per the MVP policy.
+- No retry, and the message is not sent to a DLQ.
 
-Không chạy failure injection trên database chứa dữ liệu quan trọng.
+Do not run failure injection against a database holding important data.
 
-##### Case I — Shutdown tối giản
+##### Case I — Minimal shutdown
 
-Đưa một số message hợp lệ vào queue, sau đó gửi SIGTERM tới telemetry process.
+Put several valid messages into the queue, then send SIGTERM to the telemetry process.
 
-Pass khi:
+Passes when:
 
-- Process nhận signal và đi vào cleanup.
-- Consumer được yêu cầu disconnect.
-- Worker task bị cancel; transaction đang chạy rollback nếu bị cancel giữa batch.
-- Queue không drain; message còn trong RAM được phép mất.
-- Database pool được đóng qua `close_db()`.
+- The process receives the signal and goes into cleanup.
+- The consumer is asked to disconnect.
+- The worker task is cancelled; an in-flight transaction rolls back if
+  cancelled mid-batch.
+- The queue is not drained; messages still in RAM are allowed to be lost.
+- The database pool is closed via `close_db()`.
 
 ##### Case J — Queue full
 
-Chỉ chạy với cấu hình test có queue size nhỏ và producer nhanh hơn worker.
+Only run with a test configuration that has a small queue size and a producer
+faster than the worker.
 
-Pass khi:
+Passes when:
 
-- Callback không block vô hạn.
-- Message vượt capacity bị drop có chủ đích.
-- Log `WARNING` khi queue đầy.
-- Process tiếp tục chạy; không tuyên bố zero data loss.
+- The callback does not block indefinitely.
+- Messages beyond capacity are dropped intentionally.
+- A `WARNING` is logged when the queue is full.
+- The process keeps running; zero data loss is not claimed.
 
 #### 15.5. Cleanup
 
-- Xóa fixture telemetry/telematic/vehicle theo đúng thứ tự foreign key hoặc dùng
-  transaction/namespace test riêng.
-- Khôi phục setting queue/batch/interval sau case queue full.
-- Khởi động lại hạ tầng/process đã cố ý dừng ở failure test.
-- Không dùng `docker compose down -v` trừ khi database test disposable và đã xác
-  nhận rõ phạm vi xóa.
+- Delete telemetry/telematic/vehicle fixtures in the correct foreign-key
+  order, or use a dedicated test transaction/namespace.
+- Restore the queue/batch/interval settings after the queue-full case.
+- Restart any infrastructure/process that was intentionally stopped during a
+  failure test.
+- Do not use `docker compose down -v` unless the test database is disposable
+  and the scope of deletion has been clearly confirmed.
 
-#### 15.6. Báo cáo nghiệm thu
+#### 15.6. Acceptance report
 
-Ghi vào planner:
+Record in the planner:
 
-- Ngày, môi trường, revision/commit được test.
-- Phiên bản PostgreSQL/TimescaleDB/EMQX.
-- Setting queue/batch/interval.
-- Danh sách case pass/fail và bằng chứng ngắn.
-- Known limitation hoặc case không chạy, kèm lý do.
+- The date, environment, and revision/commit tested.
+- The PostgreSQL/TimescaleDB/EMQX versions.
+- The queue/batch/interval settings.
+- The list of cases pass/fail with brief evidence.
+- Known limitations or cases not run, with the reason.
 
-**Kiểm tra:**
+**Checks:**
 
-- [x] Preconditions và baseline hợp lệ
-- [x] Message tối thiểu/đầy đủ được insert đúng
-- [x] `raw_payload`, timezone và internal mapping đúng
-- [x] Invalid payload không vào DB
-- [x] Serial không mapping được skip
-- [x] Flush theo size và interval đúng
-- [ ] Mixed batch có log/result đúng
-- [x] Database failure rollback và dừng process
-- [x] Shutdown tối giản cleanup đúng, không drain queue
-- [x] Queue full drop/log đúng
-- [x] Báo cáo nghiệm thu có môi trường và bằng chứng
+- [x] Preconditions and baseline are valid
+- [x] Minimal/full messages are inserted correctly
+- [x] `raw_payload`, timezone, and internal mapping are correct
+- [x] Invalid payloads do not enter the DB
+- [x] Unmapped serials are skipped
+- [x] Flush by size and by interval work correctly
+- [ ] Mixed batch has correct log/result
+- [x] Database failure rolls back and stops the process
+- [x] Minimal shutdown cleans up correctly, without draining the queue
+- [x] Queue full drop/log works correctly
+- [x] The acceptance report has environment and evidence
 
-**Kết quả nghiệm thu (2026-07-28):**
+**Acceptance outcome (2026-07-28):**
 
-- Môi trường: PostgreSQL/TimescaleDB container `g3network-db` healthy,
+- Environment: PostgreSQL/TimescaleDB container `g3network-db` healthy,
   EMQX 5.5 container `g3network-broker` healthy, Alembic DB revision
-  `c0f4a8b6e2d1`, hypertable `vehicle_telemetry` tồn tại. Lệnh
-  `uv run alembic current` bị treo trong phiên này nên baseline revision được
-  xác minh trực tiếp qua bảng `alembic_version`.
-- Runtime test: chạy `entrypoint.py` trên host với
+  `c0f4a8b6e2d1`, hypertable `vehicle_telemetry` exists. The
+  `uv run alembic current` command hung in this session, so the baseline
+  revision was verified directly via the `alembic_version` table.
+- Runtime test: ran `entrypoint.py` on the host with
   `TELEMETRY_BATCH_SIZE=2`, `TELEMETRY_FLUSH_INTERVAL=1`,
-  `TELEMETRY_QUEUE_SIZE=10`. Process trong sandbox không mở được MQTT socket
-  (`Operation not permitted`), nên E2E runtime được chạy ngoài sandbox.
-- Fixture: tạo vehicle `E2E-AD02` và telematic `TBOX-E2E-AD02`; sau test đã
-  cleanup thành công, xóa 5 row `vehicle_telemetry`, 1 row `telematics` và 1 row
-  `vehicles`; xác minh còn 0 row fixture.
-- Case A pass: publish payload tối thiểu qua `mosquitto_pub`; DB có đúng 1 row
-  theo `message_uuid`, mapping đúng `vehicle_id`, `recorded_at` UTC, `soc=50`,
-  `raw_payload.telematic_serial=TBOX-E2E-AD02`; `last_seen_at` của telematic tăng.
-- Case B pass: payload đầy đủ flatten đúng các field `speed`, `heading`,
-  `battery_voltage`, `battery_current`, `battery_temperature`,
-  `motor_temperature`, `odometer`, `signal_strength`, `error_codes`; field
-  `extra_field` vẫn còn trong `raw_payload`.
-- Case C pass: JSON malformed và latitude ngoài range đều log `WARNING` tại MQTT
-  consumer và không tạo row DB.
-- Case D pass: serial `TBOX-E2E-MISSING` qua Pydantic validation nhưng service
-  skip; log `processed=0`, `skipped=1`; DB không có row theo UUID test.
-- Case E pass: gửi 2 message trong cùng phiên `mosquitto_pub -l`; worker xử lý
-  batch `batch_size=2`, `processed=2`; DB có đủ 2 row.
-- Case F pass gián tiếp: các message đơn lẻ flush sau khoảng
-  `TELEMETRY_FLUSH_INTERVAL=1` và insert thành công theo interval.
-- Case H pass: dừng DB container tạm thời rồi publish payload hợp lệ; worker log
-  `ERROR` với traceback DB connection closed, process cleanup và dừng; sau khi
-  start DB lại, UUID case H có 0 row.
-- Case I pass: chạy process mới rồi gửi SIGINT; log cho thấy worker stop và
-  `Telemetry ingestion stopped`, exit code 0. Chưa gửi SIGTERM riêng vì entrypoint
-  dùng cùng signal path cho SIGINT/SIGTERM.
-- Case J pass ở mức smoke logic: gọi trực tiếp `_handle_message()` với queue
-  `maxsize=1`; message thứ hai log `Queue full, message dropped`, queue vẫn
-  `qsize=1`. Chưa tái hiện queue-full qua EMQX vì worker consume nhanh và case
-  này phụ thuộc timing.
-- Chưa chạy mixed batch đầy đủ gồm valid + serial missing + invalid trong cùng
-  batch; các hành vi thành phần đã được kiểm riêng ở Case A/C/D/E.
+  `TELEMETRY_QUEUE_SIZE=10`. The process in the sandbox could not open an
+  MQTT socket (`Operation not permitted`), so the E2E runtime was run outside
+  the sandbox.
+- Fixture: created vehicle `E2E-AD02` and telematic `TBOX-E2E-AD02`; after the
+  test, cleanup succeeded, deleting 5 `vehicle_telemetry` rows, 1 `telematics`
+  row, and 1 `vehicles` row; verified 0 fixture rows remain.
+- Case A passed: published a minimal payload via `mosquitto_pub`; the DB has
+  exactly 1 row for the `message_uuid`, correct `vehicle_id` mapping,
+  `recorded_at` in UTC, `soc=50`,
+  `raw_payload.telematic_serial=TBOX-E2E-AD02`; the telematic's `last_seen_at`
+  increased.
+- Case B passed: the full payload flattened correctly into the fields
+  `speed`, `heading`, `battery_voltage`, `battery_current`,
+  `battery_temperature`, `motor_temperature`, `odometer`, `signal_strength`,
+  `error_codes`; the `extra_field` remained in `raw_payload`.
+- Case C passed: malformed JSON and an out-of-range latitude both logged
+  `WARNING` at the MQTT consumer and created no DB row.
+- Case D passed: serial `TBOX-E2E-MISSING` passed Pydantic validation but was
+  skipped by the service; logged `processed=0`, `skipped=1`; the DB has no row
+  for the test UUID.
+- Case E passed: sent 2 messages in the same `mosquitto_pub -l` session; the
+  worker processed the batch with `batch_size=2`, `processed=2`; the DB has
+  both rows.
+- Case F passed indirectly: individual messages flushed after roughly
+  `TELEMETRY_FLUSH_INTERVAL=1` and were inserted successfully per the interval.
+- Case H passed: stopped the DB container temporarily then published a valid
+  payload; the worker logged `ERROR` with a traceback of the DB connection
+  closed, the process cleaned up and stopped; after restarting the DB, the
+  case H UUID has 0 rows.
+- Case I passed: started a fresh process then sent SIGINT; the logs show the
+  worker stopping and `Telemetry ingestion stopped`, exit code 0. A separate
+  SIGTERM was not sent since the entrypoint uses the same signal path for
+  SIGINT/SIGTERM.
+- Case J passed at the smoke-logic level: called `_handle_message()` directly
+  with a queue of `maxsize=1`; the second message logged
+  `Queue full, message dropped`, and the queue stayed at `qsize=1`. Queue-full
+  was not reproduced via EMQX because the worker consumes quickly and this
+  case is timing-dependent.
+- The full mixed batch with valid + missing serial + invalid together has not
+  been run; the individual behaviors have already been verified separately in
+  Cases A/C/D/E.
 
 ---
 
-### Bước 16: Chuyển luồng active sang xử lý từng message
+### Step 16: Switch the active flow to per-message processing
 
-**Mục tiêu:** Bỏ batch window khỏi đường chạy MVP để message được xử lý ngay
-theo thứ tự lấy ra khỏi queue, nhưng giữ toàn bộ implementation batch để có thể
-bật lại khi workload thực tế cần tối ưu throughput.
+**Goal:** Remove the batch window from the MVP run path so messages are
+processed immediately in the order taken off the queue, while keeping the
+entire batch implementation so it can be re-enabled when a real workload needs
+throughput optimization.
 
-#### 16.1. Contract và transaction
+#### 16.1. Contract and transaction
 
-- Luồng active là:
+- The active flow is:
   `MQTTConsumer → asyncio.Queue → MessageWorker → process_message → database`.
-- `MessageWorker` lấy đúng một `TelemetryEnvelope` mỗi vòng lặp; không chờ đủ
-  số lượng và không dùng `TELEMETRY_FLUSH_INTERVAL`.
-- Mỗi message có một transaction riêng do worker sở hữu. Thành công thì commit;
-  lỗi database rollback transaction của message hiện tại và dừng worker theo
-  policy MVP không retry.
-- Các message đã commit trước đó vẫn được giữ khi một message sau gặp lỗi.
-  Message còn trong queue khi process dừng vẫn có thể mất vì queue là RAM và MVP
-  không drain queue.
-- `received_at` được tạo riêng cho từng message tại service boundary xử lý.
-- Message không có mapping telematic/vehicle bị skip; lỗi chuyển đổi dữ liệu
-  chỉ tăng `errors` cho message hiện tại. MQTT schema validation vẫn diễn ra ở
-  consumer trước khi enqueue.
+- `MessageWorker` takes exactly one `TelemetryEnvelope` per loop iteration; it
+  does not wait for a target count and does not use `TELEMETRY_FLUSH_INTERVAL`.
+- Each message has its own transaction owned by the worker. On success it
+  commits; a database error rolls back the current message's transaction and
+  stops the worker per the MVP no-retry policy.
+- Messages already committed earlier are kept when a later message fails.
+  Messages still in the queue when the process stops may still be lost
+  because the queue is in RAM and the MVP does not drain the queue.
+- `received_at` is generated separately for each message at the service
+  boundary that processes it.
+- A message with no telematic/vehicle mapping is skipped; a data conversion
+  error only increments `errors` for the current message. MQTT schema
+  validation still happens at the consumer before enqueueing.
 
-#### 16.2. File thay đổi
+#### 16.2. Files changed
 
-Tạo:
+Created:
 
 - `backend/app/domains/telemetry/ingestion/message_worker.py`
 
-Cập nhật:
+Updated:
 
-- `backend/app/domains/telemetry/service.py`: thêm `process_message()` và
+- `backend/app/domains/telemetry/service.py`: added `process_message()` and
   `MessageResult`.
-- `backend/app/domains/telemetry/repository.py`: chỉ giữ lookup/insert dữ liệu
-  telemetry; mapping singular/batch thuộc public service của `telematics`.
-- `backend/app/domains/telemetry/ingestion/entrypoint.py`: dùng
-  `MessageWorker`, không truyền batch size/flush interval vào active worker.
-- `backend/app/libs/common/config.py`, `backend/.env.example`: giữ setting batch
-  cho code tương lai và ghi rõ chúng không thuộc active path.
-- `docs/01-requirements/future.md`: ghi nhận batch processing là thành phần hoãn.
+- `backend/app/domains/telemetry/repository.py`: keeps only telemetry
+  data lookup/insert; singular/batch mapping belongs to the `telematics`
+  public service.
+- `backend/app/domains/telemetry/ingestion/entrypoint.py`: uses
+  `MessageWorker`, no longer passes batch size/flush interval to the active worker.
+- `backend/app/libs/common/config.py`, `backend/.env.example`: keep the batch
+  settings for future code and clearly note they are not part of the active path.
+- `docs/01-requirements/future.md`: records batch processing as a deferred component.
 
-#### 16.3. Bảo toàn batch implementation
+#### 16.3. Preserving the batch implementation
 
-- Không xóa hoặc chuyển đổi `batch_worker.py` và `process_batch()` sang wrapper
-  singular; batch path phải còn nguyên để tránh mất implementation đã có.
-- Không đưa truy vấn model/repository `telematics` trở lại telemetry. Khi bật lại
-  batch path phải gọi public `telematics.service` và đánh giá benchmark,
-  transaction atomicity, backpressure và failure semantics.
-- Rà soát mục cache telematic mapping trong `future.md` để không còn mô tả rằng
-  active MVP đang dùng batch lookup.
+- Do not delete or convert `batch_worker.py` and `process_batch()` into a
+  singular wrapper; the batch path must remain intact to avoid losing the
+  existing implementation.
+- Do not bring `telematics` model/repository queries back into telemetry. When
+  re-enabling the batch path, it must call the public `telematics.service` and
+  be evaluated for benchmarking, transaction atomicity, backpressure, and
+  failure semantics.
+- Review the telematic mapping cache item in `future.md` so it no longer
+  describes the active MVP as using batch lookup.
 
-#### 16.4. Kiểm tra
+#### 16.4. Checks
 
-- [x] Active entrypoint dùng `MessageWorker` và không còn batch window.
-- [x] Singular service/repository API giữ transaction boundary ở worker.
-- [x] Batch worker/service/repository path vẫn tồn tại và không bị gọi từ entrypoint.
-- [x] `compileall`, Black, isort, Ruff và mypy pass trên các file thay đổi.
-- [x] Smoke test message hợp lệ, mapping bị skip và lỗi database rollback.
-- [x] Smoke test MQTT/entrypoint, shutdown và queue-full không hồi quy policy
-  queue RAM MVP.
+- [x] The active entrypoint uses `MessageWorker` and no longer has a batch window.
+- [x] The singular service/repository API keeps the transaction boundary at the worker.
+- [x] The batch worker/service/repository path still exists and is not called from the entrypoint.
+- [x] `compileall`, Black, isort, Ruff, and mypy pass on the changed files.
+- [x] Smoke test for a valid message, a skipped mapping, and a database error rollback.
+- [x] Smoke test for MQTT/entrypoint, shutdown, and queue-full show no
+  regression of the MVP RAM-queue policy.
 
-**Kết quả thực hiện (2026-07-30):**
+**Implementation outcome (2026-07-30):**
 
-- Tạo `MessageWorker` làm active worker; entrypoint không còn truyền hoặc log
-  `TELEMETRY_BATCH_SIZE`/`TELEMETRY_FLUSH_INTERVAL`.
-- `process_message()` thực hiện singular mapping lookup và insert trong
-  transaction do worker sở hữu. Hai message smoke liên tiếp tạo hai transaction
-  riêng; batch APIs vẫn import được và không bị entrypoint gọi.
-- Targeted `compileall`, Black, isort, Ruff và mypy đều pass. Full-repository
-  Black/isort vẫn báo lỗi formatting/import sorting tồn tại trước ở
-  `app/domains/telematics/models.py`, `app/domains/telematics/repository.py` và
-  `app/domains/telemetry/models.py`; không sửa các file ngoài phạm vi.
-- PostgreSQL smoke pass với mapping thật `T00001`: insert, query, raw payload và
-  cleanup đều thành công.
-- MQTT E2E pass với EMQX 5.5: message UUID
-  `0f8b7b0e-7b2f-4d12-9f15-4aa4d7b7a002` được persist với `soc=62.5`, log
-  `processed=1`, sau đó đã xóa row test.
-- Batch implementation vẫn nằm trong `batch_worker.py`, `process_batch()` và
-  repository batch APIs; đã ghi nhận mục 25 trong `future.md`.
+- Created `MessageWorker` as the active worker; the entrypoint no longer
+  passes or logs `TELEMETRY_BATCH_SIZE`/`TELEMETRY_FLUSH_INTERVAL`.
+- `process_message()` performs a singular mapping lookup and insert within a
+  transaction owned by the worker. Two consecutive smoke messages created two
+  separate transactions; the batch APIs are still importable and are not
+  called by the entrypoint.
+- Targeted `compileall`, Black, isort, Ruff, and mypy all pass. Full-repository
+  Black/isort still report pre-existing formatting/import-sorting errors in
+  `app/domains/telematics/models.py`, `app/domains/telematics/repository.py`,
+  and `app/domains/telemetry/models.py`; files outside this scope were not fixed.
+- PostgreSQL smoke passed with the real mapping `T00001`: insert, query, raw
+  payload, and cleanup all succeeded.
+- MQTT E2E passed with EMQX 5.5: message UUID
+  `0f8b7b0e-7b2f-4d12-9f15-4aa4d7b7a002` was persisted with `soc=62.5`, logged
+  `processed=1`, and the test row was then deleted.
+- The batch implementation still lives in `batch_worker.py`, `process_batch()`,
+  and the repository batch APIs; recorded as item 25 in `future.md`.
 
 ---
 
-## Tổng kết
+## Summary
 
-### Trạng thái hiện tại
+### Current status
 
-- Bước 0-14: đã triển khai theo scope MVP tối giản; planner đã được đối chiếu
-  lại với source ingestion ngày 2026-07-28.
-- Bước 15: đã chạy E2E chính ngày 2026-07-28; còn mixed batch đầy đủ và
-  queue-full qua broker chưa nghiệm thu ổn định.
-- Bước 16: đã chuyển active ingestion sang xử lý từng message ngày 2026-07-30;
-  batch path được giữ lại và ghi nhận trong `future.md`.
+- Steps 0-14: implemented per the minimal MVP scope; the planner was
+  cross-checked against the ingestion source again on 2026-07-28.
+- Step 15: the main E2E run was completed on 2026-07-28; the full mixed batch
+  and queue-full-via-broker cases have not been reliably accepted yet.
+- Step 16: switched active ingestion to per-message processing on 2026-07-30;
+  the batch path is retained and recorded in `future.md`.
 
-Sau khi hoàn thành bước 16, hệ thống có:
+After completing step 16, the system has:
 
-1. **Database**: 2 bảng `telematics` và `vehicle_telemetry` (TimescaleDB hypertable)
-2. **MQTT Broker**: EMQX 5.5 chạy local, QoS 0; chưa cấu hình ACL production
+1. **Database**: 2 tables, `telematics` and `vehicle_telemetry` (TimescaleDB hypertable)
+2. **MQTT Broker**: EMQX 5.5 running locally, QoS 0; no production ACL configured yet
 3. **Backend**:
-   - MQTT consumer nhận message từ broker với QoS 0
-   - Message worker xử lý tuần tự từng message ngay sau khi lấy khỏi queue
-   - Single lookup và insert cho active MVP
-   - Batch worker, batch lookup và bulk insert được giữ cho phase tương lai
-   - Lưu raw_payload JSONB để debug và reprocessing
-   - Process entrypoint riêng, signal handling và cleanup tối giản
-   - JSON structured logging, không còn process-local metrics
+   - MQTT consumer receives messages from the broker with QoS 0
+   - Message worker processes each message sequentially right after taking it off the queue
+   - Single lookup and insert for the active MVP
+   - Batch worker, batch lookup, and bulk insert kept for a future phase
+   - Stores raw_payload JSONB for debugging and reprocessing
+   - Separate process entrypoint, signal handling, and minimal cleanup
+   - JSON structured logging, no more process-local metrics
 
-**Công nghệ sử dụng:**
+**Technology used:**
 
 - Python 3.12 + FastAPI
 - SQLAlchemy 2.0 (async)
@@ -1614,38 +1680,39 @@ Sau khi hoàn thành bước 16, hệ thống có:
 
 **Performance/SLA:**
 
-- Chưa có benchmark để cam kết throughput hoặc latency production.
-- Batch flush interval không thuộc active path; chỉ có ý nghĩa khi bật lại batch
-  worker trong phase tương lai.
-- TimescaleDB hypertable đã dùng; compression/retention policy chưa được cấu hình.
-- Chỉ công bố con số performance sau khi đo workload đại diện với số xe, tần suất,
-  payload size và database resource đã chốt.
+- No benchmark yet to commit to production throughput or latency.
+- The batch flush interval is not part of the active path; it only matters if
+  the batch worker is re-enabled in a future phase.
+- The TimescaleDB hypertable is in use; the compression/retention policy has
+  not been configured yet.
+- Only publish performance numbers after measuring a representative workload
+  with a finalized vehicle count, frequency, payload size, and database resources.
 
-**Giới hạn MVP:**
+**MVP limitations:**
 
-- MQTT QoS 0 (không đảm bảo delivery)
-- Không retry/reconnect
-- Không có dead-letter queue
-- Không có persistent queue
-- Không có duplicate detection nâng cao
-- Queue full sẽ drop message
-- Không có metrics/counter trong ingestion MVP hiện tại
-- Log chưa được thu thập tập trung
-- Chưa có authentication/authorization MQTT production
-- Đã có automated smoke/unit test tối thiểu; integration test với broker và
-  database được hoãn sang phase kế tiếp
-- Các hạng mục hoãn được quản lý tại `docs/01-requirements/future.md`
+- MQTT QoS 0 (no delivery guarantee)
+- No retry/reconnect
+- No dead-letter queue
+- No persistent queue
+- No advanced duplicate detection
+- A full queue drops messages
+- No metrics/counters in the current ingestion MVP
+- Logs are not yet collected centrally
+- No production MQTT authentication/authorization yet
+- Minimal automated smoke/unit tests exist; integration tests with the broker
+  and database are deferred to the next phase
+- Deferred items are tracked in `docs/01-requirements/future.md`
 
-**Phase tiếp theo:**
+**Next phase:**
 
-- API query telemetry mở rộng (history, map, aggregate và realtime dashboard)
-- Tầng aggregate/throttle và cơ chế đẩy realtime cho dashboard
+- Expanded telemetry query API (history, map, aggregate, and realtime dashboard)
+- An aggregate/throttle layer and a realtime push mechanism for the dashboard
 - Real-time alerting
-- Dashboard frontend
-- MQTT security và device identity
-- Retry/reconnect và DLQ
+- Frontend dashboard
+- MQTT security and device identity
+- Retry/reconnect and DLQ
 - Persistent queue
-- Duplicate detection nâng cao
-- Observability tập trung và persistent metrics
-- Health/readiness endpoint và graceful drain khi cần vận hành production
-- Retention/compression/benchmark theo volume thật
+- Advanced duplicate detection
+- Centralized observability and persistent metrics
+- Health/readiness endpoint and graceful drain for production operation
+- Retention/compression/benchmark based on real volume

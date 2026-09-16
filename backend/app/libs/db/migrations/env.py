@@ -1,4 +1,4 @@
-"""Cấu hình Alembic cho migration bất đồng bộ của backend."""
+"""Alembic configuration for the backend's async migrations."""
 
 import asyncio
 from logging.config import fileConfig
@@ -8,8 +8,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Chỉ nạp sáu model charging active; technical status history không thuộc
-# metadata MVP và source legacy tương ứng chỉ còn ở dạng comment trong domain.
+# Only load the six active charging models; technical status history is not
+# part of the MVP metadata and the corresponding legacy source only remains
+# as a comment in the domain.
 from app.domains.charging_sessions.models import (  # noqa: F401
     ChargingSessionEventModel,
     ChargingSessionMeterValueModel,
@@ -26,18 +27,19 @@ from app.domains.vehicles.models import VehicleModel  # noqa: F401
 from app.libs.common.config import settings
 from app.libs.db.base import Base
 
-# Đối tượng Alembic cung cấp context và cấu hình được đọc từ alembic.ini.
+# The Alembic object provides the context and configuration read from alembic.ini.
 config = context.config
 
-# Dùng cùng Settings với API và worker để không tồn tại nguồn đọc .env thứ hai.
-# ConfigParser dùng interpolation %, nên escape ký tự này trước khi ghi vào ini.
+# Use the same Settings as the API and worker so a second source of .env
+# reading doesn't exist. ConfigParser uses % interpolation, so this character
+# must be escaped before writing it into the ini.
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
-# Nạp cấu hình logger của Alembic nếu file ini có phần logging tương ứng.
+# Load Alembic's logger configuration if the ini file has a corresponding logging section.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Metadata dùng cho autogenerate migration.
+# Metadata used for autogenerate migrations.
 target_metadata = Base.metadata
 
 

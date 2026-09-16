@@ -1,4 +1,4 @@
-"""Tạo sáu bảng charging active và hai hypertable history của MVP."""
+"""Create the six active charging tables and the two MVP history hypertables."""
 
 from collections.abc import Sequence
 
@@ -12,15 +12,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Tạo topology, session aggregate và hai bảng history phiên sạc."""
+    """Create the topology, session aggregate, and two charging session history tables."""
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
     op.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
 
     _create_topology_tables()
     _create_session_tables()
 
-    # Chỉ event và meter sample là dữ liệu tăng liên tục theo thời gian.
-    # Aggregate charging_sessions vẫn là bảng quan hệ thông thường.
+    # Only events and meter samples are data that grows continuously over
+    # time. The charging_sessions aggregate remains an ordinary relational table.
     for table_name, time_column in (
         ("charging_session_events", "event_occurred_at"),
         ("charging_session_meter_values", "sampled_at"),
@@ -33,7 +33,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Xóa sáu bảng charging active và hai enum lifecycle."""
+    """Drop the six active charging tables and the two lifecycle enums."""
     op.drop_table("charging_session_meter_values")
     op.drop_table("charging_session_events")
     op.drop_table("charging_sessions")
@@ -45,7 +45,7 @@ def downgrade() -> None:
 
 
 def _create_topology_tables() -> None:
-    """Tạo station, EVSE và connector theo thứ tự foreign key."""
+    """Create station, EVSE, and connector in foreign-key order."""
     op.create_table(
         "charging_stations",
         sa.Column("station_id", sa.UUID(), nullable=False),
@@ -114,7 +114,7 @@ def _create_topology_tables() -> None:
 
 
 def _create_session_tables() -> None:
-    """Tạo aggregate session, event history và meter history."""
+    """Create the session aggregate, event history, and meter history."""
     op.create_table(
         "charging_sessions",
         sa.Column("session_id", sa.UUID(), nullable=False),

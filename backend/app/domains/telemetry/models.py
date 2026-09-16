@@ -110,7 +110,7 @@ class VehicleTelemetryModel(Base):
     # Motion data
     speed: Mapped[float | None] = mapped_column(
         Double(), nullable=True
-    )  # km/h, nullable vì không phải telematic nào cũng cung cấp
+    )  # km/h, nullable because not every telematic device provides it
     heading: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # degrees 0-360

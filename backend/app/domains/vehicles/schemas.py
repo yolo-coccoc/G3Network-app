@@ -1,4 +1,4 @@
-"""Pydantic schema cho HTTP API của domain vehicles."""
+"""Pydantic schemas for the vehicles domain HTTP API."""
 
 from datetime import datetime
 from uuid import UUID
@@ -10,64 +10,68 @@ from app.libs.common.config import settings
 
 
 class _VehicleInputFields(BaseModel):
-    """Các field dùng chung cho request tạo và cập nhật xe."""
+    """Fields shared by the create and update vehicle requests."""
 
     license_plate: str = Field(
-        ..., min_length=1, max_length=20, description="Biển số xe"
+        ..., min_length=1, max_length=20, description="License plate"
     )
     vin: str = Field(
         ...,
         min_length=17,
         max_length=17,
-        description="Số khung (Vehicle Identification Number)",
+        description="VIN (Vehicle Identification Number)",
     )
-    make: str = Field(..., min_length=1, max_length=50, description="Hãng xe")
-    model: str = Field(..., min_length=1, max_length=50, description="Dòng xe")
-    year: int = Field(..., ge=1900, le=2100, description="Năm sản xuất")
+    make: str = Field(..., min_length=1, max_length=50, description="Manufacturer")
+    model: str = Field(..., min_length=1, max_length=50, description="Model")
+    year: int = Field(..., ge=1900, le=2100, description="Manufacturing year")
     status: VehicleStatus = Field(
-        default=VehicleStatus.ACTIVE, description="Trạng thái xe"
+        default=VehicleStatus.ACTIVE, description="Vehicle status"
     )
 
 
 class VehicleCreateRequest(_VehicleInputFields):
-    """Dữ liệu HTTP request để tạo xe mới."""
+    """HTTP request data for creating a new vehicle."""
 
     fleet_id: str | None = Field(
-        None, description="ID đội xe (nullable - có thể chưa phân bổ)"
+        None, description="Fleet ID (nullable - may not be assigned yet)"
     )
 
 
 class VehicleUpdateRequest(BaseModel):
-    """Dữ liệu HTTP request để cập nhật từng phần một xe."""
+    """HTTP request data for partially updating a vehicle."""
 
     license_plate: str | None = Field(
-        None, min_length=1, max_length=20, description="Biển số xe"
+        None, min_length=1, max_length=20, description="License plate"
     )
-    vin: str | None = Field(None, min_length=17, max_length=17, description="Số khung")
-    make: str | None = Field(None, min_length=1, max_length=50, description="Hãng xe")
-    model: str | None = Field(None, min_length=1, max_length=50, description="Dòng xe")
-    year: int | None = Field(None, ge=1900, le=2100, description="Năm sản xuất")
-    status: VehicleStatus | None = Field(None, description="Trạng thái xe")
-    fleet_id: str | None = Field(None, description="ID đội xe")
+    vin: str | None = Field(
+        None, min_length=17, max_length=17, description="VIN (chassis number)"
+    )
+    make: str | None = Field(
+        None, min_length=1, max_length=50, description="Manufacturer"
+    )
+    model: str | None = Field(None, min_length=1, max_length=50, description="Model")
+    year: int | None = Field(None, ge=1900, le=2100, description="Manufacturing year")
+    status: VehicleStatus | None = Field(None, description="Vehicle status")
+    fleet_id: str | None = Field(None, description="Fleet ID")
 
 
 class VehicleResponse(_VehicleInputFields):
-    """Dữ liệu xe trả về qua HTTP API."""
+    """Vehicle data returned via the HTTP API."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    vehicle_id: UUID = Field(..., description="ID xe (internal)")
-    fleet_id: str | None = Field(None, description="ID đội xe")
-    created_at: datetime = Field(..., description="Thời gian tạo")
-    updated_at: datetime = Field(..., description="Thời gian cập nhật cuối")
+    vehicle_id: UUID = Field(..., description="Vehicle ID (internal)")
+    fleet_id: str | None = Field(None, description="Fleet ID")
+    created_at: datetime = Field(..., description="Creation time")
+    updated_at: datetime = Field(..., description="Last update time")
 
 
 class VehicleListResponse(BaseModel):
-    """Dữ liệu danh sách xe có phân trang trả về qua HTTP API."""
+    """Paginated vehicle list data returned via the HTTP API."""
 
-    items: list[VehicleResponse] = Field(..., description="Danh sách xe")
-    total: int = Field(..., ge=0, description="Tổng số xe")
-    page: int = Field(..., ge=1, description="Trang hiện tại")
+    items: list[VehicleResponse] = Field(..., description="List of vehicles")
+    total: int = Field(..., ge=0, description="Total number of vehicles")
+    page: int = Field(..., ge=1, description="Current page")
     page_size: int = Field(
-        ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Số item per trang"
+        ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Number of items per page"
     )
