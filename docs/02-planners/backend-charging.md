@@ -1,6 +1,6 @@
 # Planner: Backend for charging station management and charging session storage
 
-> Feature code: AD-03 and the lifecycle part of S-02
+> Feature code: F-G2 and the lifecycle part of F-B2
 >
 > Status: In progress. Trimmed-down MVP implemented; automated smoke tests are
 > in place, PostgreSQL/OCPP integration and the production path remain deferred

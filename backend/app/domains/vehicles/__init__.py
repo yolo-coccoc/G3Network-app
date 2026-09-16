@@ -1,1 +1,1 @@
-"""Vehicles domain - Vehicle management (AD-05)."""
+"""Vehicles domain - Vehicle management (F-F2)."""

@@ -1,6 +1,6 @@
-# Planner: Backend Telemetry Ingestion (AD-02, FM-01, FM-02)
+# Planner: Backend Telemetry Ingestion (F-A1, F-A5)
 
-> Feature code: AD-02 (Real-time data ingestion), FM-01 (Realtime dashboard), FM-02 (Location/status history)
+> Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A5 (Location, trip history & geofencing)
 > Status: 🚧 Active MVP source and minimal automated smoke tests have been
 > deployed; the batch path and integration tests are deferred to the next phase
 > Date created: 2026-07-24
@@ -137,7 +137,7 @@ Each step must clearly record:
 **Prompt:**
 ```
 Read and summarize the following files:
-1. docs/01-requirements/feature-list.md - find the AD-02, FM-01, FM-02 items
+1. docs/01-requirements/feature-list.md - find the F-A1, F-A5 items
 
 Answer the following questions:
 - What fields does telemetry data include? (GPS, SOC, speed, voltage...)
@@ -163,10 +163,6 @@ Answer the following questions:
   numbers as acceptance criteria.
 - Realtime alerts, query APIs, and the dashboard use telemetry data but are
   outside the scope of the ingestion MVP.
-- `feature-list.md` currently describes functionality by item/actor and no
-  longer directly uses the codes `AD-02`, `FM-01`, `FM-02`; the planner keeps
-  the codes for compatibility with document history and needs to be
-  cross-checked against actual feature content.
 
 ---
 

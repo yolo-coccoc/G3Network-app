@@ -1,7 +1,7 @@
 """
 Batch worker that processes telemetry messages.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 The worker processes the queue in periodic batches:
 - Every flush_interval seconds OR when the queue has enough batch_size messages

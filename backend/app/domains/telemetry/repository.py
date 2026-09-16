@@ -1,6 +1,6 @@
 """Data access repository for the telemetry domain.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 This module contains both the singular operations used by the current MVP
 flow and the batch operations kept for reuse when real throughput needs

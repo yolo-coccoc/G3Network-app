@@ -1,6 +1,6 @@
 """Minimal MQTT consumer for telemetry ingestion MVP.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 The consumer does only three things: configure the MQTT client, receive
 telemetry payloads, and put valid messages onto the in-RAM queue. Invalid

@@ -41,7 +41,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Duplicate detection to avoid inserting duplicate messages into the database
   - Zero data loss when the network or process encounters an error
 - **Reason for deferral**: The MVP focuses on proving the basic flow works, assuming an ideal network. QoS 0 is enough to test the end-to-end flow. Retry and duplicate detection will be added during production rollout.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1, F-A5)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput.
 
@@ -56,7 +56,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Audit trail for debugging production issues
   - Separates failed messages from the main flow so performance is unaffected
 - **Reason for deferral**: The MVP doesn't need a DLQ because volume is low and debugging can be done via logs. Will be added when scaling to production with high volume.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: The DLQ could be implemented with a JSON file (simple) or a DB table (queryable). Needs a cleanup policy (delete after 7-30 days).
 
@@ -71,7 +71,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Allows a queue larger than RAM capacity
   - Replay messages from the queue when needed
 - **Reason for deferral**: The MVP uses an in-memory asyncio.Queue, which is enough for the demo. A process crash will lose messages in the queue, but that's acceptable with QoS 0. A persistent queue (SQLite, Redis, or Kafka) will be added when higher reliability is needed.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: Weigh SQLite (simple, local), Redis (fast, needs extra infra), or Kafka (scales well, complex).
 
@@ -86,7 +86,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Reduces DB load
   - Lower latency per message
 - **Reason for deferral**: The active MVP currently processes messages one at a time and doesn't need anything beyond a simple lookup. When the batch path is re-enabled or volume increases, caching will be evaluated together with a benchmark to reduce repeated lookups and DB load.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: If a cache is used, it needs a TTL (5-10 minutes) and invalidation when a telematic is assigned to/removed from a vehicle. Consider Redis if the cache needs to be shared across multiple worker instances.
 
@@ -100,7 +100,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Database-level guarantee (not dependent on application logic)
   - Supports idempotency on retry
 - **Reason for deferral**: TimescaleDB requires a unique constraint to include the partition key (recorded_at). A (message_uuid, recorded_at) constraint doesn't prevent duplicates if a message is retried with a different recorded_at. More complex duplicate detection logic is needed (e.g., a separate table tracking processed message_uuid). Will be added when QoS 1+ is implemented.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: Could use a dedicated `processed_messages` table to track processed message_uuid values, with a TTL (e.g., 24h) to avoid unbounded growth.
 
@@ -115,7 +115,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Handles the edge case of a message retried with a different recorded_at
   - Can ignore the duplicate or update the existing record
 - **Reason for deferral**: The MVP uses QoS 0, so there is no retry and no need for duplicate detection. Will be added when upgrading to QoS 1+.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: Could be implemented via:
   - An in-memory Bloom filter (fast, has false positives)
@@ -133,7 +133,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - Increases the chance of success once the system recovers
   - Circuit breaker pattern to fail fast
 - **Reason for deferral**: The MVP has no retry logic. The batch worker stops on error and needs a manual restart. Retry with exponential backoff will be added when higher reliability is needed.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1)
 - **Date recorded**: 2026-07-25
 - **Additional notes**: Needs a max retry config (e.g., 3-5 attempts) and a max backoff (e.g., 60s). After retries are exhausted, route to the DLQ.
 
@@ -144,7 +144,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Replace the two `latitude`/`longitude` columns with a `geography(Point, 4326)` column, or add a synced geography column.
 - **Purpose/role in the system**: Supports spatial indexing, radius queries, geofencing, and efficient trip history.
 - **Reason for deferral**: The telemetry MVP planner decided to store coordinates using two `DOUBLE PRECISION` columns to prove out the ingest flow first.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02, FM-01, FM-02)
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1, F-A5)
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Needs a migration of existing data and a decision between geometry and geography before implementation.
 
@@ -155,7 +155,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Convert `vehicles.fleet_id` to a UUID internal ID and create a foreign key to the table owned by the fleet domain.
 - **Purpose/role in the system**: Ensures the integrity of vehicle-to-fleet assignment and complies with the rule that foreign keys must always reference internal IDs.
 - **Reason for deferral**: The fleet domain and table haven't been implemented yet; no relationship placeholder should be added in source before the target model exists.
-- **Related planner/feature**: FM-01…FM-07
+- **Related planner/feature**: F-A6, F-E1, F-E2, F-E3
 - **Date recorded**: 2026-07-26
 - **Additional notes**: When fleet is implemented, a migration is needed to convert the current `String(36)` data to UUID and add the constraint.
 
@@ -177,7 +177,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Add `include_object` to Alembic to skip `spatial_ref_sys` and internal indexes created by TimescaleDB.
 - **Purpose/role in the system**: Makes `alembic check` and autogenerate reflect only the schema managed by the application, avoiding migrations that would drop extension-owned objects.
 - **Reason for deferral**: The MVP hasn't settled on CI/CD yet and migrations are currently reviewed/run manually; the Alembic head is still correct.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02), general database configuration.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1), general database configuration.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Before enabling `alembic check` in CI or using autogenerate for a new migration, this item must be completed.
 
@@ -188,7 +188,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Parse `{telematic_serial}` from the MQTT topic and reject the message if it doesn't match the `telematic_serial` in the JSON payload.
 - **Purpose/role in the system**: Prevents a message from being attributed to the wrong device when the topic and payload disagree, and helps control device identity.
 - **Reason for deferral**: The MVP assumes the telematic publishes to the correct topic and payload per spec.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1).
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Should be implemented alongside MQTT authentication/authorization before the production environment.
 
@@ -199,7 +199,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Only update `last_seen_at`, `updated_at`, and the row count when the new timestamp is actually greater than the current value.
 - **Purpose/role in the system**: Keeps `updated_at` semantically correct and makes the `telematics_updated` metric/log reflect the number of devices that actually changed.
 - **Reason for deferral**: The current discrepancy only affects metadata/logs; it doesn't move `last_seen_at` backward and doesn't block the MVP ingest flow.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02).
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1).
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Need to consider a suitable batch SQL approach that still keeps a single update per batch.
 
@@ -210,7 +210,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Batch lookup returns every device including those with a null `vehicle_id`, so the service can log/report metrics for the two provisioning states separately.
 - **Purpose/role in the system**: Helps operations distinguish an invalid serial from a valid device that just hasn't been assigned to a vehicle yet.
 - **Reason for deferral**: Both cases are safely skipped in the MVP, and there's no provisioning operations dashboard yet.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02), AD-05.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1), F-F2.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Implementation requires changing the mapping return type to `tuple[UUID, UUID | None]` and adding a dedicated metric.
 
@@ -221,7 +221,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Short description**: Add pytest, pytest-asyncio, test fixtures, and unit/integration tests for the backend.
 - **Purpose/role in the system**: Protects transaction boundaries, API validation, repository queries, MQTT ingestion, the batch window, and graceful shutdown from regressions.
 - **Reason for deferral**: A minimal smoke/unit test suite already exists; the rest — integration tests against PostgreSQL/TimescaleDB, MQTT/OCPP end-to-end tests, coverage, and shared test fixtures — is deferred to avoid weighing down the initial phase.
-- **Related planner/feature**: The whole backend; priority on `backend-telemetry-ingestion.md` (AD-02) and vehicles AD-05.
+- **Related planner/feature**: The whole backend; priority on `backend-telemetry-ingestion.md` (F-A1) and vehicles F-F2.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: `pytest`, `pytest-asyncio`, and `make backend-test` are already in place. Before setting up CI/CD, an isolated test database needs to be added and a coverage threshold decided.
 
@@ -235,7 +235,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   - `.env` only holds values that change per environment, such as the database URL, broker connection, credentials, and runtime tuning; it holds no business rules or application logic.
   - All backend source code and Alembic access configuration via `app.libs.common.config.settings`, without calling `os.getenv()` or `load_dotenv()` directly.
 - **Reason for deferral**: The initial MVP already had a Pydantic-based `Settings`, but there was still a `DEBUG` variable that didn't match `APP_DEBUG`, an undeclared/unused `CORS_ORIGINS` in `.env.example`, Alembic had its own separate mechanism for reading `.env`, and some queue/batch/MQTT defaults were duplicated in source.
-- **Related planner/feature**: Shared backend configuration; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, AD-02.
+- **Related planner/feature**: Shared backend configuration; `backend/app/libs/common/config.py`, `backend/.env.example`, `backend/app/libs/db/migrations/env.py`, F-A1.
 - **Date recorded**: 2026-07-30
 - **Additional notes**: `DEBUG` was renamed to `APP_DEBUG`, the unused `CORS_ORIGINS` (no middleware consumed it) was removed, Alembic was switched to use the same `Settings`, the MQTT will and shared pagination policy were moved into configuration, the default password was removed from `config.py`, and the `.env.example` files were standardized. `DATABASE_URL` must now be provided from the environment; the remaining values have safe defaults in `config.py` and can be overridden in `.env`.
 - **Date completed**: 2026-07-30
@@ -263,7 +263,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   consumer and batch worker were removed to keep ingestion minimal, so there
   is no endpoint/exporter or process-local figures yet.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` steps 13-14
-  (AD-02, FM-01, FM-02).
+  (F-A1, F-A5).
 - **Date recorded**: 2026-07-27
 - **Additional notes**: Step 14 moved JSON logging up to the telemetry
   entrypoint, so startup/MQTT/worker/shutdown logs now share the same output
@@ -295,7 +295,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   mapping to exist for lookup, and no Admin workflow for device management has
   been built yet.
 - **Related planner/feature**: `backend-crud-vehicles.md`,
-  `backend-telemetry-ingestion.md` (AD-05, AD-02).
+  `backend-telemetry-ingestion.md` (F-F2, F-A1).
 - **Date recorded**: 2026-07-27
 - **Additional notes**: Since the telematic model/repository belongs to the
   telemetry domain, vehicles must not import these internal modules directly.
@@ -352,7 +352,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   docstrings are currently short and in English; `json_schema_extra` examples
   were dropped at some point in history, while telemetry schemas already have
   detailed examples.
-- **Related planner/feature**: `backend-crud-vehicles.md` (AD-05), the coding
+- **Related planner/feature**: `backend-crud-vehicles.md` (F-F2), the coding
   convention rules in `CLAUDE.md`.
 - **Date recorded**: 2026-07-27
 - **Additional notes**: This is documentation debt, not an API behavior
@@ -378,7 +378,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   and most of its checklist hasn't been updated even though the source already
   exists; the current audit prioritizes finishing the telemetry planner and
   only records the gap for vehicles.
-- **Related planner/feature**: `backend-crud-vehicles.md` (AD-05).
+- **Related planner/feature**: `backend-crud-vehicles.md` (F-F2).
 - **Date recorded**: 2026-07-27
 - **Additional notes**: Do not mark a test as passing just because the source
   exists. Automated tests are already tracked collectively under item 16; this
@@ -401,7 +401,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   queue entirely in RAM, accepting the loss of data still in the queue on
   shutdown, to keep the lifecycle and batch worker simpler.
 - **Related planner/feature**:
-  `backend-telemetry-ingestion.md` (AD-02), step 14.
+  `backend-telemetry-ingestion.md` (F-A1), step 14.
 - **Date recorded**: 2026-07-27
 - **Additional notes**: When re-implementing this, base the
   liveness/readiness contract and drain timeout on the actual deployment
@@ -438,7 +438,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   and detailed propagation are deferred to keep the MVP's MQTT → DB flow
   short.
 - **Related planner/feature**:
-  `backend-telemetry-ingestion.md` (AD-02), steps 14-15.
+  `backend-telemetry-ingestion.md` (F-A1), steps 14-15.
 - **Date recorded**: 2026-07-28
 - **Additional notes**: Should be implemented together with item 22 if
   preparing to run under an orchestrator or if a reliable alert/exit code is
@@ -464,7 +464,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   benchmark yet showing that batching is needed at the current volume. The
   batch window would also add unnecessary latency for the demo.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` Step 16
-  (AD-02, FM-01, FM-02).
+  (F-A1, F-A5).
 - **Date recorded**: 2026-07-30
 - **Additional notes**: The batch code is still kept in
   `backend/app/domains/telemetry/ingestion/batch_worker.py`,
@@ -491,7 +491,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   and session lifecycle; there isn't yet a stable enough provider, tariff, or
   identity contract, or business rules, to implement this safely.
 - **Related planner/feature**: `docs/02-planners/backend-charging.md`,
-  AD-03 and S-02; the corresponding billing/payment items in
+  F-G2 and F-B2; the corresponding billing/payment items in
   `docs/01-requirements/feature-list.md`.
 - **Date recorded**: 2026-07-31
 - **Additional notes**: Do not create a `charging_remote_commands`, tariff,
@@ -523,7 +523,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   cleaned up/removed. Individual pieces must not be re-enabled on their own
   without a full reliability contract.
 - **Related planner/feature**: `backend-charging.md`,
-  `backend-charging-mvp-ideal.md`, AD-03 and S-02.
+  `backend-charging-mvp-ideal.md`, F-G2 and F-B2.
 - **Date recorded**: 2026-08-02
 - **Additional notes**: When resuming this work, design the migration for
   history/idempotency, timeout settings, a network-failure simulator, and
@@ -552,7 +552,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   having to be kept as comments. The active schema/API only keeps identity,
   topology FKs, timestamps, and soft-delete.
 - **Related planner/feature**: `backend-charging-mvp-ideal.md` Steps 1-2,
-  `backend-charging.md`, AD-03, and the S-02 lifecycle section.
+  `backend-charging.md`, F-G2, and the F-B2 lifecycle section.
 - **Date recorded**: 2026-08-02
 - **Additional notes**: When resuming this work, the real-device contract,
   PostGIS location, capability schema, power rating/connector type, status
@@ -587,7 +587,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   reliability as the number of devices grows. Changing `error_codes` may also
   require a migration or API versioning, so it shouldn't be changed
   unilaterally while the MVP contract hasn't been finalized.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (AD-02),
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1),
   `backend-crud-telematics.md` (if added), the local simulator, and the coding
   convention in `CLAUDE.md`.
 - **Date recorded**: 2026-08-04
@@ -637,7 +637,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   service, the MQTT ingestion flow, schema/repository/model, and migrations.
   Do not merge by simply renaming a directory or creating a temporary
   forwarding layer.
-- **Related planner/feature**: backend domain structure, AD-02, AD-05, and
+- **Related planner/feature**: backend domain structure, F-A1, F-F2, and
   the telemetry/vehicles/telematics planners.
 - **Date recorded**: 2026-08-03
 
@@ -662,7 +662,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   when a station closes the connection normally, in order to keep the gateway
   short and focused on the `Started → Updated/MeterValues → Ended` flow.
 - **Related planner/feature**:
-  `docs/02-planners/backend-charging-mvp-ideal.md` Step 4, AD-03 and S-02.
+  `docs/02-planners/backend-charging-mvp-ideal.md` Step 4, F-G2 and F-B2.
 - **Date recorded**: 2026-08-04
 - **Additional notes**: When implementing for production or the reliability
   path, the error contract, health/readiness signal, close-code policy,
@@ -705,7 +705,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   along with the station/transaction identity at a level sufficient for
   investigation without recording sensitive raw payloads.
 - **Related planner/feature**: `backend-charging.md`,
-  `backend-charging-mvp-ideal.md`, AD-03 and S-02.
+  `backend-charging-mvp-ideal.md`, F-G2 and F-B2.
 - **Date recorded**: 2026-08-04
 
 ### 33. Expanded telemetry monitoring and alerting API
@@ -725,8 +725,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   device ACKs, or fleet-based access control; no alert table, API, or MQTT
   command placeholder should be created in the MVP.
 - **Related planner/feature**: `backend-telemetry-query-api.md`,
-  `backend-telemetry-ingestion.md`, FM-01, FM-02, and items 3.1/3.7/4.5 in
-  `docs/01-requirements/feature-list.md`.
+  `backend-telemetry-ingestion.md`, F-A2, F-A3, F-A4, F-C2, and related items
+  in `docs/01-requirements/feature-list.md`.
 - **Date recorded**: 2026-09-15
 - **Additional notes**: When resuming this work, the scope of
   history/map/connector and the alert lifecycle must be settled separately

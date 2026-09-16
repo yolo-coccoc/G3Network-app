@@ -1,6 +1,6 @@
 """Worker that processes telemetry messages from the queue one at a time.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 This worker is the active flow of the telemetry ingestion MVP: each time it
 takes a ``TelemetryEnvelope`` off the queue, the worker opens a transaction,

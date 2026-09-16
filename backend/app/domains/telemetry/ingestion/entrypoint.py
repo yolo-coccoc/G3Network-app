@@ -1,6 +1,6 @@
 """Minimal entrypoint for the process that receives telemetry over MQTT.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 The MVP process keeps the queue and tasks only in RAM. When it receives a
 stop signal or a task fails, the process disconnects the consumer, cancels

@@ -1,8 +1,13 @@
 # Repo Status
 
-Short summary of what's actually implemented right now. This is the source
-of truth for **progress** — unlike `docs/01-requirements/`, which describes
-intended features and can be revised independently of what's actually built.
+Short, domain-level summary of what's actually implemented right now. This is
+the source of truth for **progress at a glance** — unlike most of
+`docs/01-requirements/`, which describes intended features and can be revised
+independently of what's actually built. The one exception is
+[`feature-list.md`](../01-requirements/feature-list.md): each feature there
+carries this repo's backend implementation status directly (per `F-XX` item,
+not just per domain), and it is also kept current as progress source of
+truth — update both together when a change shifts a domain's overall status.
 For technical depth (components, diagram, database, infra), see
 [architecture.md](./architecture.md).
 

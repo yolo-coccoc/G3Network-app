@@ -7,13 +7,22 @@
 > violates convention. Update the relevant document (this file, or a detail
 > file under `.claude/rules/`) once a decision is confirmed.
 
-- `docs/00-status/overview.md` - Current repo status: what's actually
-  implemented (source of truth for progress; requirement docs below are
-  reference/intent, not status)
+- `docs/00-status/overview.md` - Current repo status: quick domain-level
+  summary of what's actually implemented (source of truth for progress at a
+  glance)
 - `docs/00-status/architecture.md` - Technical documentation: components,
   diagram, database, infra
-- `docs/01-requirements/feature-list.md` - Feature spec by actor, with status
+- `docs/01-requirements/feature-list.md` - Whole-company product spec by
+  actor (driver app, web portal, CSKH, background system), sourced from the
+  product PRD. Each feature also carries this repo's backend implementation
+  status and backend domain directly (this repo builds only the backend) —
+  it's the **feature-level progress checklist** (source of truth for
+  progress per-feature, alongside overview.md's per-domain summary); update
+  a feature's status/domain fields in the same change that completes it
 - `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner)
+- `docs/02-planners/` - One implementation planner per domain/feature (step-by-step build log,
+  decisions made, evidence of what was tested); read the relevant planner before resuming work
+  on a domain it covers, and add/update a planner when starting a new one
 
 ---
 

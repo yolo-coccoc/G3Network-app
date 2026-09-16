@@ -79,11 +79,11 @@ and must not be placed in source code.
 backend/
 ├── app/               # Source code (uv package)
 │   ├── domains/       # Business domains (bounded contexts)
-│   │   ├── vehicles/  # Vehicle management (AD-05)
-│   │   ├── telematics/# Device profile and vehicle mapping (AD-02/AD-05)
-│   │   ├── telemetry/ # MQTT ingestion and latest telemetry query (AD-02/FM-01)
-│   │   ├── charging_stations/ # Topology and OCPP 2.0.1 (AD-03)
-│   │   └── charging_sessions/ # Session, event and meter lifecycle (S-02)
+│   │   ├── vehicles/  # Vehicle management (F-F2)
+│   │   ├── telematics/# Device profile and vehicle mapping (F-G1)
+│   │   ├── telemetry/ # MQTT ingestion and latest telemetry query (F-A1)
+│   │   ├── charging_stations/ # Topology and OCPP 2.0.1 (F-C1, F-G2)
+│   │   └── charging_sessions/ # Session, event and meter lifecycle (F-B2)
 │   ├── api/          # FastAPI application
 │   │   └── main.py   # Entry point
 │   └── libs/         # Shared utilities

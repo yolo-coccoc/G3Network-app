@@ -1,6 +1,6 @@
 """Business service for the telemetry domain.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module

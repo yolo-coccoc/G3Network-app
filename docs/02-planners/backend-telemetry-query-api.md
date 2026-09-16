@@ -1,6 +1,6 @@
 # Planner: Backend Telemetry Query API
 
-> Feature code: FM-01 (Realtime dashboard), FM-02 (Position/status history)
+> Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A5 (Location, trip history & geofencing)
 > Status: 🚧 The latest API has been implemented within MVP scope; the
 > extended history/map/alert APIs have no source yet
 > Created: 2026-07-29

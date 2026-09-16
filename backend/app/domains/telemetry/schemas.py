@@ -1,7 +1,7 @@
 """
 Pydantic schemas for MQTT telemetry message validation.
 
-Feature code: AD-02 (Receive real-time data)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 This schema validates messages from MQTT before they are placed on the queue.
 The message is sent from the Telematics device and does not contain any

@@ -1,6 +1,6 @@
 # Planner: Charging backend MVP under ideal conditions
 
-> Feature code: AD-03 and the basic lifecycle of S-02
+> Feature code: F-G2 and the basic lifecycle of F-B2
 >
 > Status: In progress. Active source and the minimum automated smoke tests
 > are complete; integration tests are still tracked in

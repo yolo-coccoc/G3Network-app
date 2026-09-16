@@ -1,6 +1,6 @@
 # Planner: Minimal automated tests for the current backend
 
-> Feature code: AD-02, AD-03, AD-05, FM-01, FM-02, S-02
+> Feature code: F-A1, F-G2, F-F2, F-A5, F-B2
 >
 > Status: 🚧 A minimal test suite has been implemented; PostgreSQL integration tests exist
 > but are skipped by default unless the environment variable is enabled

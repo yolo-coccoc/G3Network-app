@@ -1,6 +1,6 @@
-# Planner: Telematic Simulator (AD-02, AD-05)
+# Planner: Telematic Simulator (F-A1, F-F2)
 
-> Feature code: AD-02 (Telemetry data ingestion), AD-05 (Vehicle and device management)
+> Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-F2 (Device provisioning)
 > Status: 🚧 Source implemented at `simulator/`; automated regression tests
 > are still tracked in [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Created: 2026-07-28

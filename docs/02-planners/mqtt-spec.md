@@ -2,7 +2,7 @@
 
 > Version: 1.0.0  
 > Created: 2026-07-25  
-> Feature code: AD-02 (Real-time data ingestion)
+> Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 ---
 

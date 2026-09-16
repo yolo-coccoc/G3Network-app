@@ -1,6 +1,6 @@
-# Planner: Backend CRUD Vehicles (AD-05)
+# Planner: Backend CRUD Vehicles (F-F2)
 
-> Feature code: AD-05 (Vehicle management - CRUD, device assignment)
+> Feature code: F-F2 (Device provisioning)
 > Status: 🚧 Source implemented; integration acceptance and automated regression
 > tests are still tracked in [`backend-automated-tests.md`](./backend-automated-tests.md)
 > Created: 2026-07-23
@@ -446,7 +446,7 @@ Create the file backend/app/domains/vehicles/vehicles.md describing:
 - The endpoints and how to use them
 - The fields in the Vehicle model
 - Notes on usage (soft delete, validation...)
-- A link to feature code AD-05 in the feature list
+- A link to feature code F-F2 in the feature list
 ```
 
 **Checks:**

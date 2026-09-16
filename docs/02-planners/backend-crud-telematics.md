@@ -1,6 +1,6 @@
-# Planner: Backend CRUD Telematics (AD-02, AD-05)
+# Planner: Backend CRUD Telematics (F-G1, F-F2)
 
-> Feature code: AD-02 (Telematics data management), AD-05 (Vehicle and device management)
+> Feature code: F-G1 (Tri-Ring vehicle telematics integration), F-F2 (Device provisioning)
 > Status: 🚧 Source implemented; a minimal smoke test exists, full CRUD/integration
 > regression tests are still tracked
 > in [`backend-automated-tests.md`](./backend-automated-tests.md)
