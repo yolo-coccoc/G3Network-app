@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
+import app.domains.charging_stations.service as charging_stations_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telematics.service as telematics_public_service
@@ -330,3 +331,25 @@ async def test_charging_service_runs_started_meter_ended_flow(
     assert session.energy_delivered_wh == Decimal("750")
     assert inserted_events == [SessionEventType.STARTED, SessionEventType.ENDED]
     assert inserted_meters == [Decimal("1500")]
+
+
+def test_charging_station_location_round_trips_through_postgis_conversion() -> None:
+    """Latitude/longitude survive the PostGIS geography conversion round trip.
+
+    Regression guard for the x/y (longitude/latitude) ordering Shapely and
+    PostGIS both expect - a swapped pair would still "work" (no exception)
+    but silently store the wrong location.
+    """
+    location = charging_stations_service._coordinates_to_location(10.762622, 106.660172)
+
+    latitude, longitude = charging_stations_service._location_to_coordinates(location)
+
+    assert latitude == pytest.approx(10.762622)
+    assert longitude == pytest.approx(106.660172)
+
+
+def test_charging_station_location_conversion_handles_missing_coordinates() -> None:
+    """No location, or a partially-missing pair, converts to/from ``None``."""
+    assert charging_stations_service._coordinates_to_location(None, None) is None
+    assert charging_stations_service._coordinates_to_location(10.762622, None) is None
+    assert charging_stations_service._location_to_coordinates(None) == (None, None)

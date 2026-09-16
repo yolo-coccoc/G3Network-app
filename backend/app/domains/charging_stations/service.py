@@ -8,8 +8,12 @@ is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 from collections.abc import Mapping
+from decimal import Decimal
 from uuid import UUID
 
+from geoalchemy2.elements import WKBElement
+from geoalchemy2.shape import from_shape, to_shape
+from shapely.geometry import Point
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,24 +44,83 @@ from app.domains.charging_stations.schemas import (
     ChargingStationResponse,
     ChargingStationUpdateRequest,
 )
+from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 from app.libs.common.config import settings
 
 
+def _location_to_coordinates(
+    location: WKBElement | None,
+) -> tuple[float | None, float | None]:
+    """Convert a stored PostGIS geography point into (latitude, longitude).
+
+    Args:
+        location: Geography point read back from the ORM, or ``None``.
+
+    Returns:
+        ``(latitude, longitude)``, or ``(None, None)`` if no location is set.
+    """
+    if location is None:
+        return None, None
+    point = to_shape(location)
+    return point.y, point.x
+
+
+def _coordinates_to_location(
+    latitude: float | None, longitude: float | None
+) -> WKBElement | None:
+    """Convert a (latitude, longitude) pair into a PostGIS geography point.
+
+    Args:
+        latitude: Latitude in decimal degrees, or ``None``.
+        longitude: Longitude in decimal degrees, or ``None``.
+
+    Returns:
+        A geography point ready to persist, or ``None`` if either coordinate
+        is missing.
+
+    Note:
+        Callers validate that latitude/longitude are provided together (see
+        ``ChargingStationCreateRequest``/``ChargingStationUpdateRequest``);
+        this function only guards against a partially-missing pair.
+    """
+    if latitude is None or longitude is None:
+        return None
+    return from_shape(Point(longitude, latitude), srid=4326)
+
+
 def to_charging_station_response(
-    station: ChargingStationModel,
+    station: ChargingStationModel, *, connector_count: int
 ) -> ChargingStationResponse:
-    """Build a station response from the minimal topology model.
+    """Build a station response from the topology model and its connector count.
+
+    Pure mapping only — the connector count is computed by the caller (via a
+    repository query) rather than here, since a pure mapper must never do
+    I/O.
 
     Args:
         station: Station ORM object queried or created by the repository.
+        connector_count: Number of active connectors across the station's
+            active EVSEs, already computed by the caller.
 
     Returns:
-        Response schema without technical metadata.
+        Response schema including directory metadata and connector count.
     """
+    latitude, longitude = _location_to_coordinates(station.location)
     return ChargingStationResponse(
         station_id=station.station_id,
         ocpp_identity=station.ocpp_identity,
         display_name=station.display_name,
+        latitude=latitude,
+        longitude=longitude,
+        power_rating_kw=(
+            float(station.power_rating_kw)
+            if station.power_rating_kw is not None
+            else None
+        ),
+        connector_standard=station.connector_standard,
+        operating_hours=station.operating_hours,
+        maintenance_status=station.maintenance_status,
+        connector_count=connector_count,
         created_at=station.created_at,
         updated_at=station.updated_at,
         deleted_at=station.deleted_at,
@@ -130,17 +193,35 @@ async def create_charging_station(
         raise ChargingTopologyConflictError(
             f"OCPP identity '{station_data.ocpp_identity}' already exists"
         )
+    maintenance_status = (
+        station_data.maintenance_status
+        if station_data.maintenance_status is not None
+        else ChargingStationMaintenanceStatus.OPERATIONAL
+    )
+    power_rating_kw = (
+        Decimal(str(station_data.power_rating_kw))
+        if station_data.power_rating_kw is not None
+        else None
+    )
     try:
         station = await repository.create_charging_station(
             db,
             ocpp_identity=station_data.ocpp_identity,
             display_name=station_data.display_name,
+            location=_coordinates_to_location(
+                station_data.latitude, station_data.longitude
+            ),
+            power_rating_kw=power_rating_kw,
+            connector_standard=station_data.connector_standard,
+            operating_hours=station_data.operating_hours,
+            maintenance_status=maintenance_status,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "Station OCPP identity already exists"
         ) from error
-    return to_charging_station_response(station)
+    # A brand-new station has no EVSEs/connectors yet - no query needed.
+    return to_charging_station_response(station, connector_count=0)
 
 
 async def list_charging_stations(
@@ -161,7 +242,10 @@ async def list_charging_stations(
         List of stations and pagination metadata.
 
     Side Effects:
-        Performs two read queries; does not commit or rollback.
+        Performs two read queries plus one connector-count query per station
+        on the page (no batching yet - deliberately deferred until
+        throughput needs it, see ``docs/01-requirements/future.md``); does
+        not commit or rollback.
     """
     page = max(page, settings.API_DEFAULT_PAGE)
     page_size = min(
@@ -174,8 +258,16 @@ async def list_charging_stations(
         limit=page_size,
     )
     total = await repository.count_stations(db)
+    items = []
+    for station in stations:
+        connector_count = await repository.count_connectors_by_station_id(
+            db, station.station_id
+        )
+        items.append(
+            to_charging_station_response(station, connector_count=connector_count)
+        )
     return ChargingStationListResponse(
-        items=[to_charging_station_response(station) for station in stations],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -201,7 +293,8 @@ async def get_charging_station(
     station = await repository.get_station_by_id(db, station_id)
     if station is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    return to_charging_station_response(station)
+    connector_count = await repository.count_connectors_by_station_id(db, station_id)
+    return to_charging_station_response(station, connector_count=connector_count)
 
 
 async def resolve_ocpp_topology(
@@ -286,9 +379,25 @@ async def update_charging_station(
             f"OCPP identity '{station_data.ocpp_identity}' already exists"
         )
 
-    update_data = _clean_update_values(station_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(
+        station_data.model_dump(
+            exclude_unset=True, exclude={"latitude", "longitude", "power_rating_kw"}
+        )
+    )
+    # latitude/longitude map to one DB column (location) and power_rating_kw
+    # needs a float->Decimal conversion - both handled separately from the
+    # generic _clean_update_values pass above.
+    if station_data.latitude is not None and station_data.longitude is not None:
+        update_data["location"] = _coordinates_to_location(
+            station_data.latitude, station_data.longitude
+        )
+    if station_data.power_rating_kw is not None:
+        update_data["power_rating_kw"] = Decimal(str(station_data.power_rating_kw))
     if not update_data:
-        return to_charging_station_response(station)
+        connector_count = await repository.count_connectors_by_station_id(
+            db, station_id
+        )
+        return to_charging_station_response(station, connector_count=connector_count)
     try:
         updated = await repository.update_charging_station(db, station_id, update_data)
     except IntegrityError as error:
@@ -297,7 +406,8 @@ async def update_charging_station(
         ) from error
     if updated is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    return to_charging_station_response(updated)
+    connector_count = await repository.count_connectors_by_station_id(db, station_id)
+    return to_charging_station_response(updated, connector_count=connector_count)
 
 
 async def soft_delete_charging_station(
@@ -392,7 +502,7 @@ async def list_charging_evses(
     evses = await repository.list_charging_evses(
         db, station_id=station_id, offset=(page - 1) * page_size, limit=page_size
     )
-    total = await repository.count_evses(db, station_id=station_id)
+    total = await repository.count_evses(db, station_id)
     return ChargingEvseListResponse(
         items=[to_charging_evse_response(evse) for evse in evses],
         total=total,
@@ -559,7 +669,7 @@ async def list_charging_connectors(
     connectors = await repository.list_charging_connectors(
         db, evse_id=evse_id, offset=(page - 1) * page_size, limit=page_size
     )
-    total = await repository.count_connectors(db, evse_id=evse_id)
+    total = await repository.count_connectors(db, evse_id)
     return ChargingConnectorListResponse(
         items=[to_charging_connector_response(connector) for connector in connectors],
         total=total,

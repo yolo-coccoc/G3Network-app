@@ -64,3 +64,9 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = "ocpp.*"
 ignore_missing_imports = true
+
+# ``shapely`` (used to build/read PostGIS geography points in the
+# charging_stations domain, F-C1) does not ship type stubs either.
+[[tool.mypy.overrides]]
+module = "shapely.*"
+ignore_missing_imports = true

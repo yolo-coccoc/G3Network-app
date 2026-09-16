@@ -10,6 +10,7 @@ from ocpp.v201.enums import MeasurandEnumType
 from pydantic import ValidationError
 
 from app.domains.charging_stations.ocpp.ocpp_server import extract_meter_samples
+from app.domains.charging_stations.schemas import ChargingStationCreateRequest
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.schemas import TelemetryMessage
@@ -46,6 +47,47 @@ def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
     invalid_location["location"] = {"latitude": 100, "longitude": 106.7}
     with pytest.raises(ValidationError):
         TelemetryMessage.model_validate(invalid_location)
+
+
+def test_charging_station_request_rejects_partial_location() -> None:
+    """A charging station request requires latitude/longitude together, or neither."""
+    with pytest.raises(ValidationError):
+        ChargingStationCreateRequest(
+            ocpp_identity="STATION-PARTIAL-001",
+            display_name="Partial Location Station",
+            latitude=10.762622,
+            longitude=None,
+            power_rating_kw=None,
+            connector_standard=None,
+            operating_hours=None,
+            maintenance_status=None,
+        )
+
+    without_location = ChargingStationCreateRequest(
+        ocpp_identity="STATION-NO-LOCATION-001",
+        display_name="No Location Station",
+        latitude=None,
+        longitude=None,
+        power_rating_kw=None,
+        connector_standard=None,
+        operating_hours=None,
+        maintenance_status=None,
+    )
+    assert without_location.latitude is None
+    assert without_location.longitude is None
+
+    with_location = ChargingStationCreateRequest(
+        ocpp_identity="STATION-WITH-LOCATION-001",
+        display_name="With Location Station",
+        latitude=10.762622,
+        longitude=106.660172,
+        power_rating_kw=None,
+        connector_standard=None,
+        operating_hours=None,
+        maintenance_status=None,
+    )
+    assert with_location.latitude == 10.762622
+    assert with_location.longitude == 106.660172
 
 
 def test_vehicle_and_telematic_requests_validate_core_contract() -> None:

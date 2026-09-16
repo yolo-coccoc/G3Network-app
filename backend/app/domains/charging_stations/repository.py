@@ -8,8 +8,10 @@ by the service via the public functions here.
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
+from geoalchemy2.elements import WKBElement
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -19,6 +21,7 @@ from app.domains.charging_stations.models import (
     ChargingEvseModel,
     ChargingStationModel,
 )
+from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 
 
 def utc_now() -> datetime:
@@ -35,6 +38,13 @@ async def create_charging_station(
     *,
     ocpp_identity: str,
     display_name: str,
+    location: WKBElement | None = None,
+    power_rating_kw: Decimal | None = None,
+    connector_standard: str | None = None,
+    operating_hours: str | None = None,
+    maintenance_status: ChargingStationMaintenanceStatus = (
+        ChargingStationMaintenanceStatus.OPERATIONAL
+    ),
 ) -> ChargingStationModel:
     """Create a station and flush to surface constraint violations within the transaction.
 
@@ -42,6 +52,12 @@ async def create_charging_station(
         db: Async session owned by the entry boundary.
         ocpp_identity: Unique OCPP identity of the station.
         display_name: Display name.
+        location: GPS location as a PostGIS geography point, nullable.
+        power_rating_kw: Nominal power rating in kW, nullable.
+        connector_standard: Connector standard served (e.g. ``"CCS2"``), nullable.
+        operating_hours: Freeform operating hours description, nullable.
+        maintenance_status: Admin-set maintenance state; defaults to
+            ``OPERATIONAL``.
 
     Returns:
         The station that was just persisted.
@@ -49,6 +65,11 @@ async def create_charging_station(
     station = ChargingStationModel(
         ocpp_identity=ocpp_identity,
         display_name=display_name,
+        location=location,
+        power_rating_kw=power_rating_kw,
+        connector_standard=connector_standard,
+        operating_hours=operating_hours,
+        maintenance_status=maintenance_status,
     )
     db.add(station)
     await db.flush()
@@ -146,6 +167,32 @@ async def count_stations(
     conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
         select(func.count(ChargingStationModel.station_id)).where(and_(*conditions))
+    )
+    return int(result.scalar() or 0)
+
+
+async def count_connectors_by_station_id(db: AsyncSession, station_id: UUID) -> int:
+    """Count active connectors across all active EVSEs of a station.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the parent station.
+
+    Returns:
+        Number of active connectors across all active EVSEs of the station.
+    """
+    result = await db.execute(
+        select(func.count(ChargingConnectorModel.connector_id))
+        .select_from(ChargingConnectorModel)
+        .join(
+            ChargingEvseModel,
+            ChargingConnectorModel.evse_id == ChargingEvseModel.evse_id,
+        )
+        .where(
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
+            ChargingConnectorModel.deleted_at.is_(None),
+        )
     )
     return int(result.scalar() or 0)
 
@@ -331,7 +378,7 @@ async def list_charging_evses(
     return list(result.scalars().all())
 
 
-async def count_evses(db: AsyncSession, *, station_id: UUID) -> int:
+async def count_evses(db: AsyncSession, station_id: UUID) -> int:
     """Count active EVSEs belonging to a station.
 
     Args:
@@ -520,7 +567,7 @@ async def list_charging_connectors(
     return list(result.scalars().all())
 
 
-async def count_connectors(db: AsyncSession, *, evse_id: UUID) -> int:
+async def count_connectors(db: AsyncSession, evse_id: UUID) -> int:
     """Count active connectors belonging to an EVSE.
 
     Args:

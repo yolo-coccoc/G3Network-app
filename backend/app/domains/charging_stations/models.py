@@ -1,26 +1,37 @@
 """Minimal SQLAlchemy models for charging station topology.
 
-The module only describes the three active topology tables of the ideal MVP.
-Stations, EVSEs, and connectors are pre-provisioned; technical status,
-capability, and device metadata are not part of this step's persistence
-contract.
+The module describes the three active topology tables of the ideal MVP.
+Stations, EVSEs, and connectors are pre-provisioned. ``ChargingStationModel``
+also carries directory/descriptive metadata (location, power rating,
+connector standard, operating hours, maintenance status) per F-C1. Live,
+OCPP-derived technical/connection status, capability negotiation, and other
+device metadata are still not part of this step's persistence contract — see
+``docs/01-requirements/future.md`` items 27 and 28.
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID, uuid4
 
+from geoalchemy2 import Geography
+from geoalchemy2.elements import WKBElement
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+)
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 from app.libs.db.base import Base
 
 
@@ -40,6 +51,18 @@ class ChargingStationModel(Base):
         station_id: Internal UUID.
         ocpp_identity: Identity that appears in the OCPP WebSocket path.
         display_name: Display name.
+        location: GPS location as a PostGIS geography point (SRID 4326),
+            nullable. Stored as geography (not plain lat/lon columns, unlike
+            ``vehicle_telemetry``) since this is descriptive directory data
+            rather than a high-frequency telemetry stream.
+        power_rating_kw: Nominal power rating of the station in kW, nullable.
+            A simple station-level aggregate, not modeled per EVSE/connector.
+        connector_standard: Connector standard served by the station (e.g.
+            ``"CCS2"``), nullable.
+        operating_hours: Freeform description of operating hours (e.g.
+            ``"24/7"``), nullable.
+        maintenance_status: Admin-set maintenance state; defaults to
+            ``OPERATIONAL``.
         created_at: Time the record was created.
         updated_at: Time the record was last updated.
         deleted_at: Soft-delete time, nullable.
@@ -56,6 +79,24 @@ class ChargingStationModel(Base):
     )
     ocpp_identity: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    location: Mapped[WKBElement | None] = mapped_column(
+        # spatial_index=False: the GIST index is created explicitly by the
+        # migration (ix_charging_stations_location) instead of relying on
+        # GeoAlchemy2's automatic DDL hook, matching how every other index
+        # in this codebase is explicit.
+        Geography(geometry_type="POINT", srid=4326, spatial_index=False),
+        nullable=True,
+    )
+    power_rating_kw: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2), nullable=True
+    )
+    connector_standard: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    operating_hours: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    maintenance_status: Mapped[ChargingStationMaintenanceStatus] = mapped_column(
+        SQLEnum(ChargingStationMaintenanceStatus),
+        nullable=False,
+        default=ChargingStationMaintenanceStatus.OPERATIONAL,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )
@@ -69,6 +110,7 @@ class ChargingStationModel(Base):
     __table_args__ = (
         UniqueConstraint("ocpp_identity", name="uq_charging_stations_ocpp_identity"),
         Index("ix_charging_stations_deleted_at", "deleted_at"),
+        Index("ix_charging_stations_location", "location", postgresql_using="gist"),
     )
 
 

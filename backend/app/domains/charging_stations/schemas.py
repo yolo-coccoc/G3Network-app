@@ -1,16 +1,20 @@
 """Pydantic schemas for pre-provisioned charging topology.
 
-The ideal MVP only exposes the OCPP identity, internal IDs, and timestamps
-needed to inspect the topology. Location, capability, technical status, and
-device information are deferred alongside the technical status path; they are
+``ChargingStationCreateRequest``/``ChargingStationUpdateRequest``/
+``ChargingStationResponse`` expose directory/descriptive metadata (location,
+power rating, connector standard, operating hours, maintenance status) per
+F-C1, plus the OCPP identity, internal IDs, and timestamps. Capability
+negotiation, live OCPP-derived technical/connection status, and other device
+information remain deferred alongside the technical status path; they are
 not included in the active HTTP contract.
 """
 
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 from app.libs.common.config import settings
 
 
@@ -20,10 +24,25 @@ class ChargingStationCreateRequest(BaseModel):
     Attributes:
         ocpp_identity: Station identity used in the OCPP WebSocket path.
         display_name: Display name of the station.
+        latitude: GPS latitude in decimal degrees, nullable.
+        longitude: GPS longitude in decimal degrees, nullable.
+        power_rating_kw: Nominal power rating in kW, nullable (0 <
+            value <= 9999.99, matching the ``Numeric(6, 2)`` column).
+        connector_standard: Connector standard served (e.g. ``"CCS2"``),
+            nullable.
+        operating_hours: Freeform operating hours description, nullable.
+        maintenance_status: Admin-set maintenance state; defaults to
+            ``OPERATIONAL`` if not given.
     """
 
     ocpp_identity: str = Field(..., min_length=1, max_length=255)
     display_name: str = Field(..., min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    power_rating_kw: float | None = Field(None, gt=0, le=9999.99)
+    connector_standard: str | None = Field(None, min_length=1, max_length=20)
+    operating_hours: str | None = Field(None, min_length=1, max_length=100)
+    maintenance_status: ChargingStationMaintenanceStatus | None = None
 
     @field_validator("ocpp_identity", "display_name")
     @classmethod
@@ -44,17 +63,47 @@ class ChargingStationCreateRequest(BaseModel):
             raise ValueError("Value must not be empty or contain only whitespace")
         return normalized
 
+    @model_validator(mode="after")
+    def validate_location_pair(self) -> "ChargingStationCreateRequest":
+        """Require latitude/longitude together, since one alone isn't a location.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If exactly one of latitude/longitude is provided.
+        """
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
+
 
 class ChargingStationUpdateRequest(BaseModel):
-    """Station identity fields allowed for partial update.
+    """Station fields allowed for partial update.
 
     Attributes:
         ocpp_identity: New identity; ``None`` means do not update.
         display_name: New display name; ``None`` means do not update.
+        latitude: New GPS latitude; ``None`` means do not update.
+        longitude: New GPS longitude; ``None`` means do not update.
+        power_rating_kw: New power rating in kW (0 < value <= 9999.99);
+            ``None`` means do not update.
+        connector_standard: New connector standard; ``None`` means do not
+            update.
+        operating_hours: New operating hours description; ``None`` means do
+            not update.
+        maintenance_status: New maintenance state; ``None`` means do not
+            update.
     """
 
     ocpp_identity: str | None = Field(None, min_length=1, max_length=255)
     display_name: str | None = Field(None, min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+    power_rating_kw: float | None = Field(None, gt=0, le=9999.99)
+    connector_standard: str | None = Field(None, min_length=1, max_length=20)
+    operating_hours: str | None = Field(None, min_length=1, max_length=100)
+    maintenance_status: ChargingStationMaintenanceStatus | None = None
 
     @field_validator("ocpp_identity", "display_name")
     @classmethod
@@ -77,6 +126,24 @@ class ChargingStationUpdateRequest(BaseModel):
             raise ValueError("Value must not be empty or contain only whitespace")
         return normalized
 
+    @model_validator(mode="after")
+    def validate_location_pair(self) -> "ChargingStationUpdateRequest":
+        """Require latitude/longitude together when either is being updated.
+
+        Per this backend's PATCH convention, ``None`` means "do not update"
+        for each field independently - so this only rejects the case where
+        exactly one of the pair is being set to a real value.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If exactly one of latitude/longitude is provided.
+        """
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        return self
+
 
 class ChargingStationResponse(BaseModel):
     """Active station information without technical status or raw payload.
@@ -85,6 +152,14 @@ class ChargingStationResponse(BaseModel):
         station_id: Internal UUID.
         ocpp_identity: Unique OCPP identity.
         display_name: Display name.
+        latitude: GPS latitude in decimal degrees, nullable.
+        longitude: GPS longitude in decimal degrees, nullable.
+        power_rating_kw: Nominal power rating in kW, nullable.
+        connector_standard: Connector standard served, nullable.
+        operating_hours: Freeform operating hours description, nullable.
+        maintenance_status: Admin-set maintenance state.
+        connector_count: Number of active connectors across the station's
+            active EVSEs, computed at read time (not stored).
         created_at: Time created.
         updated_at: Time of last update.
         deleted_at: Soft-delete time, nullable.
@@ -95,6 +170,13 @@ class ChargingStationResponse(BaseModel):
     station_id: UUID
     ocpp_identity: str
     display_name: str
+    latitude: float | None
+    longitude: float | None
+    power_rating_kw: float | None
+    connector_standard: str | None
+    operating_hours: str | None
+    maintenance_status: ChargingStationMaintenanceStatus
+    connector_count: int = Field(..., ge=0)
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
