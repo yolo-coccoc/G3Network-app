@@ -28,6 +28,10 @@ def test_openapi_registers_current_backend_routes() -> None:
     # F-A6/F-C6: per-vehicle SOC-based operating and energy-usage reports.
     assert "/api/v1/telemetry/vehicles/{vehicle_id}/operating-report" in paths
     assert "/api/v1/telemetry/vehicles/{vehicle_id}/energy-usage" in paths
+    # F-E4: the drivers domain and its vehicle-assignment endpoints.
+    assert any(path.startswith("/api/v1/drivers") for path in paths)
+    assert "/api/v1/drivers/{driver_id}/assignment" in paths
+    assert "/api/v1/drivers/{driver_id}/assignments" in paths
 
 
 @pytest.mark.asyncio

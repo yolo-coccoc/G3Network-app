@@ -15,6 +15,7 @@ from app.domains.charging_stations.ocpp.ocpp_server import (
     parse_ocpp_transaction_id,
 )
 from app.domains.charging_stations.schemas import ChargingStationCreateRequest
+from app.domains.drivers.schemas import DriverCreateRequest, DriverVehicleAssignRequest
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicCreateRequest,
@@ -191,6 +192,30 @@ def test_telematic_config_push_request_rejects_interval_outside_bounds() -> None
                 settings.TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS + 1
             )
         )
+
+
+def test_driver_create_request_validates_core_contract() -> None:
+    """A driver request accepts valid data and rejects an empty full name (F-E4)."""
+    driver = DriverCreateRequest(
+        full_name="Test Driver",
+        phone_number="0900000001",
+        license_number="LICENSE-001",
+    )
+
+    assert driver.license_number == "LICENSE-001"
+    with pytest.raises(ValidationError):
+        DriverCreateRequest(
+            full_name="",
+            phone_number="0900000001",
+            license_number="LICENSE-001",
+        )
+
+
+def test_driver_vehicle_assign_request_rejects_malformed_vin() -> None:
+    """F-E4's assignment request enforces the same 17-character VIN length as vehicles."""
+    DriverVehicleAssignRequest(vehicle_vin="1HGBH41JXMN109186")
+    with pytest.raises(ValidationError):
+        DriverVehicleAssignRequest(vehicle_vin="TOO-SHORT")
 
 
 def test_extract_meter_samples_reads_raw_dict_payload() -> None:
