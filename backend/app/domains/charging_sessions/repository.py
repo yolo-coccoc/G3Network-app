@@ -307,6 +307,7 @@ async def insert_event(
     session_id: UUID,
     event_occurred_at: datetime,
     event_type: SessionEventType,
+    seq_no: int | None,
 ) -> ChargingSessionEventModel:
     """Append one TransactionEvent history record and flush it.
 
@@ -316,6 +317,8 @@ async def insert_event(
         session_id: UUID of the aggregate that owns the event.
         event_occurred_at: The event time, already normalized to UTC.
         event_type: The canonical TransactionEvent type.
+        seq_no: OCPP's own sequence number, already validated by the
+            service; nullable for callers that have none (F-B2).
 
     Returns:
         The ORM event just added.
@@ -328,6 +331,7 @@ async def insert_event(
         session_id=session_id,
         event_occurred_at=event_occurred_at,
         event_type=event_type,
+        seq_no=seq_no,
     )
     db.add(event)
     await db.flush()

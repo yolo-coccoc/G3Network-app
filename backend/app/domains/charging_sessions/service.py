@@ -1,10 +1,20 @@
 """Public service ingesting TransactionEvent and individual MeterValues messages, happy path.
 
 The ideal MVP assumes a fixed message order and removes reliability
-branching. The caller at the entry boundary still owns commit/rollback of
-the transaction.
+branching (retry, DLQ, out-of-order recovery, dedup - see
+``docs/01-requirements/future.md`` item 27). On top of that, this service
+enforces two correctness invariants that hold even on the happy path
+(F-B2): a session's lifecycle state can only move forward (an event
+arriving after ``COMPLETED`` is refused, not silently applied), and a
+meter reading can only move the aggregate's ``meter_end_wh`` forward in
+*time* (a sample stamped earlier than the one already applied is
+discarded). Neither invariant implements retry/dedup/out-of-order
+*recovery* - they only stop the happy path itself from writing a value
+nothing can vouch for. The caller at the entry boundary still owns
+commit/rollback of the transaction.
 """
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -15,6 +25,7 @@ import app.domains.charging_sessions.repository as repository
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
+    ChargingSessionStateError,
 )
 from app.domains.charging_sessions.models import (
     ChargingSessionEventModel,
@@ -38,6 +49,8 @@ from app.domains.charging_sessions.types import (
     TransactionIngestResult,
 )
 from app.libs.common.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _utc(value: datetime, field_name: str) -> datetime:
@@ -81,8 +94,37 @@ def _energy(value: Decimal | None, field_name: str) -> Decimal | None:
     return value
 
 
+def _seq_no(value: int | None, field_name: str) -> int | None:
+    """Check that the OCPP sequence number is a non-negative integer (F-B2).
+
+    Args:
+        value: The sequence number from the adapter, nullable for callers
+            that have none.
+        field_name: The field name used in the error message.
+
+    Returns:
+        The validated sequence number, or ``None``.
+
+    Raises:
+        ChargingSessionInputError: If the value is not an ``int``, is a
+            ``bool``, or is negative. ``bool`` is rejected explicitly
+            because ``isinstance(True, int)`` is ``True`` in Python - a
+            stray ``True`` must not silently collide with a real
+            ``seqNo`` of 0.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ChargingSessionInputError(f"{field_name} must be an int")
+    if value < 0:
+        raise ChargingSessionInputError(f"{field_name} must not be negative")
+    return value
+
+
 def _apply_charging_session_meter_end(
-    session: ChargingSessionModel, meter_end_wh: Decimal | None
+    session: ChargingSessionModel,
+    meter_end_wh: Decimal | None,
+    meter_end_sampled_at: datetime,
 ) -> None:
     """Update the final meter reading and energy delivered on the ORM session.
 
@@ -90,18 +132,42 @@ def _apply_charging_session_meter_end(
         session: The ORM aggregate being processed in the transaction.
         meter_end_wh: The latest meter reading; no change is made if this is
             ``None``.
+        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
+            already normalized to UTC (F-B2).
 
     Side Effects:
-        Updates ``meter_end_wh`` and recomputes the energy delivered if a
-        start meter reading is present.
+        If a watermark (``session.meter_end_sampled_at``) is already
+        stored and ``meter_end_sampled_at`` is *older*, the update is
+        discarded (logged at WARNING, operator-visible) and neither
+        ``meter_end_wh`` nor ``energy_delivered_wh`` changes - a message
+        that arrived out of order must not overwrite a newer reading with
+        a stale one. Ties (``==``) apply: one OCPP message can carry
+        several samples sharing one timestamp, and rejecting ties would
+        drop legitimate ones. This is a *time*-ordering check only, never
+        a value check: a register that decreases while time still moves
+        forward (a meter reset) still applies and still yields a wrong
+        total - reconciling that is the deferred reliability path
+        (``future.md`` item 27) and must not be opened up on its own here.
     """
     if meter_end_wh is None:
         return
+    if (
+        session.meter_end_sampled_at is not None
+        and meter_end_sampled_at < session.meter_end_sampled_at
+    ):
+        logger.warning(
+            "Discarded stale charging meter reading",
+            extra={
+                "session_id": str(session.session_id),
+                "stale_sampled_at": meter_end_sampled_at.isoformat(),
+                "current_sampled_at": session.meter_end_sampled_at.isoformat(),
+                "stale_value_wh": str(meter_end_wh),
+            },
+        )
+        return
     session.meter_end_wh = meter_end_wh
+    session.meter_end_sampled_at = meter_end_sampled_at
     if session.meter_start_wh is not None:
-        # The MVP assumes the register increases monotonically; checking for
-        # meter reset/decrease belongs to the reliability path and must not
-        # be opened up on its own in this service.
         session.energy_delivered_wh = meter_end_wh - session.meter_start_wh
 
 
@@ -332,16 +398,23 @@ async def ingest_transaction_event(
     transaction_id: str,
     event_type: SessionEventType,
     event_occurred_at: datetime,
+    seq_no: int | None,
     meter_start_wh: Decimal | None = None,
     meter_end_wh: Decimal | None = None,
+    meter_end_sampled_at: datetime | None = None,
 ) -> TransactionIngestResult:
     """Process one TransactionEvent according to the happy-path lifecycle.
 
     Rule:
         ``Started`` creates a new aggregate; ``Updated`` and ``Ended``
-        require the aggregate to already exist, with matching topology and
-        messages arriving in the correct order. The event is always
-        appended before the aggregate is updated.
+        require the aggregate to already exist, with matching topology.
+        Once a session is ``COMPLETED``, every subsequent event for it is
+        refused (F-B2) - a duplicate ``Ended`` or a late ``Updated`` must
+        not silently re-mutate a finished record. The event is always
+        appended before the aggregate is updated, and a stale meter
+        reading (older ``meter_end_sampled_at`` than one already applied)
+        is discarded rather than overwriting a newer value - see
+        ``_apply_charging_session_meter_end``.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -351,9 +424,14 @@ async def ingest_transaction_event(
         transaction_id: The OCPP transaction identity.
         event_type: The canonical event type.
         event_occurred_at: The event time; must have a timezone.
+        seq_no: OCPP's own sequence number for this event, nullable for a
+            caller with none (F-B2). Persisted, not yet used for dedup.
         meter_start_wh: The meter reading at the start of the session, for
             ``Started``.
         meter_end_wh: The latest meter reading, for ``Updated``/``Ended``.
+        meter_end_sampled_at: The measurement time of ``meter_end_wh``, if
+            the adapter has the embedded sample's own timestamp; falls
+            back to ``event_occurred_at`` when omitted (F-B2).
 
     Returns:
         A result containing the session UUID, current status and number of
@@ -364,6 +442,7 @@ async def ingest_transaction_event(
             the topology does not match.
         ChargingSessionNotFoundError: If the event is not ``Started`` but
             the aggregate does not yet exist.
+        ChargingSessionStateError: If the session is already ``COMPLETED``.
 
     Side Effects:
         Creates or updates the aggregate and appends an event in the
@@ -375,8 +454,14 @@ async def ingest_transaction_event(
             "transaction_id is empty or exceeds 255 characters"
         )
     occurred_at = _utc(event_occurred_at, "event_occurred_at")
+    validated_seq_no = _seq_no(seq_no, "seq_no")
     meter_start = _energy(meter_start_wh, "meter_start_wh")
     meter_end = _energy(meter_end_wh, "meter_end_wh")
+    sampled_at = (
+        _utc(meter_end_sampled_at, "meter_end_sampled_at")
+        if meter_end_sampled_at is not None
+        else occurred_at
+    )
 
     session: ChargingSessionModel | None
     if event_type == SessionEventType.STARTED:
@@ -402,14 +487,26 @@ async def ingest_transaction_event(
             )
         if session.evse_id != evse_id or session.connector_id != connector_id:
             raise ChargingSessionInputError("Transaction topology does not match")
+        if session.status is SessionStatus.COMPLETED:
+            # COMPLETED is terminal: re-stamping ended_at or re-applying a
+            # meter reading would silently rewrite a finished session and
+            # corrupt F-C5's energy totals. Distinguishing a harmless
+            # replay from a genuinely different late event needs
+            # seq_no-keyed dedup (future.md item 27), so every post-Ended
+            # event is refused the same way, whether it's a duplicate
+            # Ended or a late Updated.
+            raise ChargingSessionStateError(
+                f"Transaction '{transaction_id}' is already completed"
+            )
 
     await repository.insert_event(
         db,
         session_id=session.session_id,
         event_occurred_at=occurred_at,
         event_type=event_type,
+        seq_no=validated_seq_no,
     )
-    _apply_charging_session_meter_end(session, meter_end)
+    _apply_charging_session_meter_end(session, meter_end, sampled_at)
 
     if event_type is SessionEventType.ENDED:
         session.ended_at = occurred_at
@@ -431,9 +528,14 @@ async def ingest_meter_values(
     """Store one MeterValues message and update the aggregate.
 
     Rule:
-        Each call processes exactly one sample. The MVP assumes messages
-        arrive in order and without duplicates; the current sample becomes
-        the aggregate's final meter reading.
+        Each call processes exactly one sample. The sample row is always
+        appended to history (append-only), but the aggregate's
+        ``meter_end_wh`` only advances if the sample is not stale - see
+        ``_apply_charging_session_meter_end`` (F-B2). An event for an
+        already-``COMPLETED`` session is refused (F-B2), for the same
+        reason as ``ingest_transaction_event``'s guard: a MeterValues
+        landing after ``Ended`` must not silently rewrite a finished
+        session's energy total.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -448,6 +550,7 @@ async def ingest_meter_values(
         ChargingSessionInputError: If the sample lacks a timezone or the
             energy value is invalid.
         ChargingSessionNotFoundError: If the aggregate does not exist.
+        ChargingSessionStateError: If the session is already ``COMPLETED``.
 
     Side Effects:
         Appends a meter sample and updates the aggregate in the same
@@ -457,6 +560,8 @@ async def ingest_meter_values(
     session = await repository.get_session_by_id(db, session_id)
     if session is None:
         raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
+    if session.status is SessionStatus.COMPLETED:
+        raise ChargingSessionStateError(f"Session '{session_id}' is already completed")
     sampled_at = _utc(sample.sampled_at, "sampled_at")
     value_wh = _energy(sample.value_wh, "value_wh")
     if value_wh is None:
@@ -467,7 +572,7 @@ async def ingest_meter_values(
         sampled_at=sampled_at,
         value_wh=value_wh,
     )
-    _apply_charging_session_meter_end(session, value_wh)
+    _apply_charging_session_meter_end(session, value_wh, sampled_at)
 
     session.updated_at = repository.utc_now()
     return MeterIngestResult(

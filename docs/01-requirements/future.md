@@ -532,6 +532,17 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Additional notes**: When resuming this work, design the migration for
   history/idempotency, timeout settings, a network-failure simulator, and
   duplicate/reconnect tests before going to production.
+  **2026-09-17 update (F-B2)**: four scoped correctness fixes landed on
+  top of this deferral without reopening it - `seq_no` is now persisted
+  (enabling future dedup, not implementing it), a session's status can
+  only move forward (an event for an already-`COMPLETED` session is
+  refused rather than silently applied), a stale `MeterValues` can no
+  longer overwrite a newer reading, and OCPP `measurand`/`unitOfMeasure`
+  are read instead of assuming everything is Wh. Accepted consequence of
+  the COMPLETED-session guard: a station that never received its `Ended`
+  ACK will retry and get a repeated `CALLERROR` on every retry, since no
+  queue/backoff/idempotent-replay exists yet - that remains this item's
+  job. See `docs/02-planners/backend-charging-ingest-fixes.md`.
 
 ### 28. Topology metadata and charging helpers excluded from the ideal MVP
 

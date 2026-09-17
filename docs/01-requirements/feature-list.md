@@ -638,7 +638,17 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_sessions`
 - **Status:** 🚧 In progress — happy-path lifecycle only (`Started → Updated/MeterValues →
-  Ended`); no retry, out-of-order handling, DLQ, or reconciliation check yet
+  Ended`); still no retry, out-of-order recovery, DLQ, or dedup (`future.md` item 27). F-B2's
+  round added four scoped correctness fixes on top of the happy path without opening that
+  reliability work: OCPP's `seqNo` is now persisted per event (enabling future dedup, not
+  implementing it); an event for an already-`COMPLETED` session is refused rather than silently
+  re-mutating a finished record; a `MeterValues` sample older than the one already applied is
+  discarded instead of overwriting a newer reading backwards; and OCPP's `measurand`/
+  `unitOfMeasure` are read so a kWh-unit or non-energy sample can no longer silently corrupt the
+  energy total. Also fixed the prerequisite bug blocking all of this and the simulator: OCPP
+  handlers were annotated for dataclasses `python-ocpp` never actually delivers (it only
+  snake_cases JSON into plain dicts), causing a live `AttributeError` crash - see
+  `docs/02-planners/backend-charging-ingest-fixes.md`.
 
 ### F-B3 Policy-violation matching & flagging
 - **Actor:** System

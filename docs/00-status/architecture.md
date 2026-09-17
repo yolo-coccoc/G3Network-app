@@ -66,7 +66,12 @@ FastAPI registers the following domains:
   hours, maintenance status), a nearby-station radius search (F-D1), and the
   OCPP 2.0.1 gateway (now also handling `StatusNotification`, F-C2).
 - `charging_sessions`: storing the session aggregate, lifecycle events and
-  meter values, plus a station-level energy aggregation query (F-C5).
+  meter values, plus a station-level energy aggregation query (F-C5). F-B2
+  added four correctness fixes on the happy path: persisted OCPP `seqNo`,
+  a guard refusing any event on an already-`COMPLETED` session, a
+  time-ordering watermark stopping a stale `MeterValues` from overwriting
+  a newer reading, and `measurand`/unit-aware energy normalization in the
+  OCPP adapter (still no retry/out-of-order recovery/DLQ/dedup).
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=`; telemetry ingestion
   raises one when a vehicle's SOC crosses the 30/20/10% tiers (carrying the
@@ -118,6 +123,7 @@ The current Alembic baseline consists of:
 0014_device_offline_alert
 0015_telematic_config_push
 0016_vehicle_battery_capacity
+0017_charging_ingest_fields
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:

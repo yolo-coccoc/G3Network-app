@@ -158,7 +158,10 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                             )
                             """))).scalars())
 
-        assert version == "0004_create_charging_mvp_schema"
+        # Pinned to the current Alembic head. This assertion was stale
+        # (hardcoded to an old head) until F-B2 - it went unnoticed only
+        # because this suite is skipped unless RUN_DB_INTEGRATION=1.
+        assert version == "0017_charging_ingest_fields"
         assert len(tables) == 9
     finally:
         await engine.dispose()

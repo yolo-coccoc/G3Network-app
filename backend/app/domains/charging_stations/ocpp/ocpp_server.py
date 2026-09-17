@@ -55,6 +55,19 @@ _MAX_IDENTITY_LENGTH: Final[int] = 255
 # plain dicts (snake_cased keys), never as ocpp.v201.datatypes dataclasses.
 OcppPayload = dict[str, Any]
 
+# OCPP 2.0.1: a SampledValue with no measurand is a cumulative active-import
+# energy register, which is the only measurand meter_start_wh/meter_end_wh
+# can be computed from (F-B2). Any other measurand (power, SoC,
+# temperature, an *interval* energy delta) is data this MVP doesn't model.
+_ENERGY_REGISTER_MEASURAND: Final[str] = "Energy.Active.Import.Register"
+# Wh is OCPP's default unit; kWh is the only other energy unit in the 2.0.1
+# standardized list. Keys are lowercased for a case-insensitive match,
+# since unitOfMeasure.unit is a free string, not an enum, in the spec.
+_ENERGY_UNIT_FACTORS_WH: Final[dict[str, Decimal]] = {
+    "wh": Decimal(1),
+    "kwh": Decimal(1000),
+}
+
 
 def parse_ocpp_identity(request_path: str) -> str | None:
     """Extract the OCPP identity from a valid URL path.
@@ -138,28 +151,77 @@ def parse_ocpp_timestamp(value: str) -> datetime:
     return timestamp
 
 
+def normalize_sampled_value_to_wh(sampled_value: OcppPayload) -> Decimal | None:
+    """Convert one OCPP sampled value into a canonical Wh energy reading (F-B2).
+
+    Rule:
+        Only ``Energy.Active.Import.Register`` is a cumulative import
+        register, and therefore the only measurand the session aggregate
+        can use ``meter_start_wh``/``meter_end_wh`` from; anything else
+        (power, SoC, temperature, an *interval* energy delta) is extra
+        telemetry this MVP doesn't model and is skipped, not an error. An
+        absent ``measurand`` means that register, per OCPP 2.0.1's own
+        default. The reading is ``value * 10 ** multiplier`` in ``unit``,
+        with ``unit`` defaulting to Wh and ``multiplier`` to 0 - the OCPP
+        JSON Schema declares those defaults but validation doesn't inject
+        them, so both are defaulted here.
+
+    Args:
+        sampled_value: One ``sampledValue`` object, snake_cased by
+            ``python-ocpp`` into a plain dict - see the module docstring.
+
+    Returns:
+        The reading in Wh, or ``None`` if the measurand is not the import
+        energy register (skip this sample, not an error).
+
+    Raises:
+        ValueError: If the measurand is the import energy register but its
+            unit is neither Wh nor kWh - an uninterpretable register
+            reading must fail loudly rather than be dropped, which would
+            leave the aggregate stale while the station believes it
+            reported successfully.
+    """
+    measurand = sampled_value.get("measurand") or _ENERGY_REGISTER_MEASURAND
+    if measurand != _ENERGY_REGISTER_MEASURAND:
+        return None
+
+    unit_of_measure = sampled_value.get("unit_of_measure") or {}
+    unit = str(unit_of_measure.get("unit") or "Wh").lower()
+    multiplier = unit_of_measure.get("multiplier") or 0
+    factor = _ENERGY_UNIT_FACTORS_WH.get(unit)
+    if factor is None:
+        raise ValueError(f"Unrecognized energy unit '{unit}' for {measurand}")
+
+    raw_value = Decimal(str(sampled_value["value"]))
+    return raw_value.scaleb(multiplier) * factor
+
+
 def extract_meter_samples(
     meter_values: list[OcppPayload],
 ) -> list[MeterSampleInput]:
-    """Convert the samples in an OCPP message into persistence input.
+    """Convert the energy samples in an OCPP message into persistence input.
 
     Args:
         meter_values: Groups of samples, snake_cased by ``python-ocpp``
             into plain dicts - see the module docstring.
 
     Returns:
-        List of samples in the same order as the payload.
+        Canonical Wh samples in payload order. Shorter than the payload,
+        or empty, when the message carries non-energy measurands
+        (F-B2) - see ``normalize_sampled_value_to_wh``.
+
+    Raises:
+        ValueError: If a timestamp lacks a timezone, or an energy-register
+            sample uses an uninterpretable unit.
     """
     samples: list[MeterSampleInput] = []
     for meter_value in meter_values:
         sampled_at = parse_ocpp_timestamp(meter_value["timestamp"])
         for sampled_value in meter_value["sampled_value"]:
-            samples.append(
-                MeterSampleInput(
-                    sampled_at=sampled_at,
-                    value_wh=Decimal(str(sampled_value["value"])),
-                )
-            )
+            value_wh = normalize_sampled_value_to_wh(sampled_value)
+            if value_wh is None:
+                continue
+            samples.append(MeterSampleInput(sampled_at=sampled_at, value_wh=value_wh))
     return samples
 
 
@@ -305,8 +367,8 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             timestamp: Time of the event per OCPP.
             trigger_reason: OCPP trigger, currently only parsed to preserve
                 the contract.
-            seq_no: OCPP sequence number, not yet part of the active
-                persistence schema.
+            seq_no: OCPP sequence number, persisted on the event history
+                row (F-B2) but not yet used for dedup/ordering.
             transaction_info: The ``transactionInfo`` object, as a plain
                 dict - see the module docstring.
             meter_value: Start/end meter values depending on the event, as
@@ -322,7 +384,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             transaction; the EVSE -> session mapping is only updated after
             the transaction commits.
         """
-        del trigger_reason, seq_no
+        del trigger_reason
         event_map = {
             TransactionEventEnumType.started: SessionEventType.STARTED,
             TransactionEventEnumType.updated: SessionEventType.UPDATED,
@@ -332,6 +394,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         samples = extract_meter_samples(meter_value) if meter_value else []
         meter_start_wh = samples[0].value_wh if samples else None
         meter_end_wh = samples[-1].value_wh if samples else None
+        meter_end_sampled_at = samples[-1].sampled_at if samples else None
         transaction_id = parse_ocpp_transaction_id(transaction_info)
         async with self.session_factory.begin() as db:
             station_id, evse_id, connector_id = await resolve_ocpp_topology(
@@ -347,6 +410,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 transaction_id=transaction_id,
                 event_type=session_event,
                 event_occurred_at=parse_ocpp_timestamp(timestamp),
+                seq_no=seq_no,
                 meter_start_wh=(
                     meter_start_wh
                     if session_event is SessionEventType.STARTED
@@ -354,6 +418,11 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 ),
                 meter_end_wh=(
                     meter_end_wh
+                    if session_event is not SessionEventType.STARTED
+                    else None
+                ),
+                meter_end_sampled_at=(
+                    meter_end_sampled_at
                     if session_event is not SessionEventType.STARTED
                     else None
                 ),

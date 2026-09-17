@@ -28,7 +28,10 @@ class ChargingSessionResponse(BaseModel):
         started_at: The time of Started.
         ended_at: The time of Ended, nullable while active.
         meter_start_wh: The meter reading at the start of the session.
-        meter_end_wh: The final meter reading.
+        meter_end_wh: The most recently observed meter reading, as of
+            ``meter_end_sampled_at`` (F-B2).
+        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
+            nullable (F-B2).
         energy_delivered_wh: The difference between the start/end meter
             readings.
         created_at: The time the aggregate was created.
@@ -47,6 +50,7 @@ class ChargingSessionResponse(BaseModel):
     ended_at: datetime | None
     meter_start_wh: Decimal | None
     meter_end_wh: Decimal | None
+    meter_end_sampled_at: datetime | None
     energy_delivered_wh: Decimal | None
     created_at: datetime
     updated_at: datetime
@@ -76,6 +80,7 @@ class ChargingSessionEventResponse(BaseModel):
         event_occurred_at: The time the event occurred.
         session_id: UUID of the session that owns the event.
         event_type: ``Started``, ``Updated`` or ``Ended``.
+        seq_no: OCPP's own sequence number, nullable (F-B2).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -84,6 +89,7 @@ class ChargingSessionEventResponse(BaseModel):
     event_occurred_at: datetime
     session_id: UUID
     event_type: SessionEventType
+    seq_no: int | None
 
 
 class ChargingSessionMeterValueResponse(BaseModel):
@@ -93,7 +99,8 @@ class ChargingSessionMeterValueResponse(BaseModel):
         meter_value_id: Internal UUID of the sample.
         sampled_at: The time the sample was taken.
         session_id: UUID of the session that owns the sample.
-        value_wh: The energy value in Wh.
+        value_wh: The energy value in Wh - the OCPP adapter owns
+            normalizing measurand/unit into this canonical form (F-B2).
     """
 
     model_config = ConfigDict(from_attributes=True)

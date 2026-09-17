@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,7 +52,14 @@ class ChargingSessionModel(Base):
         started_at: The time of Started.
         ended_at: The time of Ended, nullable while still active.
         meter_start_wh: The meter reading at the start of the session.
-        meter_end_wh: The latest/final meter reading.
+        meter_end_wh: The most recently observed meter reading, as of
+            ``meter_end_sampled_at`` - not necessarily the numerically
+            latest, since a sample older than the current watermark is
+            discarded (F-B2).
+        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
+            nullable - an existing row's true sample time is genuinely
+            unknown (F-B2). Never moves backward: a sample timestamped
+            earlier than this value is discarded, not applied.
         energy_delivered_wh: The difference between the end and start meter
             readings.
         created_at: The time the record was created.
@@ -99,6 +106,9 @@ class ChargingSessionModel(Base):
         Numeric(24, 3), nullable=True
     )
     meter_end_wh: Mapped[Decimal | None] = mapped_column(Numeric(24, 3), nullable=True)
+    meter_end_sampled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     energy_delivered_wh: Mapped[Decimal | None] = mapped_column(
         Numeric(24, 3), nullable=True
     )
@@ -133,6 +143,11 @@ class ChargingSessionEventModel(Base):
             partitioning key.
         session_id: The UUID of the session aggregate that owns the event.
         event_type: The type — ``Started``, ``Updated`` or ``Ended``.
+        seq_no: OCPP's own per-transaction sequence counter, nullable - a
+            row written before this column existed has no truthful value,
+            and 0 would collide with a real ``seqNo`` of 0. Captured so
+            ordering/duplicate detection become possible later
+            (`future.md` item 27); no uniqueness is enforced on it yet.
     """
 
     __tablename__ = "charging_session_events"
@@ -159,6 +174,7 @@ class ChargingSessionEventModel(Base):
         ),
         nullable=False,
     )
+    seq_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     __table_args__ = (
         Index(
             "ix_charging_session_events_session_time",
@@ -176,7 +192,13 @@ class ChargingSessionMeterValueModel(Base):
         meter_value_id: Internal UUID of the sample.
         sampled_at: The time of measurement; also the time partitioning key.
         session_id: The UUID of the session aggregate that owns the sample.
-        value_wh: The meter reading normalized to Wh.
+        value_wh: The meter reading normalized to Wh. Normalization
+            (measurand filtering, unit/multiplier conversion) is owned by
+            the OCPP adapter (F-B2,
+            ``charging_stations.ocpp.ocpp_server.normalize_sampled_value_to_wh``)
+            - this table only ever stores the canonical result, never the
+            raw pre-normalization payload (see ``future.md`` item 27 for
+            the deferred raw-payload audit trail).
     """
 
     __tablename__ = "charging_session_meter_values"

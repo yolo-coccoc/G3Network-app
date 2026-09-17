@@ -1,8 +1,15 @@
 """Minimal data types for the ideal charging_sessions MVP.
 
 The MVP assumes messages arrive in order, without duplicates and without
-interruption. Because of this the module only keeps the active/completed
-status, three TransactionEvent types and one canonical Wh meter sample.
+interruption - retry, DLQ, out-of-order recovery, and dedup remain
+deferred (``future.md`` item 27). Because of this the module only keeps
+the active/completed status, three TransactionEvent types and one
+canonical Wh meter sample. F-B2 layers two correctness invariants on top
+of that assumption without reopening it: a session's status can only move
+forward (an event for an already-``COMPLETED`` session is refused, not
+applied), and a meter reading can only advance the aggregate's
+``meter_end_wh`` forward in *time* (a sample stamped earlier than one
+already applied is discarded, not overwritten).
 """
 
 import enum
