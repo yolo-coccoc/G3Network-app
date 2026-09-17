@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
+import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.repository as telematics_repository
@@ -22,13 +23,20 @@ import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
 import app.domains.vehicles.service as vehicles_public_service
+from app.domains.charging_sessions.exceptions import ChargingSessionInputError
 from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
     MeterSampleInput,
     SessionEventType,
     SessionStatus,
 )
-from app.domains.charging_stations.types import NearestChargingStation
+from app.domains.charging_stations.exceptions import ChargingConnectorNotFoundError
+from app.domains.charging_stations.models import ChargingStationModel
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ChargingStationMaintenanceStatus,
+    NearestChargingStation,
+)
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
@@ -154,6 +162,24 @@ def _charging_session() -> ChargingSessionModel:
         energy_delivered_wh=None,
         created_at=now,
         updated_at=now,
+    )
+
+
+def _charging_station_record(*, station_id: UUID | None = None) -> ChargingStationModel:
+    """Create a minimal ORM station for a nearby-search mapper test."""
+    now = datetime.now(timezone.utc)
+    return ChargingStationModel(
+        station_id=station_id or uuid4(),
+        ocpp_identity="OCPP-TEST-001",
+        display_name="Test Station",
+        location=coordinates_to_location(10.762622, 106.660172),
+        power_rating_kw=Decimal("120.00"),
+        connector_standard="CCS2",
+        operating_hours="24/7",
+        maintenance_status=ChargingStationMaintenanceStatus.OPERATIONAL,
+        created_at=now,
+        updated_at=now,
+        deleted_at=None,
     )
 
 
@@ -719,6 +745,146 @@ async def test_charging_service_runs_started_meter_ended_flow(
     assert session.energy_delivered_wh == Decimal("750")
     assert inserted_events == [SessionEventType.STARTED, SessionEventType.ENDED]
     assert inserted_meters == [Decimal("1500")]
+
+
+@pytest.mark.asyncio
+async def test_get_station_energy_summary_converts_wh_to_kwh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The energy summary converts the repository's Wh total to kWh (F-C5)."""
+    station_id = uuid4()
+    start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    end = datetime(2026, 9, 2, tzinfo=timezone.utc)
+
+    async def energy_summary(db: AsyncSession, **kwargs: object) -> tuple[Decimal, int]:
+        assert kwargs["station_id"] == station_id
+        assert kwargs["start_time"] == start
+        assert kwargs["end_time"] == end
+        return Decimal("12500.000"), 3
+
+    monkeypatch.setattr(
+        charging_repository, "get_station_energy_summary", energy_summary
+    )
+
+    summary = await charging_service.get_station_energy_summary(
+        _db(), station_id=station_id, start_time=start, end_time=end
+    )
+
+    assert summary.station_id == station_id
+    assert summary.total_energy_kwh == pytest.approx(12.5)
+    assert summary.session_count == 3
+
+
+@pytest.mark.asyncio
+async def test_get_station_energy_summary_rejects_naive_timestamp() -> None:
+    """A start_time/end_time with no timezone is rejected before any query runs."""
+    with pytest.raises(ChargingSessionInputError, match="start_time"):
+        await charging_service.get_station_energy_summary(
+            _db(),
+            station_id=uuid4(),
+            start_time=datetime(2026, 9, 1),
+            end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_station_energy_summary_rejects_non_positive_range() -> None:
+    """end_time at or before start_time is rejected."""
+    same_instant = datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    with pytest.raises(ChargingSessionInputError):
+        await charging_service.get_station_energy_summary(
+            _db(),
+            station_id=uuid4(),
+            start_time=same_instant,
+            end_time=same_instant,
+        )
+
+
+def test_to_nearby_charging_station_response_decodes_location_and_distance() -> None:
+    """to_nearby_charging_station_response() decodes lat/lon and carries distance_km (F-D1)."""
+    station = _charging_station_record()
+
+    response = charging_stations_service.to_nearby_charging_station_response(
+        station, connector_count=4, distance_km=2.5
+    )
+
+    assert response.latitude == pytest.approx(10.762622)
+    assert response.longitude == pytest.approx(106.660172)
+    assert response.connector_count == 4
+    assert response.distance_km == pytest.approx(2.5)
+    assert response.power_rating_kw == pytest.approx(120.0)
+
+
+@pytest.mark.asyncio
+async def test_find_nearby_charging_stations_clamps_radius_and_paginates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The nearby-search service clamps radius/page/page_size before querying."""
+    station = _charging_station_record()
+    captured: dict[str, object] = {}
+
+    async def list_nearby(
+        db: AsyncSession, **kwargs: object
+    ) -> list[tuple[ChargingStationModel, float]]:
+        captured.update(kwargs)
+        return [(station, 1500.0)]
+
+    async def count_nearby(db: AsyncSession, **kwargs: object) -> int:
+        return 1
+
+    async def connector_count(db: AsyncSession, station_id: UUID) -> int:
+        return 2
+
+    monkeypatch.setattr(
+        charging_stations_repository, "list_nearby_stations", list_nearby
+    )
+    monkeypatch.setattr(
+        charging_stations_repository, "count_nearby_stations", count_nearby
+    )
+    monkeypatch.setattr(
+        charging_stations_repository, "count_connectors_by_station_id", connector_count
+    )
+
+    response = await charging_stations_service.find_nearby_charging_stations(
+        _db(),
+        latitude=10.762622,
+        longitude=106.660172,
+        radius_km=settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM + 100,
+        page=0,
+        page_size=0,
+    )
+
+    assert captured["radius_meters"] == pytest.approx(
+        settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM * 1000
+    )
+    assert response.page == settings.API_DEFAULT_PAGE
+    assert response.page_size == settings.API_DEFAULT_PAGE_SIZE
+    assert len(response.items) == 1
+    assert response.items[0].distance_km == pytest.approx(1.5)
+    assert response.items[0].connector_count == 2
+
+
+@pytest.mark.asyncio
+async def test_update_connector_status_raises_not_found_for_inactive_connector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """update_connector_status() raises when the repository finds no active connector."""
+
+    async def no_update(db: AsyncSession, connector_id: UUID, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        charging_stations_repository, "update_connector_status", no_update
+    )
+
+    with pytest.raises(ChargingConnectorNotFoundError):
+        await charging_stations_service.update_connector_status(
+            _db(),
+            connector_id=uuid4(),
+            status=ChargingConnectorStatus.OCCUPIED,
+            status_updated_at=datetime.now(timezone.utc),
+        )
 
 
 def test_geo_location_round_trips_through_postgis_conversion() -> None:

@@ -16,7 +16,7 @@ def test_migration_graph_has_one_current_head() -> None:
     backend_root = _backend_root()
     script = ScriptDirectory.from_config(Config(str(backend_root / "alembic.ini")))
 
-    assert script.get_heads() == ["0009_anomaly_notification_type"]
+    assert script.get_heads() == ["0010_charging_connector_status"]
 
 
 def test_reset_migration_uses_application_allowlist() -> None:
