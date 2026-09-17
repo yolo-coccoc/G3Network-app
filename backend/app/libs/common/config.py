@@ -50,6 +50,10 @@ class Settings(BaseSettings):
         CHARGING_OCPP_PORT: Bind port of the OCPP WebSocket gateway.
         CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: Maximum radius accepted by
             the nearby-station search (F-D1).
+        TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS: How often the device
+            health monitor sweeps for silent devices (F-J1/F-J3).
+        TELEMATICS_SILENT_THRESHOLD_MINUTES: How long without telemetry
+            counts as a device going silent (F-J1/F-J3).
     """
 
     model_config = SettingsConfigDict(
@@ -111,6 +115,12 @@ class Settings(BaseSettings):
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.
     CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: float = Field(default=200.0, gt=0)
+
+    # F-J1/F-J3's periodic device-silence check. The interval must stay
+    # materially smaller than the threshold, or a device could sit past the
+    # threshold for a whole interval before anyone notices.
+    TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS: float = Field(default=300.0, gt=0)
+    TELEMATICS_SILENT_THRESHOLD_MINUTES: int = Field(default=180, ge=1)
 
     # The old production planner's timeout/retry/raw-payload settings are
     # commented out in the ideal MVP; the corresponding source will come back

@@ -1,11 +1,11 @@
 """Shared types for the notifications domain.
 
 A single generic notification contract serves every alert-producing feature
-(F-A2, F-A4, F-A3 today; F-B5/F-J3 later) so each one only needs to add a
-``NotificationType`` member and shape its own ``payload`` - not a new table,
-migration, or endpoint. See ``docs/01-requirements/future.md`` for the
-recipient-scoping and multi-channel-delivery gaps this intentionally leaves
-open.
+(F-A2, F-A4, F-A3, F-J1/F-J3 today; F-B5 later) so each one only needs to
+add a ``NotificationType`` member and shape its own ``payload`` - not a new
+table, migration, or endpoint. See ``docs/01-requirements/future.md`` for
+the recipient-scoping and multi-channel-delivery gaps this intentionally
+leaves open.
 """
 
 import enum
@@ -18,6 +18,7 @@ class NotificationType(str, enum.Enum):
     BATTERY_ALERT = "BATTERY_ALERT"
     ANOMALY_ALERT = "ANOMALY_ALERT"  # F-A4
     SOH_ALERT = "SOH_ALERT"  # F-A3
+    DEVICE_OFFLINE_ALERT = "DEVICE_OFFLINE_ALERT"  # F-J1, F-J3 partial
 
 
 class NotificationSeverity(str, enum.Enum):

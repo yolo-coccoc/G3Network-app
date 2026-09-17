@@ -1,5 +1,6 @@
 """Smoke test for the backend's main service workflows."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -15,6 +16,7 @@ import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
+import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telematics.service as telematics_public_service
@@ -51,7 +53,11 @@ from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.telemetry.types import BatteryAlertLevel, VehicleAnomalyType
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import VehicleCreateRequest
-from app.domains.vehicles.types import VehicleReference, VehicleStatus
+from app.domains.vehicles.types import (
+    VehicleActivationStatus,
+    VehicleReference,
+    VehicleStatus,
+)
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 
@@ -61,7 +67,9 @@ def _db() -> AsyncSession:
     return cast(AsyncSession, object())
 
 
-def _vehicle_record() -> VehicleModel:
+def _vehicle_record(
+    *, activation_status: VehicleActivationStatus = VehicleActivationStatus.PENDING
+) -> VehicleModel:
     """Create a minimal ORM vehicle for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return VehicleModel(
@@ -73,6 +81,7 @@ def _vehicle_record() -> VehicleModel:
         year=2026,
         status=VehicleStatus.ACTIVE,
         fleet_id=None,
+        activation_status=activation_status,
         created_at=now,
         updated_at=now,
     )
@@ -97,6 +106,8 @@ def _telemetry_envelope(
     *,
     battery_temperature: float | None = None,
     battery_voltage: float | None = None,
+    soh_percent: float | None = None,
+    cycle_count: int | None = None,
     errors: list[str] | None = None,
 ) -> TelemetryEnvelope:
     """Create a valid telemetry envelope for process_message."""
@@ -110,6 +121,8 @@ def _telemetry_envelope(
                 "soc": soc,
                 "temperature": battery_temperature,
                 "voltage": battery_voltage,
+                "soh_percent": soh_percent,
+                "cycle_count": cycle_count,
             },
             "errors": errors,
         }
@@ -118,7 +131,12 @@ def _telemetry_envelope(
 
 
 def _telemetry_record(
-    *, vehicle_id: UUID, recorded_at: datetime, message_id: int = 1
+    *,
+    vehicle_id: UUID,
+    recorded_at: datetime,
+    message_id: int = 1,
+    soh_percent: float | None = None,
+    cycle_count: int | None = None,
 ) -> VehicleTelemetryModel:
     """Create a minimal ORM telemetry record for a history/latest test."""
     return VehicleTelemetryModel(
@@ -136,6 +154,8 @@ def _telemetry_record(
         battery_voltage=None,
         battery_current=None,
         battery_temperature=None,
+        soh_percent=soh_percent,
+        cycle_count=cycle_count,
         motor_temperature=None,
         odometer=None,
         signal_strength=None,
@@ -238,6 +258,147 @@ async def test_vehicle_service_soft_delete_returns_success(
 
 
 @pytest.mark.asyncio
+async def test_mark_device_assigned_advances_pending_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_device_assigned() moves a PENDING vehicle to DEVICE_ASSIGNED (F-F2)."""
+    record = _vehicle_record(activation_status=VehicleActivationStatus.PENDING)
+    updated_values: dict[str, object] = {}
+
+    async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel:
+        return record
+
+    async def update_fields(
+        db_session: AsyncSession, vehicle_id: UUID, values: dict[str, object]
+    ) -> VehicleModel:
+        updated_values.update(values)
+        return record
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(vehicle_repository, "update_fields", update_fields)
+
+    await vehicle_service.mark_device_assigned(_db(), record.vehicle_id)
+
+    assert updated_values == {
+        "activation_status": VehicleActivationStatus.DEVICE_ASSIGNED
+    }
+
+
+@pytest.mark.asyncio
+async def test_mark_device_assigned_is_noop_past_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_device_assigned() doesn't regress a vehicle already past PENDING (F-F2)."""
+    record = _vehicle_record(activation_status=VehicleActivationStatus.ACTIVATED)
+
+    async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel:
+        return record
+
+    async def fail_if_called(
+        db_session: AsyncSession, vehicle_id: UUID, values: dict[str, object]
+    ) -> VehicleModel:
+        raise AssertionError("update_fields should not be called")
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(vehicle_repository, "update_fields", fail_if_called)
+
+    await vehicle_service.mark_device_assigned(_db(), record.vehicle_id)
+
+
+@pytest.mark.asyncio
+async def test_mark_vehicle_activated_advances_device_assigned_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_vehicle_activated() moves a vehicle to ACTIVATED (F-F2)."""
+    record = _vehicle_record(activation_status=VehicleActivationStatus.DEVICE_ASSIGNED)
+    updated_values: dict[str, object] = {}
+
+    async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel:
+        return record
+
+    async def update_fields(
+        db_session: AsyncSession, vehicle_id: UUID, values: dict[str, object]
+    ) -> VehicleModel:
+        updated_values.update(values)
+        return record
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(vehicle_repository, "update_fields", update_fields)
+
+    await vehicle_service.mark_vehicle_activated(_db(), record.vehicle_id)
+
+    assert updated_values == {"activation_status": VehicleActivationStatus.ACTIVATED}
+
+
+@pytest.mark.asyncio
+async def test_mark_vehicle_activated_is_noop_when_already_activated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mark_vehicle_activated() is idempotent once a vehicle is ACTIVATED (F-F2)."""
+    record = _vehicle_record(activation_status=VehicleActivationStatus.ACTIVATED)
+
+    async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel:
+        return record
+
+    async def fail_if_called(
+        db_session: AsyncSession, vehicle_id: UUID, values: dict[str, object]
+    ) -> VehicleModel:
+        raise AssertionError("update_fields should not be called")
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(vehicle_repository, "update_fields", fail_if_called)
+
+    await vehicle_service.mark_vehicle_activated(_db(), record.vehicle_id)
+
+
+@pytest.mark.asyncio
+async def test_get_vehicle_activation_summary_computes_rate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_vehicle_activation_summary() computes the success rate from two counts (F-F2)."""
+
+    async def count_by_status(
+        db_session: AsyncSession, activation_status: VehicleActivationStatus
+    ) -> int:
+        return {
+            VehicleActivationStatus.DEVICE_ASSIGNED: 3,
+            VehicleActivationStatus.ACTIVATED: 7,
+        }[activation_status]
+
+    monkeypatch.setattr(
+        vehicle_repository, "count_by_activation_status", count_by_status
+    )
+
+    summary = await vehicle_service.get_vehicle_activation_summary(_db())
+
+    assert summary.attempted_count == 10
+    assert summary.activated_count == 7
+    assert summary.activation_rate_percent == pytest.approx(70.0)
+
+
+@pytest.mark.asyncio
+async def test_get_vehicle_activation_summary_handles_zero_attempted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fleet with no provisioning attempts yet reports None, not a division by zero (F-F2)."""
+
+    async def count_by_status(
+        db_session: AsyncSession, activation_status: VehicleActivationStatus
+    ) -> int:
+        return 0
+
+    monkeypatch.setattr(
+        vehicle_repository, "count_by_activation_status", count_by_status
+    )
+
+    summary = await vehicle_service.get_vehicle_activation_summary(_db())
+
+    assert summary.attempted_count == 0
+    assert summary.activated_count == 0
+    assert summary.activation_rate_percent is None
+
+
+@pytest.mark.asyncio
 async def test_telematic_service_resolves_vehicle_vin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -267,6 +428,9 @@ async def test_telematic_service_resolves_vehicle_vin(
         async def scalar(self, statement: object) -> None:
             return await no_assigned_vehicle(statement)
 
+    async def mark_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
     monkeypatch.setattr(telematics_repository, "get_by_serial", no_existing_serial)
     monkeypatch.setattr(telematics_repository, "insert", insert_telematic)
     monkeypatch.setattr(
@@ -279,6 +443,10 @@ async def test_telematic_service_resolves_vehicle_vin(
         "resolve_vehicle_reference_by_id",
         resolve_id,
     )
+    # F-F2's activation hook fires since a vehicle_id resolves; mocked out
+    # since FakeDatabase only implements .scalar(), and this test is about
+    # VIN resolution, not activation.
+    monkeypatch.setattr(vehicles_public_service, "mark_device_assigned", mark_assigned)
 
     response = await telematics_service.create_telematic(
         cast(AsyncSession, FakeDatabase()),
@@ -330,6 +498,9 @@ async def test_telemetry_service_persists_mapped_message(
     ) -> VehicleTelemetryModel | None:
         return None
 
+    async def mark_activated(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
     monkeypatch.setattr(
         telematics_public_service,
         "resolve_mapping_by_serial",
@@ -339,6 +510,10 @@ async def test_telemetry_service_persists_mapped_message(
     monkeypatch.setattr(
         telemetry_repository, "get_latest_vehicle_telemetry", no_previous_telemetry
     )
+    # previous_telemetry is None here (first-ever message), which also
+    # triggers F-F2's activation hook - mocked out since this test is about
+    # the ingestion counters, not activation.
+    monkeypatch.setattr(vehicle_service, "mark_vehicle_activated", mark_activated)
 
     result = await telemetry_service.process_message(_db(), _telemetry_envelope())
 
@@ -351,10 +526,15 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
 ) -> None:
     """process_message raises exactly one notification when SOC crosses a threshold (F-A2)."""
     mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
-    # battery_temperature/battery_voltage/error_codes are None so F-A4's
-    # detectors (also run by process_message) find nothing to report here.
+    # battery_temperature/battery_voltage/error_codes/soh_percent are None
+    # so F-A3's and F-A4's detectors (also run by process_message) find
+    # nothing to report here.
     previous_telemetry = SimpleNamespace(
-        soc=25.0, battery_temperature=None, battery_voltage=None, error_codes=None
+        soc=25.0,
+        battery_temperature=None,
+        battery_voltage=None,
+        error_codes=None,
+        soh_percent=None,
     )
     created_notifications: list[dict[str, object]] = []
 
@@ -440,6 +620,85 @@ def test_detect_battery_alert_level(
         telemetry_service.detect_battery_alert_level(previous_soc, current_soc)
         == expected_level
     )
+
+
+@pytest.mark.parametrize(
+    ("previous_soh", "current_soh", "expected"),
+    [
+        (None, 65.0, False),  # first reading: no alert, matches F-A2
+        (None, 80.0, False),  # first reading, above threshold: no alert
+        (75.0, None, False),  # device didn't report SOH this message
+        (75.0, 71.0, False),  # dropping but still above threshold
+        (75.0, 70.0, True),  # entry, inclusive boundary
+        (65.0, 60.0, False),  # already below threshold: no repeat
+        (60.0, 75.0, False),  # SOH recovering never alerts
+        (85.0, 55.0, True),  # a bigger single-message drop still alerts once
+    ],
+)
+def test_detect_soh_alert(
+    previous_soh: float | None, current_soh: float | None, expected: bool
+) -> None:
+    """detect_soh_alert() only fires on a strict-above/inclusive-below crossing (F-A3).
+
+    Same crossing shape as detect_battery_alert_level, but unlike F-A4's
+    fire-safety detectors, a missing previous reading means no alert here -
+    gradual SOH degradation isn't a condition where skipping the very first
+    reading carries real risk.
+    """
+    assert telemetry_service.detect_soh_alert(previous_soh, current_soh) is expected
+
+
+@pytest.mark.asyncio
+async def test_process_message_raises_soh_alert_on_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """process_message raises exactly one SOH_ALERT notification on a crossing (F-A3)."""
+    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    previous_telemetry = SimpleNamespace(
+        soc=80.0,
+        battery_temperature=None,
+        battery_voltage=None,
+        error_codes=None,
+        soh_percent=75.0,
+    )
+    created_notifications: list[dict[str, object]] = []
+
+    async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
+        return mapping
+
+    async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
+        return 1
+
+    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+        return previous_telemetry
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        telematics_public_service, "resolve_mapping_by_serial", resolve_mapping
+    )
+    monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
+    monkeypatch.setattr(
+        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    result = await telemetry_service.process_message(
+        _db(), _telemetry_envelope(soc=80.0, soh_percent=68.0, cycle_count=142)
+    )
+
+    assert result == {"processed": 1, "skipped": 0, "errors": 0}
+    assert len(created_notifications) == 1
+    call = created_notifications[0]
+    assert call["notification_type"] is NotificationType.SOH_ALERT
+    assert call["severity"] is NotificationSeverity.WARNING
+    assert call["vehicle_id"] == mapping.vehicle_id
+    payload = cast(dict[str, object], call["payload"])
+    assert payload["soh_percent"] == 68.0
+    assert payload["cycle_count"] == 142
 
 
 @pytest.mark.parametrize(
@@ -602,7 +861,11 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     """process_message raises one ANOMALY_ALERT notification per detector that fires (F-A4)."""
     mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
     previous_telemetry = SimpleNamespace(
-        soc=80.0, battery_temperature=45.0, battery_voltage=650.0, error_codes=None
+        soc=80.0,
+        battery_temperature=45.0,
+        battery_voltage=650.0,
+        error_codes=None,
+        soh_percent=None,
     )
     created_notifications: list[dict[str, object]] = []
 
@@ -1119,3 +1382,211 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
     )
 
     assert captured_limit["limit"] == settings.TELEMETRY_HISTORY_MAX_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_raises_alert_for_newly_silent_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device silent past the threshold with no prior alert gets exactly one (F-J1/F-J3)."""
+    vehicle_id = uuid4()
+    device = _telematic_record(vehicle_id)
+    now = datetime.now(timezone.utc)
+    last_seen_at = now - timedelta(
+        minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 30
+    )
+    created_notifications: list[dict[str, object]] = []
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def last_telemetry_at(db: AsyncSession, vid: UUID) -> datetime:
+        assert vid == vehicle_id
+        return last_seen_at
+
+    async def last_notified_at(db: AsyncSession, **kwargs: object) -> None:
+        return None
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(
+        telemetry_service, "resolve_last_telemetry_at", last_telemetry_at
+    )
+    monkeypatch.setattr(
+        notifications_service, "resolve_last_notified_at", last_notified_at
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    await device_health_monitor.check_devices_for_silence(_db())
+
+    assert len(created_notifications) == 1
+    call = created_notifications[0]
+    assert call["notification_type"] is NotificationType.DEVICE_OFFLINE_ALERT
+    assert call["severity"] is NotificationSeverity.WARNING
+    assert call["vehicle_id"] == vehicle_id
+    payload = cast(dict[str, object], call["payload"])
+    assert payload["telematic_serial"] == device.telematic_serial
+    assert cast(int, payload["silent_minutes"]) >= (
+        settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 30
+    )
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_skips_device_within_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device that reported recently doesn't alert (F-J1/F-J3)."""
+    vehicle_id = uuid4()
+    device = _telematic_record(vehicle_id)
+    last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def last_telemetry_at(db: AsyncSession, vid: UUID) -> datetime:
+        return last_seen_at
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("create_notification should not be called")
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(
+        telemetry_service, "resolve_last_telemetry_at", last_telemetry_at
+    )
+    monkeypatch.setattr(notifications_service, "create_notification", fail_if_called)
+
+    await device_health_monitor.check_devices_for_silence(_db())
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_skips_device_never_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device that has never sent telemetry is skipped, not treated as silent (F-J1/F-J3)."""
+    vehicle_id = uuid4()
+    device = _telematic_record(vehicle_id)
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def no_telemetry(db: AsyncSession, vid: UUID) -> None:
+        return None
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("create_notification should not be called")
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(telemetry_service, "resolve_last_telemetry_at", no_telemetry)
+    monkeypatch.setattr(notifications_service, "create_notification", fail_if_called)
+
+    await device_health_monitor.check_devices_for_silence(_db())
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_suppresses_duplicate_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device already alerted for this exact silence episode doesn't alert again (F-J1/F-J3)."""
+    vehicle_id = uuid4()
+    device = _telematic_record(vehicle_id)
+    now = datetime.now(timezone.utc)
+    last_seen_at = now - timedelta(
+        minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 30
+    )
+    # The prior alert is newer than last_seen_at - the device hasn't
+    # reported anything new since that alert was raised.
+    prior_alert_at = last_seen_at + timedelta(minutes=1)
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def last_telemetry_at(db: AsyncSession, vid: UUID) -> datetime:
+        return last_seen_at
+
+    async def last_notified_at(db: AsyncSession, **kwargs: object) -> datetime:
+        return prior_alert_at
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("create_notification should not be called")
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(
+        telemetry_service, "resolve_last_telemetry_at", last_telemetry_at
+    )
+    monkeypatch.setattr(
+        notifications_service, "resolve_last_notified_at", last_notified_at
+    )
+    monkeypatch.setattr(notifications_service, "create_notification", fail_if_called)
+
+    await device_health_monitor.check_devices_for_silence(_db())
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_realerts_after_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device that recovered then went silent again alerts a second time (F-J1/F-J3)."""
+    vehicle_id = uuid4()
+    device = _telematic_record(vehicle_id)
+    now = datetime.now(timezone.utc)
+    last_seen_at = now - timedelta(
+        minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 30
+    )
+    # The prior alert predates last_seen_at - the device reported again
+    # (moving last_seen_at forward) after that alert, so a new silence
+    # episode is eligible to alert.
+    prior_alert_at = last_seen_at - timedelta(hours=1)
+    created_notifications: list[dict[str, object]] = []
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def last_telemetry_at(db: AsyncSession, vid: UUID) -> datetime:
+        return last_seen_at
+
+    async def last_notified_at(db: AsyncSession, **kwargs: object) -> datetime:
+        return prior_alert_at
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(
+        telemetry_service, "resolve_last_telemetry_at", last_telemetry_at
+    )
+    monkeypatch.setattr(
+        notifications_service, "resolve_last_notified_at", last_notified_at
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    await device_health_monitor.check_devices_for_silence(_db())
+
+    assert len(created_notifications) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_monitor_exits_immediately_when_stop_event_already_set() -> None:
+    """run_monitor() returns without running a tick if already told to stop (F-J1/F-J3)."""
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    # No monkeypatching of check_devices_for_silence/list_active_with_vehicle -
+    # if run_monitor tried to run a tick, it would hit the real (unmocked)
+    # database and fail/hang, so a clean return proves no tick ran.
+    await device_health_monitor.run_monitor(stop_event)

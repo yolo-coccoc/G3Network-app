@@ -1,7 +1,7 @@
 # G3Network - Makefile
 # Common commands used for development
 
-.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim backend-test db-migrate db-reset
+.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim telematics-monitor-dev backend-test db-migrate db-reset
 
 # Default: show help
 help:
@@ -20,6 +20,7 @@ help:
 	@echo "  make charging-ocpp-dev - Run the OCPP 2.0.1 gateway (port 9000)"
 	@echo "  make charging-ocpp-seed - Provision station/EVSE/connector simulator"
 	@echo "  make charging-ocpp-sim - Run the OCPP session happy-path simulator"
+	@echo "  make telematics-monitor-dev - Run the device-silence health monitor"
 	@echo "  make backend-test    - Run tests"
 	@echo ""
 	@echo "Database:"
@@ -81,6 +82,10 @@ charging-ocpp-seed:
 charging-ocpp-sim:
 	@echo "Running the OCPP session happy-path simulator..."
 	cd backend && uv run python ../simulator/charging_session_simulator.py
+
+telematics-monitor-dev:
+	@echo "Starting telematics device health monitor..."
+	cd backend && uv run python -m app.domains.telematics.monitoring.entrypoint
 
 backend-test:
 	@echo "Running backend tests..."

@@ -6,6 +6,7 @@ ingestion worker's transaction when ``create_notification`` is called as a
 cross-domain producer. This module never commits/rollbacks on its own.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +74,28 @@ async def create_notification(
         payload=payload,
     )
     return NotificationReference(notification_id=notification.notification_id)
+
+
+async def resolve_last_notified_at(
+    db: AsyncSession, *, vehicle_id: UUID, notification_type: NotificationType
+) -> datetime | None:
+    """Get when a vehicle was last notified of a given type. Public entry point for F-J1/F-J3.
+
+    Args:
+        db: Async session owned by the caller's entry boundary (the
+            telematics device-health monitor's transaction).
+        vehicle_id: Vehicle to look up.
+        notification_type: Notification type to filter by.
+
+    Returns:
+        The `created_at` of the most recent matching notification, or
+        `None` if none exist. A primitive return type, not the ORM model -
+        the correct shape for a cross-domain boundary.
+    """
+    notification = await repository.find_latest_by_vehicle_and_type(
+        db, vehicle_id, notification_type
+    )
+    return notification.created_at if notification is not None else None
 
 
 async def list_notifications(

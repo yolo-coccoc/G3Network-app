@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telematics.models import TelematicModel
-from app.domains.telematics.types import TelematicVehicleMapping
+from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 
 
 async def get_by_id(
@@ -112,6 +112,33 @@ async def find_mappings_by_serial(
         )
         for row in query_result.all()
     }
+
+
+async def list_active_with_vehicle(
+    db_session: AsyncSession,
+) -> list[TelematicModel]:
+    """Get active devices assigned to a vehicle, for the F-J1/F-J3 health monitor.
+
+    Args:
+        db_session: Current database session.
+
+    Returns:
+        Non-soft-deleted, ``ACTIVE`` devices with a non-``None``
+        ``vehicle_id``. A device that's soft-deleted, explicitly
+        ``INACTIVE``/``MAINTENANCE``, or not yet assigned to a vehicle is
+        excluded - a device deliberately taken offline being silent is
+        expected, not something to alert on. Unbounded result set - the
+        MVP's device count doesn't need pagination here; add a cap if that
+        changes.
+    """
+    query_result = await db_session.execute(
+        select(TelematicModel).where(
+            TelematicModel.deleted_at.is_(None),
+            TelematicModel.status == TelematicStatus.ACTIVE,
+            TelematicModel.vehicle_id.is_not(None),
+        )
+    )
+    return list(query_result.scalars().all())
 
 
 async def list_all(

@@ -116,6 +116,37 @@ async def list_notifications(
     return list(result.scalars().all())
 
 
+async def find_latest_by_vehicle_and_type(
+    db: AsyncSession, vehicle_id: UUID, notification_type: NotificationType
+) -> NotificationModel | None:
+    """Find the most recent notification of a type for a vehicle (F-J1/F-J3).
+
+    Composite business-identity lookup - both parts positional, per this
+    backend's naming convention (the function name already names both).
+
+    Args:
+        db: Current async session.
+        vehicle_id: Vehicle to look up.
+        notification_type: Notification type to filter by.
+
+    Returns:
+        The matching notification with the highest ``notification_id``
+        (the domain's own monotonic ordering, not ``created_at`` - avoids a
+        tie if two notifications land within the same tick), or ``None`` if
+        none exist.
+    """
+    result = await db.execute(
+        select(NotificationModel)
+        .where(
+            NotificationModel.vehicle_id == vehicle_id,
+            NotificationModel.notification_type == notification_type,
+        )
+        .order_by(NotificationModel.notification_id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def mark_notification_read(
     db: AsyncSession, notification_id: int
 ) -> NotificationModel | None:
