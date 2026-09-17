@@ -143,6 +143,106 @@ class VehicleTelemetryHistoryResponse(BaseModel):
     count: int = Field(..., ge=0)
 
 
+class VehicleOperatingReportResponse(BaseModel):
+    """Per-vehicle operating performance over a queried window (F-A6).
+
+    Energy is inferred from SOC drops in the vehicle's own telemetry, not
+    from charging-session records (which carry no vehicle linkage) - see
+    ``telemetry.service.get_vehicle_operating_report`` for the accuracy
+    limits of that method (gross not net energy, SOC quantization,
+    sparse-telemetry under-counting, nominal not SOH-adjusted capacity).
+    Every rate field is ``None`` when it's undefined (no distance
+    recorded, or fewer than two samples in the window); the raw sums are
+    always numbers.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle queried.
+        start_time: Normalized (UTC) lower bound actually used.
+        end_time: Normalized (UTC) upper bound actually used.
+        sample_count: Telemetry rows inside the window.
+        odometer_sample_count: Rows whose ``odometer`` was not NULL.
+        first_recorded_at: Earliest telemetry timestamp in the window, or
+            ``None`` if the window is empty.
+        last_recorded_at: Latest telemetry timestamp in the window, or
+            ``None`` if the window is empty.
+        distance_km: Total distance traveled in the window.
+        energy_consumed_kwh: Total energy inferred from SOC drops.
+        energy_per_100km_kwh: Energy intensity, or ``None`` if
+            ``distance_km`` is 0.
+        distance_per_day_km: Average daily distance over the *requested*
+            window (not the observed sample span), or ``None`` if fewer
+            than two samples were recorded.
+        energy_cost_vnd: ``energy_consumed_kwh`` priced at
+            ``cost_per_kwh_vnd``.
+        cost_per_km_vnd: Cost per kilometre, or ``None`` if ``distance_km``
+            is 0.
+        battery_capacity_kwh: Pack capacity used for the kWh conversion -
+            the vehicle's recorded value, or the engineering default.
+        is_default_battery_capacity: ``True`` if the vehicle has no
+            recorded ``battery_capacity_kwh`` and the default was used.
+        cost_per_kwh_vnd: Flat engineering-default tariff used for the
+            cost figures - not vendor-confirmed, not configurable yet.
+    """
+
+    vehicle_id: UUID
+    start_time: datetime
+    end_time: datetime
+    sample_count: int = Field(..., ge=0)
+    odometer_sample_count: int = Field(..., ge=0)
+    first_recorded_at: datetime | None = None
+    last_recorded_at: datetime | None = None
+    distance_km: float = Field(..., ge=0)
+    energy_consumed_kwh: float = Field(..., ge=0)
+    energy_per_100km_kwh: float | None = Field(None, ge=0)
+    distance_per_day_km: float | None = Field(None, ge=0)
+    energy_cost_vnd: float = Field(..., ge=0)
+    cost_per_km_vnd: float | None = Field(None, ge=0)
+    battery_capacity_kwh: float = Field(..., gt=0)
+    is_default_battery_capacity: bool
+    cost_per_kwh_vnd: float = Field(..., ge=0)
+
+
+class VehicleEnergyUsageResponse(BaseModel):
+    """Energy that entered one vehicle's battery over a queried window (F-C6).
+
+    "Customer" is a vehicle in this MVP (one vehicle per customer); there
+    is no customer entity in this backend. Measures energy *into the
+    pack*, inferred from SOC rises in the vehicle's own telemetry - not
+    kWh billed at a station meter, and not attributable to any station,
+    connector, or session. It therefore cannot satisfy NF-10's 3-way
+    reconciliation (<1% deviation): a station meter typically reads more
+    than the pack receives (charger/conversion losses), and this also
+    includes regenerative braking and any non-station charging. See
+    ``docs/01-requirements/future.md`` for the station-metered method
+    this is a stand-in for.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle queried.
+        start_time: Normalized (UTC) lower bound actually used.
+        end_time: Normalized (UTC) upper bound actually used.
+        sample_count: Telemetry rows inside the window.
+        first_recorded_at: Earliest telemetry timestamp in the window, or
+            ``None`` if the window is empty.
+        last_recorded_at: Latest telemetry timestamp in the window, or
+            ``None`` if the window is empty.
+        energy_charged_kwh: Total energy inferred from SOC rises.
+        battery_capacity_kwh: Pack capacity used for the kWh conversion -
+            the vehicle's recorded value, or the engineering default.
+        is_default_battery_capacity: ``True`` if the vehicle has no
+            recorded ``battery_capacity_kwh`` and the default was used.
+    """
+
+    vehicle_id: UUID
+    start_time: datetime
+    end_time: datetime
+    sample_count: int = Field(..., ge=0)
+    first_recorded_at: datetime | None = None
+    last_recorded_at: datetime | None = None
+    energy_charged_kwh: float = Field(..., ge=0)
+    battery_capacity_kwh: float = Field(..., gt=0)
+    is_default_battery_capacity: bool
+
+
 class TelemetryLocationPayload(BaseModel):
     """
     GPS location data from the telematic device.

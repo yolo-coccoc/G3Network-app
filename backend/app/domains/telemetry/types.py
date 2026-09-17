@@ -1,11 +1,13 @@
 """Shared types for the telemetry domain.
 
 Feature code: F-A2 (Tiered battery alerts), F-A4 (Anomaly detection),
-F-A3 (Battery health (SOH) & cycle tracking)
+F-A3 (Battery health (SOH) & cycle tracking), F-A6 (Operating performance
+report), F-C6 (Per-customer energy usage)
 """
 
 import enum
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.domains.notifications.types import NotificationSeverity
 
@@ -93,3 +95,58 @@ class VehicleAnomaly:
 # for "alert when SOH drops below a configured threshold," not multiple
 # severity levels.
 SOH_ALERT_THRESHOLD_PERCENT = 70.0
+
+
+@dataclass(frozen=True)
+class VehicleTelemetryWindowSummary:
+    """Folded telemetry deltas for one vehicle over one time window (F-A6/F-C6).
+
+    Produced by a single SQL pass over ``vehicle_telemetry`` (see
+    ``telemetry/repository.py::get_vehicle_window_summary``). Every field
+    is already clamped and coalesced by the query, so an empty window
+    yields zeros (never ``None``) for the sums.
+
+    Attributes:
+        soc_discharge_percent: Sum of positive SOC drops between
+            consecutive samples (%). Gross discharge - SOC rises are not
+            netted out. F-A6's consumed-energy input.
+        soc_charge_percent: Sum of positive SOC rises between consecutive
+            samples (%). F-C6's charged-energy input.
+        distance_km: Sum of positive odometer deltas between consecutive
+            samples (km).
+        sample_count: Telemetry rows inside the window. A fold needs two
+            adjacent rows to produce one delta, so a count below 2 means
+            no interval was measurable.
+        odometer_sample_count: Rows inside the window whose ``odometer``
+            was not NULL - lets a caller tell "vehicle didn't move" apart
+            from "device never reports odometer".
+        first_recorded_at: Earliest ``recorded_at`` in the window, or
+            ``None`` when the window is empty.
+        last_recorded_at: Latest ``recorded_at`` in the window, or
+            ``None`` when the window is empty.
+    """
+
+    soc_discharge_percent: float
+    soc_charge_percent: float
+    distance_km: float
+    sample_count: int
+    odometer_sample_count: int
+    first_recorded_at: datetime | None
+    last_recorded_at: datetime | None
+
+
+# Engineering default, not vendor-confirmed - see docs/01-requirements/future.md.
+# Used only when a vehicle has no recorded battery_capacity_kwh (F-A6/F-C6),
+# so an existing vehicle still produces a report instead of a 4xx.
+# Deliberately NOT a DB column default: writing this into the vehicles
+# table would make "nobody entered the spec" indistinguishable from "the
+# spec really is this value." The report echoes is_default_battery_capacity
+# so a consumer never mistakes the estimate for a recorded spec.
+DEFAULT_BATTERY_CAPACITY_KWH = 75.0
+
+# Engineering default, not a confirmed tariff - see
+# docs/01-requirements/future.md. F-A6's own constraint says "cost formula
+# must be configurable (electricity price varies)" - that is knowingly
+# unmet this round. Flat rate only: no time-of-use, no per-station tariff,
+# no tax or demand charges.
+ENERGY_COST_PER_KWH_VND = 3000.0

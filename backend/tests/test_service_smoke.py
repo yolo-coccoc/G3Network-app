@@ -9,6 +9,7 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
+from aiomqtt import MqttError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
@@ -16,6 +17,7 @@ import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
+import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
@@ -41,8 +43,16 @@ from app.domains.charging_stations.types import (
 )
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.domains.telematics.exceptions import (
+    TelematicCommandPublishError,
+    TelematicNotConfigurableError,
+    TelematicNotFoundError,
+)
 from app.domains.telematics.models import TelematicModel
-from app.domains.telematics.schemas import TelematicCreateRequest
+from app.domains.telematics.schemas import (
+    TelematicConfigPushRequest,
+    TelematicCreateRequest,
+)
 from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 from app.domains.telemetry.exceptions import (
     TelemetryInvalidRangeError,
@@ -50,7 +60,12 @@ from app.domains.telemetry.exceptions import (
 )
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
-from app.domains.telemetry.types import BatteryAlertLevel, VehicleAnomalyType
+from app.domains.telemetry.types import (
+    DEFAULT_BATTERY_CAPACITY_KWH,
+    BatteryAlertLevel,
+    VehicleAnomalyType,
+    VehicleTelemetryWindowSummary,
+)
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import (
@@ -96,6 +111,8 @@ def _telematic_record(vehicle_id: UUID) -> TelematicModel:
         vehicle_id=vehicle_id,
         status=TelematicStatus.ACTIVE,
         firmware_version="test",
+        telemetry_interval_seconds=None,
+        config_pushed_at=None,
         created_at=now,
         updated_at=now,
     )
@@ -232,6 +249,7 @@ async def test_vehicle_service_creates_vehicle_response(
             model=record.model,
             year=record.year,
             status=record.status,
+            battery_capacity_kwh=None,
             fleet_id=None,
         ),
     )
@@ -405,7 +423,9 @@ async def test_telematic_service_resolves_vehicle_vin(
     """The telematic service resolves the VIN via the vehicles public service."""
     vehicle_id = uuid4()
     record = _telematic_record(vehicle_id)
-    reference = VehicleReference(vehicle_id=vehicle_id, vin="1HGBH41JXMN109186")
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
 
     async def no_existing_serial(db: AsyncSession, serial: str) -> None:
         return None
@@ -460,6 +480,158 @@ async def test_telematic_service_resolves_vehicle_vin(
 
     assert response.vehicle_id == vehicle_id
     assert response.vehicle_vin == reference.vin
+
+
+def test_build_command_topic_uses_device_serial() -> None:
+    """The command topic matches mqtt-spec.md 2.3's template verbatim."""
+    topic = telematics_mqtt_publisher.build_command_topic("TBOX-VN-000123")
+
+    assert topic == "g3network/telematics/TBOX-VN-000123/command"
+
+
+def test_set_telemetry_interval_payload_matches_mqtt_contract() -> None:
+    """The payload has exactly the keys mqtt-spec.md 2.3 documents."""
+    issued_at = datetime(2026, 9, 17, 10, 30, tzinfo=timezone.utc)
+
+    payload = telematics_mqtt_publisher.build_set_telemetry_interval_payload(
+        60, issued_at=issued_at
+    )
+
+    assert payload == {
+        "command": "set_telemetry_interval",
+        "telemetry_interval_seconds": 60,
+        "timestamp": issued_at.isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_push_telematic_config_publishes_and_records_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful push publishes the command and persists the new interval."""
+    vehicle_id = uuid4()
+    record = _telematic_record(vehicle_id)
+    published: dict[str, object] = {}
+    updated: dict[str, object] = {}
+
+    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+        return record
+
+    async def publish(serial: str, payload: dict[str, object]) -> None:
+        published["serial"] = serial
+        published["payload"] = payload
+
+    async def update_fields(
+        db: AsyncSession, telematic_record: TelematicModel, values: dict[str, object]
+    ) -> TelematicModel:
+        updated.update(values)
+        return telematic_record
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(telematics_mqtt_publisher, "publish_device_command", publish)
+    monkeypatch.setattr(telematics_repository, "update_fields", update_fields)
+
+    response = await telematics_service.push_telematic_config(
+        _db(),
+        record.telematic_id,
+        TelematicConfigPushRequest(telemetry_interval_seconds=60),
+    )
+
+    assert published["serial"] == record.telematic_serial
+    payload = cast(dict[str, object], published["payload"])
+    assert payload["telemetry_interval_seconds"] == 60
+    assert updated["telemetry_interval_seconds"] == 60
+    # The DB row and the wire message must agree on the push timestamp.
+    config_pushed_at = cast(datetime, updated["config_pushed_at"])
+    assert config_pushed_at.isoformat() == payload["timestamp"]
+    assert response.telemetry_interval_seconds == 60
+    assert response.command_topic == (
+        f"g3network/telematics/{record.telematic_serial}/command"
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_telematic_config_rejects_unknown_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown or soft-deleted device 404s before any publish is attempted."""
+
+    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> None:
+        return None
+
+    async def fail_if_called(serial: str, payload: dict[str, object]) -> None:
+        raise AssertionError("publish must not be attempted for an unknown device")
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        telematics_mqtt_publisher, "publish_device_command", fail_if_called
+    )
+
+    with pytest.raises(TelematicNotFoundError):
+        await telematics_service.push_telematic_config(
+            _db(),
+            uuid4(),
+            TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        )
+
+
+@pytest.mark.asyncio
+async def test_push_telematic_config_rejects_inactive_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An INACTIVE device is refused before any publish is attempted."""
+    record = _telematic_record(uuid4())
+    record.status = TelematicStatus.INACTIVE
+
+    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+        return record
+
+    async def fail_if_called(serial: str, payload: dict[str, object]) -> None:
+        raise AssertionError("publish must not be attempted for an INACTIVE device")
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        telematics_mqtt_publisher, "publish_device_command", fail_if_called
+    )
+
+    with pytest.raises(TelematicNotConfigurableError):
+        await telematics_service.push_telematic_config(
+            _db(),
+            record.telematic_id,
+            TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        )
+
+
+@pytest.mark.asyncio
+async def test_push_telematic_config_does_not_record_when_publish_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed publish leaves the database untouched (fail-closed)."""
+    record = _telematic_record(uuid4())
+
+    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+        return record
+
+    async def raise_mqtt_error(serial: str, payload: dict[str, object]) -> None:
+        raise MqttError("broker unreachable")
+
+    async def fail_if_called(
+        db: AsyncSession, telematic_record: TelematicModel, values: dict[str, object]
+    ) -> None:
+        raise AssertionError("update_fields must not run when the publish failed")
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        telematics_mqtt_publisher, "publish_device_command", raise_mqtt_error
+    )
+    monkeypatch.setattr(telematics_repository, "update_fields", fail_if_called)
+
+    with pytest.raises(TelematicCommandPublishError):
+        await telematics_service.push_telematic_config(
+            _db(),
+            record.telematic_id,
+            TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        )
 
 
 @pytest.mark.asyncio
@@ -1234,7 +1406,9 @@ async def test_get_vehicle_telemetry_history_response_returns_ordered_points(
 ) -> None:
     """The history service returns every point the repository provides, count included."""
     vehicle_id = uuid4()
-    reference = VehicleReference(vehicle_id=vehicle_id, vin="1HGBH41JXMN109186")
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = datetime(2026, 9, 2, tzinfo=timezone.utc)
     records = [
@@ -1354,7 +1528,9 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
 ) -> None:
     """A limit above the configured max is clamped, not rejected."""
     vehicle_id = uuid4()
-    reference = VehicleReference(vehicle_id=vehicle_id, vin="1HGBH41JXMN109186")
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = start + timedelta(hours=1)
     captured_limit: dict[str, int] = {}
@@ -1382,6 +1558,404 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
     )
 
     assert captured_limit["limit"] == settings.TELEMETRY_HISTORY_MAX_LIMIT
+
+
+def test_calculate_energy_kwh_converts_soc_percent_with_capacity() -> None:
+    """A summed SOC delta converts to kWh proportionally to pack capacity."""
+    assert telemetry_service.calculate_energy_kwh(20.0, 75.0) == pytest.approx(15.0)
+
+
+def test_calculate_energy_per_100km_returns_none_without_distance() -> None:
+    """Energy intensity is undefined, not zero or infinite, at zero distance."""
+    assert telemetry_service.calculate_energy_per_100km_kwh(15.0, 0.0) is None
+
+
+def test_calculate_energy_per_100km_scales_to_hundred_kilometres() -> None:
+    """15 kWh over 50 km is 30 kWh/100km."""
+    result = telemetry_service.calculate_energy_per_100km_kwh(15.0, 50.0)
+    assert result == pytest.approx(30.0)
+
+
+def test_calculate_cost_per_km_returns_none_without_distance() -> None:
+    """Cost per km is undefined, not zero, at zero distance."""
+    assert telemetry_service.calculate_cost_per_km_vnd(45000.0, 0.0) is None
+
+
+def test_calculate_distance_per_day_uses_requested_window_not_observed_span() -> None:
+    """km/day divides by the full requested window, not the sample span."""
+    start = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    end = start + timedelta(days=7)
+
+    result = telemetry_service.calculate_distance_per_day_km(140.0, start, end)
+
+    assert result == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_operating_report_rejects_naive_start_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-A6 rejects a start_time with no timezone before touching the DB."""
+    with pytest.raises(TelemetryInvalidRangeError):
+        await telemetry_service.get_vehicle_operating_report(
+            _db(),
+            vehicle_id=uuid4(),
+            start_time=datetime(2026, 9, 1),
+            end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.asyncio
+async def test_operating_report_rejects_end_time_at_or_before_start_time() -> None:
+    """F-A6 rejects a non-positive time range."""
+    start = datetime(2026, 9, 2, tzinfo=timezone.utc)
+    with pytest.raises(TelemetryInvalidRangeError):
+        await telemetry_service.get_vehicle_operating_report(
+            _db(), vehicle_id=uuid4(), start_time=start, end_time=start
+        )
+
+
+@pytest.mark.asyncio
+async def test_operating_report_rejects_range_beyond_configured_maximum() -> None:
+    """F-A6 rejects a window wider than TELEMETRY_REPORT_MAX_RANGE_DAYS."""
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    end = start + timedelta(days=settings.TELEMETRY_REPORT_MAX_RANGE_DAYS + 1)
+    with pytest.raises(TelemetryInvalidRangeError):
+        await telemetry_service.get_vehicle_operating_report(
+            _db(), vehicle_id=uuid4(), start_time=start, end_time=end
+        )
+
+
+@pytest.mark.asyncio
+async def test_operating_report_raises_not_found_for_unknown_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-A6 404s on a vehicle that doesn't exist or was soft-deleted."""
+
+    async def no_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", no_vehicle
+    )
+
+    with pytest.raises(TelemetryNotFoundError):
+        await telemetry_service.get_vehicle_operating_report(
+            _db(),
+            vehicle_id=uuid4(),
+            start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.asyncio
+async def test_operating_report_falls_back_to_default_battery_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vehicle with no recorded capacity gets the documented default, flagged."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=20.0,
+        soc_charge_percent=0.0,
+        distance_km=50.0,
+        sample_count=10,
+        odometer_sample_count=10,
+        first_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.is_default_battery_capacity is True
+    assert report.battery_capacity_kwh == DEFAULT_BATTERY_CAPACITY_KWH
+    assert report.energy_consumed_kwh == pytest.approx(
+        20.0 / 100.0 * DEFAULT_BATTERY_CAPACITY_KWH
+    )
+
+
+@pytest.mark.asyncio
+async def test_operating_report_uses_recorded_battery_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vehicle with a recorded capacity uses it, not flagged as default."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=60.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=10.0,
+        soc_charge_percent=0.0,
+        distance_km=40.0,
+        sample_count=5,
+        odometer_sample_count=5,
+        first_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.is_default_battery_capacity is False
+    assert report.battery_capacity_kwh == 60.0
+
+
+@pytest.mark.asyncio
+async def test_operating_report_returns_none_rates_for_empty_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty window yields zero sums but None for every derived rate."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=0.0,
+        soc_charge_percent=0.0,
+        distance_km=0.0,
+        sample_count=0,
+        odometer_sample_count=0,
+        first_recorded_at=None,
+        last_recorded_at=None,
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.distance_km == 0.0
+    assert report.energy_consumed_kwh == 0.0
+    assert report.energy_per_100km_kwh is None
+    assert report.distance_per_day_km is None
+    assert report.cost_per_km_vnd is None
+
+
+@pytest.mark.asyncio
+async def test_operating_report_returns_none_rates_for_single_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single telemetry row (no adjacent pair) yields None derived rates too."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=0.0,
+        soc_charge_percent=0.0,
+        distance_km=0.0,
+        sample_count=1,
+        odometer_sample_count=1,
+        first_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.distance_per_day_km is None
+    assert report.energy_per_100km_kwh is None
+    assert report.cost_per_km_vnd is None
+
+
+@pytest.mark.asyncio
+async def test_operating_report_reports_energy_without_distance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parked vehicle can drain SOC (HVAC) with zero distance - energy stays positive."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=5.0,
+        soc_charge_percent=0.0,
+        distance_km=0.0,
+        sample_count=10,
+        odometer_sample_count=10,
+        first_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.energy_consumed_kwh > 0
+    assert report.energy_per_100km_kwh is None
+    assert report.cost_per_km_vnd is None
+
+
+@pytest.mark.asyncio
+async def test_operating_report_echoes_normalized_utc_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-UTC offset input is echoed back normalized to UTC."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=0.0,
+        soc_charge_percent=0.0,
+        distance_km=0.0,
+        sample_count=0,
+        odometer_sample_count=0,
+        first_recorded_at=None,
+        last_recorded_at=None,
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    tz_plus_7 = timezone(timedelta(hours=7))
+    report = await telemetry_service.get_vehicle_operating_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, 7, 0, tzinfo=tz_plus_7),
+        end_time=datetime(2026, 9, 2, 7, 0, tzinfo=tz_plus_7),
+    )
+
+    assert report.start_time == datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+    assert report.end_time == datetime(2026, 9, 2, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_energy_usage_report_reports_soc_rises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-C6 converts summed SOC rises (not drops) into charged energy."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+    )
+    summary = VehicleTelemetryWindowSummary(
+        soc_discharge_percent=5.0,
+        soc_charge_percent=40.0,
+        distance_km=0.0,
+        sample_count=20,
+        odometer_sample_count=0,
+        first_recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        last_recorded_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
+        return reference
+
+    async def window_summary(db: AsyncSession, **kwargs: object) -> Any:
+        return summary
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    monkeypatch.setattr(
+        telemetry_repository, "get_vehicle_window_summary", window_summary
+    )
+
+    report = await telemetry_service.get_vehicle_energy_usage_report(
+        _db(),
+        vehicle_id=vehicle_id,
+        start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+    )
+
+    assert report.energy_charged_kwh == pytest.approx(40.0 / 100.0 * 75.0)
+    assert report.is_default_battery_capacity is False
 
 
 @pytest.mark.asyncio

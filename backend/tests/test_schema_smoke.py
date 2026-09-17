@@ -13,11 +13,15 @@ from pydantic import ValidationError
 
 from app.domains.charging_stations.ocpp.ocpp_server import extract_meter_samples
 from app.domains.charging_stations.schemas import ChargingStationCreateRequest
-from app.domains.telematics.schemas import TelematicCreateRequest
+from app.domains.telematics.schemas import (
+    TelematicConfigPushRequest,
+    TelematicCreateRequest,
+)
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 from app.libs.common.geo import location_to_coordinates
 
 
@@ -142,6 +146,7 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
         model="E-Truck",
         year=2026,
         status=VehicleStatus.ACTIVE,
+        battery_capacity_kwh=None,
         fleet_id=None,
     )
     telematic = TelematicCreateRequest(
@@ -159,7 +164,30 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
             make="G3Network",
             model="E-Truck",
             year=2026,
+            battery_capacity_kwh=None,
             fleet_id=None,
+        )
+
+
+def test_telematic_config_push_request_rejects_interval_outside_bounds() -> None:
+    """F-J2's requested telemetry interval must stay within the configured bounds."""
+    TelematicConfigPushRequest(
+        telemetry_interval_seconds=settings.TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS
+    )
+    TelematicConfigPushRequest(
+        telemetry_interval_seconds=settings.TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS
+    )
+    with pytest.raises(ValidationError):
+        TelematicConfigPushRequest(
+            telemetry_interval_seconds=(
+                settings.TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS - 1
+            )
+        )
+    with pytest.raises(ValidationError):
+        TelematicConfigPushRequest(
+            telemetry_interval_seconds=(
+                settings.TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS + 1
+            )
         )
 
 

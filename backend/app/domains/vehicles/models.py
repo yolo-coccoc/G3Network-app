@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, Double
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy import Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -33,6 +33,10 @@ class VehicleModel(Base):
         activation_status: Progress through the F-F2 device-provisioning
             flow (`PENDING`/`DEVICE_ASSIGNED`/`ACTIVATED`), independent of
             `status`. Defaults to `PENDING`.
+        battery_capacity_kwh: Nominal usable battery pack capacity in kWh,
+            nullable - not every vehicle's spec has been recorded. The
+            F-A6/F-C6 reports fall back to a documented default when it's
+            NULL. Nominal, not SOH-adjusted.
         created_at: Creation time
         updated_at: Last update time
     """
@@ -62,6 +66,7 @@ class VehicleModel(Base):
         default=VehicleActivationStatus.PENDING,
         nullable=False,
     )
+    battery_capacity_kwh: Mapped[float | None] = mapped_column(Double(), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

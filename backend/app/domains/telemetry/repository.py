@@ -14,12 +14,13 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.types import VehicleTelemetryWindowSummary
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,119 @@ async def get_vehicle_telemetry_history(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def get_vehicle_window_summary(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> VehicleTelemetryWindowSummary:
+    """Fold one vehicle's telemetry deltas over a time window (F-A6/F-C6).
+
+    A single SQL pass computes ``lag(soc)``/``lag(odometer)`` over
+    ``(PARTITION BY vehicle_id ORDER BY recorded_at)`` within the
+    time-bounded window (an inner query), then sums the clamped
+    positive deltas in an outer aggregate - a window function cannot be
+    nested inside an aggregate in the same ``SELECT``. Reuses
+    ``ix_vehicle_telemetry_vehicle_time`` for both the filter and the
+    window's sort order; no new index is needed. Deliberately not built
+    on ``get_vehicle_telemetry_history`` - that function's hard ``limit``
+    would silently truncate a month of frequent telemetry.
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle to fold.
+        start_time: Inclusive lower bound, already validated and
+            normalized to UTC by the service.
+        end_time: Inclusive upper bound, already validated and normalized
+            to UTC by the service.
+
+    Returns:
+        The folded summary. An empty window (no rows) yields zeroed sums
+        and ``None`` timestamps, never ``NULL`` sums - see the outer
+        ``coalesce`` below.
+
+    Side Effects:
+        Read-only. Single SQL round trip; no I/O beyond the query.
+    """
+    # lag() must be computed in an inner SELECT: SQL forbids a window
+    # function inside an aggregate in the same select list.
+    # partition_by is redundant while the WHERE pins one vehicle, but it
+    # keeps the fold correct by construction if the filter is ever
+    # widened, and costs nothing - PostgreSQL proves vehicle_id constant
+    # and reuses ix_vehicle_telemetry_vehicle_time's ordering instead of
+    # sorting.
+    previous_soc = func.lag(VehicleTelemetryModel.soc).over(
+        partition_by=VehicleTelemetryModel.vehicle_id,
+        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    )
+    previous_odometer = func.lag(VehicleTelemetryModel.odometer).over(
+        partition_by=VehicleTelemetryModel.vehicle_id,
+        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    )
+
+    deltas = (
+        select(
+            VehicleTelemetryModel.recorded_at.label("recorded_at"),
+            VehicleTelemetryModel.odometer.label("odometer"),
+            (previous_soc - VehicleTelemetryModel.soc).label("soc_drop"),
+            (VehicleTelemetryModel.soc - previous_soc).label("soc_rise"),
+            (VehicleTelemetryModel.odometer - previous_odometer).label(
+                "odometer_delta"
+            ),
+        )
+        .where(
+            VehicleTelemetryModel.vehicle_id == vehicle_id,
+            VehicleTelemetryModel.recorded_at >= start_time,
+            VehicleTelemetryModel.recorded_at <= end_time,
+        )
+        .subquery()
+    )
+
+    # coalesce(delta, 0.0) before greatest(): the window's first row has
+    # no predecessor (lag() is NULL), and an odometer the device didn't
+    # report is NULL too. PostgreSQL's GREATEST happens to skip NULL
+    # arguments, but relying on that non-standard behaviour would make
+    # the clamp unreadable - be explicit instead.
+    # greatest(..., 0.0) drops negative deltas: a drop is not a rise, a
+    # rise is not a drop, and an odometer that moved backwards (device
+    # reset) contributes nothing rather than a negative distance.
+    # The outer coalesce covers the empty window, where sum() is NULL.
+    clamped_drop = func.greatest(func.coalesce(deltas.c.soc_drop, 0.0), 0.0)
+    clamped_rise = func.greatest(func.coalesce(deltas.c.soc_rise, 0.0), 0.0)
+    clamped_distance = func.greatest(func.coalesce(deltas.c.odometer_delta, 0.0), 0.0)
+
+    result = await db.execute(
+        select(
+            func.coalesce(func.sum(clamped_drop), 0.0),
+            func.coalesce(func.sum(clamped_rise), 0.0),
+            func.coalesce(func.sum(clamped_distance), 0.0),
+            func.count(),
+            func.count(deltas.c.odometer),
+            func.min(deltas.c.recorded_at),
+            func.max(deltas.c.recorded_at),
+        ).select_from(deltas)
+    )
+    (
+        soc_discharge_percent,
+        soc_charge_percent,
+        distance_km,
+        sample_count,
+        odometer_sample_count,
+        first_recorded_at,
+        last_recorded_at,
+    ) = result.one()
+    return VehicleTelemetryWindowSummary(
+        soc_discharge_percent=float(soc_discharge_percent),
+        soc_charge_percent=float(soc_charge_percent),
+        distance_km=float(distance_km),
+        sample_count=int(sample_count),
+        odometer_sample_count=int(odometer_sample_count),
+        first_recorded_at=first_recorded_at,
+        last_recorded_at=last_recorded_at,
+    )
 
 
 async def bulk_insert_telemetry(

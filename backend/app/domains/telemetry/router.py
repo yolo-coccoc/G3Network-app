@@ -16,11 +16,15 @@ from app.domains.telemetry.exceptions import (
     TelemetryNotFoundError,
 )
 from app.domains.telemetry.schemas import (
+    VehicleEnergyUsageResponse,
+    VehicleOperatingReportResponse,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.service import (
     get_latest_vehicle_telemetry_response,
+    get_vehicle_energy_usage_report,
+    get_vehicle_operating_report,
     get_vehicle_telemetry_history_response,
 )
 from app.libs.common.config import settings
@@ -103,6 +107,95 @@ async def get_vehicle_telemetry_history_endpoint(
             start_time=start_time,
             end_time=end_time,
             limit=limit,
+        )
+    except TelemetryNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
+    except TelemetryInvalidRangeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from error
+
+
+@router.get(
+    "/vehicles/{vehicle_id}/operating-report",
+    response_model=VehicleOperatingReportResponse,
+    summary="Get a vehicle's operating performance over a time window",
+)
+async def get_vehicle_operating_report_endpoint(
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> VehicleOperatingReportResponse:
+    """Return distance, energy consumed, and cost for a vehicle over a window (F-A6).
+
+    Energy is inferred from SOC drops in the vehicle's own telemetry, not
+    from charging-session records. See
+    ``VehicleOperatingReportResponse`` for the accuracy limits.
+
+    Args:
+        vehicle_id: Internal ID of the vehicle.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The operating report over the normalized time window.
+
+    Raises:
+        HTTPException: ``400`` if the time range is invalid; ``404`` if
+            the vehicle does not exist or has been soft deleted.
+    """
+    try:
+        return await get_vehicle_operating_report(
+            db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+        )
+    except TelemetryNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
+    except TelemetryInvalidRangeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
+        ) from error
+
+
+@router.get(
+    "/vehicles/{vehicle_id}/energy-usage",
+    response_model=VehicleEnergyUsageResponse,
+    summary="Get a vehicle's (customer's) charged energy over a time window",
+)
+async def get_vehicle_energy_usage_endpoint(
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> VehicleEnergyUsageResponse:
+    """Return energy charged into a vehicle's pack over a window (F-C6).
+
+    "Customer" is a vehicle in this MVP. Energy is inferred from SOC
+    rises in the vehicle's own telemetry, not from a station meter - see
+    ``VehicleEnergyUsageResponse`` for why this cannot satisfy NF-10's
+    reconciliation requirement.
+
+    Args:
+        vehicle_id: Internal ID of the vehicle (customer).
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The energy-usage report over the normalized time window.
+
+    Raises:
+        HTTPException: ``400`` if the time range is invalid; ``404`` if
+            the vehicle does not exist or has been soft deleted.
+    """
+    try:
+        return await get_vehicle_energy_usage_report(
+            db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
         )
     except TelemetryNotFoundError as error:
         raise HTTPException(

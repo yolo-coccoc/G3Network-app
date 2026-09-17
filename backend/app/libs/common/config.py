@@ -65,6 +65,9 @@ class Settings(BaseSettings):
             for a pushed telemetry publish interval (F-J2).
         TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS: Upper bound accepted
             for a pushed telemetry publish interval (F-J2).
+        TELEMETRY_REPORT_MAX_RANGE_DAYS: Maximum span allowed between
+            start_time/end_time on the F-A6/F-C6 operating and
+            energy-usage report queries.
     """
 
     model_config = SettingsConfigDict(
@@ -154,6 +157,16 @@ class Settings(BaseSettings):
     # interval's factor, with no device-side guard anywhere to catch it.
     TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS: int = Field(default=5, ge=1)
     TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS: int = Field(default=3600, ge=1)
+
+    # Bound for the F-A6/F-C6 report window. Deliberately larger than
+    # TELEMETRY_HISTORY_MAX_RANGE_DAYS: the history endpoint materializes
+    # one JSON point per row, so its 7-day cap bounds the *response
+    # size*; this report streams a SQL aggregate and returns O(1) bytes
+    # regardless of window length, so its only real constraint is scan
+    # time. 31 days covers F-A6's "daily/weekly/monthly" requirement
+    # including the longest calendar month. A cap still exists to stop an
+    # unbounded "since 1970" request from scanning every hypertable chunk.
+    TELEMETRY_REPORT_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
 
     # The old production planner's timeout/retry/raw-payload settings are
     # commented out in the ideal MVP; the corresponding source will come back

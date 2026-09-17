@@ -23,6 +23,11 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert "/api/v1/charging-sessions/stations/{station_id}/energy" in paths
     # F-F2: the activation summary, registered before {vehicle_id}.
     assert "/api/v1/vehicles/activation-summary" in paths
+    # F-J2: push a telemetry publish-interval config to a device over MQTT.
+    assert "/api/v1/telematics/{telematic_id}/config" in paths
+    # F-A6/F-C6: per-vehicle SOC-based operating and energy-usage reports.
+    assert "/api/v1/telemetry/vehicles/{vehicle_id}/operating-report" in paths
+    assert "/api/v1/telemetry/vehicles/{vehicle_id}/energy-usage" in paths
 
 
 @pytest.mark.asyncio

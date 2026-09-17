@@ -51,11 +51,13 @@ def to_vehicle_reference(vehicle_record: VehicleModel) -> VehicleReference:
         vehicle_record: An active vehicle record.
 
     Returns:
-        DTO containing the internal ID and VIN of the vehicle.
+        DTO containing the internal ID, VIN, and battery capacity of the
+        vehicle.
     """
     return VehicleReference(
         vehicle_id=vehicle_record.vehicle_id,
         vin=vehicle_record.vin,
+        battery_capacity_kwh=vehicle_record.battery_capacity_kwh,
     )
 
 

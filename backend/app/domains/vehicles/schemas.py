@@ -27,6 +27,16 @@ class _VehicleInputFields(BaseModel):
     status: VehicleStatus = Field(
         default=VehicleStatus.ACTIVE, description="Vehicle status"
     )
+    battery_capacity_kwh: float | None = Field(
+        None,
+        gt=0,
+        le=1000,
+        description=(
+            "Nominal battery pack capacity in kWh (nullable). Per the "
+            "PATCH semantics on VehicleUpdateRequest, this can be set or "
+            "changed but not cleared back to null once recorded."
+        ),
+    )
 
 
 class VehicleCreateRequest(_VehicleInputFields):
@@ -53,6 +63,9 @@ class VehicleUpdateRequest(BaseModel):
     year: int | None = Field(None, ge=1900, le=2100, description="Manufacturing year")
     status: VehicleStatus | None = Field(None, description="Vehicle status")
     fleet_id: str | None = Field(None, description="Fleet ID")
+    battery_capacity_kwh: float | None = Field(
+        None, gt=0, le=1000, description="Nominal battery pack capacity in kWh"
+    )
 
 
 class VehicleResponse(_VehicleInputFields):

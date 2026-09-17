@@ -4,7 +4,10 @@ Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
 battery alerts), F-A3 (Battery health (SOH) & cycle tracking), F-A4
 (Anomaly detection), F-A5 (Location, trip history & geofencing - the
 time-range history query only; geofencing itself is deferred, see
-docs/01-requirements/future.md)
+docs/01-requirements/future.md), F-A6 (Operating performance report,
+computed from SOC drops in telemetry - charging_sessions carries no
+vehicle linkage), F-C6 (Per-customer energy usage, computed from SOC
+rises in the same telemetry history; "customer" is a vehicle in this MVP)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module
@@ -36,12 +39,16 @@ from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
     TelemetryMessage,
+    VehicleEnergyUsageResponse,
+    VehicleOperatingReportResponse,
     VehicleTelemetryHistoryPoint,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
+    DEFAULT_BATTERY_CAPACITY_KWH,
+    ENERGY_COST_PER_KWH_VND,
     HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
     SOH_ALERT_THRESHOLD_PERCENT,
     VEHICLE_ANOMALY_SEVERITIES,
@@ -49,8 +56,10 @@ from app.domains.telemetry.types import (
     BatteryAlertLevel,
     VehicleAnomaly,
     VehicleAnomalyType,
+    VehicleTelemetryWindowSummary,
 )
 from app.domains.vehicles import service as vehicle_service
+from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from app.libs.common.geo import location_to_coordinates
 
@@ -202,8 +211,11 @@ def to_vehicle_telemetry_history_point(
     )
 
 
-def _normalize_history_bound(value: datetime, field_name: str) -> datetime:
-    """Require a timezone-aware bound and normalize it to UTC (F-A5).
+def _normalize_time_bound(value: datetime, field_name: str) -> datetime:
+    """Require a timezone-aware bound and normalize it to UTC.
+
+    Shared by every time-windowed telemetry query (F-A5's history, F-A6's
+    operating report, F-C6's energy-usage report).
 
     Args:
         value: A ``start_time``/``end_time`` query parameter as parsed by
@@ -256,8 +268,8 @@ async def get_vehicle_telemetry_history_response(
         TelemetryNotFoundError: If the vehicle does not exist or was
             soft-deleted.
     """
-    normalized_start = _normalize_history_bound(start_time, "start_time")
-    normalized_end = _normalize_history_bound(end_time, "end_time")
+    normalized_start = _normalize_time_bound(start_time, "start_time")
+    normalized_end = _normalize_time_bound(end_time, "end_time")
 
     if normalized_end <= normalized_start:
         raise TelemetryInvalidRangeError("end_time must be after start_time")
@@ -290,6 +302,341 @@ async def get_vehicle_telemetry_history_response(
     points = [to_vehicle_telemetry_history_point(record) for record in records]
     return VehicleTelemetryHistoryResponse(
         vehicle_id=vehicle_id, points=points, count=len(points)
+    )
+
+
+async def _resolve_report_context(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> tuple[datetime, datetime, VehicleReference, VehicleTelemetryWindowSummary]:
+    """Validate a report window, resolve the vehicle, and fold its telemetry.
+
+    Shared by F-A6 and F-C6 - both read the same window, the same vehicle
+    record (for its battery capacity), and the same single aggregate;
+    only the projection into a response schema differs.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to report on.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+
+    Returns:
+        ``(normalized_start, normalized_end, vehicle_reference,
+        window_summary)``.
+
+    Raises:
+        TelemetryInvalidRangeError: Either bound is missing a timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: The vehicle does not exist or was
+            soft-deleted. Unlike F-C5's station-energy summary (which
+            doesn't own station existence and returns a zero result for
+            an unknown station), this function 404s - `telemetry` already
+            depends on `vehicles` and already 404s on its other two
+            endpoints, and the vehicle lookup here is a required input
+            for battery capacity anyway, not an avoidable extra query.
+    """
+    normalized_start = _normalize_time_bound(start_time, "start_time")
+    normalized_end = _normalize_time_bound(end_time, "end_time")
+
+    if normalized_end <= normalized_start:
+        raise TelemetryInvalidRangeError("end_time must be after start_time")
+
+    max_range = timedelta(days=settings.TELEMETRY_REPORT_MAX_RANGE_DAYS)
+    if normalized_end - normalized_start > max_range:
+        raise TelemetryInvalidRangeError(
+            "Requested range exceeds the maximum of "
+            f"{settings.TELEMETRY_REPORT_MAX_RANGE_DAYS} day(s)"
+        )
+
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, vehicle_id
+    )
+    if vehicle_reference is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+
+    window_summary = await telemetry_repository.get_vehicle_window_summary(
+        db,
+        vehicle_id=vehicle_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+    )
+    return normalized_start, normalized_end, vehicle_reference, window_summary
+
+
+def calculate_energy_kwh(soc_percent: float, battery_capacity_kwh: float) -> float:
+    """Convert a summed SOC percentage into energy using pack capacity.
+
+    Pure function, no I/O.
+
+    Args:
+        soc_percent: Summed SOC delta (%), already clamped non-negative.
+        battery_capacity_kwh: Pack capacity to convert against - the
+            vehicle's recorded value or the engineering default.
+
+    Returns:
+        Energy in kWh.
+    """
+    return soc_percent / 100.0 * battery_capacity_kwh
+
+
+def calculate_energy_cost_vnd(energy_kwh: float) -> float:
+    """Price energy at the flat engineering-default tariff (F-A6).
+
+    Pure function, no I/O.
+
+    Args:
+        energy_kwh: Energy amount to price.
+
+    Returns:
+        Cost in VND at ``ENERGY_COST_PER_KWH_VND``.
+    """
+    return energy_kwh * ENERGY_COST_PER_KWH_VND
+
+
+def calculate_energy_per_100km_kwh(
+    energy_kwh: float, distance_km: float
+) -> float | None:
+    """Compute energy intensity, or None when no distance was recorded.
+
+    Pure function, no I/O.
+
+    Args:
+        energy_kwh: Energy consumed over the window.
+        distance_km: Distance traveled over the window.
+
+    Returns:
+        kWh per 100 km, or ``None`` if ``distance_km`` is 0 - reporting a
+        rate against zero distance would fabricate a number rather than
+        state "undefined" (a parked vehicle can still consume energy via
+        HVAC, so ``energy_kwh > 0`` here is legitimate, not a bug).
+    """
+    if distance_km <= 0:
+        return None
+    return energy_kwh / distance_km * 100.0
+
+
+def calculate_cost_per_km_vnd(
+    energy_cost_vnd: float, distance_km: float
+) -> float | None:
+    """Compute cost per kilometre, or None when no distance was recorded.
+
+    Pure function, no I/O.
+
+    Args:
+        energy_cost_vnd: Total energy cost over the window.
+        distance_km: Distance traveled over the window.
+
+    Returns:
+        VND per km, or ``None`` if ``distance_km`` is 0 - same
+        undefined-rather-than-zero reasoning as
+        ``calculate_energy_per_100km_kwh``.
+    """
+    if distance_km <= 0:
+        return None
+    return energy_cost_vnd / distance_km
+
+
+def calculate_distance_per_day_km(
+    distance_km: float, start_time: datetime, end_time: datetime
+) -> float:
+    """Compute average daily distance across the *requested* window.
+
+    Pure function, no I/O.
+
+    Args:
+        distance_km: Distance traveled over the window.
+        start_time: Normalized start of the requested window.
+        end_time: Normalized end of the requested window.
+
+    Returns:
+        km/day, using the requested span as the denominator - not the
+        observed first-to-last sample span. Dividing by the observed span
+        would silently rescale: a vehicle that reported for one hour of a
+        30-day window would read as if it drove that hour's distance
+        every day. Callers see ``sample_count``/``first_recorded_at``/
+        ``last_recorded_at`` and can judge coverage themselves. Never
+        divides by zero: the caller has already rejected
+        ``end_time <= start_time``.
+    """
+    window_days = (end_time - start_time).total_seconds() / 86400.0
+    return distance_km / window_days
+
+
+def _resolve_battery_capacity(
+    vehicle_reference: VehicleReference,
+) -> tuple[float, bool]:
+    """Resolve the pack capacity to use for a kWh conversion (F-A6/F-C6).
+
+    Pure function, no I/O.
+
+    Args:
+        vehicle_reference: The vehicle's cross-domain reference DTO.
+
+    Returns:
+        ``(battery_capacity_kwh, is_default_battery_capacity)`` - the
+        vehicle's recorded capacity if present, else
+        ``DEFAULT_BATTERY_CAPACITY_KWH`` with the flag set so the
+        response can tell a consumer the number is an estimate.
+    """
+    if vehicle_reference.battery_capacity_kwh is not None:
+        return vehicle_reference.battery_capacity_kwh, False
+    return DEFAULT_BATTERY_CAPACITY_KWH, True
+
+
+async def get_vehicle_operating_report(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> VehicleOperatingReportResponse:
+    """Get a vehicle's operating performance over a time window (F-A6).
+
+    Energy consumed is inferred from summed SOC drops in the vehicle's
+    own telemetry (not from `charging_sessions`, which carries no vehicle
+    linkage), converted to kWh via the vehicle's recorded battery
+    capacity or a documented engineering default. This measures gross
+    discharge - SOC rises (regen, any charging inside the window) are not
+    netted out. Assumes telemetry is reported frequently; sparse
+    telemetry silently under-counts (an entire discharge-recharge cycle
+    inside a reporting gap is invisible to this method). See
+    ``VehicleOperatingReportResponse`` for the full limitations.
+
+    Rule:
+        Every derived rate (`energy_per_100km_kwh`, `distance_per_day_km`,
+        `cost_per_km_vnd`) is `None` when it's undefined - fewer than two
+        telemetry samples in the window (no interval was measurable), or
+        zero distance traveled. The raw sums (`distance_km`,
+        `energy_consumed_kwh`, `energy_cost_vnd`) are always numbers,
+        0 when nothing happened.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to report on.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+
+    Returns:
+        The operating report over the normalized window.
+
+    Raises:
+        TelemetryInvalidRangeError: See ``_resolve_report_context``.
+        TelemetryNotFoundError: See ``_resolve_report_context``.
+    """
+    (
+        normalized_start,
+        normalized_end,
+        vehicle_reference,
+        window_summary,
+    ) = await _resolve_report_context(
+        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+    )
+    battery_capacity_kwh, is_default_battery_capacity = _resolve_battery_capacity(
+        vehicle_reference
+    )
+    has_measurable_interval = window_summary.sample_count >= 2
+
+    energy_consumed_kwh = calculate_energy_kwh(
+        window_summary.soc_discharge_percent, battery_capacity_kwh
+    )
+    energy_cost_vnd = calculate_energy_cost_vnd(energy_consumed_kwh)
+    energy_per_100km_kwh = (
+        calculate_energy_per_100km_kwh(energy_consumed_kwh, window_summary.distance_km)
+        if has_measurable_interval
+        else None
+    )
+    cost_per_km_vnd = (
+        calculate_cost_per_km_vnd(energy_cost_vnd, window_summary.distance_km)
+        if has_measurable_interval
+        else None
+    )
+    distance_per_day_km = (
+        calculate_distance_per_day_km(
+            window_summary.distance_km, normalized_start, normalized_end
+        )
+        if has_measurable_interval
+        else None
+    )
+
+    return VehicleOperatingReportResponse(
+        vehicle_id=vehicle_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        sample_count=window_summary.sample_count,
+        odometer_sample_count=window_summary.odometer_sample_count,
+        first_recorded_at=window_summary.first_recorded_at,
+        last_recorded_at=window_summary.last_recorded_at,
+        distance_km=window_summary.distance_km,
+        energy_consumed_kwh=energy_consumed_kwh,
+        energy_per_100km_kwh=energy_per_100km_kwh,
+        distance_per_day_km=distance_per_day_km,
+        energy_cost_vnd=energy_cost_vnd,
+        cost_per_km_vnd=cost_per_km_vnd,
+        battery_capacity_kwh=battery_capacity_kwh,
+        is_default_battery_capacity=is_default_battery_capacity,
+        cost_per_kwh_vnd=ENERGY_COST_PER_KWH_VND,
+    )
+
+
+async def get_vehicle_energy_usage_report(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> VehicleEnergyUsageResponse:
+    """Get the energy that entered one vehicle's pack over a time window (F-C6).
+
+    "Customer" is a vehicle in this MVP (one vehicle per customer,
+    per the user's simplification); there is no customer entity in this
+    backend. Energy is inferred from summed SOC rises in the vehicle's
+    own telemetry - the mirror image of F-A6's SOC-drop sum, sharing the
+    same single-scan aggregate. See ``VehicleEnergyUsageResponse`` for why
+    this cannot satisfy NF-10's 3-way reconciliation.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to report on.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+
+    Returns:
+        The energy-usage report over the normalized window.
+
+    Raises:
+        TelemetryInvalidRangeError: See ``_resolve_report_context``.
+        TelemetryNotFoundError: See ``_resolve_report_context``.
+    """
+    (
+        normalized_start,
+        normalized_end,
+        vehicle_reference,
+        window_summary,
+    ) = await _resolve_report_context(
+        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+    )
+    battery_capacity_kwh, is_default_battery_capacity = _resolve_battery_capacity(
+        vehicle_reference
+    )
+    energy_charged_kwh = calculate_energy_kwh(
+        window_summary.soc_charge_percent, battery_capacity_kwh
+    )
+
+    return VehicleEnergyUsageResponse(
+        vehicle_id=vehicle_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        sample_count=window_summary.sample_count,
+        first_recorded_at=window_summary.first_recorded_at,
+        last_recorded_at=window_summary.last_recorded_at,
+        energy_charged_kwh=energy_charged_kwh,
+        battery_capacity_kwh=battery_capacity_kwh,
+        is_default_battery_capacity=is_default_battery_capacity,
     )
 
 
