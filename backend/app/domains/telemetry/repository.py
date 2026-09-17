@@ -10,6 +10,7 @@ boundary passes in the session and decides whether to commit or roll back.
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -72,6 +73,48 @@ async def get_latest_vehicle_telemetry(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_vehicle_telemetry_history(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    limit: int,
+) -> list[VehicleTelemetryModel]:
+    """Get telemetry records for a vehicle within a time range (F-A5).
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        start_time: Inclusive lower bound, already validated and normalized
+            to UTC by the service.
+        end_time: Inclusive upper bound, already validated and normalized to
+            UTC by the service.
+        limit: Maximum number of records to return, already clamped by the
+            service.
+
+    Returns:
+        Records ordered by ``recorded_at`` ascending (chronological, for
+        trip replay), oldest first, capped at ``limit``.
+
+    Side Effects:
+        Reuses the existing ``ix_vehicle_telemetry_vehicle_time`` index
+        (btree on ``vehicle_id, recorded_at DESC``) - PostgreSQL can scan it
+        backwards for this ascending range scan, so no new index is needed.
+    """
+    result = await db.execute(
+        select(VehicleTelemetryModel)
+        .where(
+            VehicleTelemetryModel.vehicle_id == vehicle_id,
+            VehicleTelemetryModel.recorded_at >= start_time,
+            VehicleTelemetryModel.recorded_at <= end_time,
+        )
+        .order_by(VehicleTelemetryModel.recorded_at.asc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
 
 
 async def bulk_insert_telemetry(

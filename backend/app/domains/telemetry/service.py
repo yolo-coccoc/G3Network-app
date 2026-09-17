@@ -1,7 +1,9 @@
 """Business service for the telemetry domain.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
-battery alerts), F-A4 (Anomaly detection)
+battery alerts), F-A4 (Anomaly detection), F-A5 (Location, trip history &
+geofencing - the time-range history query only; geofencing itself is
+deferred, see docs/01-requirements/future.md)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module
@@ -14,7 +16,7 @@ lifecycle.
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 from uuid import UUID
 
@@ -25,11 +27,16 @@ import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 from app.domains.notifications.types import NotificationType
-from app.domains.telemetry.exceptions import TelemetryNotFoundError
+from app.domains.telemetry.exceptions import (
+    TelemetryInvalidRangeError,
+    TelemetryNotFoundError,
+)
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
     TelemetryMessage,
+    VehicleTelemetryHistoryPoint,
+    VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.types import (
@@ -42,6 +49,7 @@ from app.domains.telemetry.types import (
     VehicleAnomalyType,
 )
 from app.domains.vehicles import service as vehicle_service
+from app.libs.common.config import settings
 from app.libs.common.geo import location_to_coordinates
 
 logger = logging.getLogger(__name__)
@@ -123,6 +131,134 @@ async def get_latest_vehicle_telemetry_response(
         )
 
     return to_vehicle_telemetry_latest_response(telemetry)
+
+
+def to_vehicle_telemetry_history_point(
+    telemetry: VehicleTelemetryModel,
+) -> VehicleTelemetryHistoryPoint:
+    """Build one history point from the ORM model (F-A5).
+
+    Pure mapping only, no I/O. Same ``location`` decoding as
+    ``to_vehicle_telemetry_latest_response`` - the ORM model stores GPS as a
+    single geography point, not plain latitude/longitude columns.
+
+    Args:
+        telemetry: Telemetry ORM object queried by the repository.
+
+    Returns:
+        One point with latitude/longitude decoded from ``location``.
+    """
+    latitude, longitude = location_to_coordinates(telemetry.location)
+    assert (
+        latitude is not None and longitude is not None
+    ), "vehicle_telemetry.location is NOT NULL"
+    return VehicleTelemetryHistoryPoint(
+        recorded_at=telemetry.recorded_at,
+        latitude=latitude,
+        longitude=longitude,
+        speed=telemetry.speed,
+        heading=telemetry.heading,
+        soc=telemetry.soc,
+        battery_voltage=telemetry.battery_voltage,
+        battery_current=telemetry.battery_current,
+        battery_temperature=telemetry.battery_temperature,
+        motor_temperature=telemetry.motor_temperature,
+        odometer=telemetry.odometer,
+        signal_strength=telemetry.signal_strength,
+        error_codes=telemetry.error_codes,
+        schema_version=telemetry.schema_version,
+    )
+
+
+def _normalize_history_bound(value: datetime, field_name: str) -> datetime:
+    """Require a timezone-aware bound and normalize it to UTC (F-A5).
+
+    Args:
+        value: A ``start_time``/``end_time`` query parameter as parsed by
+            FastAPI/Pydantic - naive if the caller omitted a UTC offset.
+        field_name: Name to report in the error message.
+
+    Returns:
+        The value normalized to UTC.
+
+    Raises:
+        TelemetryInvalidRangeError: If ``value`` has no timezone.
+    """
+    if value.utcoffset() is None:
+        raise TelemetryInvalidRangeError(f"{field_name} must have a timezone")
+    return value.astimezone(timezone.utc)
+
+
+async def get_vehicle_telemetry_history_response(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    limit: int | None = None,
+) -> VehicleTelemetryHistoryResponse:
+    """Get a vehicle's telemetry history within a bounded time range (F-A5).
+
+    Scoped as a time-range location/telemetry history query, not segmented
+    trips - this backend has no trip concept (see
+    ``docs/01-requirements/future.md``). The caller narrows the time window
+    if a range holds more points than ``limit``; this function does not
+    paginate server-side.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to query.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        limit: Maximum number of points to return, or ``None`` to use
+            ``settings.TELEMETRY_HISTORY_DEFAULT_LIMIT``. Clamped to
+            ``[1, settings.TELEMETRY_HISTORY_MAX_LIMIT]``.
+
+    Returns:
+        Response with points ordered chronologically (oldest first).
+
+    Raises:
+        TelemetryInvalidRangeError: If either bound is missing a timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: If the vehicle does not exist or was
+            soft-deleted.
+    """
+    normalized_start = _normalize_history_bound(start_time, "start_time")
+    normalized_end = _normalize_history_bound(end_time, "end_time")
+
+    if normalized_end <= normalized_start:
+        raise TelemetryInvalidRangeError("end_time must be after start_time")
+
+    max_range = timedelta(days=settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS)
+    if normalized_end - normalized_start > max_range:
+        raise TelemetryInvalidRangeError(
+            "Requested range exceeds the maximum of "
+            f"{settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS} day(s)"
+        )
+
+    resolved_limit = (
+        limit if limit is not None else settings.TELEMETRY_HISTORY_DEFAULT_LIMIT
+    )
+    resolved_limit = min(max(resolved_limit, 1), settings.TELEMETRY_HISTORY_MAX_LIMIT)
+
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, vehicle_id
+    )
+    if vehicle_reference is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+
+    records = await telemetry_repository.get_vehicle_telemetry_history(
+        db,
+        vehicle_id=vehicle_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        limit=resolved_limit,
+    )
+    points = [to_vehicle_telemetry_history_point(record) for record in records]
+    return VehicleTelemetryHistoryResponse(
+        vehicle_id=vehicle_id, points=points, count=len(points)
+    )
 
 
 def detect_battery_alert_level(

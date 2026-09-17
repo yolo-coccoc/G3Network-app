@@ -37,6 +37,12 @@ class Settings(BaseSettings):
         TELEMETRY_QUEUE_SIZE: In-memory queue capacity.
         TELEMETRY_BATCH_SIZE: Batch worker setting kept for a future phase.
         TELEMETRY_FLUSH_INTERVAL: Batch window kept for a future phase.
+        TELEMETRY_HISTORY_MAX_RANGE_DAYS: Maximum span allowed between
+            start_time/end_time on the telemetry history query (F-A5).
+        TELEMETRY_HISTORY_DEFAULT_LIMIT: Default max points returned per
+            telemetry history call.
+        TELEMETRY_HISTORY_MAX_LIMIT: Hard cap on points returned per
+            telemetry history call.
         API_DEFAULT_PAGE: Default page for paginated endpoints.
         API_DEFAULT_PAGE_SIZE: Default number of records per page.
         API_MAX_PAGE_SIZE: Maximum number of records per page.
@@ -82,6 +88,13 @@ class Settings(BaseSettings):
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
     TELEMETRY_BATCH_SIZE: int = Field(default=100, ge=1)
     TELEMETRY_FLUSH_INTERVAL: float = Field(default=30.0, gt=0)
+
+    # Bounds for the telemetry history query (F-A5). No offset/page - a
+    # range with more points than the limit is narrowed by the caller
+    # instead, avoiding OFFSET pagination on a hypertable ordered by time.
+    TELEMETRY_HISTORY_MAX_RANGE_DAYS: int = Field(default=7, ge=1)
+    TELEMETRY_HISTORY_DEFAULT_LIMIT: int = Field(default=500, ge=1)
+    TELEMETRY_HISTORY_MAX_LIMIT: int = Field(default=2000, ge=1)
 
     # Pagination policy shared across domains that have list endpoints.
     API_DEFAULT_PAGE: int = Field(default=1, ge=1)

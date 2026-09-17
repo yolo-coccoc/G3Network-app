@@ -15,6 +15,8 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert any(path.startswith("/api/v1/telemetry") for path in paths)
     assert any(path.startswith("/api/v1/charging-stations") for path in paths)
     assert any(path.startswith("/api/v1/charging-sessions") for path in paths)
+    # F-A5: the bounded time-range telemetry history query.
+    assert "/api/v1/telemetry/vehicles/{vehicle_id}/history" in paths
 
 
 @pytest.mark.asyncio

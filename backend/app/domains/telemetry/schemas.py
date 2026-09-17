@@ -1,7 +1,9 @@
 """
-Pydantic schemas for MQTT telemetry message validation.
+Pydantic schemas for MQTT telemetry message validation and the HTTP query API.
 
-Feature code: F-A1 (Real-time vehicle telemetry ingestion)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A5 (Location,
+trip history & geofencing - the history query only; geofencing itself is
+deferred, see docs/01-requirements/future.md)
 
 This schema validates messages from MQTT before they are placed on the queue.
 The message is sent from the Telematics device and does not contain any
@@ -64,6 +66,69 @@ class VehicleTelemetryLatestResponse(BaseModel):
     signal_strength: int | None
     error_codes: dict[str, list[str]] | None
     schema_version: int
+
+
+class VehicleTelemetryHistoryPoint(BaseModel):
+    """One telemetry reading within a history query's time range (F-A5).
+
+    Same field set as ``VehicleTelemetryLatestResponse`` minus
+    ``vehicle_id``/``telematic_serial`` - both are redundant per point in a
+    single-vehicle history and are carried once at the response's top level
+    instead.
+
+    Attributes:
+        recorded_at: Timestamp when the device recorded the data, in UTC.
+        latitude: GPS latitude.
+        longitude: GPS longitude.
+        speed: Current speed, km/h.
+        heading: Direction of travel, degrees.
+        soc: Remaining battery percentage.
+        battery_voltage: Battery voltage, V.
+        battery_current: Battery current, A.
+        battery_temperature: Battery temperature, °C.
+        motor_temperature: Motor temperature, °C.
+        odometer: Total distance traveled, km.
+        signal_strength: Signal strength, dBm.
+        error_codes: Error codes from the device.
+        schema_version: Version of the MQTT message schema the device used
+            to send this record (F-A1).
+    """
+
+    recorded_at: datetime
+    latitude: float
+    longitude: float
+    speed: float | None
+    heading: float | None
+    soc: float
+    battery_voltage: float | None
+    battery_current: float | None
+    battery_temperature: float | None
+    motor_temperature: float | None
+    odometer: float | None
+    signal_strength: int | None
+    error_codes: dict[str, list[str]] | None
+    schema_version: int
+
+
+class VehicleTelemetryHistoryResponse(BaseModel):
+    """Telemetry history for one vehicle within a queried time range (F-A5).
+
+    Ordered chronologically for trip replay (the frontend draws the
+    polyline); this backend does no trip-boundary/segmentation detection -
+    see ``docs/01-requirements/future.md`` for that gap. No ``total``/
+    ``page`` fields - a range with more points than the query's ``limit``
+    is narrowed by the caller instead of paginated server-side.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle queried.
+        points: Telemetry readings ordered by ``recorded_at`` ascending,
+            oldest first.
+        count: Number of points in this response.
+    """
+
+    vehicle_id: UUID
+    points: list[VehicleTelemetryHistoryPoint]
+    count: int = Field(..., ge=0)
 
 
 class TelemetryLocationPayload(BaseModel):
