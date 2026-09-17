@@ -714,9 +714,11 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
 - **Status:** 🚧 In progress — session data over OCPP 2.0.1 (`TransactionEvent`/`MeterValues`)
-  works; OCPP 1.6J is not implemented at all (only `ocpp.v201` is used), and connector status
-  (`StatusNotification`) is not handled — see F-C2. NF-05 production security profile also not
-  finalized (dev mode intentionally allows no TLS/no auth, per `tech-decisions.md`)
+  works, and connector status is now handled too (`StatusNotification`, F-C2). What's left is
+  blocked on business decisions, not further software work: OCPP 1.6J is not implemented at all
+  (only `ocpp.v201` is used) — committing to a version at station procurement is unresolved
+  ("Items needing confirmation" #11) — and the NF-05 production security profile isn't finalized
+  (dev mode intentionally allows no TLS/no auth, per `tech-decisions.md`)
 
 ### F-G3 Data pipeline (ETL)
 - **Actor:** System
