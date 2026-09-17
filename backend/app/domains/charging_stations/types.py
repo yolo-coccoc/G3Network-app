@@ -10,6 +10,8 @@ deferred (see ``docs/01-requirements/future.md`` items 27 and 28).
 """
 
 import enum
+from dataclasses import dataclass
+from uuid import UUID
 
 
 class ChargingStationMaintenanceStatus(str, enum.Enum):
@@ -22,3 +24,27 @@ class ChargingStationMaintenanceStatus(str, enum.Enum):
     OPERATIONAL = "OPERATIONAL"
     UNDER_MAINTENANCE = "UNDER_MAINTENANCE"
     OUT_OF_SERVICE = "OUT_OF_SERVICE"
+
+
+@dataclass(frozen=True)
+class NearestChargingStation:
+    """A station resolved as nearest to a given point (F-A2).
+
+    "Available" is approximated as "not soft-deleted and not under
+    maintenance/out of service" - this codebase has no live occupancy or
+    online/offline signal (see the module docstring and
+    ``docs/01-requirements/future.md``).
+
+    Attributes:
+        station_id: Internal UUID of the station.
+        display_name: Display name.
+        latitude: GPS latitude in decimal degrees.
+        longitude: GPS longitude in decimal degrees.
+        distance_km: Great-circle distance from the query point, in km.
+    """
+
+    station_id: UUID
+    display_name: str
+    latitude: float
+    longitude: float
+    distance_km: float

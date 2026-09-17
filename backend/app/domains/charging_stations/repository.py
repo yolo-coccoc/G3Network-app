@@ -171,6 +171,42 @@ async def count_stations(
     return int(result.scalar() or 0)
 
 
+async def find_nearest_station_by_location(
+    db: AsyncSession, location: WKBElement
+) -> tuple[ChargingStationModel, float] | None:
+    """Find the nearest active, operational station to a point (F-A2).
+
+    Args:
+        db: Current async session.
+        location: PostGIS geography point to measure distance from.
+
+    Returns:
+        A tuple of the nearest matching station and its distance in meters,
+        or ``None`` if no active/operational station has a location set.
+
+    Side Effects:
+        Orders by the ``<->`` KNN operator so the query can use
+        ``ix_charging_stations_location`` (GIST) instead of a full scan.
+    """
+    distance_meters = func.ST_Distance(ChargingStationModel.location, location)
+    result = await db.execute(
+        select(ChargingStationModel, distance_meters)
+        .where(
+            ChargingStationModel.deleted_at.is_(None),
+            ChargingStationModel.location.is_not(None),
+            ChargingStationModel.maintenance_status
+            == ChargingStationMaintenanceStatus.OPERATIONAL,
+        )
+        .order_by(ChargingStationModel.location.distance_centroid(location))
+        .limit(1)
+    )
+    row = result.first()
+    if row is None:
+        return None
+    station, distance = row
+    return station, float(distance)
+
+
 async def count_connectors_by_station_id(db: AsyncSession, station_id: UUID) -> int:
     """Count active connectors across all active EVSEs of a station.
 

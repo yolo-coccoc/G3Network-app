@@ -41,7 +41,10 @@ from app.domains.charging_stations.schemas import (
     ChargingStationResponse,
     ChargingStationUpdateRequest,
 )
-from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
+from app.domains.charging_stations.types import (
+    ChargingStationMaintenanceStatus,
+    NearestChargingStation,
+)
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 
@@ -253,6 +256,43 @@ async def get_charging_station(
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     connector_count = await repository.count_connectors_by_station_id(db, station_id)
     return to_charging_station_response(station, connector_count=connector_count)
+
+
+async def find_nearest_operational_station(
+    db: AsyncSession, *, latitude: float, longitude: float
+) -> NearestChargingStation | None:
+    """Find the nearest operational station to a point. Public entry point for F-A2.
+
+    Args:
+        db: Async session owned by the caller's entry boundary (e.g. the
+            telemetry ingestion worker's transaction).
+        latitude: GPS latitude in decimal degrees of the query point.
+        longitude: GPS longitude in decimal degrees of the query point.
+
+    Returns:
+        A minimal reference DTO for the nearest active, operational station
+        with a known location - never the ORM model - or ``None`` if none
+        qualifies. "Operational" only reflects the admin-set
+        ``maintenance_status``; there is no live occupancy signal (see
+        ``NearestChargingStation``'s docstring).
+    """
+    query_point = coordinates_to_location(latitude, longitude)
+    assert query_point is not None, "latitude/longitude are both required here"
+    match = await repository.find_nearest_station_by_location(db, query_point)
+    if match is None:
+        return None
+    station, distance_meters = match
+    station_latitude, station_longitude = location_to_coordinates(station.location)
+    assert (
+        station_latitude is not None and station_longitude is not None
+    ), "query filters out stations with a NULL location"
+    return NearestChargingStation(
+        station_id=station.station_id,
+        display_name=station.display_name,
+        latitude=station_latitude,
+        longitude=station_longitude,
+        distance_km=distance_meters / 1000,
+    )
 
 
 async def resolve_ocpp_topology(
