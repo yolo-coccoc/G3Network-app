@@ -16,7 +16,7 @@ def test_migration_graph_has_one_current_head() -> None:
     backend_root = _backend_root()
     script = ScriptDirectory.from_config(Config(str(backend_root / "alembic.ini")))
 
-    assert script.get_heads() == ["0007_telemetry_schema_version"]
+    assert script.get_heads() == ["0008_notifications"]
 
 
 def test_reset_migration_uses_application_allowlist() -> None:
