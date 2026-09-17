@@ -1,14 +1,15 @@
 """Business service for the telemetry domain.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
-battery alerts)
+battery alerts), F-A4 (Anomaly detection)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module
 because a later phase may need to optimize throughput with batch lookup and
-bulk insert. F-A2's threshold detection only runs in the per-message flow
-(``process_message``) - ``process_batch``/``batch_worker.py`` are dormant and
-not part of the current process lifecycle.
+bulk insert. F-A2's threshold detection and F-A4's anomaly detection only run
+in the per-message flow (``process_message``) - ``process_batch``/
+``batch_worker.py`` are dormant and not part of the current process
+lifecycle.
 """
 
 import logging
@@ -28,11 +29,17 @@ from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
+    TelemetryMessage,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
+    HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
+    VEHICLE_ANOMALY_SEVERITIES,
+    VOLTAGE_DROP_THRESHOLD_VOLTS,
     BatteryAlertLevel,
+    VehicleAnomaly,
+    VehicleAnomalyType,
 )
 from app.domains.vehicles import service as vehicle_service
 from app.libs.common.geo import location_to_coordinates
@@ -218,6 +225,269 @@ async def _raise_battery_alert(
     )
 
 
+def detect_high_battery_temperature(
+    previous_celsius: float | None, current_celsius: float | None
+) -> VehicleAnomaly | None:
+    """Detect a battery temperature entering the high-temperature anomaly range (F-A4).
+
+    Pure function, no I/O. This is a level condition, not a one-time
+    crossing like F-A2's SOC thresholds - a vehicle resting above the
+    threshold would alert on every message if this fired on "at or above the
+    threshold" alone. It only fires on *entry*: unlike
+    ``detect_battery_alert_level``, a missing previous reading is treated as
+    "below threshold" rather than suppressing the alert - a fire-safety
+    anomaly must not be silently skipped just because it is the vehicle's
+    first message. It stays silent while the reading remains above the
+    threshold, and re-arms once the reading recovers below it.
+
+    Args:
+        previous_celsius: The vehicle's previous battery temperature
+            reading, or ``None`` if this is the first reading or the device
+            didn't report it.
+        current_celsius: The current message's battery temperature reading,
+            or ``None`` if the device didn't report it (in which case
+            nothing can be detected).
+
+    Returns:
+        A ``HIGH_BATTERY_TEMPERATURE`` anomaly on entry into the high range,
+        or ``None``.
+    """
+    if current_celsius is None:
+        return None
+    was_below = (
+        previous_celsius is None
+        or previous_celsius < HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS
+    )
+    if not (
+        was_below and current_celsius >= HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS
+    ):
+        return None
+    return VehicleAnomaly(
+        anomaly_type=VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE,
+        severity=VEHICLE_ANOMALY_SEVERITIES[
+            VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE
+        ],
+        evidence={
+            "threshold_celsius": HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
+            "observed_celsius": current_celsius,
+        },
+    )
+
+
+def detect_sudden_voltage_drop(
+    previous_volts: float | None, current_volts: float | None
+) -> VehicleAnomaly | None:
+    """Detect a sudden absolute drop in battery voltage between readings (F-A4).
+
+    Pure function, no I/O. Undefined without both readings, unlike the
+    high-temperature detector - a drop is a comparison between two points,
+    so a missing previous reading (first message, or device didn't report
+    voltage) means nothing can be said, and this stays silent rather than
+    guessing a baseline.
+
+    Args:
+        previous_volts: The vehicle's previous battery voltage reading, or
+            ``None``.
+        current_volts: The current message's battery voltage reading, or
+            ``None``.
+
+    Returns:
+        A ``SUDDEN_VOLTAGE_DROP`` anomaly if the drop meets or exceeds
+        ``VOLTAGE_DROP_THRESHOLD_VOLTS``, or ``None``.
+    """
+    if previous_volts is None or current_volts is None:
+        return None
+    drop_volts = previous_volts - current_volts
+    if drop_volts < VOLTAGE_DROP_THRESHOLD_VOLTS:
+        return None
+    return VehicleAnomaly(
+        anomaly_type=VehicleAnomalyType.SUDDEN_VOLTAGE_DROP,
+        severity=VEHICLE_ANOMALY_SEVERITIES[VehicleAnomalyType.SUDDEN_VOLTAGE_DROP],
+        evidence={
+            "threshold_volts": VOLTAGE_DROP_THRESHOLD_VOLTS,
+            "previous_volts": previous_volts,
+            "current_volts": current_volts,
+            "drop_volts": drop_volts,
+        },
+    )
+
+
+def detect_new_error_codes(
+    previous_codes: Sequence[str] | None, current_codes: Sequence[str] | None
+) -> VehicleAnomaly | None:
+    """Detect a device error code that wasn't present in the previous reading (F-A4).
+
+    Pure function, no I/O. F-A4 names "cell/module fault" and "motor fault"
+    as separate triggers, but the MQTT contract only carries opaque error
+    code strings with no vendor catalog to map a code to one or the other -
+    see ``VehicleAnomalyType.DEVICE_FAULT``'s docstring and
+    ``docs/01-requirements/future.md``. Only *newly appearing* codes fire an
+    anomaly; a code that was already active on the previous reading (still
+    faulted, not a new fault) or one that cleared does not.
+
+    Args:
+        previous_codes: Error codes active on the vehicle's previous
+            reading, or ``None`` if there were none.
+        current_codes: Error codes active on the current reading, or
+            ``None`` if there are none.
+
+    Returns:
+        A ``DEVICE_FAULT`` anomaly listing the newly appeared codes, or
+        ``None`` if there are none.
+    """
+    if not current_codes:
+        return None
+    new_codes = sorted(set(current_codes) - set(previous_codes or []))
+    if not new_codes:
+        return None
+    return VehicleAnomaly(
+        anomaly_type=VehicleAnomalyType.DEVICE_FAULT,
+        severity=VEHICLE_ANOMALY_SEVERITIES[VehicleAnomalyType.DEVICE_FAULT],
+        evidence={
+            "new_codes": new_codes,
+            "active_codes": sorted(current_codes),
+        },
+    )
+
+
+def detect_vehicle_anomalies(
+    previous_telemetry: VehicleTelemetryModel | None,
+    message: TelemetryMessage,
+) -> list[VehicleAnomaly]:
+    """Run every F-A4 detector against one telemetry reading.
+
+    Pure function, no I/O. A single message may legitimately trip more than
+    one detector (e.g. a battery fire event could show both high temperature
+    and a new fault code), so every detector runs independently and all
+    results are returned.
+
+    Args:
+        previous_telemetry: The vehicle's previous telemetry row, already
+            queried by the caller, or ``None`` for the vehicle's first
+            reading.
+        message: The current message already validated by Pydantic.
+
+    Returns:
+        Every anomaly detected in this reading, in detector-declaration
+        order (temperature, voltage, then fault codes); empty if none.
+    """
+    previous_temperature = (
+        previous_telemetry.battery_temperature if previous_telemetry else None
+    )
+    previous_voltage = (
+        previous_telemetry.battery_voltage if previous_telemetry else None
+    )
+    # error_codes is stored as {"codes": [...]} JSONB, or None.
+    previous_error_codes = (
+        previous_telemetry.error_codes.get("codes")
+        if previous_telemetry and previous_telemetry.error_codes
+        else None
+    )
+
+    anomalies: list[VehicleAnomaly] = []
+    temperature_anomaly = detect_high_battery_temperature(
+        previous_temperature,
+        message.battery.temperature,
+    )
+    if temperature_anomaly is not None:
+        anomalies.append(temperature_anomaly)
+    voltage_anomaly = detect_sudden_voltage_drop(
+        previous_voltage,
+        message.battery.voltage,
+    )
+    if voltage_anomaly is not None:
+        anomalies.append(voltage_anomaly)
+    fault_anomaly = detect_new_error_codes(previous_error_codes, message.errors)
+    if fault_anomaly is not None:
+        anomalies.append(fault_anomaly)
+    return anomalies
+
+
+def to_telemetry_snapshot(message: TelemetryMessage) -> dict[str, object]:
+    """Build a JSONB-safe data snapshot of a telemetry message (F-A4).
+
+    Pure mapping, no I/O. This is the "event log with a data snapshot" F-A4
+    asks for - stored inside the anomaly notification's ``payload`` rather
+    than a separate table (see ``docs/02-planners/backend-anomaly-detection.md``).
+    Only JSON-serializable values are included (``UUID``/``datetime`` are
+    converted to strings) since ``payload`` is a JSONB column.
+
+    Args:
+        message: The telemetry message the anomaly was detected in.
+
+    Returns:
+        A flat dict of the message's fields relevant to investigating an
+        anomaly.
+    """
+    return {
+        "message_uuid": str(message.message_uuid),
+        "recorded_at": message.recorded_at.isoformat(),
+        "latitude": message.location.latitude,
+        "longitude": message.location.longitude,
+        "speed": message.vehicle_state.speed if message.vehicle_state else None,
+        "odometer": message.vehicle_state.odometer if message.vehicle_state else None,
+        "soc": message.battery.soc,
+        "battery_voltage": message.battery.voltage,
+        "battery_current": message.battery.current,
+        "battery_temperature": message.battery.temperature,
+        "motor_temperature": message.motor.temperature if message.motor else None,
+        "error_codes": message.errors,
+        "schema_version": message.schema_version,
+    }
+
+
+_ANOMALY_TITLES: dict[VehicleAnomalyType, str] = {
+    VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE: "High battery temperature detected",
+    VehicleAnomalyType.SUDDEN_VOLTAGE_DROP: "Sudden battery voltage drop detected",
+    VehicleAnomalyType.DEVICE_FAULT: "Device fault code reported",
+}
+
+
+async def _raise_vehicle_anomaly_alert(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    anomaly: VehicleAnomaly,
+    message: TelemetryMessage,
+) -> None:
+    """Raise an F-A4 anomaly notification carrying evidence and a data snapshot.
+
+    Args:
+        db: Session whose transaction is owned by the worker.
+        vehicle_id: Vehicle the anomaly was detected on.
+        anomaly: Anomaly already detected by ``detect_vehicle_anomalies``.
+        message: The telemetry message the anomaly was detected in, used to
+            build the stored snapshot.
+
+    Side Effects:
+        Writes one notification row into the session; does not commit.
+    """
+    payload: dict[str, object] = {
+        "anomaly_type": anomaly.anomaly_type.value,
+        "evidence": anomaly.evidence,
+        "snapshot": to_telemetry_snapshot(message),
+    }
+    await notifications_service.create_notification(
+        db,
+        notification_type=NotificationType.ANOMALY_ALERT,
+        severity=anomaly.severity,
+        vehicle_id=vehicle_id,
+        title=_ANOMALY_TITLES[anomaly.anomaly_type],
+        body=(
+            f"Vehicle anomaly '{anomaly.anomaly_type.value}' detected with "
+            f"evidence {anomaly.evidence}."
+        ),
+        payload=payload,
+    )
+    logger.info(
+        "vehicle anomaly alert raised",
+        extra={
+            "vehicle_id": str(vehicle_id),
+            "anomaly_type": anomaly.anomaly_type.value,
+        },
+    )
+
+
 class BatchResult(TypedDict):
     """Counters returned after processing a telemetry batch."""
 
@@ -250,9 +520,12 @@ async def process_message(
       and the worker stops per MVP policy.
     - After a successful insert, F-A2 battery-threshold detection runs
       against the vehicle's previous SOC reading; a crossing raises exactly
-      one notification (see ``detect_battery_alert_level``). This never
-      affects ``processed``/``skipped``/``errors`` - it is reported via a
-      separate structured log line.
+      one notification (see ``detect_battery_alert_level``). F-A4 anomaly
+      detection also runs against the same previous reading; a message may
+      trip zero, one, or more anomaly detectors, each raising its own
+      notification (see ``detect_vehicle_anomalies``). Neither ever affects
+      ``processed``/``skipped``/``errors`` - each is reported via a separate
+      structured log line.
 
     Args:
         db: AsyncSession whose transaction is owned by the worker.
@@ -291,6 +564,8 @@ async def process_message(
     # Read the previous reading before inserting this one - once the new row
     # is inserted, get_latest_vehicle_telemetry would return it instead of
     # the actual previous reading, and the crossing could never be detected.
+    # Kept as the full ORM row (not just .soc) since F-A4's detectors also
+    # need the previous temperature/voltage/error codes.
     previous_telemetry = await telemetry_repository.get_latest_vehicle_telemetry(
         db, vehicle_id
     )
@@ -335,6 +610,14 @@ async def process_message(
             current_soc=message.battery.soc,
             latitude=message.location.latitude,
             longitude=message.location.longitude,
+        )
+
+    for anomaly in detect_vehicle_anomalies(previous_telemetry, message):
+        await _raise_vehicle_anomaly_alert(
+            db,
+            vehicle_id=vehicle_id,
+            anomaly=anomaly,
+            message=message,
         )
 
     return {"processed": processed_count, "skipped": 0, "errors": 0}

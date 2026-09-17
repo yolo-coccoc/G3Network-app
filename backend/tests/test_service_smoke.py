@@ -1,5 +1,6 @@
 """Smoke test for the backend's main service workflows."""
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -35,7 +36,7 @@ from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
-from app.domains.telemetry.types import BatteryAlertLevel
+from app.domains.telemetry.types import BatteryAlertLevel, VehicleAnomalyType
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import VehicleReference, VehicleStatus
@@ -78,7 +79,13 @@ def _telematic_record(vehicle_id: UUID) -> TelematicModel:
     )
 
 
-def _telemetry_envelope(soc: float = 80.0) -> TelemetryEnvelope:
+def _telemetry_envelope(
+    soc: float = 80.0,
+    *,
+    battery_temperature: float | None = None,
+    battery_voltage: float | None = None,
+    errors: list[str] | None = None,
+) -> TelemetryEnvelope:
     """Create a valid telemetry envelope for process_message."""
     message = TelemetryMessage.model_validate(
         {
@@ -86,7 +93,12 @@ def _telemetry_envelope(soc: float = 80.0) -> TelemetryEnvelope:
             "telematic_serial": "TBOX-TEST-001",
             "recorded_at": "2026-08-26T10:00:00Z",
             "location": {"latitude": 10.8, "longitude": 106.7},
-            "battery": {"soc": soc},
+            "battery": {
+                "soc": soc,
+                "temperature": battery_temperature,
+                "voltage": battery_voltage,
+            },
+            "errors": errors,
         }
     )
     return TelemetryEnvelope(message=message, raw_payload={"test": True})
@@ -280,7 +292,11 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
 ) -> None:
     """process_message raises exactly one notification when SOC crosses a threshold (F-A2)."""
     mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
-    previous_telemetry = SimpleNamespace(soc=25.0)
+    # battery_temperature/battery_voltage/error_codes are None so F-A4's
+    # detectors (also run by process_message) find nothing to report here.
+    previous_telemetry = SimpleNamespace(
+        soc=25.0, battery_temperature=None, battery_voltage=None, error_codes=None
+    )
     created_notifications: list[dict[str, object]] = []
 
     async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
@@ -365,6 +381,210 @@ def test_detect_battery_alert_level(
         telemetry_service.detect_battery_alert_level(previous_soc, current_soc)
         == expected_level
     )
+
+
+@pytest.mark.parametrize(
+    ("previous_celsius", "current_celsius", "expects_anomaly"),
+    [
+        (None, 45.0, False),  # first reading, below threshold: no anomaly
+        (None, 65.0, True),  # first reading, at/above threshold: DOES alert
+        (55.0, 59.9, False),  # rising but still below threshold
+        (55.0, 60.0, True),  # entry, inclusive boundary
+        (61.0, 67.0, False),  # already above threshold: no repeat
+        (67.0, 45.0, False),  # recovers below threshold: silent
+        (45.0, 62.0, True),  # re-entry after recovery: alerts again
+    ],
+)
+def test_detect_high_battery_temperature(
+    previous_celsius: float | None,
+    current_celsius: float | None,
+    expects_anomaly: bool,
+) -> None:
+    """detect_high_battery_temperature() fires once on entry, not on every message above it.
+
+    Unlike detect_battery_alert_level, a missing previous reading is treated
+    as "below threshold" (not "no alert") - a fire-safety anomaly must not
+    be silently skipped on a vehicle's very first message.
+    """
+    anomaly = telemetry_service.detect_high_battery_temperature(
+        previous_celsius, current_celsius
+    )
+    if expects_anomaly:
+        assert anomaly is not None
+        assert anomaly.anomaly_type is VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE
+        assert anomaly.evidence["observed_celsius"] == current_celsius
+    else:
+        assert anomaly is None
+
+
+def test_detect_high_battery_temperature_skips_missing_reading() -> None:
+    """No anomaly when the device didn't report a temperature at all."""
+    assert telemetry_service.detect_high_battery_temperature(55.0, None) is None
+
+
+@pytest.mark.parametrize(
+    ("previous_volts", "current_volts", "expects_anomaly"),
+    [
+        (None, 600.0, False),  # first reading: undefined, stays silent
+        (650.0, None, False),  # device didn't report voltage this time
+        (650.0, 648.2, False),  # small drop, below threshold
+        (650.0, 600.0, True),  # exactly at threshold (inclusive)
+        (650.0, 591.0, True),  # well above threshold
+        (600.0, 650.0, False),  # voltage rising, never an anomaly
+    ],
+)
+def test_detect_sudden_voltage_drop(
+    previous_volts: float | None,
+    current_volts: float | None,
+    expects_anomaly: bool,
+) -> None:
+    """detect_sudden_voltage_drop() only fires on an absolute drop >= the threshold."""
+    anomaly = telemetry_service.detect_sudden_voltage_drop(
+        previous_volts, current_volts
+    )
+    if expects_anomaly:
+        assert anomaly is not None
+        assert anomaly.anomaly_type is VehicleAnomalyType.SUDDEN_VOLTAGE_DROP
+        assert anomaly.evidence["drop_volts"] == pytest.approx(
+            previous_volts - current_volts  # type: ignore[operator]
+        )
+    else:
+        assert anomaly is None
+
+
+@pytest.mark.parametrize(
+    ("previous_codes", "current_codes", "expected_new_codes"),
+    [
+        (None, None, None),
+        (None, [], None),
+        (None, ["E001"], ["E001"]),
+        (["E001"], ["E001"], None),  # unchanged: still faulted, not a new fault
+        (["E001"], [], None),  # cleared: not an anomaly
+        (["E001"], ["E001", "E042"], ["E042"]),  # one new code alongside an old one
+    ],
+)
+def test_detect_new_error_codes(
+    previous_codes: list[str] | None,
+    current_codes: list[str] | None,
+    expected_new_codes: list[str] | None,
+) -> None:
+    """detect_new_error_codes() only fires on a code absent from the previous reading."""
+    anomaly = telemetry_service.detect_new_error_codes(previous_codes, current_codes)
+    if expected_new_codes is None:
+        assert anomaly is None
+    else:
+        assert anomaly is not None
+        assert anomaly.anomaly_type is VehicleAnomalyType.DEVICE_FAULT
+        assert anomaly.evidence["new_codes"] == expected_new_codes
+
+
+def test_detect_vehicle_anomalies_returns_every_detector_that_fires() -> None:
+    """A single reading tripping two conditions at once returns both anomalies."""
+    previous_telemetry = SimpleNamespace(
+        battery_temperature=45.0, battery_voltage=650.0, error_codes=None
+    )
+    message = _telemetry_envelope(
+        battery_temperature=65.0, battery_voltage=650.0, errors=["E042"]
+    ).message
+
+    anomalies = telemetry_service.detect_vehicle_anomalies(
+        cast(VehicleTelemetryModel, previous_telemetry), message
+    )
+
+    anomaly_types = {anomaly.anomaly_type for anomaly in anomalies}
+    assert anomaly_types == {
+        VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE,
+        VehicleAnomalyType.DEVICE_FAULT,
+    }
+
+
+def test_detect_vehicle_anomalies_reads_stored_error_codes_shape() -> None:
+    """The previous reading's error_codes is the stored {"codes": [...]} JSONB shape."""
+    previous_telemetry = SimpleNamespace(
+        battery_temperature=None,
+        battery_voltage=None,
+        error_codes={"codes": ["E001"]},
+    )
+    message = _telemetry_envelope(errors=["E001", "E042"]).message
+
+    anomalies = telemetry_service.detect_vehicle_anomalies(
+        cast(VehicleTelemetryModel, previous_telemetry), message
+    )
+
+    assert len(anomalies) == 1
+    assert anomalies[0].evidence["new_codes"] == ["E042"]
+
+
+def test_detect_vehicle_anomalies_returns_empty_for_no_previous_reading() -> None:
+    """A vehicle's very first message with unremarkable readings raises nothing."""
+    message = _telemetry_envelope().message
+
+    assert telemetry_service.detect_vehicle_anomalies(None, message) == []
+
+
+def test_to_telemetry_snapshot_is_json_serializable() -> None:
+    """to_telemetry_snapshot() only contains values the JSONB payload column can store."""
+    message = _telemetry_envelope(
+        battery_temperature=65.0, battery_voltage=600.0, errors=["E042"]
+    ).message
+
+    snapshot = telemetry_service.to_telemetry_snapshot(message)
+
+    serialized = json.dumps(snapshot)  # raises TypeError on a non-JSON-safe value
+    assert json.loads(serialized)["battery_temperature"] == 65.0
+    assert snapshot["message_uuid"] == str(message.message_uuid)
+    assert snapshot["recorded_at"] == message.recorded_at.isoformat()
+
+
+@pytest.mark.asyncio
+async def test_process_message_raises_one_notification_per_tripped_anomaly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """process_message raises one ANOMALY_ALERT notification per detector that fires (F-A4)."""
+    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    previous_telemetry = SimpleNamespace(
+        soc=80.0, battery_temperature=45.0, battery_voltage=650.0, error_codes=None
+    )
+    created_notifications: list[dict[str, object]] = []
+
+    async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
+        return mapping
+
+    async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
+        return 1
+
+    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+        return previous_telemetry
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        telematics_public_service, "resolve_mapping_by_serial", resolve_mapping
+    )
+    monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
+    monkeypatch.setattr(
+        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    result = await telemetry_service.process_message(
+        _db(),
+        _telemetry_envelope(soc=80.0, battery_temperature=65.0, battery_voltage=650.0),
+    )
+
+    assert result == {"processed": 1, "skipped": 0, "errors": 0}
+    assert len(created_notifications) == 1
+    call = created_notifications[0]
+    assert call["notification_type"] is NotificationType.ANOMALY_ALERT
+    assert call["severity"] is NotificationSeverity.CRITICAL
+    assert call["vehicle_id"] == mapping.vehicle_id
+    payload = cast(dict[str, object], call["payload"])
+    assert payload["anomaly_type"] == VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE.value
+    snapshot = cast(dict[str, object], payload["snapshot"])
+    assert snapshot["battery_temperature"] == 65.0
 
 
 def test_notification_service_builds_response_from_model() -> None:
