@@ -111,7 +111,10 @@ reverse proxy in the development environment.
 ## Not yet in the MVP
 
 - User, authentication, RBAC and driver.
-- Full telemetry history API, vehicle/station map and aggregate dashboard.
+- Vehicle/station map and aggregate dashboard. A bounded time-range
+  telemetry history query exists (F-A5,
+  `GET /telemetry/vehicles/{id}/history`), but true trip segmentation
+  (start/end detection, idle-gap grouping) does not.
 - Aggregate connector status and technical status history.
 - Live station occupancy/online signal for a true "nearest *available*"
   (F-A2's lookup only reflects `deleted_at`/`maintenance_status` today).
@@ -121,7 +124,9 @@ reverse proxy in the development environment.
 - A device error-code catalog (cell/module vs. motor fault classification),
   vendor-validated F-A4 anomaly thresholds, re-alert/escalation for a
   persisting anomaly, and a motor-temperature anomaly detector.
-- Geofence, device health, charging policy, payment and billing.
+- Geofence (boundary config on `vehicles`, in/out-of-zone events/alerts on
+  `telemetry` — F-A5's deferred half), device health, charging policy,
+  payment and billing.
 - Web portal, vehicle app, centralized observability and production
   reliability.
 

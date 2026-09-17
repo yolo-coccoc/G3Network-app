@@ -752,10 +752,13 @@ The items below are actual deferral decisions made in the repo, not placeholders
   detection in `telemetry/service.py`. F-A4's slice is also done — high
   battery temperature, sudden voltage drop, and new device error codes are
   detected in the same per-message flow and raise `ANOMALY_ALERT`
-  notifications; see `docs/02-planners/backend-anomaly-detection.md`. Still
-  open from this item: full telemetry history/map, aggregated connector
+  notifications; see `docs/02-planners/backend-anomaly-detection.md`. F-A5's
+  slice is also done — a bounded time-range telemetry history query
+  (`GET /telemetry/vehicles/{id}/history`), not full/unbounded history and
+  not a map; see `docs/02-planners/backend-telemetry-query-api.md` §2.2.
+  Still open from this item: the vehicle/station map, aggregated connector
   status, and any device-ACK/MQTT-command mechanism. See items 37, 40, 41
-  and 42-45 below.
+  and 42-48 below.
 
 ### 34. Batched connector-count query for the station directory list endpoint
 
@@ -1037,6 +1040,76 @@ The items below are actual deferral decisions made in the repo, not placeholders
   here, decide the threshold and whether it maps to "motor fault" or is a
   genuinely new, fifth trigger - don't conflate it with item 42's
   error-code-based fault classification without confirming that's correct.
+
+### 46. True trip segmentation for F-A5 "trip replay"
+
+- **Short description**: F-A5's "trip replay" output is currently served as
+  a bounded time-range telemetry history query
+  (`GET /telemetry/vehicles/{id}/history`) returning raw points for the
+  caller to draw a polyline from - not segmented trips with a start, an
+  end, and a trip identity.
+- **Purpose/role in the system**: A real trip boundary (ignition-on to
+  ignition-off, or an idle-gap heuristic) would let the fleet portal list
+  "trips" directly instead of the caller inferring boundaries from a flat
+  point list, and would let a trip be referenced by ID (for F-A6/F-A8
+  reporting, audit, or the repossession-process usage context F-A5's PRD
+  entry mentions).
+- **Reason for deferral**: This backend has no trip concept anywhere - item
+  38 already notes that F-A9 (Empty-trip detection, still 📋 Planned) would
+  be the *only* place a trip boundary/ID gets introduced. Inventing a trip
+  concept here (e.g. an idle-gap threshold) ahead of F-A9 risks a second,
+  conflicting definition of "trip" in the same backend.
+- **Related planner/feature**: F-A5, F-A9, item 38,
+  `docs/02-planners/backend-telemetry-query-api.md` §2.2.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When F-A9 lands its trip concept, revisit whether
+  `GET .../history` should accept a `trip_id` alongside (or instead of) a
+  raw time range, and whether trip boundaries should be persisted or
+  computed on read.
+
+### 47. Geofencing for F-A5 (boundary config + in/out-of-zone alerts)
+
+- **Short description**: F-A5's geofencing half - geofence boundary
+  configuration (per vehicle/fleet, on `vehicles`) and in/out-of-zone
+  entry/exit detection and alerting (on `telemetry`) - is entirely
+  deferred. Only the location/history-query half of F-A5 was implemented.
+- **Purpose/role in the system**: Lets fleet managers define a geographic
+  boundary per vehicle/fleet and get alerted when a vehicle enters or
+  exits it - named in F-A5's Output ("in/out-of-zone alerts") and cited as
+  supporting the internal vehicle-repossession process.
+- **Reason for deferral**: Deferred by explicit request when F-A5's backend
+  was scoped, to ship the location-history half first. No geofence
+  boundary table, no PostGIS containment query, and no event/notification
+  wiring exist yet for this.
+- **Related planner/feature**: F-A5, `vehicles`, `telemetry`,
+  `docs/02-planners/backend-telemetry-query-api.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, decide where geofence boundaries are
+  stored (likely a `vehicles`-owned table storing a PostGIS `geography`
+  polygon per vehicle/fleet), how entry/exit is detected (a `ST_Contains`/
+  `ST_Within` check per incoming telemetry point vs. a periodic batch
+  check), and whether in/out-of-zone events reuse the `notifications`
+  domain the way F-A2/F-A4 do.
+
+### 48. TimescaleDB retention policy for `vehicle_telemetry`
+
+- **Short description**: F-A5's "trip history retained ≥6 months" constraint
+  currently holds only because nothing deletes rows from `vehicle_telemetry`
+  - there is no TimescaleDB retention/`drop_chunks` policy, and no explicit
+  decision on how long data is kept beyond "at least" 6 months.
+- **Purpose/role in the system**: A retention policy bounds storage growth
+  on a high-frequency hypertable (one row every 5-10s per vehicle) and turns
+  an implicit "we haven't deleted anything yet" into an explicit, auditable
+  guarantee.
+- **Reason for deferral**: No storage-growth pressure yet at the current
+  device count; adding a retention/compression policy now would be a guess
+  at a retention window without real volume data to size it against.
+- **Related planner/feature**: F-A5, F-A1, `docs/00-status/architecture.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, add a TimescaleDB
+  `add_retention_policy`/compression policy via a migration once real
+  storage volume justifies it, and confirm the actual retention window (the
+  PRD only says "≥6 months," not an upper bound) as a business decision.
 
 ---
 

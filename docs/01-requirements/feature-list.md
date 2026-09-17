@@ -269,8 +269,15 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `vehicles` (geofence-boundary config); `telemetry` (GPS/speed history, trip
   segmentation, geofence events)
-- **Status:** 📋 Planned — `telemetry` currently returns only the latest record per vehicle; no
-  history, trip replay, or geofencing yet
+- **Status:** ✅ Done (MVP/POC scope) — "live location" is served by F-A1's existing
+  `GET /telemetry/vehicles/{id}/latest`. "Trip replay" is served by a new
+  `GET /telemetry/vehicles/{id}/history` endpoint returning a vehicle's telemetry points within a
+  required, capped time range (default 7-day max span, `TELEMETRY_HISTORY_MAX_RANGE_DAYS`),
+  ordered chronologically for the frontend to draw a route polyline — not segmented trips; this
+  backend has no trip concept (`future.md` items 38, 46). Geofencing (boundary config +
+  in/out-of-zone events/alerts) is entirely deferred (`future.md` item 47), as is the ≥6-month
+  retention constraint as an enforced policy (`future.md` item 48) and NF-08's consent/audit-log
+  requirement (no `identity` domain yet, same gap as every other personal-data-adjacent endpoint)
 - Note: the source also mentions this feature supports the internal vehicle-repossession
   process — that's usage context, not an additional software requirement.
 
