@@ -17,18 +17,21 @@ For technical depth (components, diagram, database, infra), see
 |---|---|
 | `vehicles` | CRUD and soft delete. |
 | `telematics` | Device CRUD, mapping devices to vehicles. |
-| `telemetry` | Ingests via MQTT with a versioned message schema (`schema_version`); API only returns the **latest** record per vehicle — no history, map, or alert API yet. F-A1 done at MVP/POC scope; online/offline flag and NF-01/NF-04/NF-06 hardening deferred (`future.md` items 35, 36). |
-| `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway, and station directory metadata (location, power rating, connector standard, operating hours, maintenance status, computed connector count). Assumes pre-provisioned, always-online topology; no live status/connection tracking yet. |
+| `telemetry` | Ingests via MQTT with a versioned message schema (`schema_version`); API only returns the **latest** record per vehicle — no history or map yet. F-A1 done at MVP/POC scope; online/offline flag and NF-01/NF-04/NF-06 hardening deferred (`future.md` items 35, 36). F-A2 tiered battery alerts also done: SOC-threshold-crossing detection raises a notification via the `notifications` domain. |
+| `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway, station directory metadata (location, power rating, connector standard, operating hours, maintenance status, computed connector count), and a nearest-operational-station lookup (F-A2) using PostGIS. Assumes pre-provisioned, always-online topology; no live status/connection/occupancy tracking yet. |
 | `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. No retry, out-of-order handling, or DLQ. |
+| `notifications` | Generic backend-storage notification table (F-A2's delivery leg), polled via `GET /api/v1/notifications?after_id=`; a JSONB payload carries type-specific fields so future alert types (F-A4, F-B5, F-J3) can reuse it without a new table. No push, no recipient scoping (no `identity` domain yet) — poll-only for now. |
 
 ## Database
 
-Current Alembic head: `0007_telemetry_schema_version`.
+Current Alembic head: `0008_notifications`.
 
 ## Not built yet
 
-Web portal, vehicle app, identity/RBAC, driver, notification, policy,
-billing/payment, and extended monitoring (full telemetry history, map,
-alerts, threshold pushes) have no active source in the repo. See
+Web portal, vehicle app, identity/RBAC, driver, policy, billing/payment,
+and extended monitoring (full telemetry history, map, connector-status
+aggregation, push/multi-channel delivery) have no active source in the
+repo. `notifications` has a minimal backend-storage/polling slice (F-A2)
+but not the multi-channel delivery F-F3 describes. See
 [`docs/01-requirements/future.md`](../01-requirements/future.md) for the
 full list of deferred components and why.

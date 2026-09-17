@@ -746,6 +746,13 @@ The items below are actual deferral decisions made in the repo, not placeholders
   history/map/connector and the alert lifecycle must be settled separately
   before creating a migration. Do not assume these APIs already exist just
   because telemetry data is already stored in TimescaleDB.
+- **Partial resolution (2026-09-17)**: F-A2's slice of this item is done —
+  the `notifications` domain (generic table + JSONB payload,
+  `GET /api/v1/notifications?after_id=`) and SOC-threshold-crossing
+  detection in `telemetry/service.py`. Still open from this item: full
+  telemetry history/map, aggregated connector status, F-A4 anomaly
+  detection, and any device-ACK/MQTT-command mechanism. See items 37-41
+  below and `docs/02-planners/backend-notifications.md`.
 
 ### 34. Batched connector-count query for the station directory list endpoint
 
@@ -825,6 +832,116 @@ The items below are actual deferral decisions made in the repo, not placeholders
   concurrent publishers for NF-04, and configure EMQX for per-device TLS client
   certificates (issuance/rotation/revocation process still needs to be designed) for
   NF-06.
+
+---
+
+### 37. Live station occupancy/online signal for "nearest available station"
+
+- **Short description**: A live occupied/free and online/offline signal per
+  station/EVSE/connector, so F-A2's nearest-station lookup can answer
+  "available" for real instead of approximating it as "not soft-deleted and
+  not under maintenance."
+- **Purpose/role in the system**: F-A2's stated output is "distance to the
+  nearest *available* station" — today's `find_nearest_operational_station`
+  filters on `deleted_at`/`maintenance_status` only, both admin-set and
+  never updated by OCPP. A vehicle could be pointed at a station where every
+  connector is already occupied.
+- **Reason for deferral**: No OCPP `StatusNotification`/`Heartbeat` handler
+  exists, and neither `ChargingEvseModel` nor `ChargingConnectorModel` has a
+  status column (see `docs/01-requirements/future.md` items 27/28, the
+  charging MVP's always-online assumption). Building this is charging-domain
+  scope, not something to bolt onto the nearest-station query.
+- **Related planner/feature**: F-A2, F-C1, `charging_stations`,
+  `docs/02-planners/backend-notifications.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, this likely means an OCPP
+  `StatusNotification` handler plus a status column on `ChargingConnectorModel`
+  (or `ChargingEvseModel`), then changing `find_nearest_station_by_location`'s
+  filter to also require "available" in the new sense. Revisit alongside
+  items 27/28 rather than in isolation.
+
+### 38. True per-trip de-duplication for F-A2 battery alerts
+
+- **Short description**: F-A2's spec says "1 alert per threshold per trip";
+  the current implementation approximates this as "1 alert per threshold
+  crossing" (previous SOC above the threshold, current at-or-below it),
+  since no trip concept exists in the backend.
+- **Purpose/role in the system**: A trip boundary would let the same
+  threshold alert again on a new trip even without an intervening full
+  charge back above it (e.g. a short top-up that doesn't clear the
+  threshold but starts a new trip) - the crossing-only rule can't
+  distinguish that from "still the same low-battery trip."
+- **Reason for deferral**: F-A9 (Empty-trip detection), which would
+  introduce the only trip concept anywhere in this backend, is itself still
+  📋 Planned. No trip table, trip ID, or trip-boundary detection exists to
+  key a per-trip de-dup state on.
+- **Related planner/feature**: F-A2, F-A9, `telemetry`,
+  `docs/02-planners/backend-notifications.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When F-A9 lands, revisit
+  `detect_battery_alert_level` in `telemetry/service.py` - it may need a
+  trip ID parameter and per-(vehicle, trip, threshold) state instead of
+  purely comparing consecutive readings.
+
+### 39. Hysteresis/re-arm margin for F-A2 threshold crossing
+
+- **Short description**: A small SOC margin (e.g. 2%) a vehicle must climb
+  back above a threshold before that threshold can alert again, instead of
+  the current bare crossing rule re-arming the instant SOC ticks back above
+  the line.
+- **Purpose/role in the system**: Guards against a noisy raw SOC sensor
+  oscillating across a threshold (20.1 → 19.9 → 20.1 → 19.9 → ...) and
+  producing a new alert on every oscillation.
+- **Reason for deferral**: Not needed yet - telemetry's `soc` is a single
+  reported value per message from the BMS, not observed to be noisy in the
+  simulator or in current use. Adding a margin now would be a constant with
+  nothing to tune it against. Revisit if real device data shows this
+  oscillation happening.
+- **Related planner/feature**: F-A2, `telemetry/service.py::detect_battery_alert_level`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: If added, the margin should be a named setting
+  (e.g. `BATTERY_ALERT_REARM_MARGIN_PERCENT`), not a bare literal, per this
+  backend's config-over-hardcoding convention.
+
+### 40. Recipient scoping for notifications
+
+- **Short description**: Notifications are currently vehicle-scoped only
+  (a nullable `vehicle_id` column) with no concept of which user/role should
+  see them - there is no filter by driver, fleet, or operator account.
+- **Purpose/role in the system**: F-A2 says the driver receives early
+  alerts and the fleet manager receives alerts from the 20% threshold up -
+  today's API returns every notification to any caller.
+- **Reason for deferral**: No `identity` domain (auth & RBAC) exists yet in
+  this repo (see `domain-boundaries.md`); recipient scoping depends on it.
+  Building an ad hoc scoping mechanism now would be redone once `identity`
+  lands.
+- **Related planner/feature**: F-A2, `notifications`, `identity` (future
+  domain), `docs/02-planners/backend-notifications.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When `identity` lands, `notifications` likely needs
+  a recipient/audience column or join table, and the list endpoint needs an
+  auth-derived filter instead of returning everything.
+
+### 41. Push and multi-channel delivery for notifications (F-F3)
+
+- **Short description**: `notifications` today is backend-storage plus
+  admin-portal polling only - no push notification, in-app real-time
+  delivery, or SMS, and no per-channel/per-threshold configuration.
+- **Purpose/role in the system**: F-F3 (Multi-channel notifications) names
+  push/in-app/SMS as the delivery channels for F-A2/F-B5/F-J3, with SMS
+  reserved as a fallback for critical alerts.
+- **Reason for deferral**: There is no mobile app in this repo's scope
+  (the driver-facing app doesn't exist yet), so push/in-app delivery has no
+  client to deliver to; SMS needs a third-party gateway decision. The
+  polling API this item builds on top of is the storage layer a future
+  push mechanism would reuse.
+- **Related planner/feature**: F-F3, F-A2, F-B5, F-J3, `notifications`
+  (future multi-channel work).
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When a mobile/driver app exists, revisit whether
+  `notifications`' polling API stays as-is (the app polls too) or gets a
+  push layer (e.g. FCM/APNs) added alongside it - both can coexist, since
+  the table is the source of truth either way.
 
 ---
 

@@ -66,8 +66,18 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirement — NF-03 (Availability/SLA):** Platform uptime ≥99.5%/month;
   battery & station alerts are the top-priority flow.
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `telemetry` (threshold detection); `notifications` (delivery — future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `telemetry` (threshold detection); `notifications` (storage/delivery)
+- **Status:** ✅ Done (MVP/POC scope) — SOC-threshold crossing detection runs inside telemetry
+  ingestion; a crossing raises a notification (`notifications` domain) carrying the nearest
+  operational station and its distance, queryable via `GET /api/v1/notifications`. Since there is
+  no mobile app in this backend's scope, delivery is backend-storage-plus-portal-polling, not a
+  push to a device — the app-level constraints ("must work while backgrounded", a navigation
+  button) don't apply here. "1 alert per threshold per trip" is approximated as "1 alert per
+  threshold crossing" (previous SOC above, current at-or-below), since no trip concept exists yet
+  (F-A9 is still Planned); "nearest available station" only reflects `deleted_at`/
+  `maintenance_status`, since no live occupancy/online signal exists. NF-01/NF-03 are not
+  measured — this backend's current scope is MVP/POC, not a performance/uptime target (see
+  `future.md`).
 
 ### F-A9 Empty-trip (deadhead) detection
 - **Actor:** Driver (declares load status); System (infers automatically)

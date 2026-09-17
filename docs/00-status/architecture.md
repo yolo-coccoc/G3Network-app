@@ -14,18 +14,25 @@ flowchart LR
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     API["FastAPI API"]
     Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions"]
+    Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
+    Portal["Admin web portal\n(polls, not built yet)"]
 
     Vehicle -->|MQTT telemetry| Broker
     Broker --> Ingestion
     Ingestion -->|vehicle_telemetry| DB
+    Ingestion -->|SOC crossing -> alert, F-A2| Notifications
+    Notifications -->|nearest station lookup| Domains
+    Notifications -->|notifications| DB
 
     Station <-->|OCPP 2.0.1| OCPP
     OCPP -->|session event + meter| Domains
     Domains -->|charging data| DB
 
     API --> Domains
+    API --> Notifications
     Domains -->|CRUD/query| DB
+    Portal -.->|GET /api/v1/notifications| API
 ```
 
 ## Current components
@@ -43,6 +50,12 @@ FastAPI registers the following domains:
   hours, maintenance status), and the OCPP 2.0.1 gateway.
 - `charging_sessions`: storing the session aggregate, lifecycle events and
   meter values.
+- `notifications`: a generic, backend-storage notification table (F-A2)
+  polled via `GET /api/v1/notifications?after_id=`; telemetry ingestion
+  raises one when a vehicle's SOC crosses the 30/20/10% tiers, carrying the
+  nearest operational charging station (resolved via `charging_stations`,
+  the first PostGIS spatial query in the codebase). No push and no
+  recipient scoping yet — there is no mobile app and no `identity` domain.
 
 The API process runs separately via Uvicorn. Telemetry ingestion and the OCPP
 gateway have their own entrypoints, sharing the same database/session
@@ -59,8 +72,10 @@ extensions:
   `vehicle_telemetry.location` (both `geography(Point, 4326)` columns) —
   `charging_stations.location` has a GIST index, `vehicle_telemetry.location`
   deliberately doesn't (high-frequency write path, no spatial query need
-  yet). There's still no map/geofence *search* API (radius query, filtering)
-  — only storage and CRUD.
+  yet). F-A2's nearest-operational-station lookup is the first query to use
+  that index (`ST_Distance` + the `<->` KNN operator). There's still no
+  general-purpose map/geofence *search* API (radius query, filtering) beyond
+  that one nearest-station lookup.
 - `uuid-ossp` for the local database.
 
 The current Alembic baseline consists of:
@@ -72,6 +87,8 @@ The current Alembic baseline consists of:
 0004_create_charging_mvp_schema
 0005_station_directory_fields
 0006_telemetry_location_geo
+0007_telemetry_schema_version
+0008_notifications
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -95,10 +112,13 @@ reverse proxy in the development environment.
 - User, authentication, RBAC and driver.
 - Full telemetry history API, vehicle/station map and aggregate dashboard.
 - Aggregate connector status and technical status history.
-- Battery alerts, battery anomalies, alert de-duplication and threshold alert
-  pushes.
-- Geofence, device health, charging policy, payment, billing and
-  notification.
+- Battery anomalies (F-A4) and their notifications; live station
+  occupancy/online signal for a true "nearest *available*" (F-A2's lookup
+  only reflects `deleted_at`/`maintenance_status` today).
+- Push/multi-channel notification delivery (F-F3), recipient scoping, and
+  the online/offline vehicle flag (F-A1) — `notifications` today is
+  backend-storage-plus-portal-polling only.
+- Geofence, device health, charging policy, payment and billing.
 - Web portal, vehicle app, centralized observability and production
   reliability.
 
