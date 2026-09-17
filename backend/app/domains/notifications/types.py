@@ -1,7 +1,7 @@
 """Shared types for the notifications domain.
 
 A single generic notification contract serves every alert-producing feature
-(F-A2 today; F-A4/F-B5/F-J3 later) so each one only needs to add a
+(F-A2, F-A4 today; F-B5/F-J3 later) so each one only needs to add a
 ``NotificationType`` member and shape its own ``payload`` - not a new table,
 migration, or endpoint. See ``docs/01-requirements/future.md`` for the
 recipient-scoping and multi-channel-delivery gaps this intentionally leaves
@@ -16,6 +16,7 @@ class NotificationType(str, enum.Enum):
     """Kind of event a notification was raised for."""
 
     BATTERY_ALERT = "BATTERY_ALERT"
+    ANOMALY_ALERT = "ANOMALY_ALERT"  # F-A4
 
 
 class NotificationSeverity(str, enum.Enum):
