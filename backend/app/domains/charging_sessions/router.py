@@ -5,18 +5,23 @@ service and converts domain exceptions into status codes. It does not
 expose raw OCPP payloads or command transport at this stage.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
-from app.domains.charging_sessions.exceptions import ChargingSessionNotFoundError
+from app.domains.charging_sessions.exceptions import (
+    ChargingSessionInputError,
+    ChargingSessionNotFoundError,
+)
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
     ChargingSessionListResponse,
     ChargingSessionMeterValueListResponse,
     ChargingSessionResponse,
+    StationEnergySummaryResponse,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -170,4 +175,46 @@ async def list_charging_session_meter_values_endpoint(
     except ChargingSessionNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
+
+
+@router.get(
+    "/charging-sessions/stations/{station_id}/energy",
+    response_model=StationEnergySummaryResponse,
+    summary="Get total energy sold at a station within a time window",
+)
+async def get_station_energy_summary_endpoint(
+    station_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> StationEnergySummaryResponse:
+    """Aggregate completed sessions' energy for a station over a window (F-C5).
+
+    Args:
+        station_id: UUID of the station to aggregate over.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
+
+    Returns:
+        Total kWh and completed-session count for the window. An unknown
+        ``station_id`` returns a zero summary, not a 404 - see the service
+        docstring.
+
+    Raises:
+        HTTPException: ``400`` if either timestamp lacks a timezone or
+            ``end_time`` isn't after ``start_time``.
+    """
+    try:
+        return await charging_session_service.get_station_energy_summary(
+            db,
+            station_id=station_id,
+            start_time=start_time,
+            end_time=end_time,
+        )
+    except ChargingSessionInputError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
         ) from error

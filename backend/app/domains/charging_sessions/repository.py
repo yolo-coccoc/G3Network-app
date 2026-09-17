@@ -215,6 +215,46 @@ async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
     return int(result.scalar() or 0)
 
 
+async def get_station_energy_summary(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> tuple[Decimal, int]:
+    """Sum delivered energy and count completed sessions for a station (F-C5).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the station to aggregate over.
+        start_time: Inclusive lower bound on ``ended_at``, already
+            normalized to UTC by the service.
+        end_time: Inclusive upper bound on ``ended_at``, already normalized
+            to UTC by the service.
+
+    Returns:
+        Tuple of ``(total_energy_wh, session_count)`` for completed
+        sessions of the station that ended within the window; ``(Decimal(0),
+        0)`` if none match. An unknown ``station_id`` legitimately returns
+        the same zero result - this function doesn't check that the station
+        exists.
+    """
+    result = await db.execute(
+        select(
+            func.coalesce(func.sum(ChargingSessionModel.energy_delivered_wh), 0),
+            func.count(ChargingSessionModel.session_id),
+        ).where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.status == SessionStatus.COMPLETED,
+            ChargingSessionModel.ended_at.is_not(None),
+            ChargingSessionModel.ended_at >= start_time,
+            ChargingSessionModel.ended_at <= end_time,
+        )
+    )
+    total_energy_wh, session_count = result.one()
+    return Decimal(total_energy_wh), int(session_count)
+
+
 async def create_session(
     db: AsyncSession,
     *,

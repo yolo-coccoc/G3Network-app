@@ -28,6 +28,7 @@ from app.domains.charging_sessions.schemas import (
     ChargingSessionMeterValueListResponse,
     ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
+    StationEnergySummaryResponse,
 )
 from app.domains.charging_sessions.types import (
     MeterIngestResult,
@@ -473,4 +474,51 @@ async def ingest_meter_values(
         session_id=session.session_id,
         status=session.status,
         accepted_count=1,
+    )
+
+
+async def get_station_energy_summary(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> StationEnergySummaryResponse:
+    """Total energy sold at a station within a time window (F-C5).
+
+    Pure aggregation over already-stored session data; no writes.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        station_id: UUID of the station to aggregate over.
+        start_time: Inclusive lower bound on ``ended_at``.
+        end_time: Inclusive upper bound on ``ended_at``.
+
+    Returns:
+        Total energy (kWh) and count of completed sessions ending within
+        the window. An unknown ``station_id`` returns a zero summary rather
+        than a 404 - this domain doesn't own station existence, and a
+        report endpoint legitimately answers "no sessions" for one.
+
+    Raises:
+        ChargingSessionInputError: If either timestamp lacks a timezone, or
+            ``end_time`` isn't after ``start_time``.
+    """
+    normalized_start = _utc(start_time, "start_time")
+    normalized_end = _utc(end_time, "end_time")
+    if normalized_end <= normalized_start:
+        raise ChargingSessionInputError("end_time must be after start_time")
+
+    total_energy_wh, session_count = await repository.get_station_energy_summary(
+        db,
+        station_id=station_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+    )
+    return StationEnergySummaryResponse(
+        station_id=station_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        total_energy_kwh=float(total_energy_wh / Decimal(1000)),
+        session_count=session_count,
     )

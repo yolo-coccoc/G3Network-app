@@ -134,3 +134,25 @@ class ChargingSessionMeterValueListResponse(BaseModel):
     total: int = Field(..., ge=0)
     page: int = Field(..., ge=1)
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
+class StationEnergySummaryResponse(BaseModel):
+    """Total energy sold at a station within a queried time window (F-C5).
+
+    An aggregate over completed sessions only - an active session's energy
+    isn't final yet, so it's excluded until it ends.
+
+    Attributes:
+        station_id: UUID of the station queried.
+        start_time: Inclusive lower bound of the window, as given.
+        end_time: Inclusive upper bound of the window, as given.
+        total_energy_kwh: Sum of ``energy_delivered_wh`` (converted to kWh)
+            across completed sessions ending within the window.
+        session_count: Number of completed sessions included in the sum.
+    """
+
+    station_id: UUID
+    start_time: datetime
+    end_time: datetime
+    total_energy_kwh: float = Field(..., ge=0)
+    session_count: int = Field(..., ge=0)
