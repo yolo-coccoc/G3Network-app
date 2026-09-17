@@ -1,11 +1,14 @@
 """Business service for the telemetry domain.
 
-Feature code: F-A1 (Real-time vehicle telemetry ingestion)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
+battery alerts)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module
 because a later phase may need to optimize throughput with batch lookup and
-bulk insert.
+bulk insert. F-A2's threshold detection only runs in the per-message flow
+(``process_message``) - ``process_batch``/``batch_worker.py`` are dormant and
+not part of the current process lifecycle.
 """
 
 import logging
@@ -16,13 +19,20 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_stations.service as charging_stations_service
+import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
+from app.domains.notifications.types import NotificationType
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
     VehicleTelemetryLatestResponse,
+)
+from app.domains.telemetry.types import (
+    BATTERY_ALERT_THRESHOLDS,
+    BatteryAlertLevel,
 )
 from app.domains.vehicles import service as vehicle_service
 from app.libs.common.geo import location_to_coordinates
@@ -108,6 +118,106 @@ async def get_latest_vehicle_telemetry_response(
     return to_vehicle_telemetry_latest_response(telemetry)
 
 
+def detect_battery_alert_level(
+    previous_soc: float | None, current_soc: float
+) -> BatteryAlertLevel | None:
+    """Detect whether SOC just crossed a tiered alert threshold (F-A2).
+
+    Pure function, no I/O. A crossing is ``previous_soc > threshold >=
+    current_soc`` - strict on the previous side, inclusive on the current
+    side. The asymmetry is load-bearing: it makes a reading of exactly the
+    threshold alert once and only once. If both sides were inclusive, a
+    vehicle resting at exactly the threshold would alert on every message it
+    sends while parked there.
+
+    Args:
+        previous_soc: The vehicle's previous SOC reading (%), or ``None`` if
+            this is the first telemetry ever recorded for the vehicle (in
+            which case no alert is ever raised, regardless of how low
+            ``current_soc`` is).
+        current_soc: The current message's SOC reading (%).
+
+    Returns:
+        The most severe level crossed by this single reading (a gap that
+        skips multiple thresholds, e.g. 35% to 8%, still raises exactly one
+        alert), or ``None`` if no threshold was crossed downward.
+    """
+    if previous_soc is None:
+        return None
+    crossed_level: BatteryAlertLevel | None = None
+    for level, threshold in BATTERY_ALERT_THRESHOLDS.items():
+        if previous_soc > threshold.threshold_percent >= current_soc:
+            # Iterates least to most severe; keep the last match so a
+            # multi-threshold drop resolves to the most severe one crossed.
+            crossed_level = level
+    return crossed_level
+
+
+async def _raise_battery_alert(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    alert_level: BatteryAlertLevel,
+    current_soc: float,
+    latitude: float,
+    longitude: float,
+) -> None:
+    """Resolve the nearest operational station and raise a battery alert.
+
+    Args:
+        db: Session whose transaction is owned by the worker.
+        vehicle_id: Vehicle the alert is about.
+        alert_level: Level returned by ``detect_battery_alert_level``.
+        current_soc: SOC (%) that triggered the alert.
+        latitude: Vehicle's GPS latitude at the triggering message.
+        longitude: Vehicle's GPS longitude at the triggering message.
+
+    Side Effects:
+        Writes one notification row into the session; does not commit. The
+        nearest-station lookup is a snapshot taken now, from the vehicle's
+        GPS at this exact message - it is not recomputed later, so it
+        describes where the vehicle was when it crossed the threshold, not
+        where it currently is.
+    """
+    threshold = BATTERY_ALERT_THRESHOLDS[alert_level]
+    nearest_station = await charging_stations_service.find_nearest_operational_station(
+        db, latitude=latitude, longitude=longitude
+    )
+    payload: dict[str, object] = {
+        "threshold_percent": threshold.threshold_percent,
+        "soc": current_soc,
+        "station_id": (
+            str(nearest_station.station_id) if nearest_station is not None else None
+        ),
+        "station_name": (
+            nearest_station.display_name if nearest_station is not None else None
+        ),
+        "distance_km": (
+            nearest_station.distance_km if nearest_station is not None else None
+        ),
+    }
+    await notifications_service.create_notification(
+        db,
+        notification_type=NotificationType.BATTERY_ALERT,
+        severity=threshold.severity,
+        vehicle_id=vehicle_id,
+        title=f"Battery at {current_soc:.0f}% ({alert_level.value.title()})",
+        body=(
+            f"Vehicle battery dropped to {current_soc:.1f}%, crossing the "
+            f"{threshold.threshold_percent:.0f}% threshold."
+        ),
+        payload=payload,
+    )
+    logger.info(
+        "battery alert raised",
+        extra={
+            "vehicle_id": str(vehicle_id),
+            "alert_level": alert_level.value,
+            "soc": current_soc,
+        },
+    )
+
+
 class BatchResult(TypedDict):
     """Counters returned after processing a telemetry batch."""
 
@@ -138,6 +248,11 @@ async def process_message(
     - A message conversion error only increments ``errors`` for the current
       message; a DB error is raised so the transaction boundary rolls back
       and the worker stops per MVP policy.
+    - After a successful insert, F-A2 battery-threshold detection runs
+      against the vehicle's previous SOC reading; a crossing raises exactly
+      one notification (see ``detect_battery_alert_level``). This never
+      affects ``processed``/``skipped``/``errors`` - it is reported via a
+      separate structured log line.
 
     Args:
         db: AsyncSession whose transaction is owned by the worker.
@@ -172,6 +287,15 @@ async def process_message(
 
     telematic_id = mapping.telematic_id
     vehicle_id = mapping.vehicle_id
+
+    # Read the previous reading before inserting this one - once the new row
+    # is inserted, get_latest_vehicle_telemetry would return it instead of
+    # the actual previous reading, and the crossing could never be detected.
+    previous_telemetry = await telemetry_repository.get_latest_vehicle_telemetry(
+        db, vehicle_id
+    )
+    previous_soc = previous_telemetry.soc if previous_telemetry is not None else None
+
     try:
         telemetry_values = message.to_vehicle_telemetry_values(
             telematic_id,
@@ -201,6 +325,18 @@ async def process_message(
             "processed": processed_count,
         },
     )
+
+    alert_level = detect_battery_alert_level(previous_soc, message.battery.soc)
+    if alert_level is not None:
+        await _raise_battery_alert(
+            db,
+            vehicle_id=vehicle_id,
+            alert_level=alert_level,
+            current_soc=message.battery.soc,
+            latitude=message.location.latitude,
+            longitude=message.location.longitude,
+        )
+
     return {"processed": processed_count, "skipped": 0, "errors": 0}
 
 

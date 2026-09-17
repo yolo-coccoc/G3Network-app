@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -10,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
+import app.domains.charging_stations.service as charging_stations_service
+import app.domains.notifications.service as notifications_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telematics.service as telematics_public_service
@@ -24,11 +27,15 @@ from app.domains.charging_sessions.types import (
     SessionEventType,
     SessionStatus,
 )
+from app.domains.charging_stations.types import NearestChargingStation
+from app.domains.notifications.models import NotificationModel
+from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
+from app.domains.telemetry.types import BatteryAlertLevel
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import VehicleCreateRequest
 from app.domains.vehicles.types import VehicleReference, VehicleStatus
@@ -71,7 +78,7 @@ def _telematic_record(vehicle_id: UUID) -> TelematicModel:
     )
 
 
-def _telemetry_envelope() -> TelemetryEnvelope:
+def _telemetry_envelope(soc: float = 80.0) -> TelemetryEnvelope:
     """Create a valid telemetry envelope for process_message."""
     message = TelemetryMessage.model_validate(
         {
@@ -79,7 +86,7 @@ def _telemetry_envelope() -> TelemetryEnvelope:
             "telematic_serial": "TBOX-TEST-001",
             "recorded_at": "2026-08-26T10:00:00Z",
             "location": {"latitude": 10.8, "longitude": 106.7},
-            "battery": {"soc": 80},
+            "battery": {"soc": soc},
         }
     )
     return TelemetryEnvelope(message=message, raw_payload={"test": True})
@@ -247,16 +254,143 @@ async def test_telemetry_service_persists_mapped_message(
     async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
         return 1
 
+    async def no_previous_telemetry(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> VehicleTelemetryModel | None:
+        return None
+
     monkeypatch.setattr(
         telematics_public_service,
         "resolve_mapping_by_serial",
         resolve_mapping,
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
+    monkeypatch.setattr(
+        telemetry_repository, "get_latest_vehicle_telemetry", no_previous_telemetry
+    )
 
     result = await telemetry_service.process_message(_db(), _telemetry_envelope())
 
     assert result == {"processed": 1, "skipped": 0, "errors": 0}
+
+
+@pytest.mark.asyncio
+async def test_telemetry_service_raises_battery_alert_on_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """process_message raises exactly one notification when SOC crosses a threshold (F-A2)."""
+    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    previous_telemetry = SimpleNamespace(soc=25.0)
+    created_notifications: list[dict[str, object]] = []
+
+    async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
+        return mapping
+
+    async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
+        return 1
+
+    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+        return previous_telemetry
+
+    async def no_nearest_station(
+        db: AsyncSession, *, latitude: float, longitude: float
+    ) -> NearestChargingStation | None:
+        return None
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        telematics_public_service, "resolve_mapping_by_serial", resolve_mapping
+    )
+    monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
+    monkeypatch.setattr(
+        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+    )
+    monkeypatch.setattr(
+        charging_stations_service,
+        "find_nearest_operational_station",
+        no_nearest_station,
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    result = await telemetry_service.process_message(
+        _db(), _telemetry_envelope(soc=18.0)
+    )
+
+    assert result == {"processed": 1, "skipped": 0, "errors": 0}
+    assert len(created_notifications) == 1
+    call = created_notifications[0]
+    assert call["notification_type"] is NotificationType.BATTERY_ALERT
+    assert call["severity"] is NotificationSeverity.WARNING
+    assert call["vehicle_id"] == mapping.vehicle_id
+    payload = cast(dict[str, object], call["payload"])
+    assert payload["threshold_percent"] == 20.0
+    assert payload["soc"] == 18.0
+    assert payload["station_id"] is None
+    assert payload["distance_km"] is None
+
+
+@pytest.mark.parametrize(
+    ("previous_soc", "current_soc", "expected_level"),
+    [
+        (None, 15.0, None),
+        (35.0, 31.0, None),
+        (31.0, 30.0, BatteryAlertLevel.EARLY),
+        (29.0, 25.0, None),
+        (21.0, 20.0, BatteryAlertLevel.MAIN),
+        (20.0, 19.8, None),
+        (20.0, 20.0, None),
+        (11.0, 10.0, BatteryAlertLevel.CRITICAL),
+        (35.0, 8.0, BatteryAlertLevel.CRITICAL),
+        (15.0, 20.0, None),
+    ],
+)
+def test_detect_battery_alert_level(
+    previous_soc: float | None,
+    current_soc: float,
+    expected_level: BatteryAlertLevel | None,
+) -> None:
+    """detect_battery_alert_level() only fires on a strict-above/inclusive-below crossing.
+
+    Covers: no alert on the very first message (``previous_soc is None``);
+    no alert while already above every threshold; a boundary touch fires
+    exactly once; no re-alert while resting below (or exactly on) a
+    threshold already crossed; a multi-threshold single-message drop
+    resolves to the most severe level; rising SOC never alerts.
+    """
+    assert (
+        telemetry_service.detect_battery_alert_level(previous_soc, current_soc)
+        == expected_level
+    )
+
+
+def test_notification_service_builds_response_from_model() -> None:
+    """to_notification_response() maps the ORM model into the response schema."""
+    now = datetime.now(timezone.utc)
+    vehicle_id = uuid4()
+    notification = NotificationModel(
+        notification_id=42,
+        notification_type=NotificationType.BATTERY_ALERT,
+        severity=NotificationSeverity.WARNING,
+        vehicle_id=vehicle_id,
+        title="Battery at 18%",
+        body="Vehicle battery dropped to 18.0%, crossing the 20% threshold.",
+        payload={"threshold_percent": 20.0, "soc": 18.0},
+        created_at=now,
+        read_at=None,
+    )
+
+    response = notifications_service.to_notification_response(notification)
+
+    assert response.notification_id == 42
+    assert response.notification_type is NotificationType.BATTERY_ALERT
+    assert response.severity is NotificationSeverity.WARNING
+    assert response.vehicle_id == vehicle_id
+    assert response.payload["soc"] == 18.0
+    assert response.read_at is None
 
 
 @pytest.mark.asyncio
