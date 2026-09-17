@@ -14,7 +14,7 @@ flowchart LR
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     Monitor["telematics/monitoring\nperiodic device-health check"]
     API["FastAPI API"]
-    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions"]
+    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers"]
     Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
     Portal["Admin web portal\n(polls, not built yet)"]
@@ -80,6 +80,16 @@ FastAPI registers the following domains:
   threshold (F-A3); the device-health monitor raises one when a vehicle
   goes silent (F-J1/F-J3). No push and no recipient scoping yet — there is
   no mobile app and no `identity` domain.
+- `drivers`: this backend's first brand-new domain since the initial
+  baseline (F-E4). Driver profile CRUD plus a `driver_vehicle_assignments`
+  assignment-history table (`assigned_at`/`unassigned_at`) enforcing "one
+  active vehicle per driver, one active driver per vehicle" via this
+  backend's first partial unique indexes, with smooth reassignment
+  (auto-closes the driver's previous active assignment) and full
+  per-driver assignment history. Depends one-directionally on `vehicles`'
+  public service to resolve/validate a VIN on assign — the same shape as
+  `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
+  built here — see `future.md` item 67.
 
 The API process runs separately via Uvicorn. Telemetry ingestion, the OCPP
 gateway, and the telematics device-health monitor each have their own
@@ -124,6 +134,7 @@ The current Alembic baseline consists of:
 0015_telematic_config_push
 0016_vehicle_battery_capacity
 0017_charging_ingest_fields
+0018_drivers
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -144,7 +155,10 @@ reverse proxy in the development environment.
 
 ## Not yet in the MVP
 
-- User, authentication, RBAC and driver.
+- User, authentication and RBAC (the `identity` domain has no active
+  source yet). `drivers` now has a profile-CRUD/assignment slice (F-E4),
+  but no login/auth of its own and no empty-trip detection (F-A9,
+  suspended — no trip concept exists in this backend).
 - Vehicle/station map and aggregate dashboard. A bounded time-range
   telemetry history query exists (F-A5,
   `GET /telemetry/vehicles/{id}/history`), but true trip segmentation

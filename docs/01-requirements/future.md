@@ -1528,6 +1528,48 @@ The items below are actual deferral decisions made in the repo, not placeholders
   `repository.create_session` to raise `IntegrityError`, assert the
   service converts it) should accompany the fix.
 
+### 67. F-A9's driver-declaration and automatic-inference halves
+
+- **Short description**: F-A9 (Empty-trip/deadhead detection) asks for a
+  driver to declare a trip's load status (loaded/empty), the system to
+  infer it automatically from per-km battery consumption vs. a
+  vehicle's reference consumption curve, and a flag raised when the two
+  disagree. None of this was built when the `drivers` domain was added
+  (F-E4) - the domain itself now exists, but F-A9 stays unimplemented.
+- **Purpose/role in the system**: Feeds the Phase 2 backhaul-optimization
+  feature (per F-A9's own note, out of scope here) with empty-km data,
+  and would be the vehicle for "Items needing confirmation" #1 (mismatch
+  handling) once built.
+- **Reason for deferral**: Confirmed by research (2026-09-18): this
+  backend has **no trip concept anywhere** (no `trip_id`, no trip table,
+  no start/end-boundary detection - `future.md` items 38 and 46 already
+  document this and explicitly reserve "inventing a trip concept" for
+  whenever F-A9 is built, warning against a second, conflicting
+  definition), **no driver identity/auth on any request** (every endpoint
+  in this backend, including the new `drivers` domain, is
+  unauthenticated), and **no per-vehicle-model reference consumption
+  curve** exists to compare against. Three options were weighed when
+  `drivers` was built: (a) declaration-only, tagging a vehicle's CURRENT
+  load status (mirrors the existing `vehicles.status` enum-on-a-row
+  pattern, needs no trip concept); (b) declaration + a crude inference
+  proxy (reuse F-A6's SOC-based energy calculation over an arbitrary time
+  window instead of a true trip, compared against one hardcoded
+  fleet-wide reference-consumption constant); (c) build a real trip model
+  first. Per explicit instruction, **none were built this round** -
+  F-A9 was suspended entirely rather than picking a partial option.
+- **Related planner/feature**: F-A9, F-E4, `drivers`, `telemetry`, items
+  38, 46, `docs/02-planners/backend-crud-drivers.md`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: When resumed, option (a) (declaration-only,
+  vehicle-tagged) is the cheapest and was the recommended starting point
+  during design - it needs no trip concept and matches the PRD's "≤2
+  taps" simplicity, though it only satisfies the driver-declaration half.
+  The automatic-inference half genuinely cannot honor the PRD's "per-km
+  over this trip" framing without a trip boundary; option (b)'s
+  arbitrary-time-window proxy is a real accuracy compromise, not a true
+  substitute, and should be presented to the user as such rather than
+  silently assumed equivalent.
+
 ---
 
 ## Update rules

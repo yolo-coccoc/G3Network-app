@@ -21,17 +21,20 @@ For technical depth (components, diagram, database, infra), see
 | `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway, station directory metadata (location, power rating, connector standard, operating hours, maintenance status, computed connector count), a nearest-operational-station lookup (F-A2), and a nearby-station radius search filtered by connector standard/power/maintenance status (F-D1), all using PostGIS. The OCPP gateway also handles `StatusNotification` (F-C2), writing a live per-connector status. Assumes pre-provisioned, always-online topology; no heartbeat/connection tracking yet. |
 | `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. Still no retry, out-of-order recovery, DLQ, or dedup (`future.md` item 27), but F-B2 layered four scoped correctness fixes on the happy path: OCPP `seqNo` is persisted per event, an event for an already-`COMPLETED` session is refused rather than applied, a stale `MeterValues` can't overwrite a newer reading, and OCPP `measurand`/unit are read instead of assuming Wh. Also serves a station-level energy aggregation query over a time window (F-C5). |
 | `notifications` | Generic backend-storage notification table (F-A2's delivery leg, also reused by F-A3/F-A4/F-J1/F-J3), polled via `GET /api/v1/notifications?after_id=`; a JSONB payload carries type-specific fields so alert types (`BATTERY_ALERT`, `ANOMALY_ALERT`, `SOH_ALERT`, `DEVICE_OFFLINE_ALERT`, and future F-B5 types) share one table without a new migration or endpoint per type. No push, no recipient scoping (no `identity` domain yet) — poll-only for now. |
+| `drivers` | This backend's first brand-new domain since the initial baseline. Driver profile CRUD plus a `driver_vehicle_assignments` **assignment-history table** (`assigned_at`/`unassigned_at`, this backend's first use of a partial unique index to enforce "one active vehicle per driver, one active driver per vehicle"), with smooth reassignment (auto-closes the driver's previous active assignment) and full per-driver assignment history (F-E4, done at MVP/POC scope). F-A9 (empty-trip detection) was considered alongside it but is suspended — no trip concept, driver auth, or consumption-curve data exists anywhere in this backend yet (`future.md` item 67). |
 
 ## Database
 
-Current Alembic head: `0017_charging_ingest_fields`.
+Current Alembic head: `0018_drivers`.
 
 ## Not built yet
 
-Web portal, vehicle app, identity/RBAC, driver, policy, billing/payment,
+Web portal, vehicle app, identity/RBAC, policy, billing/payment,
 and extended monitoring (full telemetry history, map, connector-status
 aggregation, push/multi-channel delivery) have no active source in the
 repo. `notifications` has a minimal backend-storage/polling slice (F-A2)
-but not the multi-channel delivery F-F3 describes. See
+but not the multi-channel delivery F-F3 describes. `drivers` now has a
+CRUD/assignment slice (F-E4), but F-A9 (empty-trip detection) remains
+unimplemented, blocked on a trip concept this backend doesn't have yet. See
 [`docs/01-requirements/future.md`](../01-requirements/future.md) for the
 full list of deferred components and why.

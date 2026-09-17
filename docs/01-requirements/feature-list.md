@@ -425,8 +425,22 @@ carries its original PRD code so you can trace it back.
 - **Actor:** Fleet manager
 - **Output:** Add/edit drivers, assign/reassign vehicles, per-driver activity history
 - **Priority · Release:** Should · P1.1
-- **Backend domain:** `drivers` (future domain — data portion; assignment UI is client-side)
-- **Status:** 📋 Planned
+- **Backend domain:** `drivers` (data portion; assignment UI is client-side)
+- **Status:** ✅ Done (MVP/POC scope) — `drivers` is this backend's first brand-new domain since the
+  vehicles/telematics baseline. Driver CRUD (`POST/GET/PATCH/DELETE /drivers`) mirrors the
+  vehicles domain exactly. Vehicle assignment is a genuine history table
+  (`driver_vehicle_assignments`, `assigned_at`/`unassigned_at`), not a single current-vehicle
+  column, so `GET /drivers/{id}/assignments` gives real "per-driver activity history" — a
+  deliberate improvement over the existing `telematics.vehicle_id` pattern, which cannot express
+  history and has two known bugs (its unique constraint isn't scoped to non-deleted rows, and
+  reassigning never auto-frees the old row). `POST /drivers/{id}/assignment` reassigns smoothly in
+  one call (auto-closing the driver's previous vehicle) rather than requiring a manual unassign
+  first. One active vehicle per driver and one active driver per vehicle are enforced via two
+  partial unique indexes (`WHERE unassigned_at IS NULL`) — this backend's first use of a partial
+  index. Assumption, stated plainly: driver fields (`full_name`, `phone_number`, `license_number`,
+  `status`) aren't specified by the PRD beyond "Add/edit drivers"; the 1:1-at-a-time assignment
+  cardinality is also an assumption, not a stated requirement. See
+  `docs/02-planners/backend-crud-drivers.md`.
 
 ### F-F1 Accounts & RBAC
 - **Actor:** Admin (G3 Network)
