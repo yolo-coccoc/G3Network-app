@@ -11,6 +11,7 @@ from sqlalchemy import (
     Double,
     ForeignKey,
     Index,
+    Integer,
     String,
     UniqueConstraint,
     literal_column,
@@ -56,6 +57,9 @@ class VehicleTelemetryModel(Base):
         signal_strength: Cellular signal strength in dBm, nullable
         error_codes: JSONB array of error codes, nullable
         raw_payload: Original JSON payload from telematic (for debug/reprocessing)
+        schema_version: Version of the MQTT message contract the device
+            used (F-A1). Defaults to 1 for devices/records that predate
+            this field.
     """
 
     __tablename__ = "vehicle_telemetry"
@@ -151,6 +155,9 @@ class VehicleTelemetryModel(Base):
 
     # Raw payload for debugging and reprocessing
     raw_payload: Mapped[dict[str, object]] = mapped_column(JSONB(), nullable=False)
+
+    # Version of the MQTT message contract the sending device used (F-A1).
+    schema_version: Mapped[int] = mapped_column(Integer(), nullable=False, default=1)
 
     # Table constraints and indexes
     __table_args__ = (

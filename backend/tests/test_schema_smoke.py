@@ -39,6 +39,21 @@ def test_telemetry_timestamp_is_normalized_to_utc() -> None:
     assert message.recorded_at == datetime(2026, 8, 26, 3, 0, tzinfo=timezone.utc)
 
 
+def test_telemetry_message_schema_version_defaults_to_one() -> None:
+    """schema_version defaults to 1 for devices/tests that don't send it.
+
+    F-A1's "schema is versioned" requirement must stay backward compatible
+    with every existing device and fixture that predates this field.
+    """
+    message = TelemetryMessage.model_validate(_valid_telemetry_payload())
+    assert message.schema_version == 1
+
+    versioned_payload = _valid_telemetry_payload()
+    versioned_payload["schema_version"] = 2
+    versioned_message = TelemetryMessage.model_validate(versioned_payload)
+    assert versioned_message.schema_version == 2
+
+
 def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
     """The schema rejects a timezone-naive timestamp and an out-of-range GPS location."""
     naive_payload = _valid_telemetry_payload()
@@ -70,6 +85,7 @@ def test_telemetry_message_stores_location_as_geography_not_lat_lon() -> None:
 
     assert "latitude" not in values
     assert "longitude" not in values
+    assert values["schema_version"] == 1
     location = cast(WKBElement, values["location"])
     latitude, longitude = location_to_coordinates(location)
     assert latitude == pytest.approx(10.8)

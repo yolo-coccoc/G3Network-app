@@ -72,6 +72,7 @@ def to_vehicle_telemetry_latest_response(
         odometer=telemetry.odometer,
         signal_strength=telemetry.signal_strength,
         error_codes=telemetry.error_codes,
+        schema_version=telemetry.schema_version,
     )
 
 

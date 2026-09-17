@@ -37,6 +37,8 @@ class VehicleTelemetryLatestResponse(BaseModel):
         odometer: Total distance traveled, km.
         signal_strength: Signal strength, dBm.
         error_codes: Error codes from the device.
+        schema_version: Version of the MQTT message schema the device used
+            to send this record (F-A1).
 
     Note:
         No longer built via ``model_validate(orm_obj, from_attributes=True)``
@@ -61,6 +63,7 @@ class VehicleTelemetryLatestResponse(BaseModel):
     odometer: float | None
     signal_strength: int | None
     error_codes: dict[str, list[str]] | None
+    schema_version: int
 
 
 class TelemetryLocationPayload(BaseModel):
@@ -231,6 +234,11 @@ class TelemetryMessage(BaseModel):
         motor: Motor data (nullable)
         signal: Network signal data (nullable)
         errors: List of currently active error codes (nullable)
+        schema_version: Version of this message contract the device is
+            using. Defaults to ``1`` so devices that predate this field
+            (and existing tests) keep validating without sending it;
+            bump this when the payload shape changes in a
+            backward-incompatible way.
     """
 
     message_uuid: Annotated[
@@ -276,6 +284,14 @@ class TelemetryMessage(BaseModel):
     errors: Annotated[
         list[str] | None,
         Field(default=None, description="List of currently active error codes"),
+    ]
+    schema_version: Annotated[
+        int,
+        Field(
+            default=1,
+            ge=1,
+            description="Version of this message contract the device is using",
+        ),
     ]
 
     @field_validator("telematic_serial")
@@ -375,6 +391,7 @@ class TelemetryMessage(BaseModel):
             "signal_strength": signal_dict.get("strength") if signal_dict else None,
             "error_codes": error_codes_dict,
             "raw_payload": raw_payload,
+            "schema_version": self.schema_version,
         }
 
     model_config = {

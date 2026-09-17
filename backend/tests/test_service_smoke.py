@@ -386,6 +386,7 @@ def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
         signal_strength=None,
         error_codes=None,
         raw_payload={},
+        schema_version=3,
     )
 
     response = telemetry_service.to_vehicle_telemetry_latest_response(record)
@@ -394,3 +395,4 @@ def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
     assert response.longitude == pytest.approx(106.660172)
     assert response.vehicle_id == record.vehicle_id
     assert response.soc == 80.0
+    assert response.schema_version == 3
