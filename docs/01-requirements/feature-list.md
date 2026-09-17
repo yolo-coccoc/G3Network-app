@@ -554,7 +554,18 @@ carries its original PRD code so you can trace it back.
   battery fire risk)
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telemetry`
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope) — high battery temperature (≥60°C) and sudden voltage drop
+  (≥50V between consecutive readings) are detected per-message in `telemetry/service.py`,
+  reusing the `notifications` domain (`ANOMALY_ALERT` type) for delivery, exactly as F-A2 does
+  for battery alerts; each anomaly's payload carries both its evidence and a full telemetry
+  snapshot as the "event log" this feature asks for. Approximations: "cell/module fault" and
+  "motor fault" cannot be told apart from the MQTT contract's opaque error code strings, so both
+  collapse into one generic `DEVICE_FAULT` anomaly pending a vendor error-code catalog
+  (`future.md` item 42); both thresholds are unvalidated engineering defaults, not
+  vendor-confirmed (`future.md` item 43); an anomaly alerts once on entry and stays silent while
+  it persists, with no re-alert/escalation for an unacknowledged condition (`future.md` item 44);
+  no motor-temperature detector exists, since motor temperature isn't one of F-A4's four named
+  triggers (`future.md` item 45)
 
 ### F-A7 Route-aware range & consumption forecast
 - **Actor:** System

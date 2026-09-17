@@ -749,10 +749,13 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Partial resolution (2026-09-17)**: F-A2's slice of this item is done —
   the `notifications` domain (generic table + JSONB payload,
   `GET /api/v1/notifications?after_id=`) and SOC-threshold-crossing
-  detection in `telemetry/service.py`. Still open from this item: full
-  telemetry history/map, aggregated connector status, F-A4 anomaly
-  detection, and any device-ACK/MQTT-command mechanism. See items 37-41
-  below and `docs/02-planners/backend-notifications.md`.
+  detection in `telemetry/service.py`. F-A4's slice is also done — high
+  battery temperature, sudden voltage drop, and new device error codes are
+  detected in the same per-message flow and raise `ANOMALY_ALERT`
+  notifications; see `docs/02-planners/backend-anomaly-detection.md`. Still
+  open from this item: full telemetry history/map, aggregated connector
+  status, and any device-ACK/MQTT-command mechanism. See items 37, 40, 41
+  and 42-45 below.
 
 ### 34. Batched connector-count query for the station directory list endpoint
 
@@ -942,6 +945,98 @@ The items below are actual deferral decisions made in the repo, not placeholders
   `notifications`' polling API stays as-is (the app polls too) or gets a
   push layer (e.g. FCM/APNs) added alongside it - both can coexist, since
   the table is the source of truth either way.
+
+### 42. Device error-code catalog for F-A4 fault classification
+
+- **Short description**: A vendor-confirmed mapping from telematic error
+  codes (the opaque strings in `TelemetryMessage.errors`, e.g. `"E001"`) to
+  a fault category, so F-A4's "cell/module fault" and "motor fault"
+  triggers can be told apart instead of both collapsing into one generic
+  `DEVICE_FAULT` anomaly.
+- **Purpose/role in the system**: F-A4 names cell/module fault and motor
+  fault as two of its four triggers. Without a catalog, `telemetry/
+  service.py::detect_new_error_codes` can only say "a new error code
+  appeared," not which subsystem it belongs to - an operator reading a
+  `DEVICE_FAULT` notification can't tell a battery fire precursor from a
+  minor motor fault from the alert alone.
+- **Reason for deferral**: `docs/02-planners/mqtt-spec.md` defines `errors`
+  as opaque strings with no code catalog anywhere in this repo's contracts.
+  Inventing a code-to-category mapping without the device vendor's
+  documentation would be a guess baked into the backend's business logic.
+- **Related planner/feature**: F-A4, `telemetry/service.py`,
+  `docs/02-planners/backend-anomaly-detection.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When the vendor's error code catalog is available,
+  split `VehicleAnomalyType.DEVICE_FAULT` into distinct types (e.g.
+  `CELL_MODULE_FAULT`, `MOTOR_FAULT`) and route each code to the right one
+  in `detect_new_error_codes`, or a successor function.
+
+### 43. Vendor-validated, configurable F-A4 anomaly thresholds
+
+- **Short description**: `HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS`
+  (60.0°C) and `VOLTAGE_DROP_THRESHOLD_VOLTS` (50.0V) in `telemetry/
+  types.py` are engineering defaults picked for the MVP, not values
+  confirmed against the actual battery pack/BMS specification, and they are
+  module-level constants rather than settings.
+- **Purpose/role in the system**: Accurate thresholds directly affect a
+  fire-safety-relevant Must feature - too high risks missing a real
+  anomaly, too low risks alert fatigue. Configurability would let different
+  vehicle/battery models use different thresholds without a code change.
+- **Reason for deferral**: No vendor/BMS specification was available at
+  implementation time; a wrong guess dressed up as a `Settings` field would
+  look more authoritative than it is. `BATTERY_ALERT_THRESHOLDS` (F-A2) set
+  the precedent of starting with plain constants before promoting values to
+  configuration.
+- **Related planner/feature**: F-A4, `telemetry/types.py`,
+  `docs/02-planners/backend-anomaly-detection.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, confirm real thresholds with the
+  vehicle/battery vendor, then decide whether they stay as constants or move
+  into `app.libs.common.config.Settings` (e.g. if different fleets/vehicle
+  models need different values).
+
+### 44. Re-alert/escalation for a persisting F-A4 anomaly
+
+- **Short description**: F-A4 anomalies use the same "alert once on entry,
+  silent while it persists" crossing rule as F-A2's SOC thresholds - a
+  battery stuck at 90°C for an hour raises exactly one notification, the
+  same as a battery that briefly touched 61°C and recovered.
+- **Purpose/role in the system**: For a fire-safety-relevant anomaly, an
+  operator who misses or is slow to act on the first alert gets no reminder
+  that the condition is still active.
+- **Reason for deferral**: No cooldown/re-alert state exists anywhere in
+  this backend yet, and adding one means an extra query (last notification
+  of this type for this vehicle) on the telemetry ingestion hot path -
+  correctly scoped alongside item 39 (F-A2's hysteresis/re-arm margin,
+  which has the same "not needed until real device data shows a need"
+  reasoning) rather than added speculatively.
+- **Related planner/feature**: F-A4, F-A2 item 39,
+  `telemetry/service.py::detect_high_battery_temperature`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, consider a time-based cooldown (e.g.
+  re-alert if still anomalous after N minutes) or a severity-tier escalation
+  (as F-A2 uses across SOC levels) rather than re-alerting on every message.
+
+### 45. High-motor-temperature detector for F-A4
+
+- **Short description**: `vehicle_telemetry.motor_temperature` is ingested
+  and stored but has no F-A4 anomaly detector - only battery temperature,
+  voltage drop, and new device error codes are detected today.
+- **Purpose/role in the system**: A sustained high motor temperature is a
+  plausible failure precursor alongside the battery-side anomalies F-A4
+  already covers.
+- **Reason for deferral**: F-A4's spec names four triggers - high battery
+  temperature, sudden voltage drop, cell/module fault, motor fault - and
+  motor *temperature* is not one of them; treating it as a proxy for "motor
+  fault" would be inventing a trigger the spec doesn't ask for. Recorded
+  here as a candidate rather than implemented speculatively.
+- **Related planner/feature**: F-A4, `telemetry/service.py`,
+  `docs/02-planners/backend-anomaly-detection.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: If motor fault detection is confirmed to belong
+  here, decide the threshold and whether it maps to "motor fault" or is a
+  genuinely new, fifth trigger - don't conflate it with item 42's
+  error-code-based fault classification without confirming that's correct.
 
 ---
 

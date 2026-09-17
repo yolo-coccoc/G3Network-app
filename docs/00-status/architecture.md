@@ -89,6 +89,7 @@ The current Alembic baseline consists of:
 0006_telemetry_location_geo
 0007_telemetry_schema_version
 0008_notifications
+0009_anomaly_notification_type
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -112,12 +113,14 @@ reverse proxy in the development environment.
 - User, authentication, RBAC and driver.
 - Full telemetry history API, vehicle/station map and aggregate dashboard.
 - Aggregate connector status and technical status history.
-- Battery anomalies (F-A4) and their notifications; live station
-  occupancy/online signal for a true "nearest *available*" (F-A2's lookup
-  only reflects `deleted_at`/`maintenance_status` today).
+- Live station occupancy/online signal for a true "nearest *available*"
+  (F-A2's lookup only reflects `deleted_at`/`maintenance_status` today).
 - Push/multi-channel notification delivery (F-F3), recipient scoping, and
   the online/offline vehicle flag (F-A1) — `notifications` today is
   backend-storage-plus-portal-polling only.
+- A device error-code catalog (cell/module vs. motor fault classification),
+  vendor-validated F-A4 anomaly thresholds, re-alert/escalation for a
+  persisting anomaly, and a motor-temperature anomaly detector.
 - Geofence, device health, charging policy, payment and billing.
 - Web portal, vehicle app, centralized observability and production
   reliability.

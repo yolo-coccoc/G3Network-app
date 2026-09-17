@@ -17,14 +17,14 @@ For technical depth (components, diagram, database, infra), see
 |---|---|
 | `vehicles` | CRUD and soft delete. |
 | `telematics` | Device CRUD, mapping devices to vehicles. |
-| `telemetry` | Ingests via MQTT with a versioned message schema (`schema_version`); API only returns the **latest** record per vehicle — no history or map yet. F-A1 done at MVP/POC scope; online/offline flag and NF-01/NF-04/NF-06 hardening deferred (`future.md` items 35, 36). F-A2 tiered battery alerts also done: SOC-threshold-crossing detection raises a notification via the `notifications` domain. |
+| `telemetry` | Ingests via MQTT with a versioned message schema (`schema_version`); API only returns the **latest** record per vehicle — no history or map yet. F-A1 done at MVP/POC scope; online/offline flag and NF-01/NF-04/NF-06 hardening deferred (`future.md` items 35, 36). F-A2 tiered battery alerts also done: SOC-threshold-crossing detection raises a notification via the `notifications` domain. F-A4 anomaly detection also done: high battery temperature, sudden voltage drop, and new device error codes are detected per-message and raise `ANOMALY_ALERT` notifications; cell/module vs. motor fault classification and motor-temperature detection are deferred (`future.md` items 42, 45). |
 | `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway, station directory metadata (location, power rating, connector standard, operating hours, maintenance status, computed connector count), and a nearest-operational-station lookup (F-A2) using PostGIS. Assumes pre-provisioned, always-online topology; no live status/connection/occupancy tracking yet. |
 | `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. No retry, out-of-order handling, or DLQ. |
-| `notifications` | Generic backend-storage notification table (F-A2's delivery leg), polled via `GET /api/v1/notifications?after_id=`; a JSONB payload carries type-specific fields so future alert types (F-A4, F-B5, F-J3) can reuse it without a new table. No push, no recipient scoping (no `identity` domain yet) — poll-only for now. |
+| `notifications` | Generic backend-storage notification table (F-A2's delivery leg, also reused by F-A4), polled via `GET /api/v1/notifications?after_id=`; a JSONB payload carries type-specific fields so alert types (`BATTERY_ALERT`, `ANOMALY_ALERT`, and future F-B5/F-J3 types) share one table without a new migration or endpoint per type. No push, no recipient scoping (no `identity` domain yet) — poll-only for now. |
 
 ## Database
 
-Current Alembic head: `0008_notifications`.
+Current Alembic head: `0009_anomaly_notification_type`.
 
 ## Not built yet
 
