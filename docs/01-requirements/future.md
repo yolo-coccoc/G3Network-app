@@ -43,7 +43,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Reason for deferral**: The MVP focuses on proving the basic flow works, assuming an ideal network. QoS 0 is enough to test the end-to-end flow. Retry and duplicate detection will be added during production rollout.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1, F-A5)
 - **Date recorded**: 2026-07-25
-- **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput.
+- **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput. When this is revisited, reconsider it together with transport-level security (TLS/mTLS on the MQTT connection, item 36) rather than in isolation — raising QoS alone doesn't improve delivery guarantees without also changing the publisher (currently hardcoded to QoS 0 in `simulator/telematic_simulator.py`) and doesn't address message authenticity/integrity, which is a separate concern from delivery reliability.
 
 ---
 
@@ -773,6 +773,58 @@ The items below are actual deferral decisions made in the repo, not placeholders
   station_id`, filling in `0` for stations with no active connectors) and
   have `list_charging_stations` call it once instead of looping per station.
   Benchmark first rather than assuming it's needed.
+
+---
+
+### 35. Online/offline status flag for F-A1
+
+- **Short description**: A per-vehicle/telematic online/offline status flag, derived from
+  telemetry ingestion (e.g. "offline" if no message received within a configurable
+  threshold).
+- **Purpose/role in the system**: F-A1 names "online/offline flag maintained" as a stated
+  constraint — fleet-facing screens need a live status signal beyond just "a latest record
+  exists," since a stale latest record still looks like data if nothing marks it stale.
+- **Reason for deferral**: Explicitly suspended on 2026-09-17 in favor of shipping schema
+  versioning first, then confirmed out of scope under this backend's MVP/POC scope
+  decision — no staleness-threshold config, computation (on-read vs. background sweep), or
+  API field exists yet. `app/libs/common/config.py` already has a commented-out
+  `CHARGING_OFFLINE_TIMEOUT_SECONDS` precedent that an equivalent
+  `TELEMETRY_OFFLINE_THRESHOLD_SECONDS` could follow.
+- **Related planner/feature**: F-A1, `telemetry` domain.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, decide with the user whether the flag is computed
+  on read (compare `received_at`/`recorded_at` to now against a threshold, no new column)
+  or maintained by a background job (needs its own state and a definition of "flap"
+  handling); on-read is the simpler MVP-consistent default but hasn't been confirmed.
+
+---
+
+### 36. NF-01/NF-04/NF-06 hardening for F-A1 telemetry ingestion
+
+- **Short description**: The non-functional requirements originally named for F-A1 —
+  NF-01 (ingestion latency ≤30s p95, target ≤10s), NF-04 (scale from 300 to 1,200+
+  concurrent vehicles/devices by 2029 without an architecture change), and NF-06
+  (per-device mTLS/certificate identity, revocable) — are not implemented or measured.
+- **Purpose/role in the system**: Latency instrumentation and a load test would validate
+  F-A1 meets its stated SLO and capacity target; device-level TLS/mTLS would replace
+  today's MQTT connection, which supports at most optional username/password and no
+  transport-level device identity, certificate issuance, or revocation.
+- **Reason for deferral**: This backend's current scope is an MVP/POC — non-functional
+  concerns like performance and scale are explicitly out of scope until a production
+  rollout is planned, and only a basic (or no) security posture is required for now. No
+  latency metrics, load-test harness, or device PKI exists. This mirrors the same
+  intentional carve-out already made explicit for OCPP in `tech-decisions.md` ("OCPP
+  security MVP" — dev allows unauthenticated/non-TLS connections in an isolated
+  environment; production must finalize its own security profile).
+- **Related planner/feature**: F-A1, `telemetry` domain/ingestion, EMQX broker
+  configuration; QoS/transport security should be reconsidered together (item 2).
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Don't treat the current MVP posture as a production security or
+  performance baseline. Before a production rollout: add structured latency logging
+  around ingestion (publish → DB commit) for NF-01, run a load test simulating 1,200+
+  concurrent publishers for NF-04, and configure EMQX for per-device TLS client
+  certificates (issuance/rotation/revocation process still needs to be designed) for
+  NF-06.
 
 ---
 

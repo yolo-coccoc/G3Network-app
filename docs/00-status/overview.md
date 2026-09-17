@@ -17,13 +17,13 @@ For technical depth (components, diagram, database, infra), see
 |---|---|
 | `vehicles` | CRUD and soft delete. |
 | `telematics` | Device CRUD, mapping devices to vehicles. |
-| `telemetry` | Ingests via MQTT; API only returns the **latest** record per vehicle — no history, map, or alert API yet. |
+| `telemetry` | Ingests via MQTT with a versioned message schema (`schema_version`); API only returns the **latest** record per vehicle — no history, map, or alert API yet. F-A1 done at MVP/POC scope; online/offline flag and NF-01/NF-04/NF-06 hardening deferred (`future.md` items 35, 36). |
 | `charging_stations` | Station → EVSE → Connector topology CRUD, OCPP 2.0.1 gateway, and station directory metadata (location, power rating, connector standard, operating hours, maintenance status, computed connector count). Assumes pre-provisioned, always-online topology; no live status/connection tracking yet. |
 | `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. No retry, out-of-order handling, or DLQ. |
 
 ## Database
 
-Current Alembic head: `0006_telemetry_location_geo`.
+Current Alembic head: `0007_telemetry_schema_version`.
 
 ## Not built yet
 

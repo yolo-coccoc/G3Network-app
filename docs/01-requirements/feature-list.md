@@ -516,12 +516,16 @@ carries its original PRD code so you can trace it back.
   (2026) to 1,200+ (2029) without an architecture change.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telemetry`
-- **Status:** 🚧 In progress — MQTT ingestion works and the schema is now versioned
-  (`schema_version` on `TelemetryMessage`/`vehicle_telemetry`, defaults to 1 for backward
-  compatibility). Still open: API returns only the latest record per vehicle (no history
-  retention/query API — future.md item 33), no online/offline flag yet, NF-01 latency
-  never measured, NF-04 300→1,200+ never scale-tested, NF-06 device mTLS/certificate
-  identity not implemented (MQTT only supports optional username/password today)
+- **Status:** ✅ Done (MVP/POC scope) — MQTT ingestion, latest-value storage, the
+  latest-per-vehicle read API, and schema versioning (`schema_version` on
+  `TelemetryMessage`/`vehicle_telemetry`, defaults to 1 for backward compatibility) are
+  implemented. This backend's current scope is an MVP/POC: non-functional concerns like
+  scale/performance and anything beyond a basic security posture are intentionally not
+  pursued yet, so the following are deferred rather than blocking completion — the
+  online/offline flag (future.md item 35), NF-01 latency measurement, NF-04 300→1,200+
+  scale-testing, and NF-06 device mTLS/certificate identity (MQTT currently supports only
+  optional username/password) (future.md item 36). History/retention query API tracked
+  separately in future.md item 33.
 
 ### F-A3 Battery health (SOH) & cycle tracking
 - **Actor:** System
