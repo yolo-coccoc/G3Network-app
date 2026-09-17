@@ -54,6 +54,17 @@ class Settings(BaseSettings):
             health monitor sweeps for silent devices (F-J1/F-J3).
         TELEMATICS_SILENT_THRESHOLD_MINUTES: How long without telemetry
             counts as a device going silent (F-J1/F-J3).
+        MQTT_COMMAND_TOPIC_TEMPLATE: Topic template for backend->device
+            commands (F-J2).
+        MQTT_COMMAND_CLIENT_ID: Client identifier prefix for the
+            short-lived publisher used to send device commands (F-J2).
+        MQTT_COMMAND_QOS: QoS used when publishing a device command.
+        MQTT_COMMAND_RETAIN: Whether a device command is retained.
+        MQTT_COMMAND_TIMEOUT_SECONDS: Timeout bounding one command publish.
+        TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS: Lower bound accepted
+            for a pushed telemetry publish interval (F-J2).
+        TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS: Upper bound accepted
+            for a pushed telemetry publish interval (F-J2).
     """
 
     model_config = SettingsConfigDict(
@@ -121,6 +132,28 @@ class Settings(BaseSettings):
     # threshold for a whole interval before anyone notices.
     TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS: float = Field(default=300.0, gt=0)
     TELEMATICS_SILENT_THRESHOLD_MINUTES: int = Field(default=180, ge=1)
+
+    # F-J2's backend->device command channel (mqtt-spec.md 2.3). The client
+    # id must differ from MQTT_CLIENT_ID: a broker evicts an existing
+    # session when a second connection claims the same id, so reusing the
+    # telemetry consumer's id here would kick ingestion offline on every
+    # config push. QoS 1 rather than the telemetry default of 0 because a
+    # config command is a one-shot instruction - dropping it silently
+    # leaves the device on its old interval with nothing to notice the
+    # loss. The timeout bounds how long an HTTP request holds its database
+    # transaction open across a broker round trip.
+    MQTT_COMMAND_TOPIC_TEMPLATE: str = "g3network/telematics/{telematic_serial}/command"
+    MQTT_COMMAND_CLIENT_ID: str = "g3network-backend-command"
+    MQTT_COMMAND_QOS: int = Field(default=1, ge=0, le=2)
+    MQTT_COMMAND_RETAIN: bool = False
+    MQTT_COMMAND_TIMEOUT_SECONDS: float = Field(default=5.0, gt=0)
+
+    # F-J2's accepted range for the device telemetry publish interval. The
+    # lower bound is the load-bearing one: an operator typo of "1" would
+    # multiply this device's contribution to ingestion volume by the old
+    # interval's factor, with no device-side guard anywhere to catch it.
+    TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS: int = Field(default=5, ge=1)
+    TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS: int = Field(default=3600, ge=1)
 
     # The old production planner's timeout/retry/raw-payload settings are
     # commented out in the ideal MVP; the corresponding source will come back

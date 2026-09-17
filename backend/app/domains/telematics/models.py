@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,13 @@ class TelematicModel(Base):
         vehicle_id: ID of the assigned vehicle, may be NULL.
         status: Operating status.
         firmware_version: Current firmware version.
+        telemetry_interval_seconds: Telemetry publish interval last
+            successfully pushed to the device over MQTT (F-J2), NULL
+            until the first successful push - there is no ack topic, so
+            this means "the last value we handed to the broker", never
+            "the value we wish we'd sent".
+        config_pushed_at: When ``telemetry_interval_seconds`` was last
+            successfully pushed, NULL until the first push.
         deleted_at: Soft-delete timestamp.
     """
 
@@ -48,6 +55,12 @@ class TelematicModel(Base):
         SQLEnum(TelematicStatus), nullable=False, index=True
     )
     firmware_version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    telemetry_interval_seconds: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
+    config_pushed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

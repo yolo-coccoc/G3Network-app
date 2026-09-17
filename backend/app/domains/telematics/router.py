@@ -7,10 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.telematics import service
 from app.domains.telematics.exceptions import (
+    TelematicCommandPublishError,
     TelematicConflictError,
+    TelematicNotConfigurableError,
     TelematicNotFoundError,
 )
 from app.domains.telematics.schemas import (
+    TelematicConfigPushRequest,
+    TelematicConfigResponse,
     TelematicCreateRequest,
     TelematicListResponse,
     TelematicResponse,
@@ -97,3 +101,24 @@ async def soft_delete_telematic_endpoint(
         await service.soft_delete_telematic(db_session, telematic_id)
     except TelematicNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.post("/{telematic_id}/config", response_model=TelematicConfigResponse)
+async def push_telematic_config_endpoint(
+    telematic_id: UUID,
+    telematic_config_push_request: TelematicConfigPushRequest,
+    db_session: AsyncSession = Depends(get_db),
+) -> TelematicConfigResponse:
+    """Push a telemetry publish-interval config to a device over MQTT (F-J2)."""
+    try:
+        return await service.push_telematic_config(
+            db_session,
+            telematic_id,
+            telematic_config_push_request,
+        )
+    except TelematicNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except TelematicNotConfigurableError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except TelematicCommandPublishError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error

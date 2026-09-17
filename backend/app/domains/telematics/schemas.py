@@ -38,8 +38,35 @@ class TelematicResponse(BaseModel):
     vehicle_vin: str | None
     status: TelematicStatus
     firmware_version: str | None
+    telemetry_interval_seconds: int | None
+    config_pushed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class TelematicConfigPushRequest(BaseModel):
+    """Desired telemetry publish interval to push to a device over MQTT (F-J2)."""
+
+    telemetry_interval_seconds: int = Field(
+        ...,
+        ge=settings.TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS,
+        le=settings.TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS,
+    )
+
+
+class TelematicConfigResponse(BaseModel):
+    """Outcome of one successful configuration push (F-J2).
+
+    Returned only on success - see ``service.push_telematic_config``'s
+    fail-closed contract: nothing is persisted and this response is never
+    built if the MQTT publish itself failed.
+    """
+
+    telematic_id: UUID
+    telematic_serial: str
+    telemetry_interval_seconds: int
+    config_pushed_at: datetime
+    command_topic: str
 
 
 class TelematicListResponse(BaseModel):

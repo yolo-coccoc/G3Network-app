@@ -11,3 +11,11 @@ class TelematicNotFoundError(TelematicError):
 
 class TelematicConflictError(TelematicError):
     """Device data or vehicle mapping is duplicated."""
+
+
+class TelematicNotConfigurableError(TelematicError):
+    """Device is not in a status that accepts a config push (F-J2)."""
+
+
+class TelematicCommandPublishError(TelematicError):
+    """Publishing a device command over MQTT failed (F-J2)."""
