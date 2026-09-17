@@ -2,11 +2,11 @@
 
 Directory/descriptive metadata about a pre-provisioned station (location,
 power rating, connector standard, operating hours, maintenance status) is
-part of the active contract (F-C1). Live, OCPP-derived technical/connection
-status — heartbeat-based online/offline state, administrative status,
-capability negotiation — is still excluded: devices are assumed to always be
-online and active in the local happy path, and that reliability path remains
-deferred (see ``docs/01-requirements/future.md`` items 27 and 28).
+part of the active contract (F-C1). A connector's live OCPP-reported status
+(F-C2) is also part of the active contract now. Still excluded: heartbeat-based
+online/offline connection state, administrative status, and capability
+negotiation — that reliability path remains deferred (see
+``docs/01-requirements/future.md`` items 27 and 28).
 """
 
 import enum
@@ -24,6 +24,23 @@ class ChargingStationMaintenanceStatus(str, enum.Enum):
     OPERATIONAL = "OPERATIONAL"
     UNDER_MAINTENANCE = "UNDER_MAINTENANCE"
     OUT_OF_SERVICE = "OUT_OF_SERVICE"
+
+
+class ChargingConnectorStatus(str, enum.Enum):
+    """Live status of a connector as reported by OCPP ``StatusNotification`` (F-C2).
+
+    These are OCPP 2.0.1's exact ``ConnectorStatusEnumType`` values (used as
+    the enum's values, not just its Python member names — see
+    ``models.py``'s ``enum_values()`` helper). OCPP 2.0.1 has no distinct
+    "Charging" status: ``Preparing``/``Charging``/``SuspendedEV``/
+    ``Finishing`` from OCPP 1.6J are all folded into ``OCCUPIED``.
+    """
+
+    AVAILABLE = "Available"
+    OCCUPIED = "Occupied"
+    RESERVED = "Reserved"
+    UNAVAILABLE = "Unavailable"
+    FAULTED = "Faulted"
 
 
 @dataclass(frozen=True)

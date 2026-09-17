@@ -48,6 +48,8 @@ class Settings(BaseSettings):
         API_MAX_PAGE_SIZE: Maximum number of records per page.
         CHARGING_OCPP_HOST: Bind host of the OCPP WebSocket gateway.
         CHARGING_OCPP_PORT: Bind port of the OCPP WebSocket gateway.
+        CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: Maximum radius accepted by
+            the nearby-station search (F-D1).
     """
 
     model_config = SettingsConfigDict(
@@ -105,6 +107,10 @@ class Settings(BaseSettings):
     # use the same namespace so processes don't infer different timeouts on their own.
     CHARGING_OCPP_HOST: str = "0.0.0.0"
     CHARGING_OCPP_PORT: int = Field(default=9000, ge=1, le=65535)
+
+    # Upper bound for the nearby-station search's radius_km query param
+    # (F-D1) - guards against an unbounded PostGIS scan.
+    CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: float = Field(default=200.0, gt=0)
 
     # The old production planner's timeout/retry/raw-payload settings are
     # commented out in the ideal MVP; the corresponding source will come back

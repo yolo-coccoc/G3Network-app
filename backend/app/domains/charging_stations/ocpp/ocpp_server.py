@@ -18,7 +18,7 @@ from uuid import UUID
 from ocpp.routing import on
 from ocpp.v201 import ChargePoint, call_result
 from ocpp.v201.datatypes import EVSEType, MeterValueType, TransactionType
-from ocpp.v201.enums import Action, TransactionEventEnumType
+from ocpp.v201.enums import Action, ConnectorStatusEnumType, TransactionEventEnumType
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.datastructures import Headers
@@ -33,6 +33,7 @@ from app.domains.charging_sessions.types import (
 )
 from app.domains.charging_stations import repository
 from app.domains.charging_stations import service as charging_stations_service
+from app.domains.charging_stations.types import ChargingConnectorStatus
 from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
 
@@ -347,6 +348,67 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                     db, session_id=session_id, sample=sample
                 )
         return call_result.MeterValues()
+
+    @on(Action.status_notification)  # type: ignore[untyped-decorator]
+    async def on_status_notification(
+        self,
+        timestamp: str,
+        connector_status: ConnectorStatusEnumType,
+        evse_id: int,
+        connector_id: int,
+        **_: object,
+    ) -> call_result.StatusNotification:
+        """Record a connector's live status, then ACK the OCPP call (F-C2).
+
+        Args:
+            timestamp: Time of the status change per OCPP.
+            connector_status: OCPP status label. Arrives as a plain ``str``
+                at runtime despite the type annotation - ``python-ocpp``
+                passes the parsed JSON straight through with no coercion.
+            evse_id: OCPP EVSE ID owning the connector.
+            connector_id: OCPP connector ID within the EVSE.
+            **_: Optional OCPP fields not part of the MVP.
+
+        Returns:
+            A valid empty response for StatusNotification.
+
+        Raises:
+            ChargingStationNotFoundError: If ``self.id`` is not
+                pre-provisioned.
+            ChargingEvseNotFoundError: If ``evse_id`` is not pre-provisioned
+                under this station.
+            ChargingConnectorNotFoundError: If ``connector_id`` is not
+                pre-provisioned under that EVSE.
+            ValueError: If ``connector_status`` isn't one of OCPP 2.0.1's
+                five status labels.
+
+        Side Effects:
+            Calls the public ``charging_stations`` service within an atomic
+            transaction; rolls back entirely on any of the above. No
+            try/except here - ``python-ocpp`` already wraps every handler
+            invocation, logs the traceback, and replies with a
+            ``CALLERROR(InternalError)`` without closing the connection,
+            the same de-facto contract ``on_transaction_event`` and
+            ``on_meter_values`` already rely on. Standardizing this instead
+            of relying on the framework default is deferred (see
+            ``docs/01-requirements/future.md`` item 31).
+        """
+        async with self.session_factory.begin() as db:
+            _station_id, _evse_id, connector_uuid = (
+                await charging_stations_service.resolve_ocpp_topology(
+                    db,
+                    ocpp_identity=self.id,
+                    ocpp_evse_id=evse_id,
+                    ocpp_connector_id=connector_id,
+                )
+            )
+            await charging_stations_service.update_connector_status(
+                db,
+                connector_id=connector_uuid,
+                status=ChargingConnectorStatus(connector_status),
+                status_updated_at=parse_ocpp_timestamp(timestamp),
+            )
+        return call_result.StatusNotification()
 
 
 class OCPPServer:

@@ -31,6 +31,7 @@ from app.domains.charging_stations.schemas import (
     ChargingStationListResponse,
     ChargingStationResponse,
     ChargingStationUpdateRequest,
+    NearbyChargingStationListResponse,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -93,6 +94,60 @@ async def list_charging_stations_endpoint(
     """
     return await charging_service.list_charging_stations(
         db,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/charging-stations/nearby",
+    response_model=NearbyChargingStationListResponse,
+    summary="Find charging stations near a point",
+)
+async def find_nearby_charging_stations_endpoint(
+    latitude: float = Query(..., ge=-90, le=90),
+    longitude: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(
+        ..., gt=0, le=settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM
+    ),
+    connector_standard: str | None = Query(None, min_length=1, max_length=20),
+    min_power_kw: float | None = Query(None, gt=0),
+    is_operational_only: bool = Query(True),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> NearbyChargingStationListResponse:
+    """Find stations within a radius of a point, nearest first (F-D1).
+
+    Registered before ``GET /charging-stations/{station_id}`` so
+    ``/nearby`` isn't captured by that path's ``{station_id}`` parameter.
+
+    Args:
+        latitude: GPS latitude in decimal degrees of the query point.
+        longitude: GPS longitude in decimal degrees of the query point.
+        radius_km: Search radius in km.
+        connector_standard: Exact-match filter, e.g. ``"CCS2"``.
+        min_power_kw: Minimum power rating filter.
+        is_operational_only: Whether to only return operational stations.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response with the matching stations, nearest first.
+    """
+    return await charging_service.find_nearby_charging_stations(
+        db,
+        latitude=latitude,
+        longitude=longitude,
+        radius_km=radius_km,
+        connector_standard=connector_standard,
+        min_power_kw=min_power_kw,
+        is_operational_only=is_operational_only,
         page=page,
         page_size=page_size,
     )

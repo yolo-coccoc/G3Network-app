@@ -3,10 +3,13 @@
 ``ChargingStationCreateRequest``/``ChargingStationUpdateRequest``/
 ``ChargingStationResponse`` expose directory/descriptive metadata (location,
 power rating, connector standard, operating hours, maintenance status) per
-F-C1, plus the OCPP identity, internal IDs, and timestamps. Capability
-negotiation, live OCPP-derived technical/connection status, and other device
-information remain deferred alongside the technical status path; they are
-not included in the active HTTP contract.
+F-C1, plus the OCPP identity, internal IDs, and timestamps.
+``ChargingConnectorResponse`` also exposes the connector's live OCPP status
+per F-C2 (read-only - not part of ``ChargingConnectorUpdateRequest``, since
+it's OCPP-owned, not admin-editable). Capability negotiation, heartbeat-based
+connection status, and other device information remain deferred alongside
+the technical status path; they are not included in the active HTTP
+contract.
 """
 
 from datetime import datetime
@@ -14,7 +17,10 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ChargingStationMaintenanceStatus,
+)
 from app.libs.common.config import settings
 
 
@@ -198,6 +204,59 @@ class ChargingStationListResponse(BaseModel):
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
+class NearbyChargingStationResponse(BaseModel):
+    """A station near a queried point, driver-facing (F-D1).
+
+    Drops ``ocpp_identity`` and the audit/soft-delete timestamps that
+    ``ChargingStationResponse`` carries - not relevant to a driver-facing
+    map query - and adds ``distance_km``.
+
+    Attributes:
+        station_id: Internal UUID.
+        display_name: Display name.
+        latitude: GPS latitude in decimal degrees, nullable.
+        longitude: GPS longitude in decimal degrees, nullable.
+        power_rating_kw: Nominal power rating in kW, nullable.
+        connector_standard: Connector standard served, nullable.
+        operating_hours: Freeform operating hours description, nullable.
+        maintenance_status: Admin-set maintenance state. "Available" only
+            reflects this field, not a live occupancy signal - see
+            ``docs/01-requirements/future.md``.
+        connector_count: Number of active connectors across the station's
+            active EVSEs, computed at read time (not stored).
+        distance_km: Great-circle distance from the query point, in km.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    station_id: UUID
+    display_name: str
+    latitude: float | None
+    longitude: float | None
+    power_rating_kw: float | None
+    connector_standard: str | None
+    operating_hours: str | None
+    maintenance_status: ChargingStationMaintenanceStatus
+    connector_count: int = Field(..., ge=0)
+    distance_km: float = Field(..., ge=0)
+
+
+class NearbyChargingStationListResponse(BaseModel):
+    """Paginated list of nearby stations.
+
+    Attributes:
+        items: Matching stations on the current page, nearest first.
+        total: Total number of stations within the queried radius.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+    """
+
+    items: list[NearbyChargingStationResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
 class ChargingEvseCreateRequest(BaseModel):
     """Data for creating an EVSE belonging to a station.
 
@@ -283,6 +342,10 @@ class ChargingConnectorResponse(BaseModel):
         connector_id: Internal UUID.
         evse_id: UUID of the parent EVSE.
         ocpp_connector_id: Connector ID in OCPP.
+        status: Live status last reported via OCPP ``StatusNotification``
+            (F-C2), nullable if the connector hasn't reported yet.
+        status_updated_at: Time the last status report was processed,
+            nullable.
         created_at: Time created.
         updated_at: Time of last update.
         deleted_at: Soft-delete time, nullable.
@@ -293,6 +356,8 @@ class ChargingConnectorResponse(BaseModel):
     connector_id: UUID
     evse_id: UUID
     ocpp_connector_id: int
+    status: ChargingConnectorStatus | None
+    status_updated_at: datetime | None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None

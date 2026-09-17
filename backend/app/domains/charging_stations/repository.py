@@ -21,7 +21,10 @@ from app.domains.charging_stations.models import (
     ChargingEvseModel,
     ChargingStationModel,
 )
-from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ChargingStationMaintenanceStatus,
+)
 
 
 def utc_now() -> datetime:
@@ -205,6 +208,140 @@ async def find_nearest_station_by_location(
         return None
     station, distance = row
     return station, float(distance)
+
+
+async def list_nearby_stations(
+    db: AsyncSession,
+    *,
+    location: WKBElement,
+    radius_meters: float,
+    connector_standard: str | None,
+    min_power_kw: Decimal | None,
+    operational_only: bool,
+    offset: int,
+    limit: int,
+) -> list[tuple[ChargingStationModel, float]]:
+    """Find stations within a radius of a point, nearest first (F-D1).
+
+    Args:
+        db: Current async session.
+        location: PostGIS geography point to search around.
+        radius_meters: Maximum distance from ``location``, in meters.
+        connector_standard: Exact-match filter on the connector standard
+            (e.g. ``"CCS2"``), or ``None`` to not filter by it.
+        min_power_kw: Minimum ``power_rating_kw``, or ``None`` to not
+            filter by it.
+        operational_only: Whether to only return stations with
+            ``maintenance_status == OPERATIONAL``. Same approximation of
+            "available" as ``find_nearest_station_by_location`` (F-A2) -
+            admin-set, not a live occupancy signal.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
+
+    Returns:
+        Matching stations paired with their distance in meters, ordered
+        nearest first.
+
+    Side Effects:
+        Filters with ``ST_DWithin`` (native meters on a geography column)
+        and orders by the ``<->`` KNN operator, so the query can use
+        ``ix_charging_stations_location`` (GIST) for both the radius filter
+        and the ordering.
+    """
+    conditions = _nearby_station_conditions(
+        location,
+        radius_meters=radius_meters,
+        connector_standard=connector_standard,
+        min_power_kw=min_power_kw,
+        operational_only=operational_only,
+    )
+    distance_meters = func.ST_Distance(ChargingStationModel.location, location)
+    result = await db.execute(
+        select(ChargingStationModel, distance_meters)
+        .where(*conditions)
+        .order_by(ChargingStationModel.location.distance_centroid(location))
+        .offset(offset)
+        .limit(limit)
+    )
+    return [(station, float(distance)) for station, distance in result.all()]
+
+
+async def count_nearby_stations(
+    db: AsyncSession,
+    *,
+    location: WKBElement,
+    radius_meters: float,
+    connector_standard: str | None,
+    min_power_kw: Decimal | None,
+    operational_only: bool,
+) -> int:
+    """Count stations within a radius of a point, with the same filters as
+    ``list_nearby_stations``.
+
+    Args:
+        db: Current async session.
+        location: PostGIS geography point to search around.
+        radius_meters: Maximum distance from ``location``, in meters.
+        connector_standard: Exact-match filter on the connector standard,
+            or ``None`` to not filter by it.
+        min_power_kw: Minimum ``power_rating_kw``, or ``None`` to not
+            filter by it.
+        operational_only: Whether to only count stations with
+            ``maintenance_status == OPERATIONAL``.
+
+    Returns:
+        Number of matching stations.
+    """
+    conditions = _nearby_station_conditions(
+        location,
+        radius_meters=radius_meters,
+        connector_standard=connector_standard,
+        min_power_kw=min_power_kw,
+        operational_only=operational_only,
+    )
+    result = await db.execute(
+        select(func.count(ChargingStationModel.station_id)).where(*conditions)
+    )
+    return int(result.scalar() or 0)
+
+
+def _nearby_station_conditions(
+    location: WKBElement,
+    *,
+    radius_meters: float,
+    connector_standard: str | None,
+    min_power_kw: Decimal | None,
+    operational_only: bool,
+) -> list[ColumnElement[bool]]:
+    """Build the shared WHERE conditions for a nearby-station query (F-D1).
+
+    Args:
+        location: PostGIS geography point to search around.
+        radius_meters: Maximum distance from ``location``, in meters.
+        connector_standard: Exact-match filter, or ``None`` to skip it.
+        min_power_kw: Minimum power filter, or ``None`` to skip it.
+        operational_only: Whether to require ``maintenance_status ==
+            OPERATIONAL``.
+
+    Returns:
+        Conditions shared by ``list_nearby_stations`` and
+        ``count_nearby_stations``, so the two queries can never drift apart.
+    """
+    conditions: list[ColumnElement[bool]] = [
+        ChargingStationModel.deleted_at.is_(None),
+        ChargingStationModel.location.is_not(None),
+        func.ST_DWithin(ChargingStationModel.location, location, radius_meters),
+    ]
+    if operational_only:
+        conditions.append(
+            ChargingStationModel.maintenance_status
+            == ChargingStationMaintenanceStatus.OPERATIONAL
+        )
+    if connector_standard is not None:
+        conditions.append(ChargingStationModel.connector_standard == connector_standard)
+    if min_power_kw is not None:
+        conditions.append(ChargingStationModel.power_rating_kw >= min_power_kw)
+    return conditions
 
 
 async def count_connectors_by_station_id(db: AsyncSession, station_id: UUID) -> int:
@@ -644,6 +781,43 @@ async def update_charging_connector(
         return None
     for field_name, value in update_data.items():
         setattr(connector, field_name, value)
+    connector.updated_at = utc_now()
+    await db.flush()
+    await db.refresh(connector)
+    return connector
+
+
+async def update_connector_status(
+    db: AsyncSession,
+    connector_id: UUID,
+    *,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+) -> ChargingConnectorModel | None:
+    """Set a connector's live status from an OCPP ``StatusNotification`` (F-C2).
+
+    Args:
+        db: Current async session.
+        connector_id: UUID of the connector to update.
+        status: New live status reported by the station.
+        status_updated_at: Timestamp the station reported, already parsed
+            and normalized to UTC by the caller.
+
+    Returns:
+        The updated connector, or ``None`` if it is no longer active.
+
+    Side Effects:
+        Assigns ``status``/``status_updated_at``, updates ``updated_at``,
+        flushes, and refreshes; does not commit. No out-of-order guard —
+        in-order message arrival is this MVP's existing assumption (see
+        ``docs/01-requirements/future.md`` item 27); the incoming timestamp
+        is not compared against the stored one.
+    """
+    connector = await get_connector_by_id(db, connector_id)
+    if connector is None:
+        return None
+    connector.status = status
+    connector.status_updated_at = status_updated_at
     connector.updated_at = utc_now()
     await db.flush()
     await db.refresh(connector)

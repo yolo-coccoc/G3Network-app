@@ -8,6 +8,7 @@ is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 from collections.abc import Mapping
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -40,8 +41,11 @@ from app.domains.charging_stations.schemas import (
     ChargingStationListResponse,
     ChargingStationResponse,
     ChargingStationUpdateRequest,
+    NearbyChargingStationListResponse,
+    NearbyChargingStationResponse,
 )
 from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
     NearestChargingStation,
 )
@@ -292,6 +296,144 @@ async def find_nearest_operational_station(
         latitude=station_latitude,
         longitude=station_longitude,
         distance_km=distance_meters / 1000,
+    )
+
+
+def to_nearby_charging_station_response(
+    station: ChargingStationModel, *, connector_count: int, distance_km: float
+) -> NearbyChargingStationResponse:
+    """Build a driver-facing nearby-station response (F-D1).
+
+    Pure mapping only - the connector count and distance are computed by
+    the caller, since a pure mapper must never do I/O.
+
+    Args:
+        station: Station ORM object queried by the repository.
+        connector_count: Number of active connectors, already computed by
+            the caller.
+        distance_km: Distance from the query point, already computed by
+            the caller.
+
+    Returns:
+        Driver-facing response schema, without the internal/admin fields
+        ``ChargingStationResponse`` carries.
+    """
+    latitude, longitude = location_to_coordinates(station.location)
+    return NearbyChargingStationResponse(
+        station_id=station.station_id,
+        display_name=station.display_name,
+        latitude=latitude,
+        longitude=longitude,
+        power_rating_kw=(
+            float(station.power_rating_kw)
+            if station.power_rating_kw is not None
+            else None
+        ),
+        connector_standard=station.connector_standard,
+        operating_hours=station.operating_hours,
+        maintenance_status=station.maintenance_status,
+        connector_count=connector_count,
+        distance_km=distance_km,
+    )
+
+
+async def find_nearby_charging_stations(
+    db: AsyncSession,
+    *,
+    latitude: float,
+    longitude: float,
+    radius_km: float,
+    connector_standard: str | None = None,
+    min_power_kw: float | None = None,
+    is_operational_only: bool = True,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+) -> NearbyChargingStationListResponse:
+    """Find stations within a radius of a point, filtered and paginated (F-D1).
+
+    Generalizes ``find_nearest_operational_station`` (F-A2) from "1
+    nearest" to "N within a radius, filtered by connector standard/power,
+    nearest first".
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        latitude: GPS latitude in decimal degrees of the query point.
+        longitude: GPS longitude in decimal degrees of the query point.
+        radius_km: Search radius in km; clamped to
+            ``(0, settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM]``.
+        connector_standard: Exact-match filter, or ``None`` to not filter.
+        min_power_kw: Minimum power rating filter, or ``None`` to not
+            filter.
+        is_operational_only: Whether to only return stations with
+            ``maintenance_status == OPERATIONAL`` - same approximation of
+            "available" as F-A2 (see ``NearestChargingStation``'s
+            docstring and ``docs/01-requirements/future.md``).
+        page: Page number starting at one; lower values are clamped to the
+            default.
+        page_size: Page size, clamped according to settings.
+
+    Returns:
+        Matching stations nearest-first, and pagination metadata.
+
+    Side Effects:
+        Performs two read queries plus one connector-count query per
+        station on the page - the same deliberate, deferred N+1 as
+        ``list_charging_stations`` (see ``docs/01-requirements/future.md``
+        item 34); does not commit or rollback.
+    """
+    # radius_km > 0 is enforced by the router's Query validation; clamp only
+    # the upper bound here so a non-HTTP caller can't request an unbounded
+    # PostGIS scan, and floor negative/zero input rather than passing it
+    # straight to ST_DWithin.
+    radius_km = min(
+        max(radius_km, 0.001), settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM
+    )
+    page = max(page, settings.API_DEFAULT_PAGE)
+    page_size = min(
+        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
+    )
+    offset = (page - 1) * page_size
+
+    query_point = coordinates_to_location(latitude, longitude)
+    assert query_point is not None, "latitude/longitude are both required here"
+    radius_meters = radius_km * 1000
+    min_power_decimal = Decimal(str(min_power_kw)) if min_power_kw is not None else None
+
+    matches = await repository.list_nearby_stations(
+        db,
+        location=query_point,
+        radius_meters=radius_meters,
+        connector_standard=connector_standard,
+        min_power_kw=min_power_decimal,
+        operational_only=is_operational_only,
+        offset=offset,
+        limit=page_size,
+    )
+    total = await repository.count_nearby_stations(
+        db,
+        location=query_point,
+        radius_meters=radius_meters,
+        connector_standard=connector_standard,
+        min_power_kw=min_power_decimal,
+        operational_only=is_operational_only,
+    )
+    items = []
+    for station, distance_meters in matches:
+        connector_count = await repository.count_connectors_by_station_id(
+            db, station.station_id
+        )
+        items.append(
+            to_nearby_charging_station_response(
+                station,
+                connector_count=connector_count,
+                distance_km=distance_meters / 1000,
+            )
+        )
+    return NearbyChargingStationListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -743,6 +885,36 @@ async def update_charging_connector(
     if updated is None:
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return to_charging_connector_response(updated)
+
+
+async def update_connector_status(
+    db: AsyncSession,
+    *,
+    connector_id: UUID,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+) -> None:
+    """Record a connector's live status from an OCPP ``StatusNotification``. Public entry point for F-C2.
+
+    Args:
+        db: Async session owned by the caller's entry boundary (the OCPP
+            gateway's own transaction).
+        connector_id: UUID of the connector the station reported on.
+        status: New live status.
+        status_updated_at: Timestamp the station reported, already parsed
+            and normalized to UTC.
+
+    Raises:
+        ChargingConnectorNotFoundError: If the connector is not active.
+    """
+    updated = await repository.update_connector_status(
+        db,
+        connector_id,
+        status=status,
+        status_updated_at=status_updated_at,
+    )
+    if updated is None:
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
 
 
 async def soft_delete_charging_connector(
