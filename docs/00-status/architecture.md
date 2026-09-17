@@ -73,9 +73,11 @@ extensions:
   `charging_stations.location` has a GIST index, `vehicle_telemetry.location`
   deliberately doesn't (high-frequency write path, no spatial query need
   yet). F-A2's nearest-operational-station lookup is the first query to use
-  that index (`ST_Distance` + the `<->` KNN operator). There's still no
-  general-purpose map/geofence *search* API (radius query, filtering) beyond
-  that one nearest-station lookup.
+  that index (`ST_Distance` + the `<->` KNN operator). F-D1's nearby-station
+  search (`GET /charging-stations/nearby`) is the first query to use
+  `ST_DWithin` for a radius filter, alongside the same KNN ordering.
+  There's still no geofence *search* API (radius query, filtering) on
+  `vehicle_telemetry`/vehicle geofencing.
 - `uuid-ossp` for the local database.
 
 The current Alembic baseline consists of:
@@ -90,6 +92,7 @@ The current Alembic baseline consists of:
 0007_telemetry_schema_version
 0008_notifications
 0009_anomaly_notification_type
+0010_charging_connector_status
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -115,9 +118,13 @@ reverse proxy in the development environment.
   telemetry history query exists (F-A5,
   `GET /telemetry/vehicles/{id}/history`), but true trip segmentation
   (start/end detection, idle-gap grouping) does not.
-- Aggregate connector status and technical status history.
+- Aggregate/fleet-wide connector status dashboard and technical status
+  history. Per-connector live status exists (F-C2, `StatusNotification`),
+  but nothing aggregates it across a station or fleet yet.
 - Live station occupancy/online signal for a true "nearest *available*"
-  (F-A2's lookup only reflects `deleted_at`/`maintenance_status` today).
+  and "nearby *available*" (F-A2's and F-D1's lookups only reflect
+  `deleted_at`/`maintenance_status` today, not F-C2's new per-connector
+  status).
 - Push/multi-channel notification delivery (F-F3), recipient scoping, and
   the online/offline vehicle flag (F-A1) — `notifications` today is
   backend-storage-plus-portal-polling only.

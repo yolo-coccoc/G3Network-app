@@ -132,7 +132,11 @@ carries its original PRD code so you can trace it back.
 - **Output:** Nearby stations filtered by availability / power / connector standard
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations` (nearby-station search/filter query; map rendering itself is frontend)
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope) — `GET /charging-stations/nearby` returns stations within a
+  capped radius (`CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM`, default 200 km), nearest first, filtered
+  by `connector_standard` (exact match) and `min_power_kw`, using the same PostGIS `ST_DWithin`/KNN
+  approach as F-A2's nearest-station lookup. "Availability" reflects `maintenance_status` only —
+  the same admin-set approximation F-A2 uses, not a live occupancy signal (`future.md` item 37)
 
 ### F-D2 Navigation to station
 - **Actor:** Driver
@@ -354,7 +358,11 @@ carries its original PRD code so you can trace it back.
 - **Output:** kWh sold per station per time window, for time-of-day pricing optimization
 - **Priority · Release:** Should · P1.1
 - **Backend domain:** `charging_sessions` (aggregation over stored session data)
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope) — `GET /charging-sessions/stations/{station_id}/energy?start_time=&end_time=`
+  sums `energy_delivered_wh` (converted to kWh) and counts completed sessions ending within a
+  required, timezone-checked window; both bounds are otherwise unbounded (an ordinary table, not
+  a hypertable, so no max-range cap like F-A5's). An unknown `station_id` returns a zero summary
+  rather than a 404 - this domain doesn't own station existence
 
 ### F-C8 Dynamic pricing by generation source & time-of-day
 - **Actor:** G3 Energy (configures tariffs); driver (sees current price)
@@ -625,9 +633,14 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-02 (≤30s OCPP status latency)
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
-- **Status:** 📋 Planned — no `status` column exists on any topology model, and the OCPP
-  gateway only handles `TransactionEvent`/`MeterValues`; `StatusNotification` is not handled at
-  all, so nothing for this feature is built yet
+- **Status:** ✅ Done (MVP/POC scope) — the OCPP gateway now handles `StatusNotification`,
+  writing OCPP 2.0.1's native status (`Available`/`Occupied`/`Reserved`/`Unavailable`/`Faulted`)
+  and a timestamp onto `ChargingConnectorModel`, exposed via `GET /charging-connectors/{id}`.
+  Correction to this entry's own wording: OCPP 2.0.1 has no separate "Charging" status — 1.6J's
+  `Preparing`/`Charging`/`SuspendedEV`/`Finishing` are all folded into `Occupied`; a live
+  "currently charging" view would need to join `charging_sessions`, not read this column alone.
+  NF-02's ≤30s/≥99% targets aren't measured (MVP/POC scope, no monitoring yet); no out-of-order
+  guard (in-order arrival is this MVP's assumption, `future.md` item 27)
 
 ### F-C6 Per-customer energy usage
 - **Actor:** System

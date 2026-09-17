@@ -573,6 +573,13 @@ The items below are actual deferral decisions made in the repo, not placeholders
   status (live OCPP-derived state — that's item 27's reliability path), the
   capability schema, and the location/status *search* helpers (radius
   search, status filter).
+- **Further partial resolution (2026-09-17)**: the location *search*
+  helper is also done — F-D1's `GET /charging-stations/nearby` (`ST_DWithin`
+  radius search filtered by connector standard/power/maintenance status).
+  Per-connector *status* now exists too (F-C2, `ChargingConnectorStatus` on
+  `ChargingConnectorModel`), but it isn't a *status filter* on the nearby
+  search yet - see item 49. Administrative/connection status and the
+  capability schema remain fully deferred.
 
 ### 29. Query optimization and code-quality cleanup for simulator/telemetry
 
@@ -865,6 +872,13 @@ The items below are actual deferral decisions made in the repo, not placeholders
   (or `ChargingEvseModel`), then changing `find_nearest_station_by_location`'s
   filter to also require "available" in the new sense. Revisit alongside
   items 27/28 rather than in isolation.
+- **Partial resolution (2026-09-17)**: The status column and
+  `StatusNotification` handler this item called for now exist (F-C2,
+  `ChargingConnectorModel.status`). Still open: changing
+  `find_nearest_station_by_location` (F-A2) and the new
+  `list_nearby_stations`/`count_nearby_stations` (F-D1) to actually filter
+  on it — see item 49 for that narrower remaining piece. The
+  online/offline (heartbeat) half of this item is also still open.
 
 ### 38. True per-trip de-duplication for F-A2 battery alerts
 
@@ -1110,6 +1124,35 @@ The items below are actual deferral decisions made in the repo, not placeholders
   `add_retention_policy`/compression policy via a migration once real
   storage volume justifies it, and confirm the actual retention window (the
   PRD only says "≥6 months," not an upper bound) as a business decision.
+
+### 49. Connector-status-aware availability for F-A2/F-D1
+
+- **Short description**: F-A2's nearest-operational-station lookup and
+  F-D1's nearby-station search both approximate "available" as
+  `deleted_at IS NULL AND maintenance_status = OPERATIONAL` — an admin-set
+  directory field, not a live signal. F-C2 now gives this backend a real
+  per-connector status (`Available`/`Occupied`/`Reserved`/`Unavailable`/
+  `Faulted`), but neither query reads it yet.
+- **Purpose/role in the system**: A station with every connector
+  `Occupied` or `Faulted` still shows up as "available" today - refining
+  both queries to also require at least one connector in `Available`
+  status would make "available" mean something closer to what a driver
+  actually needs.
+- **Reason for deferral**: F-C2 was scoped as storing the status column
+  only, not wiring it into other domains' queries - that's a second,
+  separate change (a join from `charging_stations`/`charging_connectors`
+  through `charging_evses`, filtered per station) that wasn't part of the
+  F-C2/F-D1 round. Item 37 already flagged this exact resume path before
+  F-C2 existed; this item narrows it now that the missing piece (the
+  status column) is actually there.
+- **Related planner/feature**: F-A2, F-D1, F-C2, item 37,
+  `charging_stations/repository.py`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, add a repository query joining
+  `charging_connectors` (`status = 'Available'`) through `charging_evses`
+  to `charging_stations`, and decide whether "available" should require
+  *any* available connector or a minimum count - a business decision, not
+  a technical one.
 
 ---
 
