@@ -1492,6 +1492,42 @@ The items below are actual deferral decisions made in the repo, not placeholders
   boundaries at query time. Only pursue this after a real benchmark shows
   the raw scan is the bottleneck.
 
+### 66. Duplicate `Started` surfaces a raw `IntegrityError`, not a domain exception (F-B2)
+
+- **Short description**: F-B2's fix #2 guards `Updated`/`Ended` against an
+  already-`COMPLETED` session, but a duplicate `Started` for the same
+  `(station_id, ocpp_transaction_id)` pair never reaches that guard - it
+  goes straight to `repository.create_session`, hits
+  `uq_charging_sessions_station_transaction`, and raises a raw
+  `IntegrityError` that propagates uncaught out of
+  `ingest_transaction_event`. This is a live violation of
+  `backend-runtime-conventions.md`'s own stated rule: *"A DB unique
+  constraint is the last line of defense; an `IntegrityError` must be
+  converted into the appropriate domain error"* - every other domain in
+  this backend (`vehicles`, `telematics`) already does this conversion;
+  `charging_sessions` doesn't, for this one path.
+- **Purpose/role in the system**: An uncaught `IntegrityError` still
+  produces the same *observable* outcome as F-B2's other guards (OCPP's
+  generic exception handling turns it into a `CALLERROR`), but it's an
+  accident of that generic handling, not a deliberate, attributable
+  rejection - and it would surface as a raw driver exception (not
+  `ChargingSessionStateError`) to any future non-OCPP caller of this
+  service (e.g. a REST ingest path).
+- **Reason for deferral**: Identified during F-B2's design as an optional
+  fifth fix and deliberately left out of that round's approved scope
+  (correctness fixes #1-#4 only) to keep the diff focused; it is a small,
+  independent, low-risk fix (catch `IntegrityError` around
+  `repository.create_session`, re-raise `ChargingSessionStateError`) that
+  doesn't touch the reliability path in item 27 above.
+- **Related planner/feature**: F-B2,
+  `docs/02-planners/backend-charging-ingest-fixes.md`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: Reuses the `ChargingSessionStateError` F-B2 already
+  introduced - no new exception type needed. A test analogous to the
+  existing `test_ingest_transaction_event_rejects_repeated_ended` (stub
+  `repository.create_session` to raise `IntegrityError`, assert the
+  service converts it) should accompany the fix.
+
 ---
 
 ## Update rules
