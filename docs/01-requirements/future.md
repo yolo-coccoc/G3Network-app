@@ -816,6 +816,15 @@ The items below are actual deferral decisions made in the repo, not placeholders
   on read (compare `received_at`/`recorded_at` to now against a threshold, no new column)
   or maintained by a background job (needs its own state and a definition of "flap"
   handling); on-read is the simpler MVP-consistent default but hasn't been confirmed.
+- **Partial resolution (2026-09-17)**: F-J1/F-J3's periodic device-health monitor
+  (`telematics/monitoring/`) now computes silence the "background job" way this item
+  described, using the same `received_at`-vs-threshold comparison the "on-read" option
+  would have used, but it only produces a one-shot `DEVICE_OFFLINE_ALERT` notification per
+  silence episode - it does **not** persist a queryable online/offline flag/field anywhere
+  (no new column on `vehicles`/`telematics`, no API field). A fleet-facing screen wanting
+  "is this vehicle online right now" as a stored, queryable value still has nothing to read
+  - only the alert history via `GET /api/v1/notifications`. Resuming this item now means
+  deciding whether that's sufficient or a real flag/field is still wanted.
 
 ---
 
@@ -1153,6 +1162,60 @@ The items below are actual deferral decisions made in the repo, not placeholders
   to `charging_stations`, and decide whether "available" should require
   *any* available connector or a minimum count - a business decision, not
   a technical one.
+
+### 50. F-J1's per-device health dashboard (SIM/power status, firmware view)
+
+- **Short description**: F-J1's stated output is a "per-device dashboard —
+  last-seen, firmware version, SIM/data status, power status." Only
+  last-seen (via the F-J1/F-J3 silence monitor's alert) and firmware
+  version (already a plain CRUD field on `TelematicModel`) exist; SIM/data
+  status and power status have no field anywhere in this backend.
+- **Purpose/role in the system**: Operations/admin need a live per-device
+  view to triage a device issue (weak signal vs. dead SIM vs. no power)
+  before dispatching anyone - today's alert only says "silent," not why.
+- **Reason for deferral**: The MQTT contract (`mqtt-spec.md`) never defined
+  SIM/carrier or power-rail fields, and no telematic hardware spec commits
+  to sending them (same root gap as F-G1's unresolved Tri-Ring spec,
+  "Items needing confirmation" #1). Inventing fields the device may never
+  actually populate would be guessing at a hardware contract.
+- **Related planner/feature**: F-J1, F-G1, `telematics`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When the Tri-Ring telematics spec is confirmed,
+  check whether it exposes SIM/carrier signal or power-rail status; if so,
+  extend the MQTT contract and `TelematicModel`/`vehicle_telemetry`
+  accordingly and surface them on a per-device endpoint. Don't build a
+  "dashboard" UI here regardless - that's the admin portal's job; this
+  repo's part is only the data.
+
+### 51. F-J3's power-loss-vs-signal-loss discrimination
+
+- **Short description**: F-J3 requires "distinguish sudden power loss from
+  ordinary signal loss." The F-J1/F-J3 monitor built this round only knows
+  "no telemetry for N minutes" - it cannot tell a dead battery/pulled fuse
+  apart from a truck in a tunnel or a dead cell zone.
+- **Purpose/role in the system**: A power-loss/tamper signal likely
+  triggers a different (more urgent, possibly security/repossession-adjacent
+  per F-J3's own PRD note) response than routine signal loss - conflating
+  them under one alert type risks the wrong response or alert fatigue from
+  treating every dead zone as tamper.
+- **Reason for deferral**: No signal exists to make the distinction. A
+  per-device MQTT Last Will (the standard MQTT idiom for "this specific
+  client went ungracefully offline") would need each *telematic device* to
+  be its own MQTT client with its own LWT - today only the *backend's own*
+  consumer process has one (`MQTT_STATUS_TOPIC_TEMPLATE`,
+  `app/domains/telemetry/ingestion/mqtt_consumer.py`), which says nothing
+  about any individual vehicle. Alternatively, an on-device battery/power
+  field in the MQTT payload (same gap as item 50) would let the backend
+  tell the two apart directly.
+- **Related planner/feature**: F-J3, F-J1, item 50, `telematics/monitoring/`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resuming, this likely needs one of: (a) each
+  telematic device publishing its own MQTT LWT so the broker can report
+  ungraceful disconnects per device (an EMQX/broker-topology decision, not
+  purely a backend one), or (b) a power-status field in the MQTT payload
+  (needs the same hardware-spec confirmation as item 50). Don't guess a
+  proxy heuristic (e.g. "GPS didn't move" ≠ "lost power") without
+  confirming it's an acceptable approximation first.
 
 ---
 

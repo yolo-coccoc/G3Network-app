@@ -451,7 +451,14 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-06 (device identity)
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telematics`
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope, partial) — the auto-alert half is built: a new periodic
+  monitor (`telematics/monitoring/`, this backend's first non-event-driven background process)
+  sweeps active devices every `TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS` (default 300s) and
+  raises a `DEVICE_OFFLINE_ALERT` notification once per silence episode once a vehicle exceeds
+  `TELEMATICS_SILENT_THRESHOLD_MINUTES` (default 180) without telemetry. Not built: the
+  per-device dashboard (SIM/data status, power status) — no such field exists anywhere in this
+  backend's MQTT contract — and distinguishing a device fault from the engine being off (see
+  F-J3, same gap)
 
 ### F-K1 Driver safety scoring
 - **Actor:** System (computes); fleet manager (views weekly report)
@@ -559,7 +566,14 @@ carries its original PRD code so you can trace it back.
 - **Constraints:** Updated ≥1×/day
 - **Priority · Release:** Should · P1.1
 - **Backend domain:** `telemetry`
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope) — `soh_percent`/`cycle_count` are now part of the MQTT
+  battery payload and `vehicle_telemetry`, exposed via the existing latest/history endpoints.
+  Below-threshold detection reuses the same crossing-rule pattern as F-A2/F-A4
+  (`SOH_ALERT_THRESHOLD_PERCENT = 70.0`, an engineering default, not vendor-confirmed), raising a
+  `SOH_ALERT` notification. "Estimated capacity fade over time" is served by charting
+  `soh_percent` across F-A5's history endpoint — no separate trend/regression computation exists.
+  "Updated ≥1×/day" is trivially satisfied since telemetry updates far more often whenever the
+  field is present
 
 ### F-A4 Anomaly detection
 - **Actor:** System
@@ -673,8 +687,13 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-06 (device identity/certificate issued at provisioning)
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `vehicles`
-- **Status:** 🚧 In progress — vehicle CRUD + soft delete exist; the activation state machine and
-  ≥98% activation-success tracking are not built
+- **Status:** ✅ Done (MVP/POC scope) — `VehicleModel.activation_status` tracks
+  `PENDING → DEVICE_ASSIGNED → ACTIVATED`: `DEVICE_ASSIGNED` fires when `telematics` assigns a
+  device to the vehicle, `ACTIVATED` fires on the vehicle's first-ever telemetry message
+  (end-to-end data flow confirmed). `GET /vehicles/activation-summary` reports the fleet-wide
+  success rate (`activated_count / attempted_count`, where "attempted" = `DEVICE_ASSIGNED` +
+  `ACTIVATED`). NF-06 (device identity/certificate) is not built — no PKI/certificate issuance
+  exists anywhere in this backend
 - Note: the source also describes a physical handover checklist alongside this item — that's an
   operational process, not a software requirement; only the activation flow and data-flow
   confirmation are in scope here.
@@ -761,7 +780,12 @@ carries its original PRD code so you can trace it back.
   software.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telematics`
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope, partial) — the "device offline" half is built, sharing the
+  same periodic monitor and `DEVICE_OFFLINE_ALERT` notification as F-J1. Not built: distinguishing
+  sudden power loss from ordinary signal loss - no signal exists anywhere in this backend to tell
+  the two apart (a per-device Last Will only exists for the backend's own MQTT consumer process,
+  not per-telematic-device). NF-09 (≥48h on-device store-and-forward) and NF-06 (device identity)
+  are not built either
 
 ---
 

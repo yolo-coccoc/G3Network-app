@@ -12,6 +12,7 @@ flowchart LR
     Broker["EMQX 5.5\nMQTT"]
     Ingestion["Telemetry ingestion\nMQTT consumer + worker"]
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
+    Monitor["telematics/monitoring\nperiodic device-health check"]
     API["FastAPI API"]
     Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions"]
     Notifications["notifications"]
@@ -21,13 +22,16 @@ flowchart LR
     Vehicle -->|MQTT telemetry| Broker
     Broker --> Ingestion
     Ingestion -->|vehicle_telemetry| DB
-    Ingestion -->|SOC crossing -> alert, F-A2| Notifications
+    Ingestion -->|SOC/SOH crossing -> alert, F-A2/F-A3| Notifications
     Notifications -->|nearest station lookup| Domains
     Notifications -->|notifications| DB
 
     Station <-->|OCPP 2.0.1| OCPP
     OCPP -->|session event + meter| Domains
     Domains -->|charging data| DB
+
+    Monitor -->|last-seen check, F-J1/F-J3| DB
+    Monitor -->|silence -> alert| Notifications
 
     API --> Domains
     API --> Notifications
@@ -41,25 +45,32 @@ flowchart LR
 
 FastAPI registers the following domains:
 
-- `vehicles`: vehicle CRUD and soft delete.
-- `telematics`: device CRUD and mapping devices to vehicles.
+- `vehicles`: vehicle CRUD and soft delete, plus an F-F2 device-activation
+  state machine and its fleet-wide success-rate summary.
+- `telematics`: device CRUD and mapping devices to vehicles, plus a
+  periodic device-health monitor (F-J1/F-J3, partial) - this backend's
+  first non-event-driven background process.
 - `telemetry`: receiving data via the ingestion service and reading a
-  vehicle's latest telemetry.
+  vehicle's latest/history telemetry (including F-A3's `soh_percent`/
+  `cycle_count`).
 - `charging_stations`: Station → EVSE → Connector topology CRUD, station
   directory metadata (location, power rating, connector standard, operating
-  hours, maintenance status), and the OCPP 2.0.1 gateway.
+  hours, maintenance status), a nearby-station radius search (F-D1), and the
+  OCPP 2.0.1 gateway (now also handling `StatusNotification`, F-C2).
 - `charging_sessions`: storing the session aggregate, lifecycle events and
-  meter values.
+  meter values, plus a station-level energy aggregation query (F-C5).
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=`; telemetry ingestion
-  raises one when a vehicle's SOC crosses the 30/20/10% tiers, carrying the
-  nearest operational charging station (resolved via `charging_stations`,
-  the first PostGIS spatial query in the codebase). No push and no
-  recipient scoping yet — there is no mobile app and no `identity` domain.
+  raises one when a vehicle's SOC crosses the 30/20/10% tiers (carrying the
+  nearest operational charging station, resolved via `charging_stations`,
+  the first PostGIS spatial query in the codebase) or SOH drops below its
+  threshold (F-A3); the device-health monitor raises one when a vehicle
+  goes silent (F-J1/F-J3). No push and no recipient scoping yet — there is
+  no mobile app and no `identity` domain.
 
-The API process runs separately via Uvicorn. Telemetry ingestion and the OCPP
-gateway have their own entrypoints, sharing the same database/session
-configuration.
+The API process runs separately via Uvicorn. Telemetry ingestion, the OCPP
+gateway, and the telematics device-health monitor each have their own
+entrypoint, sharing the same database/session configuration.
 
 ### Database
 
@@ -93,6 +104,10 @@ The current Alembic baseline consists of:
 0008_notifications
 0009_anomaly_notification_type
 0010_charging_connector_status
+0011_vehicle_activation_status
+0012_telemetry_battery_health
+0013_soh_alert_notification_type
+0014_device_offline_alert
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -132,8 +147,9 @@ reverse proxy in the development environment.
   vendor-validated F-A4 anomaly thresholds, re-alert/escalation for a
   persisting anomaly, and a motor-temperature anomaly detector.
 - Geofence (boundary config on `vehicles`, in/out-of-zone events/alerts on
-  `telemetry` — F-A5's deferred half), device health, charging policy,
-  payment and billing.
+  `telemetry` — F-A5's deferred half), the F-J1 device-health dashboard
+  (SIM/power status) and F-J3's power-loss-vs-signal-loss distinction,
+  charging policy, payment and billing.
 - Web portal, vehicle app, centralized observability and production
   reliability.
 
