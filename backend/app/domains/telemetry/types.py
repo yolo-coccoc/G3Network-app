@@ -1,6 +1,7 @@
 """Shared types for the telemetry domain.
 
-Feature code: F-A2 (Tiered battery alerts), F-A4 (Anomaly detection)
+Feature code: F-A2 (Tiered battery alerts), F-A4 (Anomaly detection),
+F-A3 (Battery health (SOH) & cycle tracking)
 """
 
 import enum
@@ -85,3 +86,10 @@ class VehicleAnomaly:
     anomaly_type: VehicleAnomalyType
     severity: NotificationSeverity
     evidence: dict[str, object] = field(default_factory=dict)
+
+
+# Engineering default, not vendor-confirmed - see docs/01-requirements/future.md.
+# A single threshold, not tiers like BATTERY_ALERT_THRESHOLDS: F-A3 only asks
+# for "alert when SOH drops below a configured threshold," not multiple
+# severity levels.
+SOH_ALERT_THRESHOLD_PERCENT = 70.0

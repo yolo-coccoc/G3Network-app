@@ -35,6 +35,9 @@ class VehicleTelemetryLatestResponse(BaseModel):
         battery_voltage: Battery voltage, V.
         battery_current: Battery current, A.
         battery_temperature: Battery temperature, °C.
+        soh_percent: Battery State of Health, remaining capacity vs. new
+            (F-A3), nullable.
+        cycle_count: Charge/discharge cycle count (F-A3), nullable.
         motor_temperature: Motor temperature, °C.
         odometer: Total distance traveled, km.
         signal_strength: Signal strength, dBm.
@@ -61,6 +64,8 @@ class VehicleTelemetryLatestResponse(BaseModel):
     battery_voltage: float | None
     battery_current: float | None
     battery_temperature: float | None
+    soh_percent: float | None
+    cycle_count: int | None
     motor_temperature: float | None
     odometer: float | None
     signal_strength: int | None
@@ -86,6 +91,11 @@ class VehicleTelemetryHistoryPoint(BaseModel):
         battery_voltage: Battery voltage, V.
         battery_current: Battery current, A.
         battery_temperature: Battery temperature, °C.
+        soh_percent: Battery State of Health, remaining capacity vs. new
+            (F-A3), nullable. Charting this field across a queried time
+            range is how "estimated capacity fade over time" (F-A3) is
+            served - no separate trend/regression endpoint exists.
+        cycle_count: Charge/discharge cycle count (F-A3), nullable.
         motor_temperature: Motor temperature, °C.
         odometer: Total distance traveled, km.
         signal_strength: Signal strength, dBm.
@@ -103,6 +113,8 @@ class VehicleTelemetryHistoryPoint(BaseModel):
     battery_voltage: float | None
     battery_current: float | None
     battery_temperature: float | None
+    soh_percent: float | None
+    cycle_count: int | None
     motor_temperature: float | None
     odometer: float | None
     signal_strength: int | None
@@ -201,6 +213,9 @@ class TelemetryBatteryPayload(BaseModel):
         voltage: Battery voltage (V)
         current: Current (A). Negative = discharging, Positive = charging
         temperature: Battery temperature (°C)
+        soh_percent: State of Health - remaining capacity vs. new (0-100%),
+            nullable (F-A3)
+        cycle_count: Charge/discharge cycle count, nullable (F-A3)
     """
 
     soc: Annotated[
@@ -222,12 +237,39 @@ class TelemetryBatteryPayload(BaseModel):
     temperature: Annotated[
         float | None, Field(default=None, description="Battery temperature (°C)")
     ]
+    soh_percent: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0,
+            le=100,
+            description="State of Health - remaining capacity vs. new (%)",
+        ),
+    ]
+    cycle_count: Annotated[
+        int | None,
+        Field(default=None, ge=0, description="Charge/discharge cycle count"),
+    ]
 
     model_config = {
         "json_schema_extra": {
             "examples": [
-                {"soc": 78.5, "voltage": 400.2, "current": -15.3, "temperature": 35.2},
-                {"soc": 50.0, "voltage": None, "current": None, "temperature": None},
+                {
+                    "soc": 78.5,
+                    "voltage": 400.2,
+                    "current": -15.3,
+                    "temperature": 35.2,
+                    "soh_percent": 96.5,
+                    "cycle_count": 142,
+                },
+                {
+                    "soc": 50.0,
+                    "voltage": None,
+                    "current": None,
+                    "temperature": None,
+                    "soh_percent": None,
+                    "cycle_count": None,
+                },
             ]
         }
     }
@@ -410,6 +452,8 @@ class TelemetryMessage(BaseModel):
             "voltage": self.battery.voltage,
             "current": self.battery.current,
             "temperature": self.battery.temperature,
+            "soh_percent": self.battery.soh_percent,
+            "cycle_count": self.battery.cycle_count,
         }
 
         # Build motor dict
@@ -449,6 +493,8 @@ class TelemetryMessage(BaseModel):
             "battery_voltage": battery_dict.get("voltage"),
             "battery_current": battery_dict.get("current"),
             "battery_temperature": battery_dict.get("temperature"),
+            "soh_percent": battery_dict.get("soh_percent"),
+            "cycle_count": battery_dict.get("cycle_count"),
             "motor_temperature": motor_dict.get("temperature") if motor_dict else None,
             "odometer": (
                 vehicle_state_dict.get("odometer") if vehicle_state_dict else None

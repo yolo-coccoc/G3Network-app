@@ -52,6 +52,9 @@ class VehicleTelemetryModel(Base):
         battery_voltage: Battery voltage in volts, nullable
         battery_current: Battery current in amperes, nullable
         battery_temperature: Battery temperature in °C, nullable
+        soh_percent: Battery State of Health, remaining capacity vs. new
+            (0-100), nullable (F-A3)
+        cycle_count: Charge/discharge cycle count, nullable (F-A3)
         motor_temperature: Motor temperature in °C, nullable
         odometer: Total distance traveled in km, nullable
         signal_strength: Cellular signal strength in dBm, nullable
@@ -134,6 +137,12 @@ class VehicleTelemetryModel(Base):
     battery_temperature: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # °C
+    soh_percent: Mapped[float | None] = mapped_column(
+        Double(), nullable=True
+    )  # State of Health %, F-A3
+    cycle_count: Mapped[int | None] = mapped_column(
+        Integer(), nullable=True
+    )  # charge/discharge cycles, F-A3
 
     # Motor data
     motor_temperature: Mapped[float | None] = mapped_column(

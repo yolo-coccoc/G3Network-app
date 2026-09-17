@@ -1,17 +1,18 @@
 """Business service for the telemetry domain.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
-battery alerts), F-A4 (Anomaly detection), F-A5 (Location, trip history &
-geofencing - the time-range history query only; geofencing itself is
-deferred, see docs/01-requirements/future.md)
+battery alerts), F-A3 (Battery health (SOH) & cycle tracking), F-A4
+(Anomaly detection), F-A5 (Location, trip history & geofencing - the
+time-range history query only; geofencing itself is deferred, see
+docs/01-requirements/future.md)
 
 The current MVP flow processes each message individually to reduce latency
 and isolate transactions. The batch functions are kept as-is in the module
 because a later phase may need to optimize throughput with batch lookup and
-bulk insert. F-A2's threshold detection and F-A4's anomaly detection only run
-in the per-message flow (``process_message``) - ``process_batch``/
-``batch_worker.py`` are dormant and not part of the current process
-lifecycle.
+bulk insert. F-A2's threshold detection, F-A3's SOH-alert detection, and
+F-A4's anomaly detection only run in the per-message flow
+(``process_message``) - ``process_batch``/``batch_worker.py`` are dormant
+and not part of the current process lifecycle.
 """
 
 import logging
@@ -26,7 +27,7 @@ import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
-from app.domains.notifications.types import NotificationType
+from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telemetry.exceptions import (
     TelemetryInvalidRangeError,
     TelemetryNotFoundError,
@@ -42,6 +43,7 @@ from app.domains.telemetry.schemas import (
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
     HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
+    SOH_ALERT_THRESHOLD_PERCENT,
     VEHICLE_ANOMALY_SEVERITIES,
     VOLTAGE_DROP_THRESHOLD_VOLTS,
     BatteryAlertLevel,
@@ -93,6 +95,8 @@ def to_vehicle_telemetry_latest_response(
         battery_voltage=telemetry.battery_voltage,
         battery_current=telemetry.battery_current,
         battery_temperature=telemetry.battery_temperature,
+        soh_percent=telemetry.soh_percent,
+        cycle_count=telemetry.cycle_count,
         motor_temperature=telemetry.motor_temperature,
         odometer=telemetry.odometer,
         signal_strength=telemetry.signal_strength,
@@ -133,6 +137,32 @@ async def get_latest_vehicle_telemetry_response(
     return to_vehicle_telemetry_latest_response(telemetry)
 
 
+async def resolve_last_telemetry_at(
+    db: AsyncSession, vehicle_id: UUID
+) -> datetime | None:
+    """Get a vehicle's last telemetry receive time. Public entry point for F-J1/F-J3.
+
+    Args:
+        db: Async session owned by the caller's entry boundary (the
+            telematics device-health monitor's transaction).
+        vehicle_id: Internal ID of the vehicle to check.
+
+    Returns:
+        The `received_at` (backend receive clock, not the device's own
+        `recorded_at`) of the vehicle's latest telemetry row, or `None` if
+        the vehicle has never reported. Using `received_at` means a device
+        with a skewed clock can't dodge the silence check by reporting a
+        `recorded_at` in the future.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback. A
+        primitive return type, not the ORM model or an HTTP response
+        schema - the correct shape for a cross-domain boundary.
+    """
+    telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)
+    return telemetry.received_at if telemetry is not None else None
+
+
 def to_vehicle_telemetry_history_point(
     telemetry: VehicleTelemetryModel,
 ) -> VehicleTelemetryHistoryPoint:
@@ -162,6 +192,8 @@ def to_vehicle_telemetry_history_point(
         battery_voltage=telemetry.battery_voltage,
         battery_current=telemetry.battery_current,
         battery_temperature=telemetry.battery_temperature,
+        soh_percent=telemetry.soh_percent,
+        cycle_count=telemetry.cycle_count,
         motor_temperature=telemetry.motor_temperature,
         odometer=telemetry.odometer,
         signal_strength=telemetry.signal_strength,
@@ -358,6 +390,73 @@ async def _raise_battery_alert(
             "alert_level": alert_level.value,
             "soc": current_soc,
         },
+    )
+
+
+def detect_soh_alert(previous_soh: float | None, current_soh: float | None) -> bool:
+    """Detect whether battery SOH just crossed the alert threshold (F-A3).
+
+    Pure function, no I/O. Same strict-above/inclusive-below crossing shape
+    as ``detect_battery_alert_level`` - fires once on entry, not on every
+    message resting below the threshold. Unlike F-A4's fire-safety
+    detectors, a missing previous reading means "no alert" here (matching
+    F-A2): gradual SOH degradation isn't a condition where skipping the
+    very first reading carries real risk.
+
+    Args:
+        previous_soh: The vehicle's previous SOH reading (%), or ``None``
+            if this is the first reading or the device didn't report it.
+        current_soh: The current message's SOH reading (%), or ``None`` if
+            the device didn't report it.
+
+    Returns:
+        ``True`` if SOH just crossed below
+        ``SOH_ALERT_THRESHOLD_PERCENT``, else ``False``.
+    """
+    if previous_soh is None or current_soh is None:
+        return False
+    return previous_soh > SOH_ALERT_THRESHOLD_PERCENT >= current_soh
+
+
+async def _raise_soh_alert(
+    db: AsyncSession,
+    *,
+    vehicle_id: UUID,
+    current_soh: float,
+    cycle_count: int | None,
+) -> None:
+    """Raise a battery-health notification (F-A3).
+
+    Args:
+        db: Session whose transaction is owned by the worker.
+        vehicle_id: Vehicle the alert is about.
+        current_soh: SOH (%) that triggered the alert.
+        cycle_count: The vehicle's current charge/discharge cycle count,
+            nullable, included in the payload for context.
+
+    Side Effects:
+        Writes one notification row into the session; does not commit.
+    """
+    payload: dict[str, object] = {
+        "threshold_percent": SOH_ALERT_THRESHOLD_PERCENT,
+        "soh_percent": current_soh,
+        "cycle_count": cycle_count,
+    }
+    await notifications_service.create_notification(
+        db,
+        notification_type=NotificationType.SOH_ALERT,
+        severity=NotificationSeverity.WARNING,
+        vehicle_id=vehicle_id,
+        title=f"Battery health at {current_soh:.0f}%",
+        body=(
+            f"Vehicle battery SOH dropped to {current_soh:.1f}%, crossing "
+            f"the {SOH_ALERT_THRESHOLD_PERCENT:.0f}% threshold."
+        ),
+        payload=payload,
+    )
+    logger.info(
+        "SOH alert raised",
+        extra={"vehicle_id": str(vehicle_id), "soh_percent": current_soh},
     )
 
 
@@ -654,12 +753,19 @@ async def process_message(
     - A message conversion error only increments ``errors`` for the current
       message; a DB error is raised so the transaction boundary rolls back
       and the worker stops per MVP policy.
+    - After a successful insert, if this is the vehicle's first-ever
+      telemetry message (``previous_telemetry is None``), F-F2's activation
+      state machine advances to ``ACTIVATED`` (see
+      ``vehicle_service.mark_vehicle_activated``) - a best-effort side
+      channel that never affects this function's own return value.
     - After a successful insert, F-A2 battery-threshold detection runs
       against the vehicle's previous SOC reading; a crossing raises exactly
-      one notification (see ``detect_battery_alert_level``). F-A4 anomaly
-      detection also runs against the same previous reading; a message may
-      trip zero, one, or more anomaly detectors, each raising its own
-      notification (see ``detect_vehicle_anomalies``). Neither ever affects
+      one notification (see ``detect_battery_alert_level``). F-A3's SOH
+      threshold detection runs the same way against the previous SOH
+      reading (see ``detect_soh_alert``). F-A4 anomaly detection also runs
+      against the same previous reading; a message may trip zero, one, or
+      more anomaly detectors, each raising its own notification (see
+      ``detect_vehicle_anomalies``). None of these ever affect
       ``processed``/``skipped``/``errors`` - each is reported via a separate
       structured log line.
 
@@ -737,6 +843,11 @@ async def process_message(
         },
     )
 
+    if previous_telemetry is None:
+        # F-F2: this vehicle's first-ever telemetry message confirms
+        # end-to-end data flow. Best-effort side channel - never raises.
+        await vehicle_service.mark_vehicle_activated(db, vehicle_id)
+
     alert_level = detect_battery_alert_level(previous_soc, message.battery.soc)
     if alert_level is not None:
         await _raise_battery_alert(
@@ -746,6 +857,18 @@ async def process_message(
             current_soc=message.battery.soc,
             latitude=message.location.latitude,
             longitude=message.location.longitude,
+        )
+
+    previous_soh = previous_telemetry.soh_percent if previous_telemetry else None
+    if detect_soh_alert(previous_soh, message.battery.soh_percent):
+        assert (
+            message.battery.soh_percent is not None
+        ), "detect_soh_alert() only returns True when current_soh is not None"
+        await _raise_soh_alert(
+            db,
+            vehicle_id=vehicle_id,
+            current_soh=message.battery.soh_percent,
+            cycle_count=message.battery.cycle_count,
         )
 
     for anomaly in detect_vehicle_anomalies(previous_telemetry, message):
