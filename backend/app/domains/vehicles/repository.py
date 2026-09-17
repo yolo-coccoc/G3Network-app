@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.vehicles.models import VehicleModel
-from app.domains.vehicles.types import VehicleStatus
+from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
 from app.libs.common.config import settings
 
 
@@ -143,6 +143,29 @@ async def count(
 
     query_result = await db_session.execute(
         select(func.count(VehicleModel.vehicle_id)).where(and_(*conditions))
+    )
+    return query_result.scalar() or 0
+
+
+async def count_by_activation_status(
+    db_session: AsyncSession, activation_status: VehicleActivationStatus
+) -> int:
+    """Count active vehicles at a given activation status (F-F2).
+
+    Args:
+        db_session: Current database session.
+        activation_status: Activation status to count.
+
+    Returns:
+        Number of non-soft-deleted vehicles at that activation status.
+    """
+    query_result = await db_session.execute(
+        select(func.count(VehicleModel.vehicle_id)).where(
+            and_(
+                VehicleModel.activation_status == activation_status,
+                VehicleModel.deleted_at.is_(None),
+            )
+        )
     )
     return query_result.scalar() or 0
 

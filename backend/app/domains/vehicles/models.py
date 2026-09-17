@@ -9,7 +9,7 @@ from sqlalchemy import Integer, String
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.vehicles.types import VehicleStatus
+from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
 from app.libs.db.base import Base
 
 
@@ -30,6 +30,9 @@ class VehicleModel(Base):
         year: Manufacturing year
         status: Vehicle status
         fleet_id: Fleet ID (nullable, may not be assigned yet)
+        activation_status: Progress through the F-F2 device-provisioning
+            flow (`PENDING`/`DEVICE_ASSIGNED`/`ACTIVATED`), independent of
+            `status`. Defaults to `PENDING`.
         created_at: Creation time
         updated_at: Last update time
     """
@@ -54,6 +57,11 @@ class VehicleModel(Base):
         SQLEnum(VehicleStatus), default=VehicleStatus.ACTIVE, nullable=False, index=True
     )
     fleet_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    activation_status: Mapped[VehicleActivationStatus] = mapped_column(
+        SQLEnum(VehicleActivationStatus),
+        default=VehicleActivationStatus.PENDING,
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

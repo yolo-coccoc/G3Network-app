@@ -11,6 +11,7 @@ from app.domains.vehicles.exceptions import (
     VehicleNotFoundError,
 )
 from app.domains.vehicles.schemas import (
+    VehicleActivationSummaryResponse,
     VehicleCreateRequest,
     VehicleListResponse,
     VehicleResponse,
@@ -90,6 +91,27 @@ async def list_vehicles_endpoint(
         page_size,
         status_filter,
     )
+
+
+@router.get(
+    "/activation-summary",
+    response_model=VehicleActivationSummaryResponse,
+    summary="Get the fleet-wide device-activation success rate",
+    description="Get counts and success rate for the F-F2 device-provisioning flow. "
+    "Registered before /{vehicle_id} so it isn't captured as a path parameter.",
+)
+async def get_vehicle_activation_summary_endpoint(
+    db_session: AsyncSession = Depends(get_db),
+) -> VehicleActivationSummaryResponse:
+    """Get the fleet-wide activation success rate (F-F2).
+
+    Args:
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Activation counts and success rate.
+    """
+    return await vehicle_service.get_vehicle_activation_summary(db_session)
 
 
 @router.get(

@@ -21,6 +21,8 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert "/api/v1/charging-stations/nearby" in paths
     # F-C5: the station-level energy aggregation query.
     assert "/api/v1/charging-sessions/stations/{station_id}/energy" in paths
+    # F-F2: the activation summary, registered before {vehicle_id}.
+    assert "/api/v1/vehicles/activation-summary" in paths
 
 
 @pytest.mark.asyncio

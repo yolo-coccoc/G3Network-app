@@ -18,12 +18,17 @@ from app.domains.vehicles.exceptions import (
 )
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.schemas import (
+    VehicleActivationSummaryResponse,
     VehicleCreateRequest,
     VehicleListResponse,
     VehicleResponse,
     VehicleUpdateRequest,
 )
-from app.domains.vehicles.types import VehicleReference, VehicleStatus
+from app.domains.vehicles.types import (
+    VehicleActivationStatus,
+    VehicleReference,
+    VehicleStatus,
+)
 from app.libs.common.config import settings
 
 
@@ -92,6 +97,101 @@ async def resolve_vehicle_reference_by_id(
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     return to_vehicle_reference(vehicle_record) if vehicle_record else None
+
+
+async def mark_device_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
+    """Advance a vehicle's activation status once a device is assigned. Public entry point for F-F2.
+
+    Called by the `telematics` domain right after it resolves a telematic
+    device onto this vehicle.
+
+    Args:
+        db_session: Database session owned by the caller's entry boundary
+            (the HTTP boundary handling the telematic create/update).
+        vehicle_id: Internal ID of the vehicle a device was just assigned to.
+
+    Side Effects:
+        No-op if the vehicle doesn't exist or is already past `PENDING` -
+        this is a best-effort side channel, not a primary business
+        operation, so it never raises back into the caller's flow.
+    """
+    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
+    if vehicle_record is None or vehicle_record.activation_status != (
+        VehicleActivationStatus.PENDING
+    ):
+        return
+    await vehicle_repository.update_fields(
+        db_session,
+        vehicle_id,
+        {"activation_status": VehicleActivationStatus.DEVICE_ASSIGNED},
+    )
+
+
+async def mark_vehicle_activated(db_session: AsyncSession, vehicle_id: UUID) -> None:
+    """Mark a vehicle activated once its first telemetry message arrives. Public entry point for F-F2.
+
+    Called by `telemetry.process_message` on a vehicle's first-ever
+    telemetry message - the strongest available signal that end-to-end
+    data flow is confirmed.
+
+    Args:
+        db_session: Database session owned by the caller's entry boundary
+            (the telemetry ingestion worker's transaction).
+        vehicle_id: Internal ID of the vehicle that just reported telemetry
+            for the first time.
+
+    Side Effects:
+        No-op if the vehicle doesn't exist or is already `ACTIVATED` -
+        same best-effort, never-raises contract as `mark_device_assigned`.
+    """
+    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
+    if (
+        vehicle_record is None
+        or vehicle_record.activation_status is VehicleActivationStatus.ACTIVATED
+    ):
+        return
+    await vehicle_repository.update_fields(
+        db_session,
+        vehicle_id,
+        {"activation_status": VehicleActivationStatus.ACTIVATED},
+    )
+
+
+async def get_vehicle_activation_summary(
+    db_session: AsyncSession,
+) -> VehicleActivationSummaryResponse:
+    """Get the fleet-wide F-F2 activation success rate.
+
+    Args:
+        db_session: Current database session.
+
+    Returns:
+        Counts of vehicles that have at least started provisioning
+        (`DEVICE_ASSIGNED` or `ACTIVATED`) versus fully confirmed
+        (`ACTIVATED`), and the resulting success rate. `attempted_count ==
+        0` reports `activation_rate_percent = None` rather than dividing
+        by zero.
+
+    Side Effects:
+        Two separate count queries (one per activation status) rather than
+        one grouped query - this repo's convention is the simple per-item
+        version first, batched only once a benchmark shows a need.
+    """
+    device_assigned_count = await vehicle_repository.count_by_activation_status(
+        db_session, VehicleActivationStatus.DEVICE_ASSIGNED
+    )
+    activated_count = await vehicle_repository.count_by_activation_status(
+        db_session, VehicleActivationStatus.ACTIVATED
+    )
+    attempted_count = device_assigned_count + activated_count
+    activation_rate_percent = (
+        (activated_count / attempted_count) * 100 if attempted_count > 0 else None
+    )
+    return VehicleActivationSummaryResponse(
+        attempted_count=attempted_count,
+        activated_count=activated_count,
+        activation_rate_percent=activation_rate_percent,
+    )
 
 
 async def create_vehicle(

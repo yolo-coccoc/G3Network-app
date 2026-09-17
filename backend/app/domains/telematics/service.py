@@ -133,6 +133,10 @@ async def create_telematic(
         raise TelematicConflictError(
             "Telematic serial or vehicle already exists"
         ) from error
+    if vehicle_id is not None:
+        # F-F2: advance the vehicle's activation state machine now that a
+        # device is assigned. Best-effort side channel - never raises.
+        await vehicle_service.mark_device_assigned(db_session, vehicle_id)
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -214,6 +218,10 @@ async def update_telematic(
         raise TelematicConflictError(
             "Vehicle is already assigned to another telematic"
         ) from error
+    if "vehicle_id" in values and values["vehicle_id"] is not None:
+        # F-F2: advance the vehicle's activation state machine now that a
+        # device is (re)assigned. Best-effort side channel - never raises.
+        await vehicle_service.mark_device_assigned(db_session, values["vehicle_id"])
     return await build_telematic_response(db_session, telematic_record)
 
 
