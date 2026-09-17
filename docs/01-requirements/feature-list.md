@@ -292,8 +292,24 @@ carries its original PRD code so you can trace it back.
   CSV export
 - **Constraints:** Cost formula must be configurable (electricity price varies)
 - **Priority · Release:** Must · P1.1
-- **Backend domain:** `fleet` (future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `telemetry` (corrected from `fleet`, which has no active source — see note)
+- **Status:** ✅ Done (MVP/POC scope) — `GET /telemetry/vehicles/{vehicle_id}/operating-report`
+  computes distance/energy/cost over a time window (max 31 days) directly from
+  `vehicle_telemetry`: energy consumed is the sum of positive SOC drops between consecutive
+  samples, converted to kWh via the vehicle's recorded `battery_capacity_kwh` (new nullable
+  column) or a documented engineering-default fallback (75 kWh, flagged in the response);
+  distance is the sum of positive odometer deltas; cost uses a hardcoded engineering-default VND/
+  kWh constant, not yet configurable (the stated constraint is knowingly unmet, see `future.md`).
+  km/day divides by the requested window, not the observed sample span. Every derived rate
+  (kWh/100km, cost/km) is `null` when undefined (zero distance or fewer than two samples) rather
+  than a fabricated number. Not built: CSV export, and the `fleet`-level multi-vehicle rollup this
+  was originally scoped under — that domain has no active source in this backend (see
+  `docs/02-planners/backend-operating-energy-reports.md`).
+- Note: `charging_sessions` was the original implied data source for kWh, but that table carries
+  no vehicle linkage at all (the same blocker recorded for F-C6), so this round computes energy
+  from the vehicle's own telemetry instead, per an explicit user decision. This is a genuine
+  accuracy tradeoff (gross discharge, not net; SOC quantization; sparse-telemetry
+  under-counting) — see the response schema's docstring for the full list.
 
 ### F-A8 Per-driver charging-efficiency report
 - **Actor:** Fleet manager (primary); driver (can view their own report in-app)
@@ -662,8 +678,23 @@ carries its original PRD code so you can trace it back.
 - **Constraints:** must match a 3-way reconciliation (connector–vehicle–payment)
 - **Non-functional requirements:** NF-10
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `charging_sessions`
-- **Status:** 📋 Planned
+- **Backend domain:** `telemetry` (corrected from `charging_sessions` — see note)
+- **Status:** ✅ Done (MVP/POC scope, partial) — `GET /telemetry/vehicles/{vehicle_id}/energy-usage`
+  reports kWh charged per "customer," where a customer is simplified to one vehicle (one vehicle
+  per customer), per an explicit product decision for this MVP — there is no customer/owner entity
+  anywhere in this backend. Energy is the sum of positive SOC rises between consecutive telemetry
+  samples (the mirror of F-A6's SOC-drop sum, sharing the same underlying query), converted to kWh
+  the same way F-A6 does. **NF-10's 3-way reconciliation (connector–vehicle–payment, <1% deviation)
+  is not met and cannot be met by this method** — it measures energy that entered the pack, not
+  kWh billed at a station meter, so it excludes charger/conversion losses (typically 5-15%) and
+  includes any non-station charging or regenerative braking. No cost/payment field is included
+  either — that belongs to the future `billing` domain.
+- Note: the original design implied keying this off `charging_sessions`, but that table has no
+  vehicle, customer, or driver identity column at all — confirmed via the OCPP ingestion path,
+  which never reads the `idToken` field OCPP would carry one in (see
+  `docs/02-planners/backend-operating-energy-reports.md`). Adding that linkage, and thereby a
+  station-metered version of this feature that could actually satisfy NF-10, is deferred
+  (`future.md`).
 
 ### F-C7 Station load forecast & load balancing
 - **Actor:** System
@@ -768,7 +799,16 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-06
 - **Priority · Release:** Should · P1.1
 - **Backend domain:** `telematics`
-- **Status:** 📋 Planned
+- **Status:** ✅ Done (MVP/POC scope, partial) — `POST /telematics/{telematic_id}/config` pushes a
+  telemetry publish-interval change to a device over MQTT (`g3network/telematics/{serial}/command`,
+  QoS 1, this backend's first-ever MQTT publish), fail-closed: the interval is only recorded on
+  `telematics` once the broker accepts the message (PUBACK), never before. Verified end-to-end with
+  `mosquitto_sub`. Not built: local alert thresholds (only send-frequency is implemented — no
+  device-side threshold semantics are defined anywhere, same hardware-contract gap as F-G1),
+  push per vehicle/fleet (today it's one device per call), confirmation that the device actually
+  applied the config (no ack topic exists in the MQTT contract — a successful publish only proves
+  the broker accepted it), and rollback (needs the same missing confirmation signal first). See
+  `docs/02-planners/backend-telematics-config-push.md`.
 
 ### F-J3 Device offline / tamper alert
 - **Actor:** System

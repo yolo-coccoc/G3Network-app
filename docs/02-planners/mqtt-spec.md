@@ -1,8 +1,9 @@
 # MQTT Specification - Telematic Device Protocol
 
-> Version: 1.0.0  
+> Version: 1.1.0  
 > Created: 2026-07-25  
-> Feature code: F-A1 (Real-time vehicle telemetry ingestion)
+> Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-J2 (Remote
+> device configuration - OTA, partial)
 
 ---
 
@@ -65,22 +66,46 @@ g3network/telematics/{telematic_serial}/status
 
 ---
 
-### 2.3. Backend Command (Subscribed by the Telematic - for a later phase)
+### 2.3. Backend Command (Published by the Backend, subscribed by the Telematic)
 
 **Topic pattern:**
 ```
 g3network/telematics/{telematic_serial}/command
 ```
 
-**Example payload:**
+**Direction:** backend → device. QoS 1 (not the telemetry default of 0) - a
+config command is a one-shot instruction, so a silently dropped message
+would leave the device on its old configuration with nothing to notice
+the loss. Not retained by default. Published from a short-lived MQTT
+client scoped to one publish (`telematics/commands/mqtt_publisher.py`);
+its client id always differs from the telemetry consumer's `MQTT_CLIENT_ID`
+so publishing a command never evicts the ingestion consumer's session.
+
+**Implemented command - `set_telemetry_interval` (F-J2, partial):**
 ```json
 {
-  "command": "restart",
-  "timestamp": "2026-07-25T10:30:00Z"
+  "command": "set_telemetry_interval",
+  "telemetry_interval_seconds": 60,
+  "timestamp": "2026-09-17T10:30:31.064251+00:00"
 }
 ```
 
-**Note:** Not implemented in the MVP; defined in advance only to design the ACL.
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `command` | string | yes | One of the implemented commands below. |
+| `telemetry_interval_seconds` | integer | yes, for `set_telemetry_interval` | Desired publish interval, seconds. Bounded server-side by `TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS`/`TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS`. |
+| `timestamp` | string (ISO 8601, UTC offset) | yes | Backend-issued; matches the `config_pushed_at` value recorded on the `telematics` row for this same push. |
+
+**Defined but not implemented** - `restart`:
+```json
+{ "command": "restart", "timestamp": "2026-07-25T10:30:00Z" }
+```
+
+**Important limitation:** no acknowledgement/confirmation topic exists.
+The backend cannot know whether a device received or applied a command -
+a successful publish means only that the broker accepted the message
+(QoS 1 PUBACK). See `docs/01-requirements/future.md` for the deferred
+ack/confirmation topic this would need.
 
 ---
 
@@ -301,6 +326,17 @@ mosquitto_pub -h localhost -p 1883 -q 0 -i TBOX-VN-000123 \
   -m '{"message_uuid":"497f6eca-6276-4993-bfeb-53cbbbba6f08","telematic_serial":"TBOX-VN-000123","recorded_at":"2026-07-25T10:00:00Z","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
 ```
 
+### 8.3. Subscribe to a backend command (verifying F-J2)
+
+```bash
+mosquitto_sub -h localhost -p 1883 -t "g3network/telematics/+/command" -v
+```
+
+Then trigger a push via `POST /api/v1/telematics/{telematic_id}/config`
+with `{"telemetry_interval_seconds": 60}` and confirm the message appears
+on `g3network/telematics/{serial}/command` with the exact payload shape
+in section 2.3.
+
 ---
 
 ## 9. Version History
@@ -308,3 +344,4 @@ mosquitto_pub -h localhost -p 1883 -q 0 -i TBOX-VN-000123 \
 | Version | Date | Change |
 |-----------|------|----------|
 | 1.0.0 | 2026-07-25 | Initial version |
+| 1.1.0 | 2026-09-17 | F-J2 (partial): implemented `set_telemetry_interval` on the backend command topic; documented its exact payload, QoS, and the missing-ack limitation. |

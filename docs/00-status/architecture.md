@@ -35,6 +35,8 @@ flowchart LR
 
     API --> Domains
     API --> Notifications
+    API -->|F-J2 command publish| Broker
+    Broker -.->|command topic, not consumed by any device yet| Vehicle
     Domains -->|CRUD/query| DB
     Portal -.->|GET /api/v1/notifications| API
 ```
@@ -46,13 +48,19 @@ flowchart LR
 FastAPI registers the following domains:
 
 - `vehicles`: vehicle CRUD and soft delete, plus an F-F2 device-activation
-  state machine and its fleet-wide success-rate summary.
-- `telematics`: device CRUD and mapping devices to vehicles, plus a
-  periodic device-health monitor (F-J1/F-J3, partial) - this backend's
-  first non-event-driven background process.
-- `telemetry`: receiving data via the ingestion service and reading a
+  state machine and its fleet-wide success-rate summary. Also carries a
+  nullable `battery_capacity_kwh` (F-A6/F-C6's kWh-conversion input).
+- `telematics`: device CRUD and mapping devices to vehicles, a periodic
+  device-health monitor (F-J1/F-J3, partial) - this backend's first
+  non-event-driven background process - and a backend-to-device MQTT
+  command publisher (`telematics/commands/`, F-J2 partial) - this
+  backend's first-ever MQTT *publish* path, pushing a telemetry
+  publish-interval change to `g3network/telematics/{serial}/command`.
+- `telemetry`: receiving data via the ingestion service, reading a
   vehicle's latest/history telemetry (including F-A3's `soh_percent`/
-  `cycle_count`).
+  `cycle_count`), and two SOC-based aggregate reports (F-A6 operating
+  performance, F-C6 energy usage) computed from the same telemetry
+  history via a single window-function query.
 - `charging_stations`: Station → EVSE → Connector topology CRUD, station
   directory metadata (location, power rating, connector standard, operating
   hours, maintenance status), a nearby-station radius search (F-D1), and the
@@ -108,6 +116,8 @@ The current Alembic baseline consists of:
 0012_telemetry_battery_health
 0013_soh_alert_notification_type
 0014_device_offline_alert
+0015_telematic_config_push
+0016_vehicle_battery_capacity
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -150,6 +160,17 @@ reverse proxy in the development environment.
   `telemetry` — F-A5's deferred half), the F-J1 device-health dashboard
   (SIM/power status) and F-J3's power-loss-vs-signal-loss distinction,
   charging policy, payment and billing.
+- F-J2's confirmation-of-applied-config and rollback (no MQTT ack topic
+  exists, so a successful publish only proves the broker accepted the
+  message), fleet/vehicle-group-scoped config push (one device per call
+  today), and local alert thresholds (only the telemetry publish interval
+  is implemented).
+- F-A6/F-C6's fleet-level multi-vehicle rollup and CSV export, a
+  configurable electricity tariff (both use a hardcoded engineering-default
+  VND/kWh constant), and vendor-confirmed battery capacity (falls back to
+  a documented default when a vehicle has none recorded). F-C6 specifically
+  cannot satisfy NF-10's 3-way reconciliation with its current SOC-based
+  method - that needs the vehicle-linkage `charging_sessions` still lacks.
 - Web portal, vehicle app, centralized observability and production
   reliability.
 

@@ -1217,6 +1217,270 @@ The items below are actual deferral decisions made in the repo, not placeholders
   proxy heuristic (e.g. "GPS didn't move" ≠ "lost power") without
   confirming it's an acceptable approximation first.
 
+### 52. Confirmation of applied device configuration (F-J2)
+
+- **Short description**: F-J2's constraint says "confirmation of applied
+  config." Nothing in this round confirms anything - `telematics
+  .telemetry_interval_seconds`/`config_pushed_at` mean only "the last
+  interval we successfully handed to the broker," never "the interval the
+  device is actually running."
+- **Purpose/role in the system**: Without this, an operator pushing a
+  config change has no way to know whether it took effect, or whether the
+  device is still silently running its old interval (or firmware default).
+- **Reason for deferral**: `mqtt-spec.md` 2.3 defines no ack/reported-config
+  topic. A successful publish today proves only that the broker accepted
+  the message (QoS 1 PUBACK), not that any device received or applied it.
+- **Related planner/feature**: F-J2, `telematics/commands/`,
+  `docs/02-planners/backend-telematics-config-push.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Needs a `.../command/ack` (or reported-config)
+  topic in the contract, a consumer for it, a desired/reported column pair
+  on `telematics` (today there's only one column, meaning "desired"), and
+  a reconciliation sweep. This is the keystone gap - items 53 and 56 below
+  are not meaningfully buildable without it first.
+
+### 53. Configuration rollback (F-J2)
+
+- **Short description**: F-J2's constraint says "rollback supported." Not
+  built - there is no previous-value history on `telematics`, only the
+  current desired interval.
+- **Purpose/role in the system**: Lets ops revert a bad config push (e.g.
+  an interval that overwhelms ingestion) without knowing the prior value
+  by hand.
+- **Reason for deferral**: Rolling back into silence is indistinguishable
+  from doing nothing without item 52's confirmation signal to know the
+  rollback actually landed.
+- **Related planner/feature**: F-J2, item 52.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Needs per-device previous-value history (a simple
+  "previous interval" column, or a small history table) plus item 52.
+
+### 54. Fleet- and vehicle-group-scoped config push (F-J2)
+
+- **Short description**: F-J2 says "push per vehicle/fleet"; today it is
+  one device per HTTP call.
+- **Purpose/role in the system**: Ops updating an interval fleet-wide
+  today must call the endpoint once per device.
+- **Reason for deferral**: Writing a fleet-wide push loop now would be a
+  preemptive batched operation - the runtime conventions' "no premature
+  batching" rule forbids building this ahead of a demonstrated need (same
+  reasoning as items 5, 29, 34).
+- **Related planner/feature**: F-J2.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: A simple per-device loop calling the existing
+  endpoint N times is the right shape when this is picked up - only batch
+  the underlying publish if a benchmark shows the loop is too slow.
+
+### 55. Reliable command delivery via an outbox table and dispatcher worker (F-J2)
+
+- **Short description**: The config push is fire-and-forget: a short-lived
+  MQTT client publishes once inside the HTTP request, with no retry, no
+  queue, and no dispatcher process.
+- **Purpose/role in the system**: A transient broker outage today just
+  fails the HTTP request (502); nothing retries the push later.
+- **Reason for deferral**: There is no device consuming commands and no
+  ack (item 52), so a retry has nothing to converge toward yet - building
+  an outbox now would reliably deliver a message nobody reads.
+- **Related planner/feature**: F-J2, item 52.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: The shape when needed: a `telematic_commands` row
+  written in the same transaction as the HTTP request, a separate
+  entrypoint process draining it with retry/backoff, at-least-once
+  delivery. This also closes the current publish-then-commit crash window
+  (a process crash between a successful MQTT publish and the DB commit
+  leaves the DB under-claiming what was actually sent - accepted as the
+  safer direction for now, since the next push reconverges it).
+
+### 56. Command audit history (F-J2)
+
+- **Short description**: No row-per-push audit trail exists - only the
+  device's current desired interval and last-push timestamp.
+- **Purpose/role in the system**: "Who pushed what config, when" for
+  operational troubleshooting and accountability.
+- **Reason for deferral**: Without item 52's confirmation signal, a
+  history row would record only "bytes were sent," not an outcome - low
+  value on its own. There's also no `identity`/auth domain yet to fill in
+  "who."
+- **Related planner/feature**: F-J2, item 52.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Revisit once both item 52 (outcome) and an
+  `identity` domain (actor) exist.
+
+### 57. Per-device MQTT identity and ACL enforcement for the command topic (F-J2, NF-06)
+
+- **Short description**: `mqtt-spec.md` section 7's ACL rules (a device may
+  only subscribe to its own command topic; only the backend may publish to
+  it) are written but not enforced anywhere - `infra/docker-compose.yml`
+  runs EMQX with stock config, no ACL file, anonymous connections allowed.
+- **Purpose/role in the system**: Without enforcement, any MQTT client can
+  subscribe to any device's command topic (eavesdropping) or publish a
+  forged command to it (spoofing) - a real risk once F-J2 pushes something
+  more consequential than a publish interval.
+- **Reason for deferral**: Same broker-hardening gap as item 36 (NF-06
+  mTLS for F-A1 *ingestion*) - this is the outbound-command half of that
+  same unfinished work, not a new class of problem.
+- **Related planner/feature**: F-J2, item 36.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Address both items together when EMQX gets real
+  auth/ACL configuration - don't solve the command topic's exposure in
+  isolation from the telemetry topic's.
+
+### 58. Retained backend-to-device commands (F-J2)
+
+- **Short description**: `MQTT_COMMAND_RETAIN` defaults to `False`.
+  Setting it `True` would let a reconnecting device pick up its latest
+  config without a re-push.
+- **Purpose/role in the system**: Convenience for a device that reconnects
+  after being offline during a config push.
+- **Reason for deferral**: A retained command with no ack (item 52) and no
+  expiry would be redelivered to every future connection forever, with no
+  way to detect a device that already acted on a stale one.
+- **Related planner/feature**: F-J2, item 52.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Revisit once item 52 exists, so a device can
+  report it already applied a retained command.
+
+### 59. Additional device config keys - local alert thresholds (F-J2)
+
+- **Short description**: F-J2's stated output names "send frequency,
+  local alert thresholds"; only send frequency (`set_telemetry_interval`)
+  is implemented.
+- **Purpose/role in the system**: Let ops tune a device's own on-board
+  alert thresholds (e.g. a local low-battery buzzer) without a firmware
+  update.
+- **Reason for deferral**: No device-side threshold semantics are defined
+  anywhere - same hardware-contract gap as items 50/51 (the unresolved
+  Tri-Ring telematics spec). Don't invent threshold fields the firmware
+  may never read.
+- **Related planner/feature**: F-J2, F-G1, items 50, 51.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Once the Tri-Ring spec (or its OBD/CAN fallback)
+  is confirmed, check whether it exposes any on-device alerting the
+  backend could configure.
+
+### 60. Configurable electricity tariff for F-A6
+
+- **Short description**: F-A6's own constraint says "cost formula must be
+  configurable (electricity price varies)." This round hardcodes a flat
+  `ENERGY_COST_PER_KWH_VND = 3000.0` constant in `telemetry/types.py`.
+- **Purpose/role in the system**: Real electricity pricing varies by
+  tenant, time-of-day, and region; a flat constant can't reflect that.
+- **Reason for deferral**: Per the user's explicit instruction for this
+  round, the constant was hardcoded with an explanatory comment rather
+  than building tariff configuration - the same treatment already applied
+  to F-A6/F-C6's other engineering defaults.
+- **Related planner/feature**: F-A6, `docs/02-planners/backend-operating-energy-reports.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When resumed, likely a per-tenant/time-of-use
+  tariff table rather than a single setting - a `Settings`-level override
+  (e.g. `TELEMETRY_ENERGY_COST_PER_KWH_VND`) would only half-satisfy the
+  constraint (one global scalar, still no time-of-use).
+
+### 61. Vendor-confirmed battery capacity and a vehicle-model catalog
+
+- **Short description**: `vehicles.battery_capacity_kwh` is a manually
+  entered, per-vehicle nullable field; when absent, F-A6/F-C6 substitute
+  `DEFAULT_BATTERY_CAPACITY_KWH = 75.0`, an engineering guess. There is no
+  vehicle-model catalog mapping `make`/`model`/`year` to a real spec.
+- **Purpose/role in the system**: Every kWh, cost, and efficiency number
+  F-A6/F-C6 report for a vehicle with no recorded capacity is an estimate
+  built on a guessed pack size (flagged via `is_default_battery_capacity`,
+  but still an estimate).
+- **Reason for deferral**: No vendor/spec data source exists to populate
+  this from; same "engineering default, not vendor-confirmed" family as
+  `SOH_ALERT_THRESHOLD_PERCENT` and the F-A4 thresholds.
+- **Related planner/feature**: F-A6, F-C6, F-A3, F-A4.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: A `make`/`model`/`year` → capacity lookup table
+  would let new vehicles default sensibly instead of falling back to one
+  fleet-wide constant, once real vendor specs are available.
+
+### 62. Station-metered per-customer energy and NF-10 3-way reconciliation (the "real" F-C6)
+
+- **Short description**: F-C6's constraint requires a 3-way reconciliation
+  (connector–vehicle–payment, <1% deviation, NF-10). This round's
+  telemetry-based method (SOC rises) cannot meet that - it measures energy
+  into the pack, not kWh billed at a station meter, excludes
+  charger/conversion losses (typically 5-15%), and can't attribute energy
+  to a specific station or session.
+- **Purpose/role in the system**: Billing/reconciliation ultimately needs
+  a station-metered figure tied to an actual charging session, not a
+  telemetry-derived proxy.
+- **Reason for deferral**: `charging_sessions` has no vehicle, customer,
+  or driver identity column at all, and the OCPP `TransactionEvent`
+  handler never reads the `idToken` field that would carry one (it's
+  absorbed by a catch-all kwarg) - this is the same blocker recorded when
+  F-A6 was first scoped and F-A6/F-C6 deliberately avoided reopening it
+  this round.
+- **Related planner/feature**: F-C6, F-A6, F-B3 (session-data portion).
+- **Date recorded**: 2026-09-17
+- **Additional notes**: Needs, at minimum: a vehicle_id (or idToken)
+  column on `charging_sessions`, an OCPP `Authorize`/`idToken` handler
+  (currently unhandled entirely), and a decision on what identity a
+  station-issued RFID/token actually maps to (a vehicle? a driver? a
+  fleet account?) before the column can be populated meaningfully.
+
+### 63. Fleet-level rollup and CSV export for F-A6
+
+- **Short description**: F-A6's stated output includes a multi-vehicle
+  fleet view and CSV export. This round only ships the per-vehicle JSON
+  endpoint.
+- **Purpose/role in the system**: A fleet manager comparing vehicles or
+  exporting a report for offline analysis needs more than one API call
+  per vehicle.
+- **Reason for deferral**: No `fleet` domain has active source in this
+  backend yet (per `directory-structure.md`, a domain isn't created before
+  a concrete task needs it), and no CSV export machinery exists anywhere
+  in the codebase.
+- **Related planner/feature**: F-A6, `docs/02-planners/backend-operating-energy-reports.md`.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: When a `fleet` domain is justified by a concrete
+  task, it should call `telemetry.get_vehicle_operating_report` per
+  vehicle rather than duplicating the SOC-fold query - the aggregation
+  belongs at the fleet layer, not inside `telemetry`.
+
+### 64. SOC dead-band or current-integration energy method for F-A6/F-C6
+
+- **Short description**: Summing raw SOC deltas over-counts energy at high
+  sampling frequency - a device dithering between two adjacent integer SOC
+  values (e.g. `61 → 60 → 61 → 60`) contributes to *both* the discharge
+  and the charge sum on every dither, so higher-frequency telemetry makes
+  the over-count worse, not better.
+- **Purpose/role in the system**: Accuracy of F-A6's consumed-energy and
+  F-C6's charged-energy figures.
+- **Reason for deferral**: Fixing this needs either a dead-band (ignore
+  deltas below a noise threshold) or integrating
+  `battery_current × battery_voltage × dt`, and neither has been validated
+  against real device noise characteristics yet - guessing a dead-band
+  width without real data would trade one unverified assumption for
+  another.
+- **Related planner/feature**: F-A6, F-C6.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: `battery_current`/`battery_voltage` are already
+  ingested per message (nullable) - the current-integration method could
+  reuse them once their reliability across real devices is validated.
+
+### 65. TimescaleDB continuous aggregate for the F-A6/F-C6 report window
+
+- **Short description**: `get_vehicle_window_summary` scans raw
+  `vehicle_telemetry` rows for every report call (a `lag()` window fold
+  over the requested range, up to 31 days).
+- **Purpose/role in the system**: Query latency/cost at higher telemetry
+  volume or wider report windows.
+- **Reason for deferral**: Per the runtime conventions' "never
+  preemptively optimize" rule - no benchmark has shown this scan is too
+  slow. The existing `ix_vehicle_telemetry_vehicle_time` index already
+  lets PostgreSQL do an index scan into a streaming window aggregate with
+  no sort node.
+- **Related planner/feature**: F-A6, F-C6.
+- **Date recorded**: 2026-09-17
+- **Additional notes**: A continuous aggregate isn't a drop-in win here
+  regardless - a delta fold isn't bucket-decomposable (the delta spanning
+  two buckets is invisible to per-bucket sums), so it would need to
+  materialize per-bucket first/last SOC and odometer and reconcile
+  boundaries at query time. Only pursue this after a real benchmark shows
+  the raw scan is the bottleneck.
+
 ---
 
 ## Update rules
