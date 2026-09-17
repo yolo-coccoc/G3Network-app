@@ -50,3 +50,29 @@ class VehicleReference:
     vehicle_id: UUID
     vin: str
     battery_capacity_kwh: float | None
+
+
+@dataclass(frozen=True)
+class VehicleSummary:
+    """A wider, display-oriented DTO for other domains that list vehicles.
+
+    Deliberately a sibling of `VehicleReference`, not a widened version of
+    it - coding-conventions section 5.1 lists `Summary` ("summarized
+    data") as its own DTO role distinct from `Reference` ("minimal
+    reference to an object"). Keeping them separate means a caller that
+    only needs `VehicleReference`'s narrow shape (e.g. `telemetry`'s
+    F-A6/F-C6 reports) never has to carry fields it doesn't use, and
+    `VehicleReference`'s existing consumers/tests are unaffected by this
+    addition.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        vin: VIN (chassis number).
+        license_plate: License plate, for display in a caller's own list.
+        status: Vehicle lifecycle status (F-E1's "status" column).
+    """
+
+    vehicle_id: UUID
+    vin: str
+    license_plate: str
+    status: VehicleStatus

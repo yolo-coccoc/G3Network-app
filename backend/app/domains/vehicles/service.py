@@ -28,6 +28,7 @@ from app.domains.vehicles.types import (
     VehicleActivationStatus,
     VehicleReference,
     VehicleStatus,
+    VehicleSummary,
 )
 from app.libs.common.config import settings
 
@@ -99,6 +100,44 @@ async def resolve_vehicle_reference_by_id(
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     return to_vehicle_reference(vehicle_record) if vehicle_record else None
+
+
+def to_vehicle_summary(vehicle_record: VehicleModel) -> VehicleSummary:
+    """Convert an ORM record into a display-oriented DTO for other domains.
+
+    Args:
+        vehicle_record: An active vehicle record.
+
+    Returns:
+        DTO containing the internal ID, VIN, license plate, and status of
+        the vehicle.
+    """
+    return VehicleSummary(
+        vehicle_id=vehicle_record.vehicle_id,
+        vin=vehicle_record.vin,
+        license_plate=vehicle_record.license_plate,
+        status=vehicle_record.status,
+    )
+
+
+async def resolve_vehicle_summary_by_id(
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+) -> VehicleSummary | None:
+    """Find an active vehicle by ID and return its display-oriented DTO.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+
+    Returns:
+        `VehicleSummary` if the vehicle is found; otherwise `None`.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
+    return to_vehicle_summary(vehicle_record) if vehicle_record else None
 
 
 async def mark_device_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:

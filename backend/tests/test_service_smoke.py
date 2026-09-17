@@ -18,7 +18,11 @@ import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
+import app.domains.fleet.repository as fleet_repository
+import app.domains.fleet.service as fleet_service
 import app.domains.notifications.service as notifications_service
+import app.domains.support.repository as support_repository
+import app.domains.support.service as support_service
 import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
@@ -56,8 +60,36 @@ from app.domains.drivers.exceptions import (
 from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
 from app.domains.drivers.schemas import DriverCreateRequest, DriverVehicleAssignRequest
 from app.domains.drivers.types import DriverStatus
+from app.domains.fleet.exceptions import (
+    FleetConflictError,
+    FleetMembershipConflictError,
+    FleetMembershipNotFoundError,
+    FleetNotFoundError,
+    FleetVehicleNotFoundError,
+)
+from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
+from app.domains.fleet.schemas import FleetCreateRequest, FleetVehicleAddRequest
+from app.domains.fleet.types import FleetStatus
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.domains.support.exceptions import (
+    SupportCaseNotFoundError,
+    SupportCaseStateError,
+    SupportDriverNotFoundError,
+    SupportVehicleNotFoundError,
+)
+from app.domains.support.models import SupportCaseModel
+from app.domains.support.schemas import (
+    SupportCaseUpdateRequest,
+    SupportSosCreateRequest,
+    SupportTicketCreateRequest,
+)
+from app.domains.support.types import (
+    SupportCaseCategory,
+    SupportCaseChannel,
+    SupportCaseStatus,
+    SupportCaseType,
+)
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
     TelematicNotConfigurableError,
@@ -87,6 +119,7 @@ from app.domains.vehicles.types import (
     VehicleActivationStatus,
     VehicleReference,
     VehicleStatus,
+    VehicleSummary,
 )
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
@@ -110,7 +143,6 @@ def _vehicle_record(
         model="E-Truck",
         year=2026,
         status=VehicleStatus.ACTIVE,
-        fleet_id=None,
         activation_status=activation_status,
         created_at=now,
         updated_at=now,
@@ -146,6 +178,75 @@ def _assignment_record(
         vehicle_id=vehicle_id,
         assigned_at=now,
         unassigned_at=unassigned_at,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _support_case_record(
+    *,
+    case_type: SupportCaseType = SupportCaseType.TICKET,
+    status: SupportCaseStatus = SupportCaseStatus.OPEN,
+    sla_response_minutes: int = 60,
+    response_due_at: datetime | None = None,
+    first_responded_at: datetime | None = None,
+    driver_id: UUID | None = None,
+) -> SupportCaseModel:
+    """Create a minimal ORM support case for the service to convert into a response."""
+    now = datetime.now(timezone.utc)
+    return SupportCaseModel(
+        case_id=uuid4(),
+        case_type=case_type,
+        category=SupportCaseCategory.TECHNICAL,
+        channel=SupportCaseChannel.IN_APP,
+        status=status,
+        vehicle_id=None,
+        driver_id=driver_id,
+        vin=None,
+        error_code=None,
+        location=None,
+        subject="Test subject",
+        description=None,
+        sla_response_minutes=sla_response_minutes,
+        response_due_at=response_due_at
+        or (now + timedelta(minutes=sla_response_minutes)),
+        first_responded_at=first_responded_at,
+        resolved_at=None,
+        closed_at=None,
+        created_at=now,
+        updated_at=now,
+        deleted_at=None,
+    )
+
+
+def _fleet_record(*, fleet_id: UUID | None = None) -> FleetModel:
+    """Create a minimal ORM fleet for the service to convert into a response."""
+    now = datetime.now(timezone.utc)
+    return FleetModel(
+        fleet_id=fleet_id or uuid4(),
+        fleet_code="FLEET-001",
+        name="Test Fleet",
+        status=FleetStatus.ACTIVE,
+        created_at=now,
+        updated_at=now,
+        deleted_at=None,
+    )
+
+
+def _membership_record(
+    *,
+    fleet_id: UUID,
+    vehicle_id: UUID,
+    left_at: datetime | None = None,
+) -> FleetVehicleMembershipModel:
+    """Create a minimal ORM membership, open unless `left_at` is given."""
+    now = datetime.now(timezone.utc)
+    return FleetVehicleMembershipModel(
+        membership_id=uuid4(),
+        fleet_id=fleet_id,
+        vehicle_id=vehicle_id,
+        joined_at=now,
+        left_at=left_at,
         created_at=now,
         updated_at=now,
     )
@@ -306,7 +407,6 @@ async def test_vehicle_service_creates_vehicle_response(
             year=record.year,
             status=record.status,
             battery_capacity_kwh=None,
-            fleet_id=None,
         ),
     )
 
@@ -3117,3 +3217,605 @@ async def test_run_monitor_exits_immediately_when_stop_event_already_set() -> No
     # if run_monitor tried to run a tick, it would hit the real (unmocked)
     # database and fail/hang, so a clean return proves no tick ran.
     await device_health_monitor.run_monitor(stop_event)
+
+
+@pytest.mark.asyncio
+async def test_create_support_ticket_creates_open_case(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_support_ticket() opens a case with the ticket SLA (F-I1)."""
+    inserted = _support_case_record(
+        case_type=SupportCaseType.TICKET,
+        sla_response_minutes=settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES,
+    )
+
+    async def insert(db: AsyncSession, values: dict[str, object]) -> SupportCaseModel:
+        assert values["case_type"] == SupportCaseType.TICKET
+        assert (
+            values["sla_response_minutes"]
+            == settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES
+        )
+        return inserted
+
+    monkeypatch.setattr(support_repository, "insert", insert)
+
+    response = await support_service.create_support_ticket(
+        _db(),
+        SupportTicketCreateRequest(
+            vehicle_vin=None,
+            driver_id=None,
+            category=SupportCaseCategory.TECHNICAL,
+            subject="App crashes on login",
+            description=None,
+            error_code=None,
+            latitude=None,
+            longitude=None,
+        ),
+    )
+
+    assert response.case_id == inserted.case_id
+    assert response.case_type == SupportCaseType.TICKET
+    assert response.is_sla_breached is False
+
+
+@pytest.mark.asyncio
+async def test_create_support_ticket_rejects_unknown_vin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_support_ticket() raises when the VIN doesn't resolve to a vehicle (F-I1)."""
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+
+    with pytest.raises(SupportVehicleNotFoundError):
+        await support_service.create_support_ticket(
+            _db(),
+            SupportTicketCreateRequest(
+                vehicle_vin="1HGBH41JXMN109186",
+                driver_id=None,
+                category=SupportCaseCategory.TECHNICAL,
+                subject="App crashes on login",
+                description=None,
+                error_code=None,
+                latitude=None,
+                longitude=None,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_support_ticket_rejects_unknown_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_support_ticket() raises when the driver ID doesn't resolve (F-I1)."""
+
+    async def no_driver(db: AsyncSession, driver_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(driver_service, "resolve_driver_reference_by_id", no_driver)
+
+    with pytest.raises(SupportDriverNotFoundError):
+        await support_service.create_support_ticket(
+            _db(),
+            SupportTicketCreateRequest(
+                vehicle_vin=None,
+                driver_id=uuid4(),
+                category=SupportCaseCategory.TECHNICAL,
+                subject="App crashes on login",
+                description=None,
+                error_code=None,
+                latitude=None,
+                longitude=None,
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_support_sos() uses the <=5 minute SOS SLA and fills a subject (F-I2)."""
+    captured: dict[str, object] = {}
+
+    async def insert(db: AsyncSession, values: dict[str, object]) -> SupportCaseModel:
+        captured.update(values)
+        return _support_case_record(
+            case_type=SupportCaseType.SOS,
+            sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
+        )
+
+    monkeypatch.setattr(support_repository, "insert", insert)
+
+    await support_service.create_support_sos(
+        _db(),
+        SupportSosCreateRequest(
+            vehicle_vin=None,
+            driver_id=None,
+            category=SupportCaseCategory.BREAKDOWN,
+            description=None,
+            error_code=None,
+            latitude=10.8,
+            longitude=106.7,
+        ),
+    )
+
+    assert captured["case_type"] == SupportCaseType.SOS
+    assert captured["channel"] == SupportCaseChannel.IN_APP
+    assert captured["sla_response_minutes"] == settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES
+    assert captured["subject"] == "SOS - BREAKDOWN"
+
+
+@pytest.mark.asyncio
+async def test_update_support_case_sets_first_responded_at_on_acknowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving a case to ACKNOWLEDGED stamps first_responded_at once (F-I1)."""
+    case_record = _support_case_record(
+        status=SupportCaseStatus.OPEN, first_responded_at=None
+    )
+    captured: dict[str, object] = {}
+
+    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+        return case_record
+
+    async def update_fields(
+        db: AsyncSession, case_id: UUID, values: dict[str, object]
+    ) -> SupportCaseModel:
+        captured.update(values)
+        return _support_case_record(status=SupportCaseStatus.ACKNOWLEDGED)
+
+    monkeypatch.setattr(support_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(support_repository, "update_fields", update_fields)
+
+    await support_service.update_support_case(
+        _db(),
+        case_record.case_id,
+        SupportCaseUpdateRequest(
+            status=SupportCaseStatus.ACKNOWLEDGED,
+            category=None,
+            subject=None,
+            description=None,
+        ),
+    )
+
+    assert captured["status"] == SupportCaseStatus.ACKNOWLEDGED
+    assert isinstance(captured["first_responded_at"], datetime)
+
+
+@pytest.mark.asyncio
+async def test_update_support_case_rejects_when_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A CLOSED support case refuses any further update (F-I1)."""
+    case_record = _support_case_record(status=SupportCaseStatus.CLOSED)
+
+    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+        return case_record
+
+    monkeypatch.setattr(support_repository, "get_by_id", get_by_id)
+
+    with pytest.raises(SupportCaseStateError):
+        await support_service.update_support_case(
+            _db(),
+            case_record.case_id,
+            SupportCaseUpdateRequest(
+                status=SupportCaseStatus.RESOLVED,
+                category=None,
+                subject=None,
+                description=None,
+            ),
+        )
+
+
+def test_calculate_is_sla_breached_true_when_past_due_without_response() -> None:
+    """A case past its response deadline with no response yet is breached (F-I1/F-I2)."""
+    now = datetime.now(timezone.utc)
+    case_record = _support_case_record(response_due_at=now - timedelta(minutes=1))
+
+    assert support_service.calculate_is_sla_breached(case_record) is True
+
+
+def test_calculate_is_sla_breached_false_when_responded_before_due() -> None:
+    """A case responded to before its deadline is not breached (F-I1/F-I2)."""
+    now = datetime.now(timezone.utc)
+    case_record = _support_case_record(
+        response_due_at=now + timedelta(minutes=10),
+        first_responded_at=now,
+    )
+
+    assert support_service.calculate_is_sla_breached(case_record) is False
+
+
+@pytest.mark.asyncio
+async def test_get_support_case_raises_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_support_case() raises for an unknown case ID (F-I1/F-I2)."""
+
+    async def no_case(db: AsyncSession, case_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(support_repository, "get_by_id", no_case)
+
+    with pytest.raises(SupportCaseNotFoundError):
+        await support_service.get_support_case(_db(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_create_fleet_creates_fleet_with_zero_vehicle_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_fleet() returns a fresh fleet with vehicle_count 0 (F-E1)."""
+    inserted = _fleet_record()
+
+    async def no_existing(db: AsyncSession, fleet_code: str) -> None:
+        return None
+
+    async def insert(db: AsyncSession, values: dict[str, object]) -> FleetModel:
+        return inserted
+
+    async def zero_count(db: AsyncSession, fleet_id: UUID) -> int:
+        return 0
+
+    monkeypatch.setattr(fleet_repository, "find_by_fleet_code", no_existing)
+    monkeypatch.setattr(fleet_repository, "insert", insert)
+    monkeypatch.setattr(
+        fleet_repository, "count_active_memberships_by_fleet", zero_count
+    )
+
+    response = await fleet_service.create_fleet(
+        _db(), FleetCreateRequest(fleet_code=inserted.fleet_code, name=inserted.name)
+    )
+
+    assert response.fleet_id == inserted.fleet_id
+    assert response.vehicle_count == 0
+
+
+@pytest.mark.asyncio
+async def test_create_fleet_rejects_duplicate_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """create_fleet() raises when the fleet code already exists (F-E1)."""
+    existing = _fleet_record()
+
+    async def find_existing(db: AsyncSession, fleet_code: str) -> FleetModel:
+        return existing
+
+    monkeypatch.setattr(fleet_repository, "find_by_fleet_code", find_existing)
+
+    with pytest.raises(FleetConflictError):
+        await fleet_service.create_fleet(
+            _db(),
+            FleetCreateRequest(fleet_code=existing.fleet_code, name="Another Name"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """add_vehicle_to_fleet() opens a new membership and enriches the VIN (F-E1)."""
+    fleet_record = _fleet_record()
+    vehicle_id = uuid4()
+    vehicle_reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
+    inserted = _membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id)
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return vehicle_reference
+
+    async def no_active_membership(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    async def insert_membership(
+        db: AsyncSession, **kwargs: object
+    ) -> FleetVehicleMembershipModel:
+        return inserted
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(
+        fleet_repository, "get_active_membership_by_vehicle", no_active_membership
+    )
+    monkeypatch.setattr(fleet_repository, "insert_membership", insert_membership)
+
+    response = await fleet_service.add_vehicle_to_fleet(
+        _db(),
+        fleet_record.fleet_id,
+        FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+    )
+
+    assert response.membership_id == inserted.membership_id
+    assert response.vehicle_vin == vehicle_reference.vin
+    assert response.left_at is None
+
+
+@pytest.mark.asyncio
+async def test_add_vehicle_to_fleet_rejects_unknown_vin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """add_vehicle_to_fleet() raises when the VIN doesn't resolve to a vehicle (F-E1)."""
+    fleet_record = _fleet_record()
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+
+    with pytest.raises(FleetVehicleNotFoundError):
+        await fleet_service.add_vehicle_to_fleet(
+            _db(),
+            fleet_record.fleet_id,
+            FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """add_vehicle_to_fleet() never silently steals a vehicle from another fleet (F-E1)."""
+    fleet_record = _fleet_record()
+    other_fleet_id = uuid4()
+    vehicle_id = uuid4()
+    vehicle_reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
+    membership_elsewhere = _membership_record(
+        fleet_id=other_fleet_id, vehicle_id=vehicle_id
+    )
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return vehicle_reference
+
+    async def active_membership(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> FleetVehicleMembershipModel:
+        return membership_elsewhere
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("insert_membership must not run on a conflict")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(
+        fleet_repository, "get_active_membership_by_vehicle", active_membership
+    )
+    monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
+
+    with pytest.raises(FleetMembershipConflictError):
+        await fleet_service.add_vehicle_to_fleet(
+            _db(),
+            fleet_record.fleet_id,
+            FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+        )
+
+
+@pytest.mark.asyncio
+async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding a vehicle already in this fleet is a no-op returning the existing row (F-E1)."""
+    fleet_record = _fleet_record()
+    vehicle_id = uuid4()
+    vehicle_reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
+    existing_membership = _membership_record(
+        fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
+    )
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return vehicle_reference
+
+    async def active_membership(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> FleetVehicleMembershipModel:
+        return existing_membership
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("insert_membership must not run when already a member")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(
+        fleet_repository, "get_active_membership_by_vehicle", active_membership
+    )
+    monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
+
+    response = await fleet_service.add_vehicle_to_fleet(
+        _db(),
+        fleet_record.fleet_id,
+        FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+    )
+
+    assert response.membership_id == existing_membership.membership_id
+
+
+@pytest.mark.asyncio
+async def test_remove_vehicle_from_fleet_closes_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """remove_vehicle_from_fleet() closes the vehicle's active membership (F-E1)."""
+    fleet_record = _fleet_record()
+    vehicle_id = uuid4()
+    active_membership = _membership_record(
+        fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
+    )
+    closed: list[FleetVehicleMembershipModel] = []
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def get_active(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> FleetVehicleMembershipModel:
+        return active_membership
+
+    async def close_membership(
+        db: AsyncSession,
+        membership_record: FleetVehicleMembershipModel,
+        **kwargs: object,
+    ) -> FleetVehicleMembershipModel:
+        closed.append(membership_record)
+        return membership_record
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        fleet_repository, "get_active_membership_by_vehicle", get_active
+    )
+    monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
+
+    await fleet_service.remove_vehicle_from_fleet(
+        _db(), fleet_record.fleet_id, vehicle_id
+    )
+
+    assert closed == [active_membership]
+
+
+@pytest.mark.asyncio
+async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """remove_vehicle_from_fleet() raises when the vehicle has no active membership (F-E1)."""
+    fleet_record = _fleet_record()
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def no_active(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "get_active_membership_by_vehicle", no_active)
+
+    with pytest.raises(FleetMembershipNotFoundError):
+        await fleet_service.remove_vehicle_from_fleet(
+            _db(), fleet_record.fleet_id, uuid4()
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_fleet_vehicles_enriches_each_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """list_fleet_vehicles() enriches each membership with the vehicle summary (F-E1)."""
+    fleet_record = _fleet_record()
+    vehicle_id = uuid4()
+    membership = _membership_record(
+        fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
+    )
+    vehicle_summary = VehicleSummary(
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        license_plate="TEST-001",
+        status=VehicleStatus.ACTIVE,
+    )
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def list_active(
+        db: AsyncSession, fleet_id: UUID, *, offset: int, limit: int
+    ) -> list[FleetVehicleMembershipModel]:
+        return [membership]
+
+    async def count_active(db: AsyncSession, fleet_id: UUID) -> int:
+        return 1
+
+    async def resolve_summary(db: AsyncSession, vehicle_id: UUID) -> VehicleSummary:
+        return vehicle_summary
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        fleet_repository, "list_active_memberships_by_fleet", list_active
+    )
+    monkeypatch.setattr(
+        fleet_repository, "count_active_memberships_by_fleet", count_active
+    )
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
+    )
+
+    response = await fleet_service.list_fleet_vehicles(_db(), fleet_record.fleet_id)
+
+    assert response.total == 1
+    assert response.items[0].vin == vehicle_summary.vin
+    assert response.items[0].license_plate == vehicle_summary.license_plate
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_fleet_closes_active_memberships_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """soft_delete_fleet() closes every open membership before deleting (F-E1)."""
+    fleet_record = _fleet_record()
+    memberships = [
+        _membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
+        for _ in range(2)
+    ]
+    closed: list[FleetVehicleMembershipModel] = []
+
+    async def list_all_active(
+        db: AsyncSession, fleet_id: UUID
+    ) -> list[FleetVehicleMembershipModel]:
+        return memberships
+
+    async def close_membership(
+        db: AsyncSession,
+        membership_record: FleetVehicleMembershipModel,
+        **kwargs: object,
+    ) -> FleetVehicleMembershipModel:
+        closed.append(membership_record)
+        return membership_record
+
+    async def soft_delete(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    monkeypatch.setattr(
+        fleet_repository, "list_all_active_memberships_by_fleet", list_all_active
+    )
+    monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
+    monkeypatch.setattr(fleet_repository, "soft_delete", soft_delete)
+
+    result = await fleet_service.soft_delete_fleet(_db(), fleet_record.fleet_id)
+
+    assert len(closed) == 2
+    assert result == {"message": "Fleet deleted successfully"}
+
+
+@pytest.mark.asyncio
+async def test_get_fleet_raises_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """get_fleet() raises for an unknown fleet ID (F-E1)."""
+
+    async def no_fleet(db: AsyncSession, fleet_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", no_fleet)
+
+    with pytest.raises(FleetNotFoundError):
+        await fleet_service.get_fleet(_db(), uuid4())

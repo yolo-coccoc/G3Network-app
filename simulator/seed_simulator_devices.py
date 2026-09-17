@@ -56,7 +56,6 @@ def main() -> None:
             "model": "E-Truck Simulator",
             "year": 2026,
             "status": "ACTIVE",
-            "fleet_id": None,
         }
         vehicle = post("/api/v1/vehicles/", vehicle_payload)
         telematic_serial = f"{TELEMATIC_SERIAL_PREFIX}{suffix}"

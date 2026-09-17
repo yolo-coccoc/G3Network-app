@@ -25,6 +25,11 @@ from app.domains.drivers.models import (  # noqa: F401
     DriverModel,
     DriverVehicleAssignmentModel,
 )
+from app.domains.fleet.models import (  # noqa: F401
+    FleetModel,
+    FleetVehicleMembershipModel,
+)
+from app.domains.support.models import SupportCaseModel  # noqa: F401
 from app.domains.telematics.models import TelematicModel  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetryModel  # noqa: F401
 from app.domains.vehicles.models import VehicleModel  # noqa: F401

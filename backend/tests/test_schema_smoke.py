@@ -16,6 +16,12 @@ from app.domains.charging_stations.ocpp.ocpp_server import (
 )
 from app.domains.charging_stations.schemas import ChargingStationCreateRequest
 from app.domains.drivers.schemas import DriverCreateRequest, DriverVehicleAssignRequest
+from app.domains.fleet.schemas import FleetCreateRequest, FleetVehicleAddRequest
+from app.domains.support.schemas import (
+    SupportSosCreateRequest,
+    SupportTicketCreateRequest,
+)
+from app.domains.support.types import SupportCaseCategory
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicCreateRequest,
@@ -150,7 +156,6 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
         year=2026,
         status=VehicleStatus.ACTIVE,
         battery_capacity_kwh=None,
-        fleet_id=None,
     )
     telematic = TelematicCreateRequest(
         telematic_serial="TBOX-TEST-001",
@@ -168,7 +173,6 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
             model="E-Truck",
             year=2026,
             battery_capacity_kwh=None,
-            fleet_id=None,
         )
 
 
@@ -216,6 +220,61 @@ def test_driver_vehicle_assign_request_rejects_malformed_vin() -> None:
     DriverVehicleAssignRequest(vehicle_vin="1HGBH41JXMN109186")
     with pytest.raises(ValidationError):
         DriverVehicleAssignRequest(vehicle_vin="TOO-SHORT")
+
+
+def test_support_ticket_create_request_requires_coordinates_together() -> None:
+    """F-I1's ticket request rejects a lone latitude/longitude value."""
+    SupportTicketCreateRequest(
+        vehicle_vin=None,
+        driver_id=None,
+        category=SupportCaseCategory.TECHNICAL,
+        subject="App crashes on login",
+        description=None,
+        error_code=None,
+        latitude=None,
+        longitude=None,
+    )
+    with pytest.raises(ValidationError):
+        SupportTicketCreateRequest(
+            vehicle_vin=None,
+            driver_id=None,
+            category=SupportCaseCategory.TECHNICAL,
+            subject="App crashes on login",
+            description=None,
+            error_code=None,
+            latitude=10.8,
+            longitude=None,
+        )
+
+
+def test_support_sos_create_request_requires_coordinates() -> None:
+    """F-I2's SOS request requires a location, unlike the optional one on a ticket."""
+    SupportSosCreateRequest(
+        vehicle_vin=None,
+        driver_id=None,
+        description=None,
+        error_code=None,
+        latitude=10.8,
+        longitude=106.7,
+    )
+    with pytest.raises(ValidationError):
+        SupportSosCreateRequest()  # type: ignore[call-arg]
+
+
+def test_fleet_create_request_validates_core_contract() -> None:
+    """A fleet request accepts valid data and rejects an empty fleet code (F-E1)."""
+    fleet = FleetCreateRequest(fleet_code="FLEET-001", name="Hanoi Fleet")
+
+    assert fleet.fleet_code == "FLEET-001"
+    with pytest.raises(ValidationError):
+        FleetCreateRequest(fleet_code="", name="Hanoi Fleet")
+
+
+def test_fleet_vehicle_add_request_rejects_malformed_vin() -> None:
+    """F-E1's membership request enforces the same 17-character VIN length as vehicles."""
+    FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186")
+    with pytest.raises(ValidationError):
+        FleetVehicleAddRequest(vehicle_vin="TOO-SHORT")
 
 
 def test_extract_meter_samples_reads_raw_dict_payload() -> None:

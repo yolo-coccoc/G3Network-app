@@ -42,10 +42,6 @@ class _VehicleInputFields(BaseModel):
 class VehicleCreateRequest(_VehicleInputFields):
     """HTTP request data for creating a new vehicle."""
 
-    fleet_id: str | None = Field(
-        None, description="Fleet ID (nullable - may not be assigned yet)"
-    )
-
 
 class VehicleUpdateRequest(BaseModel):
     """HTTP request data for partially updating a vehicle."""
@@ -62,7 +58,6 @@ class VehicleUpdateRequest(BaseModel):
     model: str | None = Field(None, min_length=1, max_length=50, description="Model")
     year: int | None = Field(None, ge=1900, le=2100, description="Manufacturing year")
     status: VehicleStatus | None = Field(None, description="Vehicle status")
-    fleet_id: str | None = Field(None, description="Fleet ID")
     battery_capacity_kwh: float | None = Field(
         None, gt=0, le=1000, description="Nominal battery pack capacity in kWh"
     )
@@ -74,7 +69,6 @@ class VehicleResponse(_VehicleInputFields):
     model_config = ConfigDict(from_attributes=True)
 
     vehicle_id: UUID = Field(..., description="Vehicle ID (internal)")
-    fleet_id: str | None = Field(None, description="Fleet ID")
     activation_status: VehicleActivationStatus = Field(
         ..., description="Progress through the F-F2 device-provisioning flow"
     )

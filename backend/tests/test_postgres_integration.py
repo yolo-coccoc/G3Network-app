@@ -193,7 +193,6 @@ async def test_telemetry_repository_round_trip_rolls_back(
                 model="Integration Test",
                 year=2026,
                 status=VehicleStatus.ACTIVE,
-                fleet_id=None,
             )
             telematic = TelematicModel(
                 telematic_id=telematic_id,

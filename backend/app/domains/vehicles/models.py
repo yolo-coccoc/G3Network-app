@@ -29,7 +29,6 @@ class VehicleModel(Base):
         model: Model
         year: Manufacturing year
         status: Vehicle status
-        fleet_id: Fleet ID (nullable, may not be assigned yet)
         activation_status: Progress through the F-F2 device-provisioning
             flow (`PENDING`/`DEVICE_ASSIGNED`/`ACTIVATED`), independent of
             `status`. Defaults to `PENDING`.
@@ -60,7 +59,6 @@ class VehicleModel(Base):
     status: Mapped[VehicleStatus] = mapped_column(
         SQLEnum(VehicleStatus), default=VehicleStatus.ACTIVE, nullable=False, index=True
     )
-    fleet_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     activation_status: Mapped[VehicleActivationStatus] = mapped_column(
         SQLEnum(VehicleActivationStatus),
         default=VehicleActivationStatus.PENDING,

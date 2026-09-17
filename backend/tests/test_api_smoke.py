@@ -32,6 +32,14 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert any(path.startswith("/api/v1/drivers") for path in paths)
     assert "/api/v1/drivers/{driver_id}/assignment" in paths
     assert "/api/v1/drivers/{driver_id}/assignments" in paths
+    # F-I1/F-I2: the support domain's ticket and SOS intake endpoints.
+    assert "/api/v1/support/cases" in paths
+    assert "/api/v1/support/sos" in paths
+    assert "/api/v1/support/cases/{case_id}" in paths
+    # F-E1: the fleet domain and its vehicle-membership endpoints.
+    assert any(path.startswith("/api/v1/fleets") for path in paths)
+    assert "/api/v1/fleets/{fleet_id}/vehicles" in paths
+    assert "/api/v1/fleets/{fleet_id}/memberships" in paths
 
 
 @pytest.mark.asyncio

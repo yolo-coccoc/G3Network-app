@@ -68,6 +68,10 @@ class Settings(BaseSettings):
         TELEMETRY_REPORT_MAX_RANGE_DAYS: Maximum span allowed between
             start_time/end_time on the F-A6/F-C6 operating and
             energy-usage report queries.
+        SUPPORT_TICKET_RESPONSE_SLA_MINUTES: Minutes allowed to first
+            respond to an in-app support ticket (F-I1).
+        SUPPORT_SOS_RESPONSE_SLA_MINUTES: Minutes allowed to first respond
+            to an SOS case (F-I2's stated <=5 minute callback SLA).
     """
 
     model_config = SettingsConfigDict(
@@ -167,6 +171,16 @@ class Settings(BaseSettings):
     # including the longest calendar month. A cap still exists to stop an
     # unbounded "since 1970" request from scanning every hypertable chunk.
     TELEMETRY_REPORT_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
+
+    # F-I1/F-I2's response-SLA minutes. Copied onto each support_cases row
+    # at creation time rather than read live at breach-check time, so a
+    # later change to these settings never rewrites the SLA a past case
+    # was actually held to. The SOS default matches the spec's stated
+    # <=5 minute callback SLA; the ticket default (60) is an engineering
+    # placeholder pending the CSKH staffing/SLA business decision recorded
+    # in feature-list.md's "Items needing confirmation".
+    SUPPORT_TICKET_RESPONSE_SLA_MINUTES: int = Field(default=60, ge=1)
+    SUPPORT_SOS_RESPONSE_SLA_MINUTES: int = Field(default=5, ge=1)
 
     # The old production planner's timeout/retry/raw-payload settings are
     # commented out in the ideal MVP; the corresponding source will come back
