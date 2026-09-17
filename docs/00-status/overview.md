@@ -22,10 +22,12 @@ For technical depth (components, diagram, database, infra), see
 | `charging_sessions` | Happy-path lifecycle only: `Started → Updated/MeterValues → Ended`. Still no retry, out-of-order recovery, DLQ, or dedup (`future.md` item 27), but F-B2 layered four scoped correctness fixes on the happy path: OCPP `seqNo` is persisted per event, an event for an already-`COMPLETED` session is refused rather than applied, a stale `MeterValues` can't overwrite a newer reading, and OCPP `measurand`/unit are read instead of assuming Wh. Also serves a station-level energy aggregation query over a time window (F-C5). |
 | `notifications` | Generic backend-storage notification table (F-A2's delivery leg, also reused by F-A3/F-A4/F-J1/F-J3), polled via `GET /api/v1/notifications?after_id=`; a JSONB payload carries type-specific fields so alert types (`BATTERY_ALERT`, `ANOMALY_ALERT`, `SOH_ALERT`, `DEVICE_OFFLINE_ALERT`, and future F-B5 types) share one table without a new migration or endpoint per type. No push, no recipient scoping (no `identity` domain yet) — poll-only for now. |
 | `drivers` | This backend's first brand-new domain since the initial baseline. Driver profile CRUD plus a `driver_vehicle_assignments` **assignment-history table** (`assigned_at`/`unassigned_at`, this backend's first use of a partial unique index to enforce "one active vehicle per driver, one active driver per vehicle"), with smooth reassignment (auto-closes the driver's previous active assignment) and full per-driver assignment history (F-E4, done at MVP/POC scope). F-A9 (empty-trip detection) was considered alongside it but is suspended — no trip concept, driver auth, or consumption-curve data exists anywhere in this backend yet (`future.md` item 67). |
+| `support` | Support case tickets (F-I1) and SOS intake (F-I2), done at MVP/POC scope. One `support_cases` table discriminated by `case_type` (`TICKET`/`SOS`) rather than two tables, since the spec ties them into one lifecycle. A response-SLA deadline (60 min for a ticket, ≤5 min for an SOS) is copied onto each row at creation time so a later config change never rewrites a past case's SLA; `is_sla_breached` is computed on read, not stored. Vehicle/driver context is client-supplied and validated against `vehicles`/`drivers`, not fetched from `telemetry`. A CLOSED/CANCELLED case refuses further updates. F-I4 (partner directory + dispatch routing) and F-I3 (maintenance booking) are deferred — see `future.md` items 68-69. |
+| `fleet` | Fleet CRUD and vehicle membership (F-E1), done at MVP/POC scope — this backend's second brand-new domain. A `fleet_vehicle_memberships` **assignment-history table** mirrors `driver_vehicle_assignments`'s shape (`joined_at`/`left_at`, a partial unique index on `vehicle_id`), with one structural difference: no equivalent index on `fleet_id`, since a fleet legitimately holds many vehicles. Replaces the dead `vehicles.fleet_id` column (dropped entirely, not converted — `future.md` item 10, superseded). F-E1's "status" column honestly reports only the vehicle lifecycle enum — no online/offline signal exists anywhere in this backend (`future.md` item 35). F-E2 (KPI dashboard) is deferred — see `future.md` item 72; F-E3/F-A8 remain hard-blocked on `charging_sessions` having no vehicle/driver linkage. |
 
 ## Database
 
-Current Alembic head: `0018_drivers`.
+Current Alembic head: `0020_fleet`.
 
 ## Not built yet
 
@@ -35,6 +37,12 @@ aggregation, push/multi-channel delivery) have no active source in the
 repo. `notifications` has a minimal backend-storage/polling slice (F-A2)
 but not the multi-channel delivery F-F3 describes. `drivers` now has a
 CRUD/assignment slice (F-E4), but F-A9 (empty-trip detection) remains
-unimplemented, blocked on a trip concept this backend doesn't have yet. See
+unimplemented, blocked on a trip concept this backend doesn't have yet.
+`support` now has a ticket/SOS-intake slice (F-I1/F-I2), but F-I4's partner
+directory/dispatch and F-I3's booking remain unimplemented. `fleet` now has
+a CRUD/membership slice (F-E1), but F-E2's KPI dashboard, F-E3's charging
+& warranty report, and F-A8's per-driver efficiency report remain
+unimplemented — the latter two are hard-blocked on `charging_sessions`
+having no vehicle/driver linkage. See
 [`docs/01-requirements/future.md`](../01-requirements/future.md) for the
 full list of deferred components and why.

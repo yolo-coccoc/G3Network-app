@@ -245,8 +245,12 @@ carries its original PRD code so you can trace it back.
   hands off the case — actual 24/7 staffing/coverage is an organizational decision (see
   "Items needing confirmation").
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `support` (future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `support`
+- **Status:** ✅ Done (MVP/POC scope) — `POST /support/sos` records the case (location, error code,
+  vehicle/driver context) with the ≤5-minute response-SLA deadline stored on the row. The backend's
+  job ends at recording the handoff: the callback itself is a human action taken after this call
+  returns, per this feature's own stated business decision. Forwarding to F-I4 is not built — see
+  `docs/01-requirements/future.md`.
 
 ### F-I3 Maintenance scheduling
 - **Actor:** Driver
@@ -255,8 +259,10 @@ carries its original PRD code so you can trace it back.
 - **Input:** Selected workshop, time slot
 - **Output:** Confirmed booking; maintenance history stored per vehicle
 - **Priority · Release:** Could · P1.5
-- **Backend domain:** `support` (future domain — booking data portion; workshop discovery/booking UI is client-side)
-- **Status:** 📋 Planned
+- **Backend domain:** `support` (booking data portion; workshop discovery/booking UI is client-side)
+- **Status:** 📋 Planned — deferred this round in favor of F-I1/F-I2 (see
+  `docs/01-requirements/future.md`); needs a bookable-slot/calendar inventory concept that doesn't
+  exist anywhere in this backend yet.
 
 ---
 
@@ -322,8 +328,12 @@ carries its original PRD code so you can trace it back.
   policy is an internal HR/operations decision — the software's job is producing accurate
   numbers.
 - **Priority · Release:** Should · P1.1
-- **Backend domain:** `fleet` (future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `fleet`
+- **Status:** 📋 Planned — hard-blocked: `charging_sessions` has no `vehicle_id`/`driver_id`
+  column at all, so there is no session→driver path anywhere in this backend to compute
+  "charging sessions per driver" from (`future.md` item 62 records the RFID/token-identity
+  question as an unresolved business decision, not a coding gap). `fleet` itself now has active
+  source, but this feature needs that link resolved first.
 
 ### F-B1 Charging-policy configuration
 - **Actor:** G3 Mobility (warranty operations)
@@ -402,24 +412,44 @@ carries its original PRD code so you can trace it back.
 - **Actor:** Fleet manager
 - **Output:** Full fleet list, status, real-time location on the web portal; filter/search
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `fleet` (future domain — list/filter query; map rendering is frontend)
-- **Status:** 📋 Planned
+- **Backend domain:** `fleet` (list/filter query; map rendering is frontend)
+- **Status:** ✅ Done (MVP/POC scope) — `fleet` is this backend's second brand-new domain (after
+  `drivers`). Fleet CRUD (`POST/GET/PATCH/DELETE /fleets`) mirrors the vehicles/drivers pattern.
+  Vehicle membership is a genuine history table (`fleet_vehicle_memberships`,
+  `joined_at`/`left_at`), the same open/close shape as `driver_vehicle_assignments`, so
+  `GET /fleets/{id}/memberships` gives real history and `GET /fleets/{id}/vehicles` gives the
+  current list (F-E1's "full fleet list" — `vehicle_id`, `vin`, `license_plate`, `status`). One
+  active fleet per vehicle is enforced via a partial unique index (`WHERE left_at IS NULL`), but
+  unlike `driver_vehicle_assignments` there is no equivalent index on `fleet_id` — a fleet
+  legitimately holds many vehicles at once. `vehicles.fleet_id` (a dead `String(36)` column with
+  no FK, no index, never queried by any code) is dropped and replaced by this membership table —
+  see `future.md` item 10, now superseded. "Real-time location" and a live online/offline
+  "status" are **not** built — no such signal exists anywhere in this backend yet (`future.md`
+  item 35); F-E1's "status" column honestly reports only `vehicles.status` (the lifecycle enum).
+  See `docs/02-planners/backend-crud-fleet.md`.
 
 ### F-E2 Fleet KPI dashboard
 - **Actor:** Fleet manager
 - **Output:** Km, kWh, cost/km, SOH, utilization rate, alerts — aggregated and per-vehicle; time
   filter; export
 - **Priority · Release:** Must · P1.1
-- **Backend domain:** `fleet` (future domain — data portion; dashboard UI is client-side)
-- **Status:** 📋 Planned
+- **Backend domain:** `fleet` (data portion; dashboard UI is client-side)
+- **Status:** 📋 Planned — deferred this round in favor of F-E1 (see `docs/01-requirements/
+  future.md`); needs a DTO refactor in `telemetry` (its F-A6 report function currently returns an
+  HTTP response schema, which coding-conventions forbids passing across a domain boundary) plus a
+  new `notifications` count-by-vehicle function for the "alerts" column. `fleet` itself now has
+  active source.
 
 ### F-E3 Charging & warranty report
 - **Actor:** Fleet manager
 - **Output:** Charging sessions, policy compliance, warranty status per fleet/vehicle; CSV/PDF
   export, filterable
 - **Priority · Release:** Must · P1.1
-- **Backend domain:** `fleet` (future domain — aggregates `charging_sessions` and `policy` data)
-- **Status:** 📋 Planned
+- **Backend domain:** `fleet` (aggregates `charging_sessions` and `policy` data)
+- **Status:** 📋 Planned — hard-blocked on both halves: the charging half needs a session→vehicle
+  link `charging_sessions` doesn't have (`future.md` item 62, same blocker as F-A8), and the
+  warranty/policy half needs the `policy` domain, which has no active source at all. `fleet`
+  itself now has active source, but this feature needs both blockers resolved first.
 
 ### F-E4 Driver management & assignment
 - **Actor:** Fleet manager
@@ -531,8 +561,16 @@ carries its original PRD code so you can trace it back.
   the committed SLA is an organizational decision — the software just needs to expose ticket
   creation, categorization and an SLA timer.
 - **Priority · Release:** Should · P1.1
-- **Backend domain:** `support` (future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `support`
+- **Status:** ✅ Done (MVP/POC scope) — `POST /support/cases` creates a ticket with vehicle/driver
+  context (VIN/location/error-code resolved and validated, not just echoed), a category, and a
+  response-SLA deadline copied onto the row at creation time so a later config change never
+  rewrites a past case's SLA. `GET/PATCH/DELETE /support/cases{,/…}` cover lifecycle status
+  (OPEN → ACKNOWLEDGED → RESOLVED → CLOSED, plus CANCELLED), filtering, and soft delete; a
+  CLOSED/CANCELLED case refuses further updates (409). F-I2's SOS reuses the same table
+  (`case_type=SOS`) since the spec ties the two into one lifecycle. Zalo/hotline logging exists as
+  a `channel` enum member with no actual integration behind it. See
+  `docs/02-planners/backend-support-cases.md`.
 
 ### F-I4 Repair & rescue network dispatch
 - **Actor:** Customer support / CSKH (dispatches); driver (tracks status)
@@ -551,8 +589,10 @@ carries its original PRD code so you can trace it back.
   ≤15-minute SLA isn't achievable across the whole operating area, the real coverage should be
   published rather than promising more than the network can deliver.
 - **Priority · Release:** Must · P1.1
-- **Backend domain:** `support` (future domain)
-- **Status:** 📋 Planned
+- **Backend domain:** `support`
+- **Status:** 📋 Planned — deferred this round in favor of F-I1/F-I2 (see
+  `docs/01-requirements/future.md`); needs a partner directory (with a nearest-partner PostGIS
+  lookup) and dispatch routing that don't exist yet. `support` itself now has active source.
 
 ---
 

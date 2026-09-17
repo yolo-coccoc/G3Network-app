@@ -14,7 +14,7 @@ flowchart LR
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     Monitor["telematics/monitoring\nperiodic device-health check"]
     API["FastAPI API"]
-    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers"]
+    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers\nsupport\nfleet"]
     Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
     Portal["Admin web portal\n(polls, not built yet)"]
@@ -90,6 +90,24 @@ FastAPI registers the following domains:
   public service to resolve/validate a VIN on assign — the same shape as
   `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
   built here — see `future.md` item 67.
+- `support`: support case tickets (F-I1) and SOS intake (F-I2). One
+  `support_cases` table discriminated by `case_type` rather than two
+  tables. Depends one-directionally on `vehicles` (resolve/validate a VIN)
+  and `drivers` (validate a driver ID, enrich `driver_name`) - deliberately
+  not wired to `telemetry`, since vehicle context is client-supplied at
+  case-creation time rather than fetched live. A response-SLA deadline is
+  copied onto each row at creation so a later config change never rewrites
+  a past case's SLA; a CLOSED/CANCELLED case refuses further updates.
+  F-I4 (partner directory/dispatch) and F-I3 (booking) are deferred.
+- `fleet`: this backend's second brand-new domain (F-E1). Fleet CRUD plus
+  a `fleet_vehicle_memberships` assignment-history table mirroring
+  `driver_vehicle_assignments`'s shape, with one difference: no partial
+  unique index on `fleet_id` (a fleet holds many vehicles at once).
+  Depends one-directionally on `vehicles` to resolve/validate a VIN on
+  membership add and to enrich F-E1's vehicle list (`vin`/`license_plate`/
+  `status`, via a new `VehicleSummary` DTO). Replaces the dead
+  `vehicles.fleet_id` column, dropped in the same migration. F-E2 (KPI
+  dashboard) is deferred.
 
 The API process runs separately via Uvicorn. Telemetry ingestion, the OCPP
 gateway, and the telematics device-health monitor each have their own
@@ -135,6 +153,8 @@ The current Alembic baseline consists of:
 0016_vehicle_battery_capacity
 0017_charging_ingest_fields
 0018_drivers
+0019_support_cases
+0020_fleet
 ```
 
 The charging MVP only supports pre-provisioned topology and the happy path:
@@ -191,6 +211,20 @@ reverse proxy in the development environment.
   a documented default when a vehicle has none recorded). F-C6 specifically
   cannot satisfy NF-10's 3-way reconciliation with its current SOC-based
   method - that needs the vehicle-linkage `charging_sessions` still lacks.
+- F-E2's fleet KPI dashboard (needs a DTO refactor in `telemetry` plus a
+  new `notifications` count-by-vehicle function - `future.md` item 72),
+  F-E3's charging & warranty report, and F-A8's per-driver
+  charging-efficiency report - the latter two are hard-blocked on
+  `charging_sessions` having no vehicle/driver linkage at all (same
+  blocker as F-C6/NF-10 above), plus F-E3 also needs the `policy` domain.
+  A live online/offline vehicle signal for F-E1's "status" column doesn't
+  exist either (same gap as F-A1 above).
+- F-I4's repair/rescue partner directory and dispatch routing, and F-I3's
+  maintenance-scheduling booking - both considered alongside F-I1/F-I2 when
+  `support` was built but deferred (`future.md` items 68-69). An
+  SLA-breach monitor/escalation for support cases and support-case
+  ownership scoped to an authenticated driver also don't exist yet
+  (`future.md` items 70-71).
 - Web portal, vehicle app, centralized observability and production
   reliability.
 

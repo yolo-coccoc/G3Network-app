@@ -154,7 +154,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
 
 ---
 
-### 10. Foreign key from vehicles to fleet
+### 10. Foreign key from vehicles to fleet — Superseded
 
 - **Short description**: Convert `vehicles.fleet_id` to a UUID internal ID and create a foreign key to the table owned by the fleet domain.
 - **Purpose/role in the system**: Ensures the integrity of vehicle-to-fleet assignment and complies with the rule that foreign keys must always reference internal IDs.
@@ -162,6 +162,18 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Related planner/feature**: F-A6, F-E1, F-E2, F-E3
 - **Date recorded**: 2026-07-26
 - **Additional notes**: When fleet is implemented, a migration is needed to convert the current `String(36)` data to UUID and add the constraint.
+- **Resolution (2026-09-18)**: Superseded, not implemented as planned. This item predates the
+  assignment-history-table pattern established by `drivers`/`driver_vehicle_assignments`
+  (2026-09-18). Converting `fleet_id` to a UUID FK on `vehicles` would have forced `vehicles` to
+  validate it on write — either a new `vehicles → fleet` edge (a real cycle against the
+  unavoidable `fleet → vehicles` edge fleet needs for listing) or relying on the DB constraint as
+  primary validation, which `backend-runtime-conventions.md` calls a last line of defense, not the
+  real check. It also could never express membership history. Per CLAUDE.md's "most recent
+  decision wins" rule, `fleet` instead owns a `fleet_vehicle_memberships` history table (mirroring
+  `driver_vehicle_assignments`), and the dead `vehicles.fleet_id` column (`String(36)`, no FK, no
+  index, never queried by any code) was dropped entirely in migration `0020_fleet` — per
+  repo-conventions' rule that an old placeholder must be removed, not converted, once the real
+  component exists. See `docs/02-planners/backend-crud-fleet.md`.
 
 ---
 
@@ -1569,6 +1581,136 @@ The items below are actual deferral decisions made in the repo, not placeholders
   arbitrary-time-window proxy is a real accuracy compromise, not a true
   substitute, and should be presented to the user as such rather than
   silently assumed equivalent.
+
+---
+
+### 68. F-I4's repair/rescue partner directory and dispatch routing
+
+- **Short description**: F-I4 (repair & rescue network dispatch) was
+  considered alongside F-I1/F-I2 when the `support` domain was built, but
+  not implemented - no partner directory table, no nearest-partner
+  routing, and no dispatch/acceptance-SLA tracking exist.
+- **Purpose/role in the system**: An SOS case (F-I2) is supposed to be
+  "forwarded to F-I4"; without it, an SOS case is recorded but never
+  auto-routed to an actual repair/rescue partner - CSKH has to do that
+  entirely outside the system today.
+- **Reason for deferral**: Scoped out by explicit user decision to build
+  only F-I1+F-I2 this round. F-I4 needs real new surface area (a partner
+  directory with region/capability/coverage/hours, a nearest-partner
+  PostGIS lookup cloning `charging_stations`' GIST-indexed pattern, and a
+  1:N dispatch-with-its-own-acceptance-SLA table) that wasn't built
+  speculatively ahead of a concrete task.
+- **Related planner/feature**: F-I4, F-I2, `support`,
+  `docs/02-planners/backend-support-cases.md`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: When resumed, `support_cases` (F-I1/F-I2's table)
+  already carries everything a dispatch needs to reference (`case_id`,
+  `vehicle_id`, `location`). Add `support_partners` (with a GIST-indexed
+  `location`, unlike `support_cases.location` which deliberately has none)
+  and `support_dispatches` (case → partner, its own
+  `acceptance_due_at`/`accepted_at`/`eta_at`, a partial unique index so
+  only one dispatch per case is "live" at a time). "Available" can only
+  honestly mean an operator-maintained flag - no real-time partner
+  integration exists to feed a live signal.
+
+---
+
+### 69. F-I3's maintenance-scheduling booking
+
+- **Short description**: F-I3 (maintenance scheduling) was considered
+  alongside F-I1/F-I2/F-I4 for the `support` domain but not implemented.
+- **Purpose/role in the system**: Lets a driver book a workshop slot from
+  a maintenance reminder and stores the resulting history per vehicle.
+- **Reason for deferral**: Lowest priority in the set (Could · P1.5) and
+  genuinely a different entity from a support case/ticket (a bookable-slot
+  calendar, not a case lifecycle) - no slot/calendar inventory concept
+  exists anywhere in this backend, and its own upstream trigger (F-F4
+  maintenance reminders) has no owning domain at all yet either.
+- **Related planner/feature**: F-I3, F-F4, `support`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: Needs F-F4 (or at least a decision on which domain
+  owns maintenance reminders) resolved first, plus a workshop/slot
+  inventory data source that doesn't exist yet.
+
+---
+
+### 70. SLA-breach monitor and escalation for support cases
+
+- **Short description**: F-I1/F-I2's SLA is currently a stored deadline
+  (`response_due_at`) plus a computed `is_sla_breached` flag, read only
+  when a case is fetched. Nothing proactively watches for a breach.
+- **Purpose/role in the system**: A ticket or SOS case that breaches its
+  response SLA with nobody currently viewing it goes unnoticed until
+  someone happens to `GET` it.
+- **Reason for deferral**: No cooldown/re-alert/escalation infrastructure
+  exists anywhere in this backend yet (same gap noted for F-A4 in item
+  44), and there is no CSKH identity/`identity` domain to route an
+  escalation to - building a monitor with nothing to notify would be
+  premature. `support_cases.response_due_at` already has a partial index
+  (`WHERE first_responded_at IS NULL`) specifically so this query is cheap
+  once a monitor is justified.
+- **Related planner/feature**: F-I1, F-I2, `support`, item 44 (same
+  "alert once, no re-alert" pattern class),
+  `telematics/monitoring/` (the closest existing periodic-worker
+  precedent, F-J1/F-J3).
+- **Date recorded**: 2026-09-18
+- **Additional notes**: When `identity` lands and there's someone to
+  notify, clone `telematics/monitoring/device_health_monitor.py`'s
+  periodic-sweep shape rather than inventing a new worker pattern.
+
+---
+
+### 71. Support case ownership without authentication
+
+- **Short description**: `support_cases.driver_id` is entirely
+  client-supplied and unverified - there is no session/auth to confirm the
+  caller is actually that driver.
+- **Purpose/role in the system**: F-I1 implies a driver only creates/sees
+  their own tickets; today any caller can attribute a case to any
+  `driver_id` and list/read any case.
+- **Reason for deferral**: No `identity` domain (auth & RBAC) exists yet
+  in this backend - matches every other domain's current unauthenticated
+  state, not a gap specific to `support`.
+- **Related planner/feature**: F-I1, F-F1 (`identity`), `support`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: When `identity` lands, `list_support_cases`/
+  `get_support_case` need an auth-derived filter instead of returning any
+  case to any caller - the same shape as item 40's notifications
+  recipient-scoping gap.
+
+---
+
+### 72. F-E2's fleet KPI dashboard
+
+- **Short description**: F-E2 (fleet KPI dashboard: km/kWh/cost-per-km/
+  SOH/utilization/alerts, aggregated and per-vehicle) was scoped alongside
+  F-E1 when the `fleet` domain was built, but not implemented.
+- **Purpose/role in the system**: A fleet manager comparing vehicles or
+  wanting an aggregate view needs more than F-E1's plain vehicle list.
+- **Reason for deferral**: Needs two changes in domains `fleet` doesn't
+  own, deferred by explicit user decision to keep this round to fleet
+  CRUD + F-E1 only: (1) `telemetry.get_vehicle_operating_report` currently
+  returns `VehicleOperatingReportResponse`, an HTTP response schema -
+  coding-conventions §5.1 forbids passing one across a domain boundary, so
+  `fleet` cannot call it as-is; (2) `notifications` has no
+  count-by-vehicle function for an "alerts" column. Per item 63's mandate,
+  the rollup must call `telemetry`'s per-vehicle function rather than
+  duplicating its SOC-fold query - it does not exist as a callable DTO
+  today.
+- **Related planner/feature**: F-E2, `fleet`, `telemetry`, `notifications`,
+  item 63, `docs/02-planners/backend-crud-fleet.md`.
+- **Date recorded**: 2026-09-18
+- **Additional notes**: When resumed: (1) extract a frozen-dataclass DTO
+  (e.g. `VehicleOperatingSummary` in `telemetry/types.py`) out of
+  `get_vehicle_operating_report`, with the existing endpoint building its
+  HTTP response from that DTO - zero behavior change to the existing
+  F-A6 endpoint; (2) add `notifications.count_notifications_by_vehicle`.
+  Fleet-level ratios must be recomputed from summed numerators/
+  denominators, never averaged per-vehicle averages, matching F-A6's own
+  precedent. "Utilization rate" has no honest backing data yet (no trip/
+  ignition/duty concept, per item 46) - ship `distance_per_day_km`
+  instead of inventing a field with that name. F-E3 and F-A8 remain
+  separately blocked (items above) even once this item is resolved.
 
 ---
 
