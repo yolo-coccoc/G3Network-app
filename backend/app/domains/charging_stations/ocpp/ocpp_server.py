@@ -4,6 +4,15 @@ The gateway only validates the path, subprotocol, and identity of a
 pre-provisioned station, then keeps one stable connection within the
 process. Production reliability, reconnect, and technical status history
 are outside the active path.
+
+``python-ocpp``'s ``ChargePoint._handle_call`` only snake_cases inbound
+JSON keys and splats the result as handler kwargs - it never constructs
+the ``ocpp.v201.datatypes`` dataclasses. So nested OCPP objects (``evse``,
+``transactionInfo``, ``meterValue`` and its ``sampledValue`` entries)
+always arrive as plain ``dict``s at runtime, never as those dataclasses,
+regardless of a handler's type annotation. Handlers here are written
+against that reality (aliased ``OcppPayload``); don't re-introduce
+dataclass type hints for nested OCPP objects.
 """
 
 import asyncio
@@ -11,13 +20,12 @@ import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Final
+from typing import Any, Final
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 from ocpp.routing import on
 from ocpp.v201 import ChargePoint, call_result
-from ocpp.v201.datatypes import EVSEType, MeterValueType, TransactionType
 from ocpp.v201.enums import Action, ConnectorStatusEnumType, TransactionEventEnumType
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import Server, ServerConnection, serve
@@ -42,6 +50,10 @@ logger = logging.getLogger(__name__)
 OCPP_SUBPROTOCOL: Final[str] = "ocpp2.0.1"
 OCPP_PATH_PREFIX: Final[str] = "/ocpp/"
 _MAX_IDENTITY_LENGTH: Final[int] = 255
+
+# See the module docstring: python-ocpp delivers nested OCPP objects as
+# plain dicts (snake_cased keys), never as ocpp.v201.datatypes dataclasses.
+OcppPayload = dict[str, Any]
 
 
 def parse_ocpp_identity(request_path: str) -> str | None:
@@ -127,41 +139,79 @@ def parse_ocpp_timestamp(value: str) -> datetime:
 
 
 def extract_meter_samples(
-    meter_values: list[MeterValueType],
+    meter_values: list[OcppPayload],
 ) -> list[MeterSampleInput]:
     """Convert the samples in an OCPP message into persistence input.
 
     Args:
-        meter_values: Groups of samples parsed by ``python-ocpp``.
+        meter_values: Groups of samples, snake_cased by ``python-ocpp``
+            into plain dicts - see the module docstring.
 
     Returns:
         List of samples in the same order as the payload.
     """
     samples: list[MeterSampleInput] = []
     for meter_value in meter_values:
-        sampled_at = parse_ocpp_timestamp(meter_value.timestamp)
-        for sampled_value in meter_value.sampled_value:
+        sampled_at = parse_ocpp_timestamp(meter_value["timestamp"])
+        for sampled_value in meter_value["sampled_value"]:
             samples.append(
                 MeterSampleInput(
                     sampled_at=sampled_at,
-                    value_wh=Decimal(str(sampled_value.value)),
+                    value_wh=Decimal(str(sampled_value["value"])),
                 )
             )
     return samples
+
+
+def parse_ocpp_transaction_id(transaction_info: OcppPayload) -> str:
+    """Read the transaction identity out of a raw TransactionEvent payload.
+
+    Args:
+        transaction_info: The ``transactionInfo`` object, snake_cased by
+            ``python-ocpp`` into a plain dict - see the module docstring.
+
+    Returns:
+        The OCPP transaction identity.
+
+    Raises:
+        ValueError: If the payload has no ``transaction_id``.
+    """
+    transaction_id = transaction_info.get("transaction_id")
+    if not transaction_id:
+        raise ValueError("transactionInfo must have a transactionId")
+    return str(transaction_id)
+
+
+def parse_ocpp_evse_reference(evse: OcppPayload | None) -> tuple[int, int]:
+    """Read the OCPP EVSE and connector IDs out of a raw ``evse`` payload.
+
+    Args:
+        evse: The ``evse`` object, snake_cased by ``python-ocpp`` into a
+            plain dict - see the module docstring.
+
+    Returns:
+        A ``(ocpp_evse_id, ocpp_connector_id)`` pair.
+
+    Raises:
+        ValueError: If the payload is missing the EVSE or the connector.
+    """
+    if evse is None or evse.get("id") is None or evse.get("connector_id") is None:
+        raise ValueError("TransactionEvent must have an EVSE and connector")
+    return int(evse["id"]), int(evse["connector_id"])
 
 
 async def resolve_ocpp_topology(
     db: AsyncSession,
     *,
     ocpp_identity: str,
-    evse: EVSEType | None,
+    evse: OcppPayload | None,
 ) -> tuple[UUID, UUID, UUID]:
     """Resolve the OCPP EVSE/connector identity into UUID primitives.
 
     Args:
         db: Async session of the action transaction.
         ocpp_identity: Identity of the OCPP station.
-        evse: EVSE object from the OCPP payload.
+        evse: EVSE object from the OCPP payload, as a plain dict.
 
     Returns:
         Tuple of internal IDs for the station, EVSE, and connector.
@@ -169,13 +219,12 @@ async def resolve_ocpp_topology(
     Raises:
         ValueError: If the payload is missing the EVSE or connector.
     """
-    if evse is None or evse.connector_id is None:
-        raise ValueError("TransactionEvent must have an EVSE and connector")
+    ocpp_evse_id, ocpp_connector_id = parse_ocpp_evse_reference(evse)
     return await charging_stations_service.resolve_ocpp_topology(
         db,
         ocpp_identity=ocpp_identity,
-        ocpp_evse_id=evse.id,
-        ocpp_connector_id=evse.connector_id,
+        ocpp_evse_id=ocpp_evse_id,
+        ocpp_connector_id=ocpp_connector_id,
     )
 
 
@@ -244,9 +293,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         timestamp: str,
         trigger_reason: object,
         seq_no: int,
-        transaction_info: TransactionType,
-        meter_value: list[MeterValueType] | None = None,
-        evse: EVSEType | None = None,
+        transaction_info: OcppPayload,
+        meter_value: list[OcppPayload] | None = None,
+        evse: OcppPayload | None = None,
         **_: object,
     ) -> call_result.TransactionEvent:
         """Persist a TransactionEvent using primitive values, then ACK the OCPP call.
@@ -258,11 +307,11 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
                 the contract.
             seq_no: OCPP sequence number, not yet part of the active
                 persistence schema.
-            transaction_info: Transaction dataclass produced by the OCPP
-                parser.
+            transaction_info: The ``transactionInfo`` object, as a plain
+                dict - see the module docstring.
             meter_value: Start/end meter values depending on the event, as
-                OCPP dataclasses.
-            evse: OCPP EVSE and connector to resolve.
+                plain dicts - see the module docstring.
+            evse: OCPP EVSE and connector to resolve, as a plain dict.
             **_: Optional OCPP fields not part of the MVP.
 
         Returns:
@@ -283,7 +332,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         samples = extract_meter_samples(meter_value) if meter_value else []
         meter_start_wh = samples[0].value_wh if samples else None
         meter_end_wh = samples[-1].value_wh if samples else None
-        transaction_id = transaction_info.transaction_id
+        transaction_id = parse_ocpp_transaction_id(transaction_info)
         async with self.session_factory.begin() as db:
             station_id, evse_id, connector_id = await resolve_ocpp_topology(
                 db,
@@ -311,17 +360,17 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             )
         if session_event is SessionEventType.ENDED:
             if evse is not None:
-                self._session_by_evse.pop(evse.id, None)
+                self._session_by_evse.pop(evse["id"], None)
         else:
             if evse is not None:
-                self._session_by_evse[evse.id] = result.session_id
+                self._session_by_evse[evse["id"]] = result.session_id
         return call_result.TransactionEvent()
 
     @on(Action.meter_values)  # type: ignore[untyped-decorator]
     async def on_meter_values(
         self,
         evse_id: int,
-        meter_value: list[MeterValueType],
+        meter_value: list[OcppPayload],
         **_: object,
     ) -> call_result.MeterValues:
         """Persist each MeterValues energy sample within one transaction.
@@ -329,7 +378,8 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         Args:
             evse_id: OCPP EVSE ID used to look up the session on this
                 connection.
-            meter_value: Groups of OCPP dataclass samples to convert to Wh.
+            meter_value: Groups of samples, as plain dicts - see the
+                module docstring - to convert to Wh.
             **_: Optional OCPP fields not part of the MVP.
 
         Returns:
@@ -340,6 +390,11 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
             AsyncSession; an exception rolls back the entire message's
             entry transaction.
         """
+        # Populated by on_transaction_event on this same connection and
+        # popped on Ended. A missing key means MeterValues outside a
+        # transaction or after a reconnect dropped the mapping; the
+        # resulting KeyError -> CALLERROR is the intended MVP failure, and
+        # surviving a reconnect is the reliability path (future.md item 27).
         session_id = self._session_by_evse[evse_id]
         samples = extract_meter_samples(meter_value)
         async with self.session_factory.begin() as db:

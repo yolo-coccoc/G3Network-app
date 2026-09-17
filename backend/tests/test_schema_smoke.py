@@ -7,11 +7,13 @@ from uuid import uuid4
 
 import pytest
 from geoalchemy2.elements import WKBElement
-from ocpp.v201.datatypes import MeterValueType, SampledValueType, UnitOfMeasureType
-from ocpp.v201.enums import MeasurandEnumType
 from pydantic import ValidationError
 
-from app.domains.charging_stations.ocpp.ocpp_server import extract_meter_samples
+from app.domains.charging_stations.ocpp.ocpp_server import (
+    extract_meter_samples,
+    parse_ocpp_evse_reference,
+    parse_ocpp_transaction_id,
+)
 from app.domains.charging_stations.schemas import ChargingStationCreateRequest
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
@@ -191,19 +193,49 @@ def test_telematic_config_push_request_rejects_interval_outside_bounds() -> None
         )
 
 
-def test_ocpp_meter_value_is_kept_without_unit_conversion() -> None:
-    """An OCPP meter value is kept as-is, with no unit conversion."""
-    meter_value = MeterValueType(
-        timestamp="2026-08-26T10:00:00Z",
-        sampled_value=[
-            SampledValueType(
-                value=1.25,
-                measurand=MeasurandEnumType.energy_active_import_register,
-                unit_of_measure=UnitOfMeasureType(unit="kWh"),
-            )
-        ],
-    )
+def test_extract_meter_samples_reads_raw_dict_payload() -> None:
+    """extract_meter_samples parses the plain-dict shape python-ocpp actually
+    delivers (Step 0's regression test) - not the ocpp.v201 dataclasses.
+    """
+    meter_value = {
+        "timestamp": "2026-08-26T10:00:00Z",
+        "sampled_value": [{"value": 1.25}],
+    }
 
     samples = extract_meter_samples([meter_value])
 
     assert samples[0].value_wh == Decimal("1.25")
+
+
+def test_ocpp_meter_value_is_kept_without_unit_conversion() -> None:
+    """An OCPP meter value is kept as-is, with no unit conversion (pre-F-B2 baseline)."""
+    meter_value = {
+        "timestamp": "2026-08-26T10:00:00Z",
+        "sampled_value": [
+            {
+                "value": 1.25,
+                "measurand": "Energy.Active.Import.Register",
+                "unit_of_measure": {"unit": "kWh"},
+            }
+        ],
+    }
+
+    samples = extract_meter_samples([meter_value])
+
+    assert samples[0].value_wh == Decimal("1.25")
+
+
+def test_parse_ocpp_transaction_id_reads_dict_payload() -> None:
+    """parse_ocpp_transaction_id reads the snake_cased dict python-ocpp delivers."""
+    assert parse_ocpp_transaction_id({"transaction_id": "TX-001"}) == "TX-001"
+    with pytest.raises(ValueError):
+        parse_ocpp_transaction_id({})
+
+
+def test_parse_ocpp_evse_reference_reads_dict_payload() -> None:
+    """parse_ocpp_evse_reference reads the snake_cased dict python-ocpp delivers."""
+    assert parse_ocpp_evse_reference({"id": 1, "connector_id": 2}) == (1, 2)
+    with pytest.raises(ValueError):
+        parse_ocpp_evse_reference(None)
+    with pytest.raises(ValueError):
+        parse_ocpp_evse_reference({"id": 1})
