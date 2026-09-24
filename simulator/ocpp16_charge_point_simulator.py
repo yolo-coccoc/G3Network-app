@@ -14,6 +14,10 @@ Scenarios are added one message group at a time as the gateway learns them
 
 * ``boot`` - BootNotification, then ``--heartbeats`` Heartbeats spaced
   ``--heartbeat-interval`` seconds apart.
+* ``status`` - the ``boot`` scenario, then StatusNotification for connector 0
+  (the whole charger) and every gun: a full Available -> Preparing -> Charging
+  -> SuspendedEV -> Finishing -> Available cycle on gun 1 (one report without a
+  timestamp, which 1.6 allows), then a fault on gun 2 and on the charger.
 
 Like the 2.0.1 simulator this only generates valid happy-path traffic. It does
 not simulate retries, duplicates, reconnects, delays, or random errors. A
@@ -25,17 +29,18 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from ocpp.exceptions import OCPPError
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call, call_result
-from ocpp.v16.enums import Action
+from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
 from websockets.asyncio.client import connect
 from websockets.typing import Subprotocol
 
 OCPP_SUBPROTOCOL = "ocpp1.6"
-SCENARIOS = ("boot",)
+SCENARIOS = ("boot", "status")
 
 # (key, value, readonly). Modelled on the spec summary's section 4.3 keys; the
 # defaults are what a vendor might ship, not what G3 wants (for example
@@ -110,6 +115,19 @@ class RunReport:
     """
 
     errors: list[str] = field(default_factory=list)
+
+
+def utc_timestamp() -> str:
+    """Build an OCPP UTC timestamp with milliseconds, ending in ``Z``.
+
+    Returns:
+        ISO-8601 timestamp such as ``2026-09-24T10:00:00.000Z``.
+    """
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
@@ -210,6 +228,65 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 await asyncio.sleep(self.config.heartbeat_interval_seconds)
             await self.send_call(call.Heartbeat())
 
+    async def send_status(
+        self,
+        connector_id: int,
+        status: str,
+        *,
+        error_code: str = "NoError",
+        vendor_error_code: str | None = None,
+        info: str | None = None,
+        with_timestamp: bool = True,
+    ) -> None:
+        """Send one StatusNotification.
+
+        Args:
+            connector_id: ``0`` for the whole charger, otherwise the gun number.
+            status: An OCPP 1.6 ``ChargePointStatus`` label.
+            error_code: An OCPP 1.6 ``ChargePointErrorCode`` label.
+            vendor_error_code: Vendor-specific error code, if any.
+            info: Free-text information, if any.
+            with_timestamp: Set to ``False`` to omit the (optional) timestamp.
+        """
+        await self.send_call(
+            call.StatusNotification(
+                connector_id=connector_id,
+                error_code=ChargePointErrorCode(error_code),
+                status=ChargePointStatus(status),
+                timestamp=utc_timestamp() if with_timestamp else None,
+                info=info,
+                vendor_error_code=vendor_error_code,
+            )
+        )
+
+    async def run_status_scenario(self) -> None:
+        """Boot, then report the charger and every gun through a charging cycle.
+
+        Side Effects:
+            Sends the boot messages and then one StatusNotification per step;
+            each is answered by the gateway or reported as a CALLERROR.
+        """
+        await self.run_boot_scenario()
+        await self.send_status(0, "Available")
+        for gun in range(1, self.config.connectors + 1):
+            await self.send_status(gun, "Available")
+        await self.send_status(1, "Preparing")
+        await self.send_status(1, "Charging", with_timestamp=False)
+        await self.send_status(1, "SuspendedEV")
+        await self.send_status(1, "Finishing")
+        await self.send_status(1, "Available")
+        if self.config.connectors >= 2:
+            await self.send_status(
+                2,
+                "Faulted",
+                error_code="ConnectorLockFailure",
+                vendor_error_code="3",
+                info="gun lock failed",
+            )
+        await self.send_status(
+            0, "Faulted", error_code="PowerMeterFailure", vendor_error_code="23"
+        )
+
 
 async def run(config: SimulatorConfig) -> RunReport:
     """Connect as a 1.6J charger, run the scenario, and disconnect.
@@ -242,6 +319,8 @@ async def run(config: SimulatorConfig) -> RunReport:
         try:
             if config.scenario == "boot":
                 await charge_point.run_boot_scenario()
+            elif config.scenario == "status":
+                await charge_point.run_status_scenario()
             await asyncio.sleep(config.linger_seconds)
         finally:
             listener.cancel()

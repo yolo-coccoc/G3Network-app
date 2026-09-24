@@ -172,11 +172,101 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # Pinned to the current Alembic head. This assertion was stale
         # (hardcoded to an old head) until F-B2 - it went unnoticed only
         # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0022_charging_station_device"
+        assert version == "0023_charging_status_details"
         assert len(tables) == 10
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
         assert "charging_ocpp_messages" in hypertables
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_status_migration_downgrade_converts_1_6_statuses_and_upgrade_restores_them(
+    temporary_database: str,
+) -> None:
+    """Downgrading 0023 with data present rebuilds the enum without losing rows.
+
+    PostgreSQL cannot drop enum values, so the downgrade converts every
+    1.6J-only connector status to ``Occupied`` and recreates the type; a later
+    upgrade must bring all ten values back.
+    """
+    labels_sql = text(
+        "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
+        "WHERE t.typname = 'chargingconnectorstatus'"
+    )
+    now = datetime.now(timezone.utc)
+    station_id, evse_id, connector_id = uuid4(), uuid4(), uuid4()
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_stations (station_id, ocpp_identity, "
+                    "display_name, maintenance_status, created_at, updated_at, "
+                    "charger_status) VALUES (:s, :i, 'x', 'OPERATIONAL', :t, :t, 'Faulted')"
+                ),
+                {"s": station_id, "i": f"IT-{uuid4().hex[:12]}", "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
+                    "created_at, updated_at) VALUES (:e, :s, 1, :t, :t)"
+                ),
+                {"e": evse_id, "s": station_id, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connectors (connector_id, evse_id, "
+                    "ocpp_connector_id, status, error_code, created_at, updated_at) "
+                    "VALUES (:c, :e, 1, 'SuspendedEVSE', 'NoError', :t, :t)"
+                ),
+                {"c": connector_id, "e": evse_id, "t": now},
+            )
+            assert len((await connection.execute(labels_sql)).all()) == 10
+
+        _run_alembic(temporary_database, "downgrade", "0022_charging_station_device")
+
+        async with engine.connect() as connection:
+            status = await connection.scalar(
+                text(
+                    "SELECT status::text FROM charging_connectors WHERE connector_id = :c"
+                ),
+                {"c": connector_id},
+            )
+            labels = set((await connection.execute(labels_sql)).scalars())
+            new_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name IN ('charging_connectors', 'charging_stations') "
+                            "AND column_name IN ('error_code', 'status_info', "
+                            "'charger_status', 'charger_error_code')"
+                        )
+                    )
+                ).scalars()
+            )
+        assert status == "Occupied"
+        assert labels == {"Available", "Occupied", "Reserved", "Unavailable", "Faulted"}
+        assert new_columns == set()
+
+        _run_alembic(temporary_database, "upgrade", "head")
+
+        async with engine.connect() as connection:
+            restored = set((await connection.execute(labels_sql)).scalars())
+        assert restored == {
+            "Available",
+            "Occupied",
+            "Reserved",
+            "Unavailable",
+            "Faulted",
+            "Preparing",
+            "Charging",
+            "SuspendedEV",
+            "SuspendedEVSE",
+            "Finishing",
+        }
     finally:
         await engine.dispose()
 

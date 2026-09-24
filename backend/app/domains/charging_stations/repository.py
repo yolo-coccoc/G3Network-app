@@ -795,6 +795,9 @@ async def update_connector_status(
     *,
     status: ChargingConnectorStatus,
     status_updated_at: datetime,
+    error_code: str | None = None,
+    vendor_error_code: str | None = None,
+    status_info: str | None = None,
 ) -> ChargingConnectorModel | None:
     """Set a connector's live status from an OCPP ``StatusNotification`` (F-C2).
 
@@ -804,12 +807,18 @@ async def update_connector_status(
         status: New live status reported by the station.
         status_updated_at: Timestamp the station reported, already parsed
             and normalized to UTC by the caller.
+        error_code: ``errorCode`` of this report, if the protocol carries one
+            (OCPP 1.6J does, 2.0.1 does not).
+        vendor_error_code: ``vendorErrorCode`` of this report, if any.
+        status_info: Free-text ``info`` of this report, if any.
 
     Returns:
         The updated connector, or ``None`` if it is no longer active.
 
     Side Effects:
-        Assigns ``status``/``status_updated_at``, updates ``updated_at``,
+        Assigns ``status``/``status_updated_at`` and the three detail fields
+        (a report without them **clears** the old values, because the latest
+        report is the truth about the connector), updates ``updated_at``,
         flushes, and refreshes; does not commit. No out-of-order guard —
         in-order message arrival is this MVP's existing assumption (see
         ``docs/01-requirements/future.md`` item 27); the incoming timestamp
@@ -820,6 +829,9 @@ async def update_connector_status(
         return None
     connector.status = status
     connector.status_updated_at = status_updated_at
+    connector.error_code = error_code
+    connector.vendor_error_code = vendor_error_code
+    connector.status_info = status_info
     connector.updated_at = utc_now()
     await db.flush()
     await db.refresh(connector)
@@ -967,3 +979,47 @@ async def touch_station_seen(
         )
     )
     await db.flush()
+
+
+async def update_station_charger_status(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+    error_code: str | None,
+    vendor_error_code: str | None,
+) -> bool:
+    """Store the status of the whole charger (OCPP 1.6J connector ``0``).
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station that reported.
+        status: Reported status of the whole charger.
+        status_updated_at: Timestamp of the report, timezone-aware UTC.
+        error_code: Reported ``errorCode``, or ``None``.
+        vendor_error_code: Reported ``vendorErrorCode``, or ``None``.
+
+    Returns:
+        ``True`` if an active station was updated.
+
+    Side Effects:
+        Issues one ``UPDATE`` and flushes; does not commit. ``updated_at`` is
+        left unchanged: device-reported state is not an administrator's edit.
+    """
+    result = await db.execute(
+        update(ChargingStationModel)
+        .where(
+            ChargingStationModel.station_id == station_id,
+            ChargingStationModel.deleted_at.is_(None),
+        )
+        .values(
+            charger_status=status,
+            charger_status_updated_at=status_updated_at,
+            charger_error_code=error_code,
+            charger_vendor_error_code=vendor_error_code,
+            updated_at=ChargingStationModel.updated_at,
+        )
+    )
+    await db.flush()
+    return bool(result.rowcount)  # type: ignore[attr-defined]

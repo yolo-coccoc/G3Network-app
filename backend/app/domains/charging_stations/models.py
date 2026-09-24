@@ -104,6 +104,15 @@ class ChargingStationModel(Base):
         last_seen_at: Time of the latest frame of any kind received from the
             charger, nullable. "Online" is derived from it at read time
             (``CHARGING_OFFLINE_TIMEOUT_SECONDS``), never stored.
+        charger_status: OCPP 1.6J connector ``0`` — the status of the whole
+            charger, nullable (2.0.1 has no such concept). Kept on the
+            station because connector ``0`` has no topology row.
+        charger_status_updated_at: Time the last connector-``0`` status was
+            processed, nullable.
+        charger_error_code: ``errorCode`` reported for connector ``0`` as
+            sent (``NoError`` included), nullable.
+        charger_vendor_error_code: ``vendorErrorCode`` reported for connector
+            ``0``, nullable.
         created_at: Time the record was created.
         updated_at: Time the record was last updated by an admin edit;
             device-reported columns above do not bump it.
@@ -149,6 +158,21 @@ class ChargingStationModel(Base):
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    charger_status: Mapped[ChargingConnectorStatus | None] = mapped_column(
+        SQLEnum(
+            ChargingConnectorStatus,
+            name="chargingconnectorstatus",
+            values_callable=enum_values,
+        ),
+        nullable=True,
+    )
+    charger_status_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    charger_error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    charger_vendor_error_code: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
@@ -227,6 +251,13 @@ class ChargingConnectorModel(Base):
             processed, nullable. No out-of-order guard — in-order message
             arrival is this MVP's existing assumption (see
             ``docs/01-requirements/future.md`` item 27).
+        error_code: ``errorCode`` from the latest ``StatusNotification`` as
+            sent (OCPP 1.6J; ``NoError`` included), nullable. Replaced by
+            every status update, so it always describes the latest report.
+        vendor_error_code: ``vendorErrorCode`` from the latest report,
+            nullable.
+        status_info: The free-text ``info`` field of the latest report,
+            nullable.
         created_at: Time the record was created.
         updated_at: Time the record was last updated.
         deleted_at: Soft-delete time, nullable.
@@ -258,6 +289,9 @@ class ChargingConnectorModel(Base):
     status_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vendor_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status_info: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

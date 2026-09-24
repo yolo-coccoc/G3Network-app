@@ -175,6 +175,13 @@ class ChargingStationResponse(BaseModel):
         last_boot_at: Time of the latest accepted boot, nullable.
         last_seen_at: Time of the latest frame of any kind from the charger,
             nullable.
+        charger_status: Status of the whole charger (OCPP 1.6J connector
+            ``0``), nullable.
+        charger_status_updated_at: Time that status was processed, nullable.
+        charger_error_code: ``errorCode`` reported for the whole charger,
+            nullable.
+        charger_vendor_error_code: ``vendorErrorCode`` reported for the whole
+            charger, nullable.
         is_online: Derived at read time: ``last_seen_at`` is within
             ``CHARGING_OFFLINE_TIMEOUT_SECONDS``. ``False`` for a station
             that has never connected. A connector's last reported status is
@@ -203,6 +210,10 @@ class ChargingStationResponse(BaseModel):
     firmware_version: str | None
     last_boot_at: datetime | None
     last_seen_at: datetime | None
+    charger_status: ChargingConnectorStatus | None
+    charger_status_updated_at: datetime | None
+    charger_error_code: str | None
+    charger_vendor_error_code: str | None
     is_online: bool
     created_at: datetime
     updated_at: datetime
@@ -367,6 +378,10 @@ class ChargingConnectorResponse(BaseModel):
             (F-C2), nullable if the connector hasn't reported yet.
         status_updated_at: Time the last status report was processed,
             nullable.
+        error_code: ``errorCode`` of the latest report (OCPP 1.6J), nullable.
+        vendor_error_code: ``vendorErrorCode`` of the latest report,
+            nullable.
+        status_info: Free-text ``info`` of the latest report, nullable.
         created_at: Time created.
         updated_at: Time of last update.
         deleted_at: Soft-delete time, nullable.
@@ -379,6 +394,9 @@ class ChargingConnectorResponse(BaseModel):
     ocpp_connector_id: int
     status: ChargingConnectorStatus | None
     status_updated_at: datetime | None
+    error_code: str | None
+    vendor_error_code: str | None
+    status_info: str | None
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None

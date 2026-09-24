@@ -163,8 +163,8 @@ def test_create_charge_point_picks_the_adapter_for_the_negotiated_protocol(
     assert charge_point.id == "LSC"
 
 
-def test_1_6_adapter_handles_only_boot_and_heartbeat_so_far() -> None:
-    """Later planner steps add the other 1.6J messages; today only these two exist."""
+def test_1_6_adapter_handles_only_the_messages_implemented_so_far() -> None:
+    """Later planner steps add the other 1.6J messages; only these exist today."""
     charge_point = OCPP16ChargePoint(
         "LSC",
         object(),  # type: ignore[arg-type]
@@ -176,4 +176,4 @@ def test_1_6_adapter_handles_only_boot_and_heartbeat_so_far() -> None:
         for action, handlers in charge_point.route_map.items()
         if "_on_action" in handlers
     }
-    assert handled == {"BootNotification", "Heartbeat"}
+    assert handled == {"BootNotification", "Heartbeat", "StatusNotification"}

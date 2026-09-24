@@ -8,7 +8,7 @@ hide which contract each handler assumes.
 
 Scope: handlers are added one message group at a time by the OCPP 1.6J
 planner (``docs/02-planners/backend-ocpp16-charger-integration.md``). Currently
-handled: ``BootNotification`` and ``Heartbeat``. Every other action a 1.6J
+handled: ``BootNotification``, ``Heartbeat`` and ``StatusNotification``. Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
 """
@@ -22,8 +22,12 @@ from ocpp.v16.enums import Action, RegistrationStatus
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domains.charging_stations import service as charging_stations_service
-from app.domains.charging_stations.ocpp.parsing import format_ocpp_timestamp
+from app.domains.charging_stations.ocpp.parsing import (
+    format_ocpp_timestamp,
+    parse_ocpp_timestamp,
+)
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
+from app.domains.charging_stations.types import ChargingConnectorStatus
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -136,3 +140,85 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         return call_result.Heartbeat(
             current_time=format_ocpp_timestamp(datetime.now(timezone.utc))
         )
+
+    @on(Action.status_notification)  # type: ignore[untyped-decorator]
+    async def on_status_notification(
+        self,
+        connector_id: int,
+        error_code: str,
+        status: str,
+        timestamp: str | None = None,
+        info: str | None = None,
+        vendor_error_code: str | None = None,
+        **_: object,
+    ) -> call_result.StatusNotification:
+        """Record a gun's (or the whole charger's) status and error details.
+
+        Connector ``0`` is the whole charger and is stored on the station;
+        connector ``n >= 1`` is gun ``n`` and is stored on the connector
+        provisioned as EVSE ``n`` / connector ``1`` (decision D3). The status
+        keeps the exact 1.6J label (decision D4), and ``errorCode``,
+        ``vendorErrorCode`` and ``info`` are stored as sent.
+
+        Args:
+            connector_id: ``0`` for the whole charger, otherwise the gun number.
+            error_code: OCPP 1.6 ``ChargePointErrorCode`` (``NoError`` included).
+            status: OCPP 1.6 ``ChargePointStatus`` label. Arrives as a plain
+                ``str`` at runtime, like the 2.0.1 handler.
+            timestamp: Time of the status change; **optional** in 1.6, so the
+                server's receive time is used when it is absent.
+            info: Free-text additional information.
+            vendor_error_code: Vendor-specific error code.
+            **_: Other optional OCPP fields (``vendor_id``) that are not stored.
+
+        Returns:
+            A valid empty response for StatusNotification.
+
+        Raises:
+            ValueError: If ``status`` is not one of the nine 1.6 statuses, or
+                ``timestamp`` has no timezone.
+            ChargingStationNotFoundError: If the station is not provisioned.
+            ChargingEvseNotFoundError: If the gun's EVSE is not provisioned.
+            ChargingConnectorNotFoundError: If the gun's connector is not
+                provisioned.
+
+        Side Effects:
+            Updates the station or connector row in an atomic transaction that
+            rolls back entirely on any error above; ``python-ocpp`` then
+            answers ``CALLERROR(InternalError)`` without closing the
+            connection (the same contract as the other handlers).
+        """
+        reported_status = ChargingConnectorStatus(status)
+        reported_at = (
+            parse_ocpp_timestamp(timestamp)
+            if timestamp is not None
+            else datetime.now(timezone.utc)
+        )
+        async with self.session_factory.begin() as db:
+            if connector_id == 0:
+                await charging_stations_service.update_charger_status(
+                    db,
+                    ocpp_identity=self.id,
+                    status=reported_status,
+                    status_updated_at=reported_at,
+                    error_code=error_code,
+                    vendor_error_code=vendor_error_code,
+                )
+            else:
+                _station_id, _evse_id, connector_uuid = (
+                    await charging_stations_service.resolve_ocpp16_topology(
+                        db,
+                        ocpp_identity=self.id,
+                        ocpp_connector_id=connector_id,
+                    )
+                )
+                await charging_stations_service.update_connector_status(
+                    db,
+                    connector_id=connector_uuid,
+                    status=reported_status,
+                    status_updated_at=reported_at,
+                    error_code=error_code,
+                    vendor_error_code=vendor_error_code,
+                    status_info=info,
+                )
+        return call_result.StatusNotification()

@@ -3,9 +3,8 @@
 Directory/descriptive metadata about a pre-provisioned station (location,
 power rating, connector standard, operating hours, maintenance status) is
 part of the active contract (F-C1). A connector's live OCPP-reported status
-(F-C2) is also part of the active contract now. Still excluded: heartbeat-based
-online/offline connection state, administrative status, and capability
-negotiation — that reliability path remains deferred (see
+(F-C2) is also part of the active contract now. Still excluded: administrative
+status and capability negotiation — that reliability path remains deferred (see
 ``docs/01-requirements/future.md`` items 27 and 28). The verbatim OCPP
 message log is the one exception to "no technical history": it stores raw
 frames, not derived status (see ``OcppMessageDirection``).
@@ -31,11 +30,30 @@ class ChargingStationMaintenanceStatus(str, enum.Enum):
 class ChargingConnectorStatus(str, enum.Enum):
     """Live status of a connector as reported by OCPP ``StatusNotification`` (F-C2).
 
-    These are OCPP 2.0.1's exact ``ConnectorStatusEnumType`` values (used as
-    the enum's values, not just its Python member names — see
-    ``models.py``'s ``enum_values()`` helper). OCPP 2.0.1 has no distinct
-    "Charging" status: ``Preparing``/``Charging``/``SuspendedEV``/
-    ``Finishing`` from OCPP 1.6J are all folded into ``OCCUPIED``.
+    The values are the exact labels the protocols use (stored as values, not
+    Python member names — see ``models.py``'s ``enum_values()`` helper):
+    OCPP 2.0.1's ``ConnectorStatusEnumType`` (``Available``, ``Occupied``,
+    ``Reserved``, ``Unavailable``, ``Faulted``) **plus** the five OCPP 1.6J
+    statuses that have no 2.0.1 equivalent, so a 1.6J charger's status is kept
+    exactly as it reported it (decision D4 of the OCPP 1.6J planner).
+
+    Busy rule: a connector is free **only** when ``AVAILABLE``. ``OCCUPIED``,
+    ``PREPARING``, ``CHARGING``, ``SUSPENDED_EV``, ``SUSPENDED_EVSE`` and
+    ``FINISHING`` are busy (``Suspended*`` are normal pauses, not faults);
+    ``RESERVED`` and ``UNAVAILABLE`` are not free either; ``FAULTED`` is not
+    free and needs attention.
+
+    Attributes:
+        AVAILABLE: Ready, no vehicle (both protocols).
+        OCCUPIED: 2.0.1's single "in use" status.
+        RESERVED: Booked (both protocols).
+        UNAVAILABLE: Out of service (both protocols).
+        FAULTED: Fault, cannot charge (both protocols).
+        PREPARING: 1.6J: plugged in or authorized, not yet delivering.
+        CHARGING: 1.6J: delivering power.
+        SUSPENDED_EV: 1.6J: connected, the vehicle paused the charge.
+        SUSPENDED_EVSE: 1.6J: connected, the charger paused the charge.
+        FINISHING: 1.6J: session ended, gun not yet removed.
     """
 
     AVAILABLE = "Available"
@@ -43,6 +61,11 @@ class ChargingConnectorStatus(str, enum.Enum):
     RESERVED = "Reserved"
     UNAVAILABLE = "Unavailable"
     FAULTED = "Faulted"
+    PREPARING = "Preparing"
+    CHARGING = "Charging"
+    SUSPENDED_EV = "SuspendedEV"
+    SUSPENDED_EVSE = "SuspendedEVSE"
+    FINISHING = "Finishing"
 
 
 class OcppMessageDirection(str, enum.Enum):

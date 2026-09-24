@@ -110,6 +110,10 @@ def to_charging_station_response(
         firmware_version=station.firmware_version,
         last_boot_at=station.last_boot_at,
         last_seen_at=station.last_seen_at,
+        charger_status=station.charger_status,
+        charger_status_updated_at=station.charger_status_updated_at,
+        charger_error_code=station.charger_error_code,
+        charger_vendor_error_code=station.charger_vendor_error_code,
         is_online=is_online,
         created_at=station.created_at,
         updated_at=station.updated_at,
@@ -918,6 +922,9 @@ async def update_connector_status(
     connector_id: UUID,
     status: ChargingConnectorStatus,
     status_updated_at: datetime,
+    error_code: str | None = None,
+    vendor_error_code: str | None = None,
+    status_info: str | None = None,
 ) -> None:
     """Record a connector's live status from an OCPP ``StatusNotification``. Public entry point for F-C2.
 
@@ -928,6 +935,9 @@ async def update_connector_status(
         status: New live status.
         status_updated_at: Timestamp the station reported, already parsed
             and normalized to UTC.
+        error_code: ``errorCode`` of the report (OCPP 1.6J), stored as sent.
+        vendor_error_code: ``vendorErrorCode`` of the report, if any.
+        status_info: Free-text ``info`` of the report, if any.
 
     Raises:
         ChargingConnectorNotFoundError: If the connector is not active.
@@ -937,6 +947,9 @@ async def update_connector_status(
         connector_id,
         status=status,
         status_updated_at=status_updated_at,
+        error_code=error_code,
+        vendor_error_code=vendor_error_code,
+        status_info=status_info,
     )
     if updated is None:
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
@@ -1093,4 +1106,91 @@ async def record_charger_boot(
         serial_number=serial_number,
         firmware_version=firmware_version,
         booted_at=booted_at.astimezone(timezone.utc),
+    )
+
+
+async def resolve_ocpp16_topology(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    ocpp_connector_id: int,
+) -> tuple[UUID, UUID, UUID]:
+    """Resolve an OCPP 1.6J connector number into internal topology IDs.
+
+    Rule:
+        OCPP 1.6J has no EVSE level, so gun ``n`` (``n >= 1``) is provisioned
+        as EVSE ``n`` holding connector ``1`` (decision D3 of the OCPP 1.6J
+        planner). Connector ``0`` means the whole charger and has no topology
+        row: callers must use ``update_charger_status`` for it instead.
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+        ocpp_connector_id: Connector number in the 1.6J message; must be
+            positive.
+
+    Returns:
+        Tuple ``(station_id, evse_id, connector_id)``.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``ocpp_connector_id`` is not positive.
+        ChargingStationNotFoundError: If the station is not pre-provisioned.
+        ChargingEvseNotFoundError: If EVSE ``n`` is not provisioned.
+        ChargingConnectorNotFoundError: If EVSE ``n`` has no connector ``1``.
+    """
+    if ocpp_connector_id < 1:
+        raise ChargingOcppMessageInputError(
+            "OCPP 1.6J connector 0 is the whole charger and has no topology row"
+        )
+    return await resolve_ocpp_topology(
+        db,
+        ocpp_identity=ocpp_identity,
+        ocpp_evse_id=ocpp_connector_id,
+        ocpp_connector_id=1,
+    )
+
+
+async def update_charger_status(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+    error_code: str | None,
+    vendor_error_code: str | None,
+) -> None:
+    """Record the status of the whole charger (OCPP 1.6J connector ``0``).
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Identity of the station that reported.
+        status: Reported status of the whole charger.
+        status_updated_at: Timestamp of the report, timezone-aware.
+        error_code: Reported ``errorCode``, stored as sent.
+        vendor_error_code: Reported ``vendorErrorCode``, or ``None``.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``status_updated_at`` lacks a
+            timezone.
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+
+    Side Effects:
+        Updates the station row within the caller's transaction; does not
+        commit or roll back.
+    """
+    if status_updated_at.tzinfo is None or status_updated_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("status_updated_at must have a timezone")
+    station = await repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    await repository.update_station_charger_status(
+        db,
+        station.station_id,
+        status=status,
+        status_updated_at=status_updated_at.astimezone(timezone.utc),
+        error_code=error_code,
+        vendor_error_code=vendor_error_code,
     )
