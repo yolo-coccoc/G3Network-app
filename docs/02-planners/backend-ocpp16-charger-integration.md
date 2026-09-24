@@ -1063,6 +1063,10 @@ passed.
 - Which unhandled inbound actions deserve trivial ACK handlers.
 - Whether `ChangeConfiguration` for the meter interval is needed (acceptance
   item 5) and therefore whether the command channel moves up.
+- Which start flow a **card tap** really produces (`Authorize` → `StartTransaction`,
+  or `StartTransaction` alone) and whether any message outside the seven handled ones
+  (`DataTransfer`, `FirmwareStatusNotification`, `DiagnosticsStatusNotification`…) is sent
+  (`future.md` #81; evidence queries 1 and 2). The documents describe only the app/QR flow.
 - Whether `StatusNotification` / `StartTransaction` also need JSON-schema
   validation switched off (Step 7b did it only for `MeterValues` and
   `StopTransaction`): a non-standard `errorCode` or `status` from the real

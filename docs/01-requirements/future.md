@@ -1867,6 +1867,47 @@ The items below are actual deferral decisions made in the repo, not placeholders
 - **Additional notes**: Needs the real power-allocation behaviour verified
   first (`Power.Offered` per gun, Step 7b).
 
+### 81. Unverified assumptions about the charger's OCPP message set and start flow
+
+- **Short description**: Three things about what the Willdigits charger sends that the
+  specification documents do not settle, to be confirmed from the real charger's raw log
+  (planner Step 10) and only then acted on:
+  1. **The documents give each message's purpose, not its fields.** The field lists the
+     backend relies on (for example `StartTransaction` carrying `connectorId`, `idTag`,
+     `meterStart`, `timestamp`) come from the OCPP 1.6 JSON schema shipped with the `ocpp`
+     library, not from the vendor manual or the G3 handover document.
+  2. **The only step-by-step session sequence in the documents is the app/QR flow, not the
+     card flow.** The handover document's reference session (§5.1, "Chuỗi message của một phiên
+     hoàn chỉnh"; summary §4.4) starts with `RemoteStartTransaction` after the driver scans a QR
+     code. What a **card tap** produces (`Authorize` → `StartTransaction`, or no `Authorize` at
+     all because of a local whitelist / `LocalAuthorizeOffline` / Autocharge) is described in
+     neither document in OCPP terms; the backend's card-flow behaviour follows the OCPP 1.6
+     standard, not the vendor.
+  3. **The message list is what the spec promises, not what the charger sends.** The documents
+     name seven charger-initiated messages (`BootNotification`, `Heartbeat`,
+     `StatusNotification`, `Authorize`, `StartTransaction`, `StopTransaction`, `MeterValues`)
+     plus `DataTransfer` and `FirmwareStatusNotification`. The gateway handles the seven;
+     `DataTransfer`, `FirmwareStatusNotification` and the standard-but-unmentioned
+     `DiagnosticsStatusNotification` are answered `CALLERROR NotImplemented` and kept in the raw
+     message log.
+- **Purpose/role in the system**: Avoids building on a guess. A wrong assumption about the
+  start flow (point 2) or an unhandled message the charger insists on (point 3) would show up
+  as a session that never starts or a charger that misbehaves, and point 1 decides whether the
+  backend reads the fields it expects.
+- **Reason for deferral**: It cannot be answered without the hardware, and the planner's rule is
+  to replace assumptions with real logs before changing the design (decision D14, Step 10).
+  Adding speculative handlers now would be code for messages nobody has seen.
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md` (Step 10), F-G2, F-B2, F-H1, open-questions #4,
+  `docs/03-specifications/charging-station-specification-summary.md` §4.1 and §4.4.
+- **Date recorded**: 2026-09-25
+- **Additional notes**: When the real charger is connected, use the Step 10 evidence queries 1
+  (messages by action) and 2 (errors the gateway answered). Then: (a) confirm the field names
+  and value forms in the raw frames; (b) note whether a card tap sends `Authorize` and record
+  the observed card-flow sequence in the spec summary; (c) add a minimal acknowledgement handler
+  only for a message actually seen (for example `FirmwareStatusNotification` or
+  `DiagnosticsStatusNotification` need only an empty reply; `DataTransfer` needs a documented
+  `status`). The QR/app flow itself needs `RemoteStartTransaction`, which is item 74.
+
 ---
 
 ## Update rules

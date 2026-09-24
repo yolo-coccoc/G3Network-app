@@ -327,6 +327,8 @@ Not every key is writable; fixed ones answer `readOnly`. **Record which keys are
 ## 4.4 A complete session — the reference sequence
 Compare every real log with this and record every deviation.
 
+> **Which flow this is:** this is the handover document's reference session (doc A §5.1), and it is the **app/QR flow** — step 4 is the backend sending `RemoteStartTransaction`. The **card flow** (driver taps an RFID card at the charger) is described in neither source document in OCPP terms; the manual only says how the card is used (§6.2 step 4, §6.3). Expect `Authorize` → `StartTransaction` from the OCPP 1.6 standard, unconfirmed for this charger (`future.md` #81).
+
 | # | Event | Message | Note |
 |---|---|---|---|
 | 1 | Charger boots | `BootNotification` → Accepted | CSMS returns `currentTime` and `interval` |
