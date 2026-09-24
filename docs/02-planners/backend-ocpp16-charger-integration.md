@@ -3,10 +3,11 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–6 **done** on 2026-09-24 (decisions,
+> Status: 🚧 In progress — Steps 0–6 and 7a **done** on 2026-09-24 (decisions,
 > raw OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat
 > and liveness — **milestone M1 reached** —, StatusNotification and the
-> transaction lifecycle); Step 7 (measurements, M2) is next
+> transaction lifecycle) and Step 7a (unified measurement storage); Step 7b
+> (1.6J MeterValues, M2) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -716,12 +717,18 @@ Do not add any 1.6J code or store any new measurand in this step.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Integration: migrate to `0024`, insert energy rows, upgrade to `0025` → row count and values equal; downgrade restores them; new table is a hypertable and the old one is gone
-- [ ] Regression: run the 2.0.1 simulator **before and after** the change on the same inputs; `/charging-sessions/{id}`, `/events`, `/meter-values` return identical values
-- [ ] No reference to `charging_session_meter_values` remains in code (`rg`)
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (138 source files), `compileall`, `git diff --check` — clean
+- [x] Unit (`tests/test_charging_measurements_smoke.py` and the updated `test_service_smoke.py`; 306 tests pass): `ingest_meter_values` stores the energy register as measurand `Energy.Active.Import.Register`, unit `Wh`, with its `context` (`None` for the 2.0.1 path) and still updates the session aggregate; the F-B2 tests (stale sample discarded, equal timestamp applies, decreasing register still applies, COMPLETED refused) pass unchanged apart from the renamed repository function; the `/meter-values` response keeps exactly `meter_value_id`, `sampled_at`, `session_id`, `value_wh`, rendered with three decimals as before
+- [x] Integration (`RUN_DB_INTEGRATION=1`, temporary database): a dedicated test migrates to `0024`, inserts two real energy samples into the old table, upgrades to `0025` — **same IDs, same order, same values, `measurand`/`unit` set, old table gone** — inserts a `SoC` measurement, downgrades — **the two energy rows are restored, the SoC row is dropped** — and upgrades again; the migration cycle reaches head `0025_charging_measurements`; `charging_session_measurements` is a hypertable and `charging_session_meter_values` no longer exists
+- [x] Regression (live, real gateway + API, 2.0.1 simulator): the session is `completed`, 1000 → 1500 Wh, 500 Wh delivered; `/meter-values` returns `1250` and `1500` (total 2); `/events` returns `Started, Updated, Ended`; the F-C5 station energy report says 0.5 kWh over 1 session — identical to the baseline recorded in `backend-charging-mvp-ideal.md` (Step 6). The measurements table holds the two rows as energy/`Wh`
+- [x] No reference to the table or model `charging_session_meter_values` / `ChargingSessionMeterValueModel` remains in the code (`rg`; only the repository/service/router *function* names `…meter_values…` remain, which are the unchanged `/meter-values` view)
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 7a is done.
+
+- Migration `0025_charging_measurements` (data-preserving): creates the hypertable `charging_session_measurements` (`measurement_id`, `sampled_at`, `session_id`, `measurand`, `value Numeric(24,6)`, `unit`, `context`, `phase`, `location`; index `(session_id, measurand, sampled_at)`), copies every energy row, drops `charging_session_meter_values`. The downgrade recreates the old table and restores **only** energy rows (documented; other measurements are lost).
+- `ChargingSessionMeterValueModel` → `ChargingSessionMeasurementModel`; repository `insert_meter_value` → `insert_measurement`; the list/count queries behind `/meter-values` filter on the energy measurand; `MeterSampleInput` gained an optional `context`; new constants `ENERGY_ACTIVE_IMPORT_REGISTER` and `ENERGY_UNIT_WH` in `charging_sessions/types.py`; `ingest_meter_values`' public signature and behaviour are unchanged. Alembic's `env.py` imports the new model. F-C5 is untouched (it reads the session aggregate).
+- One detail found during the live regression: the new column keeps six decimals, so `value_wh` would have rendered as `1250.000000`; the response mapper quantises to three decimals so the API output stays byte-identical, and a unit test pins the string.
+- The dev database held no meter samples, so its migration moved nothing; the data copy was proven on the temporary database. Not done here, by design: any 1.6J code and any non-energy measurand (Step 7b).
 
 #### Step 7b — 1.6J MeterValues and extra measurands
 
