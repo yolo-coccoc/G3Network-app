@@ -3,9 +3,10 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–4 **done** on 2026-09-24 (decisions,
+> Status: 🚧 In progress — Steps 0–5 **done** on 2026-09-24 (decisions,
 > raw OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat
-> and liveness — **milestone M1 reached**); Step 5 (StatusNotification) is next
+> and liveness — **milestone M1 reached** — and StatusNotification); Step 6
+> (transactions) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -565,13 +566,21 @@ Do not add any alerting.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke: all 9 statuses are accepted and stored as sent, `Occupied` still works for 2.0.1; all 16 error codes stored; connector `0` writes the station columns and never touches topology; missing `timestamp`; unknown status raises; unprovisioned connector → error; 2.0.1 `StatusNotification` unaffected
-- [ ] Regression: `GET /charging-stations/nearby` results unchanged; the 2.0.1 simulator's `Occupied` status still stores
-- [ ] Integration: migration cycle
-- [ ] Live: simulator statuses for 0/1/2 → connector API shows the exact 1.6 `status` + error fields; station shows `charger_status`
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (134 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp16_status_smoke.py`; 277 tests pass in total): the enum has exactly ten values (the nine 1.6J statuses + `Occupied`) and every 1.6 label converts directly; each of the nine statuses and all 16 standard error codes (`NoError` included) are stored exactly as sent, together with `vendorErrorCode` and `info`; gun `n` resolves to EVSE `n` / connector `1`; connector `0` writes only the station columns and never touches topology; a missing `timestamp` uses the receive time; an unknown status raises before any transaction opens; a naive timestamp is rejected; an unprovisioned gun propagates the error; connector `0`/negatives are rejected by the resolver; the service forwards the new fields (omitting them stores `NULL`); connector and station responses expose the new fields; the **2.0.1 `StatusNotification` handler is unchanged** (still stores `Occupied`, passes no error fields)
+- [x] Integration (`RUN_DB_INTEGRATION=1`): the migration cycle reaches head `0023_charging_status_details`, and a dedicated test **downgrades with data present** — a connector holding `SuspendedEVSE` becomes `Occupied`, the enum is rebuilt to five values, the new columns disappear — then upgrades again and all ten values are back
+- [x] Regression: the F-D1/F-A2 nearby-station code is untouched and its tests pass; the station list endpoint still works live; the 2.0.1 simulator path is exercised by the unchanged 2.0.1 handler test
+- [x] Live (real gateway + API, dev database, 1.6J simulator, station provisioned with EVSE 1/connector 1 and EVSE 2/connector 1): the `status` scenario gets 12 ACK / 0 CALLERROR; the station shows `charger_status=Faulted`, `PowerMeterFailure`, vendor `23`; gun 1 ends `Available`/`NoError`, gun 2 `Faulted`/`ConnectorLockFailure`/vendor `3`/info `gun lock failed`; a raw client then sent **all nine statuses and all 16 error codes** and read every one back exactly as sent (0 mismatches); an unprovisioned gun 9, an unknown status and a timestamp without timezone all returned a `CALLERROR` and changed nothing; `charging_stations.updated_at` stayed untouched
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 5 is done.
+
+- Migration `0023_charging_status_details`: `ALTER TYPE chargingconnectorstatus ADD VALUE` for the five 1.6J statuses (in Alembic's `autocommit_block`), `charging_connectors.error_code/vendor_error_code/status_info`, and `charging_stations.charger_status/charger_status_updated_at/charger_error_code/charger_vendor_error_code` (connector 0). The downgrade rebuilds the enum as planned.
+- `ChargingConnectorStatus` widened (docstring rewritten with the busy rule); models, connector and station response schemas extended.
+- `update_connector_status` (repository and service) gained optional keyword-only `error_code`, `vendor_error_code`, `status_info` — a report without them **clears** the old values because the latest report is the truth; new `update_station_charger_status`, `update_charger_status`, and `resolve_ocpp16_topology` (gun `n` → EVSE `n` / connector `1`).
+- `OCPP16ChargePoint.on_status_notification` handles connector `0` and guns `n ≥ 1`. **No mapping function was needed** — the enum values are the 1.6 labels (a simplification versus the original plan's `to_canonical_connector_status_v16`).
+- Simulator: new `status` scenario (charger + every gun through a charging cycle, one report without timestamp, a gun fault and a charger fault).
+- Note: an unknown `status` label is rejected by the library's JSON-schema validation (`FormatViolation`) before the handler runs — still loud, and the handler's own `ValueError` remains as a second guard.
+- Not done, by design: alerting on faults (`future.md` #75), invalidating stale statuses when a charger goes offline (`future.md` #76), 2.0.1 error details (`future.md` #78). `docs/01-requirements/feature-list.md` F-C2's note about statuses being "folded into `Occupied`" is now outdated — it is rewritten in Step 11.
 
 **Future:** fault alerting and the vendor 80-code catalog; stale-status invalidation and availability from `is_online` → `future.md` #75 and #76 (extends #37/#49).
 
