@@ -829,11 +829,13 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
 - **Status:** 🚧 In progress — session data over OCPP 2.0.1 (`TransactionEvent`/`MeterValues`)
-  works, and connector status is now handled too (`StatusNotification`, F-C2). What's left is
-  blocked on business decisions, not further software work: OCPP 1.6J is not implemented at all
-  (only `ocpp.v201` is used) — committing to a version at station procurement is unresolved
-  ("Items needing confirmation" #11) — and the NF-05 production security profile isn't finalized
-  (dev mode intentionally allows no TLS/no auth, per `tech-decisions.md`)
+  works, and connector status is now handled too (`StatusNotification`, F-C2). OCPP 1.6J support
+  is **planned** (decided 2026-09-24: added alongside 2.0.1, one adapter per protocol) because the
+  first real charger (Willdigits DC) speaks 1.6J — see
+  `docs/02-planners/backend-ocpp16-charger-integration.md`; it is not implemented yet and 2.0.1
+  keeps working. "Items needing confirmation" #11 is answered for this first hardware. Still open:
+  the NF-05 production security profile (dev mode intentionally allows no TLS/no auth, per
+  `tech-decisions.md`) and remote commands from the API
 
 ### F-G3 Data pipeline (ETL)
 - **Actor:** System
@@ -964,5 +966,8 @@ included.
     phase)*
 11. **OCPP version requirement at procurement (F-G2):** commit to 1.6J only, or require 2.0.1
     support at first purchase? *(PRD ref: Q8)*
+    *(Answered for the first hardware, 2026-09-24: the Willdigits charger speaks 1.6J and the
+    backend will support 1.6J alongside 2.0.1 — see F-G2. The procurement policy for later
+    purchases remains open.)*
 12. **Driving-score coverage under NF-20 (F-K1):** should the "model must be retrainable" quality
     bar that explicitly covers F-A7/F-C7/F-D6 also apply to the driver safety-scoring model?

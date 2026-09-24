@@ -1712,6 +1712,149 @@ The items below are actual deferral decisions made in the repo, not placeholders
   instead of inventing a field with that name. F-E3 and F-A8 remain
   separately blocked (items above) even once this item is resolved.
 
+### 73. OCPP transport security for real chargers
+
+- **Short description**: Encrypt and authenticate the charger's WebSocket
+  connection: `wss://` (TLS certificates on the gateway or a terminating
+  proxy), per-charger credentials (Basic Auth or client certificate), or a
+  VPN/private APN for the charger SIMs as the fallback.
+- **Purpose/role in the system**: Charging data and control commands cross
+  public 4G; today the URL identity is the only check, so anyone who knows a
+  provisioned identity can impersonate that charger.
+- **Reason for deferral**: The vendor has not confirmed whether the charger
+  supports `wss://` or which authentication scheme (open-questions #4);
+  building the wrong scheme would be wasted work. Dev mode intentionally
+  allows no TLS/no auth (`tech-decisions.md`, decision D12 of the planner).
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, F-G2, NF-05.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Resume once the vendor answers. Changing the HMI
+  default password (`77777777`) is an on-site procedure, not part of this
+  item. Also decides whether a reverse proxy/TLS terminator becomes part of
+  the infra (currently none, by decision).
+
+### 74. CSMS remote commands over OCPP and the command channel
+
+- **Short description**: Let the backend send commands to a connected charger:
+  `RemoteStartTransaction`/`RemoteStopTransaction`, on-demand
+  `GetConfiguration`/`ChangeConfiguration`, `TriggerMessage`, `Reset`,
+  `UnlockConnector`, `ChangeAvailability`, and, if the charger supports the
+  profile, Smart Charging, firmware/diagnostics and reservation.
+- **Purpose/role in the system**: Scan-to-charge (F-H1), load balancing
+  (F-C7), remote reservation (F-C4), tuning the `MeterValues` interval and
+  recovering stuck guns all need the CSMS to initiate calls.
+- **Reason for deferral**: The OCPP gateway is a separate OS process from the
+  API, so an HTTP request needs a cross-process channel to reach the open
+  socket (a design decision of its own). Which optional OCPP profiles the
+  charger supports is unconfirmed. The 1.6J planner builds only an automatic
+  post-boot `GetConfiguration` (decision D10).
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, item 26, F-G2, F-H1, F-C4, F-C7.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: `python-ocpp`'s receive loop is sequential; a call
+  must never be awaited inside a handler (schedule a task). Until this
+  exists, use an external OCPP test tool (e.g. SteVe) for probes that need
+  commands. Several of the spec's acceptance items (8, 9, 12-16) cannot be
+  verified through this backend without it.
+
+### 75. Charger fault alerting and error-code catalog
+
+- **Short description**: Turn `errorCode`/`vendorErrorCode` from
+  `StatusNotification` into actions: notifications, automatic support tickets,
+  blocking a gun (`GroundFailure`, `HighTemperature`), and suspending billing
+  and flagging the session as suspect on meter faults (`PowerMeterFailure`
+  and the vendor meter codes). Includes the catalog mapping the vendor's 80
+  internal codes to descriptions.
+- **Purpose/role in the system**: Operations must learn about charger faults
+  without reading the database; billing must not trust a session measured
+  by a failing meter.
+- **Reason for deferral**: The planner only stores the error fields
+  (nothing is discarded). The vendor's mapping table is incomplete
+  (duplicate/blank entries) and has been requested (open-questions #4);
+  which faults raise which alert is an operations policy decision.
+  `notification_type` has no charging types yet.
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, F-C2, F-J1, notifications, `support`.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Stop reasons #66-#69 in the manual are normal or
+  BMS-initiated completions, not faults - the catalog must classify them.
+
+### 76. Stale connector status and online-aware availability
+
+- **Short description**: Handle a charger that goes offline: flag or
+  invalidate its last-reported connector statuses, and make F-A2/F-D1
+  "available" depend on `is_online` and connector status.
+- **Purpose/role in the system**: An offline charger keeps its last status
+  forever (the vendor's own platform shows the same trap), so drivers could
+  be routed to an unreachable or occupied charger.
+- **Reason for deferral**: The 1.6J planner exposes a derived `is_online`
+  and stores the full status but does not change any availability query
+  (extends items 37 and 49). What "available" means (any available
+  connector, or a minimum count) is a business decision.
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, items 37 and 49, F-A2, F-D1, F-C2.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: `ChargingConnectorStatus` now carries the 1.6J
+  values in addition to 2.0.1's `Occupied` (decision D4). The busy rule when
+  this is built: a gun is free only when `Available`; `Preparing`,
+  `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing` and `Occupied` are
+  busy, and `Suspended*` are normal, not faults.
+
+### 77. Non-transaction (station-level, clock-aligned) metering
+
+- **Short description**: Handle `MeterValues` without a `transactionId`,
+  such as clock-aligned samples (target 900 s) used for time-of-use tariffs.
+- **Purpose/role in the system**: Energy per time-of-day slot and
+  station-level readings that don't belong to a charging session.
+- **Reason for deferral**: The tariff design (F-C8) does not exist; sessions
+  are the only metering unit today. Such messages are kept only in the raw
+  OCPP log for now and counted in a debug log.
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, F-C8, F-C5, NF-19.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Requires setting `ClockAlignedDataInterval` and
+  `MeterValuesAlignedData` on the charger, i.e. item 74.
+
+### 78. OCPP 2.0.1 parity for the 1.6J work
+
+- **Short description**: Give the 2.0.1 path what the 1.6J path gets:
+  `BootNotification` handling and device info, stop reason, `idToken`,
+  non-energy measurements, connector error details.
+- **Purpose/role in the system**: Consistent data regardless of protocol.
+- **Reason for deferral**: No 2.0.1 hardware exists; only the simulator uses
+  that path (decision D13). The 2.0.1 gateway changes only where shared code
+  forces it (raw log, negotiation, last-seen, unified energy storage).
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, F-G2, F-B2, item 62.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: The unified `charging_session_measurements` table
+  already accepts non-energy measurands; only the 2.0.1 extraction is missing.
+
+### 79. Raw OCPP message log: read API and retention
+
+- **Short description**: A read-only API (or admin query tool) for
+  `charging_ocpp_messages`, and a TimescaleDB retention policy for it.
+- **Purpose/role in the system**: Dispute investigation and vendor-deviation
+  analysis without direct database access; bounded storage growth.
+- **Reason for deferral**: Nothing consumes it beyond SQL yet. The frames
+  contain RFID `idTag`s (later VINs), so any API needs access control, which
+  the backend does not have (no `identity` domain yet). Retention needs a
+  business decision (billing evidence may need years, cf. NF-19/NF-11).
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, item 48 (similar retention question),
+  NF-11.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Do not log raw frames to application logs.
+
+### 80. Per-gun power and connector standard in the station directory
+
+- **Short description**: Model power rating and connector standard per
+  connector/EVSE instead of one value per station, including power sharing
+  between guns.
+- **Purpose/role in the system**: A 240 kW dual-gun charger delivers about
+  120 kW per gun when both are in use; the vendor's other units show `GBT`
+  connectors, so a mixed-standard station is possible.
+- **Reason for deferral**: `power_rating_kw` and `connector_standard` are
+  deliberately station-level aggregates (F-C1, item 28); F-D1's filters read
+  them. Fine for the MVP; only visible with real data.
+- **Related planner/feature**: `docs/02-planners/backend-ocpp16-charger-integration.md`, F-C1, F-D1, item 28.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Needs the real power-allocation behaviour verified
+  first (`Power.Offered` per gun, Step 7b).
+
 ---
 
 ## Update rules
