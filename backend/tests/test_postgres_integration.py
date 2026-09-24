@@ -4,7 +4,8 @@ import os
 import subprocess
 import sys
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -155,7 +156,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                                 'charging_stations', 'charging_evses',
                                 'charging_connectors', 'charging_sessions',
                                 'charging_session_events',
-                                'charging_session_meter_values',
+                                'charging_session_measurements',
                                 'charging_ocpp_messages'
                             )
                             """))).scalars())
@@ -173,11 +174,134 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # Pinned to the current Alembic head. This assertion was stale
         # (hardcoded to an old head) until F-B2 - it went unnoticed only
         # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0024_charging_session_fields"
+        assert version == "0025_charging_measurements"
         assert len(tables) == 10
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
         assert "charging_ocpp_messages" in hypertables
+        assert "charging_session_measurements" in hypertables
+        assert "charging_session_meter_values" not in hypertables
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_measurements_migration_copies_energy_rows_and_downgrade_restores_only_energy(
+    temporary_database: str,
+) -> None:
+    """The unification keeps every existing energy sample; downgrading keeps only energy.
+
+    The database is first taken back to 0024 (the old ``charging_session_meter_values``
+    table), given real samples, upgraded to 0025 and then downgraded again.
+    """
+    now = datetime.now(timezone.utc)
+    station_id, evse_id, connector_id, session_id = uuid4(), uuid4(), uuid4(), uuid4()
+    sample_ids = [uuid4(), uuid4()]
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    try:
+        _run_alembic(temporary_database, "downgrade", "0024_charging_session_fields")
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
+                    "maintenance_status, created_at, updated_at) "
+                    "VALUES (:s, :i, 'x', 'OPERATIONAL', :t, :t)"
+                ),
+                {"s": station_id, "i": f"IT-{uuid4().hex[:12]}", "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, created_at, updated_at) VALUES (:e, :s, 1, :t, :t)"
+                ),
+                {"e": evse_id, "s": station_id, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connectors (connector_id, evse_id, ocpp_connector_id, created_at, updated_at) VALUES (:c, :e, 1, :t, :t)"
+                ),
+                {"c": connector_id, "e": evse_id, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_sessions (session_id, station_id, evse_id, connector_id, "
+                    "ocpp_transaction_id, status, started_at, created_at, updated_at) "
+                    "VALUES (:x, :s, :e, :c, 'TX-IT', 'active', :t, :t, :t)"
+                ),
+                {
+                    "x": session_id,
+                    "s": station_id,
+                    "e": evse_id,
+                    "c": connector_id,
+                    "t": now,
+                },
+            )
+            for index, sample_id in enumerate(sample_ids):
+                await connection.execute(
+                    text(
+                        "INSERT INTO charging_session_meter_values "
+                        "(meter_value_id, sampled_at, session_id, value_wh) "
+                        "VALUES (:m, :at, :x, :v)"
+                    ),
+                    {
+                        "m": sample_id,
+                        "at": now + timedelta(seconds=index),
+                        "x": session_id,
+                        "v": Decimal("1250.500") + index,
+                    },
+                )
+
+        _run_alembic(temporary_database, "upgrade", "0025_charging_measurements")
+
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT measurement_id, measurand, value, unit, context "
+                        "FROM charging_session_measurements ORDER BY sampled_at"
+                    )
+                )
+            ).all()
+            old_table_exists = await connection.scalar(
+                text("SELECT to_regclass('charging_session_meter_values') IS NOT NULL")
+            )
+        assert old_table_exists is False
+        assert [
+            row.measurement_id for row in rows
+        ] == sample_ids  # same IDs, same order
+        assert [row.value for row in rows] == [Decimal("1250.5"), Decimal("1251.5")]
+        assert {(row.measurand, row.unit, row.context) for row in rows} == {
+            ("Energy.Active.Import.Register", "Wh", None)
+        }
+
+        # A non-energy measurement cannot be represented in the old table.
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_session_measurements "
+                    "(measurement_id, sampled_at, session_id, measurand, value, unit) "
+                    "VALUES (:m, :at, :x, 'SoC', 80, 'Percent')"
+                ),
+                {"m": uuid4(), "at": now, "x": session_id},
+            )
+
+        _run_alembic(temporary_database, "downgrade", "0024_charging_session_fields")
+
+        async with engine.connect() as connection:
+            restored = (
+                await connection.execute(
+                    text(
+                        "SELECT meter_value_id, value_wh FROM charging_session_meter_values "
+                        "ORDER BY sampled_at"
+                    )
+                )
+            ).all()
+        assert [row.meter_value_id for row in restored] == sample_ids
+        assert [row.value_wh for row in restored] == [
+            Decimal("1250.500"),
+            Decimal("1251.500"),
+        ]  # the SoC row is gone: only energy fits the old table
+
+        _run_alembic(temporary_database, "upgrade", "head")
     finally:
         await engine.dispose()
 

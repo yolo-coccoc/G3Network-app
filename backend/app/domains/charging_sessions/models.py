@@ -1,7 +1,8 @@
 """Minimal SQLAlchemy models for the charging session lifecycle happy path.
 
-The module only stores the session aggregate, TransactionEvent history and
-canonical Wh energy samples for the ideal MVP.
+The module stores the session aggregate, TransactionEvent history and the
+measurements (canonical Wh energy samples and, for OCPP 1.6J, other measurands)
+of each session.
 """
 
 from datetime import datetime, timezone
@@ -196,29 +197,39 @@ class ChargingSessionEventModel(Base):
     )
 
 
-class ChargingSessionMeterValueModel(Base):
-    """A canonical Wh energy sample for the session, stored as a hypertable.
+class ChargingSessionMeasurementModel(Base):
+    """One measurement of a session, stored as a hypertable.
+
+    Holds every measurand a charger reports during a session — the cumulative
+    energy register that drives the session total, and any other reading —
+    for both OCPP protocols. Normalization (measurand filtering, unit and
+    multiplier conversion) is owned by the OCPP adapter; this table only ever
+    stores the canonical result, never the raw pre-normalization payload (see
+    the raw OCPP message log for that).
 
     Attributes:
-        meter_value_id: Internal UUID of the sample.
+        measurement_id: Internal UUID of the measurement.
         sampled_at: The time of measurement; also the time partitioning key.
         session_id: The UUID of the session aggregate that owns the sample.
-        value_wh: The meter reading normalized to Wh. Normalization
-            (measurand filtering, unit/multiplier conversion) is owned by
-            the OCPP adapter (F-B2,
-            ``charging_stations.ocpp.ocpp_server.normalize_sampled_value_to_wh``)
-            - this table only ever stores the canonical result, never the
-            raw pre-normalization payload (see ``future.md`` item 27 for
-            the deferred raw-payload audit trail).
+        measurand: What was measured, as an OCPP measurand name
+            (``Energy.Active.Import.Register``, ``SoC``, ``Power.Active.Import``…).
+            Vendor-specific names are stored as sent.
+        value: The reading. For the energy register it is canonical Wh; every
+            other measurand keeps the value as sent, in ``unit``.
+        unit: The unit of ``value`` (``Wh`` for the energy register), nullable.
+        context: OCPP reading context (``Sample.Periodic``,
+            ``Transaction.End``…), nullable.
+        phase: Electrical phase the value refers to, nullable.
+        location: Where it was measured (``EV``, ``Outlet``…), nullable.
     """
 
-    __tablename__ = "charging_session_meter_values"
+    __tablename__ = "charging_session_measurements"
 
-    meter_value_id: Mapped[UUID] = mapped_column(
+    measurement_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True), primary_key=True, default=uuid4
     )
     # Sample time is both the axis for historical queries and the
-    # hypertable's partition key; meter_value_id preserves uniqueness when
+    # hypertable's partition key; measurement_id preserves uniqueness when
     # two samples share a timestamp.
     sampled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), primary_key=True, nullable=False
@@ -228,12 +239,17 @@ class ChargingSessionMeterValueModel(Base):
         ForeignKey("charging_sessions.session_id", ondelete="RESTRICT"),
         nullable=False,
     )
-    value_wh: Mapped[Decimal] = mapped_column(Numeric(24, 3), nullable=False)
+    measurand: Mapped[str] = mapped_column(String(60), nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    context: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    phase: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(20), nullable=True)
     __table_args__ = (
         Index(
-            "ix_charging_meter_session_sampled",
+            "ix_charging_measurements_session_measurand_time",
             "session_id",
+            "measurand",
             "sampled_at",
-            "meter_value_id",
         ),
     )

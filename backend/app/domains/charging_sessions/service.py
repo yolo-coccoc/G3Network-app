@@ -29,7 +29,7 @@ from app.domains.charging_sessions.exceptions import (
 )
 from app.domains.charging_sessions.models import (
     ChargingSessionEventModel,
-    ChargingSessionMeterValueModel,
+    ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
 from app.domains.charging_sessions.schemas import (
@@ -42,6 +42,8 @@ from app.domains.charging_sessions.schemas import (
     StationEnergySummaryResponse,
 )
 from app.domains.charging_sessions.types import (
+    ENERGY_ACTIVE_IMPORT_REGISTER,
+    ENERGY_UNIT_WH,
     MeterIngestResult,
     MeterSampleInput,
     SessionEventType,
@@ -377,17 +379,27 @@ def to_charging_session_event_response(
 
 
 def to_charging_session_meter_value_response(
-    meter_value: ChargingSessionMeterValueModel,
+    measurement: ChargingSessionMeasurementModel,
 ) -> ChargingSessionMeterValueResponse:
-    """Convert an ORM meter sample into the monitoring response schema.
+    """Convert an energy measurement into the ``/meter-values`` response schema.
+
+    The response contract predates the unified measurements table and is kept
+    unchanged: ``value_wh`` is the measurement's canonical Wh ``value``, shown
+    with three decimals like the ``Numeric(24, 3)`` column it used to come
+    from (the new column keeps six for non-energy measurands).
 
     Args:
-        meter_value: The ORM meter sample already queried by the repository.
+        measurement: An energy-register measurement queried by the repository.
 
     Returns:
         A canonical Wh meter response.
     """
-    return ChargingSessionMeterValueResponse.model_validate(meter_value)
+    return ChargingSessionMeterValueResponse(
+        meter_value_id=measurement.measurement_id,
+        sampled_at=measurement.sampled_at,
+        session_id=measurement.session_id,
+        value_wh=measurement.value.quantize(Decimal("0.001")),
+    )
 
 
 async def ingest_transaction_event(
@@ -587,11 +599,14 @@ async def ingest_meter_values(
     value_wh = _energy(sample.value_wh, "value_wh")
     if value_wh is None:
         raise ChargingSessionInputError("value_wh is required")
-    await repository.insert_meter_value(
+    await repository.insert_measurement(
         db,
         session_id=session.session_id,
         sampled_at=sampled_at,
-        value_wh=value_wh,
+        measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
+        value=value_wh,
+        unit=ENERGY_UNIT_WH,
+        context=sample.context,
     )
     _apply_charging_session_meter_end(session, value_wh, sampled_at)
 

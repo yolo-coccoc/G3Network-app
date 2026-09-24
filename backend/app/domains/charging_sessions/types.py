@@ -16,7 +16,15 @@ import enum
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Final
 from uuid import UUID
+
+# The measurand whose canonical form (Wh) drives a session's energy total. Every
+# other measurand is stored beside it in the same measurements table.
+ENERGY_ACTIVE_IMPORT_REGISTER: Final[str] = "Energy.Active.Import.Register"
+# Unit of every stored energy-register value: the OCPP adapter normalizes
+# Wh/kWh into Wh before the value reaches this domain.
+ENERGY_UNIT_WH: Final[str] = "Wh"
 
 
 class SessionStatus(str, enum.Enum):
@@ -52,10 +60,14 @@ class MeterSampleInput:
     Attributes:
         sampled_at: The time the sample occurred, timezone-aware.
         value_wh: The energy value in Wh.
+        context: The reading context (OCPP ``ReadingContext``, for example
+            ``Sample.Periodic`` or ``Transaction.End``), if the protocol
+            carries one.
     """
 
     sampled_at: datetime
     value_wh: Decimal
+    context: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

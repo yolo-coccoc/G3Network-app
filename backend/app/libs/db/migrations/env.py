@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 # as a comment in the domain.
 from app.domains.charging_sessions.models import (  # noqa: F401
     ChargingSessionEventModel,
-    ChargingSessionMeterValueModel,
+    ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
 from app.domains.charging_stations.models import (  # noqa: F401

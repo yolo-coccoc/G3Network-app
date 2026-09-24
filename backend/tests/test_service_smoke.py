@@ -1797,7 +1797,7 @@ async def test_charging_service_runs_started_meter_ended_flow(
         inserted_events.append(cast(SessionEventType, kwargs["event_type"]))
 
     async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        inserted_meters.append(cast(Decimal, kwargs["value_wh"]))
+        inserted_meters.append(cast(Decimal, kwargs["value"]))
 
     monkeypatch.setattr(charging_repository, "create_session", create_session)
     monkeypatch.setattr(
@@ -1805,7 +1805,7 @@ async def test_charging_service_runs_started_meter_ended_flow(
     )
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
     monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
     monkeypatch.setattr(charging_repository, "utc_now", lambda: now)
 
     started = await charging_service.ingest_transaction_event(
@@ -2000,10 +2000,10 @@ async def test_ingest_meter_values_rejects_sample_on_completed_session(
         return session
 
     async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert_meter_value must not run on a COMPLETED session")
+        raise AssertionError("insert_measurement must not run on a COMPLETED session")
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", fail_if_called)
+    monkeypatch.setattr(charging_repository, "insert_measurement", fail_if_called)
 
     with pytest.raises(ChargingSessionStateError):
         await charging_service.ingest_meter_values(
@@ -2032,10 +2032,10 @@ async def test_ingest_meter_values_ignores_stale_sample(
         return session
 
     async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        inserted.append(cast(Decimal, kwargs["value_wh"]))
+        inserted.append(cast(Decimal, kwargs["value"]))
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
 
     result = await charging_service.ingest_meter_values(
         _db(),
@@ -2072,7 +2072,7 @@ async def test_ingest_meter_values_applies_newer_sample(
         return None
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
 
     newer = watermark + timedelta(minutes=5)
     await charging_service.ingest_meter_values(
@@ -2109,7 +2109,7 @@ async def test_ingest_meter_values_applies_equal_timestamp_sample(
         return None
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
 
     await charging_service.ingest_meter_values(
         _db(),
@@ -2146,7 +2146,7 @@ async def test_ingest_meter_values_still_applies_decreasing_register(
         return None
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_meter_value", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
 
     newer_but_lower = watermark + timedelta(minutes=5)
     await charging_service.ingest_meter_values(

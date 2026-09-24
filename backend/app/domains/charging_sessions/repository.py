@@ -13,10 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.charging_sessions.models import (
     ChargingSessionEventModel,
-    ChargingSessionMeterValueModel,
+    ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
-from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+from app.domains.charging_sessions.types import (
+    ENERGY_ACTIVE_IMPORT_REGISTER,
+    SessionEventType,
+    SessionStatus,
+)
 
 # Integer transaction IDs for OCPP 1.6J, which requires the backend to assign
 # them. Created by migration 0024; declared here only to call nextval().
@@ -176,8 +180,11 @@ async def list_charging_session_meter_values(
     *,
     offset: int,
     limit: int,
-) -> list[ChargingSessionMeterValueModel]:
-    """Get the meter samples of a session in ascending time order.
+) -> list[ChargingSessionMeasurementModel]:
+    """Get the energy-register samples of a session in ascending time order.
+
+    The measurements table also holds other measurands; this listing (the
+    ``/meter-values`` view) only returns the energy register.
 
     Args:
         db: The current async session.
@@ -186,14 +193,17 @@ async def list_charging_session_meter_values(
         limit: The maximum number of samples to return.
 
     Returns:
-        The meter history, stably paginated.
+        The energy history, stably paginated.
     """
     result = await db.execute(
-        select(ChargingSessionMeterValueModel)
-        .where(ChargingSessionMeterValueModel.session_id == session_id)
+        select(ChargingSessionMeasurementModel)
+        .where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
+        )
         .order_by(
-            ChargingSessionMeterValueModel.sampled_at.asc(),
-            ChargingSessionMeterValueModel.meter_value_id.asc(),
+            ChargingSessionMeasurementModel.sampled_at.asc(),
+            ChargingSessionMeasurementModel.measurement_id.asc(),
         )
         .offset(offset)
         .limit(limit)
@@ -202,18 +212,19 @@ async def list_charging_session_meter_values(
 
 
 async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
-    """Count the meter samples of a session.
+    """Count the energy-register samples of a session.
 
     Args:
         db: The current async session.
         session_id: UUID of the session whose samples to count.
 
     Returns:
-        The total number of meter samples for the session.
+        The total number of energy-register samples for the session.
     """
     result = await db.execute(
-        select(func.count(ChargingSessionMeterValueModel.meter_value_id)).where(
-            ChargingSessionMeterValueModel.session_id == session_id
+        select(func.count(ChargingSessionMeasurementModel.measurement_id)).where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
         )
     )
     return int(result.scalar() or 0)
@@ -346,37 +357,52 @@ async def insert_event(
     return event
 
 
-async def insert_meter_value(
+async def insert_measurement(
     db: AsyncSession,
     *,
     session_id: UUID,
     sampled_at: datetime,
-    value_wh: Decimal,
-) -> ChargingSessionMeterValueModel:
-    """Append one canonical Wh energy sample and flush it.
+    measurand: str,
+    value: Decimal,
+    unit: str | None,
+    context: str | None = None,
+    phase: str | None = None,
+    location: str | None = None,
+) -> ChargingSessionMeasurementModel:
+    """Append one measurement of a session and flush it.
 
     Args:
         db: The current async session; the repository does not commit the
             transaction.
-        session_id: UUID of the aggregate that owns the sample.
+        session_id: UUID of the aggregate that owns the measurement.
         sampled_at: The measurement time, already normalized to UTC.
-        value_wh: The non-negative energy value in Wh.
+        measurand: The OCPP measurand name.
+        value: The reading; canonical Wh for the energy register.
+        unit: Unit of ``value``, if known.
+        context: OCPP reading context, if any.
+        phase: Electrical phase, if any.
+        location: Measurement location, if any.
 
     Returns:
-        The ORM meter sample just added.
+        The ORM measurement just added.
 
     Side Effects:
-        Adds a sample record and calls ``flush`` in the current
-        transaction.
+        Adds a record and calls ``flush`` in the current transaction. The
+        table is append-only.
     """
-    meter = ChargingSessionMeterValueModel(
+    measurement = ChargingSessionMeasurementModel(
         session_id=session_id,
         sampled_at=sampled_at,
-        value_wh=value_wh,
+        measurand=measurand,
+        value=value,
+        unit=unit,
+        context=context,
+        phase=phase,
+        location=location,
     )
-    db.add(meter)
+    db.add(measurement)
     await db.flush()
-    return meter
+    return measurement
 
 
 async def next_ocpp16_transaction_id(db: AsyncSession) -> int:
