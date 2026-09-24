@@ -7,8 +7,9 @@ soft-deleted, and OCPP must not create topology on its own. The transaction
 is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
+import logging
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -54,24 +55,38 @@ from app.domains.charging_stations.types import (
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 
+logger = logging.getLogger(__name__)
+
 
 def to_charging_station_response(
-    station: ChargingStationModel, *, connector_count: int
+    station: ChargingStationModel,
+    *,
+    connector_count: int,
+    now: datetime | None = None,
 ) -> ChargingStationResponse:
     """Build a station response from the topology model and its connector count.
 
     Pure mapping only — the connector count is computed by the caller (via a
     repository query) rather than here, since a pure mapper must never do
-    I/O.
+    I/O. The only outside input is the clock, needed to derive ``is_online``;
+    it can be injected through ``now`` (tests do).
 
     Args:
         station: Station ORM object queried or created by the repository.
         connector_count: Number of active connectors across the station's
             active EVSEs, already computed by the caller.
+        now: Reference time for the online check; defaults to the current
+            UTC time.
 
     Returns:
-        Response schema including directory metadata and connector count.
+        Response schema including directory metadata, connector count, the
+        charger's device info, and ``is_online`` (``last_seen_at`` within
+        ``CHARGING_OFFLINE_TIMEOUT_SECONDS``; ``False`` if never seen).
     """
+    checked_at = now if now is not None else datetime.now(timezone.utc)
+    is_online = station.last_seen_at is not None and (
+        checked_at - station.last_seen_at
+    ) <= timedelta(seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS)
     latitude, longitude = location_to_coordinates(station.location)
     return ChargingStationResponse(
         station_id=station.station_id,
@@ -88,6 +103,14 @@ def to_charging_station_response(
         operating_hours=station.operating_hours,
         maintenance_status=station.maintenance_status,
         connector_count=connector_count,
+        ocpp_protocol_version=station.ocpp_protocol_version,
+        vendor=station.vendor,
+        model=station.model,
+        serial_number=station.serial_number,
+        firmware_version=station.firmware_version,
+        last_boot_at=station.last_boot_at,
+        last_seen_at=station.last_seen_at,
+        is_online=is_online,
         created_at=station.created_at,
         updated_at=station.updated_at,
         deleted_at=station.deleted_at,
@@ -977,17 +1000,97 @@ async def record_ocpp_message(
 
     Side Effects:
         Appends one row and flushes within the caller's transaction; does not
-        commit or roll back.
+        commit or roll back. For an inbound frame it also records the station's
+        liveness (``last_seen_at`` and ``ocpp_protocol_version``) in the same
+        transaction, since any frame proves the charger is alive; this works
+        for both protocols without touching their handlers.
     """
     if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
         raise ChargingOcppMessageInputError("occurred_at must have a timezone")
     if not ocpp_subprotocol or len(ocpp_subprotocol) > 20:
         raise ChargingOcppMessageInputError("ocpp_subprotocol must be 1-20 characters")
+    occurred_at_utc = occurred_at.astimezone(timezone.utc)
     await repository.insert_ocpp_message(
         db,
         station_id=station_id,
-        occurred_at=occurred_at.astimezone(timezone.utc),
+        occurred_at=occurred_at_utc,
         ocpp_subprotocol=ocpp_subprotocol,
         direction=direction,
         raw_frame=raw_frame,
+    )
+    if direction is OcppMessageDirection.CP_TO_CSMS:
+        await repository.touch_station_seen(
+            db,
+            station_id,
+            seen_at=occurred_at_utc,
+            ocpp_protocol_version=ocpp_subprotocol,
+        )
+
+
+async def record_charger_boot(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    vendor: str,
+    model: str,
+    serial_number: str | None,
+    firmware_version: str | None,
+    booted_at: datetime,
+) -> None:
+    """Store the device identity from an OCPP ``BootNotification``.
+
+    Rule:
+        The latest boot is the truth about the physical charger, so all four
+        device fields are overwritten (a field the charger no longer reports
+        becomes ``NULL``). A **firmware change** relative to a previously
+        stored non-null value is logged as a structured ``WARNING`` - the
+        stored value is the baseline for noticing a firmware swap; alerting on
+        it is deferred (``future.md`` #75).
+
+    Args:
+        db: Async session owned by the OCPP gateway's action transaction.
+        ocpp_identity: Identity of the station that booted.
+        vendor: ``chargePointVendor`` from the message.
+        model: ``chargePointModel`` from the message.
+        serial_number: Charger serial number, or ``None``.
+        firmware_version: Reported firmware version, or ``None``.
+        booted_at: Time of the boot, timezone-aware.
+
+    Raises:
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+        ChargingOcppMessageInputError: If ``booted_at`` lacks a timezone.
+
+    Side Effects:
+        Updates the station row within the caller's transaction; does not
+        commit or roll back.
+    """
+    if booted_at.tzinfo is None or booted_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("booted_at must have a timezone")
+    station = await repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    if (
+        station.firmware_version is not None
+        and firmware_version is not None
+        and station.firmware_version != firmware_version
+    ):
+        logger.warning(
+            "Charger firmware version changed",
+            extra={
+                "ocpp_identity": ocpp_identity,
+                "previous_firmware_version": station.firmware_version,
+                "firmware_version": firmware_version,
+            },
+        )
+    await repository.update_station_boot_info(
+        db,
+        station.station_id,
+        vendor=vendor,
+        model=model,
+        serial_number=serial_number,
+        firmware_version=firmware_version,
+        booted_at=booted_at.astimezone(timezone.utc),
     )

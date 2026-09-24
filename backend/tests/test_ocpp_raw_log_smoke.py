@@ -235,6 +235,11 @@ async def test_record_ocpp_message_normalizes_time_to_utc_and_keeps_frame_verbat
     monkeypatch.setattr(
         charging_stations_repository, "insert_ocpp_message", fake_insert
     )
+
+    async def fake_touch(db: object, station_id: UUID, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(charging_stations_repository, "touch_station_seen", fake_touch)
     frame = ' [2, "1",  "Heartbeat", {} ] \n'  # odd whitespace must survive
     local = datetime(2026, 9, 24, 8, 0, tzinfo=timezone(timedelta(hours=7)))
 
@@ -289,3 +294,41 @@ async def test_record_ocpp_message_rejects_invalid_metadata(
         )
 
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_record_ocpp_message_marks_station_seen_for_inbound_frames_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any inbound frame proves the charger is alive; an outbound frame does not."""
+    touched: list[dict[str, Any]] = []
+
+    async def fake_insert(db: object, **kwargs: Any) -> None:
+        return None
+
+    async def fake_touch(db: object, station_id: UUID, **kwargs: Any) -> None:
+        touched.append({"station_id": station_id, **kwargs})
+
+    monkeypatch.setattr(
+        charging_stations_repository, "insert_ocpp_message", fake_insert
+    )
+    monkeypatch.setattr(charging_stations_repository, "touch_station_seen", fake_touch)
+    moment = datetime(2026, 9, 24, 8, 0, tzinfo=timezone(timedelta(hours=7)))
+
+    for direction in (
+        OcppMessageDirection.CP_TO_CSMS,
+        OcppMessageDirection.CSMS_TO_CP,
+    ):
+        await charging_stations_service.record_ocpp_message(
+            object(),  # type: ignore[arg-type]
+            station_id=STATION_ID,
+            occurred_at=moment,
+            ocpp_subprotocol="ocpp1.6",
+            direction=direction,
+            raw_frame="[2]",
+        )
+
+    assert len(touched) == 1
+    assert touched[0]["station_id"] == STATION_ID
+    assert touched[0]["ocpp_protocol_version"] == "ocpp1.6"
+    assert touched[0]["seen_at"] == datetime(2026, 9, 24, 1, 0, tzinfo=timezone.utc)

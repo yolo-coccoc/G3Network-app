@@ -12,7 +12,8 @@ configuration key table modelled on the spec's section 4.3 keys, including
 Scenarios are added one message group at a time as the gateway learns them
 (see ``docs/02-planners/backend-ocpp16-charger-integration.md``); currently:
 
-* ``boot`` - BootNotification, then Heartbeat.
+* ``boot`` - BootNotification, then ``--heartbeats`` Heartbeats spaced
+  ``--heartbeat-interval`` seconds apart.
 
 Like the 2.0.1 simulator this only generates valid happy-path traffic. It does
 not simulate retries, duplicates, reconnects, delays, or random errors. A
@@ -77,6 +78,8 @@ class SimulatorConfig:
         vendor: ``chargePointVendor`` sent in BootNotification.
         model: ``chargePointModel`` sent in BootNotification.
         firmware_version: ``firmwareVersion`` sent in BootNotification.
+        heartbeats: How many Heartbeats the ``boot`` scenario sends.
+        heartbeat_interval_seconds: Pause between those Heartbeats.
         configuration: Key table served for ``GetConfiguration``.
         linger_seconds: How long to stay connected after the scenario so
             CSMS-initiated calls (for example the post-boot
@@ -91,6 +94,8 @@ class SimulatorConfig:
     vendor: str = "Willdigits"
     model: str = "DC-240kW-Dual-CCS2"
     firmware_version: str = "OCPP_L4.05_SIM"
+    heartbeats: int = 1
+    heartbeat_interval_seconds: float = 1.0
     configuration: tuple[tuple[str, str, bool], ...] = DEFAULT_CONFIGURATION
     linger_seconds: float = 1.0
     timeout_seconds: float = 5.0
@@ -187,11 +192,11 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         return response
 
     async def run_boot_scenario(self) -> None:
-        """Send BootNotification, then a Heartbeat.
+        """Send BootNotification, then the configured number of Heartbeats.
 
         Side Effects:
-            Sends two CALLs; each is answered by the gateway or reported as a
-            CALLERROR.
+            Sends ``1 + heartbeats`` CALLs; each is answered by the gateway or
+            reported as a CALLERROR.
         """
         await self.send_call(
             call.BootNotification(
@@ -200,7 +205,10 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 firmware_version=self.config.firmware_version,
             )
         )
-        await self.send_call(call.Heartbeat())
+        for index in range(self.config.heartbeats):
+            if index:
+                await asyncio.sleep(self.config.heartbeat_interval_seconds)
+            await self.send_call(call.Heartbeat())
 
 
 async def run(config: SimulatorConfig) -> RunReport:
@@ -256,6 +264,9 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--identity", default="SIM-OCPP16-001")
     parser.add_argument("--connectors", type=int, default=2)
     parser.add_argument("--scenario", choices=SCENARIOS, default="boot")
+    parser.add_argument("--firmware", default="OCPP_L4.05_SIM")
+    parser.add_argument("--heartbeats", type=int, default=1)
+    parser.add_argument("--heartbeat-interval", type=float, default=1.0)
     parser.add_argument("--linger", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=5.0)
     return parser.parse_args(arguments)
@@ -278,6 +289,9 @@ async def main(arguments: Sequence[str] | None = None) -> int:
             identity=args.identity,
             connectors=args.connectors,
             scenario=args.scenario,
+            firmware_version=args.firmware,
+            heartbeats=args.heartbeats,
+            heartbeat_interval_seconds=args.heartbeat_interval,
             linger_seconds=args.linger,
             timeout_seconds=args.timeout,
         )

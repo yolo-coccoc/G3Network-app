@@ -172,7 +172,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # Pinned to the current Alembic head. This assertion was stale
         # (hardcoded to an old head) until F-B2 - it went unnoticed only
         # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0021_charging_ocpp_raw_log"
+        assert version == "0022_charging_station_device"
         assert len(tables) == 10
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.

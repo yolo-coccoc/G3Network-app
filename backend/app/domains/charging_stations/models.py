@@ -88,8 +88,25 @@ class ChargingStationModel(Base):
             ``"24/7"``), nullable.
         maintenance_status: Admin-set maintenance state; defaults to
             ``OPERATIONAL``.
+        ocpp_protocol_version: Subprotocol of the station's latest
+            connection (``ocpp1.6`` or ``ocpp2.0.1``), nullable until it
+            first connects. Reported by the charger's connection, not
+            admin-editable.
+        vendor: ``BootNotification`` vendor name, nullable until first boot.
+        model: ``BootNotification`` model name, nullable until first boot.
+        serial_number: Charger serial number from ``BootNotification``,
+            nullable.
+        firmware_version: Firmware version from the latest
+            ``BootNotification``, nullable; a change is logged as a warning
+            (baseline for noticing a firmware swap).
+        last_boot_at: Time of the latest accepted ``BootNotification``,
+            nullable.
+        last_seen_at: Time of the latest frame of any kind received from the
+            charger, nullable. "Online" is derived from it at read time
+            (``CHARGING_OFFLINE_TIMEOUT_SECONDS``), never stored.
         created_at: Time the record was created.
-        updated_at: Time the record was last updated.
+        updated_at: Time the record was last updated by an admin edit;
+            device-reported columns above do not bump it.
         deleted_at: Soft-delete time, nullable.
 
     Invariants:
@@ -121,6 +138,17 @@ class ChargingStationModel(Base):
         SQLEnum(ChargingStationMaintenanceStatus),
         nullable=False,
         default=ChargingStationMaintenanceStatus.OPERATIONAL,
+    )
+    ocpp_protocol_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    vendor: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    firmware_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    last_boot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

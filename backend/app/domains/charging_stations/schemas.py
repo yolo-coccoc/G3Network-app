@@ -166,6 +166,19 @@ class ChargingStationResponse(BaseModel):
         maintenance_status: Admin-set maintenance state.
         connector_count: Number of active connectors across the station's
             active EVSEs, computed at read time (not stored).
+        ocpp_protocol_version: Subprotocol of the latest connection,
+            nullable until the charger first connects.
+        vendor: Charger vendor from ``BootNotification``, nullable.
+        model: Charger model from ``BootNotification``, nullable.
+        serial_number: Charger serial number, nullable.
+        firmware_version: Firmware version from the latest boot, nullable.
+        last_boot_at: Time of the latest accepted boot, nullable.
+        last_seen_at: Time of the latest frame of any kind from the charger,
+            nullable.
+        is_online: Derived at read time: ``last_seen_at`` is within
+            ``CHARGING_OFFLINE_TIMEOUT_SECONDS``. ``False`` for a station
+            that has never connected. A connector's last reported status is
+            *not* invalidated when a charger goes offline.
         created_at: Time created.
         updated_at: Time of last update.
         deleted_at: Soft-delete time, nullable.
@@ -183,6 +196,14 @@ class ChargingStationResponse(BaseModel):
     operating_hours: str | None
     maintenance_status: ChargingStationMaintenanceStatus
     connector_count: int = Field(..., ge=0)
+    ocpp_protocol_version: str | None
+    vendor: str | None
+    model: str | None
+    serial_number: str | None
+    firmware_version: str | None
+    last_boot_at: datetime | None
+    last_seen_at: datetime | None
+    is_online: bool
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None

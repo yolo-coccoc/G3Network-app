@@ -885,3 +885,85 @@ async def insert_ocpp_message(
     db.add(message)
     await db.flush()
     return message
+
+
+async def update_station_boot_info(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    vendor: str,
+    model: str,
+    serial_number: str | None,
+    firmware_version: str | None,
+    booted_at: datetime,
+) -> bool:
+    """Store the device identity reported by an OCPP ``BootNotification``.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station that booted.
+        vendor: Reported vendor name.
+        model: Reported model name.
+        serial_number: Reported serial number, or ``None`` if the charger sent
+            none (a previously stored value is then cleared, because the
+            latest boot is the truth about the device).
+        firmware_version: Reported firmware version, or ``None``.
+        booted_at: Time of the boot, timezone-aware UTC.
+
+    Returns:
+        ``True`` if an active station was updated.
+
+    Side Effects:
+        Issues one ``UPDATE`` and flushes; does not commit. ``updated_at`` is
+        deliberately left unchanged: these values are reported by the device,
+        not an administrator's edit.
+    """
+    result = await db.execute(
+        update(ChargingStationModel)
+        .where(
+            ChargingStationModel.station_id == station_id,
+            ChargingStationModel.deleted_at.is_(None),
+        )
+        .values(
+            vendor=vendor,
+            model=model,
+            serial_number=serial_number,
+            firmware_version=firmware_version,
+            last_boot_at=booted_at,
+            updated_at=ChargingStationModel.updated_at,
+        )
+    )
+    await db.flush()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
+
+
+async def touch_station_seen(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    seen_at: datetime,
+    ocpp_protocol_version: str,
+) -> None:
+    """Record that a frame just arrived from a station (liveness).
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station the frame came from.
+        seen_at: Receive time, timezone-aware UTC.
+        ocpp_protocol_version: Subprotocol of the connection.
+
+    Side Effects:
+        Issues one ``UPDATE`` without loading the row and flushes; does not
+        commit. ``updated_at`` is deliberately left unchanged so liveness
+        never looks like an administrator's edit.
+    """
+    await db.execute(
+        update(ChargingStationModel)
+        .where(ChargingStationModel.station_id == station_id)
+        .values(
+            last_seen_at=seen_at,
+            ocpp_protocol_version=ocpp_protocol_version,
+            updated_at=ChargingStationModel.updated_at,
+        )
+    )
+    await db.flush()

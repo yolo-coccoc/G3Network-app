@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         API_MAX_PAGE_SIZE: Maximum number of records per page.
         CHARGING_OCPP_HOST: Bind host of the OCPP WebSocket gateway.
         CHARGING_OCPP_PORT: Bind port of the OCPP WebSocket gateway.
+        CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS: Heartbeat ``interval``
+            the gateway returns in an OCPP 1.6J ``BootNotification``
+            response (the spec's range is 60-300 s).
+        CHARGING_OFFLINE_TIMEOUT_SECONDS: How long without any frame from a
+            charger before it is reported as offline (``is_online``); keep
+            it a few multiples of the heartbeat interval.
         CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
             accepts; bigger ones are refused by the WebSocket library
             instead of being stored truncated in the raw message log.
@@ -135,6 +141,9 @@ class Settings(BaseSettings):
     # Defaults to the WebSocket library's own 1 MiB limit rather than a small
     # value: a full GetConfiguration reply from a real charger can be large.
     CHARGING_OCPP_MAX_MESSAGE_BYTES: int = Field(default=1_048_576, ge=1024)
+    CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=60, ge=1)
+    # Three missed heartbeats at the default interval.
+    CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.
@@ -192,7 +201,6 @@ class Settings(BaseSettings):
     # commented out in the ideal MVP; the corresponding source will come back
     # when item 27 in future.md is picked up.
     # CHARGING_HEARTBEAT_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
-    # CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
     # CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
     # CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
 
