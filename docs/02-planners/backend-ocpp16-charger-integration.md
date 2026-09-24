@@ -3,9 +3,8 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 📋 Planned — Step 0 **done 2026-09-24** (all 14 design decisions
-> in §2 confirmed, documentation updated); Step 1 is next; no source has been
-> changed yet
+> Status: 🚧 In progress — Step 0 **done** and Step 1 (raw OCPP message log)
+> **done** on 2026-09-24; Step 2 (version-aware gateway) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -287,14 +286,24 @@ service/repository, __init__.py stays docstring-only).
 
 **Checks:**
 
-- [ ] Static: `black`, `isort`, `ruff check`, `mypy`, `compileall`
-- [ ] Smoke (fake connection): inbound frame is persisted **before** `recv()` returns; outbound is persisted **after** `send()`; a persistence exception propagates; a handler rollback does not remove the raw row
-- [ ] Integration (`RUN_DB_INTEGRATION=1`): migration upgrade → downgrade → upgrade; table is a hypertable
-- [ ] Live: run the existing `make charging-ocpp-dev` + `make charging-ocpp-sim`; `SELECT direction, raw_frame FROM charging_ocpp_messages ORDER BY occurred_at` shows every CALL and CALLRESULT of the session, in order
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (127 source files), `compileall`, `git diff --check` — all clean
+- [x] Smoke (fake connection, `tests/test_ocpp_raw_log_smoke.py`): inbound frame is persisted **before** `recv()` returns; outbound is persisted **after** `send()`; a persistence failure propagates and the frame is not passed on; a frame that failed to send, or a closed connection, records nothing; each frame uses its own transaction; a binary frame is stored decoded but returned unchanged; `occurred_at` is timezone-aware; the service normalises to UTC, keeps the frame text untouched, and rejects a naive timestamp or a bad subprotocol
+- [x] Integration (`RUN_DB_INTEGRATION=1`, temporary database): upgrade → downgrade → upgrade reaches head `0021_charging_ocpp_raw_log`; the table exists and **is a TimescaleDB hypertable**
+- [x] Live (real gateway, dev database, existing 2.0.1 simulator): the 10 rows for one session are exactly the 5 CALLs and 5 CALLRESULTs in order with matching unique IDs, and the session result is unchanged (`completed`, 1000 → 1500 Wh, 500 Wh delivered)
+- [x] Live negative cases: an unparseable line, an unhandled action (`BootNotification` → outbound `CALLERROR NotImplemented`) and a handler that fails and rolls back (`InternalError`; **no** session created) are all in the log; original whitespace is preserved
+- [x] Live size limit (`CHARGING_OCPP_MAX_MESSAGE_BYTES=2048`): a small frame is logged, an oversized one closes the connection with code **1009** and nothing oversized is stored
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 1 is done.
 
-**Future:** raw-log read API and retention policy → `future.md` #79.
+- New hypertable `charging_ocpp_messages` (migration `0021_charging_ocpp_raw_log`, enum `chargingocppmessagedirection`), model `ChargingOcppMessageModel`, `OcppMessageDirection` in `types.py`, repository `insert_ocpp_message`, service `record_ocpp_message`, and a new domain exception `ChargingOcppMessageInputError` (added for the metadata validation; not in the original plan).
+- `ocpp/raw_log.py::RecordingConnection` wraps the accepted WebSocket; `ocpp_server.py` resolves the station once per connection and hands the wrapper to the existing 2.0.1 adapter. Verified from the library source first that `ChargePoint` only calls `recv()` and `send()`. If a station is soft-deleted between handshake and connection setup, the connection is closed with code 1008 (this race was **not** exercised).
+- `CHARGING_OCPP_MAX_MESSAGE_BYTES` (default 1 MiB) replaces the commented `CHARGING_MAX_RAW_PAYLOAD_BYTES` and is passed to `serve(max_size=…)`; `.env.example` and the settings docstring updated.
+- Deviations from the plan: (1) the migration first created the enum explicitly and then again via `create_table`; it now follows the `0004`/`0018`/`0019` precedent (the table creates the type, the downgrade runs `DROP TYPE`); (2) the stale migration-head pins were updated now rather than in Step 9 — `test_migrations_smoke.py` and `test_postgres_integration.py` (the latter was already stale at `0017`), plus a hypertable assertion; (3) the tests live in `test_ocpp_raw_log_smoke.py`.
+- The dev database was migrated to `0021`. All test data (a throw-away station and its 15 log rows and session) was removed afterwards.
+- **Known unrelated failure, not fixed:** `test_telemetry_repository_round_trip_rolls_back` still fails with the old `latitude`/`longitude` column error already documented in `backend-charging-ingest-fixes.md` §5 (telemetry domain, out of scope for the current charging focus).
+- **Not checked:** a database outage while logging (by design it ends the connection handler — `future.md` #31), and behaviour with a real 1.6J charger (no hardware yet).
+
+**Future:** raw-log read API and retention policy → `future.md` #79. Step 11 must also update `database.md` (new table/hypertable and enum) and note in `future.md` #27 that raw payload auditing is now done.
 
 ### Step 2 — Version-aware gateway (A1)
 
