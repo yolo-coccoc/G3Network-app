@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import Sequence, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.charging_sessions.models import (
@@ -17,6 +17,10 @@ from app.domains.charging_sessions.models import (
     ChargingSessionModel,
 )
 from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+
+# Integer transaction IDs for OCPP 1.6J, which requires the backend to assign
+# them. Created by migration 0024; declared here only to call nextval().
+_OCPP16_TRANSACTION_ID_SEQUENCE = Sequence("charging_ocpp16_transaction_id_seq")
 
 
 def utc_now() -> datetime:
@@ -264,6 +268,7 @@ async def create_session(
     transaction_id: str,
     started_at: datetime,
     meter_start_wh: Decimal | None,
+    id_tag: str | None = None,
 ) -> ChargingSessionModel:
     """Create an active session and flush constraints in the current transaction.
 
@@ -278,6 +283,8 @@ async def create_session(
         started_at: The ``Started`` time, already normalized to UTC.
         meter_start_wh: The meter reading at the start of the session,
             nullable if absent from the payload.
+        id_tag: The idTag that started the session, if the protocol carries
+            one (OCPP 1.6J does).
 
     Returns:
         The active aggregate just added to the session.
@@ -294,6 +301,7 @@ async def create_session(
         status=SessionStatus.ACTIVE,
         started_at=started_at,
         meter_start_wh=meter_start_wh,
+        id_tag=id_tag,
         updated_at=utc_now(),
     )
     db.add(session)
@@ -369,3 +377,43 @@ async def insert_meter_value(
     db.add(meter)
     await db.flush()
     return meter
+
+
+async def next_ocpp16_transaction_id(db: AsyncSession) -> int:
+    """Take the next OCPP 1.6J transaction ID from the database sequence.
+
+    Args:
+        db: The current async session.
+
+    Returns:
+        The next integer, unique across all stations and restarts.
+
+    Side Effects:
+        Advances the sequence. A sequence is not transactional, so a rolled-back
+        transaction leaves a harmless gap in the numbers.
+    """
+    result = await db.execute(select(_OCPP16_TRANSACTION_ID_SEQUENCE.next_value()))
+    return int(result.scalar_one())
+
+
+async def count_active_sessions_by_connector_id(
+    db: AsyncSession, connector_id: UUID
+) -> int:
+    """Count the active sessions currently open on one connector.
+
+    Args:
+        db: The current async session.
+        connector_id: UUID of the connector.
+
+    Returns:
+        The number of sessions with status ``active`` on the connector.
+    """
+    result = await db.execute(
+        select(func.count())
+        .select_from(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.connector_id == connector_id,
+            ChargingSessionModel.status == SessionStatus.ACTIVE,
+        )
+    )
+    return int(result.scalar_one())

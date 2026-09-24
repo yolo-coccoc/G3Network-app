@@ -34,6 +34,10 @@ class ChargingSessionResponse(BaseModel):
             nullable (F-B2).
         energy_delivered_wh: The difference between the start/end meter
             readings.
+        id_tag: The idTag that started the session (OCPP 1.6J), nullable.
+        stop_reason: Why the session stopped, as reported, nullable.
+        meter_stop_wh: The charger's authoritative closing meter reading
+            (OCPP 1.6J ``meterStop``), nullable.
         created_at: The time the aggregate was created.
         updated_at: The time of the last update.
     """
@@ -52,6 +56,9 @@ class ChargingSessionResponse(BaseModel):
     meter_end_wh: Decimal | None
     meter_end_sampled_at: datetime | None
     energy_delivered_wh: Decimal | None
+    id_tag: str | None
+    stop_reason: str | None
+    meter_stop_wh: Decimal | None
     created_at: datetime
     updated_at: datetime
 

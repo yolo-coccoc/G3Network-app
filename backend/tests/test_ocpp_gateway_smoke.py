@@ -176,4 +176,11 @@ def test_1_6_adapter_handles_only_the_messages_implemented_so_far() -> None:
         for action, handlers in charge_point.route_map.items()
         if "_on_action" in handlers
     }
-    assert handled == {"BootNotification", "Heartbeat", "StatusNotification"}
+    assert handled == {
+        "BootNotification",
+        "Heartbeat",
+        "StatusNotification",
+        "Authorize",
+        "StartTransaction",
+        "StopTransaction",
+    }

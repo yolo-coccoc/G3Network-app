@@ -1194,3 +1194,27 @@ async def update_charger_status(
         error_code=error_code,
         vendor_error_code=vendor_error_code,
     )
+
+
+async def resolve_station_id_by_identity(
+    db: AsyncSession, *, ocpp_identity: str
+) -> UUID:
+    """Resolve an OCPP identity into the station's internal ID.
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+
+    Returns:
+        The internal UUID of the active station.
+
+    Raises:
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+    """
+    station = await repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    return station.station_id

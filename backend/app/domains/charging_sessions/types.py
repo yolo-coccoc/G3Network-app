@@ -74,6 +74,29 @@ class TransactionIngestResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TransactionSessionReference:
+    """Minimal reference to a session found by its OCPP transaction identity.
+
+    Lets a caller that only knows ``(station, transactionId)`` (for example an
+    OCPP 1.6J ``StopTransaction``, which carries no connector) learn the
+    session's topology and status without receiving an ORM model.
+
+    Attributes:
+        session_id: The UUID of the session aggregate.
+        station_id: The UUID of the station that owns the transaction.
+        evse_id: The UUID of the EVSE that owns the transaction.
+        connector_id: The UUID of the connector delivering power.
+        status: The session's current status.
+    """
+
+    session_id: UUID
+    station_id: UUID
+    evse_id: UUID
+    connector_id: UUID
+    status: SessionStatus
+
+
+@dataclass(frozen=True, slots=True)
 class MeterIngestResult:
     """The result of processing one MeterValues message in the happy path.
 

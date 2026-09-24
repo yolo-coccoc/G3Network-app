@@ -8,21 +8,26 @@ hide which contract each handler assumes.
 
 Scope: handlers are added one message group at a time by the OCPP 1.6J
 planner (``docs/02-planners/backend-ocpp16-charger-integration.md``). Currently
-handled: ``BootNotification``, ``Heartbeat`` and ``StatusNotification``. Every other action a 1.6J
+handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
+``Authorize``, ``StartTransaction`` and ``StopTransaction``. Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
 """
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call_result
-from ocpp.v16.enums import Action, RegistrationStatus
+from ocpp.v16.enums import Action, AuthorizationStatus, RegistrationStatus
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domains.charging_sessions import service as charging_sessions_service
+from app.domains.charging_sessions.types import SessionEventType
 from app.domains.charging_stations import service as charging_stations_service
 from app.domains.charging_stations.ocpp.parsing import (
+    OcppPayload,
     format_ocpp_timestamp,
     parse_ocpp_timestamp,
 )
@@ -222,3 +227,182 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     status_info=info,
                 )
         return call_result.StatusNotification()
+
+    @on(Action.authorize)  # type: ignore[untyped-decorator]
+    async def on_authorize(self, id_tag: str, **_: object) -> call_result.Authorize:
+        """Accept every idTag (decision D7 of the OCPP 1.6J planner).
+
+        There is no tag registry to check against and the vendor's Autocharge
+        behaviour is unknown, so rejecting unknown tags would block all
+        charging. Real validation is deferred (``future.md`` #26, #62).
+
+        Args:
+            id_tag: The tag presented at the charger; not stored here (it is
+                stored on the session by ``StartTransaction``).
+            **_: A 1.6 ``Authorize`` has no other fields.
+
+        Returns:
+            ``Accepted`` for any tag.
+        """
+        return call_result.Authorize(
+            id_tag_info={"status": AuthorizationStatus.accepted}
+        )
+
+    @on(Action.start_transaction)  # type: ignore[untyped-decorator]
+    async def on_start_transaction(
+        self,
+        connector_id: int,
+        id_tag: str,
+        meter_start: int,
+        timestamp: str,
+        reservation_id: int | None = None,
+        **_: object,
+    ) -> call_result.StartTransaction:
+        """Open a charging session and hand the charger its transaction ID.
+
+        OCPP 1.6J requires the CSMS to assign the integer ``transactionId``;
+        it comes from a database sequence (decision D6) and is stored, as text,
+        in the session's ``ocpp_transaction_id``. The ``idTag`` is stored on the
+        session and always accepted (decision D7).
+
+        If the connector already has an ``active`` session (a charger that
+        rebooted mid-session, for example), a structured warning is logged and
+        the old session is left untouched: orphan handling waits for real
+        charger logs (decision D14).
+
+        Args:
+            connector_id: The gun number (``>= 1``; gun ``n`` is EVSE ``n`` /
+                connector ``1``).
+            id_tag: The tag that started the session.
+            meter_start: Meter reading at the start, an integer in Wh.
+            timestamp: Start time (must carry a timezone).
+            reservation_id: Reservation that led to this session; not stored.
+            **_: Other optional OCPP fields.
+
+        Returns:
+            ``Accepted`` with the newly allocated ``transactionId``.
+
+        Raises:
+            ValueError: If ``timestamp`` has no timezone.
+            ChargingOcppMessageInputError: If ``connector_id`` is ``0``.
+            ChargingStationNotFoundError: If the station is not provisioned.
+            ChargingEvseNotFoundError: If the gun's EVSE is not provisioned.
+            ChargingConnectorNotFoundError: If the gun's connector is not
+                provisioned.
+            ChargingSessionInputError: If the tag or meter value is invalid.
+
+        Side Effects:
+            Allocates an ID, creates the session and its ``Started`` event in
+            one atomic transaction; everything rolls back on any error above
+            (the ID number is then skipped, which is harmless).
+        """
+        started_at = parse_ocpp_timestamp(timestamp)
+        async with self.session_factory.begin() as db:
+            station_id, evse_id, connector_uuid = (
+                await charging_stations_service.resolve_ocpp16_topology(
+                    db,
+                    ocpp_identity=self.id,
+                    ocpp_connector_id=connector_id,
+                )
+            )
+            if await charging_sessions_service.has_active_session_on_connector(
+                db, connector_uuid
+            ):
+                logger.warning(
+                    "StartTransaction on a connector that already has an active session",
+                    extra={"ocpp_identity": self.id, "ocpp_connector_id": connector_id},
+                )
+            transaction_id = (
+                await charging_sessions_service.allocate_ocpp16_transaction_id(db)
+            )
+            await charging_sessions_service.ingest_transaction_event(
+                db,
+                station_id=station_id,
+                evse_id=evse_id,
+                connector_id=connector_uuid,
+                transaction_id=str(transaction_id),
+                event_type=SessionEventType.STARTED,
+                event_occurred_at=started_at,
+                seq_no=None,
+                meter_start_wh=Decimal(meter_start),
+                id_tag=id_tag,
+            )
+        return call_result.StartTransaction(
+            transaction_id=transaction_id,
+            id_tag_info={"status": AuthorizationStatus.accepted},
+        )
+
+    @on(Action.stop_transaction)  # type: ignore[untyped-decorator]
+    async def on_stop_transaction(
+        self,
+        meter_stop: int,
+        timestamp: str,
+        transaction_id: int,
+        reason: str | None = None,
+        id_tag: str | None = None,
+        transaction_data: list[OcppPayload] | None = None,
+        **_: object,
+    ) -> call_result.StopTransaction:
+        """Close a charging session with the charger's own closing reading.
+
+        ``StopTransaction`` carries no connector, so the session (and with it
+        the topology) is looked up in the database by ``(station,
+        transactionId)`` — nothing is remembered per connection. The closing
+        ``meterStop`` is always stored as ``meter_stop_wh``; the session's
+        ``meter_end_wh`` follows the existing forward-in-time rule, so a stale
+        timestamp never overwrites a newer reading.
+
+        Args:
+            meter_stop: Meter reading at the end, an integer in Wh.
+            timestamp: Stop time (must carry a timezone).
+            transaction_id: The ID this backend allocated in
+                ``StartTransaction``.
+            reason: Why the session stopped (``EmergencyStop``,
+                ``EVDisconnected``, ``PowerLoss``…), stored as sent.
+            id_tag: Tag that stopped the session; not stored.
+            transaction_data: Meter values sampled during the session; **not
+                stored yet** (only counted in a debug log).
+            **_: Other optional OCPP fields.
+
+        Returns:
+            An empty ``StopTransaction`` confirmation.
+
+        Raises:
+            ValueError: If ``timestamp`` has no timezone.
+            ChargingStationNotFoundError: If the station is not provisioned.
+            ChargingSessionNotFoundError: If this station has no such
+                transaction.
+            ChargingSessionStateError: If the session is already completed.
+
+        Side Effects:
+            Updates the session and appends its ``Ended`` event in one atomic
+            transaction; rolls back entirely on any error above.
+        """
+        stopped_at = parse_ocpp_timestamp(timestamp)
+        async with self.session_factory.begin() as db:
+            station_id = await charging_stations_service.resolve_station_id_by_identity(
+                db, ocpp_identity=self.id
+            )
+            reference = await charging_sessions_service.resolve_session_by_transaction(
+                db, station_id=station_id, transaction_id=str(transaction_id)
+            )
+            await charging_sessions_service.ingest_transaction_event(
+                db,
+                station_id=reference.station_id,
+                evse_id=reference.evse_id,
+                connector_id=reference.connector_id,
+                transaction_id=str(transaction_id),
+                event_type=SessionEventType.ENDED,
+                event_occurred_at=stopped_at,
+                seq_no=None,
+                meter_end_wh=Decimal(meter_stop),
+                meter_end_sampled_at=stopped_at,
+                stop_reason=reason,
+                meter_stop_wh=Decimal(meter_stop),
+            )
+        if transaction_data:
+            logger.debug(
+                "Ignoring StopTransaction transactionData",
+                extra={"meter_value_groups": len(transaction_data)},
+            )
+        return call_result.StopTransaction()

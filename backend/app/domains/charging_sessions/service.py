@@ -47,6 +47,7 @@ from app.domains.charging_sessions.types import (
     SessionEventType,
     SessionStatus,
     TransactionIngestResult,
+    TransactionSessionReference,
 )
 from app.libs.common.config import settings
 
@@ -402,6 +403,9 @@ async def ingest_transaction_event(
     meter_start_wh: Decimal | None = None,
     meter_end_wh: Decimal | None = None,
     meter_end_sampled_at: datetime | None = None,
+    id_tag: str | None = None,
+    stop_reason: str | None = None,
+    meter_stop_wh: Decimal | None = None,
 ) -> TransactionIngestResult:
     """Process one TransactionEvent according to the happy-path lifecycle.
 
@@ -432,14 +436,23 @@ async def ingest_transaction_event(
         meter_end_sampled_at: The measurement time of ``meter_end_wh``, if
             the adapter has the embedded sample's own timestamp; falls
             back to ``event_occurred_at`` when omitted (F-B2).
+        id_tag: The idTag that started the session, for ``Started`` only
+            (OCPP 1.6J; at most 20 characters). Stored as sent.
+        stop_reason: Why the session stopped, for ``Ended`` only (at most 30
+            characters).
+        meter_stop_wh: The charger's authoritative closing meter reading, for
+            ``Ended`` only. Always stored, even when ``meter_end_wh`` is
+            discarded by the stale-sample rule, because it is the
+            charger's own final figure.
 
     Returns:
         A result containing the session UUID, current status and number of
         events appended.
 
     Raises:
-        ChargingSessionInputError: If the input violates the contract or
-            the topology does not match.
+        ChargingSessionInputError: If the input violates the contract (an
+            ``id_tag`` longer than 20 or a ``stop_reason`` longer than 30
+            characters, a negative energy) or the topology does not match.
         ChargingSessionNotFoundError: If the event is not ``Started`` but
             the aggregate does not yet exist.
         ChargingSessionStateError: If the session is already ``COMPLETED``.
@@ -457,6 +470,11 @@ async def ingest_transaction_event(
     validated_seq_no = _seq_no(seq_no, "seq_no")
     meter_start = _energy(meter_start_wh, "meter_start_wh")
     meter_end = _energy(meter_end_wh, "meter_end_wh")
+    meter_stop = _energy(meter_stop_wh, "meter_stop_wh")
+    if id_tag is not None and len(id_tag) > 20:
+        raise ChargingSessionInputError("id_tag exceeds 20 characters")
+    if stop_reason is not None and len(stop_reason) > 30:
+        raise ChargingSessionInputError("stop_reason exceeds 30 characters")
     sampled_at = (
         _utc(meter_end_sampled_at, "meter_end_sampled_at")
         if meter_end_sampled_at is not None
@@ -476,6 +494,7 @@ async def ingest_transaction_event(
             transaction_id=transaction_id,
             started_at=occurred_at,
             meter_start_wh=meter_start,
+            id_tag=id_tag,
         )
     else:
         session = await repository.get_session_by_transaction(
@@ -511,6 +530,8 @@ async def ingest_transaction_event(
     if event_type is SessionEventType.ENDED:
         session.ended_at = occurred_at
         session.status = SessionStatus.COMPLETED
+        session.stop_reason = stop_reason
+        session.meter_stop_wh = meter_stop
     session.updated_at = repository.utc_now()
     return TransactionIngestResult(
         session_id=session.session_id,
@@ -626,4 +647,76 @@ async def get_station_energy_summary(
         end_time=normalized_end,
         total_energy_kwh=float(total_energy_wh / Decimal(1000)),
         session_count=session_count,
+    )
+
+
+async def allocate_ocpp16_transaction_id(db: AsyncSession) -> int:
+    """Allocate the next OCPP 1.6J transaction ID.
+
+    OCPP 1.6J requires the CSMS (this backend) to assign the integer
+    ``transactionId`` in the ``StartTransaction`` response. IDs come from a
+    database sequence so they survive restarts and never repeat.
+
+    Args:
+        db: The async session owned by the entry boundary.
+
+    Returns:
+        The next integer transaction ID (32-bit range).
+
+    Side Effects:
+        Advances the sequence; a rolled-back transaction leaves a harmless
+        gap in the numbers.
+    """
+    return await repository.next_ocpp16_transaction_id(db)
+
+
+async def has_active_session_on_connector(db: AsyncSession, connector_id: UUID) -> bool:
+    """Tell whether a connector already has an open (``active``) session.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        connector_id: UUID of the connector.
+
+    Returns:
+        ``True`` if at least one session on the connector is still active.
+    """
+    return await repository.count_active_sessions_by_connector_id(db, connector_id) > 0
+
+
+async def resolve_session_by_transaction(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    transaction_id: str,
+) -> TransactionSessionReference:
+    """Look up a session by the OCPP transaction identity a charger sent.
+
+    Used by messages that carry a ``transactionId`` but no topology (OCPP 1.6J
+    ``StopTransaction`` and ``MeterValues``), so nothing has to be remembered
+    per connection: the database is the source of truth.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the station that sent the message.
+        transaction_id: The transaction identity, as stored.
+
+    Returns:
+        A frozen reference with the session's ID, topology and status.
+
+    Raises:
+        ChargingSessionNotFoundError: If the station has no such transaction.
+    """
+    session = await repository.get_session_by_transaction(
+        db, station_id, transaction_id
+    )
+    if session is None:
+        raise ChargingSessionNotFoundError(
+            f"Transaction '{transaction_id}' not found for this station"
+        )
+    return TransactionSessionReference(
+        session_id=session.session_id,
+        station_id=session.station_id,
+        evse_id=session.evse_id,
+        connector_id=session.connector_id,
+        status=session.status,
     )

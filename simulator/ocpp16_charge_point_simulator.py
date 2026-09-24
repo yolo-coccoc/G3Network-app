@@ -18,6 +18,10 @@ Scenarios are added one message group at a time as the gateway learns them
   (the whole charger) and every gun: a full Available -> Preparing -> Charging
   -> SuspendedEV -> Finishing -> Available cycle on gun 1 (one report without a
   timestamp, which 1.6 allows), then a fault on gun 2 and on the charger.
+* ``session`` - ``boot``, all connectors Available, then a charging session on
+  gun 1: Authorize, Preparing, StartTransaction (the gateway assigns the
+  transactionId), Charging, StopTransaction with the closing meter reading and
+  a stop reason, Finishing, Available.
 
 Like the 2.0.1 simulator this only generates valid happy-path traffic. It does
 not simulate retries, duplicates, reconnects, delays, or random errors. A
@@ -35,12 +39,17 @@ from urllib.parse import quote
 from ocpp.exceptions import OCPPError
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call, call_result
-from ocpp.v16.enums import Action, ChargePointErrorCode, ChargePointStatus
+from ocpp.v16.enums import (
+    Action,
+    ChargePointErrorCode,
+    ChargePointStatus,
+    Reason,
+)
 from websockets.asyncio.client import connect
 from websockets.typing import Subprotocol
 
 OCPP_SUBPROTOCOL = "ocpp1.6"
-SCENARIOS = ("boot", "status")
+SCENARIOS = ("boot", "status", "session")
 
 # (key, value, readonly). Modelled on the spec summary's section 4.3 keys; the
 # defaults are what a vendor might ship, not what G3 wants (for example
@@ -83,6 +92,9 @@ class SimulatorConfig:
         vendor: ``chargePointVendor`` sent in BootNotification.
         model: ``chargePointModel`` sent in BootNotification.
         firmware_version: ``firmwareVersion`` sent in BootNotification.
+        id_tag: idTag presented in the ``session`` scenario.
+        meter_start_wh: Meter reading (Wh) sent in StartTransaction.
+        meter_stop_wh: Meter reading (Wh) sent in StopTransaction.
         heartbeats: How many Heartbeats the ``boot`` scenario sends.
         heartbeat_interval_seconds: Pause between those Heartbeats.
         configuration: Key table served for ``GetConfiguration``.
@@ -99,6 +111,9 @@ class SimulatorConfig:
     vendor: str = "Willdigits"
     model: str = "DC-240kW-Dual-CCS2"
     firmware_version: str = "OCPP_L4.05_SIM"
+    id_tag: str = "SIMTAG001"
+    meter_start_wh: int = 1000
+    meter_stop_wh: int = 1500
     heartbeats: int = 1
     heartbeat_interval_seconds: float = 1.0
     configuration: tuple[tuple[str, str, bool], ...] = DEFAULT_CONFIGURATION
@@ -287,6 +302,45 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             0, "Faulted", error_code="PowerMeterFailure", vendor_error_code="23"
         )
 
+    async def run_session_scenario(self) -> None:
+        """Boot, then run one charging session on gun 1.
+
+        Side Effects:
+            Sends the boot messages, then Authorize -> StartTransaction ->
+            StopTransaction with the StatusNotification cycle around them. The
+            transactionId in StopTransaction is the one the gateway returned in
+            StartTransaction; if StartTransaction fails the run stops there.
+        """
+        await self.run_boot_scenario()
+        await self.send_status(0, "Available")
+        for gun in range(1, self.config.connectors + 1):
+            await self.send_status(gun, "Available")
+        await self.send_call(call.Authorize(id_tag=self.config.id_tag))
+        await self.send_status(1, "Preparing")
+        started = await self.send_call(
+            call.StartTransaction(
+                connector_id=1,
+                id_tag=self.config.id_tag,
+                meter_start=self.config.meter_start_wh,
+                timestamp=utc_timestamp(),
+            )
+        )
+        if not isinstance(started, call_result.StartTransaction):
+            return
+        print(f"TRANSACTION assigned transaction_id={started.transaction_id}")
+        await self.send_status(1, "Charging")
+        await self.send_call(
+            call.StopTransaction(
+                meter_stop=self.config.meter_stop_wh,
+                timestamp=utc_timestamp(),
+                transaction_id=started.transaction_id,
+                reason=Reason.ev_disconnected,
+                id_tag=self.config.id_tag,
+            )
+        )
+        await self.send_status(1, "Finishing")
+        await self.send_status(1, "Available")
+
 
 async def run(config: SimulatorConfig) -> RunReport:
     """Connect as a 1.6J charger, run the scenario, and disconnect.
@@ -321,6 +375,8 @@ async def run(config: SimulatorConfig) -> RunReport:
                 await charge_point.run_boot_scenario()
             elif config.scenario == "status":
                 await charge_point.run_status_scenario()
+            elif config.scenario == "session":
+                await charge_point.run_session_scenario()
             await asyncio.sleep(config.linger_seconds)
         finally:
             listener.cancel()
@@ -344,6 +400,9 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--connectors", type=int, default=2)
     parser.add_argument("--scenario", choices=SCENARIOS, default="boot")
     parser.add_argument("--firmware", default="OCPP_L4.05_SIM")
+    parser.add_argument("--id-tag", default="SIMTAG001")
+    parser.add_argument("--meter-start", type=int, default=1000)
+    parser.add_argument("--meter-stop", type=int, default=1500)
     parser.add_argument("--heartbeats", type=int, default=1)
     parser.add_argument("--heartbeat-interval", type=float, default=1.0)
     parser.add_argument("--linger", type=float, default=1.0)
@@ -369,6 +428,9 @@ async def main(arguments: Sequence[str] | None = None) -> int:
             connectors=args.connectors,
             scenario=args.scenario,
             firmware_version=args.firmware,
+            id_tag=args.id_tag,
+            meter_start_wh=args.meter_start,
+            meter_stop_wh=args.meter_stop,
             heartbeats=args.heartbeats,
             heartbeat_interval_seconds=args.heartbeat_interval,
             linger_seconds=args.linger,

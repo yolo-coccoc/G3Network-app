@@ -16,7 +16,7 @@ def test_migration_graph_has_one_current_head() -> None:
     backend_root = _backend_root()
     script = ScriptDirectory.from_config(Config(str(backend_root / "alembic.ini")))
 
-    assert script.get_heads() == ["0023_charging_status_details"]
+    assert script.get_heads() == ["0024_charging_session_fields"]
 
 
 def test_reset_migration_uses_application_allowlist() -> None:

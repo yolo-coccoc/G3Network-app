@@ -62,6 +62,14 @@ class ChargingSessionModel(Base):
             earlier than this value is discarded, not applied.
         energy_delivered_wh: The difference between the end and start meter
             readings.
+        id_tag: The idTag (RFID/token) that started the session, nullable
+            (OCPP 1.6J; at most 20 characters). Stored as sent, not
+            validated: every tag is accepted for now.
+        stop_reason: Why the session stopped, as reported (OCPP 1.6J
+            ``StopTransaction.reason``), nullable.
+        meter_stop_wh: The charger's authoritative closing meter reading from
+            ``StopTransaction.meterStop``, nullable. Kept apart from
+            ``meter_end_wh``, which follows the latest sample.
         created_at: The time the record was created.
         updated_at: The time the record was last updated.
     """
@@ -112,6 +120,9 @@ class ChargingSessionModel(Base):
     energy_delivered_wh: Mapped[Decimal | None] = mapped_column(
         Numeric(24, 3), nullable=True
     )
+    id_tag: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    meter_stop_wh: Mapped[Decimal | None] = mapped_column(Numeric(24, 3), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
     )

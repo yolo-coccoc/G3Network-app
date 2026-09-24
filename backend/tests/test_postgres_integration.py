@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.domains.charging_sessions.repository as charging_repository
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.vehicles.repository as vehicle_repository
 from app.domains.telematics.models import TelematicModel
@@ -172,11 +173,40 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # Pinned to the current Alembic head. This assertion was stale
         # (hardcoded to an old head) until F-B2 - it went unnoticed only
         # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0023_charging_status_details"
+        assert version == "0024_charging_session_fields"
         assert len(tables) == 10
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
         assert "charging_ocpp_messages" in hypertables
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ocpp16_transaction_id_sequence_is_32_bit_and_increasing(
+    temporary_database: str,
+) -> None:
+    """OCPP 1.6J transaction IDs come from a bounded, non-cycling database sequence."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory.begin() as db:
+            first = await charging_repository.next_ocpp16_transaction_id(db)
+            second = await charging_repository.next_ocpp16_transaction_id(db)
+            details = (
+                await db.execute(
+                    text(
+                        "SELECT data_type, max_value, cycle FROM pg_sequences "
+                        "WHERE sequencename = 'charging_ocpp16_transaction_id_seq'"
+                    )
+                )
+            ).one()
+        assert (first, second) == (1, 2)
+        assert details.data_type == "integer"
+        assert details.max_value == 2147483647
+        assert details.cycle is False
     finally:
         await engine.dispose()
 
