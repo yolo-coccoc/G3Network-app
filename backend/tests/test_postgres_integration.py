@@ -1,8 +1,12 @@
 """PostgreSQL integration test for the baseline migrations and telemetry repository."""
 
+import asyncio
+import json
 import os
+import socket
 import subprocess
 import sys
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -179,9 +183,14 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         assert len(tables) == 11
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
-        assert "charging_ocpp_messages" in hypertables
-        assert "charging_session_measurements" in hypertables
-        assert "charging_session_meter_values" not in hypertables
+        # Exactly four hypertables: the OCPP 1.6J work replaced the session
+        # meter-values hypertable with measurements and added the raw message log.
+        assert hypertables == {
+            "vehicle_telemetry",
+            "charging_session_events",
+            "charging_ocpp_messages",
+            "charging_session_measurements",
+        }
     finally:
         await engine.dispose()
 
@@ -513,4 +522,276 @@ async def test_telemetry_repository_round_trip_rolls_back(
             assert vehicle_after_rollback is None
             assert telemetry_after_rollback is None
     finally:
+        await engine.dispose()
+
+
+def _free_port() -> int:
+    """Ask the operating system for a TCP port nothing is listening on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _wait_for_port(port: int, timeout_seconds: float = 30.0) -> None:
+    """Block until something accepts connections on ``port`` or fail the test."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            if probe.connect_ex(("127.0.0.1", port)) == 0:
+                return
+        time.sleep(0.2)
+    raise AssertionError(f"Nothing listened on port {port} after {timeout_seconds}s")
+
+
+async def _provision_station(
+    engine: object, identity: str, evse_ids: list[int]
+) -> None:
+    """Insert a station with one EVSE (and one connector) per given EVSE number."""
+    now = datetime.now(timezone.utc)
+    station_id = uuid4()
+    async with engine.begin() as connection:  # type: ignore[attr-defined]
+        await connection.execute(
+            text(
+                "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
+                "maintenance_status, created_at, updated_at) "
+                "VALUES (:s, :i, 'e2e', 'OPERATIONAL', :t, :t)"
+            ),
+            {"s": station_id, "i": identity, "t": now},
+        )
+        for evse_number in evse_ids:
+            evse_id = uuid4()
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
+                    "created_at, updated_at) VALUES (:e, :s, :n, :t, :t)"
+                ),
+                {"e": evse_id, "s": station_id, "n": evse_number, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connectors (connector_id, evse_id, "
+                    "ocpp_connector_id, created_at, updated_at) "
+                    "VALUES (:c, :e, 1, :t, :t)"
+                ),
+                {"c": uuid4(), "e": evse_id, "t": now},
+            )
+
+
+@pytest.mark.asyncio
+async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
+    temporary_database: str,
+) -> None:
+    """Real gateway + both simulators on a freshly migrated database.
+
+    Runs the OCPP 1.6J simulator's ``session`` scenario and checks everything
+    the OCPP 1.6J planner promises is stored: the charger's device fields,
+    connector statuses for 0/1/2, a completed session with the right energy,
+    ``idTag``, stop reason and ``meterStop``, the measurements, a raw-log row for
+    every frame in both directions, and one configuration capture. Then runs the
+    2.0.1 simulator against the same gateway to prove that path is unaffected.
+    """
+    port = _free_port()
+    simulator_dir = _backend_root().parent / "simulator"
+    environment = os.environ | {
+        "DATABASE_URL": temporary_database,
+        "CHARGING_OCPP_HOST": "127.0.0.1",
+        "CHARGING_OCPP_PORT": str(port),
+    }
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    await _provision_station(engine, "E2E-16", [1, 2])
+    await _provision_station(engine, "E2E-201", [1])
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
+        cwd=_backend_root(),
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_port(port)
+        url = f"ws://127.0.0.1:{port}"
+        run_16 = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                str(simulator_dir / "ocpp16_charge_point_simulator.py"),
+                "--url",
+                url,
+                "--identity",
+                "E2E-16",
+                "--scenario",
+                "session",
+                "--linger",
+                "1.5",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert run_16.returncode == 0, run_16.stdout + run_16.stderr
+        run_201 = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                str(simulator_dir / "charging_session_simulator.py"),
+                "--url",
+                url,
+                "--identity",
+                "E2E-201",
+                "--transaction-id",
+                "E2E-TX-201",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert run_201.returncode == 0, run_201.stdout + run_201.stderr
+
+        async with engine.connect() as connection:
+            station = (
+                await connection.execute(
+                    text(
+                        "SELECT station_id, ocpp_protocol_version, vendor, model, "
+                        "firmware_version, last_boot_at IS NOT NULL AS booted, "
+                        "last_seen_at IS NOT NULL AS seen, charger_status::text AS charger_status, "
+                        "charger_error_code FROM charging_stations WHERE ocpp_identity = 'E2E-16'"
+                    )
+                )
+            ).one()
+            gun_statuses = (
+                await connection.execute(
+                    text(
+                        "SELECT e.ocpp_evse_id, c.status::text, c.error_code "
+                        "FROM charging_connectors c JOIN charging_evses e USING (evse_id) "
+                        "WHERE e.station_id = :s ORDER BY e.ocpp_evse_id"
+                    ),
+                    {"s": station.station_id},
+                )
+            ).all()
+            session = (
+                await connection.execute(
+                    text(
+                        "SELECT session_id, ocpp_transaction_id, status::text, id_tag, "
+                        "stop_reason, meter_start_wh, meter_stop_wh, meter_end_wh, "
+                        "energy_delivered_wh FROM charging_sessions WHERE station_id = :s"
+                    ),
+                    {"s": station.station_id},
+                )
+            ).one()
+            energy = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT value FROM charging_session_measurements "
+                            "WHERE session_id = :x AND measurand = 'Energy.Active.Import.Register' "
+                            "ORDER BY sampled_at"
+                        ),
+                        {"x": session.session_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            measurands = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT DISTINCT measurand FROM charging_session_measurements "
+                            "WHERE session_id = :x"
+                        ),
+                        {"x": session.session_id},
+                    )
+                ).scalars()
+            )
+            frames = (
+                await connection.execute(
+                    text(
+                        "SELECT direction::text, ocpp_subprotocol, raw_frame "
+                        "FROM charging_ocpp_messages WHERE station_id = :s "
+                        "ORDER BY occurred_at"
+                    ),
+                    {"s": station.station_id},
+                )
+            ).all()
+            captures = (
+                await connection.execute(
+                    text(
+                        "SELECT count(DISTINCT capture_id) AS captures, count(*) AS keys, "
+                        "max(value) FILTER (WHERE config_key = 'SupportedFeatureProfiles') AS profiles "
+                        "FROM charging_station_configuration_entries WHERE station_id = :s"
+                    ),
+                    {"s": station.station_id},
+                )
+            ).one()
+            legacy = (
+                await connection.execute(
+                    text(
+                        "SELECT s.ocpp_protocol_version, x.status::text, x.meter_end_wh, "
+                        "x.energy_delivered_wh FROM charging_stations s "
+                        "JOIN charging_sessions x ON x.station_id = s.station_id "
+                        "WHERE s.ocpp_identity = 'E2E-201'"
+                    )
+                )
+            ).one()
+
+        # Device fields (Boot) and liveness.
+        assert (station.ocpp_protocol_version, station.vendor) == (
+            "ocpp1.6",
+            "Willdigits",
+        )
+        assert station.model == "DC-240kW-Dual-CCS2"
+        assert station.firmware_version == "OCPP_L4.05_SIM"
+        assert station.booted and station.seen
+        # Connector 0 (whole charger) and guns 1/2 (EVSE n / connector 1).
+        assert (station.charger_status, station.charger_error_code) == (
+            "Available",
+            "NoError",
+        )
+        assert [tuple(row) for row in gun_statuses] == [
+            (1, "Available", "NoError"),
+            (2, "Available", "NoError"),
+        ]
+        # The session: allocated ID, idTag, reason, closing meter, energy.
+        assert (session.ocpp_transaction_id, session.status) == ("1", "completed")
+        assert (session.id_tag, session.stop_reason) == ("SIMTAG001", "EVDisconnected")
+        assert (session.meter_start_wh, session.meter_stop_wh) == (1000, 1500)
+        assert (session.meter_end_wh, session.energy_delivered_wh) == (1500, 500)
+        # Measurements: 1.25 kWh really is 1250 Wh, plus the extra measurands.
+        assert list(energy) == [1250, 1450, 1500]
+        assert {
+            "SoC",
+            "Power.Active.Import",
+            "Voltage",
+            "Current.Import",
+            "Temperature",
+            "Power.Offered",
+            "Voltage.Demand",  # vendor-specific, stored as sent
+        } <= measurands
+        # Raw log: every request has its answer, in both directions.
+        parsed = [(direction, json.loads(raw)) for direction, _, raw in frames]
+        assert {subprotocol for _, subprotocol, _ in frames} == {"ocpp1.6"}
+        inbound_calls = {m[1] for d, m in parsed if d == "CP_TO_CSMS" and m[0] == 2}
+        outbound_answers = {
+            m[1] for d, m in parsed if d == "CSMS_TO_CP" and m[0] in (3, 4)
+        }
+        outbound_calls = {m[1] for d, m in parsed if d == "CSMS_TO_CP" and m[0] == 2}
+        inbound_answers = {
+            m[1] for d, m in parsed if d == "CP_TO_CSMS" and m[0] in (3, 4)
+        }
+        assert inbound_calls == outbound_answers and len(inbound_calls) >= 14
+        assert (
+            outbound_calls == inbound_answers and len(outbound_calls) == 1
+        )  # GetConfiguration
+        # One configuration capture with the charger's supported profiles.
+        assert (captures.captures, captures.keys) == (1, 16)
+        assert captures.profiles == "Core,SmartCharging,RemoteTrigger"
+        # The 2.0.1 path is unaffected.
+        assert tuple(legacy) == ("ocpp2.0.1", "completed", 1500, 500)
+    finally:
+        gateway.terminate()
+        try:
+            gateway.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            gateway.kill()
         await engine.dispose()
