@@ -3,11 +3,12 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–7 **done** on 2026-09-24 (decisions, raw
+> Status: 🚧 In progress — Steps 0–8 **done** on 2026-09-24 (decisions, raw
 > OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat and
 > liveness — **milestone M1** —, StatusNotification, the transaction lifecycle,
-> unified measurement storage and 1.6J MeterValues — **milestone M2 reached**);
-> Step 8 (post-boot GetConfiguration, M3) is next
+> unified measurement storage and 1.6J MeterValues — **milestone M2** — and the
+> post-boot GetConfiguration capture — **milestone M3 reached**); Step 9
+> (end-to-end regression and tests) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -876,13 +877,18 @@ Implement the post-boot GetConfiguration capture (planner Step 8, decision D10).
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke: the Boot handler returns **before** `GetConfiguration` is sent (a fake charge point proves it is not awaited inline); a timeout/`CALLERROR` is logged and the connection survives; the task is cancelled when the connection closes; entries and `is_readonly` mapped correctly; two boots → two captures, latest endpoint returns the second
-- [ ] Integration: migration cycle
-- [ ] Live: simulator boot → `configuration` endpoint lists every key incl. `SupportedFeatureProfiles`; the raw log shows the CSMS→CP `GetConfiguration` and the CP→CSMS result
-- [ ] **M3 reached** — record it here
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (142 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp16_configuration_smoke.py`; 375 tests pass in total): the `@after(boot_notification)` hook returns `None` at once and the request goes out only when the loop next runs — **never awaited inline**; the request has no key; the call uses `suppress=False`; every reported key becomes an entry (`readonly` flag kept, a missing value stays `NULL`, keyless items skipped, non-text values stringified); a `CALLERROR` or a timeout is logged as a warning, stores nothing and opens no transaction; a database failure is logged with `logger.exception` at the task boundary and never raised; closing the connection **cancels** a capture that is still waiting; a second boot cancels the first's capture; the service writes one capture whose rows share `capture_id` and a UTC `captured_at`, writes nothing for an empty answer, rejects a naive time and an unknown station; the read service returns the newest capture sorted by key, or an empty answer before the first boot; and a **real in-process WebSocket test**: `BootNotification.conf` arrives first, then the gateway's `GetConfiguration` request, then (after the client answers) the snapshot — with no deadlock
+- [x] Integration (`RUN_DB_INTEGRATION=1`): the migration cycle reaches head `0026_charging_config_snapshots` and the new table exists
+- [x] Live (real gateway + API, dev database, 1.6J simulator): before any boot the endpoint returns `capture_id: null` and no items; after one boot it lists **16 keys** including `SupportedFeatureProfiles = Core,SmartCharging,RemoteTrigger` (`readonly=true`) and 2 read-only keys; the raw log shows `BootNotification.conf` → `GetConfiguration` request → the charger's answer (a heartbeat was handled while the request was pending); a **second boot adds a second capture** (2 captures, 32 rows) and the endpoint returns the newer one; a charger that answers `CALLERROR NotImplemented` produces the warning and the connection keeps working; disconnecting while the request is pending stores no capture, logs no error and the gateway keeps serving new connections; the boot's device fields are still filled
+- [x] **M3 reached** — the charger's real configuration, including `SupportedFeatureProfiles`, is captured on every boot (verified against the simulator; the real charger is Step 10)
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 8 is done.
+
+- Migration `0026_charging_config_snapshots`: append-only `charging_station_configuration_entries(entry_id, station_id, capture_id, captured_at, config_key, value, is_readonly)`, index `(station_id, captured_at)`, FK `RESTRICT`. Model, `ConfigurationEntry` DTO, repository (`insert_configuration_entry`, `get_latest_configuration_capture`, `list_configuration_entries_by_capture_id`), service (`record_configuration_snapshot`, `get_latest_station_configuration`), schemas, and **`GET /api/v1/charging-stations/{station_id}/configuration`** (latest capture; empty with `null` capture fields before the first boot).
+- `OCPP16ChargePoint`: `@after(Action.boot_notification)` hook `after_boot_notification` (sync, returns `None`, so the library does not wrap it), the task `_capture_configuration` (the only request this backend sends; `suppress=False`; a task boundary that logs instead of raising), `cancel_background_tasks`, called from the gateway's connection `finally`. The adapter now passes `response_timeout=CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS` (new active setting, default 30, replacing its commented form).
+- **The `@after` hook was used instead of scheduling inside the boot handler** (a refinement of the original text): `python-ocpp` runs it only after the boot response has been sent, which guarantees the required ordering; the real-socket test pins it.
+- Not done, by design: `ChangeConfiguration`, on-demand `GetConfiguration`, `TriggerMessage` (`future.md` #74), comparing captures to flag a change, and 2.0.1 configuration (#78).
 
 ### Step 9 — End-to-end regression and automated tests (E2)
 
