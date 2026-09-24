@@ -3,8 +3,9 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 📋 Planned — §2's decisions are **proposals awaiting
-> confirmation** (Step 0); no source has been changed yet
+> Status: 📋 Planned — Step 0 **done 2026-09-24** (all 14 design decisions
+> in §2 confirmed, documentation updated); Step 1 is next; no source has been
+> changed yet
 > Created: 2026-09-24
 >
 > Inputs:
@@ -47,26 +48,27 @@ real-charger logs first.
 
 ## 2. Scope decisions
 
-> ⚠️ **All decisions below are proposals.** Step 0 exists to confirm or change
-> them **before** any code is written. Each one names the alternative that was
-> rejected and why, so a reviewer can overturn it cheaply.
+> **All 14 decisions were confirmed on 2026-09-24 (Step 0).** D4 and D9 differ
+> from the original recommendation (the user chose the wider status enum and a
+> single measurements table); the rows record both the choice and the
+> alternative that was rejected, so a later reviewer can revisit it cheaply.
 
-| # | Decision (proposed) | Rejected alternative → why |
+| # | Decision | Rejected alternative → why |
 |---|---|---|
-| **D1** | **Add OCPP 1.6J alongside 2.0.1**; keep the 2.0.1 path working | Replace 2.0.1 with 1.6J → throws away tested code and contradicts F-G2's "1.6J minimum, **2.0.1-ready**" |
-| **D2** | **One adapter class per protocol**, chosen by the negotiated subprotocol; the 1.6J adapter lives in its own module | Extend `OCPPChargePoint` with 1.6 handlers → the two protocols have incompatible payload shapes (no EVSE, no `TransactionEvent`, flat `unit`); mixing them in one class hides which contract each handler assumes (same lesson as F-B2 Step 0) |
-| **D3** | **Topology mapping for 1.6J:** connector `n ≥ 1` → EVSE `n`, connector `1`; connector `0` is charger-level state stored on `charging_stations` (no topology row, keeps the `> 0` CHECK constraints) | One EVSE holding both guns → cannot tell guns apart by EVSE alone; allow connector `0` in the topology tables → breaks the deliberate `> 0` invariant and pollutes connector counts (`connector_count`, F-D1) |
-| **D4** | **Keep `charging_connectors.status` as the canonical cross-protocol vocabulary** (the existing 5 values) and **add** the protocol's own label + error fields beside it | Widen the enum to 1.6's 9 values → changes what F-C2/F-D1/F-A2 read and makes 2.0.1 stations look different; canonical-only → loses `Preparing`/`Charging`/`Suspended*` (B4) |
-| **D5** | **Charger-level state as nullable columns on `charging_stations`** (device info, `last_seen_at`, connector-0 status). `is_online` is **derived at read time** from `last_seen_at`; no background sweeper | A `charge_point` table → one row per station is a 1:1 split with no benefit; a sweeper worker → this is the deferred reliability path (`future.md` #27) and unnecessary for a derived flag |
-| **D6** | **The CSMS allocates the 1.6 `transactionId` from a PostgreSQL sequence** (integer range) and stores it as the existing `ocpp_transaction_id` string | Timestamp/UUID-derived IDs → 1.6 requires an integer; in-memory counter → lost on restart, reused after restart |
-| **D7** | **`Authorize` and `StartTransaction` accept every `idTag`** in this planner; the `idTag` is stored on the session. Real validation stays in `future.md` #26/#62 | Reject unknown tags → there is no tag registry to check against and the vendor's Autocharge/VIN behaviour is unknown; would block all charging |
-| **D8** | **Raw log = its own hypertable, verbatim frame as `TEXT`**, written **by a wrapper around the WebSocket connection**, in **its own transaction, before the frame is parsed** (inbound) / after it is sent (outbound). Read via SQL only — no API | Log inside each handler → misses unparseable/unhandled frames (exactly the ones the spec wants); `JSONB` → not verbatim; an API → nothing needs it yet |
-| **D9** | **Energy register stays in `charging_session_meter_values`** (drives the aggregate; gains a nullable `context`); **all other measurands go to a new hypertable `charging_session_measurements`**, including unknown vendor names | One wide table for everything → the aggregate query and the F-C5 report would then have to filter by measurand |
-| **D10** | **The only CSMS-initiated call is a post-boot `GetConfiguration`** (no key), sent from a separate task. No HTTP→charger command channel now | Build the command channel now → cross-process design (the gateway is a separate OS process) that needs its own decision (`future.md` new item); Phase 1's other probes (`ChangeConfiguration`, `TriggerMessage`) can use an external OCPP test tool (the handover doc suggests SteVe) |
-| **D11** | **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
-| **D12** | **No TLS/authentication change** in this planner (dev mode per `tech-decisions.md`) | Add `wss://` + Basic Auth now → the vendor has not said what it supports (spec §6.2 #4); implementing the wrong scheme wastes the work |
-| **D13** | **2.0.1 handlers are not changed** except for (a) the raw-log wrapper, (b) negotiation, (c) `last_seen_at`/protocol version updates | Give 2.0.1 the new fields too → no 2.0.1 hardware exists; recorded as parity work in `future.md` |
-| **D14** | **Reliability (`future.md` #27) is not reopened wholesale.** The 1.6 path avoids the in-memory session map by design (looks the session up by `transactionId`); orphan-session, back-fill and clock policies wait for real logs | Build reconnect/back-fill/orphan cleanup speculatively → the spec says to replace assumptions with real logs before fixing design |
+| **D1** | ✅ *Confirmed 2026-09-24.* **Add OCPP 1.6J alongside 2.0.1**; keep the 2.0.1 path working | Replace 2.0.1 with 1.6J → throws away tested code and contradicts F-G2's "1.6J minimum, **2.0.1-ready**" |
+| **D2** | ✅ *Confirmed 2026-09-24.* **One adapter class per protocol**, chosen by the negotiated subprotocol; the 1.6J adapter lives in its own module | Extend `OCPPChargePoint` with 1.6 handlers → the two protocols have incompatible payload shapes (no EVSE, no `TransactionEvent`, flat `unit`); mixing them in one class hides which contract each handler assumes (same lesson as F-B2 Step 0) |
+| **D3** | ✅ *Confirmed 2026-09-24.* **Topology mapping for 1.6J:** connector `n ≥ 1` → EVSE `n`, connector `1`; connector `0` is charger-level state stored on `charging_stations` (no topology row, keeps the `> 0` CHECK constraints) | One EVSE holding both guns → cannot tell guns apart by EVSE alone; allow connector `0` in the topology tables → breaks the deliberate `> 0` invariant and pollutes connector counts (`connector_count`, F-D1) |
+| **D4** | ✅ *Confirmed 2026-09-24 (the wider enum was chosen over the original recommendation).* **Widen `ChargingConnectorStatus` to carry 1.6J's nine statuses**, keeping the existing 2.0.1 `Occupied` (the 2.0.1 gateway still writes it) — so **10 values**: `Available, Occupied, Reserved, Unavailable, Faulted` + `Preparing, Charging, SuspendedEV, SuspendedEVSE, Finishing`. Error fields are added beside `status`; there is **no** second status column. Consequences: "busy" = **any value other than `Available`** (and not `Reserved`/`Unavailable`/`Faulted`); API consumers now see the extra values for 1.6 stations; F-D1/F-A2 don't read connector status today (`future.md` #49), so nothing regresses, but #49 must use this busy rule when it is built | Original recommendation — keep the 5-value canonical status and add a raw-label column → would keep 2.0.1 and 1.6 stations looking identical to readers; keep only 5 values → loses `Preparing`/`Charging`/`Suspended*` and the error codes (B4) |
+| **D5** | ✅ *Confirmed 2026-09-24.* **Charger-level state as nullable columns on `charging_stations`** (device info, `last_seen_at`, connector-0 status). `is_online` is **derived at read time** from `last_seen_at`; no background sweeper | A `charge_point` table → one row per station is a 1:1 split with no benefit; a sweeper worker → this is the deferred reliability path (`future.md` #27) and unnecessary for a derived flag |
+| **D6** | ✅ *Confirmed 2026-09-24.* **The CSMS allocates the 1.6 `transactionId` from a PostgreSQL sequence** (integer range) and stores it as the existing `ocpp_transaction_id` string | Timestamp/UUID-derived IDs → 1.6 requires an integer; in-memory counter → lost on restart, reused after restart |
+| **D7** | ✅ *Confirmed 2026-09-24.* **`Authorize` and `StartTransaction` accept every `idTag`** in this planner; the `idTag` is stored on the session. Real validation stays in `future.md` #26/#62 | Reject unknown tags → there is no tag registry to check against and the vendor's Autocharge/VIN behaviour is unknown; would block all charging |
+| **D8** | ✅ *Confirmed 2026-09-24.* **Raw log = its own hypertable, verbatim frame as `TEXT`**, written **by a wrapper around the WebSocket connection**, in **its own transaction, before the frame is parsed** (inbound) / after it is sent (outbound). Read via SQL only — no API | Log inside each handler → misses unparseable/unhandled frames (exactly the ones the spec wants); `JSONB` → not verbatim; an API → nothing needs it yet |
+| **D9** | ✅ *Confirmed 2026-09-24 (a single table was chosen over the original recommendation, and the follow-up chose a **full merge**).* **One table, `charging_session_measurements`, holds every measurand for both protocols — including the energy register.** The old `charging_session_meter_values` is **replaced**: its rows are copied across and the table is dropped; the 2.0.1 gateway's energy writer switches to the new table with **unchanged behaviour**; the `/meter-values` API keeps its contract as a filter on the energy measurand. The session aggregate (`meter_end_wh`, `energy_delivered_wh`) is still updated by the service, not derived from this table | Original recommendation — energy stays in the old table and only other measurands go to a new one → two places for measurements; 1.6J-only new table with the old one kept for 2.0.1 → energy history split by protocol and `/meter-values` empty for 1.6J sessions |
+| **D10** | ✅ *Confirmed 2026-09-24.* **The only CSMS-initiated call is a post-boot `GetConfiguration`** (no key), sent from a separate task. No HTTP→charger command channel now | Build the command channel now → cross-process design (the gateway is a separate OS process) that needs its own decision (`future.md` new item); Phase 1's other probes (`ChangeConfiguration`, `TriggerMessage`) can use an external OCPP test tool (the handover doc suggests SteVe) |
+| **D11** | ✅ *Confirmed 2026-09-24.* **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
+| **D12** | ✅ *Confirmed 2026-09-24.* **No TLS/authentication change** in this planner (dev mode per `tech-decisions.md`) | Add `wss://` + Basic Auth now → the vendor has not said what it supports (spec §6.2 #4); implementing the wrong scheme wastes the work |
+| **D13** | ✅ *Confirmed 2026-09-24.* **2.0.1 handlers are not changed** except for (a) the raw-log wrapper, (b) negotiation, (c) `last_seen_at`/protocol version updates, (d) its energy samples are written to the unified measurements table (D9; behaviour identical) | Give 2.0.1 the new fields too → no 2.0.1 hardware exists; recorded as parity work in `future.md` |
+| **D14** | ✅ *Confirmed 2026-09-24.* **Reliability (`future.md` #27) is not reopened wholesale.** The 1.6 path avoids the in-memory session map by design (looks the session up by `transactionId`); orphan-session, back-fill and clock policies wait for real logs | Build reconnect/back-fill/orphan cleanup speculatively → the spec says to replace assumptions with real logs before fixing design |
 
 ### 2.1 Convention notes that shape the steps
 
@@ -125,14 +127,15 @@ Simulators ──ws (ocpp2.0.1)──▶          └─▶ OCPP201ChargePoint �
 | `charging_ocpp_messages` **(new, hypertable)** | `message_id`, `occurred_at`, `station_id`, `ocpp_subprotocol`, `direction`, `raw_frame TEXT` | 1 / `0021_charging_ocpp_raw_log` |
 | `charging_stations` | + `ocpp_protocol_version`, `vendor`, `model`, `serial_number`, `firmware_version`, `last_boot_at`, `last_seen_at` | 4 / `0022_charging_station_device` |
 | `charging_stations` | + `charger_status`, `charger_status_updated_at`, `charger_error_code`, `charger_vendor_error_code` (connector 0) | 5 / `0023_charging_status_details` |
-| `charging_connectors` | + `protocol_status`, `error_code`, `vendor_error_code`, `status_info` | 5 / `0023_charging_status_details` |
+| `charging_connectors` | `status` enum gains 5 values (`Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing`); + `error_code`, `vendor_error_code`, `status_info` | 5 / `0023_charging_status_details` |
 | `charging_sessions` | + `id_tag`, `stop_reason`, `meter_stop_wh`; new integer sequence for 1.6 transaction IDs | 6 / `0024_charging_session_fields` |
-| `charging_session_meter_values` | + nullable `context` | 7 / `0025_charging_measurements` |
-| `charging_session_measurements` **(new, hypertable)** | `measurement_id`, `sampled_at`, `session_id`, `measurand`, `value`, `unit`, `context`, `phase`, `location` | 7 / `0025_charging_measurements` |
+| `charging_session_measurements` **(new, hypertable)** | `measurement_id`, `sampled_at`, `session_id`, `measurand`, `value`, `unit`, `context`, `phase`, `location` | 7a / `0025_charging_measurements` |
+| `charging_session_meter_values` **(dropped)** | rows copied into `charging_session_measurements` as `Energy.Active.Import.Register`, unit `Wh` | 7a / `0025_charging_measurements` |
 | `charging_station_configuration_entries` **(new)** | `entry_id`, `station_id`, `capture_id`, `captured_at`, `config_key`, `value`, `is_readonly` | 8 / `0026_charging_config_snapshots` |
 
-After this planner the database has **five** hypertables (telemetry, session
-events, session meter values, **raw OCPP messages, measurements**).
+After this planner the database has **four** hypertables (telemetry, session
+events, **raw OCPP messages, measurements**); measurements *replaces* the
+former session meter-values hypertable.
 
 ### 3.3 OCPP 1.6J coverage after this planner
 
@@ -143,7 +146,7 @@ events, session meter values, **raw OCPP messages, measurements**).
 | StatusNotification | CP→CSMS | ✅ Step 5 (connectors 0/1/2, error codes) |
 | Authorize | CP→CSMS | ✅ Step 6 (accept-all, D7) |
 | StartTransaction / StopTransaction | CP→CSMS | ✅ Step 6 |
-| MeterValues | CP→CSMS | ✅ Step 7 (+ `StopTransaction.transactionData`) |
+| MeterValues | CP→CSMS | ✅ Step 7b (+ `StopTransaction.transactionData`) |
 | GetConfiguration | CSMS→CP | ✅ Step 8 (post-boot, automatic only) |
 | Everything else (`RemoteStart/Stop`, `ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, Firmware, Reservation, `DataTransfer`, `FirmwareStatusNotification`…) | both | ⛔ deferred (§6); inbound ones get `CALLERROR NotImplemented` and are visible in the raw log |
 
@@ -152,7 +155,7 @@ events, session meter values, **raw OCPP messages, measurements**).
 | Milestone | After | What it proves |
 |---|---|---|
 | **M1 — "charger connects and is recorded"** | Step 4 | The sample charger (if it is on site) can connect, is answered `Accepted`, and **every frame it sends is in the raw log**. Step 10 Phase 1 can already start; the findings feed Steps 5–8 |
-| **M2 — "a full session is stored"** | Step 7 | Status, session, meter and measurements from a real or simulated session |
+| **M2 — "a full session is stored"** | Step 7b | Status, session, meter and measurements from a real or simulated session |
 | **M3 — "charger's real spec is captured"** | Step 8 | `SupportedFeatureProfiles` and every configuration key stored per boot |
 
 ## 4. Implementation order
@@ -190,12 +193,31 @@ Do not change active logic.
 
 **Checks:**
 
-- [ ] Every decision D1–D14 is marked *confirmed* or replaced in §2
-- [ ] `tech-decisions.md`, `feature-list.md` (F-G2), `open-questions.md` updated
-- [ ] §6's new deferred items exist in `future.md` with description, purpose, reason, related planner, date
-- [ ] No source/migration/config file changed
+- [x] Every decision D1–D14 is marked *confirmed* or replaced in §2 (done 2026-09-24)
+- [x] `tech-decisions.md`, `feature-list.md` (F-G2, plus a note on "Items needing confirmation" #11), `open-questions.md` (new items 4 and 5) updated (2026-09-24)
+- [x] §6's new deferred items exist in `future.md` (#73–#80) with description, purpose, reason, related planner, date
+- [x] No source/migration/config file changed
 
-**Actual result:** *(to be filled in)*
+**Actual result (completed 2026-09-24):** Step 0 is done; no source, migration
+or config file was touched.
+
+- All 14 decisions were confirmed one at a time. Twelve matched the original
+  recommendation. Two were changed by the user: **D4** (widen the connector
+  status enum to the nine 1.6J statuses instead of keeping five + a raw
+  label — `Occupied` is kept for 2.0.1, so ten values) and **D9** (one
+  `charging_session_measurements` table for everything, with a **full merge**
+  that replaces `charging_session_meter_values`). D9's merge made Step 7 split
+  into 7a (behaviour-neutral refactor + data-preserving migration, verified on
+  the 2.0.1 simulator) and 7b (1.6J MeterValues); the planner and its schema
+  delta, hypertable count (now four) and traceability tables were updated.
+- Documentation updated: `.claude/rules/tech-decisions.md` (OCPP gateway now
+  1.6J + 2.0.1), `docs/01-requirements/feature-list.md` (F-G2 status, plus a
+  one-line answer on "Items needing confirmation" #11 for the first
+  hardware), `.claude/rules/open-questions.md` (items 4–5: vendor requests and
+  non-software blockers), `docs/01-requirements/future.md` (items #73–#80).
+- Note: `.claude/` is not tracked by git (`repo-conventions.md`), so the
+  `tech-decisions.md` and `open-questions.md` edits exist locally only.
+- Next: Step 1 (raw OCPP message log).
 
 ### Step 1 — Raw OCPP message log (B1)
 
@@ -272,7 +294,7 @@ service/repository, __init__.py stays docstring-only).
 
 **Actual result:** *(to be filled in)*
 
-**Future:** raw-log read API and retention policy → new `future.md` item.
+**Future:** raw-log read API and retention policy → `future.md` #79.
 
 ### Step 2 — Version-aware gateway (A1)
 
@@ -441,20 +463,25 @@ Every helper needs a full docstring; 1.6 optional fields may be missing.
 
 **Actual result:** *(to be filled in)*
 
-### Step 5 — StatusNotification: connectors 0/1/2, protocol status, errors (B2, B3, B4, B5, C5-partial)
+### Step 5 — StatusNotification: connectors 0/1/2, full 1.6 status, errors (B2, B3, B4, B5, C5-partial)
 
 **Goal/scope:** Store what a 1.6 charger says about each gun and about
-itself: the protocol's own status, `errorCode`, `vendorErrorCode`, `info`,
+itself: the full 1.6 status, `errorCode`, `vendorErrorCode`, `info`,
 plus connector `0` as charger-level state. Fault **alerting** is out of
 scope; this step only stops the data being thrown away.
 
 **Contract/decisions:**
 
 - Migration `0023_charging_status_details`:
-  - `charging_connectors`: `protocol_status` (`String(30)`, raw label such as
-    `Charging`), `error_code` (`String(50)`), `vendor_error_code`
+  - PostgreSQL enum `chargingconnectorstatus`: add the five 1.6 values
+    (`ALTER TYPE … ADD VALUE`, which must run outside a transaction block —
+    use Alembic's `autocommit_block`). PostgreSQL cannot drop enum values, so
+    the **downgrade** converts the five new values to `Occupied`, then
+    recreates the type without them (rename-old / create-new / alter column /
+    drop-old) — verify with the upgrade → downgrade → upgrade cycle.
+  - `charging_connectors`: `error_code` (`String(50)`), `vendor_error_code`
     (`String(100)`), `status_info` (`String(50)`) — all nullable.
-  - `charging_stations`: `charger_status` (reuse the existing
+  - `charging_stations`: `charger_status` (reuse the widened
     `chargingconnectorstatus` PG enum, `create_type=False`),
     `charger_status_updated_at`, `charger_error_code`,
     `charger_vendor_error_code` — nullable (connector `0`).
@@ -462,11 +489,15 @@ scope; this step only stops the data being thrown away.
   `n ≥ 1` finds the EVSE with `ocpp_evse_id == n` and its connector with
   `ocpp_connector_id == 1`; `n == 0` is handled as charger-level and needs no
   topology row. Provisioning uses the existing CRUD (seed script from Step 3).
-- **Canonical mapping** (pure function in the 1.6 adapter, D4):
-  `Available→AVAILABLE`; `Preparing`, `Charging`, `SuspendedEV`,
-  `SuspendedEVSE`, `Finishing → OCCUPIED`; `Reserved→RESERVED`;
-  `Unavailable→UNAVAILABLE`; `Faulted→FAULTED`. Free-vs-busy semantics are
-  unchanged (F-D1/F-A2 keep working).
+- **Status vocabulary (D4):** the enum members' *values* are the exact 1.6
+  labels (`Available`, `Preparing`, `Charging`, `SuspendedEV`,
+  `SuspendedEVSE`, `Finishing`, `Reserved`, `Unavailable`, `Faulted`) plus
+  the existing 2.0.1 `Occupied`, so the adapter converts with
+  `ChargingConnectorStatus(status)` exactly like the 2.0.1 path — no mapping
+  function. An unknown label raises (loud). `types.py`'s docstring, which
+  says the enum is 2.0.1's exact list, must be rewritten. **Busy rule:** a
+  gun is free only when `Available`; `Preparing`/`Charging`/`Suspended*`/
+  `Finishing`/`Occupied` are busy; `Suspended*` are normal, not faults.
 - `timestamp` is **optional** in 1.6: absent → use the received time.
 - `errorCode` is stored as sent (`NoError` included). All 16 standard codes
   and any vendor string are accepted; unknown `status` values still raise
@@ -481,12 +512,13 @@ Implement OCPP 1.6J StatusNotification (planner Step 5, decisions D3, D4).
 
 1. Migration 0023_charging_status_details with the connector and station
    columns above; models, response schemas (connector and station).
-2. Adapter: to_canonical_connector_status_v16 (pure mapping),
-   resolve_ocpp16_topology in charging_stations.service, and
+2. Widen ChargingConnectorStatus (enum + PG type, with the downgrade
+   handling described above), resolve_ocpp16_topology in
+   charging_stations.service, and
    OCPP16ChargePoint.on_status_notification handling connector_id 0
    (station-level) and n>=1 (connector). Missing timestamp -> received time.
-3. Extend update_connector_status with optional keyword-only protocol_status,
-   error_code, vendor_error_code, status_info; add update_charger_status for
+3. Extend update_connector_status with optional keyword-only error_code,
+   vendor_error_code, status_info; add update_charger_status for
    connector 0. Keep the 2.0.1 handler's call unchanged.
 4. Simulator: send StatusNotification for 0, 1 and 2, including a Faulted
    with errorCode and vendorErrorCode.
@@ -498,14 +530,14 @@ Do not add any alerting.
 **Checks:**
 
 - [ ] Static checks clean
-- [ ] Smoke: all 9 statuses map as specified; all 16 error codes stored; connector `0` writes the station columns and never touches topology; missing `timestamp`; unknown status raises; unprovisioned connector → error; 2.0.1 `StatusNotification` unaffected
-- [ ] Regression: `GET /charging-stations/nearby` results unchanged
+- [ ] Smoke: all 9 statuses are accepted and stored as sent, `Occupied` still works for 2.0.1; all 16 error codes stored; connector `0` writes the station columns and never touches topology; missing `timestamp`; unknown status raises; unprovisioned connector → error; 2.0.1 `StatusNotification` unaffected
+- [ ] Regression: `GET /charging-stations/nearby` results unchanged; the 2.0.1 simulator's `Occupied` status still stores
 - [ ] Integration: migration cycle
-- [ ] Live: simulator statuses for 0/1/2 → connector API shows canonical `status` + `protocol_status` + error fields; station shows `charger_status`
+- [ ] Live: simulator statuses for 0/1/2 → connector API shows the exact 1.6 `status` + error fields; station shows `charger_status`
 
 **Actual result:** *(to be filled in)*
 
-**Future:** fault alerting and the vendor 80-code catalog; stale-status invalidation and availability from `is_online` → new `future.md` items (extends #37/#49).
+**Future:** fault alerting and the vendor 80-code catalog; stale-status invalidation and availability from `is_online` → `future.md` #75 and #76 (extends #37/#49).
 
 ### Step 6 — Transactions: Authorize, StartTransaction, StopTransaction (B8, B9, B10)
 
@@ -537,7 +569,7 @@ feeding the existing session service.
   (authoritative closing reading); the aggregate's `meter_end_wh` follows the
   existing forward-in-time watermark rule (F-B2), so a stale timestamp never
   overwrites a newer reading but the closing register is still kept.
-  `transaction_data` is handled in Step 7.
+  `transaction_data` is handled in Step 7b.
 - **Not done here (D14):** an ACTIVE session already on that connector when
   a new `StartTransaction` arrives is left alone with a structured
   `WARNING` — orphan policy waits for real logs. An unknown
@@ -574,7 +606,74 @@ Keep the 2.0.1 path byte-for-byte compatible.
 
 **Actual result:** *(to be filled in)*
 
-### Step 7 — MeterValues and measurements (B7, C1-for-1.6, C8) — **M2**
+### Step 7 — Unified measurement storage, then 1.6J MeterValues (B7, C1-for-1.6, C8) — **M2**
+
+Two sub-steps. **7a is a behaviour-neutral refactor** that touches the working
+2.0.1 path and a data migration, so it is verified on its own (with the
+2.0.1 simulator) before **7b** adds any 1.6J code. Do not start 7b until 7a's
+checks pass.
+
+#### Step 7a — Unify meter storage (D9)
+
+**Goal/scope:** Replace `charging_session_meter_values` with the single table
+`charging_session_measurements` for both protocols. No new measurands are
+stored yet and no 1.6 code is added; the observable 2.0.1 behaviour and the
+`/meter-values` API must not change.
+
+**Contract/decisions:**
+
+- Migration `0025_charging_measurements` (**data-preserving**, not a reset):
+  1. create hypertable `charging_session_measurements(measurement_id UUID,
+     sampled_at timestamptz — both PK, session_id FK `RESTRICT`,
+     measurand String(60) NOT NULL, value Numeric(24, 6) NOT NULL, unit
+     String(20), context String(30), phase String(10), location String(20))`,
+     index `(session_id, measurand, sampled_at)`;
+  2. copy every old row: `measurement_id = meter_value_id`, `sampled_at`,
+     `session_id`, `measurand = 'Energy.Active.Import.Register'`,
+     `value = value_wh`, `unit = 'Wh'`;
+  3. drop `charging_session_meter_values`.
+  **Downgrade:** recreate the old table/hypertable, copy back **only** the
+  energy-register rows, drop the new table. Any non-energy rows are lost on
+  downgrade — state this in the migration docstring.
+- **Energy row convention:** `measurand = Energy.Active.Import.Register`,
+  `value` = canonical **Wh**, `unit = 'Wh'`. Other measurands keep the value and
+  unit as sent.
+- `ChargingSessionMeterValueModel` → `ChargingSessionMeasurementModel`;
+  repository `insert_meter_value` → `insert_measurement`; the list/count
+  queries behind `/meter-values` filter on the energy measurand and still
+  return `{sampled_at, value_wh}` — the response schema is **unchanged**.
+- `ingest_meter_values(db, session_id, sample)` keeps its public signature
+  and behaviour (aggregate watermark rule, COMPLETED refusal); only its insert
+  target changes. `MeterSampleInput` gains an optional `context` (default
+  `None`). F-C5 is unaffected (it reads the session aggregate).
+
+**Prompt:**
+
+```text
+Unify charging meter storage (planner Step 7a, decision D9).
+
+1. Migration 0025_charging_measurements: create the hypertable, copy every
+   row from charging_session_meter_values as the energy measurand in Wh,
+   drop the old table; a downgrade recreates it and copies energy rows back.
+2. Rename the model/repository functions, point ingest_meter_values and the
+   /meter-values list/count queries at the new table filtered on the energy
+   measurand. Keep every public signature and response schema unchanged.
+3. Update existing tests that referenced the old model/table.
+Do not add any 1.6J code or store any new measurand in this step.
+```
+
+**Main files:** `charging_sessions/{models,repository,service,types}.py`, `charging_stations/ocpp/ocpp_server.py` (only if it names the old model), tests, migration `0025_…`
+
+**Checks:**
+
+- [ ] Static checks clean
+- [ ] Integration: migrate to `0024`, insert energy rows, upgrade to `0025` → row count and values equal; downgrade restores them; new table is a hypertable and the old one is gone
+- [ ] Regression: run the 2.0.1 simulator **before and after** the change on the same inputs; `/charging-sessions/{id}`, `/events`, `/meter-values` return identical values
+- [ ] No reference to `charging_session_meter_values` remains in code (`rg`)
+
+**Actual result:** *(to be filled in)*
+
+#### Step 7b — 1.6J MeterValues and extra measurands
 
 **Goal/scope:** Store `SoC`, power, voltage, current, temperature and
 `Power.Offered` (and any vendor-named measurand), keep the energy register
@@ -582,76 +681,72 @@ driving the session aggregate, and remove the in-memory session map for 1.6.
 
 **Contract/decisions:**
 
-- Migration `0025_charging_measurements`: nullable `context` on
-  `charging_session_meter_values`; new hypertable
-  `charging_session_measurements(measurement_id, sampled_at, session_id FK,
-  measurand String(60), value Numeric(24, 6), unit String(20), context
-  String(30), phase String(10), location String(20))`, index
-  `(session_id, sampled_at, measurand)`.
 - **New 1.6 normaliser** `normalize_v16_sampled_value` (separate from the
   2.0.1 function — never reuse it, comparison §2.2): default measurand
   `Energy.Active.Import.Register`, default unit `Wh`, flat `unit` field;
   energy register in `Wh`/`kWh` → canonical Wh, **any other energy unit
   raises** (loud, as today); a `kWh` sample **must** become ×1000 (explicit
   regression test).
-- **Routing:** energy register → existing `ingest_meter_values` (aggregate,
-  + `context`); every other measurand → `ingest_measurements` (per-item
-  inserts, no batching). Unknown/vendor names (🔎 `Voltage.Demand`,
-  `Current.Demand`) are stored as-is. `format = SignedData` or a
-  non-numeric non-energy value is **skipped with a structured `WARNING`
-  including a count** (C8) — never silently, never failing the whole
-  message. An unparseable **energy** value raises.
+- **New input type** `MeasurementInput` (frozen dataclass in `types.py`:
+  `sampled_at`, `measurand`, `value: Decimal`, `unit`, `context`, `phase`,
+  `location`). Public service `ingest_measurements(db, session_id, samples)`
+  inserts per item (no batching).
+- **Routing:** the energy register → `ingest_meter_values` (aggregate update
+  **and** a measurement row, with `context`); every other measurand →
+  `ingest_measurements`. Unknown/vendor names (🔎 `Voltage.Demand`,
+  `Current.Demand`) are stored as-is. `format = SignedData` or a non-numeric
+  non-energy value is **skipped with a structured `WARNING` including a
+  count** (C8) — never silently, never failing the whole message. An
+  unparseable **energy** value raises.
 - **Session lookup by `transactionId` (fixes C1 for 1.6):** new public
   `charging_sessions.service.resolve_session_by_transaction(db, station_id,
   transaction_id)` returning a frozen `TransactionSessionReference`
-  dataclass (defined in `types.py`). No `_session_by_evse` dict on the 1.6
-  adapter. `MeterValues` **without** a `transactionId` (clock-aligned /
-  outside a transaction) is not attributed to a session: it stays in the raw
-  log and is counted in a `DEBUG` log; station-level metering is deferred.
-- `StopTransaction.transaction_data` is processed by the same function
+  dataclass (`types.py`). No `_session_by_evse` dict on the 1.6 adapter.
+  `MeterValues` **without** a `transactionId` (clock-aligned / outside a
+  transaction) is not attributed to a session: it stays in the raw log and is
+  counted in a `DEBUG` log; station-level metering is deferred.
+- `StopTransaction.transaction_data` goes through the same function
   (`context = Transaction.End` normally). Existing guards apply: a sample for
   a `COMPLETED` session is refused.
 - Read API: `GET /api/v1/charging-sessions/{session_id}/measurements`
   (paginated, optional `measurand` filter), matching the existing monitoring
-  endpoints; no raw payload.
+  endpoints; no raw payload. `/meter-values` stays as the energy-only view.
 - 🔎 Treat `SoC = 0` at session start as *unknown* when consuming the data
   later; storage keeps the value as sent.
+- No migration in 7b (the table and its `context` column exist from 7a).
 
 **Prompt:**
 
 ```text
-Implement OCPP 1.6J MeterValues and measurement storage (planner Step 7,
-decision D9).
+Implement OCPP 1.6J MeterValues and measurement storage (planner Step 7b,
+decision D9). Step 7a must already be merged and verified.
 
-1. Migration 0025_charging_measurements (context column + hypertable),
-   model, repository, schemas, and the measurements endpoint.
-2. normalize_v16_sampled_value in the 1.6 adapter (separate from the 2.0.1
+1. normalize_v16_sampled_value in the 1.6 adapter (separate from the 2.0.1
    function): flat unit, defaults, energy Wh/kWh only, loud on unknown energy
    unit, structured warning + count for skipped non-energy samples.
-3. charging_sessions.service: resolve_session_by_transaction (returns a
-   frozen dataclass), ingest_measurements (per item), and pass context to the
-   energy path.
-4. OCPP16ChargePoint.on_meter_values and handling of
+2. charging_sessions: MeasurementInput and TransactionSessionReference
+   (types.py), resolve_session_by_transaction, ingest_measurements (per
+   item), context passed to the energy path, and the /measurements endpoint.
+3. OCPP16ChargePoint.on_meter_values and handling of
    StopTransaction.transaction_data through the same function. No in-memory
    session map.
-5. Simulator: MeterValues with Energy (including one kWh sample), SoC, power,
+4. Simulator: MeterValues with Energy (including one kWh sample), SoC, power,
    voltage, current, temperature, Power.Offered, and a vendor-named
    measurand.
 ```
 
-**Main files:** `charging_stations/ocpp/ocpp16_charge_point.py`, `charging_sessions/{models,repository,service,schemas,types,router}.py`, migration `0025_…`, simulator
+**Main files:** `charging_stations/ocpp/ocpp16_charge_point.py`, `charging_sessions/{repository,service,schemas,types,router}.py`, simulator
 
 **Checks:**
 
 - [ ] Static checks clean
 - [ ] Smoke (normaliser matrix): Wh default; explicit `kWh` → ×1000 (**pins the comparison §2.2 hazard**); unknown energy unit raises; SoC/power/V/A/T/Power.Offered routed to measurements; vendor measurand stored; `SignedData` and non-numeric skipped with warning; `transactionId` absent → not attributed; COMPLETED session refused; reconnect scenario — a **new** connection's `MeterValues` for an ACTIVE transaction is accepted (C1)
-- [ ] Integration: migration cycle; both new objects are hypertables
-- [ ] Live: simulator session → `energy_delivered_wh` correct after a kWh sample; `/measurements` returns every simulated measurand; kill and restart the simulator connection mid-session and confirm `MeterValues` still land
+- [ ] Live: simulator session → `energy_delivered_wh` correct after a kWh sample; `/measurements` returns every simulated measurand and `/meter-values` still returns the energy samples; kill and restart the simulator connection mid-session and confirm `MeterValues` still land
 - [ ] **M2 reached** — record it here
 
 **Actual result:** *(to be filled in)*
 
-**Future:** station-level (non-transaction) metering and 15-minute clock-aligned data; 2.0.1 measurement parity → new `future.md` items.
+**Future:** station-level (non-transaction) metering and 15-minute clock-aligned data; 2.0.1 measurement parity (storing non-energy measurands from 2.0.1) → `future.md` #77 and #78.
 
 ### Step 8 — Post-boot GetConfiguration capture (B12, part of A6) — **M3**
 
@@ -728,7 +823,7 @@ test library, DB integration only when `RUN_DB_INTEGRATION=1`).
   `test_ocpp_gateway_smoke.py` for handshake/adapter behaviour using fake
   connections; tests describe behaviour (`test_…_rejects_…`).
 - `test_postgres_integration.py`: update the expected migration head to
-  `0026_charging_config_snapshots` and assert the five hypertables.
+  `0026_charging_config_snapshots` and assert the four hypertables.
 - One scripted E2E, `make charging-ocpp16-sim`, must produce:
   station device fields; connector statuses for 0/1/2; a `completed`
   session with correct energy; measurements; raw-log rows for every frame in
@@ -826,10 +921,10 @@ Run the final checks for the OCPP 1.6J work:
 
 **Documents to update:**
 
-- `docs/01-requirements/feature-list.md`: F-G2, F-C2, F-B2 status text
+- `docs/01-requirements/feature-list.md`: F-G2, F-C2, F-B2 status text (F-C2's note that 1.6J statuses are "all folded into `Occupied`" is no longer true — rewrite it)
 - `docs/00-status/overview.md`, `docs/00-status/architecture.md` (diagram now shows 1.6J and 2.0.1)
-- `.claude/rules/directory-structure.md` (new `ocpp/` modules, new tables), `database.md` (new head, five hypertables, the new columns' nullable rationale, the sequence), `tech-decisions.md`, `open-questions.md`, `domain-boundaries.md` (state explicitly that **no new edge** was added)
-- `docs/01-requirements/future.md`: resolution notes on #27/#28/#37 partial resolution; new items from §6
+- `.claude/rules/directory-structure.md` (new `ocpp/` modules, new tables), `database.md` (new head, four hypertables — `charging_session_meter_values` replaced by `charging_session_measurements`, the new columns' nullable rationale, the sequence), `tech-decisions.md`, `open-questions.md`, `domain-boundaries.md` (state explicitly that **no new edge** was added)
+- `docs/01-requirements/future.md`: resolution notes on #27/#28/#37 partial resolution; #49 must state the busy rule from D4; new items from §6
 - `docs/02-planners/backend-charging-mvp-ideal.md`: a note that its "device always online" assumption no longer holds for the 1.6J path
 - The comparison document: mark which mismatches are closed
 
@@ -857,19 +952,19 @@ Run the final checks for the OCPP 1.6J work:
 | A6 CSMS commands | Step 8 (only post-boot `GetConfiguration`); rest ⛔ deferred |
 | B1 raw log | Step 1 |
 | B2 connector 0 · B3 EVSE mapping | Step 5 (D3) |
-| B4 status granularity · B5 error codes | Step 5 (store); alerting ⛔ deferred |
+| B4 status granularity · B5 error codes | Step 5 (widened enum + error fields); alerting ⛔ deferred |
 | B6 charger registry | Step 4 |
-| B7 measurands | Step 7 |
+| B7 measurands | Steps 7a–7b |
 | B8 transaction ID | Step 6 (D6) |
 | B9 idTag / reason | Step 6 (VIN linkage ⛔ deferred, `future.md` #62) |
 | B10 `meterStop` | Step 6 |
 | B11 tariff · B13 immutability · B14 per-gun power | ⛔ unchanged / deferred |
 | B12 configuration history | Step 8 |
-| C1 reconnect mapping | Step 7 (1.6 only; 2.0.1 unchanged) |
+| C1 reconnect mapping | Step 7b (1.6 only; 2.0.1 unchanged) |
 | C2 back-fill · C3 orphans · C4 clock | Step 10 findings, then decide (D11, D14) |
 | C5 stale status | Step 4 exposes `is_online`; invalidation ⛔ deferred |
 | C6/C7 error policy/duplicates | unchanged (`future.md` #31/#66) |
-| C8 silent skips | Step 7 (warning + count) |
+| C8 silent skips | Step 7b (warning + count) |
 | E1 simulator · E2 tests | Steps 3, 9 |
 | E3 public endpoint/TLS infra | ⛔ deferred with A5 |
 
@@ -881,37 +976,36 @@ Run the final checks for the OCPP 1.6J work:
 | 2 BootNotification | Step 4 | |
 | 3 GetConfiguration + profiles | Step 8 | |
 | 4 StatusNotification 0/1/2, ≤ 30 s | Step 5 | latency = charger `timestamp` vs raw-log `occurred_at` |
-| 5 MeterValues ≤ 30 s | Step 7 | adjusting the interval needs `ChangeConfiguration` (deferred) |
-| 6 energy measurand | Step 7 | |
-| 7 `SoC` | Step 7 | |
+| 5 MeterValues ≤ 30 s | Step 7b | adjusting the interval needs `ChangeConfiguration` (deferred) |
+| 6 energy measurand | Step 7b | |
+| 7 `SoC` | Step 7b | |
 | 8, 9 RemoteStart/Stop | ⛔ | no command channel |
 | 10 kWh agreement < 1 % | Steps 6, 7 | three figures from stored data (Step 10) |
 | 11 HMI password changed | Step 10 (procedure) | not system-verifiable |
 | 12 `wss://` · 13 Smart Charging · 14 Remote Trigger · 15 GetDiagnostics · 16 Reservation | ⛔ | need TLS / commands |
 | 17 offline back-fill | Step 10 | observe first, then design |
 | 18 unplug mid-session | Steps 6, 10 | stop reason stored |
-| 19 dual-gun load sharing | Step 7 | `Power.Offered` stored |
+| 19 dual-gun load sharing | Step 7b | `Power.Offered` stored |
 | 20 vendor error-code table | Step 5 (store) | mapping needs the vendor's table |
 
 ## 6. Out of scope and the path back
 
 Everything below must have (or already has) a `future.md` entry; Step 0
-creates the new ones, Step 11 verifies them. New items are numbered after
-the current last entry.
+created the new ones (#73–#80, recorded 2026-09-24) and Step 11 verifies them.
 
 | Deferred piece | `future.md` | Why deferred / what unblocks it |
 |---|---|---|
-| Transport security for real chargers (`wss://`, Basic Auth / client cert, VPN/private APN, per-charger credentials) | **new** | Vendor hasn't confirmed support (spec §6.2 #4) — related to NF-05 and `tech-decisions.md` |
-| CSMS remote commands over OCPP + the cross-process command channel (`RemoteStart/Stop`, on-demand `Get/ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, firmware/diagnostics, reservation) | **new** (relates to #26) | Needs an HTTP→gateway-process channel decision; profile support unconfirmed |
-| Fault alerting and the charger error-code catalog (`errorCode`/`vendorErrorCode` → notifications, tickets, gun blocking, billing suspension of suspect sessions) | **new** | Needs the vendor's 80-code mapping (spec §6.2 #2) |
-| Stale-status invalidation on disconnect; availability derived from `is_online` and connector status | extends #37, #49 | Business decision on "available" |
+| Transport security for real chargers (`wss://`, Basic Auth / client cert, VPN/private APN, per-charger credentials) | #73 | Vendor hasn't confirmed support (spec §6.2 #4) — related to NF-05 and `tech-decisions.md` |
+| CSMS remote commands over OCPP + the cross-process command channel (`RemoteStart/Stop`, on-demand `Get/ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, firmware/diagnostics, reservation) | #74 (relates to #26) | Needs an HTTP→gateway-process channel decision; profile support unconfirmed |
+| Fault alerting and the charger error-code catalog (`errorCode`/`vendorErrorCode` → notifications, tickets, gun blocking, billing suspension of suspect sessions) | #75 | Needs the vendor's 80-code mapping (spec §6.2 #2) |
+| Stale-status invalidation on disconnect; availability derived from `is_online` and connector status | #76 (extends #37, #49) | Business decision on "available" |
 | Reliability path: back-fill, orphan sessions, dedup by `seq_no`, reconnect for 2.0.1 | #27, #32, #66 | Real-charger findings (Step 10) |
 | Real `Authorize` validation, VIN/vehicle linkage on sessions | #26, #62 | No tag registry / identity contract |
-| Non-transaction (station-level, clock-aligned) metering | **new** | Needs the tariff (time-of-use) design |
-| OCPP 2.0.1 parity for the new fields (boot info, stop reason, measurements, idToken) | **new** | No 2.0.1 hardware |
-| Raw-log read API and TimescaleDB retention | **new** | Nothing consumes it yet |
+| Non-transaction (station-level, clock-aligned) metering | #77 | Needs the tariff (time-of-use) design |
+| OCPP 2.0.1 parity for the new fields (boot info, stop reason, measurements, idToken) | #78 | No 2.0.1 hardware |
+| Raw-log read API and TimescaleDB retention | #79 | Nothing consumes it yet |
 | Timestamp policy for chargers omitting a timezone | decided in Step 10 | Needs real logs (D11) |
-| Tariff versioning per session, per-gun power/connector standard in the directory | #26 / **new** | Billing domain / hardware detail |
+| Tariff versioning per session, per-gun power/connector standard in the directory | #26 (tariff) / #80 (per-gun) | Billing domain / hardware detail |
 
 Do not reopen these on your own by adding placeholders to the new code.
 
