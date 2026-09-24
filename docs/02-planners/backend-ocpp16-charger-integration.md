@@ -3,8 +3,8 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Step 0 **done** and Step 1 (raw OCPP message log)
-> **done** on 2026-09-24; Step 2 (version-aware gateway) is next
+> Status: 🚧 In progress — Steps 0–2 **done** on 2026-09-24 (decisions,
+> raw OCPP message log, version-aware gateway); Step 3 (1.6J simulator) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -358,12 +358,18 @@ Do not add any 1.6 handler in this step.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke — handshake matrix: offers `ocpp1.6` → passes protocol check; offers both → 2.0.1 selected; offers neither/none → `426` naming both protocols; bad path → `404`; unknown identity → `404`
-- [ ] Regression: the existing 2.0.1 simulator still completes `Started → Updated/MeterValues → Ended`
-- [ ] Live: a bare 1.6 client connects with `ocpp1.6` (no more `426`) and a `BootNotification` comes back as `CALLERROR NotImplemented`; the frame pair is in the raw log
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (130 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp_gateway_smoke.py`, 17 new tests): handshake matrix — offering `ocpp1.6`, `ocpp2.0.1` or both in either order is accepted; offering none/empty/`ocpp1.5`/other protocols → `426` whose message names both supported protocols; bad path → `404`; unknown identity → `404`; `select_ocpp_subprotocol` prefers `ocpp2.0.1` when both are offered and returns `ocpp1.6` for a 1.6-only client; `create_charge_point` returns the matching adapter class (`_ocpp_version` `1.6` / `2.0.1`, default 2.0.1); the 1.6J adapter has no action handlers yet
+- [x] Regression (live, real gateway): the existing 2.0.1 simulator still completes `Started → MeterValues → Updated → Ended` (`completed`, 1000 → 1500 Wh, 500 Wh delivered) with identical results
+- [x] Live: a bare 1.6 client connects with `ocpp1.6` (no more `426`), its `BootNotification` is answered `CALLERROR NotImplemented`, and both frames are in the raw log tagged `ocpp1.6`; a client offering both gets `ocpp2.0.1`; a client offering only `ocpp1.5` gets HTTP `426`
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 2 is done.
+
+- `ocpp_server.py`: `SUPPORTED_SUBPROTOCOLS = ("ocpp2.0.1", "ocpp1.6")`; `select_ocpp_subprotocol`, `_process_request` and `serve(subprotocols=…)` use it; the new `create_charge_point()` picks the adapter from the negotiated subprotocol (default 2.0.1). `OCPPChargePoint` was renamed `OCPP201ChargePoint` (no other references existed).
+- New modules: `ocpp/parsing.py` (`OcppPayload`, `parse_ocpp_timestamp`, moved out of the server to avoid an import cycle; no test imported them from the old location) and `ocpp/ocpp16_charge_point.py` (`OCPP16ChargePoint(ocpp.v16.ChargePoint)`, no handlers yet).
+- Docstrings, the entrypoint docstring and the Makefile help/echo text no longer say "2.0.1 only"; `.claude/rules/directory-structure.md` lists the new files (that file is untracked by git, local only).
+- Not done in this step by design: any 1.6J handler (Steps 4–7), and the 1.6 path/URL question (verified with the real charger in Step 10).
+- Note: the original plan mentions `426` "naming both protocols"; the body reads `Required WebSocket subprotocol: ocpp2.0.1 or ocpp1.6`.
 
 ### Step 3 — OCPP 1.6J charge-point simulator (E1)
 
