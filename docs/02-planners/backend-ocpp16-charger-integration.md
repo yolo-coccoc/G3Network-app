@@ -3,10 +3,10 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–5 **done** on 2026-09-24 (decisions,
+> Status: 🚧 In progress — Steps 0–6 **done** on 2026-09-24 (decisions,
 > raw OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat
-> and liveness — **milestone M1 reached** — and StatusNotification); Step 6
-> (transactions) is next
+> and liveness — **milestone M1 reached** —, StatusNotification and the
+> transaction lifecycle); Step 7 (measurements, M2) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -644,12 +644,17 @@ Keep the 2.0.1 path byte-for-byte compatible.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke: two `StartTransaction`s get different integer IDs; start reply carries the ID; stop stores `meter_stop_wh` and `stop_reason`; stale stop timestamp keeps the closing register but not the aggregate overwrite; second Stop on a COMPLETED session refused; unknown `transactionId` errors; `id_tag` > 20 chars rejected at the boundary; 2.0.1 tests unchanged
-- [ ] Integration: migration cycle; sequence exists
-- [ ] Live: simulator start/stop → session `completed`, `energy_delivered_wh` = stop − start, `id_tag`, `stop_reason`, `meter_stop_wh` present in `GET /charging-sessions/{id}`
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (136 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp16_transaction_smoke.py`; 303 tests pass in total): `Authorize` accepts any tag; two `StartTransaction`s get different integer IDs and the ID is returned and stored as text with the `idTag`, start time and `meterStart`; a second `Start` on a connector with an `active` session logs the structured warning and still proceeds; connector `0` is refused before an ID is allocated; a timestamp without timezone opens no transaction; `StopTransaction` finds the session (and its topology) by `(station, transactionId)` and stores the closing reading and reason, an unknown transaction propagates as an error; `transactionData` is ignored (debug-logged only); a **stale timestamp keeps `meter_stop_wh` but does not overwrite `meter_end_wh`**; a second `Stop` on a `COMPLETED` session is refused; an `idTag` over 20 characters, a stop reason over 30 or a negative meter fail; the 2.0.1 caller (none of the new arguments) is unchanged; `resolve_session_by_transaction`, `has_active_session_on_connector`, `allocate_ocpp16_transaction_id` and the session response fields
+- [x] Integration (`RUN_DB_INTEGRATION=1`): migration cycle reaches head `0024_charging_session_fields`; the sequence exists as `integer`, max `2147483647`, non-cycling, and hands out `1, 2`
+- [x] Live (real gateway + API, dev database, 1.6J simulator `session` scenario): 12 ACK / 0 CALLERROR; the session is `completed` with `id_tag`, `stop_reason=EVDisconnected`, `meter_start 1000`, `meter_stop 1500`, `meter_end 1500` and **`energy_delivered 500`**, events `Started`/`Ended`, visible through `GET /charging-sessions/{id}`, gun 1 back to `Available`; after **restarting the gateway** the next session got `transactionId 2` (the sequence lives in the database); `Stop` for an unknown transaction, a second `Stop` for a completed session, `Start` on connector `0` and `Start` on an unprovisioned gun all returned `CALLERROR` and created/changed nothing (the completed session kept `meter_stop 1500`, `energy 500`); two `Start`s on gun 2 got IDs `3` and `4` and the warning was logged; `Authorize` accepts an arbitrary tag; the 2.0.1 simulator still completes on the same station
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 6 is done.
+
+- Migration `0024_charging_session_fields`: `charging_sessions.id_tag` (20), `stop_reason` (30), `meter_stop_wh`, and the sequence `charging_ocpp16_transaction_id_seq` (`AS integer`, `MAXVALUE 2147483647`, `NO CYCLE`). Model, session response schema, repository (`create_session(id_tag=…)`, `next_ocpp16_transaction_id`, `count_active_sessions_by_connector_id`).
+- Public `charging_sessions` service additions (no new domain edge): `allocate_ocpp16_transaction_id`, `has_active_session_on_connector`, and **`resolve_session_by_transaction` with the frozen `TransactionSessionReference`** — pulled forward from Step 7b because `StopTransaction` needs it now; Step 7b reuses it. `ingest_transaction_event` gained optional keyword-only `id_tag`, `stop_reason`, `meter_stop_wh` (the 2.0.1 call site is unchanged). New `charging_stations.service.resolve_station_id_by_identity`.
+- `OCPP16ChargePoint` handles `Authorize`, `StartTransaction`, `StopTransaction`. Simulator: new `session` scenario (`--id-tag`, `--meter-start`, `--meter-stop`).
+- Not done, by design: `StopTransaction.transactionData` (Step 7b), orphan/duplicate-start policy and back-fill (D14, Step 10 findings), real tag validation (`future.md` #26/#62). The dev database's sequence has advanced (test sessions were removed; IDs are not reused).
 
 ### Step 7 — Unified measurement storage, then 1.6J MeterValues (B7, C1-for-1.6, C8) — **M2**
 
@@ -746,7 +751,8 @@ driving the session aggregate, and remove the in-memory session map for 1.6.
 - **Session lookup by `transactionId` (fixes C1 for 1.6):** new public
   `charging_sessions.service.resolve_session_by_transaction(db, station_id,
   transaction_id)` returning a frozen `TransactionSessionReference`
-  dataclass (`types.py`). No `_session_by_evse` dict on the 1.6 adapter.
+  dataclass (`types.py`) — **already added in Step 6** for `StopTransaction`;
+  Step 7b only reuses it. No `_session_by_evse` dict on the 1.6 adapter.
   `MeterValues` **without** a `transactionId` (clock-aligned / outside a
   transaction) is not attributed to a session: it stays in the raw log and is
   counted in a `DEBUG` log; station-level metering is deferred.
