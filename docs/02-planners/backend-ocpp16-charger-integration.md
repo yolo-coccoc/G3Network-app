@@ -3,12 +3,13 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–9 **done** on 2026-09-24 (decisions, raw
+> Status: 🚧 In progress — Steps 0–9 and 11 **done** on 2026-09-24 (decisions, raw
 > OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat and
 > liveness — **milestone M1** —, StatusNotification, the transaction lifecycle,
 > unified measurement storage and 1.6J MeterValues — **milestone M2** — and the
 > post-boot GetConfiguration capture — **milestone M3 reached** — and the
-> end-to-end regression); Step 10 (real-charger bring-up) needs the hardware
+> end-to-end regression), and Step 11 (documentation) **done**; **Step 10 —
+> the real-charger bring-up — is waiting for the hardware** (runbook ready)
 > Created: 2026-09-24
 >
 > Inputs:
@@ -966,6 +967,87 @@ operational; code changes only if a finding is a bug in Steps 1–8.
 5. Fill in the spec summary's confirmation table (§5.4) and the
    acceptance checklist (§5.3); append findings to the comparison document.
 
+**Evidence queries** (run in `psql` against the dev database; replace `<station>` with the
+station's UUID and `<session>` with a session's UUID). `raw_frame` is text and is cast to
+`jsonb`; an OCPP frame is a JSON array: element 0 is the message type (`2` request,
+`3` answer, `4` error), element 2 the action of a request, element 3 its payload. If a query
+fails with `invalid input syntax for type json`, the charger sent a frame that is not JSON —
+list those with `SELECT * FROM charging_ocpp_messages WHERE raw_frame !~ '^\s*\[';`.
+
+```sql
+-- 1. Which messages does the charger really send, and how often?
+SELECT raw_frame::jsonb ->> 2 AS action, count(*)
+FROM charging_ocpp_messages
+WHERE station_id = '<station>' AND direction = 'CP_TO_CSMS'
+  AND raw_frame::jsonb ->> 0 = '2'
+GROUP BY 1 ORDER BY 2 DESC;
+
+-- 2. Which of them did the gateway answer with an error (for example NotImplemented)?
+SELECT occurred_at, substring(raw_frame from 1 for 160) AS answer
+FROM charging_ocpp_messages
+WHERE station_id = '<station>' AND direction = 'CSMS_TO_CP'
+  AND raw_frame::jsonb ->> 0 = '4'
+ORDER BY occurred_at;
+
+-- 3. Connection stability: frames per minute (gaps = the charger was silent)
+SELECT date_trunc('minute', occurred_at) AS minute, count(*)
+FROM charging_ocpp_messages
+WHERE station_id = '<station>' AND direction = 'CP_TO_CSMS'
+GROUP BY 1 ORDER BY 1;
+
+-- 4. Status latency: how long after the charger's own timestamp did the frame arrive?
+--    (large or negative values point at a wrong charger clock)
+SELECT occurred_at,
+       raw_frame::jsonb -> 3 ->> 'timestamp' AS charger_timestamp,
+       occurred_at - (raw_frame::jsonb -> 3 ->> 'timestamp')::timestamptz AS delay
+FROM charging_ocpp_messages
+WHERE station_id = '<station>' AND direction = 'CP_TO_CSMS'
+  AND raw_frame::jsonb ->> 0 = '2' AND raw_frame::jsonb ->> 2 = 'StatusNotification'
+  AND jsonb_exists(raw_frame::jsonb -> 3, 'timestamp')
+ORDER BY occurred_at;
+
+-- 5. What timestamp form does the firmware send? (does it carry a timezone? -> decision D11)
+SELECT DISTINCT raw_frame::jsonb -> 3 ->> 'timestamp' AS timestamp_as_sent
+FROM charging_ocpp_messages
+WHERE station_id = '<station>' AND direction = 'CP_TO_CSMS'
+  AND raw_frame::jsonb ->> 0 = '2'
+  AND jsonb_exists(raw_frame::jsonb -> 3, 'timestamp')
+LIMIT 20;
+
+-- 6. MeterValues interval actually used (seconds between energy samples)
+SELECT sampled_at,
+       extract(epoch FROM sampled_at - lag(sampled_at) OVER (ORDER BY sampled_at)) AS seconds_since_previous,
+       value AS wh, context
+FROM charging_session_measurements
+WHERE session_id = '<session>' AND measurand = 'Energy.Active.Import.Register'
+ORDER BY sampled_at;
+
+-- 7. Which measurands does the charger send, and do they include SoC and Power.Offered?
+SELECT measurand, unit, count(*), min(value), max(value)
+FROM charging_session_measurements
+WHERE session_id = '<session>'
+GROUP BY 1, 2 ORDER BY 1;
+
+-- 8. The three figures for the kWh check (acceptance item 10): compare them with the kWh shown
+--    on the charger screen (x 1000 = Wh). They should agree within 1 %. (The last energy sample can
+--    lag the stop reading slightly; a large gap between the columns is itself a finding.)
+SELECT meter_stop_wh - meter_start_wh AS stop_minus_start_wh,
+       energy_delivered_wh AS stored_energy_delivered_wh,
+       (SELECT max(value) FROM charging_session_measurements m
+         WHERE m.session_id = s.session_id
+           AND m.measurand = 'Energy.Active.Import.Register') - meter_start_wh AS last_sample_minus_start_wh,
+       stop_reason
+FROM charging_sessions s WHERE session_id = '<session>';
+
+-- 9. What the charger says it supports (also: GET /api/v1/charging-stations/<station>/configuration)
+SELECT config_key, value, is_readonly
+FROM charging_station_configuration_entries
+WHERE station_id = '<station>'
+  AND captured_at = (SELECT max(captured_at) FROM charging_station_configuration_entries
+                     WHERE station_id = '<station>')
+ORDER BY config_key;
+```
+
 **What can and cannot be verified through this backend** (spec acceptance
 checklist): items 1–7, 10, 17–20 can be read from the stored data (raw log,
 snapshot, sessions, measurements); items 8, 9, 12–16 need remote commands or
@@ -992,7 +1074,13 @@ passed.
 - [ ] Findings that reopen a decision update §2 and/or `future.md`
 - [ ] Spec summary confirmation/acceptance tables updated; nothing marked passed without evidence
 
-**Actual result:** *(to be filled in)*
+**Actual result:** ⏳ **Not done — waiting for the real charger and a person on site.** Everything
+that could be prepared without the hardware is ready: the gateway, the simulators and the tests
+(Steps 1–9), the runbook and the nine evidence queries above (each was executed against a real
+simulated 1.6J session), and the README section for connecting a real charger. When the unit is
+available, follow the procedure above, run the queries, then record here — with raw-log evidence, not
+paraphrase — what was observed, update the spec summary's confirmation/acceptance tables, and take the
+decisions listed above (each may create a follow-up planner).
 
 ### Step 11 — Final review, docs, and recording deferred items
 
@@ -1028,7 +1116,22 @@ Run the final checks for the OCPP 1.6J work:
 - The 2.0.1 simulator and tests still pass.
 - Every deferred piece is in `future.md`; every check result and environment limit (what was and was not run) is recorded in this planner.
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented 2026-09-24):** Step 11 is done, **except** the parts that depend on
+Step 10 (marked below).
+
+- **Checks (repeated at the end):** `black`, `isort`, `ruff`, `mypy` (142 files), `compileall`, `git diff --check` clean; default scope 375 passed / 6 skipped; with `RUN_DB_INTEGRATION=1` 380 passed / 1 failed (the unrelated telemetry test, see Step 9); convention audits clean (Step 9).
+- **Documents updated:** `docs/01-requirements/feature-list.md` (F-C2 rewritten — 1.6J statuses are no longer "folded into `Occupied`" —, F-B2 and F-G2), `docs/00-status/overview.md` (charging domains, head `0026_charging_config_snapshots`), `docs/00-status/architecture.md` (diagram now shows 1.6J and 2.0.1, component text, four hypertables, revisions `0021`–`0026`), `README.md` (1.6J simulator commands, real-charger settings, new endpoints), `docs/01-requirements/future.md` (resolution notes on #26, #27, #28, #37, #49, #62; #73–#80 were added in Step 0), `docs/02-planners/backend-charging-mvp-ideal.md` (supersession note), `docs/04-responses/charging-station-spec-vs-current-system.md` (closure status table).
+- **Local rules files updated** (`.claude/` is untracked by git, so these exist locally only): `directory-structure.md`, `database.md` (head, four hypertables, ten-value status enum and its downgrade, every new column/table with the nullable rationale, the sequence), `domain-boundaries.md` ("no new domain edge", the new public functions), `dev-environment.md` (make targets and the new settings); `tech-decisions.md` and `open-questions.md` were done in Step 0.
+- **Not done:** the comparison document's mismatches marked ⏳ (A4, C2–C4) and the spec summary's confirmation/acceptance tables can only be closed after Step 10.
+
+**Planner completion criteria — status:**
+
+- [x] A 1.6J charger can connect, is answered, and every frame is stored (M1) — *simulator*
+- [x] A complete simulated 1.6J session is stored with statuses, energy, `idTag`, stop reason, `meterStop` and the mandatory measurands (M2) — *simulator*
+- [x] The charger's configuration is captured per boot (M3) — *simulator*
+- [x] The 2.0.1 simulator and tests still pass
+- [x] Every deferred piece is in `future.md`; every check result and environment limit is recorded in this planner
+- [ ] **Confirmation against the real Willdigits charger (Step 10)** — pending the hardware
 
 ## 5. Traceability
 

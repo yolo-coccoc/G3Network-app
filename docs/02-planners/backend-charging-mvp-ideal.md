@@ -8,6 +8,16 @@
 >
 > Last updated: 2026-08-02
 
+> **Superseded in part (2026-09-24):** the assumption below that "the device is
+> always online and the charging session always follows the correct flow" no
+> longer holds for the OCPP 1.6J path — a real charger reboots, loses signal and
+> sends vendor-specific values. See
+> [`backend-ocpp16-charger-integration.md`](./backend-ocpp16-charger-integration.md),
+> which adds the raw message log, charger liveness and reconnect-safe session
+> lookup for 1.6J, while the 2.0.1 path described here is unchanged. The
+> `charging_session_meter_values` table named in this planner was replaced by
+> `charging_session_measurements` (migration `0025`).
+
 This planner is the trimmed-down version of
 [`backend-charging.md`](./backend-charging.md). The older planner is not
 deleted, since it still describes the production branches. This planner is
