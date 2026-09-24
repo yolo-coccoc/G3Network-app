@@ -8,7 +8,7 @@ active components yet.
 ```mermaid
 flowchart LR
     Vehicle["Vehicle telematic device"]
-    Station["OCPP 2.0.1 charging station"]
+    Station["OCPP charging station\n(1.6J or 2.0.1)"]
     Broker["EMQX 5.5\nMQTT"]
     Ingestion["Telemetry ingestion\nMQTT consumer + worker"]
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
@@ -26,8 +26,8 @@ flowchart LR
     Notifications -->|nearest station lookup| Domains
     Notifications -->|notifications| DB
 
-    Station <-->|OCPP 2.0.1| OCPP
-    OCPP -->|session event + meter| Domains
+    Station <-->|OCPP 1.6J / 2.0.1| OCPP
+    OCPP -->|raw frames, status, session + measurements| Domains
     Domains -->|charging data| DB
 
     Monitor -->|last-seen check, F-J1/F-J3| DB
@@ -64,13 +64,32 @@ FastAPI registers the following domains:
 - `charging_stations`: Station → EVSE → Connector topology CRUD, station
   directory metadata (location, power rating, connector standard, operating
   hours, maintenance status), a nearby-station radius search (F-D1), and the
-  OCPP 2.0.1 gateway (now also handling `StatusNotification`, F-C2).
+  OCPP gateway. The gateway serves **OCPP 2.0.1 and OCPP 1.6J**: it
+  negotiates the WebSocket subprotocol (`ocpp2.0.1` preferred, `ocpp1.6`
+  accepted) and uses one adapter class per protocol
+  (`ocpp_server.py::OCPP201ChargePoint`, `ocpp16_charge_point.py::OCPP16ChargePoint`).
+  A `RecordingConnection` wrapper stores every frame, both directions,
+  verbatim in `charging_ocpp_messages` before it is parsed. For 1.6J the
+  adapter handles `BootNotification` (device info, firmware-change warning),
+  `Heartbeat`, `StatusNotification` (F-C2, incl. connector `0` = the whole
+  charger, stored on the station), `Authorize`, `StartTransaction`,
+  `StopTransaction` and `MeterValues`; every inbound frame refreshes
+  `last_seen_at` (the station's `is_online` is derived from it); and after
+  each boot the gateway asks the charger for `GetConfiguration` in a separate
+  task and stores the answer (`GET /charging-stations/{id}/configuration`).
+  1.6J is verified against a simulator; a real charger has not been connected.
 - `charging_sessions`: storing the session aggregate, lifecycle events and
-  meter values, plus a station-level energy aggregation query (F-C5). F-B2
-  added four correctness fixes on the happy path: persisted OCPP `seqNo`,
-  a guard refusing any event on an already-`COMPLETED` session, a
-  time-ordering watermark stopping a stale `MeterValues` from overwriting
-  a newer reading, and `measurand`/unit-aware energy normalization in the
+  the session's measurements, plus a station-level energy aggregation query
+  (F-C5). All measurements (the energy register that drives the session
+  total, and SoC/power/voltage/current/temperature/`Power.Offered` and
+  vendor-specific measurands) live in one `charging_session_measurements`
+  table; `/meter-values` is the energy-only view and `/measurements` shows
+  everything. The 1.6J backend assigns the integer `transactionId` from a
+  database sequence and stores the `idTag`, stop reason and the charger's
+  own `meterStop`. F-B2's four correctness fixes on the happy path still hold:
+  persisted OCPP `seqNo`, a guard refusing any event on an already-`COMPLETED`
+  session, a time-ordering watermark stopping a stale `MeterValues` from
+  overwriting a newer reading, and unit-aware energy normalization in each
   OCPP adapter (still no retry/out-of-order recovery/DLQ/dedup).
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=`; telemetry ingestion
@@ -118,8 +137,9 @@ entrypoint, sharing the same database/session configuration.
 Development uses a single PostgreSQL 16 container with the following
 extensions:
 
-- TimescaleDB for `vehicle_telemetry`, `charging_session_events` and
-  `charging_session_meter_values`.
+- TimescaleDB for four hypertables: `vehicle_telemetry`,
+  `charging_session_events`, `charging_session_measurements` and
+  `charging_ocpp_messages` (the append-only raw OCPP message log).
 - PostGIS: used for `charging_stations.location` (F-C1) and
   `vehicle_telemetry.location` (both `geography(Point, 4326)` columns) —
   `charging_stations.location` has a GIST index, `vehicle_telemetry.location`
@@ -155,13 +175,22 @@ The current Alembic baseline consists of:
 0018_drivers
 0019_support_cases
 0020_fleet
+0021_charging_ocpp_raw_log
+0022_charging_station_device
+0023_charging_status_details
+0024_charging_session_fields
+0025_charging_measurements
+0026_charging_config_snapshots
 ```
 
-The charging MVP only supports pre-provisioned topology and the happy path:
-
-```text
-Started → Updated/MeterValues → Ended
-```
+The charging MVP only supports pre-provisioned topology and the happy path
+(2.0.1: `Started → Updated/MeterValues → Ended`; 1.6J: `StartTransaction →
+MeterValues → StopTransaction`). The OCPP 1.6J work added an append-only raw
+OCPP message log, the charger's device/liveness fields, the widened connector
+status, session `idTag`/stop reason/`meterStop`, the unified measurements
+table and configuration snapshots, but **not** reconnect/offline recovery,
+fault alerting, remote commands or TLS/authentication (`future.md` items 27,
+73-76).
 
 ### Local infrastructure
 

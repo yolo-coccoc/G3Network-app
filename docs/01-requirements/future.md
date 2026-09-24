@@ -515,6 +515,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   this work, the charging planner and `CLAUDE.md` must be updated before
   writing code.
 
+- **Update 2026-09-24 (`docs/02-planners/backend-ocpp16-charger-integration.md`)**: the `idTag` presented at a charger is now stored on the session (`charging_sessions.id_tag`) and `Authorize`/`StartTransaction` accept every tag (decision D7). There is still no tag registry, no driver/vehicle mapping and no remote start/stop (see items 62 and 74).
+
 ### 27. Reliability and technical status path of the charging MVP
 
 - **Short description**: Restore the non-happy-path handling for charging,
@@ -555,6 +557,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   ACK will retry and get a repeated `CALLERROR` on every retry, since no
   queue/backoff/idempotent-replay exists yet - that remains this item's
   job. See `docs/02-planners/backend-charging-ingest-fixes.md`.
+
+- **Update 2026-09-24 (`docs/02-planners/backend-ocpp16-charger-integration.md`)**: two pieces are done. (1) Raw OCPP payload auditing: `charging_ocpp_messages` stores every frame, both directions, verbatim (no read API or retention, item 79). (2) For OCPP 1.6J, `MeterValues`/`StopTransaction` find their session in the database by `(station, transactionId)`, so the per-connection EVSE→session map no longer breaks a reconnect (the 2.0.1 adapter still has that in-memory map). Everything else stays deferred: retry, duplicate/idempotency, out-of-order recovery, orphaned sessions after a reboot mid-session (a `StartTransaction` on a connector that already has an `active` session only logs a warning), back-filled offline records for a completed session, stale connector status after a disconnect (item 76), and offline detection beyond the derived `is_online`. The policy is to be decided from real-charger logs (planner Step 10).
 
 ### 28. Topology metadata and charging helpers excluded from the ideal MVP
 
@@ -603,6 +607,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   `ChargingConnectorModel`), but it isn't a *status filter* on the nearby
   search yet - see item 49. Administrative/connection status and the
   capability schema remain fully deferred.
+
+- **Further partial resolution (2026-09-24, `docs/02-planners/backend-ocpp16-charger-integration.md`)**: the charger's device metadata (vendor, model, serial, firmware, protocol version, last boot), connection liveness (`last_seen_at`, with `is_online` derived at read time — no stored flag, no sweeper) and, for 1.6J, the status of the whole charger (connector 0) plus per-connector `errorCode`/`vendorErrorCode`/`info` are now stored; the charger's capabilities are captured (not modelled) as `GetConfiguration` snapshots (`SupportedFeatureProfiles`). Still deferred: administrative status, technical status history, a capability *schema*, and per-gun power/connector standard (item 80).
 
 ### 29. Query optimization and code-quality cleanup for simulator/telemetry
 
@@ -912,6 +918,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   on it — see item 49 for that narrower remaining piece. The
   online/offline (heartbeat) half of this item is also still open.
 
+- **Partial resolution (2026-09-24)**: an `is_online` flag (derived from `last_seen_at`) now exists on stations, but nothing consumes it: F-A2/F-D1 still don't filter on it or on connector status, and a connector's last status is not invalidated when its charger goes offline — see items 49 and 76.
+
 ### 38. True per-trip de-duplication for F-A2 battery alerts
 
 - **Short description**: F-A2's spec says "1 alert per threshold per trip";
@@ -1186,6 +1194,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   *any* available connector or a minimum count - a business decision, not
   a technical one.
 
+- **Update 2026-09-24 (decision D4)**: `ChargingConnectorStatus` now has ten values (2.0.1's five plus 1.6J's `Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing`). When this item is built use the busy rule: a connector is free only when `Available`; `Occupied`, `Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE` and `Finishing` are busy (`Suspended*` are normal pauses, not faults); `Reserved`, `Unavailable` and `Faulted` are not free either.
+
 ### 50. F-J1's per-device health dashboard (SIM/power status, firmware view)
 
 - **Short description**: F-J1's stated output is a "per-device dashboard —
@@ -1442,6 +1452,8 @@ The items below are actual deferral decisions made in the repo, not placeholders
   (currently unhandled entirely), and a decision on what identity a
   station-issued RFID/token actually maps to (a vehicle? a driver? a
   fleet account?) before the column can be populated meaningfully.
+
+- **Update 2026-09-24**: `charging_sessions` now has an `id_tag` column (OCPP 1.6J), the first identity-bearing field on a session, but it is an unvalidated string: there is still no vehicle/customer/driver identity and no `Authorize` validation, and the 2.0.1 path still ignores `idToken`. The blocker described here is unchanged.
 
 ### 63. Fleet-level rollup and CSV export for F-A6
 

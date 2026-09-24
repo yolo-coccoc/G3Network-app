@@ -700,10 +700,21 @@ carries its original PRD code so you can trace it back.
   non-energy sample can no longer silently corrupt the energy total. Also fixed the prerequisite
   bug blocking all of this and the simulator: OCPP handlers were annotated for dataclasses
   `python-ocpp` never actually delivers (it only snake_cases JSON into plain dicts), causing a
-  live `AttributeError` crash - see `docs/02-planners/backend-charging-ingest-fixes.md`. Not
-  built: retry, out-of-order recovery, DLQ, and dedup (`future.md` item 27, a deliberately
-  deferred reliability path, not a gap in this round); a duplicate `Started` still surfaces a raw
-  `IntegrityError` instead of a domain exception (`future.md` item 66).
+  live `AttributeError` crash - see `docs/02-planners/backend-charging-ingest-fixes.md`.
+  **OCPP 1.6J** is now handled too (`docs/02-planners/backend-ocpp16-charger-integration.md`):
+  `StartTransaction`/`StopTransaction`/`MeterValues`, with the backend assigning the integer
+  `transactionId` from a database sequence, the `idTag` (every tag accepted for now), the stop
+  reason and the charger's authoritative `meterStop` stored on the session, and the session found
+  by `(station, transactionId)` so a `MeterValues` after a reconnect is not lost. All measurements
+  live in one `charging_session_measurements` table (it replaced `charging_session_meter_values`):
+  the energy register (`kWh` converted to Wh) drives the total, while `SoC`, power, voltage,
+  current, temperature, `Power.Offered` and vendor-specific measurands are stored as sent and
+  readable via `GET /charging-sessions/{id}/measurements`. Every OCPP frame is also kept verbatim
+  in an append-only raw message log. Not built: retry, out-of-order recovery, DLQ, and dedup
+  (`future.md` item 27, a deliberately deferred reliability path, not a gap in this round);
+  orphaned-session and offline back-fill handling (waiting for real-charger logs); `idTag`
+  validation and vehicle linkage (items 26/62); a duplicate `Started` still surfaces a raw
+  `IntegrityError` instead of a domain exception (`future.md` item 66)
 
 ### F-B3 Policy-violation matching & flagging
 - **Actor:** System
@@ -728,14 +739,21 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-02 (≤30s OCPP status latency)
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
-- **Status:** ✅ Done (MVP/POC scope) — the OCPP gateway now handles `StatusNotification`,
-  writing OCPP 2.0.1's native status (`Available`/`Occupied`/`Reserved`/`Unavailable`/`Faulted`)
-  and a timestamp onto `ChargingConnectorModel`, exposed via `GET /charging-connectors/{id}`.
-  Correction to this entry's own wording: OCPP 2.0.1 has no separate "Charging" status — 1.6J's
-  `Preparing`/`Charging`/`SuspendedEV`/`Finishing` are all folded into `Occupied`; a live
-  "currently charging" view would need to join `charging_sessions`, not read this column alone.
-  NF-02's ≤30s/≥99% targets aren't measured (MVP/POC scope, no monitoring yet); no out-of-order
-  guard (in-order arrival is this MVP's assumption, `future.md` item 27)
+- **Status:** ✅ Done (MVP/POC scope) — the OCPP gateway handles `StatusNotification` for both
+  protocols, writing the status and a timestamp onto `ChargingConnectorModel`, exposed via
+  `GET /charging-connectors/{id}`. The status is stored **exactly as the charger reported it**:
+  OCPP 2.0.1's five values (`Available`/`Occupied`/`Reserved`/`Unavailable`/`Faulted`) plus OCPP
+  1.6J's `Preparing`/`Charging`/`SuspendedEV`/`SuspendedEVSE`/`Finishing`, so F-C2's "Charging"
+  is available for a 1.6J charger (a 2.0.1 station still reports `Occupied`). Busy rule: a
+  connector is free **only** when `Available`; `Suspended*` are normal pauses, not faults. For
+  1.6J the connector also stores `errorCode`/`vendorErrorCode`/`info`, and connector `0` (the whole
+  charger) is stored on the station (`charger_status`, `charger_error_code`, …) because it has no
+  topology row. Stations expose a derived `is_online` (`last_seen_at` within
+  `CHARGING_OFFLINE_TIMEOUT_SECONDS`), but a connector's last status is **not** invalidated when
+  its charger goes offline (`future.md` item 76). Not built: fault alerting (item 75). NF-02's
+  ≤30s/≥99% targets aren't measured (MVP/POC scope, no monitoring yet); no out-of-order guard
+  (in-order arrival is this MVP's assumption, `future.md` item 27). Verified against a simulator
+  only; see `docs/02-planners/backend-ocpp16-charger-integration.md`
 
 ### F-C6 Per-customer energy usage
 - **Actor:** System
@@ -828,14 +846,19 @@ carries its original PRD code so you can trace it back.
   OCPP version decision (see "Items needing confirmation" #11).
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
-- **Status:** 🚧 In progress — session data over OCPP 2.0.1 (`TransactionEvent`/`MeterValues`)
-  works, and connector status is now handled too (`StatusNotification`, F-C2). OCPP 1.6J support
-  is **planned** (decided 2026-09-24: added alongside 2.0.1, one adapter per protocol) because the
-  first real charger (Willdigits DC) speaks 1.6J — see
-  `docs/02-planners/backend-ocpp16-charger-integration.md`; it is not implemented yet and 2.0.1
-  keeps working. "Items needing confirmation" #11 is answered for this first hardware. Still open:
-  the NF-05 production security profile (dev mode intentionally allows no TLS/no auth, per
-  `tech-decisions.md`) and remote commands from the API
+- **Status:** 🚧 In progress — both **OCPP 2.0.1** (`TransactionEvent`/`MeterValues`/
+  `StatusNotification`) and **OCPP 1.6J** are supported by one gateway that negotiates the
+  subprotocol and uses one adapter per protocol (decided 2026-09-24; the first real charger,
+  Willdigits DC, speaks 1.6J). For 1.6J the gateway answers `BootNotification`/`Heartbeat`,
+  handles `StatusNotification`, `Authorize`, `StartTransaction`, `StopTransaction` and
+  `MeterValues`, records the charger's device info and liveness, keeps a verbatim raw log of every
+  frame, and captures the charger's `GetConfiguration` (including `SupportedFeatureProfiles`)
+  after every boot — see `docs/02-planners/backend-ocpp16-charger-integration.md`. "Items needing
+  confirmation" #11 is answered for this first hardware. **All of this was verified against
+  simulators only; the real-charger bring-up (planner Step 10) has not happened yet.** Still open:
+  the NF-05 production security profile — dev mode intentionally allows no TLS/no auth, per
+  `tech-decisions.md` (`future.md` item 73) —, remote commands from the API (item 74), fault
+  alerting (item 75) and the reliability path (item 27)
 
 ### F-G3 Data pipeline (ETL)
 - **Actor:** System

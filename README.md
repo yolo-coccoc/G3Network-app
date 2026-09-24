@@ -44,9 +44,15 @@ the database tables.
 - Station → EVSE → Connector topology CRUD, including station directory
   metadata (location, power rating, connector standard, operating hours,
   maintenance status).
-- OCPP 2.0.1 and the charging session happy-path lifecycle
-  `Started → Updated/MeterValues → Ended`.
-- API for reading charging sessions, events and meter values.
+- OCPP 2.0.1 and OCPP 1.6J (one gateway, negotiated per connection) and the
+  charging session lifecycle: 2.0.1 `Started → Updated/MeterValues → Ended`,
+  1.6J `StartTransaction → MeterValues → StopTransaction`.
+- Every OCPP frame is stored verbatim; 1.6J chargers also report their device
+  info, liveness, status (incl. errors) and configuration.
+- API for reading charging sessions, events, meter values and all
+  measurements (`GET /api/v1/charging-sessions/{id}/measurements`), and a
+  charger's latest configuration
+  (`GET /api/v1/charging-stations/{id}/configuration`).
 
 Not yet in the current baseline: full telemetry history API, vehicle/station
 map, aggregate connector status, battery/anomaly alerts, threshold alert
@@ -68,7 +74,7 @@ Terminal 2 — Receiving data from vehicle devices:
 make telemetry-dev
 ```
 
-Terminal 3 — OCPP 2.0.1 charging station gateway:
+Terminal 3 — OCPP charging station gateway (2.0.1 and 1.6J):
 
 ```bash
 make charging-ocpp-dev
@@ -129,6 +135,23 @@ The simulator connects to the gateway and sends the start-charging, meter
 value, update and end-charging flow. Results can be viewed in the logs or via
 the charging APIs in Swagger.
 
+To simulate an **OCPP 1.6J** charger (a dual-gun station like the Willdigits
+DC charger), provision a 1.6J-shaped topology (one EVSE per gun) and run its
+simulator:
+
+```bash
+make charging-ocpp16-seed
+make charging-ocpp16-sim
+```
+
+The 1.6J simulator boots, reports the charger and both guns, and runs a
+charging session with meter values (an energy reading in kWh, SoC, power,
+voltage, current, temperature and a vendor-specific measurement), then stops
+it. The charger's boot info, statuses, session, measurements and
+configuration can be read through the charging APIs in Swagger. The scenario
+and options are described in `simulator/ocpp16_charge_point_simulator.py`
+(`--scenario boot|status|session`).
+
 ### Connecting a real charging station
 
 A real charging station must first be registered as a station, EVSE and
@@ -137,8 +160,14 @@ Then configure the charging station:
 
 ```text
 OCPP URL:       ws://<backend-host-address>:9000/ocpp/<station-code>
-Protocol:       ocpp2.0.1
+Protocol:       ocpp1.6 or ocpp2.0.1 (the gateway accepts both)
 ```
+
+For an OCPP 1.6J charger register one EVSE per gun (EVSE `1` / connector `1`
+for gun 1, EVSE `2` / connector `1` for gun 2, …): 1.6J connector `n` maps to
+EVSE `n`. Connector `0` (the whole charger) needs no registration. Change the
+charger's default HMI password before connecting it. The gateway currently
+uses plain `ws://` without authentication (development mode).
 
 In a local environment, the charging station must be able to reach the
 machine running the backend.
