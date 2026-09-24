@@ -1,7 +1,7 @@
 # G3Network - Makefile
 # Common commands used for development
 
-.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim telematics-monitor-dev backend-test db-migrate db-reset
+.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test db-migrate db-reset
 
 # Default: show help
 help:
@@ -20,6 +20,8 @@ help:
 	@echo "  make charging-ocpp-dev - Run the OCPP gateway, 2.0.1 + 1.6J (port 9000)"
 	@echo "  make charging-ocpp-seed - Provision station/EVSE/connector simulator"
 	@echo "  make charging-ocpp-sim - Run the OCPP session happy-path simulator"
+	@echo "  make charging-ocpp16-seed - Provision an OCPP 1.6J station (EVSE per gun)"
+	@echo "  make charging-ocpp16-sim - Run the OCPP 1.6J charge-point simulator"
 	@echo "  make telematics-monitor-dev - Run the device-silence health monitor"
 	@echo "  make backend-test    - Run tests"
 	@echo ""
@@ -82,6 +84,14 @@ charging-ocpp-seed:
 charging-ocpp-sim:
 	@echo "Running the OCPP session happy-path simulator..."
 	cd backend && uv run python ../simulator/charging_session_simulator.py
+
+charging-ocpp16-seed:
+	@echo "Provisioning a 1.6J station (one EVSE per gun) for the OCPP 1.6J simulator..."
+	cd backend && uv run python ../simulator/seed_charging_topology.py --protocol 1.6 --identity SIM-OCPP16-001 --display-name "OCPP 1.6J Simulator"
+
+charging-ocpp16-sim:
+	@echo "Running the OCPP 1.6J charge-point simulator..."
+	cd backend && uv run python ../simulator/ocpp16_charge_point_simulator.py
 
 telematics-monitor-dev:
 	@echo "Starting telematics device health monitor..."

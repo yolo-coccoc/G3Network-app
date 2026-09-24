@@ -261,9 +261,7 @@ def _decimal_argument(value: str) -> Decimal:
     try:
         parsed = Decimal(value)
     except InvalidOperation as error:
-        raise argparse.ArgumentTypeError(
-            f"Meter is not a Decimal: {value}"
-        ) from error
+        raise argparse.ArgumentTypeError(f"Meter is not a Decimal: {value}") from error
     if not parsed.is_finite() or parsed < 0:
         raise argparse.ArgumentTypeError("Meter must be a finite, non-negative Decimal")
     return parsed
