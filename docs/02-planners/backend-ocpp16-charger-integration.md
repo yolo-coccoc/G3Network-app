@@ -3,8 +3,9 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–2 **done** on 2026-09-24 (decisions,
-> raw OCPP message log, version-aware gateway); Step 3 (1.6J simulator) is next
+> Status: 🚧 In progress — Steps 0–3 **done** on 2026-09-24 (decisions,
+> raw OCPP message log, version-aware gateway, 1.6J simulator skeleton);
+> Step 4 (Boot/Heartbeat, M1) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -98,6 +99,10 @@ real-charger logs first.
   the response frame can't be read while the handler is still running. Any
   CSMS-initiated call must be scheduled as a **separate task** (Step 8).
 - An action with no handler is answered with `CALLERROR NotImplemented`.
+- `ChargePoint.call()` **suppresses a CALLERROR by default** (`suppress=True`
+  returns `None`); pass `suppress=False` to have it raise. Found in Step 3
+  (the simulator initially reported success for failed calls). Any call this
+  backend sends (Step 8) must use `suppress=False`.
 - 1.6 nested objects arrive as snake_cased plain dicts, like 2.0.1 (F-B2
   Step 0), and 1.6 `SampledValue` has a flat `unit` (not `unit_of_measure`).
 - 1.6 schema: `BootNotification` requires only `chargePointVendor` and
@@ -407,10 +412,19 @@ seed-script option that provisions one EVSE per gun (connector 1 each) for a
 
 **Checks:**
 
-- [ ] `make charging-ocpp16-sim` connects (Step 2) and prints the server's replies
-- [ ] No production dependency added
+- [x] Static: `black`, `ruff`, `mypy` on both simulator files — clean (the simulator directory is outside the backend's `mypy .`, so it was run explicitly)
+- [x] `make charging-ocpp16-seed` (through the real API) creates a 1.6 station with **EVSE 1 / connector 1 and EVSE 2 / connector 1** (D3), verified in the database
+- [x] `make charging-ocpp16-sim` connects with `ocpp1.6` (Step 2), prints every server reply, reports each `CALLERROR` and exits `1`. Against today's gateway, `BootNotification` and `Heartbeat` are both reported as `CALLERROR NotImplementedError` — the expected state until Step 4
+- [x] The simulator answers a CSMS-initiated `GetConfiguration` (checked against a local mock CSMS, because the gateway cannot send one until Step 8): no key → all 16 keys incl. `SupportedFeatureProfiles = Core,SmartCharging,RemoteTrigger` (read-only); `['NumberOfConnectors','NoSuchKey']` → 1 key + `unknown_key = ['NoSuchKey']`
+- [x] No production dependency added (`ocpp` and `websockets` were already present)
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 3 is done.
+
+- New `simulator/ocpp16_charge_point_simulator.py` (`ocpp.v16.ChargePoint` in client mode): scenario `boot` (BootNotification, Heartbeat), CLI `--url/--identity/--connectors/--scenario/--linger/--timeout`, a configurable key table modelled on the spec §4.3 keys, and a background listener so CSMS-initiated calls are answered while the scenario runs. Scenarios are added by later steps.
+- `simulator/seed_charging_topology.py` gained `--protocol {2.0.1,1.6}` and `--connectors`; the 2.0.1 behaviour is unchanged (default), 1.6 creates one EVSE per gun.
+- `Makefile`: `charging-ocpp16-seed` and `charging-ocpp16-sim` (help text and `.PHONY` updated).
+- **Bug found and fixed during verification:** the first version printed `ACK … response=None` for a failed call, because `python-ocpp`'s `call()` suppresses CALLERROR by default. The simulator now passes `suppress=False`; the same rule was added to §2.2 and Step 8.
+- Not done, by design: any scenario beyond `boot` (added in Steps 5–7) and the `GetConfiguration` request from the gateway (Step 8).
 
 ### Step 4 — Charger identity and liveness: Boot, Heartbeat (A2, B6) — **M1**
 
@@ -771,6 +785,8 @@ CSMS-initiated call in this planner (D10).
 
 **Contract/decisions:**
 
+- The call uses `suppress=False` (§2.2) so a `CALLERROR` from the charger is
+  raised, logged and never mistaken for an empty answer.
 - **No awaiting `call()` inside a handler** (§2.2): after the
   `BootNotification` handler has returned its `Accepted` response, the
   adapter starts an `asyncio.create_task(...)` that sends
