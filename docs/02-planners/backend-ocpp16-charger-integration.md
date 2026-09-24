@@ -3,11 +3,11 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–6 and 7a **done** on 2026-09-24 (decisions,
-> raw OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat
-> and liveness — **milestone M1 reached** —, StatusNotification and the
-> transaction lifecycle) and Step 7a (unified measurement storage); Step 7b
-> (1.6J MeterValues, M2) is next
+> Status: 🚧 In progress — Steps 0–7 **done** on 2026-09-24 (decisions, raw
+> OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat and
+> liveness — **milestone M1** —, StatusNotification, the transaction lifecycle,
+> unified measurement storage and 1.6J MeterValues — **milestone M2 reached**);
+> Step 8 (post-boot GetConfiguration, M3) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -101,6 +101,14 @@ real-charger logs first.
   the response frame can't be read while the handler is still running. Any
   CSMS-initiated call must be scheduled as a **separate task** (Step 8).
 - An action with no handler is answered with `CALLERROR NotImplemented`.
+- The 1.6 JSON schema restricts `SampledValue.measurand`, `unit`, `context`,
+  `phase`, `location` and `StopTransaction.reason` to **fixed lists**. With the
+  library's default validation a single vendor-specific value makes it reject
+  the **whole message** (`CALLERROR FormatViolation`): a `MeterValues` would
+  lose every sample, and a `StopTransaction` would leave the session open
+  forever. `@on(Action.x, skip_schema_validation=True)` turns the check off
+  for one handler (Step 7b uses it for `MeterValues` and `StopTransaction`;
+  the handler then validates what it needs itself).
 - `ChargePoint.call()` **suppresses a CALLERROR by default** (`suppress=True`
   returns `None`); pass `suppress=False` to have it raise. Found in Step 3
   (the simulator initially reported success for failed calls). Any call this
@@ -797,12 +805,18 @@ decision D9). Step 7a must already be merged and verified.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke (normaliser matrix): Wh default; explicit `kWh` → ×1000 (**pins the comparison §2.2 hazard**); unknown energy unit raises; SoC/power/V/A/T/Power.Offered routed to measurements; vendor measurand stored; `SignedData` and non-numeric skipped with warning; `transactionId` absent → not attributed; COMPLETED session refused; reconnect scenario — a **new** connection's `MeterValues` for an ACTIVE transaction is accepted (C1)
-- [ ] Live: simulator session → `energy_delivered_wh` correct after a kWh sample; `/measurements` returns every simulated measurand and `/meter-values` still returns the energy samples; kill and restart the simulator connection mid-session and confirm `MeterValues` still land
-- [ ] **M2 reached** — record it here
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (140 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp16_measurements_smoke.py`, `test_charging_measurements_smoke.py`; 361 tests pass in total): **Wh default; explicit `kWh` → ×1000 (12.5 kWh → 12500 Wh — pins the comparison §2.2 hazard)**; the unit match is case-insensitive; an unknown energy unit, an unreadable value or a signed-data energy reading raises; `SoC`/power/voltage/current/temperature/`Power.Offered` become measurements with default units; explicit unit/context/phase/location kept; a **vendor-specific measurand is stored as sent**; `SoC 0` and negative values are stored; signed-data, non-numeric, non-finite and over-long extras are **skipped and counted** without failing the message; a naive timestamp or a malformed group raises; `MeterValues` and `StopTransaction` opt out of schema validation while `StatusNotification`/`StartTransaction`/`BootNotification`/`Authorize` do not; a `MeterValues` on a **brand-new adapter (reconnect)** finds its session by `transactionId` and the adapter keeps no per-connection map; no `transactionId` → nothing stored and no transaction opened; a completed session is refused; an unknown transaction propagates; the skipped-samples warning carries the count and reasons; `transactionData` is stored **before** `Ended`; a vendor stop reason is accepted and truncated to 30 characters; an unreadable `meter_stop` fails before any database work; `ingest_measurements` and the read API (filter, pagination, 404)
+- [x] Live (real gateway + API, dev database, 1.6J simulator `session` scenario): 14 ACK / 0 CALLERROR; session `completed`, 1000 → 1500 Wh, **500 Wh delivered**; `/meter-values` (energy only) returns `1250`, `1450`, `1500` — so **1.25 kWh really is stored as 1250 Wh**; `/measurements` returns 18 rows (energy ×3, `SoC` ×3, and ×2 each of `Power.Active.Import`, `Voltage`, `Current.Import`, `Temperature`, `Power.Offered`, `Voltage.Demand`), `?measurand=SoC` filters (the last one carries `context=Transaction.End` from `transactionData`), the vendor-named `Voltage.Demand` is stored as sent; a `MeterValues` on a **new connection** for a transaction started on another one was accepted (C1); a message without `transactionId` was accepted and stored nothing; an unreadable energy unit (`MWh`), an unknown transaction and a late `MeterValues` after the stop all returned `CALLERROR` and stored nothing; a good energy sample with two unstorable extras was accepted and the warning logged `skipped_samples: 2` by reason; a `StopTransaction` with a 39-character non-standard reason was accepted, closed the session and stored the reason truncated to 30; the 2.0.1 simulator still completes on the same station
+- [x] **M2 reached** — status, session, energy and the mandatory measurands are stored from a full 1.6J session (simulator; the real charger is Step 10)
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 7b is done.
+
+- New `ocpp/ocpp16_measurements.py` (pure functions, no shared code with the 2.0.1 normalizer): `extract_v16_measurements` → `V16Extraction(energy, measurements, skipped)`, plus `to_decimal`. Default units for the standard measurands; energy register accepts `Wh`/`kWh` only.
+- `OCPP16ChargePoint.on_meter_values` and a rewritten `on_stop_transaction`; both use **`skip_schema_validation=True`** (see §2.2: the 1.6 schema would otherwise reject a whole message over one vendor-specific value). This is a consequence of decision D9 ("vendor names stored as-is") that the original plan did not spell out; the handlers validate what they need instead (required numbers via `to_decimal`, timestamps, group keys) and a malformed message still ends as a loud `CALLERROR`. `StatusNotification`, `StartTransaction`, `Authorize` and `BootNotification` stay strictly validated until real logs show a need (a Step 10 question). The stop `reason` is stored truncated to the 30-character column (the raw frame keeps the original).
+- `charging_sessions`: `MeasurementInput` (frozen dataclass), `ingest_measurements` (per item, refuses a completed session, validates lengths and finiteness), `list_charging_session_measurements`, repository `list_session_measurements`/`count_session_measurements`, schemas `ChargingSessionMeasurementResponse`/`…ListResponse`, and the endpoint **`GET /api/v1/charging-sessions/{session_id}/measurements`** (paginated, optional `measurand` filter). `/meter-values` stays the energy-only view. `resolve_session_by_transaction` was reused from Step 6.
+- Simulator: the `session` scenario now sends two `MeterValues` (a `kWh` energy reading, `SoC`, power, voltage, current, temperature, `Power.Offered`, and the vendor-named `Voltage.Demand`, sent with the client-side schema check off) and a `StopTransaction` with `transactionData`.
+- No migration in 7b (as planned). Not done, by design: station-level (non-transaction) metering (`future.md` #77), storing non-energy measurands from 2.0.1 (#78).
 
 **Future:** station-level (non-transaction) metering and 15-minute clock-aligned data; 2.0.1 measurement parity (storing non-energy measurands from 2.0.1) → `future.md` #77 and #78.
 
@@ -953,6 +967,10 @@ passed.
 - Which unhandled inbound actions deserve trivial ACK handlers.
 - Whether `ChangeConfiguration` for the meter interval is needed (acceptance
   item 5) and therefore whether the command channel moves up.
+- Whether `StatusNotification` / `StartTransaction` also need JSON-schema
+  validation switched off (Step 7b did it only for `MeterValues` and
+  `StopTransaction`): a non-standard `errorCode` or `status` from the real
+  charger would currently reject that whole message.
 
 **Checks:**
 
