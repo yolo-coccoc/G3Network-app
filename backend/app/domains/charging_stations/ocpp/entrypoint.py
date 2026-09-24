@@ -1,4 +1,4 @@
-"""Entrypoint process for the OCPP 2.0.1 WebSocket gateway."""
+"""Entrypoint process for the OCPP (2.0.1 and 1.6J) WebSocket gateway."""
 
 import asyncio
 import logging

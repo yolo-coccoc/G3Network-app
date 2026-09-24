@@ -1,13 +1,15 @@
-"""Minimal WebSocket gateway for OCPP 2.0.1.
+"""Minimal WebSocket gateway for OCPP 2.0.1 and OCPP 1.6J.
 
 The gateway only validates the path, subprotocol, and identity of a
 pre-provisioned station, then keeps one stable connection within the
-process. Production reliability, reconnect, and technical status history
+process. The negotiated subprotocol (``ocpp2.0.1`` or ``ocpp1.6``) selects
+the adapter class: ``OCPP201ChargePoint`` here, ``OCPP16ChargePoint`` in
+``ocpp16_charge_point.py``. Production reliability, reconnect, and technical status history
 are outside the active path. Every frame exchanged on a connection is
 stored verbatim by ``RecordingConnection`` (see ``raw_log.py``) before any
 parsing.
 
-``python-ocpp``'s ``ChargePoint._handle_call`` only snake_cases inbound
+For the 2.0.1 adapter: ``python-ocpp``'s ``ChargePoint._handle_call`` only snake_cases inbound
 JSON keys and splats the result as handler kwargs - it never constructs
 the ``ocpp.v201.datatypes`` dataclasses. So nested OCPP objects (``evse``,
 ``transactionInfo``, ``meterValue`` and its ``sampledValue`` entries)
@@ -20,9 +22,8 @@ dataclass type hints for nested OCPP objects.
 import asyncio
 import logging
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from decimal import Decimal
-from typing import Any, Final
+from typing import Final
 from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
@@ -43,6 +44,11 @@ from app.domains.charging_sessions.types import (
 )
 from app.domains.charging_stations import repository
 from app.domains.charging_stations import service as charging_stations_service
+from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
+from app.domains.charging_stations.ocpp.parsing import (
+    OcppPayload,
+    parse_ocpp_timestamp,
+)
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import ChargingConnectorStatus
 from app.libs.common.config import settings
@@ -51,12 +57,14 @@ from app.libs.db.session import async_session_factory
 logger = logging.getLogger(__name__)
 
 OCPP_SUBPROTOCOL: Final[str] = "ocpp2.0.1"
+OCPP16_SUBPROTOCOL: Final[str] = "ocpp1.6"
+# Server preference order: when a client offers both, the newer protocol wins.
+SUPPORTED_SUBPROTOCOLS: Final[tuple[str, ...]] = (
+    OCPP_SUBPROTOCOL,
+    OCPP16_SUBPROTOCOL,
+)
 OCPP_PATH_PREFIX: Final[str] = "/ocpp/"
 _MAX_IDENTITY_LENGTH: Final[int] = 255
-
-# See the module docstring: python-ocpp delivers nested OCPP objects as
-# plain dicts (snake_cased keys), never as ocpp.v201.datatypes dataclasses.
-OcppPayload = dict[str, Any]
 
 # OCPP 2.0.1: a SampledValue with no measurand is a cumulative active-import
 # energy register, which is the only measurand meter_start_wh/meter_end_wh
@@ -131,27 +139,6 @@ def _requested_subprotocols(request: Request) -> set[str]:
     """
     header = request.headers.get("Sec-WebSocket-Protocol", "")
     return {item.strip() for item in header.split(",") if item.strip()}
-
-
-def parse_ocpp_timestamp(value: str) -> datetime:
-    """Parse an OCPP timestamp into a timezone-aware datetime.
-
-    Args:
-        value: ISO-8601 timestamp in the OCPP payload.
-
-    Returns:
-        A datetime keeping its timezone so the service can normalize it to
-        UTC.
-
-    Raises:
-        ValueError: If the timestamp has no timezone or has an invalid
-            format.
-    """
-    normalized = value.replace("Z", "+00:00")
-    timestamp = datetime.fromisoformat(normalized)
-    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-        raise ValueError("OCPP timestamp must have a timezone")
-    return timestamp
 
 
 def normalize_sampled_value_to_wh(sampled_value: OcppPayload) -> Decimal | None:
@@ -296,24 +283,48 @@ async def resolve_ocpp_topology(
 def select_ocpp_subprotocol(
     _connection: ServerConnection, client_subprotocols: Sequence[Subprotocol]
 ) -> Subprotocol | None:
-    """Select the only OCPP 2.0.1 subprotocol the gateway allows.
+    """Select the OCPP subprotocol to use for a connection.
 
     Args:
         _connection: Connection currently negotiating the handshake.
         client_subprotocols: Protocols proposed by the client.
 
     Returns:
-        ``ocpp2.0.1`` if the client proposed it; otherwise ``None``.
+        The first protocol in the server's preference order
+        (``SUPPORTED_SUBPROTOCOLS``) that the client proposed, or ``None``
+        if the client proposed none of them.
     """
-    return (
-        Subprotocol(OCPP_SUBPROTOCOL)
-        if Subprotocol(OCPP_SUBPROTOCOL) in client_subprotocols
-        else None
-    )
+    for supported in SUPPORTED_SUBPROTOCOLS:
+        if Subprotocol(supported) in client_subprotocols:
+            return Subprotocol(supported)
+    return None
 
 
-class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
-    """``python-ocpp`` adapter attaching an accepted WebSocket to a station identity.
+def create_charge_point(
+    ocpp_subprotocol: str | None,
+    identity: str,
+    connection: RecordingConnection,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> "OCPP201ChargePoint | OCPP16ChargePoint":
+    """Create the adapter class that matches the negotiated subprotocol.
+
+    Args:
+        ocpp_subprotocol: Subprotocol negotiated for this connection.
+        identity: OCPP identity already resolved in the database.
+        connection: Recording wrapper around the accepted WebSocket.
+        session_factory: Shared async session factory.
+
+    Returns:
+        An ``OCPP16ChargePoint`` for ``ocpp1.6``; otherwise an
+        ``OCPP201ChargePoint`` (the default protocol of this gateway).
+    """
+    if ocpp_subprotocol == OCPP16_SUBPROTOCOL:
+        return OCPP16ChargePoint(identity, connection, session_factory)
+    return OCPP201ChargePoint(identity, connection, session_factory)
+
+
+class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
+    """``python-ocpp`` OCPP 2.0.1 adapter attaching an accepted WebSocket to a station identity.
 
     Attributes:
         id: Station identity used by ``ChargePoint`` when dispatching OCPP.
@@ -336,7 +347,7 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
         connection: RecordingConnection,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Initialize the OCPP v201 adapter for an already validated connection.
+        """Initialize the OCPP 2.0.1 adapter for an already validated connection.
 
         Args:
             identity: OCPP identity already resolved in the database.
@@ -576,7 +587,7 @@ class OCPPServer:
         self._server: Server | None = None
 
     async def start(self) -> None:
-        """Open the WebSocket listener for OCPP 2.0.1 only.
+        """Open the WebSocket listener for OCPP 2.0.1 and OCPP 1.6J.
 
         Raises:
             RuntimeError: If the listener was already started.
@@ -597,7 +608,7 @@ class OCPPServer:
             self._handle_connection,
             self.host,
             self.port,
-            subprotocols=[Subprotocol(OCPP_SUBPROTOCOL)],
+            subprotocols=[Subprotocol(name) for name in SUPPORTED_SUBPROTOCOLS],
             select_subprotocol=select_ocpp_subprotocol,
             process_request=self._process_request,
             max_size=settings.CHARGING_OCPP_MAX_MESSAGE_BYTES,
@@ -643,11 +654,12 @@ class OCPPServer:
         identity = parse_ocpp_identity(request.path)
         if identity is None:
             return _http_rejection(404, "Not Found", "Invalid OCPP station path")
-        if OCPP_SUBPROTOCOL not in _requested_subprotocols(request):
+        if not set(SUPPORTED_SUBPROTOCOLS) & _requested_subprotocols(request):
             return _http_rejection(
                 426,
                 "Upgrade Required",
-                f"Required WebSocket subprotocol: {OCPP_SUBPROTOCOL}",
+                "Required WebSocket subprotocol: "
+                + " or ".join(SUPPORTED_SUBPROTOCOLS),
             )
         async with self.session_factory.begin() as db:
             station = await repository.get_station_by_identity(
@@ -668,8 +680,8 @@ class OCPPServer:
             connection: WebSocket connection accepted by websockets.
 
         Side Effects:
-            Creates an ``OCPPChargePoint`` adapter over a
-            ``RecordingConnection`` and waits for ``python-ocpp`` to read
+            Creates the adapter for the negotiated subprotocol
+            (``create_charge_point``) over a ``RecordingConnection`` and waits for ``python-ocpp`` to read
             messages until the station disconnects or the handler is
             cancelled. Every frame is stored verbatim in its own transaction.
             Handler errors (including a failure to store a frame) are
@@ -707,8 +719,11 @@ class OCPPServer:
             ocpp_subprotocol=connection.subprotocol or OCPP_SUBPROTOCOL,
             session_factory=self.session_factory,
         )
-        charge_point = OCPPChargePoint(
-            identity, recording_connection, self.session_factory
+        charge_point = create_charge_point(
+            connection.subprotocol,
+            identity,
+            recording_connection,
+            self.session_factory,
         )
         logger.info(
             "OCPP station connected",

@@ -17,7 +17,7 @@ help:
 	@echo "  make backend-install - Install dependencies"
 	@echo "  make backend-dev     - Run the development server (port 8000)"
 	@echo "  make telemetry-dev   - Run telemetry ingestion"
-	@echo "  make charging-ocpp-dev - Run the OCPP 2.0.1 gateway (port 9000)"
+	@echo "  make charging-ocpp-dev - Run the OCPP gateway, 2.0.1 + 1.6J (port 9000)"
 	@echo "  make charging-ocpp-seed - Provision station/EVSE/connector simulator"
 	@echo "  make charging-ocpp-sim - Run the OCPP session happy-path simulator"
 	@echo "  make telematics-monitor-dev - Run the device-silence health monitor"
@@ -72,7 +72,7 @@ telemetry-dev:
 	cd backend && uv run python -m app.domains.telemetry.ingestion.entrypoint
 
 charging-ocpp-dev:
-	@echo "Starting OCPP 2.0.1 gateway..."
+	@echo "Starting OCPP gateway (2.0.1 + 1.6J)..."
 	cd backend && uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
 charging-ocpp-seed:
