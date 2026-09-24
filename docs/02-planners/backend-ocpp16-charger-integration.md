@@ -3,12 +3,12 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–8 **done** on 2026-09-24 (decisions, raw
+> Status: 🚧 In progress — Steps 0–9 **done** on 2026-09-24 (decisions, raw
 > OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat and
 > liveness — **milestone M1** —, StatusNotification, the transaction lifecycle,
 > unified measurement storage and 1.6J MeterValues — **milestone M2** — and the
-> post-boot GetConfiguration capture — **milestone M3 reached**); Step 9
-> (end-to-end regression and tests) is next
+> post-boot GetConfiguration capture — **milestone M3 reached** — and the
+> end-to-end regression); Step 10 (real-charger bring-up) needs the hardware
 > Created: 2026-09-24
 >
 > Inputs:
@@ -922,11 +922,19 @@ clean database and record the evidence (SQL output summary) here.
 
 **Checks:**
 
-- [ ] `uv run pytest` green (default scope), and `RUN_DB_INTEGRATION=1 uv run pytest` green — state which scope ran and why if not
-- [ ] E2E evidence recorded (rows per table, endpoints returning expected values)
-- [ ] The legacy 2.0.1 simulator still passes
+- [x] Default scope `uv run pytest`: **375 passed, 6 skipped** (the 6 skips are the PostgreSQL integration tests, which need `RUN_DB_INTEGRATION=1`)
+- [x] `RUN_DB_INTEGRATION=1 uv run pytest`: **380 passed, 1 failed** — the failure is the pre-existing, unrelated `test_telemetry_repository_round_trip_rolls_back` (still builds a telemetry insert with the old `latitude`/`longitude` columns; documented in `backend-charging-ingest-fixes.md` §5 and Step 1 above; telemetry domain, out of the current charging scope, deliberately not fixed here)
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (142 source files), `compileall`, `git diff --check` — clean
+- [x] Convention audits over the OCPP 1.6J work: no `commit()`/`rollback()` in any service/repository; no `HTTPException` outside routers; no `datetime.utcnow`; no `float` energy in the OCPP path (the one existing `float(...)` is F-C5's kWh presentation); every `__init__.py` is a docstring only; no cross-domain import of another domain's `models.py`/`repository.py` in either direction
+- [x] The integration migration test asserts head `0026_charging_config_snapshots`, **exactly the four hypertables** (`vehicle_telemetry`, `charging_session_events`, `charging_ocpp_messages`, `charging_session_measurements`) and 11 application tables
+- [x] **Scripted E2E on a clean database** (`test_ocpp16_charging_session_end_to_end_on_a_clean_database`, part of the integration suite): a freshly migrated temporary database, the real gateway on a free port, the 1.6J simulator's `session` scenario, then the 2.0.1 simulator. It asserts: device fields (`ocpp1.6`, vendor, model, firmware, boot and last-seen set); connector `0` and guns 1/2 `Available`/`NoError`; the session `completed` with transaction ID `1`, `idTag SIMTAG001`, reason `EVDisconnected`, `meterStart 1000`, `meterStop 1500`, `meterEnd 1500`, **500 Wh delivered**; energy measurements `[1250, 1450, 1500]` (1.25 kWh stored as 1250 Wh) and all the extra measurands including the vendor-specific one; **every inbound request has its answer and every outbound request has its answer** in the raw log (≥ 14 inbound CALLs, exactly 1 outbound `GetConfiguration`), all tagged `ocpp1.6`; **one configuration capture of 16 keys** with `SupportedFeatureProfiles`; and the 2.0.1 session on the same gateway `completed` (1500 Wh, 500 Wh delivered) with `ocpp2.0.1`
+- [x] The legacy 2.0.1 simulator (`make charging-ocpp-sim`) still passes
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 9 is done.
+
+- Almost all of the planned tests were written **with each step** instead of at the end (handshake matrix, `RecordingConnection`, boot/heartbeat, status, transactions, the normaliser matrix incl. the kWh case, "boot returns before `GetConfiguration`", reconnect-then-`MeterValues`); Step 9 added the exact hypertable assertion, the clean-database E2E, and the two-scope runs above. The unit tests live in `test_ocpp_gateway_smoke.py`, `test_ocpp_raw_log_smoke.py`, `test_ocpp16_{boot,status,transaction,measurements,configuration}_smoke.py` and `test_charging_measurements_smoke.py`.
+- The E2E test uses the existing temporary-database fixture in `test_postgres_integration.py` (there is no shared `conftest.py`, so it lives in the same file), starts the gateway as a subprocess with `DATABASE_URL`/`CHARGING_OCPP_PORT` overridden, and always terminates it.
+- Environment limits: nothing was tested against a real charger (Step 10), a real broker/DB outage while logging, or TLS.
 
 ### Step 10 — Real-charger bring-up and findings (operational)
 
