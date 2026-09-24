@@ -7,6 +7,45 @@
 >
 > **Date:** 2026-09-24. **Nothing was changed** in the code, the database, or other docs; this is a report only.
 
+## Status update — 2026-09-24 (after the OCPP 1.6J planner, Steps 0–9)
+
+This report describes the system **as it was before** the
+[OCPP 1.6J planner](../02-planners/backend-ocpp16-charger-integration.md);
+the register below is kept unchanged as the record of that comparison. Where each
+mismatch stands now (✅ closed · ◐ partly · ⏳ waits for the real charger, Step 10 ·
+⛔ deliberately deferred with a `future.md` item). Everything marked ✅ was verified
+against **simulators only**.
+
+| ID | Now | How / where |
+|---|---|---|
+| A1 subprotocol/version | ✅ | Step 2 — `ocpp1.6` and `ocpp2.0.1` negotiated, `426` only when neither is offered |
+| A2 Boot/Heartbeat | ✅ | Step 4 |
+| A3 message shapes | ✅ | Steps 4–7 (a separate 1.6J adapter) |
+| A4 URL/identity path | ⏳ | Step 10: confirm the URL the charger builds |
+| A5 TLS/authentication | ⛔ | `future.md` #73 (waits for the vendor) |
+| A6 CSMS commands | ◐ | only the post-boot `GetConfiguration` (Step 8); the rest is #74 |
+| B1 raw message log | ✅ | Step 1 (read API/retention: #79) |
+| B2 connector 0 · B3 EVSE mapping | ✅ | Step 5 (connector 0 on the station; gun `n` = EVSE `n` / connector `1`) |
+| B4 status granularity | ✅ | Step 5 — ten-value status enum |
+| B5 error codes | ◐ | stored (Step 5); alerting and the vendor code catalog: #75 |
+| B6 charger registry | ✅ | Step 4 (device info, `last_seen_at`, derived `is_online`) |
+| B7 measurands | ✅ | Steps 7a–7b for 1.6J (2.0.1 parity: #78) |
+| B8 transaction ID | ✅ | Step 6 — database sequence |
+| B9 idTag / stop reason | ◐ | stored (Step 6); tag validation and VIN linkage: #26/#62 |
+| B10 `meterStop` | ✅ | Step 6 — stored apart from the latest sample |
+| B11 tariff · B13 immutability · B14 per-gun power | ⛔ | unchanged (#26, #80) |
+| B12 configuration history | ◐ | Step 8 stores a snapshot per boot; no diffing |
+| C1 reconnect mapping | ✅ | for 1.6J (Step 7b: lookup by `transactionId`); the 2.0.1 adapter keeps its map |
+| C2 back-fill · C3 orphans · C4 clock | ⏳ | Step 10 findings, then decide (`future.md` #27) |
+| C5 stale status | ◐ | `is_online` is exposed; invalidation: #76 |
+| C6/C7 error policy/duplicates | ⛔ | unchanged (`future.md` #31/#66) |
+| C8 silent skips | ✅ | Step 7b — skipped samples are counted and logged |
+| E1 simulator · E2 tests | ✅ | Steps 3 and 9 |
+| E3 public endpoint/TLS infra | ⛔ | with A5 |
+
+The §2 checks (handshake, `kWh` parsing, unhandled actions) now have permanent regression
+tests, and the "unit hazard" in §2.2 cannot recur: the 1.6J path has its own normaliser.
+
 **How to read severity**
 
 | Tag | Meaning |
