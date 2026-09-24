@@ -150,6 +150,51 @@ class ChargingSessionMeterValueListResponse(BaseModel):
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
+class ChargingSessionMeasurementResponse(BaseModel):
+    """One measurement of a session (any measurand).
+
+    Attributes:
+        measurement_id: Internal UUID of the measurement.
+        sampled_at: The time of measurement.
+        session_id: UUID of the session that owns it.
+        measurand: OCPP measurand name as reported (``SoC``,
+            ``Power.Active.Import``, a vendor-specific name…).
+        value: The reading; canonical Wh for the energy register.
+        unit: Unit of ``value``, nullable.
+        context: OCPP reading context, nullable.
+        phase: Electrical phase, nullable.
+        location: Measurement location, nullable.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    measurement_id: UUID
+    sampled_at: datetime
+    session_id: UUID
+    measurand: str
+    value: Decimal
+    unit: str | None
+    context: str | None
+    phase: str | None
+    location: str | None
+
+
+class ChargingSessionMeasurementListResponse(BaseModel):
+    """A paginated list of a session's measurements.
+
+    Attributes:
+        items: The measurements in the current page.
+        total: The total number of matching measurements.
+        page: The current page, starting at one.
+        page_size: The maximum number of items in the page.
+    """
+
+    items: list[ChargingSessionMeasurementResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
 class StationEnergySummaryResponse(BaseModel):
     """Total energy sold at a station within a queried time window (F-C5).
 

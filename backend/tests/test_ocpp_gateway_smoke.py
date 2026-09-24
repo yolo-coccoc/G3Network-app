@@ -183,4 +183,5 @@ def test_1_6_adapter_handles_only_the_messages_implemented_so_far() -> None:
         "Authorize",
         "StartTransaction",
         "StopTransaction",
+        "MeterValues",
     }

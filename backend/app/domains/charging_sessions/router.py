@@ -19,6 +19,7 @@ from app.domains.charging_sessions.exceptions import (
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
     ChargingSessionListResponse,
+    ChargingSessionMeasurementListResponse,
     ChargingSessionMeterValueListResponse,
     ChargingSessionResponse,
     StationEnergySummaryResponse,
@@ -169,6 +170,59 @@ async def list_charging_session_meter_values_endpoint(
         return await charging_session_service.list_charging_session_meter_values(
             db,
             session_id,
+            page=page,
+            page_size=page_size,
+        )
+    except ChargingSessionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
+
+
+@router.get(
+    "/charging-sessions/{session_id}/measurements",
+    response_model=ChargingSessionMeasurementListResponse,
+    summary="View all measurements of a charging session",
+)
+async def list_charging_session_measurements_endpoint(
+    session_id: UUID,
+    measurand: str | None = Query(
+        None,
+        min_length=1,
+        max_length=60,
+        description="Return only this measurand, for example SoC.",
+    ),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> ChargingSessionMeasurementListResponse:
+    """Get the session's measurements of every measurand, in ascending time order.
+
+    ``/meter-values`` remains the energy-only view.
+
+    Args:
+        session_id: UUID of the session whose measurements to view.
+        measurand: Optional filter on the measurand name.
+        page: The page, starting at one.
+        page_size: The maximum number of measurements in the page.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
+
+    Returns:
+        A paginated measurement history.
+
+    Raises:
+        HTTPException: ``404`` if the session does not exist.
+    """
+    try:
+        return await charging_session_service.list_charging_session_measurements(
+            db,
+            session_id,
+            measurand=measurand,
             page=page,
             page_size=page_size,
         )

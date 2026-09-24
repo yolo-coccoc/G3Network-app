@@ -443,3 +443,65 @@ async def count_active_sessions_by_connector_id(
         )
     )
     return int(result.scalar_one())
+
+
+async def list_session_measurements(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    measurand: str | None,
+    offset: int,
+    limit: int,
+) -> list[ChargingSessionMeasurementModel]:
+    """Get a session's measurements in ascending time order.
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session to query.
+        measurand: Return only this measurand, or every measurand if ``None``.
+        offset: The number of measurements to skip.
+        limit: The maximum number of measurements to return.
+
+    Returns:
+        The measurements, stably paginated.
+    """
+    statement = select(ChargingSessionMeasurementModel).where(
+        ChargingSessionMeasurementModel.session_id == session_id
+    )
+    if measurand is not None:
+        statement = statement.where(
+            ChargingSessionMeasurementModel.measurand == measurand
+        )
+    result = await db.execute(
+        statement.order_by(
+            ChargingSessionMeasurementModel.sampled_at.asc(),
+            ChargingSessionMeasurementModel.measurement_id.asc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_session_measurements(
+    db: AsyncSession, session_id: UUID, *, measurand: str | None
+) -> int:
+    """Count a session's measurements.
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session whose measurements to count.
+        measurand: Count only this measurand, or every measurand if ``None``.
+
+    Returns:
+        The number of matching measurements.
+    """
+    statement = select(
+        func.count(ChargingSessionMeasurementModel.measurement_id)
+    ).where(ChargingSessionMeasurementModel.session_id == session_id)
+    if measurand is not None:
+        statement = statement.where(
+            ChargingSessionMeasurementModel.measurand == measurand
+        )
+    result = await db.execute(statement)
+    return int(result.scalar() or 0)

@@ -9,14 +9,14 @@ hide which contract each handler assumes.
 Scope: handlers are added one message group at a time by the OCPP 1.6J
 planner (``docs/02-planners/backend-ocpp16-charger-integration.md``). Currently
 handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
-``Authorize``, ``StartTransaction`` and ``StopTransaction``. Every other action a 1.6J
+``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``. Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
 """
 
 import logging
 from datetime import datetime, timezone
-from decimal import Decimal
+from uuid import UUID
 
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call_result
@@ -26,6 +26,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domains.charging_sessions import service as charging_sessions_service
 from app.domains.charging_sessions.types import SessionEventType
 from app.domains.charging_stations import service as charging_stations_service
+from app.domains.charging_stations.ocpp.ocpp16_measurements import (
+    V16Extraction,
+    extract_v16_measurements,
+    to_decimal,
+)
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
     format_ocpp_timestamp,
@@ -324,7 +329,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 event_type=SessionEventType.STARTED,
                 event_occurred_at=started_at,
                 seq_no=None,
-                meter_start_wh=Decimal(meter_start),
+                meter_start_wh=to_decimal(meter_start, "meter_start"),
                 id_tag=id_tag,
             )
         return call_result.StartTransaction(
@@ -332,7 +337,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             id_tag_info={"status": AuthorizationStatus.accepted},
         )
 
-    @on(Action.stop_transaction)  # type: ignore[untyped-decorator]
+    @on(Action.stop_transaction, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_stop_transaction(
         self,
         meter_stop: int,
@@ -350,59 +355,187 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         transactionId)`` — nothing is remembered per connection. The closing
         ``meterStop`` is always stored as ``meter_stop_wh``; the session's
         ``meter_end_wh`` follows the existing forward-in-time rule, so a stale
-        timestamp never overwrites a newer reading.
+        timestamp never overwrites a newer reading. Meter values sampled during
+        the session (``transactionData``) are stored first, while the session is
+        still ``active``.
+
+        JSON-schema validation is switched off for this action on purpose: the
+        1.6 schema restricts ``reason`` and every sampled-value field to fixed
+        lists, so a single vendor-specific stop reason or measurand would make
+        the library reject the whole message and leave the session open forever.
+        The fields the backend relies on are validated here instead, and a
+        ``reason`` longer than the 30-character column is truncated (the raw
+        frame in the message log keeps the original).
 
         Args:
-            meter_stop: Meter reading at the end, an integer in Wh.
+            meter_stop: Meter reading at the end, in Wh.
             timestamp: Stop time (must carry a timezone).
             transaction_id: The ID this backend allocated in
                 ``StartTransaction``.
             reason: Why the session stopped (``EmergencyStop``,
-                ``EVDisconnected``, ``PowerLoss``…), stored as sent.
+                ``EVDisconnected``, a vendor value…), stored as sent.
             id_tag: Tag that stopped the session; not stored.
-            transaction_data: Meter values sampled during the session; **not
-                stored yet** (only counted in a debug log).
+            transaction_data: Meter values sampled during the session; energy
+                samples update the session total, other measurands are stored
+                as measurements.
             **_: Other optional OCPP fields.
 
         Returns:
             An empty ``StopTransaction`` confirmation.
 
         Raises:
-            ValueError: If ``timestamp`` has no timezone.
+            ValueError: If a required field is not a number, ``timestamp`` has
+                no timezone, or an energy-register sample cannot be read.
             ChargingStationNotFoundError: If the station is not provisioned.
             ChargingSessionNotFoundError: If this station has no such
                 transaction.
             ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
-            Updates the session and appends its ``Ended`` event in one atomic
-            transaction; rolls back entirely on any error above.
+            Stores the samples, updates the session and appends its ``Ended``
+            event in one atomic transaction; rolls back entirely on any error.
         """
         stopped_at = parse_ocpp_timestamp(timestamp)
+        closing_meter_wh = to_decimal(meter_stop, "meter_stop")
+        transaction_key = str(int(transaction_id))
+        extraction = extract_v16_measurements(transaction_data or [])
         async with self.session_factory.begin() as db:
             station_id = await charging_stations_service.resolve_station_id_by_identity(
                 db, ocpp_identity=self.id
             )
             reference = await charging_sessions_service.resolve_session_by_transaction(
-                db, station_id=station_id, transaction_id=str(transaction_id)
+                db, station_id=station_id, transaction_id=transaction_key
             )
+            await self._store_extraction(db, reference.session_id, extraction)
             await charging_sessions_service.ingest_transaction_event(
                 db,
                 station_id=reference.station_id,
                 evse_id=reference.evse_id,
                 connector_id=reference.connector_id,
-                transaction_id=str(transaction_id),
+                transaction_id=transaction_key,
                 event_type=SessionEventType.ENDED,
                 event_occurred_at=stopped_at,
                 seq_no=None,
-                meter_end_wh=Decimal(meter_stop),
+                meter_end_wh=closing_meter_wh,
                 meter_end_sampled_at=stopped_at,
-                stop_reason=reason,
-                meter_stop_wh=Decimal(meter_stop),
+                stop_reason=reason[:30] if reason else None,
+                meter_stop_wh=closing_meter_wh,
             )
-        if transaction_data:
-            logger.debug(
-                "Ignoring StopTransaction transactionData",
-                extra={"meter_value_groups": len(transaction_data)},
-            )
+        self._log_skipped_samples("StopTransaction", extraction)
         return call_result.StopTransaction()
+
+    @on(Action.meter_values, skip_schema_validation=True)  # type: ignore[untyped-decorator]
+    async def on_meter_values(
+        self,
+        connector_id: int,
+        meter_value: list[OcppPayload],
+        transaction_id: int | None = None,
+        **_: object,
+    ) -> call_result.MeterValues:
+        """Store the readings of a ``MeterValues`` message against its session.
+
+        The session is found in the database by ``(station, transactionId)``,
+        so a message that arrives on a new connection (after a reconnect) is
+        handled exactly like one on the original connection. Energy-register
+        samples update the session's energy total; every other measurand
+        (``SoC``, power, voltage, current, temperature, ``Power.Offered``, and
+        vendor-specific names) is stored as a measurement.
+
+        JSON-schema validation is switched off for this action on purpose (the
+        1.6 schema rejects any measurand, unit, context, phase or location
+        outside fixed lists, which would discard a whole message over one
+        vendor-specific sample); see ``ocpp16_measurements.py`` for the rules
+        applied instead. Samples that cannot be stored are skipped, counted and
+        logged as a warning.
+
+        A message **without** a ``transactionId`` (clock-aligned samples or
+        readings outside a transaction) belongs to no session, so nothing is
+        stored beyond the raw message log; station-level metering is deferred
+        (``future.md`` #77).
+
+        Args:
+            connector_id: The gun the readings belong to (not used to find the
+                session; the ``transactionId`` is).
+            meter_value: The sample groups (plain dicts).
+            transaction_id: The transaction the readings belong to, if any.
+            **_: Other optional OCPP fields.
+
+        Returns:
+            A valid empty response for MeterValues.
+
+        Raises:
+            KeyError: If a group lacks ``timestamp`` or ``sampled_value``.
+            ValueError: If a timestamp lacks a timezone or an energy-register
+                sample cannot be read.
+            ChargingStationNotFoundError: If the station is not provisioned.
+            ChargingSessionNotFoundError: If this station has no such
+                transaction.
+            ChargingSessionStateError: If the session is already completed.
+
+        Side Effects:
+            Appends the samples and updates the session in one atomic
+            transaction; rolls back entirely on any error above.
+        """
+        extraction = extract_v16_measurements(meter_value)
+        self._log_skipped_samples("MeterValues", extraction)
+        if transaction_id is None:
+            logger.debug(
+                "MeterValues without a transactionId is not attributed to a session",
+                extra={
+                    "ocpp_identity": self.id,
+                    "ocpp_connector_id": connector_id,
+                    "sample_groups": len(meter_value),
+                },
+            )
+            return call_result.MeterValues()
+        async with self.session_factory.begin() as db:
+            station_id = await charging_stations_service.resolve_station_id_by_identity(
+                db, ocpp_identity=self.id
+            )
+            reference = await charging_sessions_service.resolve_session_by_transaction(
+                db, station_id=station_id, transaction_id=str(int(transaction_id))
+            )
+            await self._store_extraction(db, reference.session_id, extraction)
+        return call_result.MeterValues()
+
+    async def _store_extraction(
+        self, db: AsyncSession, session_id: UUID, extraction: V16Extraction
+    ) -> None:
+        """Store the samples of one message against a session.
+
+        Args:
+            db: The action's async session.
+            session_id: UUID of the session that owns the samples.
+            extraction: Energy samples and other measurements to store.
+
+        Side Effects:
+            Energy samples go through ``ingest_meter_values`` (aggregate update
+            plus a measurement row), everything else through
+            ``ingest_measurements``; both refuse a ``COMPLETED`` session.
+        """
+        for sample in extraction.energy:
+            await charging_sessions_service.ingest_meter_values(
+                db, session_id=session_id, sample=sample
+            )
+        if extraction.measurements:
+            await charging_sessions_service.ingest_measurements(
+                db, session_id=session_id, samples=extraction.measurements
+            )
+
+    def _log_skipped_samples(self, action: str, extraction: V16Extraction) -> None:
+        """Log a warning when some samples of a message could not be stored.
+
+        Args:
+            action: The OCPP action name, for the log.
+            extraction: The extraction whose skipped counts to report.
+        """
+        if extraction.skipped_count:
+            logger.warning(
+                "Skipped meter samples that cannot be stored",
+                extra={
+                    "ocpp_identity": self.id,
+                    "action": action,
+                    "skipped_samples": extraction.skipped_count,
+                    "skipped_by_reason": extraction.skipped,
+                },
+            )

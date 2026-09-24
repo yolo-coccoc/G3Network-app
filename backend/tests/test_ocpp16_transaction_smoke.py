@@ -287,24 +287,6 @@ async def test_stop_transaction_finds_the_session_and_stores_meter_stop_and_reas
 
 
 @pytest.mark.asyncio
-async def test_stop_transaction_ignores_transaction_data_for_now(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """transactionData is only counted in a debug log; nothing extra is stored."""
-    ingested = _patch_stop(monkeypatch)
-
-    await _charge_point().on_stop_transaction(
-        meter_stop=1500,
-        timestamp="2026-09-24T10:30:00Z",
-        transaction_id=42,
-        transaction_data=[{"timestamp": "2026-09-24T10:29:00Z", "sampled_value": []}],
-    )
-
-    assert len(ingested) == 1
-    assert ingested[0]["stop_reason"] is None
-
-
-@pytest.mark.asyncio
 async def test_stop_transaction_for_an_unknown_transaction_propagates_the_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

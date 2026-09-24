@@ -15,6 +15,7 @@ commit/rollback of the transaction.
 """
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -36,6 +37,8 @@ from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
     ChargingSessionEventResponse,
     ChargingSessionListResponse,
+    ChargingSessionMeasurementListResponse,
+    ChargingSessionMeasurementResponse,
     ChargingSessionMeterValueListResponse,
     ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
@@ -44,6 +47,7 @@ from app.domains.charging_sessions.schemas import (
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
     ENERGY_UNIT_WH,
+    MeasurementInput,
     MeterIngestResult,
     MeterSampleInput,
     SessionEventType,
@@ -734,4 +738,125 @@ async def resolve_session_by_transaction(
         evse_id=session.evse_id,
         connector_id=session.connector_id,
         status=session.status,
+    )
+
+
+async def ingest_measurements(
+    db: AsyncSession,
+    *,
+    session_id: UUID,
+    samples: Sequence[MeasurementInput],
+) -> int:
+    """Store non-energy measurements of an active session (SoC, power, voltage…).
+
+    Rule:
+        Each sample is inserted individually (append-only history, no batching).
+        The session aggregate is **not** affected: only the energy register
+        drives ``meter_end_wh``/``energy_delivered_wh`` (see
+        ``ingest_meter_values``). A measurement for an already-``COMPLETED``
+        session is refused for the same reason as in ``ingest_meter_values``.
+        Vendor-specific measurand names are accepted as sent. Values may be
+        negative (a temperature, an exported power).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        session_id: UUID of the session that owns the samples.
+        samples: The measurements to store, in payload order.
+
+    Returns:
+        The number of measurements stored.
+
+    Raises:
+        ChargingSessionNotFoundError: If the session does not exist.
+        ChargingSessionStateError: If the session is already ``COMPLETED``.
+        ChargingSessionInputError: If a sample lacks a timezone, has a
+            non-finite value, an empty measurand, or a field longer than its
+            column (measurand 60, unit 20, context 30, phase 10, location 20).
+
+    Side Effects:
+        Appends rows and updates the session's ``updated_at`` in the caller's
+        transaction; does not commit or roll back.
+    """
+    session = await repository.get_session_by_id(db, session_id)
+    if session is None:
+        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
+    if session.status is SessionStatus.COMPLETED:
+        raise ChargingSessionStateError(f"Session '{session_id}' is already completed")
+    for sample in samples:
+        if not sample.measurand or len(sample.measurand) > 60:
+            raise ChargingSessionInputError("measurand must be 1-60 characters")
+        for field_name, field_value, limit in (
+            ("unit", sample.unit, 20),
+            ("context", sample.context, 30),
+            ("phase", sample.phase, 10),
+            ("location", sample.location, 20),
+        ):
+            if field_value is not None and len(field_value) > limit:
+                raise ChargingSessionInputError(
+                    f"{field_name} exceeds {limit} characters"
+                )
+        if not isinstance(sample.value, Decimal) or not sample.value.is_finite():
+            raise ChargingSessionInputError("value must be a finite Decimal")
+        await repository.insert_measurement(
+            db,
+            session_id=session.session_id,
+            sampled_at=_utc(sample.sampled_at, "sampled_at"),
+            measurand=sample.measurand,
+            value=sample.value,
+            unit=sample.unit,
+            context=sample.context,
+            phase=sample.phase,
+            location=sample.location,
+        )
+    session.updated_at = repository.utc_now()
+    return len(samples)
+
+
+async def list_charging_session_measurements(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    measurand: str | None,
+    page: int,
+    page_size: int,
+) -> ChargingSessionMeasurementListResponse:
+    """Get paginated measurements (any measurand) for the monitoring endpoint.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session whose measurements to view.
+        measurand: Return only this measurand, or all of them if ``None``.
+        page: The page, starting at one.
+        page_size: The page size.
+
+    Returns:
+        The measurements and pagination metadata.
+
+    Raises:
+        ChargingSessionNotFoundError: If the session does not exist.
+
+    Side Effects:
+        Performs one session lookup and two measurement queries (items and
+        count); no ORM relationships are loaded.
+    """
+    await require_charging_session(db, session_id)
+    normalized_page, normalized_page_size, offset = _paging(page, page_size)
+    measurements = await repository.list_session_measurements(
+        db,
+        session_id,
+        measurand=measurand,
+        offset=offset,
+        limit=normalized_page_size,
+    )
+    total = await repository.count_session_measurements(
+        db, session_id, measurand=measurand
+    )
+    return ChargingSessionMeasurementListResponse(
+        items=[
+            ChargingSessionMeasurementResponse.model_validate(measurement)
+            for measurement in measurements
+        ],
+        total=total,
+        page=normalized_page,
+        page_size=normalized_page_size,
     )

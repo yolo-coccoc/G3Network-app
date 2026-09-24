@@ -20,8 +20,10 @@ Scenarios are added one message group at a time as the gateway learns them
   timestamp, which 1.6 allows), then a fault on gun 2 and on the charger.
 * ``session`` - ``boot``, all connectors Available, then a charging session on
   gun 1: Authorize, Preparing, StartTransaction (the gateway assigns the
-  transactionId), Charging, StopTransaction with the closing meter reading and
-  a stop reason, Finishing, Available.
+  transactionId), Charging, two MeterValues messages (an energy reading in
+  **kWh**, SoC, power, voltage, current, temperature, ``Power.Offered`` and a
+  vendor-specific measurand), StopTransaction with the closing meter reading, a
+  stop reason and ``transactionData``, Finishing, Available.
 
 Like the 2.0.1 simulator this only generates valid happy-path traffic. It does
 not simulate retries, duplicates, reconnects, delays, or random errors. A
@@ -201,11 +203,16 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             unknown_key=unknown or None,
         )
 
-    async def send_call(self, request: object) -> object | None:
+    async def send_call(
+        self, request: object, *, skip_schema_validation: bool = False
+    ) -> object | None:
         """Send one CALL, print the outcome, and remember a CALLERROR.
 
         Args:
             request: An ``ocpp.v16.call`` payload dataclass.
+            skip_schema_validation: Send without validating against the 1.6
+                JSON schema. Needed to send a vendor-specific measurand, which
+                the standard schema forbids (real chargers do send them).
 
         Returns:
             The CALLRESULT payload, or ``None`` if the gateway answered with a
@@ -215,7 +222,11 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         try:
             # python-ocpp's call() swallows a CALLERROR by default and returns
             # None; suppress=False makes it raise so failures are never hidden.
-            response: object = await self.call(request, suppress=False)
+            response: object = await self.call(
+                request,
+                suppress=False,
+                skip_schema_validation=skip_schema_validation,
+            )
         except OCPPError as error:
             description = f"{action} -> CALLERROR {type(error).__name__}: {error}"
             self.report.errors.append(description)
@@ -329,6 +340,55 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             return
         print(f"TRANSACTION assigned transaction_id={started.transaction_id}")
         await self.send_status(1, "Charging")
+        for energy_kwh, soc in (("1.25", "40"), ("1.45", "90")):
+            await self.send_call(
+                call.MeterValues(
+                    connector_id=1,
+                    transaction_id=started.transaction_id,
+                    meter_value=[
+                        {
+                            "timestamp": utc_timestamp(),
+                            "sampled_value": [
+                                {
+                                    "value": energy_kwh,
+                                    "measurand": "Energy.Active.Import.Register",
+                                    "unit": "kWh",
+                                    "context": "Sample.Periodic",
+                                },
+                                {"value": soc, "measurand": "SoC", "unit": "Percent"},
+                                {
+                                    "value": "120000",
+                                    "measurand": "Power.Active.Import",
+                                    "unit": "W",
+                                },
+                                {"value": "650.5", "measurand": "Voltage", "unit": "V"},
+                                {
+                                    "value": "184",
+                                    "measurand": "Current.Import",
+                                    "unit": "A",
+                                },
+                                {
+                                    "value": "31",
+                                    "measurand": "Temperature",
+                                    "unit": "Celsius",
+                                },
+                                {
+                                    "value": "120000",
+                                    "measurand": "Power.Offered",
+                                    "unit": "W",
+                                },
+                                # Not an OCPP 1.6 measurand: vendors send these anyway.
+                                {
+                                    "value": "600.0",
+                                    "measurand": "Voltage.Demand",
+                                    "unit": "V",
+                                },
+                            ],
+                        }
+                    ],
+                ),
+                skip_schema_validation=True,
+            )
         await self.send_call(
             call.StopTransaction(
                 meter_stop=self.config.meter_stop_wh,
@@ -336,6 +396,23 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 transaction_id=started.transaction_id,
                 reason=Reason.ev_disconnected,
                 id_tag=self.config.id_tag,
+                transaction_data=[
+                    {
+                        "timestamp": utc_timestamp(),
+                        "sampled_value": [
+                            {
+                                "value": str(self.config.meter_stop_wh),
+                                "context": "Transaction.End",
+                            },
+                            {
+                                "value": "95",
+                                "measurand": "SoC",
+                                "unit": "Percent",
+                                "context": "Transaction.End",
+                            },
+                        ],
+                    }
+                ],
             )
         )
         await self.send_status(1, "Finishing")

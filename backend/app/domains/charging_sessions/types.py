@@ -71,6 +71,31 @@ class MeterSampleInput:
 
 
 @dataclass(frozen=True, slots=True)
+class MeasurementInput:
+    """One measurement of a session, already normalized by the OCPP adapter.
+
+    Attributes:
+        sampled_at: The time the sample occurred, timezone-aware.
+        measurand: The OCPP measurand name, as sent (vendor-specific names are
+            allowed).
+        value: The reading, a finite number; for the energy register the
+            adapter has already converted it to Wh.
+        unit: The unit of ``value``, if known.
+        context: The reading context (``Sample.Periodic``…), if any.
+        phase: The electrical phase, if any.
+        location: Where it was measured, if any.
+    """
+
+    sampled_at: datetime
+    measurand: str
+    value: Decimal
+    unit: str | None = None
+    context: str | None = None
+    phase: str | None = None
+    location: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TransactionIngestResult:
     """The result of processing one TransactionEvent in the happy path.
 
