@@ -19,11 +19,13 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.domains.charging_stations.models import (
     ChargingConnectorModel,
     ChargingEvseModel,
+    ChargingOcppMessageModel,
     ChargingStationModel,
 )
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
+    OcppMessageDirection,
 )
 
 
@@ -845,3 +847,41 @@ async def soft_delete_connector(db: AsyncSession, connector_id: UUID) -> bool:
     connector.updated_at = utc_now()
     await db.flush()
     return True
+
+
+async def insert_ocpp_message(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    occurred_at: datetime,
+    ocpp_subprotocol: str,
+    direction: OcppMessageDirection,
+    raw_frame: str,
+) -> ChargingOcppMessageModel:
+    """Append one raw OCPP frame to the message log.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station the frame was exchanged with.
+        occurred_at: Receive/send time, already timezone-aware UTC.
+        ocpp_subprotocol: Negotiated WebSocket subprotocol.
+        direction: Whether the frame was inbound or outbound.
+        raw_frame: The exact frame text.
+
+    Returns:
+        The persisted log row.
+
+    Side Effects:
+        Adds the row and flushes; does not commit. The log is append-only, so
+        there is no update or delete counterpart.
+    """
+    message = ChargingOcppMessageModel(
+        station_id=station_id,
+        occurred_at=occurred_at,
+        ocpp_subprotocol=ocpp_subprotocol,
+        direction=direction,
+        raw_frame=raw_frame,
+    )
+    db.add(message)
+    await db.flush()
+    return message

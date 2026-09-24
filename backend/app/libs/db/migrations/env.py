@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Only load the six active charging models; technical status history is not
+# Only load the active charging models; technical status history is not
 # part of the MVP metadata and the corresponding legacy source only remains
 # as a comment in the domain.
 from app.domains.charging_sessions.models import (  # noqa: F401
@@ -19,6 +19,7 @@ from app.domains.charging_sessions.models import (  # noqa: F401
 from app.domains.charging_stations.models import (  # noqa: F401
     ChargingConnectorModel,
     ChargingEvseModel,
+    ChargingOcppMessageModel,
     ChargingStationModel,
 )
 from app.domains.drivers.models import (  # noqa: F401

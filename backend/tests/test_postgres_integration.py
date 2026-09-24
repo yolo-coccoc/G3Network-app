@@ -154,15 +154,29 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                                 'charging_stations', 'charging_evses',
                                 'charging_connectors', 'charging_sessions',
                                 'charging_session_events',
-                                'charging_session_meter_values'
+                                'charging_session_meter_values',
+                                'charging_ocpp_messages'
                             )
                             """))).scalars())
+            hypertables = set(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT hypertable_name "
+                            "FROM timescaledb_information.hypertables"
+                        )
+                    )
+                ).scalars()
+            )
 
         # Pinned to the current Alembic head. This assertion was stale
         # (hardcoded to an old head) until F-B2 - it went unnoticed only
         # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0017_charging_ingest_fields"
-        assert len(tables) == 9
+        assert version == "0021_charging_ocpp_raw_log"
+        assert len(tables) == 10
+        # The raw OCPP message log must be a real TimescaleDB hypertable
+        # partitioned on occurred_at, not just an ordinary table.
+        assert "charging_ocpp_messages" in hypertables
     finally:
         await engine.dispose()
 

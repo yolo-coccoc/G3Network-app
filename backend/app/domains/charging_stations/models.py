@@ -8,7 +8,8 @@ connector standard, operating hours, maintenance status) per F-C1, and
 Heartbeat-based online/offline connection status, administrative status,
 capability negotiation, and other device metadata are still not part of
 this step's persistence contract — see ``docs/01-requirements/future.md``
-items 27 and 28.
+items 27 and 28. ``ChargingOcppMessageModel`` is the verbatim, append-only
+log of every OCPP frame exchanged with a station (both protocols).
 """
 
 from datetime import datetime, timezone
@@ -28,6 +29,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -36,6 +38,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
+    OcppMessageDirection,
 )
 from app.libs.db.base import Base
 
@@ -247,4 +250,58 @@ class ChargingConnectorModel(Base):
             name="uq_charging_connectors_evse_ocpp_id",
         ),
         Index("ix_charging_connectors_evse_deleted", "evse_id", "deleted_at"),
+    )
+
+
+class ChargingOcppMessageModel(Base):
+    """One OCPP frame exchanged with a station, stored verbatim and append-only.
+
+    The table is the evidence trail for disputes and for discovering how a
+    real charger deviates from the OCPP standard: it holds the exact text of
+    each frame *before* any parsing, including frames the gateway cannot
+    parse or has no handler for. Stored as a TimescaleDB hypertable. There is
+    deliberately no read API, and the frames (which can contain RFID
+    ``idTag`` values) must not be copied into application logs.
+
+    Attributes:
+        message_id: Internal UUID of the log row.
+        occurred_at: When the frame was received (inbound) or sent
+            (outbound), timezone-aware UTC; also the time partitioning key.
+        station_id: The station the frame was exchanged with.
+        ocpp_subprotocol: The WebSocket subprotocol negotiated for the
+            connection (``ocpp1.6`` or ``ocpp2.0.1``).
+        direction: Whether the frame was received from or sent to the
+            charge point.
+        raw_frame: The exact frame text (a JSON array in OCPP-J), never
+            re-serialised.
+    """
+
+    __tablename__ = "charging_ocpp_messages"
+
+    message_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    # TimescaleDB needs the time column in the primary key to partition the
+    # hypertable; message_id keeps rows unique when frames share a timestamp.
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), primary_key=True, nullable=False
+    )
+    station_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    ocpp_subprotocol: Mapped[str] = mapped_column(String(20), nullable=False)
+    direction: Mapped[OcppMessageDirection] = mapped_column(
+        SQLEnum(
+            OcppMessageDirection,
+            name="chargingocppmessagedirection",
+            values_callable=enum_values,
+        ),
+        nullable=False,
+    )
+    raw_frame: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        Index("ix_charging_ocpp_messages_station_time", "station_id", "occurred_at"),
     )

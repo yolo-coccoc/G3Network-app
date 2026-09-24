@@ -48,6 +48,9 @@ class Settings(BaseSettings):
         API_MAX_PAGE_SIZE: Maximum number of records per page.
         CHARGING_OCPP_HOST: Bind host of the OCPP WebSocket gateway.
         CHARGING_OCPP_PORT: Bind port of the OCPP WebSocket gateway.
+        CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
+            accepts; bigger ones are refused by the WebSocket library
+            instead of being stored truncated in the raw message log.
         CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: Maximum radius accepted by
             the nearby-station search (F-D1).
         TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS: How often the device
@@ -129,6 +132,9 @@ class Settings(BaseSettings):
     # use the same namespace so processes don't infer different timeouts on their own.
     CHARGING_OCPP_HOST: str = "0.0.0.0"
     CHARGING_OCPP_PORT: int = Field(default=9000, ge=1, le=65535)
+    # Defaults to the WebSocket library's own 1 MiB limit rather than a small
+    # value: a full GetConfiguration reply from a real charger can be large.
+    CHARGING_OCPP_MAX_MESSAGE_BYTES: int = Field(default=1_048_576, ge=1024)
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.
@@ -189,7 +195,6 @@ class Settings(BaseSettings):
     # CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
     # CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
     # CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
-    # CHARGING_MAX_RAW_PAYLOAD_BYTES: int = Field(default=65536, ge=1024)
 
 
 @lru_cache

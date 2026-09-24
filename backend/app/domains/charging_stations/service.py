@@ -8,7 +8,7 @@ is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -19,6 +19,7 @@ from app.domains.charging_stations import repository
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
+    ChargingOcppMessageInputError,
     ChargingStationNotFoundError,
     ChargingTopologyConflictError,
 )
@@ -48,6 +49,7 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
     NearestChargingStation,
+    OcppMessageDirection,
 )
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
@@ -939,3 +941,53 @@ async def soft_delete_charging_connector(
     if not await repository.soft_delete_connector(db, connector_id):
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return ChargingResourceDeleteResponse(message="Connector soft-deleted")
+
+
+async def record_ocpp_message(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    occurred_at: datetime,
+    ocpp_subprotocol: str,
+    direction: OcppMessageDirection,
+    raw_frame: str,
+) -> None:
+    """Append one raw OCPP frame to the verbatim message log.
+
+    Rule:
+        The frame is stored exactly as given; it is never parsed,
+        normalized, or truncated here. Only the metadata around it is
+        validated. Called by the OCPP gateway's connection wrapper in its own
+        transaction, so a rolled-back handler never erases the record of
+        what arrived.
+
+    Args:
+        db: Async session owned by the gateway's logging boundary.
+        station_id: UUID of the station the frame was exchanged with.
+        occurred_at: When the frame was received or sent; must carry a
+            timezone and is normalized to UTC.
+        ocpp_subprotocol: Negotiated WebSocket subprotocol (at most 20
+            characters, e.g. ``ocpp1.6``).
+        direction: Whether the frame was inbound or outbound.
+        raw_frame: The exact frame text.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``occurred_at`` lacks a timezone or
+            ``ocpp_subprotocol`` is empty or longer than 20 characters.
+
+    Side Effects:
+        Appends one row and flushes within the caller's transaction; does not
+        commit or roll back.
+    """
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("occurred_at must have a timezone")
+    if not ocpp_subprotocol or len(ocpp_subprotocol) > 20:
+        raise ChargingOcppMessageInputError("ocpp_subprotocol must be 1-20 characters")
+    await repository.insert_ocpp_message(
+        db,
+        station_id=station_id,
+        occurred_at=occurred_at.astimezone(timezone.utc),
+        ocpp_subprotocol=ocpp_subprotocol,
+        direction=direction,
+        raw_frame=raw_frame,
+    )

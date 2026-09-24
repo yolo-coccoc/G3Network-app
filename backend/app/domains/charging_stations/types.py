@@ -6,7 +6,9 @@ part of the active contract (F-C1). A connector's live OCPP-reported status
 (F-C2) is also part of the active contract now. Still excluded: heartbeat-based
 online/offline connection state, administrative status, and capability
 negotiation — that reliability path remains deferred (see
-``docs/01-requirements/future.md`` items 27 and 28).
+``docs/01-requirements/future.md`` items 27 and 28). The verbatim OCPP
+message log is the one exception to "no technical history": it stores raw
+frames, not derived status (see ``OcppMessageDirection``).
 """
 
 import enum
@@ -41,6 +43,18 @@ class ChargingConnectorStatus(str, enum.Enum):
     RESERVED = "Reserved"
     UNAVAILABLE = "Unavailable"
     FAULTED = "Faulted"
+
+
+class OcppMessageDirection(str, enum.Enum):
+    """Direction of a stored OCPP frame relative to the CSMS.
+
+    Attributes:
+        CP_TO_CSMS: A frame received from the charge point (inbound).
+        CSMS_TO_CP: A frame sent by this backend to the charge point (outbound).
+    """
+
+    CP_TO_CSMS = "CP_TO_CSMS"
+    CSMS_TO_CP = "CSMS_TO_CP"
 
 
 @dataclass(frozen=True)

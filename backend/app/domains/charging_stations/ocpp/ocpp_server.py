@@ -3,7 +3,9 @@
 The gateway only validates the path, subprotocol, and identity of a
 pre-provisioned station, then keeps one stable connection within the
 process. Production reliability, reconnect, and technical status history
-are outside the active path.
+are outside the active path. Every frame exchanged on a connection is
+stored verbatim by ``RecordingConnection`` (see ``raw_log.py``) before any
+parsing.
 
 ``python-ocpp``'s ``ChargePoint._handle_call`` only snake_cases inbound
 JSON keys and splats the result as handler kwargs - it never constructs
@@ -41,6 +43,7 @@ from app.domains.charging_sessions.types import (
 )
 from app.domains.charging_stations import repository
 from app.domains.charging_stations import service as charging_stations_service
+from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import ChargingConnectorStatus
 from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
@@ -314,8 +317,9 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
 
     Attributes:
         id: Station identity used by ``ChargePoint`` when dispatching OCPP.
-        connection: WebSocket connection created by ``websockets`` after the
-            handshake.
+        connection: Recording wrapper around the WebSocket connection created
+            by ``websockets`` after the handshake; ``ChargePoint`` only calls
+            its ``recv()``/``send()``.
         session_factory: Shared factory used for each persistence operation.
         _session_by_evse: Mapping from OCPP EVSE ID to session UUID, for
             MeterValues.
@@ -329,14 +333,15 @@ class OCPPChargePoint(ChargePoint):  # type: ignore[misc]
     def __init__(
         self,
         identity: str,
-        connection: ServerConnection,
+        connection: RecordingConnection,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """Initialize the OCPP v201 adapter for an already validated connection.
 
         Args:
             identity: OCPP identity already resolved in the database.
-            connection: WebSocket connection that completed the handshake.
+            connection: Recording wrapper around the WebSocket connection that
+                completed the handshake.
             session_factory: Shared factory owning the transaction for the
                 action handler.
 
@@ -579,7 +584,9 @@ class OCPPServer:
         Side Effects:
             Binds host/port and registers callbacks handling the handshake,
             subprotocol, and connection. The server instance is stored in
-            ``self._server``.
+            ``self._server``. Incoming messages larger than
+            ``CHARGING_OCPP_MAX_MESSAGE_BYTES`` are refused by the WebSocket
+            library (close code 1009) rather than stored truncated.
         """
         if self._server is not None:
             raise RuntimeError("OCPP gateway is already running")
@@ -593,6 +600,7 @@ class OCPPServer:
             subprotocols=[Subprotocol(OCPP_SUBPROTOCOL)],
             select_subprotocol=select_ocpp_subprotocol,
             process_request=self._process_request,
+            max_size=settings.CHARGING_OCPP_MAX_MESSAGE_BYTES,
             logger=logger,
         )
         logger.info(
@@ -660,10 +668,14 @@ class OCPPServer:
             connection: WebSocket connection accepted by websockets.
 
         Side Effects:
-            Creates an ``OCPPChargePoint`` adapter and waits for
-            ``python-ocpp`` to read messages until the station disconnects
-            or the handler is cancelled. Handler errors are logged;
-            ``CancelledError`` is re-raised so shutdown keeps working.
+            Creates an ``OCPPChargePoint`` adapter over a
+            ``RecordingConnection`` and waits for ``python-ocpp`` to read
+            messages until the station disconnects or the handler is
+            cancelled. Every frame is stored verbatim in its own transaction.
+            Handler errors (including a failure to store a frame) are
+            logged; ``CancelledError`` is re-raised so shutdown keeps working.
+            If the station was soft-deleted between the handshake and this
+            point, the connection is closed with code 1008.
         """
         request = connection.request
         # ``process_request`` already validated the request and path before
@@ -676,7 +688,28 @@ class OCPPServer:
         # timeout, and retry recovery belong to the production path and are
         # deferred; the MVP keeps state on this exact connection and lets
         # the process boundary own the socket lifecycle.
-        charge_point = OCPPChargePoint(identity, connection, self.session_factory)
+        async with self.session_factory.begin() as db:
+            station = await repository.get_station_by_identity(
+                db, identity, include_deleted=False
+            )
+        if station is None:
+            # Only reachable if the station was deleted right after the
+            # handshake validation; nothing can be logged without a station.
+            logger.warning(
+                "Closing OCPP connection for station deleted after handshake",
+                extra={"ocpp_identity": identity},
+            )
+            await connection.close(code=1008, reason="Unknown station identity")
+            return
+        recording_connection = RecordingConnection(
+            connection,
+            station_id=station.station_id,
+            ocpp_subprotocol=connection.subprotocol or OCPP_SUBPROTOCOL,
+            session_factory=self.session_factory,
+        )
+        charge_point = OCPPChargePoint(
+            identity, recording_connection, self.session_factory
+        )
         logger.info(
             "OCPP station connected",
             extra={"ocpp_identity": identity, "subprotocol": connection.subprotocol},

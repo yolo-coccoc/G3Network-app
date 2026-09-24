@@ -15,3 +15,7 @@ class ChargingConnectorNotFoundError(Exception):
 
 class ChargingTopologyConflictError(Exception):
     """Station, EVSE, or connector topology violates an existing identity."""
+
+
+class ChargingOcppMessageInputError(Exception):
+    """An OCPP message to be logged violates the storage contract."""
