@@ -3,9 +3,9 @@
 > Feature code: F-G2 (Charging station integration), F-C2 (Real-time
 > connector status), F-B2 (Charging-session logging) — extends all three
 > from OCPP 2.0.1-only to OCPP 1.6J as well
-> Status: 🚧 In progress — Steps 0–3 **done** on 2026-09-24 (decisions,
-> raw OCPP message log, version-aware gateway, 1.6J simulator skeleton);
-> Step 4 (Boot/Heartbeat, M1) is next
+> Status: 🚧 In progress — Steps 0–4 **done** on 2026-09-24 (decisions,
+> raw OCPP message log, version-aware gateway, 1.6J simulator, Boot/Heartbeat
+> and liveness — **milestone M1 reached**); Step 5 (StatusNotification) is next
 > Created: 2026-09-24
 >
 > Inputs:
@@ -484,13 +484,20 @@ Every helper needs a full docstring; 1.6 optional fields may be missing.
 
 **Checks:**
 
-- [ ] Static checks clean
-- [ ] Smoke: boot with only the two required fields; boot with all fields; heartbeat returns `current_time`; firmware-change warning logged; `is_online` boundary (just inside / just outside the timeout); 2.0.1 traffic also updates `last_seen_at`
-- [ ] Integration: migration cycle
-- [ ] Live: simulator Boot + Heartbeat → `GET /api/v1/charging-stations/{id}` shows vendor/model/firmware and `is_online = true`; after the timeout (set small via env) it flips to `false`
-- [ ] **M1 reached** — record it here
+- [x] Static: `black`, `isort`, `ruff check`, `mypy` (132 source files), `compileall`, `git diff --check` — clean
+- [x] Smoke (`tests/test_ocpp16_boot_smoke.py`, `test_ocpp_raw_log_smoke.py`; 227 tests pass in total): boot with only the two required fields; serial-number preference (`chargePointSerialNumber` over `chargeBoxSerialNumber`, both optional); parseable `currentTime` and the configured interval; unknown station propagates as an error; heartbeat returns the server time; first boot stores the baseline without a warning; a **firmware change logs a structured `WARNING`** (previous and new value), unchanged or unreported firmware does not; naive boot time / missing station rejected; `is_online` boundary (never seen, just inside, exactly at, just outside the timeout); the device fields appear on the station response; every **inbound** frame updates liveness and protocol while an outbound frame does not; `format_ocpp_timestamp` (UTC, milliseconds, `Z`, rejects naive)
+- [x] Integration (`RUN_DB_INTEGRATION=1`): migration cycle reaches head `0022_charging_station_device`
+- [x] Live (real gateway + API, dev database, 1.6J simulator; the API was started with a 3 s offline timeout): before connecting `is_online=false` and all device fields `null`; after boot + 2 heartbeats the API shows `ocpp1.6`, vendor `Willdigits`, model, firmware, `last_boot_at`, `last_seen_at`, `is_online=true`, and **`updated_at` unchanged**; a second boot with a different firmware logged `Charger firmware version changed` and stored the new baseline; after 4 s of silence `is_online=false`; the raw log holds 5 inbound + 5 outbound `ocpp1.6` frames; the simulator reports 3 ACK / 0 CALLERROR and exit code 0
+- [x] Regression (live): the 2.0.1 simulator still completes its session (1000 → 1500 Wh, 500 Wh) and its station now also records `ocpp2.0.1` and `last_seen_at`
+- [x] **M1 reached** — a 1.6J charger can connect, is answered `Accepted`, and every frame it sends is in the raw log. Verified only against the simulator; the real charger is Step 10
 
-**Actual result:** *(to be filled in)*
+**Actual result (implemented and verified 2026-09-24):** Step 4 is done.
+
+- Migration `0022_charging_station_device` (seven nullable columns on `charging_stations`, no defaults); model, response schema (`ocpp_protocol_version`, `vendor`, `model`, `serial_number`, `firmware_version`, `last_boot_at`, `last_seen_at`, `is_online`); repository `update_station_boot_info` and `touch_station_seen`; service `record_charger_boot`; settings `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS` (60) and `CHARGING_OFFLINE_TIMEOUT_SECONDS` (180, re-enabled from its commented form), documented in `.env.example`.
+- `OCPP16ChargePoint` now handles `BootNotification` (always `Accepted`, `currentTime`, `interval`) and `Heartbeat`.
+- **Liveness design:** the update happens inside `record_ocpp_message`'s own transaction (same as the raw-log row) instead of in the wrapper itself — identical behaviour, one place. Both writes deliberately leave the station's `updated_at` alone, because device-reported data is not an administrator's edit. `is_online` is derived in `to_charging_station_response` (new optional `now=` argument for tests); a connector's last status is **not** invalidated when a charger goes offline (deferred, `future.md` #76).
+- New shared helper `format_ocpp_timestamp` in `ocpp/parsing.py`. The simulator's `boot` scenario gained `--heartbeats`, `--heartbeat-interval` and `--firmware`.
+- Not done, by design: alerting on a firmware change (`future.md` #75), 2.0.1 `BootNotification` (`future.md` #78), an `Rejected`/`Pending` boot (an unprovisioned station never reaches the handler because the handshake rejects it).
 
 ### Step 5 — StatusNotification: connectors 0/1/2, full 1.6 status, errors (B2, B3, B4, B5, C5-partial)
 
