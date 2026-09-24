@@ -80,6 +80,23 @@ class OcppMessageDirection(str, enum.Enum):
     CSMS_TO_CP = "CSMS_TO_CP"
 
 
+@dataclass(frozen=True, slots=True)
+class ConfigurationEntry:
+    """One configuration key reported by a charger in ``GetConfiguration``.
+
+    Attributes:
+        key: The configuration key name (for example ``SupportedFeatureProfiles``).
+        value: The key's value as text, or ``None`` if the charger reported the
+            key without one.
+        is_readonly: Whether the charger refuses to change this key (a design
+            constraint of the charger, not an error).
+    """
+
+    key: str
+    value: str | None
+    is_readonly: bool
+
+
 @dataclass(frozen=True)
 class NearestChargingStation:
     """A station resolved as nearest to a given point (F-A2).

@@ -8,10 +8,10 @@ is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +39,8 @@ from app.domains.charging_stations.schemas import (
     ChargingEvseResponse,
     ChargingEvseUpdateRequest,
     ChargingResourceDeleteResponse,
+    ChargingStationConfigurationEntryResponse,
+    ChargingStationConfigurationResponse,
     ChargingStationCreateRequest,
     ChargingStationListResponse,
     ChargingStationResponse,
@@ -49,6 +51,7 @@ from app.domains.charging_stations.schemas import (
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
+    ConfigurationEntry,
     NearestChargingStation,
     OcppMessageDirection,
 )
@@ -1218,3 +1221,100 @@ async def resolve_station_id_by_identity(
     if station is None:
         raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
     return station.station_id
+
+
+async def record_configuration_snapshot(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    entries: Sequence[ConfigurationEntry],
+    captured_at: datetime,
+) -> UUID | None:
+    """Store one capture of a charger's configuration (``GetConfiguration``).
+
+    Rule:
+        Append-only: every call adds a new capture; earlier captures are never
+        touched, so the history shows whether a charger's settings changed. All
+        rows of a capture share a new ``capture_id`` and ``captured_at``. A
+        capture with no entries stores nothing (there would be nothing to read
+        back) and returns ``None``.
+
+    Args:
+        db: Async session owned by the OCPP gateway's transaction.
+        ocpp_identity: Identity of the station that answered.
+        entries: The configuration keys the charger reported.
+        captured_at: When the answer was received; must carry a timezone.
+
+    Returns:
+        The new capture's ID, or ``None`` if ``entries`` was empty.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``captured_at`` lacks a timezone.
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+
+    Side Effects:
+        Inserts one row per entry within the caller's transaction; does not
+        commit or roll back.
+    """
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("captured_at must have a timezone")
+    station_id = await resolve_station_id_by_identity(db, ocpp_identity=ocpp_identity)
+    if not entries:
+        return None
+    capture_id = uuid4()
+    captured_at_utc = captured_at.astimezone(timezone.utc)
+    for entry in entries:
+        await repository.insert_configuration_entry(
+            db,
+            station_id=station_id,
+            capture_id=capture_id,
+            captured_at=captured_at_utc,
+            config_key=entry.key,
+            value=entry.value,
+            is_readonly=entry.is_readonly,
+        )
+    return capture_id
+
+
+async def get_latest_station_configuration(
+    db: AsyncSession, station_id: UUID
+) -> ChargingStationConfigurationResponse:
+    """Get the latest configuration a charger reported.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station.
+
+    Returns:
+        The newest capture's keys sorted by name, or an empty response with
+        ``null`` capture fields if the charger has not reported yet.
+
+    Raises:
+        ChargingStationNotFoundError: If the station does not exist or was
+            soft-deleted.
+
+    Side Effects:
+        Performs up to three read queries; does not commit.
+    """
+    station = await repository.get_station_by_id(db, station_id)
+    if station is None:
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    latest = await repository.get_latest_configuration_capture(db, station_id)
+    if latest is None:
+        return ChargingStationConfigurationResponse(
+            station_id=station_id, capture_id=None, captured_at=None, items=[]
+        )
+    capture_id, captured_at = latest
+    rows = await repository.list_configuration_entries_by_capture_id(
+        db, station_id, capture_id
+    )
+    return ChargingStationConfigurationResponse(
+        station_id=station_id,
+        capture_id=capture_id,
+        captured_at=captured_at,
+        items=[
+            ChargingStationConfigurationEntryResponse.model_validate(row)
+            for row in rows
+        ],
+    )

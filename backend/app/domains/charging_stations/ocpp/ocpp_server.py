@@ -742,6 +742,11 @@ class OCPPServer:
                 "OCPP station handler failed",
                 extra={"ocpp_identity": identity},
             )
+        finally:
+            # A 1.6J adapter may have a post-boot request in flight; it must not
+            # outlive its connection.
+            if isinstance(charge_point, OCPP16ChargePoint):
+                await charge_point.cancel_background_tasks()
 
 
 async def run_server(

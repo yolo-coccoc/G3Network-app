@@ -9,17 +9,22 @@ hide which contract each handler assumes.
 Scope: handlers are added one message group at a time by the OCPP 1.6J
 planner (``docs/02-planners/backend-ocpp16-charger-integration.md``). Currently
 handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
-``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``. Every other action a 1.6J
+``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``.
+After every accepted ``BootNotification`` the adapter itself asks the charger for
+its configuration (``GetConfiguration``, the only request this backend sends)
+and stores the answer. Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from ocpp.routing import on
-from ocpp.v16 import ChargePoint, call_result
+from ocpp.exceptions import OCPPError
+from ocpp.routing import after, on
+from ocpp.v16 import ChargePoint, call, call_result
 from ocpp.v16.enums import Action, AuthorizationStatus, RegistrationStatus
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,7 +42,10 @@ from app.domains.charging_stations.ocpp.parsing import (
     parse_ocpp_timestamp,
 )
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
-from app.domains.charging_stations.types import ChargingConnectorStatus
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ConfigurationEntry,
+)
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -53,6 +61,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             its ``recv()``/``send()``.
         session_factory: Shared factory used for each persistence operation
             (the entry boundary owns every transaction).
+        _configuration_task: The running post-boot ``GetConfiguration`` capture,
+            if any. Kept so it can be cancelled when the connection closes.
 
     Note:
         The class receives OCPP actions after the handshake and does not
@@ -75,11 +85,18 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 action handler.
 
         Side Effects:
-            Initializes the ``python-ocpp`` base class state and attaches the
-            module logger.
+            Initializes the ``python-ocpp`` base class state, attaches the
+            module logger, and sets the response timeout for requests this
+            backend sends (``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS``).
         """
-        super().__init__(identity, connection, logger=logger)
+        super().__init__(
+            identity,
+            connection,
+            response_timeout=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS,
+            logger=logger,
+        )
         self.session_factory = session_factory
+        self._configuration_task: asyncio.Task[None] | None = None
 
     @on(Action.boot_notification)  # type: ignore[untyped-decorator]
     async def on_boot_notification(
@@ -539,3 +556,120 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     "skipped_by_reason": extraction.skipped,
                 },
             )
+
+    @after(Action.boot_notification)  # type: ignore[untyped-decorator]
+    def after_boot_notification(self, **_: object) -> None:
+        """Start capturing the charger's configuration once the boot is answered.
+
+        ``python-ocpp`` runs this hook only **after** the ``BootNotification``
+        response has been sent. The request is scheduled as a separate task and
+        never awaited here: the library's receive loop is sequential, so a
+        handler that awaited its own ``call()`` would block the loop that must
+        read the charger's answer and deadlock until the timeout. A capture that
+        is still running from an earlier boot is cancelled first.
+
+        Args:
+            **_: The ``BootNotification`` payload fields; not used.
+
+        Side Effects:
+            Creates one asyncio task, remembered in ``_configuration_task`` and
+            cancelled by ``cancel_background_tasks`` when the connection closes.
+        """
+        if self._configuration_task is not None and not self._configuration_task.done():
+            self._configuration_task.cancel()
+        self._configuration_task = asyncio.create_task(self._capture_configuration())
+
+    async def _capture_configuration(self) -> None:
+        """Ask the charger for its full configuration and store the answer.
+
+        Sends ``GetConfiguration`` with **no key**, which makes the charger
+        return every key it supports (including ``SupportedFeatureProfiles``,
+        its own answer to which OCPP profiles it implements). The call uses
+        ``suppress=False`` so a ``CALLERROR`` is raised instead of being
+        mistaken for an empty answer.
+
+        This is a task boundary: nothing awaits the task, so a failure is logged
+        here (``logger.exception``) and never affects the connection. A charger
+        that refuses or does not answer within
+        ``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS`` is logged as a warning and
+        nothing is stored. ``CancelledError`` is never swallowed.
+
+        Side Effects:
+            Sends one request; on success inserts one capture in its own atomic
+            transaction.
+        """
+        try:
+            try:
+                response = await self.call(call.GetConfiguration(), suppress=False)
+            except (OCPPError, TimeoutError) as error:
+                logger.warning(
+                    "Charger did not answer GetConfiguration",
+                    extra={
+                        "ocpp_identity": self.id,
+                        "error_type": type(error).__name__,
+                    },
+                )
+                return
+            entries = _to_configuration_entries(response.configuration_key)
+            if response.unknown_key:
+                logger.info(
+                    "Charger reported unknown configuration keys",
+                    extra={
+                        "ocpp_identity": self.id,
+                        "unknown_keys": response.unknown_key,
+                    },
+                )
+            async with self.session_factory.begin() as db:
+                await charging_stations_service.record_configuration_snapshot(
+                    db,
+                    ocpp_identity=self.id,
+                    entries=entries,
+                    captured_at=datetime.now(timezone.utc),
+                )
+        except Exception:
+            logger.exception(
+                "Configuration capture failed", extra={"ocpp_identity": self.id}
+            )
+
+    async def cancel_background_tasks(self) -> None:
+        """Cancel the post-boot capture if it is still running.
+
+        Called when the connection closes so no task outlives its connection.
+
+        Side Effects:
+            Cancels the task and waits for it to finish.
+        """
+        task = self._configuration_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+def _to_configuration_entries(
+    configuration_key: list[OcppPayload] | None,
+) -> list[ConfigurationEntry]:
+    """Convert a ``GetConfiguration`` answer into storable entries.
+
+    Args:
+        configuration_key: The ``configurationKey`` list (plain dicts with
+            ``key``, ``readonly`` and an optional ``value``), or ``None``.
+
+    Returns:
+        One entry per item that names a key; an item without a key is skipped.
+        A missing ``value`` stays ``None`` and a missing ``readonly`` is
+        ``False``.
+    """
+    entries: list[ConfigurationEntry] = []
+    for item in configuration_key or []:
+        key = item.get("key")
+        if not key:
+            continue
+        value = item.get("value")
+        entries.append(
+            ConfigurationEntry(
+                key=str(key),
+                value=None if value is None else str(value),
+                is_readonly=bool(item.get("readonly", False)),
+            )
+        )
+    return entries

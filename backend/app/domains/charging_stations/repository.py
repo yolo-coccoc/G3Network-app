@@ -20,6 +20,7 @@ from app.domains.charging_stations.models import (
     ChargingConnectorModel,
     ChargingEvseModel,
     ChargingOcppMessageModel,
+    ChargingStationConfigurationEntryModel,
     ChargingStationModel,
 )
 from app.domains.charging_stations.types import (
@@ -1023,3 +1024,93 @@ async def update_station_charger_status(
     )
     await db.flush()
     return bool(result.rowcount)  # type: ignore[attr-defined]
+
+
+async def insert_configuration_entry(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    capture_id: UUID,
+    captured_at: datetime,
+    config_key: str,
+    value: str | None,
+    is_readonly: bool,
+) -> ChargingStationConfigurationEntryModel:
+    """Append one configuration key of a capture and flush it.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station the configuration belongs to.
+        capture_id: Groups the rows of one capture.
+        captured_at: When the answer was received, timezone-aware UTC.
+        config_key: The configuration key name.
+        value: The key's value as text, or ``None``.
+        is_readonly: Whether the charger reported the key as read-only.
+
+    Returns:
+        The persisted row.
+
+    Side Effects:
+        Adds the row and flushes; does not commit. The table is append-only.
+    """
+    entry = ChargingStationConfigurationEntryModel(
+        station_id=station_id,
+        capture_id=capture_id,
+        captured_at=captured_at,
+        config_key=config_key,
+        value=value,
+        is_readonly=is_readonly,
+    )
+    db.add(entry)
+    await db.flush()
+    return entry
+
+
+async def get_latest_configuration_capture(
+    db: AsyncSession, station_id: UUID
+) -> tuple[UUID, datetime] | None:
+    """Find the most recent configuration capture of a station.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station.
+
+    Returns:
+        ``(capture_id, captured_at)`` of the newest capture, or ``None`` if the
+        station never reported its configuration.
+    """
+    result = await db.execute(
+        select(
+            ChargingStationConfigurationEntryModel.capture_id,
+            ChargingStationConfigurationEntryModel.captured_at,
+        )
+        .where(ChargingStationConfigurationEntryModel.station_id == station_id)
+        .order_by(ChargingStationConfigurationEntryModel.captured_at.desc())
+        .limit(1)
+    )
+    row = result.first()
+    return None if row is None else (row.capture_id, row.captured_at)
+
+
+async def list_configuration_entries_by_capture_id(
+    db: AsyncSession, station_id: UUID, capture_id: UUID
+) -> list[ChargingStationConfigurationEntryModel]:
+    """Get the rows of one configuration capture, sorted by key name.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the station.
+        capture_id: The capture whose rows to read.
+
+    Returns:
+        The capture's rows ordered by ``config_key``.
+    """
+    result = await db.execute(
+        select(ChargingStationConfigurationEntryModel)
+        .where(
+            ChargingStationConfigurationEntryModel.station_id == station_id,
+            ChargingStationConfigurationEntryModel.capture_id == capture_id,
+        )
+        .order_by(ChargingStationConfigurationEntryModel.config_key.asc())
+    )
+    return list(result.scalars().all())

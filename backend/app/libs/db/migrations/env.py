@@ -20,6 +20,7 @@ from app.domains.charging_stations.models import (  # noqa: F401
     ChargingConnectorModel,
     ChargingEvseModel,
     ChargingOcppMessageModel,
+    ChargingStationConfigurationEntryModel,
     ChargingStationModel,
 )
 from app.domains.drivers.models import (  # noqa: F401

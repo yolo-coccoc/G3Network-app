@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from geoalchemy2 import Geography
 from geoalchemy2.elements import WKBElement
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
 )
@@ -366,4 +367,47 @@ class ChargingOcppMessageModel(Base):
 
     __table_args__ = (
         Index("ix_charging_ocpp_messages_station_time", "station_id", "occurred_at"),
+    )
+
+
+class ChargingStationConfigurationEntryModel(Base):
+    """One configuration key of a charger, captured by ``GetConfiguration``.
+
+    Append-only: every boot adds a new capture (all its rows share
+    ``capture_id`` and ``captured_at``) and nothing is updated, so the history
+    shows whether a charger's settings were changed. The capture of
+    ``SupportedFeatureProfiles`` is the charger's real specification.
+
+    Attributes:
+        entry_id: Internal UUID of the row.
+        station_id: The station the configuration belongs to.
+        capture_id: Groups the rows of one capture.
+        captured_at: When the charger's answer was received, timezone-aware UTC.
+        config_key: The configuration key name.
+        value: The key's value as text, nullable.
+        is_readonly: Whether the charger reported the key as read-only.
+    """
+
+    __tablename__ = "charging_station_configuration_entries"
+
+    entry_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    station_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    capture_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    config_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_readonly: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_charging_config_entries_station_captured", "station_id", "captured_at"
+        ),
     )

@@ -27,6 +27,7 @@ from app.domains.charging_stations.schemas import (
     ChargingEvseResponse,
     ChargingEvseUpdateRequest,
     ChargingResourceDeleteResponse,
+    ChargingStationConfigurationResponse,
     ChargingStationCreateRequest,
     ChargingStationListResponse,
     ChargingStationResponse,
@@ -329,6 +330,38 @@ async def get_charging_station_endpoint(
     """
     try:
         return await charging_service.get_charging_station(db, station_id)
+    except ChargingStationNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
+        ) from error
+
+
+@router.get(
+    "/charging-stations/{station_id}/configuration",
+    response_model=ChargingStationConfigurationResponse,
+    summary="Get the latest configuration a charger reported",
+)
+async def get_charging_station_configuration_endpoint(
+    station_id: UUID, db: AsyncSession = Depends(get_db)
+) -> ChargingStationConfigurationResponse:
+    """Get the charger's latest ``GetConfiguration`` capture.
+
+    The capture includes ``SupportedFeatureProfiles``, the charger's own
+    answer to which OCPP profiles it supports. The response is empty (with
+    ``null`` capture fields) until the charger has reported.
+
+    Args:
+        station_id: UUID of the station.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        The newest capture's keys, sorted by name.
+
+    Raises:
+        HTTPException: ``404`` if the station does not exist or was deleted.
+    """
+    try:
+        return await charging_service.get_latest_station_configuration(db, station_id)
     except ChargingStationNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
         CHARGING_OFFLINE_TIMEOUT_SECONDS: How long without any frame from a
             charger before it is reported as offline (``is_online``); keep
             it a few multiples of the heartbeat interval.
+        CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: How long the gateway waits for a
+            charger's answer to a request it sent (the post-boot
+            ``GetConfiguration``).
         CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
             accepts; bigger ones are refused by the WebSocket library
             instead of being stored truncated in the raw message log.
@@ -144,6 +147,7 @@ class Settings(BaseSettings):
     CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS: int = Field(default=60, ge=1)
     # Three missed heartbeats at the default interval.
     CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
+    CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.
@@ -202,7 +206,6 @@ class Settings(BaseSettings):
     # when item 27 in future.md is picked up.
     # CHARGING_HEARTBEAT_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
     # CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
-    # CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
 
 
 @lru_cache

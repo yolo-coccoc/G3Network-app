@@ -426,3 +426,36 @@ class ChargingResourceDeleteResponse(BaseModel):
     """
 
     message: str
+
+
+class ChargingStationConfigurationEntryResponse(BaseModel):
+    """One configuration key of a charger.
+
+    Attributes:
+        config_key: The key name.
+        value: The key's value as text, nullable.
+        is_readonly: Whether the charger reported the key as read-only.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    config_key: str
+    value: str | None
+    is_readonly: bool
+
+
+class ChargingStationConfigurationResponse(BaseModel):
+    """The latest configuration a charger reported (``GetConfiguration``).
+
+    Attributes:
+        station_id: The station the configuration belongs to.
+        capture_id: Identifies the capture, nullable if the charger has not
+            reported its configuration yet.
+        captured_at: When the charger's answer was received, nullable likewise.
+        items: The keys of that capture, sorted by name; empty if none.
+    """
+
+    station_id: UUID
+    capture_id: UUID | None
+    captured_at: datetime | None
+    items: list[ChargingStationConfigurationEntryResponse]
