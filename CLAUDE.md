@@ -20,6 +20,12 @@
   progress per-feature, alongside overview.md's per-domain summary); update
   a feature's status/domain fields in the same change that completes it
 - `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner)
+- `docs/01-requirements/domain-model/` - The whole database design, built and
+  planned, in one source file (`domain-model.dbml`), plus generated views:
+  `overview.md` (domain map, data ownership, open decisions), one page per
+  domain, and `domain-model.xlsx` (Vietnamese, for business readers: a
+  "Tổng quan" index sheet, then one sheet per table). Edit only the `.dbml`,
+  then regenerate (the local `domain-model` skill has the commands)
 - `docs/02-planners/` - One implementation planner per domain/feature (step-by-step build log,
   decisions made, evidence of what was tested); read the relevant planner before resuming work
   on a domain it covers, and add/update a planner when starting a new one

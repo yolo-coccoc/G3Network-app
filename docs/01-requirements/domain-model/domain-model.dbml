@@ -1,0 +1,1379 @@
+// Domain model: the single source of truth for the whole database design.
+//
+// Every view under this directory (overview.md, domains/*.md,
+// domain-model.xlsx) is GENERATED from this file. Edit only this file, then
+// regenerate (see "How to use" in the Project note below).
+//
+// Conventions (enforced by the generator):
+//   - Every table belongs to exactly one TableGroup; a TableGroup is a
+//     backend domain (a bounded context).
+//   - Every table note starts with a tag line:
+//       @status built|planned|proposed  @owner customer|g3|two-party|undecided
+//       @features F-xx,F-yy  [@hypertable <time column>]
+//     built    = exists in backend/app/domains/*/models.py (must match exactly)
+//     planned  = required by a feature in feature-list.md, not built yet
+//     proposed = not in feature-list.md, but the model needs it
+//   - Every column note gives the column's meaning, its Vietnamese meaning
+//     (for the Excel export), then a sample value, in this order:
+//       note: 'What the column holds. @vi Ý nghĩa của cột. @example 51D-123.45'
+//     A foreign key's example reuses the example ID of the row it points to.
+//   - Table and TableGroup notes end with a "@vi-name <tên>" line and a
+//     "@vi <mô tả>" block; the open_decisions note ends with a "@vi" block.
+//   - A column added to a BUILT table as a design proposal carries a note
+//     starting with "@planned" (optionally followed by decision IDs and a
+//     colon). The check command ignores such columns.
+//   - Built tables use the exact PostgreSQL types and enum names from the
+//     models; planned tables use plain types and list values in notes.
+//   - Every foreign key is a standalone Ref with its delete action, written
+//     FK side first.
+
+Project g3_network {
+  database_type: 'PostgreSQL'
+  Note: '''
+This is the domain model of the G3 Network backend: every table, which
+domain owns it, who owns its data, and how it links to the rest.
+
+**Status:** ✅ built (in the code today) · 📋 planned (a feature needs it)
+· 🆕 proposed (not in the feature list, but the model needs it).
+
+**Data owner:** *customer* = belongs to one customer account (a tenant) and
+carries `account_id`; *g3* = G3's own data, shared across customers;
+*two-party* = a G3 asset used by a customer (e.g. a charging session);
+*undecided* = waiting on an open decision.
+
+**How to use:** edit `domain-model.dbml` only, then run
+`uv run --project backend --with pydbml --with openpyxl python .claude/skills/domain-model/scripts/domain_model.py generate`
+from the repository root. `... check` verifies that built tables still match
+the backend models and that these views are up to date.
+'''
+}
+
+// ---------------------------------------------------------------------------
+// Enums (built tables only; names are the PostgreSQL type names)
+// ---------------------------------------------------------------------------
+
+Enum vehiclestatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  DECOMMISSIONED
+}
+
+Enum vehicleactivationstatus {
+  PENDING
+  DEVICE_ASSIGNED
+  ACTIVATED
+}
+
+Enum telematicstatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+Enum driverstatus {
+  ACTIVE
+  INACTIVE
+}
+
+Enum fleetstatus {
+  ACTIVE
+  INACTIVE
+}
+
+Enum chargingstationmaintenancestatus {
+  OPERATIONAL
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+Enum chargingconnectorstatus {
+  Available
+  Occupied
+  Reserved
+  Unavailable
+  Faulted
+  Preparing
+  Charging
+  SuspendedEV
+  SuspendedEVSE
+  Finishing
+}
+
+Enum chargingocppmessagedirection {
+  CP_TO_CSMS
+  CSMS_TO_CP
+}
+
+Enum chargingsessionstatus {
+  active
+  completed
+}
+
+Enum chargingsessioneventtype {
+  Started
+  Updated
+  Ended
+}
+
+Enum notificationtype {
+  BATTERY_ALERT
+  ANOMALY_ALERT
+  SOH_ALERT
+  DEVICE_OFFLINE_ALERT
+}
+
+Enum notificationseverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+Enum supportcasetype {
+  TICKET
+  SOS
+}
+
+Enum supportcasecategory {
+  TECHNICAL
+  BATTERY
+  CHARGING
+  BREAKDOWN
+  ACCIDENT
+  BILLING
+  OTHER
+}
+
+Enum supportcasechannel {
+  IN_APP
+  ZALO
+  HOTLINE
+}
+
+Enum supportcasestatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+// ===========================================================================
+// identity: accounts, users, roles, access audit (F-F1)
+// ===========================================================================
+
+Table customer_accounts {
+  account_id uuid [pk, note: 'Internal ID of the customer account (the tenant). @vi Mã nội bộ của tài khoản khách hàng (tenant). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  account_type varchar(20) [not null, note: 'Whether the customer is a company or an individual truck owner. Values: ORGANIZATION | INDIVIDUAL (decision D1). @vi Khách hàng là doanh nghiệp hay chủ xe cá nhân. Giá trị: ORGANIZATION | INDIVIDUAL (quyết định D1). @example ORGANIZATION']
+  display_name varchar(200) [not null, note: 'Customer name shown in the portal and on invoices. @vi Tên khách hàng hiển thị trên portal và hóa đơn. @example Công ty CP Vận tải Minh Phát']
+  tax_code varchar(20) [note: 'Vietnamese tax code, required for e-invoices. @vi Mã số thuế, bắt buộc để xuất hóa đơn điện tử. @example 0312345678']
+  status varchar(20) [not null, note: 'Account lifecycle; SUSPENDED blocks logins without losing data. Values: ACTIVE | SUSPENDED | CLOSED. @vi Vòng đời tài khoản; SUSPENDED chặn đăng nhập nhưng không mất dữ liệu. Giá trị: ACTIVE | SUSPENDED | CLOSED. @example ACTIVE']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  Note: '''@status proposed @owner g3 @features F-F1,F-H3
+The tenant: one customer of G3, either a transport company or an individual
+truck owner. Every customer-owned row points here through `account_id`.
+@vi-name Tài khoản khách hàng
+@vi Khách thuê (tenant): một khách hàng của G3, là doanh nghiệp vận tải hoặc chủ xe cá nhân. Mọi dữ liệu thuộc khách hàng đều trỏ về đây qua account_id.'''
+}
+
+Table users {
+  user_id uuid [pk, note: 'Internal ID of the login. @vi Mã nội bộ của tài khoản đăng nhập. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  account_id uuid [note: 'Customer account the user belongs to; NULL for G3 staff. (decision D7) @vi Tài khoản khách hàng mà người dùng thuộc về; NULL với nhân viên G3 (quyết định D7). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  email varchar(255) [unique, note: 'Login e-mail, unique; optional for drivers who log in by phone. @vi Email đăng nhập, duy nhất; tài xế đăng nhập bằng SĐT thì có thể bỏ trống. @example dieuvan@minhphat.vn']
+  phone_number varchar(20) [unique, note: 'Login phone number in E.164 format, unique; used for OTP. @vi Số điện thoại đăng nhập (định dạng E.164), duy nhất; dùng nhận OTP. @example +84901234567']
+  display_name varchar(100) [not null, note: 'Name shown in the app and in audit logs. @vi Tên hiển thị trên app và trong nhật ký kiểm toán. @example Trần Thị Bình']
+  status varchar(20) [not null, note: 'Login lifecycle: invited, active, or locked by an admin. Values: INVITED | ACTIVE | LOCKED. @vi Trạng thái đăng nhập: đã mời, đang hoạt động, hoặc bị quản trị viên khóa. Giá trị: INVITED | ACTIVE | LOCKED. @example ACTIVE']
+  last_login_at timestamptz [note: 'Time of the latest successful login; NULL if never logged in. @vi Lần đăng nhập thành công gần nhất; NULL nếu chưa từng đăng nhập. @example 2026-09-14T23:10:00Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  Note: '''@status planned @owner customer @features F-F1
+A person who can log in: fleet manager, driver, or G3 staff.
+@vi-name Người dùng
+@vi Một người có thể đăng nhập: quản lý đội xe, tài xế hoặc nhân viên G3.'''
+}
+
+Table roles {
+  role_id uuid [pk, note: 'Internal ID of the role. @vi Mã nội bộ của vai trò. @example 5d1a9e3c-7b2f-4c6d-8e0a-2f4b6c8d0e33']
+  role_code varchar(50) [not null, unique, note: 'Stable code used by permission checks. e.g. ADMIN, CSKH, FLEET_MANAGER, DRIVER. @vi Mã cố định dùng khi kiểm tra quyền, ví dụ ADMIN, CSKH, FLEET_MANAGER, DRIVER. @example FLEET_MANAGER']
+  is_cross_tenant boolean [not null, note: 'TRUE if holders see every customer account (G3 staff roles). (decision D7) @vi TRUE nếu người giữ vai trò được xem mọi tài khoản khách hàng (vai trò nhân viên G3) (quyết định D7). @example false']
+  description varchar(200) [note: 'What the role may do, for admins. @vi Vai trò được làm gì, dành cho quản trị viên. @example Quản lý đội xe: xem xe, tài xế, báo cáo của công ty mình']
+  Note: '''@status planned @owner g3 @features F-F1
+A named set of permissions from the RBAC matrix.
+@vi-name Vai trò
+@vi Một nhóm quyền có tên, theo ma trận phân quyền (RBAC).'''
+}
+
+Table user_role_assignments {
+  assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần gán vai trò. @example 00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [note: 'Account in which the role applies; NULL for G3-wide roles. @vi Tài khoản mà vai trò có hiệu lực; NULL với vai trò toàn G3. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  user_id uuid [not null, note: 'User who holds the role. @vi Người dùng giữ vai trò. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  role_id uuid [not null, note: 'Role granted. @vi Vai trò được cấp. @example 5d1a9e3c-7b2f-4c6d-8e0a-2f4b6c8d0e33']
+  granted_at timestamptz [not null, note: 'When the role was granted. @vi Thời điểm cấp vai trò. @example 2026-09-01T02:00:00Z']
+  revoked_at timestamptz [note: 'When the role was revoked; NULL while still held. @vi Thời điểm thu hồi vai trò; NULL khi vẫn đang giữ. @example NULL']
+  Note: '''@status planned @owner customer @features F-F1
+Which role a user holds, and in which account. Kept as history (granted/revoked).
+@vi-name Gán vai trò
+@vi Người dùng giữ vai trò nào, trong tài khoản nào. Có lưu lịch sử cấp/thu hồi.'''
+}
+
+Table access_audit_logs {
+  audit_id bigint [pk, increment, note: 'Auto-increasing ID of the audit entry. @vi Mã tự tăng của dòng nhật ký. @example 1048576']
+  occurred_at timestamptz [pk, note: 'When the access happened; hypertable time column. @vi Thời điểm truy cập; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
+  user_id uuid [not null, note: 'Who accessed the data. @vi Ai đã truy cập dữ liệu. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  account_id uuid [note: 'Whose data was accessed. @vi Dữ liệu của tài khoản nào bị truy cập. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  action varchar(30) [not null, note: 'What was done with the data. Values: VIEW | EXPORT | UPDATE ... @vi Thao tác trên dữ liệu. Giá trị: VIEW | EXPORT | UPDATE ... @example VIEW']
+  resource_type varchar(50) [not null, note: 'Kind of data accessed. @vi Loại dữ liệu bị truy cập. @example VEHICLE_LOCATION_HISTORY']
+  resource_id varchar(100) [note: 'ID of the record accessed, as text. @vi Mã của bản ghi bị truy cập (dạng chuỗi). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  Note: '''@status planned @owner g3 @features F-F1 @hypertable occurred_at
+Append-only record of every access to personal/location data (NF-08).
+@vi-name Nhật ký truy cập dữ liệu
+@vi Nhật ký chỉ-ghi-thêm cho mọi lượt truy cập dữ liệu cá nhân/vị trí (NF-08).'''
+}
+
+Ref: users.account_id > customer_accounts.account_id [delete: restrict]
+Ref: user_role_assignments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: user_role_assignments.user_id > users.user_id [delete: restrict]
+Ref: user_role_assignments.role_id > roles.role_id [delete: restrict]
+Ref: access_audit_logs.user_id > users.user_id [delete: restrict]
+Ref: access_audit_logs.account_id > customer_accounts.account_id [delete: restrict]
+
+TableGroup identity {
+  customer_accounts
+  users
+  roles
+  user_role_assignments
+  access_audit_logs
+  Note: '''
+Who the customers are, who can log in, and what each person may see. This
+is the foundational domain: every other domain may depend on it, and it
+depends on none of them. Not built yet.
+
+- A **customer account** is one tenant: a company or an individual truck owner (D1).
+- A **user** belongs to at most one account; G3 staff belong to none (D7). A driver profile points to its user, never the other way, so identity depends on no other domain.
+- A user holds **roles** per account, kept as history.
+- Every access to personal or location data writes an **audit log** entry.
+
+@vi-name Danh tính & phân quyền
+@vi Khách hàng là ai, ai được đăng nhập và mỗi người được xem những gì. Đây là miền nền tảng: mọi miền khác có thể phụ thuộc vào nó, còn nó không phụ thuộc miền nào.
+- Một **tài khoản khách hàng** là một khách thuê (tenant): một doanh nghiệp hoặc một chủ xe cá nhân (D1).
+- Một **người dùng** thuộc tối đa một tài khoản; nhân viên G3 không thuộc tài khoản nào (D7). Hồ sơ tài xế trỏ tới người dùng của mình, không có chiều ngược lại.
+- Người dùng giữ **vai trò** theo từng tài khoản, có lưu lịch sử.
+- Mọi lượt truy cập dữ liệu cá nhân hoặc vị trí đều ghi một dòng **nhật ký kiểm toán**.
+'''
+}
+
+// ===========================================================================
+// vehicles: vehicle profile and provisioning (F-F2)
+// ===========================================================================
+
+Table vehicles {
+  vehicle_id uuid [pk, note: 'Internal ID of the vehicle. @vi Mã nội bộ của xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  account_id uuid [note: '@planned D1 D3: Customer account that owns the vehicle now. @vi Tài khoản khách hàng đang sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  license_plate varchar(20) [not null, unique, note: 'Registration plate, unique. @vi Biển số đăng ký, duy nhất. @example 51D-123.45']
+  vin varchar(17) [not null, unique, note: '17-character chassis number (VIN), unique; the vehicle\'s business key. @vi Số khung (VIN) 17 ký tự, duy nhất; là khóa nghiệp vụ của xe. @example LZGJLGR4XNX000123']
+  make varchar(50) [not null, note: 'Manufacturer. @vi Hãng sản xuất. @example Tri-Ring']
+  model varchar(50) [not null, note: 'Model line. @vi Dòng xe. @example EVT-400']
+  year integer [not null, note: 'Manufacturing year. @vi Năm sản xuất. @example 2025']
+  status vehiclestatus [not null, note: 'Operating status of the vehicle. @vi Trạng thái vận hành của xe. @example ACTIVE']
+  activation_status vehicleactivationstatus [not null, note: 'Progress through device provisioning (F-F2), independent of status. @vi Tiến độ kích hoạt thiết bị cho xe (F-F2), độc lập với trạng thái vận hành. @example ACTIVATED']
+  battery_capacity_kwh float8 [note: 'Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). @example 282.0']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  Note: '''@status built @owner customer @features F-F2,F-A6
+Static profile of one electric truck.
+@vi-name Xe
+@vi Hồ sơ tĩnh của một xe tải điện.'''
+}
+
+Table vehicle_ownerships {
+  ownership_id uuid [pk, note: 'Internal ID of the ownership period. @vi Mã nội bộ của giai đoạn sở hữu. @example 00000002-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  vehicle_id uuid [not null, note: 'Vehicle owned. @vi Xe được sở hữu. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  account_id uuid [not null, note: 'Customer account that owned it during this period. @vi Tài khoản khách hàng sở hữu xe trong giai đoạn này. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  started_at timestamptz [not null, note: 'When this owner took the vehicle (handover). @vi Thời điểm chủ này nhận xe (bàn giao). @example 2026-06-01T00:00:00Z']
+  ended_at timestamptz [note: 'When ownership ended; NULL for the current owner. @vi Thời điểm kết thúc sở hữu; NULL với chủ hiện tại. @example NULL']
+  indexes {
+    vehicle_id [unique, name: 'uq_vehicle_ownerships_active_vehicle', note: 'WHERE ended_at IS NULL']
+  }
+  Note: '''@status proposed @owner customer @features F-F2
+Which account owned a vehicle, and when. Lets a sold truck's old data stay
+with its previous owner (decision D3). Same open/close shape as
+fleet_vehicle_memberships.
+@vi-name Lịch sử sở hữu xe
+@vi Tài khoản nào sở hữu xe, trong khoảng thời gian nào. Giúp dữ liệu cũ của xe đã bán vẫn thuộc chủ cũ (quyết định D3).'''
+}
+
+Table geofences {
+  geofence_id uuid [pk, note: 'Internal ID of the geofence. @vi Mã nội bộ của vùng địa lý. @example 00000003-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account that defined it. @vi Tài khoản khách hàng đã tạo vùng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  name varchar(100) [not null, note: 'Name shown in alerts. @vi Tên hiển thị trong cảnh báo. @example Kho Tân Uyên']
+  boundary "geography(Polygon,4326)" [not null, note: 'Area as a WGS84 polygon. @vi Ranh giới vùng, dạng đa giác WGS84. @example POLYGON((106.70 11.05, 106.72 11.05, 106.72 11.07, 106.70 11.07, 106.70 11.05))']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  Note: '''@status planned @owner customer @features F-A5
+A customer-defined area used for enter/leave alerts.
+@vi-name Vùng địa lý (geofence)
+@vi Một khu vực do khách hàng định nghĩa để cảnh báo khi xe vào/ra.'''
+}
+
+Ref: vehicles.account_id > customer_accounts.account_id [delete: restrict]
+Ref: vehicle_ownerships.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: vehicle_ownerships.account_id > customer_accounts.account_id [delete: restrict]
+Ref: geofences.account_id > customer_accounts.account_id [delete: restrict]
+
+TableGroup vehicles {
+  vehicles
+  vehicle_ownerships
+  geofences
+  Note: '''
+The truck itself: identity (VIN, plate), specs, and provisioning state.
+
+- A **vehicle** belongs to one customer account at a time (D1, D3).
+- **Ownership history** records every change of owner, so past data keeps its original owner.
+- A customer defines **geofences** for location alerts (F-A5).
+
+@vi-name Xe
+@vi Bản thân chiếc xe tải: định danh (VIN, biển số), thông số và trạng thái kích hoạt.
+- Tại mỗi thời điểm, một **xe** thuộc một tài khoản khách hàng (D1, D3).
+- **Lịch sử sở hữu** ghi lại mỗi lần đổi chủ, để dữ liệu cũ vẫn thuộc chủ cũ.
+- Khách hàng định nghĩa **vùng địa lý (geofence)** để nhận cảnh báo vị trí (F-A5).
+'''
+}
+
+// ===========================================================================
+// telematics: telematic devices mounted on vehicles (F-G1, F-J1-J3)
+// ===========================================================================
+
+Table telematics {
+  telematic_id uuid [pk, note: 'Internal ID of the telematic device. @vi Mã nội bộ của thiết bị telematics. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
+  telematic_serial varchar(50) [not null, unique, note: 'Serial printed on the device; also its MQTT identity, unique. @vi Số serial in trên thiết bị; cũng là định danh MQTT, duy nhất. @example TBX-2409-000123']
+  vehicle_id uuid [unique, note: 'Vehicle the device is mounted on now; NULL when unmounted. @vi Xe mà thiết bị đang gắn; NULL khi đã tháo. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  status telematicstatus [not null, note: 'Operating status of the device. @vi Trạng thái vận hành của thiết bị. @example ACTIVE']
+  firmware_version varchar(50) [note: 'Firmware currently running on the device. @vi Phiên bản firmware đang chạy trên thiết bị. @example 1.4.2']
+  telemetry_interval_seconds integer [note: 'Publish interval last pushed to the device over MQTT (F-J2); NULL until the first push. @vi Chu kỳ gửi dữ liệu (giây) đã đẩy xuống thiết bị qua MQTT lần gần nhất (F-J2); NULL trước lần đẩy đầu tiên. @example 10']
+  config_pushed_at timestamptz [note: 'When that interval was last pushed; NULL until the first push. @vi Thời điểm đẩy chu kỳ đó lần gần nhất; NULL trước lần đẩy đầu tiên. @example 2026-09-12T03:00:00Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    status [name: 'ix_telematics_status']
+    telematic_serial [unique, name: 'ix_telematics_telematic_serial']
+    vehicle_id [name: 'ix_telematics_vehicle_id']
+  }
+  Note: '''@status built @owner undecided @features F-G1,F-J1,F-J2,F-J3
+One telematic device and the vehicle it is mounted on. Whether the device
+belongs to the customer or to G3 is decision D6.
+@vi-name Thiết bị telematics
+@vi Một thiết bị telematics và chiếc xe nó đang gắn. Thiết bị thuộc khách hàng hay G3 là quyết định D6.'''
+}
+
+Ref: telematics.vehicle_id - vehicles.vehicle_id [delete: set null]
+
+TableGroup telematics {
+  telematics
+  Note: '''
+The telematic devices that send vehicle data over MQTT.
+
+- A **device** is mounted on at most one vehicle, and a vehicle has at most one device.
+- Device health and config pushes (F-J1/F-J2/F-J3) live on the same row.
+
+@vi-name Thiết bị telematics
+@vi Các thiết bị telematics (T-box) gửi dữ liệu xe qua MQTT.
+- Một **thiết bị** gắn trên tối đa một xe, và một xe có tối đa một thiết bị.
+- Tình trạng thiết bị và cấu hình đẩy xuống thiết bị (F-J1/F-J2/F-J3) nằm cùng một dòng.
+'''
+}
+
+// ===========================================================================
+// telemetry: real-time and historical vehicle data (F-A1 ...)
+// ===========================================================================
+
+Table vehicle_telemetry {
+  message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
+  recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
+  account_id uuid [note: '@planned D1 D3: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  message_uuid uuid [not null, note: 'ID the device gives each message, used to spot duplicates. @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
+  telematic_id uuid [not null, note: 'Device that sent the sample. @vi Thiết bị đã gửi bản ghi. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
+  telematic_serial varchar(50) [not null, note: 'Device serial copied onto the row for audit and debugging. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
+  vehicle_id uuid [not null, note: 'Vehicle the sample describes. @vi Xe mà bản ghi mô tả. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  received_at timestamptz [not null, note: 'When the backend received the message. @vi Thời điểm backend nhận bản tin. @example 2026-09-15T08:30:02Z']
+  location "geography(POINT,4326)" [not null, note: 'GPS position (WGS84 point, longitude first). No spatial index (write-heavy path). @vi Vị trí GPS (điểm WGS84, kinh độ trước). Không có chỉ mục không gian (luồng ghi dày đặc). @example POINT(106.6297 10.8231)']
+  speed float8 [note: 'Speed in km/h. @vi Tốc độ (km/h). @example 62.5']
+  heading float8 [note: 'Direction of travel in degrees (0-360, 0 = north); NULL if unknown. @vi Hướng di chuyển (độ, 0-360, 0 = hướng bắc); NULL nếu không rõ. @example 135.0']
+  soc float8 [not null, note: 'State of charge: battery left, in % (0-100). @vi Mức pin còn lại (SOC), % (0-100). @example 64.2']
+  battery_voltage float8 [note: 'Pack voltage in volts. @vi Điện áp pack pin (V). @example 612.4']
+  battery_current float8 [note: 'Pack current in amperes. @vi Dòng điện pack pin (A). @example -85.3']
+  battery_temperature float8 [note: 'Battery temperature in °C. @vi Nhiệt độ pin (°C). @example 34.5']
+  soh_percent float8 [note: 'State of health: capacity left compared with new, in % (F-A3). @vi Sức khỏe pin (SOH): dung lượng còn lại so với khi mới, % (F-A3). @example 97.8']
+  cycle_count integer [note: 'Cumulative charge/discharge cycles of the pack (F-A3). @vi Số chu kỳ sạc-xả tích lũy của pack pin (F-A3). @example 213']
+  motor_temperature float8 [note: 'Motor temperature in °C. @vi Nhiệt độ động cơ (°C). @example 58.0']
+  odometer float8 [note: 'Total distance driven, in km. @vi Tổng quãng đường đã chạy (km). @example 48213.7']
+  signal_strength bigint [note: 'Cellular signal strength in dBm. @vi Cường độ sóng di động (dBm). @example -71']
+  error_codes jsonb [note: 'Fault codes active at the time, as a JSON array; NULL if none. @vi Các mã lỗi đang hoạt động, dạng mảng JSON; NULL nếu không có. @example ["P0A80", "U0100"]']
+  raw_payload jsonb [not null, note: 'Original message exactly as received, for debugging and reprocessing. @vi Bản tin gốc đúng như khi nhận, để gỡ lỗi và xử lý lại. @example {"serial": "TBX-2409-000123", "soc": 64.2, ...}']
+  schema_version integer [not null, note: 'Version of the MQTT message contract the device used (F-A1). @vi Phiên bản cấu trúc bản tin MQTT mà thiết bị dùng (F-A1). @example 1']
+  indexes {
+    (vehicle_id, `recorded_at DESC`) [name: 'ix_vehicle_telemetry_vehicle_time']
+    message_uuid [name: 'ix_vehicle_telemetry_message_uuid']
+    (telematic_id, recorded_at) [unique, name: 'uq_telematic_recorded_at']
+  }
+  Note: '''@status built @owner customer @features F-A1,F-A2,F-A3,F-A4,F-A6,F-C6 @hypertable recorded_at
+One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
+@vi-name Dữ liệu vận hành xe
+@vi Một bản ghi dữ liệu xe gửi về, mỗi 5-10 giây một bản ghi cho mỗi xe: bảng lớn nhất hệ thống.'''
+}
+
+Ref: vehicle_telemetry.account_id > customer_accounts.account_id [delete: restrict]
+Ref: vehicle_telemetry.telematic_id > telematics.telematic_id [delete: cascade]
+Ref: vehicle_telemetry.vehicle_id > vehicles.vehicle_id [delete: cascade]
+
+TableGroup telemetry {
+  vehicle_telemetry
+  Note: '''
+Everything the vehicle reports: position, battery, motor, errors. Alerts and
+energy reports are computed from it.
+
+- Each **sample** comes from one device and is stored against one vehicle.
+- Under decision D3, each sample would also record the account that owned the vehicle *at that moment*.
+
+@vi-name Dữ liệu vận hành xe
+@vi Mọi thứ xe gửi về: vị trí, pin, động cơ, mã lỗi. Cảnh báo và báo cáo năng lượng được tính từ dữ liệu này.
+- Mỗi **bản ghi** đến từ một thiết bị và được lưu theo một xe.
+- Theo quyết định D3, mỗi bản ghi sẽ ghi thêm tài khoản sở hữu xe *tại đúng thời điểm đó*.
+'''
+}
+
+// ===========================================================================
+// drivers: driver profiles, assignments, charging credentials (F-E4)
+// ===========================================================================
+
+Table drivers {
+  driver_id uuid [pk, note: 'Internal ID of the driver. @vi Mã nội bộ của tài xế. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  account_id uuid [note: '@planned D1: Customer account that employs the driver. @vi Tài khoản khách hàng tuyển dụng tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  user_id uuid [unique, note: '@planned: The driver\'s login, if they have the app; NULL otherwise. @vi Tài khoản đăng nhập của tài xế nếu có dùng app; NULL nếu không. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  full_name varchar(100) [not null, note: 'Driver\'s full name. @vi Họ tên tài xế. @example Nguyễn Văn An']
+  phone_number varchar(20) [not null, unique, note: 'Contact phone number, unique. @vi Số điện thoại liên hệ, duy nhất. @example +84912345678']
+  license_number varchar(50) [not null, unique, note: 'Driving licence number, unique; the driver\'s business key. @vi Số giấy phép lái xe, duy nhất; là khóa nghiệp vụ của tài xế. @example 790123456789']
+  status driverstatus [not null, note: 'Driver lifecycle status. @vi Trạng thái của tài xế. @example ACTIVE']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    status [name: 'ix_drivers_status']
+    license_number [unique, name: 'ix_drivers_license_number']
+    phone_number [unique, name: 'ix_drivers_phone_number']
+  }
+  Note: '''@status built @owner customer @features F-E4
+A driver employed by (or being) a customer.
+@vi-name Tài xế
+@vi Một tài xế do khách hàng tuyển dụng (hoặc chính là khách hàng).'''
+}
+
+Table driver_vehicle_assignments {
+  assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần phân công. @example 00000004-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [note: '@planned D1: Customer account the assignment belongs to. @vi Tài khoản khách hàng của lần phân công. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [not null, note: 'Driver assigned. @vi Tài xế được phân công. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  vehicle_id uuid [not null, note: 'Vehicle assigned. @vi Xe được phân công. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  assigned_at timestamptz [not null, note: 'When the assignment began. @vi Thời điểm bắt đầu phân công. @example 2026-09-01T00:00:00Z']
+  unassigned_at timestamptz [note: 'When it ended; NULL while the driver still has the vehicle. @vi Thời điểm kết thúc; NULL khi tài xế vẫn đang giữ xe. @example NULL']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (moves when the assignment is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi kết thúc phân công). @example 2026-09-10T07:15:00Z']
+  indexes {
+    vehicle_id [unique, name: 'uq_driver_vehicle_assignments_active_vehicle', note: 'WHERE unassigned_at IS NULL']
+    driver_id [unique, name: 'uq_driver_vehicle_assignments_active_driver', note: 'WHERE unassigned_at IS NULL']
+    (driver_id, assigned_at) [name: 'ix_driver_vehicle_assignments_driver_time']
+    driver_id [name: 'ix_driver_vehicle_assignments_driver_id']
+    vehicle_id [name: 'ix_driver_vehicle_assignments_vehicle_id']
+  }
+  Note: '''@status built @owner customer @features F-E4
+Which driver drove which vehicle, and when (open/close history).
+@vi-name Phân công tài xế - xe
+@vi Tài xế nào lái xe nào, trong khoảng thời gian nào (lịch sử mở/đóng).'''
+}
+
+Table charging_credentials {
+  credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của phương thức xác thực. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
+  account_id uuid [not null, note: 'Customer account billed when this credential charges. @vi Tài khoản khách hàng bị tính tiền khi dùng phương thức này để sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [note: 'Driver it belongs to; NULL for a shared fleet card. @vi Tài xế sở hữu; NULL với thẻ dùng chung của đội xe. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  credential_type varchar(20) [not null, note: 'How the charger identifies the customer. Values: RFID | APP_QR | VIN_AUTOCHARGE (decision D4). @vi Cách trụ sạc nhận biết khách hàng. Giá trị: RFID | APP_QR | VIN_AUTOCHARGE (quyết định D4). @example RFID']
+  id_tag varchar(20) [unique, note: 'Identifier the charger reports (OCPP idTag), unique. @vi Mã định danh mà trụ sạc gửi lên (OCPP idTag), duy nhất. @example 04A1B2C3D4E5F6']
+  status varchar(20) [not null, note: 'Whether the credential may start a charge. Values: ACTIVE | BLOCKED | EXPIRED. @vi Phương thức này có được dùng để bắt đầu sạc không. Giá trị: ACTIVE | BLOCKED | EXPIRED. @example ACTIVE']
+  issued_at timestamptz [not null, note: 'When the credential was issued. @vi Thời điểm cấp. @example 2026-09-01T02:00:00Z']
+  revoked_at timestamptz [note: 'When it was revoked; NULL while valid. @vi Thời điểm thu hồi; NULL khi còn hiệu lực. @example NULL']
+  Note: '''@status proposed @owner customer @features F-B2,F-C6,F-H1
+How a charger identifies who is charging. Links a session's raw idTag to a
+driver and account. Placement in `drivers` is provisional.
+@vi-name Phương thức xác thực sạc
+@vi Cách trụ sạc nhận biết ai đang sạc. Nối mã idTag thô của phiên sạc với tài xế và tài khoản. Việc đặt ở miền Tài xế là tạm thời.'''
+}
+
+Ref: drivers.account_id > customer_accounts.account_id [delete: restrict]
+Ref: drivers.user_id - users.user_id [delete: restrict]
+Ref: driver_vehicle_assignments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: driver_vehicle_assignments.driver_id > drivers.driver_id [delete: restrict]
+Ref: driver_vehicle_assignments.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: charging_credentials.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_credentials.driver_id > drivers.driver_id [delete: restrict]
+
+TableGroup drivers {
+  drivers
+  driver_vehicle_assignments
+  charging_credentials
+  Note: '''
+The people who drive the trucks, and how they identify themselves at a charger.
+
+- A **driver** belongs to one customer account (D1).
+- A driver drives at most one vehicle at a time; **assignments** keep the full history.
+- A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an account and optionally to one driver (D4).
+
+@vi-name Tài xế
+@vi Những người lái xe và cách họ xác thực tại trụ sạc.
+- Một **tài xế** thuộc một tài khoản khách hàng (D1).
+- Tại mỗi thời điểm, một tài xế lái tối đa một xe; **phân công** lưu toàn bộ lịch sử.
+- Một **phương thức xác thực sạc** (thẻ RFID, mã QR trên app, VIN autocharge) thuộc một tài khoản và có thể gắn với một tài xế (D4).
+'''
+}
+
+// ===========================================================================
+// fleet: fleets and vehicle membership (F-E1)
+// ===========================================================================
+
+Table fleets {
+  fleet_id uuid [pk, note: 'Internal ID of the fleet. @vi Mã nội bộ của đội xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  account_id uuid [note: '@planned D1 D2: Customer account the fleet belongs to. @vi Tài khoản khách hàng sở hữu đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  fleet_code varchar(50) [not null, unique, note: 'Short unique code; the fleet\'s business key. @vi Mã ngắn, duy nhất; là khóa nghiệp vụ của đội xe. @example MP-HCM-01']
+  name varchar(100) [not null, note: 'Fleet name shown in the portal. @vi Tên đội xe hiển thị trên portal. @example Đội xe Hồ Chí Minh']
+  status fleetstatus [not null, note: 'Fleet lifecycle status. @vi Trạng thái của đội xe. @example ACTIVE']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    status [name: 'ix_fleets_status']
+    fleet_code [unique, name: 'ix_fleets_fleet_code']
+  }
+  Note: '''@status built @owner customer @features F-E1
+A named group of vehicles. Whether a fleet IS a customer or a sub-group of
+one is decision D2.
+@vi-name Đội xe
+@vi Một nhóm xe có tên. Đội xe là chính khách hàng hay là nhóm con bên trong khách hàng là quyết định D2.'''
+}
+
+Table fleet_vehicle_memberships {
+  membership_id uuid [pk, note: 'Internal ID of the membership period. @vi Mã nội bộ của giai đoạn thành viên. @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [note: '@planned D1: Customer account the membership belongs to. @vi Tài khoản khách hàng của giai đoạn thành viên. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  fleet_id uuid [not null, note: 'Fleet the vehicle is in. @vi Đội xe chứa xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  vehicle_id uuid [not null, note: 'Vehicle in the fleet. @vi Xe thuộc đội. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  joined_at timestamptz [not null, note: 'When the vehicle joined the fleet. @vi Thời điểm xe vào đội. @example 2026-09-01T00:00:00Z']
+  left_at timestamptz [note: 'When it left; NULL while still a member. @vi Thời điểm xe rời đội; NULL khi vẫn còn trong đội. @example NULL']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (moves when the membership is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi xe rời đội). @example 2026-09-10T07:15:00Z']
+  indexes {
+    fleet_id [name: 'ix_fleet_vehicle_memberships_fleet_id']
+    (fleet_id, joined_at) [name: 'ix_fleet_vehicle_memberships_fleet_time']
+    vehicle_id [name: 'ix_fleet_vehicle_memberships_vehicle_id']
+    vehicle_id [unique, name: 'uq_fleet_vehicle_memberships_active_vehicle', note: 'WHERE left_at IS NULL']
+  }
+  Note: '''@status built @owner customer @features F-E1
+Which vehicle was in which fleet, and when (open/close history).
+@vi-name Thành viên đội xe
+@vi Xe nào thuộc đội nào, trong khoảng thời gian nào (lịch sử mở/đóng).'''
+}
+
+Ref: fleets.account_id > customer_accounts.account_id [delete: restrict]
+Ref: fleet_vehicle_memberships.account_id > customer_accounts.account_id [delete: restrict]
+Ref: fleet_vehicle_memberships.fleet_id > fleets.fleet_id [delete: restrict]
+Ref: fleet_vehicle_memberships.vehicle_id > vehicles.vehicle_id [delete: restrict]
+
+TableGroup fleet {
+  fleets
+  fleet_vehicle_memberships
+  Note: '''
+Groups of vehicles managed together by a fleet manager.
+
+- A **fleet** belongs to one customer account (D1, D2).
+- A vehicle is in at most one fleet at a time; a fleet holds many vehicles. **Memberships** keep the history.
+
+@vi-name Đội xe
+@vi Nhóm xe do một quản lý đội xe điều hành.
+- Một **đội xe** thuộc một tài khoản khách hàng (D1, D2).
+- Tại mỗi thời điểm, một xe thuộc tối đa một đội; một đội có nhiều xe. **Thành viên đội** lưu lại lịch sử.
+'''
+}
+
+// ===========================================================================
+// charging_stations: station/EVSE/connector topology and OCPP (F-C1, F-G2)
+// ===========================================================================
+
+Table charging_stations {
+  station_id uuid [pk, note: 'Internal ID of the station. @vi Mã nội bộ của trạm. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  ocpp_identity varchar(255) [not null, unique, note: 'Name the charger uses in its OCPP WebSocket URL, unique and never reused. @vi Tên trụ sạc dùng trong URL WebSocket OCPP, duy nhất và không bao giờ dùng lại. @example WD-HCM-001']
+  display_name varchar(200) [not null, note: 'Station name shown to drivers. @vi Tên trạm hiển thị cho tài xế. @example Trạm sạc G3 Bình Dương']
+  location "geography(POINT,4326)" [note: 'GPS position (WGS84 point, longitude first); NULL if not yet surveyed. @vi Vị trí GPS (điểm WGS84, kinh độ trước); NULL nếu chưa khảo sát. @example POINT(106.6519 10.9804)']
+  power_rating_kw numeric(6,2) [note: 'Nominal station power in kW. @vi Công suất danh định của trạm (kW). @example 480.00']
+  connector_standard varchar(20) [note: 'Plug standard served. @vi Chuẩn đầu sạc hỗ trợ. @example CCS2']
+  operating_hours varchar(100) [note: 'Opening hours as free text. @vi Giờ hoạt động, dạng văn bản tự do. @example 24/7']
+  maintenance_status chargingstationmaintenancestatus [not null, note: 'Maintenance state set by an admin. @vi Trạng thái bảo trì do quản trị viên đặt. @example OPERATIONAL']
+  ocpp_protocol_version varchar(20) [note: 'OCPP version of the latest connection; NULL until the charger first connects. @vi Phiên bản OCPP của kết nối gần nhất; NULL trước khi trụ kết nối lần đầu. @example ocpp1.6']
+  vendor varchar(100) [note: 'Charger vendor from its BootNotification. @vi Hãng trụ sạc, lấy từ BootNotification. @example Willdigits']
+  model varchar(100) [note: 'Charger model from its BootNotification. @vi Model trụ sạc, lấy từ BootNotification. @example WD-DC480']
+  serial_number varchar(100) [note: 'Charger serial number from its BootNotification. @vi Số serial trụ sạc, lấy từ BootNotification. @example WD2409001234']
+  firmware_version varchar(100) [note: 'Firmware from the latest BootNotification. @vi Firmware theo BootNotification gần nhất. @example V2.3.7']
+  last_boot_at timestamptz [note: 'Time of the latest accepted BootNotification. @vi Thời điểm BootNotification được chấp nhận gần nhất. @example 2026-09-14T22:00:05Z']
+  last_seen_at timestamptz [note: 'Time of the latest message of any kind; online/offline is derived from it. @vi Thời điểm nhận bản tin bất kỳ gần nhất; trạng thái online/offline được suy ra từ cột này. @example 2026-09-15T08:29:58Z']
+  charger_status chargingconnectorstatus [note: 'Status of the whole charger (OCPP 1.6J connector 0); NULL for OCPP 2.0.1. @vi Trạng thái của cả trụ sạc (OCPP 1.6J connector 0); NULL với OCPP 2.0.1. @example Available']
+  charger_status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:10:00Z']
+  charger_error_code varchar(50) [note: 'Error code reported for the whole charger, as sent. @vi Mã lỗi của cả trụ sạc, đúng như trụ gửi. @example NoError']
+  charger_vendor_error_code varchar(100) [note: 'Vendor-specific error code for the whole charger. @vi Mã lỗi riêng của hãng cho cả trụ sạc. @example E0000']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When an admin last edited the row (device reports do not change it). @vi Thời điểm quản trị viên sửa gần nhất (báo cáo từ thiết bị không làm thay đổi cột này). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    location [name: 'ix_charging_stations_location', note: 'GIST; radius search (F-D1)']
+    deleted_at [name: 'ix_charging_stations_deleted_at']
+  }
+  Note: '''@status built @owner g3 @features F-C1,F-C2,F-D1,F-G2
+One charging station in G3's network.
+@vi-name Trạm sạc
+@vi Một trạm sạc trong mạng lưới của G3.'''
+}
+
+Table charging_evses {
+  evse_id uuid [pk, note: 'Internal ID of the EVSE. @vi Mã nội bộ của EVSE. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
+  station_id uuid [not null, note: 'Station the EVSE belongs to. @vi Trạm chứa EVSE. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  ocpp_evse_id integer [not null, note: 'EVSE number used in OCPP, unique within the station, positive. @vi Số EVSE dùng trong OCPP, duy nhất trong trạm, là số dương. @example 1']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    (station_id, deleted_at) [name: 'ix_charging_evses_station_deleted']
+    (station_id, ocpp_evse_id) [unique, name: 'uq_charging_evses_station_ocpp_id']
+  }
+  Note: '''@status built @owner g3 @features F-C1,F-G2
+One EVSE (power outlet unit) of a station.
+@vi-name EVSE (cụm cấp điện)
+@vi Một EVSE (bộ cấp điện) của trạm.'''
+}
+
+Table charging_connectors {
+  connector_id uuid [pk, note: 'Internal ID of the connector (one physical gun). @vi Mã nội bộ của súng sạc (một súng vật lý). @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  evse_id uuid [not null, note: 'EVSE the connector belongs to. @vi EVSE chứa súng sạc. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
+  ocpp_connector_id integer [not null, note: 'Connector number used in OCPP, unique within the EVSE, positive. @vi Số súng dùng trong OCPP, duy nhất trong EVSE, là số dương. @example 1']
+  status chargingconnectorstatus [note: 'Live status from the latest StatusNotification; NULL before the first report. @vi Trạng thái trực tiếp theo StatusNotification gần nhất; NULL trước lần báo đầu tiên. @example Charging']
+  status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:31:00Z']
+  error_code varchar(50) [note: 'Error code from the latest report, as sent; replaced by every report. @vi Mã lỗi theo báo cáo gần nhất, đúng như trụ gửi; bị thay mỗi lần báo. @example NoError']
+  vendor_error_code varchar(100) [note: 'Vendor-specific error code from the latest report. @vi Mã lỗi riêng của hãng theo báo cáo gần nhất. @example E0000']
+  status_info varchar(50) [note: 'Free-text info from the latest report. @vi Thông tin văn bản tự do theo báo cáo gần nhất. @example Cable locked']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    (evse_id, deleted_at) [name: 'ix_charging_connectors_evse_deleted']
+    (evse_id, ocpp_connector_id) [unique, name: 'uq_charging_connectors_evse_ocpp_id']
+  }
+  Note: '''@status built @owner g3 @features F-C1,F-C2
+One physical gun/plug, with its live status.
+@vi-name Súng sạc
+@vi Một súng/đầu sạc vật lý, kèm trạng thái trực tiếp.'''
+}
+
+Table charging_ocpp_messages {
+  message_id uuid [pk, note: 'Internal ID of the log row. @vi Mã nội bộ của dòng nhật ký. @example 00000006-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  occurred_at timestamptz [pk, note: 'When the frame was received or sent; hypertable time column. @vi Thời điểm nhận hoặc gửi bản tin; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
+  station_id uuid [not null, note: 'Station the frame was exchanged with. @vi Trạm trao đổi bản tin. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  ocpp_subprotocol varchar(20) [not null, note: 'OCPP version negotiated for the connection. @vi Phiên bản OCPP đã thỏa thuận cho kết nối. @example ocpp1.6']
+  direction chargingocppmessagedirection [not null, note: 'From the charger (CP_TO_CSMS) or to it (CSMS_TO_CP). @vi Chiều bản tin: từ trụ sạc lên (CP_TO_CSMS) hay gửi xuống trụ (CSMS_TO_CP). @example CP_TO_CSMS']
+  raw_frame text [not null, note: 'The exact frame text, never re-serialised. Contains RFID idTags: never copy into application logs. @vi Nội dung bản tin nguyên văn, không chuẩn hóa lại. Có chứa mã RFID idTag: không bao giờ chép vào log ứng dụng. @example [2,"19223201","Heartbeat",{}]']
+  indexes {
+    (station_id, occurred_at) [name: 'ix_charging_ocpp_messages_station_time']
+  }
+  Note: '''@status built @owner g3 @features F-G2 @hypertable occurred_at
+Every OCPP frame in both directions, verbatim and append-only.
+@vi-name Nhật ký bản tin OCPP
+@vi Mọi bản tin OCPP theo cả hai chiều, lưu nguyên văn, chỉ ghi thêm.'''
+}
+
+Table charging_station_configuration_entries {
+  entry_id uuid [pk, note: 'Internal ID of the row. @vi Mã nội bộ của dòng. @example 00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  station_id uuid [not null, note: 'Station the configuration belongs to. @vi Trạm sở hữu cấu hình. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  capture_id uuid [not null, note: 'Groups all keys from one GetConfiguration answer. @vi Nhóm tất cả các khóa của cùng một lần trả lời GetConfiguration. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  captured_at timestamptz [not null, note: 'When the charger\'s answer was received. @vi Thời điểm nhận câu trả lời từ trụ sạc. @example 2026-09-14T22:00:10Z']
+  config_key varchar(100) [not null, note: 'Configuration key name. @vi Tên khóa cấu hình. @example HeartbeatInterval']
+  value text [note: 'Key value as text; NULL if the charger sent none. @vi Giá trị khóa dạng chuỗi; NULL nếu trụ không gửi. @example 60']
+  is_readonly boolean [not null, note: 'Whether the charger reports the key as read-only. @vi Trụ sạc có báo khóa này là chỉ-đọc không. @example false']
+  indexes {
+    (station_id, captured_at) [name: 'ix_charging_config_entries_station_captured']
+  }
+  Note: '''@status built @owner g3 @features F-G2
+One configuration key from a charger's GetConfiguration answer (append-only snapshots).
+@vi-name Cấu hình trụ sạc
+@vi Một khóa cấu hình trong câu trả lời GetConfiguration của trụ sạc (các bản chụp chỉ ghi thêm).'''
+}
+
+Table charging_reservations {
+  reservation_id uuid [pk, note: 'Internal ID of the reservation. @vi Mã nội bộ của lượt đặt chỗ. @example 00000009-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account holding the reservation. @vi Tài khoản khách hàng giữ chỗ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  connector_id uuid [not null, note: 'Connector reserved. @vi Súng sạc được giữ chỗ. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  driver_id uuid [note: 'Driver expected to arrive; NULL if not named. @vi Tài xế dự kiến tới; NULL nếu không chỉ định. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  reserved_from timestamptz [not null, note: 'Start of the reserved window. @vi Bắt đầu khung giờ giữ chỗ. @example 2026-09-15T13:00:00Z']
+  expires_at timestamptz [not null, note: 'When the hold lapses if nobody plugs in. @vi Thời điểm hết giữ chỗ nếu không ai cắm sạc. @example 2026-09-15T13:15:00Z']
+  status varchar(20) [not null, note: 'Reservation outcome. Values: ACTIVE | USED | EXPIRED | CANCELLED | NO_SHOW. @vi Kết quả đặt chỗ. Giá trị: ACTIVE | USED | EXPIRED | CANCELLED | NO_SHOW. @example ACTIVE']
+  Note: '''@status planned @owner two-party @features F-C4
+A customer's hold on a G3 connector for a time window.
+@vi-name Đặt chỗ súng sạc
+@vi Khách hàng giữ chỗ một súng sạc của G3 trong một khung giờ.'''
+}
+
+Ref: charging_evses.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
+Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_reservations.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_reservations.connector_id > charging_connectors.connector_id [delete: restrict]
+Ref: charging_reservations.driver_id > drivers.driver_id [delete: restrict]
+
+TableGroup charging_stations {
+  charging_stations
+  charging_evses
+  charging_connectors
+  charging_ocpp_messages
+  charging_station_configuration_entries
+  charging_reservations
+  Note: '''
+G3's charging network and the OCPP link to each charger.
+
+- A **station** has one or more **EVSEs**; each EVSE has one or more **connectors**.
+- Every OCPP frame and every configuration snapshot is kept against its station.
+- A customer can **reserve** a connector for a time window (F-C4).
+
+@vi-name Trạm sạc
+@vi Mạng lưới trạm sạc của G3 và kết nối OCPP tới từng trụ sạc.
+- Một **trạm** có một hoặc nhiều **EVSE**; mỗi EVSE có một hoặc nhiều **súng sạc (connector)**.
+- Mọi bản tin OCPP và mọi bản chụp cấu hình đều được lưu theo trạm.
+- Khách hàng có thể **đặt chỗ** một súng sạc trong một khung giờ (F-C4).
+'''
+}
+
+// ===========================================================================
+// charging_sessions: session lifecycle, events, measurements (F-B2)
+// ===========================================================================
+
+Table charging_sessions {
+  session_id uuid [pk, note: 'Internal ID of the charging session. @vi Mã nội bộ của phiên sạc. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  station_id uuid [not null, note: 'Station where the session happens. @vi Trạm diễn ra phiên sạc. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  evse_id uuid [not null, note: 'EVSE used. @vi EVSE được dùng. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
+  connector_id uuid [not null, note: 'Connector (gun) used. @vi Súng sạc được dùng. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  account_id uuid [note: '@planned D4 D5: Customer account charged for the session. @vi Tài khoản khách hàng bị tính tiền cho phiên sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  vehicle_id uuid [note: '@planned D4: Vehicle that was charged. @vi Xe được sạc. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  credential_id uuid [note: '@planned D4: Credential that started the session, resolved from id_tag. @vi Phương thức xác thực đã bắt đầu phiên, suy ra từ id_tag. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
+  ocpp_transaction_id varchar(255) [not null, note: 'Transaction ID used with the charger, unique per station. @vi Mã giao dịch dùng với trụ sạc, duy nhất trong trạm. @example 1042']
+  status chargingsessionstatus [not null, note: 'Whether the session is still running. @vi Phiên sạc còn đang chạy hay đã xong. @example completed']
+  started_at timestamptz [not null, note: 'When charging started. @vi Thời điểm bắt đầu sạc. @example 2026-09-15T08:30:00Z']
+  ended_at timestamptz [note: 'When charging ended; NULL while active. @vi Thời điểm kết thúc sạc; NULL khi đang sạc. @example 2026-09-15T09:45:00Z']
+  meter_start_wh numeric(24,3) [note: 'Charger energy meter at the start, in Wh. @vi Chỉ số công tơ của trụ lúc bắt đầu (Wh). @example 1520340.000']
+  meter_end_wh numeric(24,3) [note: 'Latest accepted meter reading, in Wh (never moves backwards in time). @vi Chỉ số công tơ mới nhất được chấp nhận (Wh), không bao giờ lùi về thời gian trước. @example 1712840.000']
+  meter_end_sampled_at timestamptz [note: 'When meter_end_wh was measured. @vi Thời điểm đo meter_end_wh. @example 2026-09-15T09:44:30Z']
+  energy_delivered_wh numeric(24,3) [note: 'Energy delivered: end reading minus start reading, in Wh. @vi Điện năng đã cấp: chỉ số cuối trừ chỉ số đầu (Wh). @example 192500.000']
+  id_tag varchar(20) [note: 'Raw identifier (RFID/token) that started the session, as sent; not validated yet. @vi Mã định danh thô (RFID/token) đã bắt đầu phiên, đúng như trụ gửi; chưa được xác thực. @example 04A1B2C3D4E5F6']
+  stop_reason varchar(30) [note: 'Why the session stopped, as the charger reported it. @vi Lý do dừng sạc, theo trụ sạc báo. @example EVDisconnected']
+  meter_stop_wh numeric(24,3) [note: 'The charger\'s own closing meter reading, in Wh. @vi Chỉ số công tơ lúc kết thúc do chính trụ sạc báo (Wh). @example 1712860.000']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-15T08:30:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T09:45:00Z']
+  indexes {
+    ended_at [name: 'ix_charging_sessions_ended_at']
+    (status, updated_at) [name: 'ix_charging_sessions_status_updated']
+    (station_id, status) [name: 'ix_charging_sessions_station_status']
+    (evse_id, status) [name: 'ix_charging_sessions_evse_status']
+    (connector_id, status) [name: 'ix_charging_sessions_connector_status']
+    started_at [name: 'ix_charging_sessions_started_at']
+    (station_id, ocpp_transaction_id) [unique, name: 'uq_charging_sessions_station_transaction']
+  }
+  Note: '''@status built @owner two-party @features F-B2,F-C5
+One charge on one connector, from start to stop.
+@vi-name Phiên sạc
+@vi Một lần sạc trên một súng sạc, từ lúc bắt đầu đến lúc kết thúc.'''
+}
+
+Table charging_session_events {
+  event_id uuid [pk, note: 'Internal ID of the event. @vi Mã nội bộ của sự kiện. @example 0000000a-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  event_occurred_at timestamptz [pk, note: 'When the event happened; hypertable time column. @vi Thời điểm xảy ra sự kiện; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
+  session_id uuid [not null, note: 'Session the event belongs to. @vi Phiên sạc chứa sự kiện. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  event_type chargingsessioneventtype [not null, note: 'Lifecycle step the event represents. @vi Bước trong vòng đời phiên sạc mà sự kiện thể hiện. @example Started']
+  seq_no integer [note: 'OCPP\'s per-transaction sequence number; NULL if not sent. @vi Số thứ tự theo giao dịch của OCPP; NULL nếu trụ không gửi. @example 0']
+  indexes {
+    (session_id, event_occurred_at, event_id) [name: 'ix_charging_session_events_session_time']
+  }
+  Note: '''@status built @owner two-party @features F-B2 @hypertable event_occurred_at
+Each Started / Updated / Ended event of a session.
+@vi-name Sự kiện phiên sạc
+@vi Từng sự kiện Bắt đầu / Cập nhật / Kết thúc của một phiên sạc.'''
+}
+
+Table charging_session_measurements {
+  measurement_id uuid [pk, note: 'Internal ID of the measurement. @vi Mã nội bộ của số đo. @example 0000000b-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  sampled_at timestamptz [pk, note: 'When the value was measured; hypertable time column. @vi Thời điểm đo; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:45:00Z']
+  session_id uuid [not null, note: 'Session the measurement belongs to. @vi Phiên sạc chứa số đo. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  measurand varchar(60) [not null, note: 'What was measured, as the OCPP measurand name. @vi Đại lượng được đo, theo tên measurand của OCPP. @example Energy.Active.Import.Register']
+  value numeric(24,6) [not null, note: 'Measured value; energy is always stored in Wh, other measurands in unit. @vi Giá trị đo; điện năng luôn lưu bằng Wh, các đại lượng khác theo đơn vị ở cột unit. @example 1568340.000000']
+  unit varchar(20) [note: 'Unit of value. @vi Đơn vị của giá trị. @example Wh']
+  context varchar(30) [note: 'Why the charger sent the reading. @vi Lý do trụ sạc gửi số đo. @example Sample.Periodic']
+  phase varchar(10) [note: 'Electrical phase the value refers to; NULL for DC. @vi Pha điện của giá trị; NULL với sạc DC. @example NULL']
+  location varchar(20) [note: 'Where it was measured. @vi Vị trí đo. @example Outlet']
+  indexes {
+    (session_id, measurand, sampled_at) [name: 'ix_charging_measurements_session_measurand_time']
+  }
+  Note: '''@status built @owner two-party @features F-B2 @hypertable sampled_at
+Every meter value a charger reports during a session (energy, power, SoC ...).
+@vi-name Số đo phiên sạc
+@vi Mọi giá trị đo trụ sạc gửi trong phiên (điện năng, công suất, SOC...).'''
+}
+
+Ref: charging_sessions.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_sessions.evse_id > charging_evses.evse_id [delete: restrict]
+Ref: charging_sessions.connector_id > charging_connectors.connector_id [delete: restrict]
+Ref: charging_sessions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: charging_sessions.credential_id > charging_credentials.credential_id [delete: restrict]
+Ref: charging_session_events.session_id > charging_sessions.session_id [delete: restrict]
+Ref: charging_session_measurements.session_id > charging_sessions.session_id [delete: restrict]
+
+TableGroup charging_sessions {
+  charging_sessions
+  charging_session_events
+  charging_session_measurements
+  Note: '''
+What happened during each charge: events, meter readings, energy delivered.
+
+- A **session** takes place on one connector of one G3 station.
+- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. The planned `credential_id` → `account_id` link closes this (D4), and is what billing (F-H1/F-H3) and reconciliation (NF-10) need.
+- A session has many **events** and many **measurements**.
+
+@vi-name Phiên sạc
+@vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
+- Một **phiên sạc** diễn ra trên một súng sạc của một trạm G3.
+- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Liên kết `credential_id` → `account_id` sẽ khắc phục điều này (D4); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
+- Một phiên sạc có nhiều **sự kiện** và nhiều **số đo**.
+'''
+}
+
+// ===========================================================================
+// notifications: operator-facing alerts (F-A2, F-F3)
+// ===========================================================================
+
+Table notifications {
+  notification_id bigint [pk, increment, note: 'Auto-increasing ID; also the polling cursor (after_id). @vi Mã tự tăng; cũng là con trỏ khi truy vấn thông báo mới (after_id). @example 5821']
+  account_id uuid [note: '@planned D1: Customer account that should see the notification. @vi Tài khoản khách hàng được xem thông báo. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  notification_type notificationtype [not null, note: 'Kind of event that raised it. @vi Loại sự kiện đã phát sinh thông báo. @example BATTERY_ALERT']
+  severity notificationseverity [not null, note: 'How urgent it is, independent of type. @vi Mức độ khẩn cấp, độc lập với loại thông báo. @example WARNING']
+  vehicle_id uuid [note: 'Vehicle it is about; NULL for non-vehicle notifications. @vi Xe mà thông báo nói tới; NULL với thông báo không liên quan xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  title varchar(200) [not null, note: 'Short summary. @vi Tóm tắt ngắn. @example Pin còn 20%']
+  body varchar(500) [not null, note: 'Longer description. @vi Mô tả chi tiết. @example Xe 51D-123.45 còn 20% pin. Trạm gần nhất: Trạm sạc G3 Bình Dương (8.4 km).']
+  payload jsonb [not null, note: 'Type-specific details as JSON. @vi Chi tiết riêng theo loại thông báo, dạng JSON. @example {"threshold": 20, "soc": 19.8, "nearest_station_id": "4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88", "distance_m": 8400}']
+  created_at timestamptz [not null, note: 'When the notification was raised. @vi Thời điểm phát sinh thông báo. @example 2026-09-15T08:30:00Z']
+  read_at timestamptz [note: 'When an operator marked it read; NULL if unread. @vi Thời điểm người vận hành đánh dấu đã đọc; NULL nếu chưa đọc. @example NULL']
+  indexes {
+    vehicle_id [name: 'ix_notifications_vehicle_id']
+  }
+  Note: '''@status built @owner customer @features F-A2,F-A3,F-A4,F-J1,F-J3
+One alert (battery, anomaly, SOH, device offline ...). One generic table;
+each alert type is an enum value plus a payload shape.
+@vi-name Thông báo
+@vi Một cảnh báo (pin, bất thường, SOH, thiết bị mất kết nối...). Một bảng chung; mỗi loại cảnh báo là một giá trị enum và một cấu trúc payload.'''
+}
+
+Ref: notifications.account_id > customer_accounts.account_id [delete: restrict]
+Ref: notifications.vehicle_id > vehicles.vehicle_id [delete: cascade]
+
+TableGroup notifications {
+  notifications
+  Note: '''
+Alerts raised by other domains, stored for operators to poll.
+
+- A **notification** is usually about one vehicle.
+- It is not yet scoped to a recipient; under D1 it would belong to the vehicle's account.
+
+@vi-name Thông báo & cảnh báo
+@vi Cảnh báo do các miền khác phát sinh, được lưu để người vận hành truy vấn.
+- Một **thông báo** thường nói về một xe.
+- Hiện chưa gắn với người nhận; theo D1, thông báo sẽ thuộc tài khoản sở hữu xe.
+'''
+}
+
+// ===========================================================================
+// support: tickets, SOS, repair partners, maintenance (F-I1 ... F-I4)
+// ===========================================================================
+
+Table support_cases {
+  case_id uuid [pk, note: 'Internal ID of the case. @vi Mã nội bộ của ca hỗ trợ. @example 0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [note: '@planned D1: Customer account the case belongs to. @vi Tài khoản khách hàng của ca hỗ trợ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  case_type supportcasetype [not null, note: 'Ordinary ticket or SOS. @vi Yêu cầu thường hay SOS. @example SOS']
+  category supportcasecategory [not null, note: 'Business category of the problem. @vi Nhóm vấn đề theo nghiệp vụ. @example BREAKDOWN']
+  channel supportcasechannel [not null, note: 'Where the case came in. @vi Kênh tiếp nhận ca. @example IN_APP']
+  status supportcasestatus [not null, note: 'Current lifecycle status. @vi Trạng thái hiện tại trong vòng đời ca. @example ACKNOWLEDGED']
+  vehicle_id uuid [note: 'Vehicle concerned, resolved from the VIN; NULL if not resolved. @vi Xe liên quan, suy ra từ VIN; NULL nếu không xác định được. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  driver_id uuid [note: 'Driver who raised the case; NULL if not supplied. @vi Tài xế tạo ca; NULL nếu không cung cấp. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  assigned_partner_id uuid [note: '@planned: Repair/rescue partner the case was dispatched to. @vi Đối tác sửa chữa/cứu hộ được điều phối xử lý ca. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
+  vin varchar(17) [note: 'VIN as sent with the case, kept even if the vehicle changes later. @vi VIN gửi kèm ca, được giữ nguyên kể cả khi xe thay đổi sau này. @example LZGJLGR4XNX000123']
+  error_code varchar(50) [note: 'Vehicle fault code active when the case was created, as sent. @vi Mã lỗi của xe tại thời điểm tạo ca, đúng như gửi lên. @example P0A80']
+  location "geography(POINT,4326)" [note: 'GPS position when the case was created. Snapshot only; no spatial index. @vi Vị trí GPS khi tạo ca. Chỉ là ảnh chụp; không có chỉ mục không gian. @example POINT(106.7009 10.7769)']
+  subject varchar(200) [note: 'Short subject; auto-filled for SOS. @vi Tiêu đề ngắn; tự điền với SOS. @example SOS: xe dừng giữa đường']
+  description text [note: 'Free-text details. @vi Mô tả chi tiết dạng văn bản tự do. @example Xe báo lỗi pin và không khởi động được.']
+  sla_response_minutes integer [not null, note: 'Response SLA in force when the case was created, in minutes. @vi SLA phản hồi (phút) có hiệu lực lúc tạo ca. @example 5']
+  response_due_at timestamptz [not null, note: 'Deadline for the first response: creation time + SLA. @vi Hạn phản hồi đầu tiên: thời điểm tạo + SLA. @example 2026-09-15T08:35:00Z']
+  first_responded_at timestamptz [note: 'When the case first left OPEN; NULL while waiting. @vi Thời điểm ca rời trạng thái OPEN lần đầu; NULL khi đang chờ. @example 2026-09-15T08:33:10Z']
+  resolved_at timestamptz [note: 'When the case was resolved; NULL until then. @vi Thời điểm ca được giải quyết; NULL cho tới lúc đó. @example NULL']
+  closed_at timestamptz [note: 'When the case was closed; NULL until then. @vi Thời điểm ca được đóng; NULL cho tới lúc đó. @example NULL']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-15T08:30:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T08:33:10Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    (vehicle_id, created_at) [name: 'ix_support_cases_vehicle_created_at']
+    driver_id [name: 'ix_support_cases_driver_id']
+    response_due_at [name: 'ix_support_cases_response_due_pending', note: 'WHERE first_responded_at IS NULL']
+    deleted_at [name: 'ix_support_cases_deleted_at']
+    status [name: 'ix_support_cases_status']
+    vehicle_id [name: 'ix_support_cases_vehicle_id']
+    (status, created_at) [name: 'ix_support_cases_status_created_at']
+  }
+  Note: '''@status built @owner customer @features F-I1,F-I2
+One support request: a ticket or an SOS, with its SLA timeline.
+@vi-name Ca hỗ trợ
+@vi Một yêu cầu hỗ trợ: yêu cầu thường hoặc SOS, kèm mốc thời gian SLA.'''
+}
+
+Table repair_partners {
+  partner_id uuid [pk, note: 'Internal ID of the partner. @vi Mã nội bộ của đối tác. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
+  name varchar(200) [not null, note: 'Partner name. @vi Tên đối tác. @example Garage Tín Phát - Thủ Đức']
+  partner_type varchar(30) [not null, note: 'Kind of partner. Values: G3_WORKSHOP | DEALER | THIRD_PARTY (feature-list item 9). @vi Loại đối tác. Giá trị: G3_WORKSHOP | DEALER | THIRD_PARTY (mục 9 của feature-list). @example THIRD_PARTY']
+  location "geography(POINT,4326)" [note: 'Base location (WGS84 point, longitude first). @vi Vị trí cơ sở (điểm WGS84, kinh độ trước). @example POINT(106.7700 10.8500)']
+  phone_number varchar(20) [note: 'Contact number for dispatch. @vi Số liên hệ để điều phối. @example +842838123456']
+  status varchar(20) [not null, note: 'Whether the partner accepts dispatches. @vi Đối tác có nhận điều phối không. @example ACTIVE']
+  Note: '''@status planned @owner g3 @features F-I4,F-I3
+A workshop or rescue partner that support can dispatch to.
+@vi-name Đối tác sửa chữa & cứu hộ
+@vi Một xưởng hoặc đơn vị cứu hộ mà CSKH có thể điều phối tới.'''
+}
+
+Table maintenance_bookings {
+  booking_id uuid [pk, note: 'Internal ID of the booking. @vi Mã nội bộ của lịch hẹn. @example 0000000d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account that booked. @vi Tài khoản khách hàng đặt lịch. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  vehicle_id uuid [not null, note: 'Vehicle to be serviced. @vi Xe cần bảo dưỡng. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  partner_id uuid [not null, note: 'Workshop booked. @vi Xưởng được đặt. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
+  scheduled_at timestamptz [not null, note: 'Appointment time. @vi Thời gian hẹn. @example 2026-09-20T01:00:00Z']
+  status varchar(20) [not null, note: 'Booking status. Values: REQUESTED | CONFIRMED | DONE | CANCELLED. @vi Trạng thái lịch hẹn. Giá trị: REQUESTED | CONFIRMED | DONE | CANCELLED. @example CONFIRMED']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-10T07:15:00Z']
+  Note: '''@status planned @owner customer @features F-I3
+A maintenance appointment for a vehicle at a partner workshop.
+@vi-name Lịch bảo dưỡng
+@vi Một lịch hẹn bảo dưỡng xe tại xưởng đối tác.'''
+}
+
+Ref: support_cases.account_id > customer_accounts.account_id [delete: restrict]
+Ref: support_cases.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: support_cases.driver_id > drivers.driver_id [delete: restrict]
+Ref: support_cases.assigned_partner_id > repair_partners.partner_id [delete: restrict]
+Ref: maintenance_bookings.account_id > customer_accounts.account_id [delete: restrict]
+Ref: maintenance_bookings.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: maintenance_bookings.partner_id > repair_partners.partner_id [delete: restrict]
+
+TableGroup support {
+  support_cases
+  repair_partners
+  maintenance_bookings
+  Note: '''
+Customer support: tickets, SOS, rescue dispatch, and maintenance bookings.
+
+- A **support case** (ticket or SOS) is about a vehicle and/or a driver of one account.
+- Support can dispatch a case to a **repair partner** (F-I4).
+- A customer books **maintenance** for a vehicle at a partner (F-I3).
+
+@vi-name CSKH & cứu hộ
+@vi Chăm sóc khách hàng: yêu cầu hỗ trợ, SOS, điều phối cứu hộ và đặt lịch bảo dưỡng.
+- Một **ca hỗ trợ** (yêu cầu thường hoặc SOS) liên quan đến một xe và/hoặc một tài xế của một tài khoản.
+- CSKH có thể điều phối ca tới một **đối tác sửa chữa** (F-I4).
+- Khách hàng **đặt lịch bảo dưỡng** cho xe tại một đối tác (F-I3).
+'''
+}
+
+// ===========================================================================
+// policy: warranty-linked charging policies and violations (F-B1, F-B3)
+// ===========================================================================
+
+Table charging_policies {
+  policy_id uuid [pk, note: 'Internal ID of the policy. @vi Mã nội bộ của chính sách. @example b8e5a2d9-3c6f-4b1e-a9d7-5f2c0e8b1aee']
+  policy_code varchar(50) [not null, unique, note: 'Stable code, unique. @vi Mã cố định, duy nhất. @example WARRANTY-STD-2026']
+  name varchar(100) [not null, note: 'Policy name. @vi Tên chính sách. @example Chính sách sạc bảo hành tiêu chuẩn']
+  status varchar(20) [not null, note: 'Whether the policy is in use. @vi Chính sách có đang được dùng không. @example ACTIVE']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  Note: '''@status planned @owner g3 @features F-B1
+A named warranty charging policy defined by G3 Mobility.
+@vi-name Chính sách sạc
+@vi Một chính sách sạc bảo hành có tên do G3 Mobility định nghĩa.'''
+}
+
+Table charging_policy_versions {
+  version_id uuid [pk, note: 'Internal ID of this version. @vi Mã nội bộ của phiên bản. @example c7d4f1a8-2b5e-4c9d-8f6a-1e3b0d7c4aff']
+  policy_id uuid [not null, note: 'Policy this version belongs to. @vi Chính sách chứa phiên bản. @example b8e5a2d9-3c6f-4b1e-a9d7-5f2c0e8b1aee']
+  version_no integer [not null, note: 'Version number within the policy, starting at 1. @vi Số phiên bản trong chính sách, bắt đầu từ 1. @example 3']
+  soc_min_percent numeric(5,2) [note: 'Lowest SOC allowed before charging, in %. @vi SOC thấp nhất được phép trước khi sạc (%). @example 20.00']
+  soc_max_percent numeric(5,2) [note: 'Highest SOC to charge to, in %. @vi SOC cao nhất được sạc tới (%). @example 90.00']
+  allowed_window_start time [note: 'Start of the allowed daily charging window (local time). @vi Bắt đầu khung giờ sạc cho phép trong ngày (giờ địa phương). @example 22:00']
+  allowed_window_end time [note: 'End of the allowed daily charging window (local time). @vi Kết thúc khung giờ sạc cho phép trong ngày (giờ địa phương). @example 06:00']
+  max_power_kw numeric(6,2) [note: 'Maximum charging power allowed, in kW. @vi Công suất sạc tối đa được phép (kW). @example 240.00']
+  effective_from timestamptz [not null, note: 'When this version takes effect. @vi Thời điểm phiên bản có hiệu lực. @example 2026-10-01T00:00:00Z']
+  created_by uuid [not null, note: 'G3 user who published the version. @vi Người dùng G3 đã ban hành phiên bản. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  indexes {
+    (policy_id, version_no) [unique]
+  }
+  Note: '''@status planned @owner g3 @features F-B1
+One immutable version of a policy's rules. Every version is kept for audit.
+@vi-name Phiên bản chính sách sạc
+@vi Một phiên bản quy tắc không sửa được của chính sách. Mọi phiên bản đều được giữ để kiểm toán.'''
+}
+
+Table charging_policy_assignments {
+  assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần áp dụng. @example 0000000e-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account the assignment belongs to. @vi Tài khoản khách hàng của lần áp dụng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  policy_id uuid [not null, note: 'Policy applied. @vi Chính sách được áp dụng. @example b8e5a2d9-3c6f-4b1e-a9d7-5f2c0e8b1aee']
+  vehicle_id uuid [note: 'Vehicle it applies to, if scoped to one vehicle. Exactly one of vehicle_id / fleet_id / vehicle_model is set. @vi Xe được áp dụng, nếu phạm vi là một xe. Chỉ đúng một trong vehicle_id / fleet_id / vehicle_model có giá trị. @example NULL']
+  fleet_id uuid [note: 'Fleet it applies to, if scoped to a fleet. @vi Đội xe được áp dụng, nếu phạm vi là một đội. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  vehicle_model varchar(50) [note: 'Model line it applies to, if scoped to a model. @vi Dòng xe được áp dụng, nếu phạm vi là một dòng xe. @example NULL']
+  assigned_at timestamptz [not null, note: 'When the assignment began. @vi Thời điểm bắt đầu áp dụng. @example 2026-10-01T00:00:00Z']
+  unassigned_at timestamptz [note: 'When it ended; NULL while in force. @vi Thời điểm kết thúc; NULL khi còn hiệu lực. @example NULL']
+  Note: '''@status planned @owner customer @features F-B1
+Which policy applies to a vehicle, a fleet, or a vehicle model.
+@vi-name Áp dụng chính sách sạc
+@vi Chính sách nào áp dụng cho một xe, một đội xe hay một dòng xe.'''
+}
+
+Table policy_violations {
+  violation_id uuid [pk, note: 'Internal ID of the violation. @vi Mã nội bộ của vi phạm. @example 0000000f-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account of the vehicle. @vi Tài khoản khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  session_id uuid [not null, note: 'Charging session that broke the policy. @vi Phiên sạc đã vi phạm chính sách. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  vehicle_id uuid [not null, note: 'Vehicle concerned. @vi Xe liên quan. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  policy_version_id uuid [not null, note: 'Exact policy version that was broken. @vi Đúng phiên bản chính sách bị vi phạm. @example c7d4f1a8-2b5e-4c9d-8f6a-1e3b0d7c4aff']
+  violation_type varchar(30) [not null, note: 'Which rule was broken. @vi Quy tắc nào bị vi phạm. @example SOC_ABOVE_MAX']
+  detected_at timestamptz [not null, note: 'When the violation was detected. @vi Thời điểm phát hiện vi phạm. @example 2026-09-15T09:45:00Z']
+  evidence jsonb [not null, note: 'Snapshot of the data that proves it, as JSON. @vi Ảnh chụp dữ liệu chứng minh vi phạm, dạng JSON. @example {"soc_end": 98.5, "soc_max": 90, "meter_stop_wh": 1712860}']
+  Note: '''@status planned @owner customer @features F-B3,F-B6
+A charging session that broke a policy, with evidence. Consequences are
+still an open business question (feature-list item 3).
+@vi-name Vi phạm chính sách sạc
+@vi Một phiên sạc vi phạm chính sách, kèm bằng chứng. Hệ quả của vi phạm vẫn là câu hỏi kinh doanh còn mở (mục 3 của feature-list).'''
+}
+
+Ref: charging_policy_versions.policy_id > charging_policies.policy_id [delete: restrict]
+Ref: charging_policy_versions.created_by > users.user_id [delete: restrict]
+Ref: charging_policy_assignments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_policy_assignments.policy_id > charging_policies.policy_id [delete: restrict]
+Ref: charging_policy_assignments.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: charging_policy_assignments.fleet_id > fleets.fleet_id [delete: restrict]
+Ref: policy_violations.account_id > customer_accounts.account_id [delete: restrict]
+Ref: policy_violations.session_id > charging_sessions.session_id [delete: restrict]
+Ref: policy_violations.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: policy_violations.policy_version_id > charging_policy_versions.version_id [delete: restrict]
+
+TableGroup policy {
+  charging_policies
+  charging_policy_versions
+  charging_policy_assignments
+  policy_violations
+  Note: '''
+Warranty-linked charging rules and the violations detected against them.
+
+- A **policy** has many immutable **versions**; the values are G3 Mobility's decision.
+- A policy is **assigned** to a vehicle, a fleet, or a vehicle model.
+- A **violation** links one charging session to the policy version it broke. This needs the session → vehicle link (D4).
+
+@vi-name Chính sách sạc (bảo hành)
+@vi Quy tắc sạc gắn với bảo hành và các vi phạm được phát hiện.
+- Một **chính sách** có nhiều **phiên bản** không sửa được; giá trị cụ thể do G3 Mobility quyết định.
+- Chính sách được **áp dụng** cho một xe, một đội xe hoặc một dòng xe.
+- Một **vi phạm** gắn một phiên sạc với đúng phiên bản chính sách bị vi phạm. Điều này cần liên kết phiên sạc → xe (D4).
+'''
+}
+
+// ===========================================================================
+// billing: tariffs, payments, wallets, invoices, subscriptions (F-H1 ... F-H4, F-C8)
+// ===========================================================================
+
+Table tariffs {
+  tariff_id uuid [pk, note: 'Internal ID of the tariff. @vi Mã nội bộ của biểu giá. @example f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10']
+  tariff_code varchar(50) [not null, note: 'Tariff code shown on receipts. @vi Mã biểu giá in trên biên nhận. @example TOU-2026-Q4']
+  station_id uuid [note: 'Station it applies to; NULL for the whole network. @vi Trạm áp dụng; NULL nếu áp dụng toàn mạng. @example NULL']
+  price_per_kwh numeric(12,2) [not null, note: 'Base energy price per kWh, in the tariff currency. @vi Đơn giá điện cơ bản cho mỗi kWh, theo đơn vị tiền tệ của biểu giá. @example 4500.00']
+  currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  schedule jsonb [note: 'Time-of-day price periods as JSON. @vi Các khung giờ giá theo thời điểm trong ngày, dạng JSON. @example [{"from": "22:00", "to": "04:00", "price_per_kwh": 3200}]']
+  valid_from timestamptz [not null, note: 'When the tariff takes effect. @vi Thời điểm biểu giá có hiệu lực. @example 2026-10-01T00:00:00Z']
+  valid_to timestamptz [note: 'When it stops applying; NULL if open-ended. @vi Thời điểm hết hiệu lực; NULL nếu không thời hạn. @example NULL']
+  Note: '''@status planned @owner g3 @features F-C8,F-H1
+The price of energy. Who owns tariffs (G3 Energy or G3 Network) is
+feature-list item 5.
+@vi-name Biểu giá điện
+@vi Giá điện. Ai sở hữu biểu giá (G3 Energy hay G3 Network) là mục 5 của feature-list.'''
+}
+
+Table payments {
+  payment_id uuid [pk, note: 'Internal ID of the payment. @vi Mã nội bộ của thanh toán. @example 3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21']
+  account_id uuid [not null, note: 'Customer account that paid. @vi Tài khoản khách hàng đã thanh toán. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  session_id uuid [note: 'Charging session paid for; NULL for other payments. @vi Phiên sạc được thanh toán; NULL với các khoản khác. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  amount numeric(14,2) [not null, note: 'Amount paid. @vi Số tiền đã thanh toán. @example 866250.00']
+  currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  method varchar(20) [not null, note: 'Payment method. Values: VNPAY | MOMO | WALLET. @vi Phương thức thanh toán. Giá trị: VNPAY | MOMO | WALLET. @example VNPAY']
+  gateway_reference varchar(100) [note: 'Reference/token from the payment gateway (never card data). (NF-05) @vi Mã tham chiếu/token của cổng thanh toán (không bao giờ lưu dữ liệu thẻ) (NF-05). @example VNP14592873']
+  status varchar(20) [not null, note: 'Payment status. @vi Trạng thái thanh toán. @example SUCCEEDED']
+  paid_at timestamptz [note: 'When the gateway confirmed the payment; NULL until then. @vi Thời điểm cổng thanh toán xác nhận; NULL cho tới lúc đó. @example 2026-09-15T09:46:12Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-15T09:45:00Z']
+  Note: '''@status planned @owner customer @features F-H1
+One payment through a gateway or wallet, usually for one session.
+@vi-name Thanh toán
+@vi Một lần thanh toán qua cổng thanh toán hoặc ví, thường cho một phiên sạc.'''
+}
+
+Table wallets {
+  wallet_id uuid [pk, note: 'Internal ID of the wallet. @vi Mã nội bộ của ví. @example 5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32']
+  account_id uuid [not null, note: 'Customer account the wallet belongs to. @vi Tài khoản khách hàng sở hữu ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [note: 'Driver it belongs to; NULL for the account-level wallet. (decision D5) @vi Tài xế sở hữu ví; NULL với ví cấp tài khoản (quyết định D5). @example NULL']
+  balance numeric(14,2) [not null, note: 'Current balance; must equal the sum of its transactions. @vi Số dư hiện tại; phải bằng tổng các giao dịch của ví. @example 12500000.00']
+  currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  status varchar(20) [not null, note: 'Whether the wallet can be used. @vi Ví có dùng được không. @example ACTIVE']
+  Note: '''@status planned @owner customer @features F-H2
+A prepaid balance for a driver or for a whole account.
+@vi-name Ví
+@vi Số dư trả trước của một tài xế hoặc của cả tài khoản.'''
+}
+
+Table wallet_transactions {
+  transaction_id uuid [pk, note: 'Internal ID of the transaction. @vi Mã nội bộ của giao dịch. @example 00000010-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account of the wallet. @vi Tài khoản khách hàng của ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  wallet_id uuid [not null, note: 'Wallet affected. @vi Ví bị ảnh hưởng. @example 5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32']
+  transaction_type varchar(20) [not null, note: 'Kind of money movement. Values: TOP_UP | CHARGE | WITHDRAW | REFUND. @vi Loại biến động tiền. Giá trị: TOP_UP | CHARGE | WITHDRAW | REFUND. @example CHARGE']
+  amount numeric(14,2) [not null, note: 'Signed amount: positive adds money, negative removes it. @vi Số tiền có dấu: dương là cộng tiền, âm là trừ tiền. @example -866250.00']
+  balance_after numeric(14,2) [not null, note: 'Wallet balance right after this transaction. @vi Số dư ví ngay sau giao dịch. @example 11633750.00']
+  session_id uuid [note: 'Charging session paid, for CHARGE transactions. @vi Phiên sạc được trả tiền, với giao dịch CHARGE. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  payment_id uuid [note: 'Gateway payment behind a top-up, if any. @vi Thanh toán qua cổng đứng sau một lần nạp tiền, nếu có. @example NULL']
+  occurred_at timestamptz [not null, note: 'When the transaction happened. @vi Thời điểm phát sinh giao dịch. @example 2026-09-15T09:46:12Z']
+  Note: '''@status planned @owner customer @features F-H2
+Append-only movement of money in or out of a wallet.
+@vi-name Giao dịch ví
+@vi Biến động tiền vào/ra khỏi ví, chỉ ghi thêm.'''
+}
+
+Table invoices {
+  invoice_id uuid [pk, note: 'Internal ID of the invoice. @vi Mã nội bộ của hóa đơn. @example 7e5c2a9f-4b1d-4e3a-9c8f-0d6b1e4a7c43']
+  account_id uuid [not null, note: 'Customer account invoiced. @vi Tài khoản khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  invoice_type varchar(20) [not null, note: 'Per-session retail invoice or monthly fleet invoice. Values: RETAIL | FLEET_MONTHLY. @vi Hóa đơn lẻ theo phiên hay hóa đơn tổng hợp tháng cho đội xe. Giá trị: RETAIL | FLEET_MONTHLY. @example FLEET_MONTHLY']
+  period_start date [note: 'First day covered; NULL for a single-session invoice. @vi Ngày đầu kỳ; NULL với hóa đơn một phiên. @example 2026-09-01']
+  period_end date [note: 'Last day covered; NULL for a single-session invoice. @vi Ngày cuối kỳ; NULL với hóa đơn một phiên. @example 2026-09-30']
+  total_amount numeric(14,2) [not null, note: 'Invoice total including tax. @vi Tổng tiền hóa đơn, gồm thuế. @example 256800000.00']
+  currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  einvoice_number varchar(50) [note: 'Number issued by the e-invoice provider; NULL until issued. @vi Số hóa đơn do nhà cung cấp hóa đơn điện tử cấp; NULL trước khi phát hành. @example C26TMP0001234']
+  status varchar(20) [not null, note: 'Invoice status; ISSUED invoices are never edited. Values: DRAFT | ISSUED | ADJUSTED | CANCELLED. @vi Trạng thái hóa đơn; hóa đơn đã ISSUED không bao giờ bị sửa. Giá trị: DRAFT | ISSUED | ADJUSTED | CANCELLED. @example ISSUED']
+  issued_at timestamptz [note: 'When the e-invoice was issued; NULL until then. @vi Thời điểm phát hành hóa đơn điện tử; NULL trước khi phát hành. @example 2026-10-01T03:00:00Z']
+  Note: '''@status planned @owner customer @features F-H3,F-H4
+A legal e-invoice. Once ISSUED it is never edited, only adjusted or cancelled
+by a new invoice.
+@vi-name Hóa đơn
+@vi Một hóa đơn điện tử hợp lệ. Khi đã PHÁT HÀNH thì không sửa, chỉ điều chỉnh hoặc hủy bằng hóa đơn mới.'''
+}
+
+Table invoice_lines {
+  line_id uuid [pk, note: 'Internal ID of the line. @vi Mã nội bộ của dòng hóa đơn. @example 00000011-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  invoice_id uuid [not null, note: 'Invoice the line belongs to. @vi Hóa đơn chứa dòng. @example 7e5c2a9f-4b1d-4e3a-9c8f-0d6b1e4a7c43']
+  account_id uuid [not null, note: 'Customer account invoiced. @vi Tài khoản khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  session_id uuid [note: 'Charging session billed on this line, if any. @vi Phiên sạc được tính tiền ở dòng này, nếu có. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  subscription_id uuid [note: 'Subscription period billed on this line, if any. @vi Kỳ thuê bao được tính tiền ở dòng này, nếu có. @example NULL']
+  description varchar(200) [not null, note: 'Line text printed on the invoice. @vi Nội dung dòng in trên hóa đơn. @example Sạc điện 192.5 kWh - Trạm sạc G3 Bình Dương - 15/09/2026']
+  quantity numeric(14,3) [not null, note: 'Quantity billed (kWh or months). @vi Số lượng tính tiền (kWh hoặc số tháng). @example 192.500']
+  unit_price numeric(12,2) [not null, note: 'Price per unit. @vi Đơn giá. @example 4500.00']
+  amount numeric(14,2) [not null, note: 'Line amount: quantity × unit price. @vi Thành tiền: số lượng × đơn giá. @example 866250.00']
+  Note: '''@status planned @owner customer @features F-H3,F-H4
+One line of an invoice: a charging session or a subscription period.
+@vi-name Dòng hóa đơn
+@vi Một dòng của hóa đơn: một phiên sạc hoặc một kỳ thuê bao.'''
+}
+
+Table subscription_plans {
+  plan_id uuid [pk, note: 'Internal ID of the plan. @vi Mã nội bộ của gói. @example 0c9a6e3d-8f5b-4c7e-a2d1-4b3f9e6c0a65']
+  plan_code varchar(50) [not null, unique, note: 'Stable plan code, unique. @vi Mã gói cố định, duy nhất. @example STANDARD']
+  name varchar(100) [not null, note: 'Plan name. @vi Tên gói. @example Gói Cơ bản']
+  price_per_vehicle_month numeric(12,2) [not null, note: 'Monthly price per vehicle. The price itself is still open (feature-list item 7). @vi Giá theo xe theo tháng. Mức giá cụ thể vẫn còn mở (mục 7 của feature-list). @example 500000.00']
+  currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  status varchar(20) [not null, note: 'Whether the plan can be sold. @vi Gói có đang được bán không. @example ACTIVE']
+  Note: '''@status planned @owner g3 @features F-H4
+A SaaS plan (e.g. Standard tier) priced per vehicle per month.
+@vi-name Gói dịch vụ
+@vi Một gói SaaS (ví dụ gói Cơ bản) tính giá theo xe theo tháng.'''
+}
+
+Table subscriptions {
+  subscription_id uuid [pk, note: 'Internal ID of the subscription. @vi Mã nội bộ của thuê bao. @example 9a7e4c1b-6d3f-4a5c-b0e8-2f1d7c9b3e54']
+  account_id uuid [not null, note: 'Customer account subscribed. @vi Tài khoản khách hàng đăng ký. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  plan_id uuid [not null, note: 'Plan subscribed to. @vi Gói được đăng ký. @example 0c9a6e3d-8f5b-4c7e-a2d1-4b3f9e6c0a65']
+  vehicle_id uuid [not null, note: 'Vehicle covered. @vi Xe được áp dụng. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  started_at timestamptz [not null, note: 'When the subscription started. @vi Thời điểm bắt đầu thuê bao. @example 2026-09-01T00:00:00Z']
+  ends_at timestamptz [note: 'When it ends; NULL if it renews until cancelled. @vi Thời điểm kết thúc; NULL nếu tự gia hạn cho tới khi hủy. @example NULL']
+  status varchar(20) [not null, note: 'Subscription status; OVERDUE locks paid features. Values: ACTIVE | OVERDUE | EXPIRED | CANCELLED. @vi Trạng thái thuê bao; OVERDUE sẽ khóa các tính năng trả phí. Giá trị: ACTIVE | OVERDUE | EXPIRED | CANCELLED. @example ACTIVE']
+  Note: '''@status planned @owner customer @features F-H4
+One vehicle subscribed to a plan; overdue locks features.
+@vi-name Thuê bao
+@vi Một xe đăng ký một gói; quá hạn thanh toán sẽ khóa tính năng.'''
+}
+
+Ref: tariffs.station_id > charging_stations.station_id [delete: restrict]
+Ref: payments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: payments.session_id > charging_sessions.session_id [delete: restrict]
+Ref: wallets.account_id > customer_accounts.account_id [delete: restrict]
+Ref: wallets.driver_id > drivers.driver_id [delete: restrict]
+Ref: wallet_transactions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: wallet_transactions.wallet_id > wallets.wallet_id [delete: restrict]
+Ref: wallet_transactions.session_id > charging_sessions.session_id [delete: restrict]
+Ref: wallet_transactions.payment_id > payments.payment_id [delete: restrict]
+Ref: invoices.account_id > customer_accounts.account_id [delete: restrict]
+Ref: invoice_lines.invoice_id > invoices.invoice_id [delete: restrict]
+Ref: invoice_lines.account_id > customer_accounts.account_id [delete: restrict]
+Ref: invoice_lines.session_id > charging_sessions.session_id [delete: restrict]
+Ref: invoice_lines.subscription_id > subscriptions.subscription_id [delete: restrict]
+Ref: subscriptions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: subscriptions.plan_id > subscription_plans.plan_id [delete: restrict]
+Ref: subscriptions.vehicle_id > vehicles.vehicle_id [delete: restrict]
+
+TableGroup billing {
+  tariffs
+  payments
+  wallets
+  wallet_transactions
+  invoices
+  invoice_lines
+  subscription_plans
+  subscriptions
+  Note: '''
+Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
+
+- A **tariff** prices energy network-wide or per station, by time of day.
+- A **payment** usually settles one charging session; a **wallet** belongs to an account or one driver (D5).
+- An **invoice** belongs to one account and has **lines** for sessions or subscription periods.
+- A **subscription** puts one vehicle on one **plan**.
+- Billing a session requires knowing whose session it was (D4).
+
+@vi-name Thanh toán & hóa đơn
+@vi Tiền: giá điện, thanh toán, ví trả trước, hóa đơn điện tử và thuê bao SaaS.
+- **Biểu giá** định giá điện cho toàn mạng hoặc từng trạm, theo khung giờ.
+- Một **thanh toán** thường cho một phiên sạc; một **ví** thuộc một tài khoản hoặc một tài xế (D5).
+- Một **hóa đơn** thuộc một tài khoản và có các **dòng hóa đơn** cho phiên sạc hoặc kỳ thuê bao.
+- Một **thuê bao** đưa một xe vào một **gói dịch vụ**.
+- Muốn tính tiền một phiên sạc phải biết phiên đó của ai (D4).
+'''
+}
+
+// ===========================================================================
+// scoring: driver safety scoring (F-K1)
+// ===========================================================================
+
+Table driver_scores {
+  score_id uuid [pk, note: 'Internal ID of the score. @vi Mã nội bộ của điểm. @example 00000012-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  account_id uuid [not null, note: 'Customer account of the driver. @vi Tài khoản khách hàng của tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [not null, note: 'Driver scored. @vi Tài xế được chấm điểm. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  week_start date [not null, note: 'Monday of the scored week. @vi Thứ Hai của tuần được chấm. @example 2026-09-14']
+  score numeric(5,2) [not null, note: 'Safety score from 0 to 100. @vi Điểm an toàn từ 0 đến 100. @example 86.50']
+  breakdown jsonb [note: 'Contribution of each factor, as JSON. @vi Mức đóng góp của từng yếu tố, dạng JSON. @example {"harsh_braking": -6.0, "speeding": -4.5, "continuous_driving": -3.0}']
+  computed_at timestamptz [not null, note: 'When the score was calculated. @vi Thời điểm tính điểm. @example 2026-09-21T17:00:00Z']
+  indexes {
+    (driver_id, week_start) [unique]
+  }
+  Note: '''@status planned @owner customer @features F-K1
+A driver's weekly safety score, computed from telemetry.
+@vi-name Điểm tài xế
+@vi Điểm an toàn hằng tuần của tài xế, tính từ dữ liệu vận hành xe.'''
+}
+
+Ref: driver_scores.account_id > customer_accounts.account_id [delete: restrict]
+Ref: driver_scores.driver_id > drivers.driver_id [delete: restrict]
+
+TableGroup scoring {
+  driver_scores
+  Note: '''
+Driver safety scoring from driving behaviour.
+
+- A driver has one **score** per week, computed from telemetry by the vehicle they drove.
+
+@vi-name Chấm điểm tài xế
+@vi Chấm điểm an toàn cho tài xế từ hành vi lái xe.
+- Mỗi tuần, mỗi tài xế có một **điểm**, tính từ dữ liệu vận hành của xe họ lái.
+'''
+}
+
+// ===========================================================================
+// unassigned: features with no domain decided yet
+// ===========================================================================
+
+Table promotion_campaigns {
+  campaign_id uuid [pk, note: 'Internal ID of the campaign. @vi Mã nội bộ của chiến dịch. @example 00000013-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  name varchar(200) [not null, note: 'Campaign name. @vi Tên chiến dịch. @example Giảm 10% sạc đêm tháng 10']
+  starts_at timestamptz [not null, note: 'When the campaign starts. @vi Thời điểm bắt đầu. @example 2026-10-01T00:00:00Z']
+  ends_at timestamptz [note: 'When it ends; NULL if open-ended. @vi Thời điểm kết thúc; NULL nếu không thời hạn. @example 2026-10-31T16:59:59Z']
+  target jsonb [note: 'Who receives it, as JSON criteria. @vi Đối tượng nhận, dạng tiêu chí JSON. @example {"vehicle_models": ["EVT-400"], "accounts": "all"}']
+  status varchar(20) [not null, note: 'Campaign status. @vi Trạng thái chiến dịch. @example SCHEDULED']
+  Note: '''@status planned @owner g3 @features F-F4
+A maintenance reminder or promotion campaign.
+@vi-name Chiến dịch khuyến mãi
+@vi Một chiến dịch nhắc bảo dưỡng hoặc khuyến mãi.'''
+}
+
+Table trips {
+  trip_id uuid [pk, note: 'Internal ID of the trip. @vi Mã nội bộ của chuyến đi. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
+  account_id uuid [not null, note: 'Customer account of the vehicle. @vi Tài khoản khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  vehicle_id uuid [not null, note: 'Vehicle that made the trip. @vi Xe thực hiện chuyến. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  driver_id uuid [note: 'Driver on the trip, if known. @vi Tài xế của chuyến, nếu biết. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  started_at timestamptz [not null, note: 'When the trip started. @vi Thời điểm bắt đầu chuyến. @example 2026-09-15T00:30:00Z']
+  ended_at timestamptz [note: 'When it ended; NULL while under way. @vi Thời điểm kết thúc; NULL khi đang chạy. @example 2026-09-15T06:10:00Z']
+  declared_load_status varchar(20) [note: 'Load status the driver declared. Values: LOADED | EMPTY. @vi Trạng thái tải do tài xế khai báo. Giá trị: LOADED | EMPTY. @example LOADED']
+  inferred_load_status varchar(20) [note: 'Load status inferred from telemetry. Values: LOADED | EMPTY. @vi Trạng thái tải suy ra từ dữ liệu vận hành. Giá trị: LOADED | EMPTY. @example LOADED']
+  Note: '''@status planned @owner customer @features F-A9
+One trip of a vehicle. F-A9 is suspended: no trip concept exists yet.
+@vi-name Chuyến đi
+@vi Một chuyến đi của xe. F-A9 đang tạm dừng: chưa có khái niệm chuyến đi.'''
+}
+
+Ref: trips.account_id > customer_accounts.account_id [delete: restrict]
+Ref: trips.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: trips.driver_id > drivers.driver_id [delete: restrict]
+
+TableGroup unassigned {
+  promotion_campaigns
+  trips
+  Note: '''
+Features whose backend domain is not decided yet (see feature-list.md).
+
+@vi-name Chưa phân miền
+@vi Các tính năng chưa được quyết định thuộc miền nghiệp vụ nào (xem feature-list.md).
+'''
+}
+
+// ===========================================================================
+// Open decisions: the model depends on these answers
+// ===========================================================================
+
+Note open_decisions {
+'''
+| ID | Question | Affects |
+|---|---|---|
+| D1 | Is the tenant a **customer account** that is either an organization or an individual truck owner? | `account_id` on every customer-owned table |
+| D2 | Is a **fleet** the same thing as a customer account, or a sub-group inside one? | `fleets`, `customer_accounts` |
+| D3 | When a vehicle **changes owner**, does its old data stay with the previous owner? | `vehicle_ownerships`, `account_id` on telemetry |
+| D4 | How is a charging session tied to a customer: **RFID card, app QR scan, VIN autocharge**, or all three? | `charging_credentials`, `charging_sessions`, billing, policy violations |
+| D5 | Who pays for a fleet driver's charge: the **driver's wallet, the fleet's wallet**, or it depends? | `wallets`, `payments` |
+| D6 | Who owns the **telematic device**: the customer, or G3 as part of the subscription? | `telematics` owner |
+| D7 | Which **G3 staff roles** (CSKH, warranty, energy operations) see across all accounts? | `users`, `roles` |
+
+@vi | Mã | Câu hỏi | Ảnh hưởng tới |
+|---|---|---|
+| D1 | Khách thuê (tenant) có phải là **tài khoản khách hàng**, gồm doanh nghiệp hoặc chủ xe cá nhân? | `account_id` trên mọi bảng thuộc khách hàng |
+| D2 | **Đội xe** là chính tài khoản khách hàng, hay là nhóm con bên trong một tài khoản? | `fleets`, `customer_accounts` |
+| D3 | Khi xe **đổi chủ**, dữ liệu cũ có tiếp tục thuộc chủ cũ không? | `vehicle_ownerships`, `account_id` trên dữ liệu vận hành |
+| D4 | Phiên sạc được gắn với khách hàng bằng cách nào: **thẻ RFID, quét QR trên app, VIN autocharge**, hay cả ba? | `charging_credentials`, `charging_sessions`, thanh toán, vi phạm chính sách |
+| D5 | Ai trả tiền khi tài xế của đội xe sạc: **ví của tài xế, ví của đội xe**, hay tùy trường hợp? | `wallets`, `payments` |
+| D6 | Ai sở hữu **thiết bị telematics**: khách hàng, hay G3 (nằm trong gói thuê bao)? | chủ sở hữu `telematics` |
+| D7 | **Vai trò nhân viên G3** nào (CSKH, bảo hành, vận hành năng lượng) được xem dữ liệu của mọi tài khoản? | `users`, `roles` |
+'''
+}
