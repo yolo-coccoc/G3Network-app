@@ -6,9 +6,10 @@ into single-line JSON, suitable for a container system to collect logs. The
 configuration is idempotent so repeated calls within a lifecycle do not
 attach duplicate handlers.
 
-The module intentionally uses only the Python standard library. Log
-transport, retention, and centralized monitoring are out of scope for the
-telemetry ingestion MVP.
+Used by every standalone entrypoint: the telemetry ingestion worker, the
+telematics device-health monitor and the OCPP gateway. The module
+intentionally uses only the Python standard library; log transport,
+retention and centralized monitoring are out of scope for the MVP.
 """
 
 import json

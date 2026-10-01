@@ -133,8 +133,9 @@ class Settings(BaseSettings):
     API_DEFAULT_PAGE_SIZE: int = Field(default=10, ge=1)
     API_MAX_PAGE_SIZE: int = Field(default=100, ge=1)
 
-    # This is a safe default for the development environment; the gateway will
-    # use the same namespace so processes don't infer different timeouts on their own.
+    # OCPP gateway (charging_stations/ocpp/entrypoint.py) settings, read from
+    # this one namespace so no process infers its own timeouts. The bind
+    # address is a safe development default.
     CHARGING_OCPP_HOST: str = "0.0.0.0"
     CHARGING_OCPP_PORT: int = Field(default=9000, ge=1, le=65535)
     # Defaults to the WebSocket library's own 1 MiB limit rather than a small
