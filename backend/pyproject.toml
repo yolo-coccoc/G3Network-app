@@ -225,6 +225,7 @@ forbidden_modules = [
     "app.domains.telemetry.router",
     "app.domains.telemetry.schemas",
     "app.domains.telemetry.time_windows",
+    "app.domains.telemetry.geofencing",
 ]
 allow_indirect_imports = true
 
