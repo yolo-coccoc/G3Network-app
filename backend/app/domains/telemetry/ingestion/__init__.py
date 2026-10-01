@@ -1,1 +1,1 @@
-"""MQTT consumer for telemetry ingestion."""
+"""Telemetry ingestion process: MQTT consumer, message worker and entrypoint (F-A1)."""

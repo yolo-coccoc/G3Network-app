@@ -1,8 +1,15 @@
-"""Shared types for the telemetry domain.
+"""Enums, thresholds and small DTOs shared across the telemetry domain's layers.
 
 Feature code: F-A2 (Tiered battery alerts), F-A4 (Anomaly detection),
 F-A3 (Battery health (SOH) & cycle tracking), F-A6 (Operating performance
 report), F-C6 (Per-customer energy usage)
+
+Scope: the alert levels/anomaly types and their thresholds and severities
+(read by ``detection.py`` and ``alerting.py``), the folded-window DTO the
+repository hands to ``reports.py``, and the report engineering defaults
+(battery capacity, tariff). Every numeric threshold and default here is an
+engineering value, not vendor-confirmed, and not configurable yet - see
+``docs/01-requirements/future.md``. No FastAPI/Pydantic/SQLAlchemy imports.
 """
 
 import enum
@@ -82,7 +89,7 @@ class VehicleAnomaly:
         severity: Notification severity to raise for this anomaly.
         evidence: Type-specific structured data supporting the detection
             (e.g. threshold/observed values); shape documented per detector
-            in ``telemetry/service.py``.
+            in ``telemetry/detection.py``.
     """
 
     anomaly_type: VehicleAnomalyType

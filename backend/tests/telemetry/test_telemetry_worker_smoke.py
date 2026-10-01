@@ -11,13 +11,14 @@ from app.domains.telemetry.schemas import TelemetryEnvelope
 
 @pytest.mark.asyncio
 async def test_message_worker_starts_and_stops_with_empty_queue() -> None:
-    """The worker creates a task and can stop when the queue is empty."""
+    """The worker returns its task, reuses it on a repeat start, and stops when idle."""
     worker = MessageWorker(asyncio.Queue[TelemetryEnvelope]())
 
-    await worker.start()
-    assert worker._task is not None
+    task = await worker.start()
+    assert await worker.start() is task  # a second start reuses the task
     await worker.stop()
 
+    assert task.cancelled()
     assert worker._running is False
 
 
@@ -32,10 +33,8 @@ async def test_message_worker_propagates_processing_error(
         raise RuntimeError("persistence failed")
 
     monkeypatch.setattr(worker, "_process_message", fail_processing)
-    await worker.start()
+    task = await worker.start()
     await worker.queue.put(cast(TelemetryEnvelope, object()))
-    task = worker._task
-    assert task is not None
 
     with pytest.raises(RuntimeError, match="persistence failed"):
         await task

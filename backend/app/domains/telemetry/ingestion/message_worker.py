@@ -12,7 +12,6 @@ import asyncio
 import logging
 
 import app.domains.telemetry.service as telemetry_service
-from app.domains.telemetry.ingestion.mqtt_consumer import message_queue
 from app.domains.telemetry.schemas import TelemetryEnvelope
 from app.libs.db.session import async_session_factory
 
@@ -29,33 +28,38 @@ class MessageWorker:
             the worker is started.
     """
 
-    def __init__(self, queue: asyncio.Queue[TelemetryEnvelope] | None = None) -> None:
+    def __init__(self, queue: asyncio.Queue[TelemetryEnvelope]) -> None:
         """Initialize the worker and take ownership of the passed-in queue.
 
         Args:
-            queue: Queue to consume from. Uses the default module-level queue
-                when left empty.
+            queue: Queue to consume from - the same instance the entrypoint
+                injects into the MQTT consumer.
 
         Side Effects:
             Initializes in-memory lifecycle state; no task or database
             session is created until ``start`` is called.
         """
-        self.queue = message_queue if queue is None else queue
+        self.queue = queue
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
-    async def start(self) -> None:
+    async def start(self) -> asyncio.Task[None]:
         """Start the background task that processes each message in the queue.
 
         Calling this again while the worker is running only logs a warning
-        and does not create a second task.
+        and returns the existing task; it never creates a second one.
+
+        Returns:
+            The task that owns the consume loop. It ends with the loop's
+            exception if processing a message fails, so the caller can
+            await or watch it to stop the process.
 
         Side Effects:
             Creates an asyncio task that owns the consume loop.
         """
-        if self._running:
+        if self._running and self._task is not None:
             logger.warning("Message worker is already running")
-            return
+            return self._task
 
         self._running = True
         self._task = asyncio.create_task(
@@ -63,6 +67,7 @@ class MessageWorker:
             name="telemetry-message-worker",
         )
         logger.info("Message worker started")
+        return self._task
 
     async def stop(self) -> None:
         """Stop the worker immediately and discard remaining messages in the in-RAM queue.
@@ -97,9 +102,9 @@ class MessageWorker:
         logger.info("Message worker loop started")
 
         while self._running:
-            message = await self.queue.get()
+            envelope = await self.queue.get()
             try:
-                await self._process_message(message)
+                await self._process_message(envelope)
             except Exception:
                 self._running = False
                 raise
@@ -116,21 +121,22 @@ class MessageWorker:
 
         Side Effects:
             Commits the transaction if the service succeeds; rolls back on
-            exception and emits a summary structured log for the message.
+            exception. Emits the one INFO summary line per message (the
+            service only logs the insert itself at DEBUG).
         """
         try:
             # The worker is the transaction boundary; the service/repository
             # only execute, never commit or roll back on their own.
             async with async_session_factory.begin() as db:
-                result = await telemetry_service.process_message(db, envelope)
+                process_result = await telemetry_service.process_message(db, envelope)
 
             logger.info(
                 "Telemetry message processed",
                 extra={
                     "message_uuid": str(envelope.message.message_uuid),
-                    "processed": result["processed"],
-                    "skipped": result["skipped"],
-                    "errors": result["errors"],
+                    "processed": process_result["processed"],
+                    "skipped": process_result["skipped"],
+                    "errors": process_result["errors"],
                 },
             )
         except Exception:

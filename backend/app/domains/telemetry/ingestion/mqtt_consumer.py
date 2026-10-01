@@ -21,13 +21,6 @@ from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
-# The default queue only supports standalone construction. The main
-# entrypoint creates its own queue from settings and injects the same
-# instance into the consumer and worker.
-message_queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(
-    maxsize=settings.TELEMETRY_QUEUE_SIZE
-)
-
 
 class MQTTConsumer:
     """Consumer that reads telemetry from the MQTT broker and pushes it onto the in-RAM queue.
@@ -47,6 +40,7 @@ class MQTTConsumer:
 
     def __init__(
         self,
+        queue: asyncio.Queue[TelemetryEnvelope],
         host: str | None = None,
         port: int | None = None,
         client_id: str | None = None,
@@ -54,11 +48,13 @@ class MQTTConsumer:
         password: str | None = None,
         qos: int | None = None,
         topic_pattern: str | None = None,
-        queue: asyncio.Queue[TelemetryEnvelope] | None = None,
     ) -> None:
         """Initialize the consumer from settings or override values.
 
         Args:
+            queue: Destination queue for valid messages. Required: the
+                entrypoint creates one queue and injects the same instance
+                into the consumer and the worker.
             host: MQTT broker host.
             port: MQTT broker port.
             client_id: MQTT client identifier.
@@ -66,8 +62,8 @@ class MQTTConsumer:
             password: MQTT password.
             qos: QoS used when subscribing.
             topic_pattern: Topic pattern for receiving telemetry.
-            queue: Destination queue for valid messages.
         """
+        self.queue = queue
         self.host = settings.MQTT_HOST if host is None else host
         self.port = settings.MQTT_PORT if port is None else port
         self.client_id = settings.MQTT_CLIENT_ID if client_id is None else client_id
@@ -77,7 +73,6 @@ class MQTTConsumer:
         self.topic_pattern = (
             settings.MQTT_TELEMETRY_TOPIC if topic_pattern is None else topic_pattern
         )
-        self.queue = message_queue if queue is None else queue
 
         self._client: MQTTClient | None = None
         self._running = False
@@ -172,7 +167,7 @@ class MQTTConsumer:
             logger.warning("Queue full, message dropped")
         except UnicodeDecodeError as error:
             # Must be caught here: an exception escaping this method ends the
-            # `async for` loop in `run()`, which would stop all ingestion
+            # `async for` loop in `start_consuming()`, which would stop all ingestion
             # because of a single malformed message.
             logger.warning(
                 "Payload is not valid UTF-8, message dropped",

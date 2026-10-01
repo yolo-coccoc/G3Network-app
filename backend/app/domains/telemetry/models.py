@@ -1,6 +1,17 @@
-"""SQLAlchemy models for Telemetry domain."""
+"""SQLAlchemy model for the telemetry domain's single table, ``vehicle_telemetry``.
 
-from datetime import datetime, timezone
+Feature code: F-A1 (Real-time vehicle telemetry ingestion).
+
+``vehicle_telemetry`` is a TimescaleDB hypertable (1-day chunks on
+``recorded_at``, which is therefore part of the primary key); the
+hypertable itself is created by the baseline migration, not by this
+model. One row per ingested MQTT message, append-only: ingestion never
+updates or deletes a row. The foreign keys to ``telematics`` and
+``vehicles`` are the only schema-level coupling to other domains - code in
+other domains never imports this model (import-linter contract).
+"""
+
+from datetime import datetime
 from uuid import UUID
 
 from geoalchemy2 import Geography
@@ -20,12 +31,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current timezone-aware UTC datetime."""
-    return datetime.now(timezone.utc)
 
 
 class VehicleTelemetryModel(Base):

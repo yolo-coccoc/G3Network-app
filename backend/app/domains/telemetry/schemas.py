@@ -3,11 +3,14 @@ Pydantic schemas for MQTT telemetry message validation and the HTTP query API.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A5 (Location,
 trip history & geofencing - the history query only; geofencing itself is
-deferred, see docs/01-requirements/future.md)
+deferred, see docs/01-requirements/future.md), F-A6 (Operating performance
+report), F-C6 (Per-customer energy usage)
 
-This schema validates messages from MQTT before they are placed on the queue.
-The message is sent from the Telematics device and does not contain any
-internal system ID.
+Two separate contracts live here and never share a class: the HTTP
+responses (``Vehicle*Response``/``VehicleTelemetryHistoryPoint``) and the
+MQTT message (``TelemetryMessage`` and its ``Telemetry*Payload`` parts),
+which the consumer validates before putting it on the queue. The MQTT
+message comes from the telematic device and carries no internal system ID.
 """
 
 from dataclasses import dataclass
@@ -503,17 +506,40 @@ class TelemetryMessage(BaseModel):
 
     @field_validator("telematic_serial")
     @classmethod
-    def validate_telematic_serial(cls, v: str) -> str:
-        """Validate that telematic_serial is not empty and has no extra whitespace."""
-        v = v.strip()
-        if not v:
+    def validate_telematic_serial(cls, value: str) -> str:
+        """Strip surrounding whitespace and reject a blank serial.
+
+        Args:
+            value: ``telematic_serial`` as sent by the device (already
+                length-checked by the field constraints).
+
+        Returns:
+            The serial without leading/trailing whitespace.
+
+        Raises:
+            ValueError: If the serial is empty after stripping; Pydantic
+                reports it as a validation error.
+        """
+        stripped_serial = value.strip()
+        if not stripped_serial:
             raise ValueError("telematic_serial must not be empty")
-        return v
+        return stripped_serial
 
     @field_validator("recorded_at")
     @classmethod
     def validate_recorded_at(cls, value: datetime) -> datetime:
-        """Require a timezone and normalize the recorded timestamp to UTC."""
+        """Require a timezone and normalize the recorded timestamp to UTC.
+
+        Args:
+            value: ``recorded_at`` as parsed from the device's payload.
+
+        Returns:
+            The same instant in UTC.
+
+        Raises:
+            ValueError: If the timestamp carries no timezone; Pydantic
+                reports it as a validation error.
+        """
         if value.utcoffset() is None:
             raise ValueError("recorded_at must have a timezone")
         return value.astimezone(timezone.utc)
@@ -535,46 +561,12 @@ class TelemetryMessage(BaseModel):
             raw_payload: Original JSON object before Pydantic normalization
 
         Returns:
-            Dict with all fields needed to insert into the DB
+            Dict with all fields needed to insert into the DB. A field of an
+            optional section the device omitted (``vehicle_state``,
+            ``motor``, ``signal``) is ``None``; ``error_codes`` is stored as
+            ``{"codes": [...]}`` JSONB, or ``None`` when no code is active.
         """
-        # Build vehicle_state dict
-        vehicle_state_dict = None
-        if self.vehicle_state:
-            vehicle_state_dict = {
-                "speed": self.vehicle_state.speed,
-                "heading": self.vehicle_state.heading,
-                "odometer": self.vehicle_state.odometer,
-            }
-
-        # Build battery dict
-        battery_dict = {
-            "soc": self.battery.soc,
-            "voltage": self.battery.voltage,
-            "current": self.battery.current,
-            "temperature": self.battery.temperature,
-            "soh_percent": self.battery.soh_percent,
-            "cycle_count": self.battery.cycle_count,
-        }
-
-        # Build motor dict
-        motor_dict = None
-        if self.motor:
-            motor_dict = {
-                "temperature": self.motor.temperature,
-            }
-
-        # Build signal dict
-        signal_dict = None
-        if self.signal:
-            signal_dict = {
-                "strength": self.signal.strength,
-            }
-
-        # Build error_codes as JSONB
-        error_codes_dict = None
-        if self.errors:
-            error_codes_dict = {"codes": self.errors}
-
+        vehicle_state = self.vehicle_state
         return {
             "message_uuid": self.message_uuid,
             "telematic_id": telematic_id,
@@ -585,22 +577,18 @@ class TelemetryMessage(BaseModel):
             "location": coordinates_to_location(
                 self.location.latitude, self.location.longitude
             ),
-            "speed": vehicle_state_dict.get("speed") if vehicle_state_dict else None,
-            "heading": (
-                vehicle_state_dict.get("heading") if vehicle_state_dict else None
-            ),
-            "soc": battery_dict["soc"],
-            "battery_voltage": battery_dict.get("voltage"),
-            "battery_current": battery_dict.get("current"),
-            "battery_temperature": battery_dict.get("temperature"),
-            "soh_percent": battery_dict.get("soh_percent"),
-            "cycle_count": battery_dict.get("cycle_count"),
-            "motor_temperature": motor_dict.get("temperature") if motor_dict else None,
-            "odometer": (
-                vehicle_state_dict.get("odometer") if vehicle_state_dict else None
-            ),
-            "signal_strength": signal_dict.get("strength") if signal_dict else None,
-            "error_codes": error_codes_dict,
+            "speed": vehicle_state.speed if vehicle_state else None,
+            "heading": vehicle_state.heading if vehicle_state else None,
+            "soc": self.battery.soc,
+            "battery_voltage": self.battery.voltage,
+            "battery_current": self.battery.current,
+            "battery_temperature": self.battery.temperature,
+            "soh_percent": self.battery.soh_percent,
+            "cycle_count": self.battery.cycle_count,
+            "motor_temperature": self.motor.temperature if self.motor else None,
+            "odometer": vehicle_state.odometer if vehicle_state else None,
+            "signal_strength": self.signal.strength if self.signal else None,
+            "error_codes": {"codes": self.errors} if self.errors else None,
             "raw_payload": raw_payload,
             "schema_version": self.schema_version,
         }

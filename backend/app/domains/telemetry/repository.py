@@ -25,14 +25,15 @@ logger = logging.getLogger(__name__)
 
 async def insert_telemetry(
     db: AsyncSession,
-    message: dict[str, object],
+    telemetry_values: dict[str, object],
 ) -> int:
     """Insert a single telemetry record using SQLAlchemy Core.
 
     Args:
         db: Database session owned by the entry boundary.
-        message: Data dict already converted by the service to match the
-            database model.
+        telemetry_values: Column values already converted by the service
+            (``TelemetryMessage.to_vehicle_telemetry_values``) to match
+            the database model.
 
     Returns:
         Number of rows the database reports as inserted.
@@ -41,15 +42,15 @@ async def insert_telemetry(
         Writes one row into the current session. The function does not
         commit or roll back.
     """
-    result = cast(
+    query_result = cast(
         CursorResult[Any],
-        await db.execute(insert(VehicleTelemetryModel).values(message)),
+        await db.execute(insert(VehicleTelemetryModel).values(telemetry_values)),
     )
     logger.debug(
         "insert_telemetry",
-        extra={"rows_inserted": result.rowcount},
+        extra={"rows_inserted": query_result.rowcount},
     )
-    return result.rowcount
+    return query_result.rowcount
 
 
 async def get_latest_vehicle_telemetry(
@@ -65,13 +66,13 @@ async def get_latest_vehicle_telemetry(
         The record with the largest `recorded_at`, or None if there is no
         data yet.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(VehicleTelemetryModel)
         .where(VehicleTelemetryModel.vehicle_id == vehicle_id)
         .order_by(VehicleTelemetryModel.recorded_at.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
 async def find_latest_received_at(
@@ -129,7 +130,7 @@ async def get_vehicle_telemetry_history(
         (btree on ``vehicle_id, recorded_at DESC``) - PostgreSQL can scan it
         backwards for this ascending range scan, so no new index is needed.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(VehicleTelemetryModel)
         .where(
             VehicleTelemetryModel.vehicle_id == vehicle_id,
@@ -139,7 +140,7 @@ async def get_vehicle_telemetry_history(
         .order_by(VehicleTelemetryModel.recorded_at.asc())
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
 async def get_vehicle_window_summary(
@@ -224,7 +225,7 @@ async def get_vehicle_window_summary(
     clamped_rise = func.greatest(func.coalesce(deltas.c.soc_rise, 0.0), 0.0)
     clamped_distance = func.greatest(func.coalesce(deltas.c.odometer_delta, 0.0), 0.0)
 
-    result = await db.execute(
+    query_result = await db.execute(
         select(
             func.coalesce(func.sum(clamped_drop), 0.0),
             func.coalesce(func.sum(clamped_rise), 0.0),
@@ -243,7 +244,7 @@ async def get_vehicle_window_summary(
         odometer_sample_count,
         first_recorded_at,
         last_recorded_at,
-    ) = result.one()
+    ) = query_result.one()
     return VehicleTelemetryWindowSummary(
         soc_discharge_percent=float(soc_discharge_percent),
         soc_charge_percent=float(soc_charge_percent),

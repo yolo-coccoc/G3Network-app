@@ -24,14 +24,18 @@ logger = logging.getLogger(__name__)
 async def run() -> None:
     """Run the consumer and worker until a signal is received or a task fails.
 
+    Whichever finishes first - the consumer task, the worker task (which
+    ends with its exception when a message fails, per MVP policy), or the
+    shutdown signal - ends the run; the others are cancelled.
+
     Side Effects:
         Creates the in-RAM queue, opens the MQTT connection, and closes
         resources when the process stops.
 
     Raises:
-        RuntimeError: When the worker fails to create a background task or a
-            task stops unexpectedly.
-        Exception: Re-raises errors from the consumer or worker.
+        Exception: Re-raises errors from connecting the consumer or starting
+            the worker. A failure inside an already running task ends the
+            run without being re-raised here; it was logged by that task.
     """
     configure_logging()
 
@@ -49,15 +53,13 @@ async def run() -> None:
 
     try:
         await consumer.connect()
-        await worker.start()
-        if worker._task is None:
-            raise RuntimeError("Batch worker task was not created during startup")
+        worker_task = await worker.start()
 
         tasks = [
             asyncio.create_task(
                 consumer.start_consuming(), name="telemetry-mqtt-consumer"
             ),
-            worker._task,
+            worker_task,
             asyncio.create_task(stop_event.wait(), name="telemetry-shutdown-signal"),
         ]
 

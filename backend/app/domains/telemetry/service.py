@@ -29,7 +29,7 @@ lookup + bulk insert) is deferred until a benchmark needs it - see
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TypedDict
 from uuid import UUID
 
@@ -51,6 +51,7 @@ from app.domains.telemetry.schemas import (
     VehicleTelemetryLatestResponse,
 )
 from app.domains.vehicles.types import VehicleReference
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -410,16 +411,15 @@ async def process_message(
         telemetry_values = message.to_vehicle_telemetry_values(
             telematic_id,
             vehicle_id,
-            datetime.now(timezone.utc),
+            utc_now(),
             envelope.raw_payload,
         )
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError):
         logger.exception(
             "failed to convert message to DB dict",
             extra={
                 "telematic_serial": message.telematic_serial,
                 "message_uuid": str(message.message_uuid),
-                "error": str(error),
             },
         )
         return {"processed": 0, "skipped": 0, "errors": 1}
@@ -428,7 +428,10 @@ async def process_message(
         db,
         telemetry_values,
     )
-    logger.info(
+    # DEBUG, not INFO: the worker already logs one INFO line per message
+    # ("Telemetry message processed") with the same message_uuid and the
+    # full counters.
+    logger.debug(
         "telemetry message persisted",
         extra={
             "message_uuid": str(message.message_uuid),
