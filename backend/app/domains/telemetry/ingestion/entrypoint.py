@@ -4,7 +4,9 @@ Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
 The MVP process keeps the queue and tasks only in RAM. When it receives a
 stop signal or a task fails, the process disconnects the consumer, cancels
-the worker, and discards any remaining messages in the queue.
+the worker, and discards any remaining messages in the queue. A stop signal
+exits with code 0; a consumer or worker that ends on its own exits with
+code 1, so a process supervisor sees the failure and can restart it.
 """
 
 import asyncio
@@ -21,6 +23,33 @@ from app.libs.db.session import close_db
 logger = logging.getLogger(__name__)
 
 
+def raise_unless_stopped_by_signal(
+    done_tasks: set[asyncio.Task[object]], signal_task: asyncio.Task[object]
+) -> None:
+    """Decide whether the run ended cleanly, given the tasks that finished.
+
+    Only the shutdown signal is a clean end. A consumer or worker task that
+    finished first means ingestion stopped by itself: its exception is
+    re-raised, and a task that returned without one (e.g. the consumer after
+    logging a lost broker connection) still counts as a failure.
+
+    Args:
+        done_tasks: The tasks `asyncio.wait` reported as done.
+        signal_task: The task that completes when SIGINT/SIGTERM arrives.
+
+    Raises:
+        Exception: The failed task's own exception, or `RuntimeError` when
+            it ended without one.
+    """
+    if signal_task in done_tasks:
+        return
+    stopped_task = next(iter(done_tasks))
+    error = stopped_task.exception()
+    if error is not None:
+        raise error
+    raise RuntimeError(f"Task '{stopped_task.get_name()}' stopped unexpectedly")
+
+
 async def run() -> None:
     """Run the consumer and worker until a signal is received or a task fails.
 
@@ -33,9 +62,10 @@ async def run() -> None:
         resources when the process stops.
 
     Raises:
-        Exception: Re-raises errors from connecting the consumer or starting
-            the worker. A failure inside an already running task ends the
-            run without being re-raised here; it was logged by that task.
+        Exception: Errors from connecting the consumer or starting the
+            worker, and - after cleanup - the error of a consumer or worker
+            task that stopped before any shutdown signal (`RuntimeError` if
+            it stopped without one), so `main()` exits with code 1.
     """
     configure_logging()
 
@@ -55,12 +85,15 @@ async def run() -> None:
         await consumer.connect()
         worker_task = await worker.start()
 
-        tasks = [
+        signal_task: asyncio.Task[object] = asyncio.create_task(
+            stop_event.wait(), name="telemetry-shutdown-signal"
+        )
+        tasks: list[asyncio.Task[object]] = [
             asyncio.create_task(
                 consumer.start_consuming(), name="telemetry-mqtt-consumer"
             ),
             worker_task,
-            asyncio.create_task(stop_event.wait(), name="telemetry-shutdown-signal"),
+            signal_task,
         ]
 
         logger.info(
@@ -68,9 +101,12 @@ async def run() -> None:
             extra={"queue_size": settings.TELEMETRY_QUEUE_SIZE},
         )
 
-        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
             task.cancel()
+        # Let the cancellations finish before cleanup touches the resources.
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise_unless_stopped_by_signal(done, signal_task)
     finally:
         await consumer.disconnect()
         await worker.stop()
