@@ -368,7 +368,7 @@ docker exec g3network-db psql -U g3network -d g3network -c "SELECT hypertable_na
 
 **Prompt:**
 ```
-Create the file docs/02-planners/mqtt-spec.md with the following content:
+Create the file docs/03-specifications/mqtt-spec.md with the following content:
 
 1. MQTT Topics:
    - Published by the telematic: `g3network/telematics/{telematic_serial}/telemetry`
@@ -426,7 +426,7 @@ Notes:
 
 **Outcome/Decisions:**
 
-- `docs/02-planners/mqtt-spec.md` is the source communication contract for
+- `docs/03-specifications/mqtt-spec.md` is the source communication contract for
   steps 5 and 7.
 - `recorded_at` is provided by the device; the backend normalizes it to UTC.
   `received_at` is added by the backend when processing a batch, per the

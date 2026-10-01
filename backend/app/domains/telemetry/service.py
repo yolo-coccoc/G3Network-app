@@ -990,7 +990,7 @@ def to_telemetry_snapshot(message: TelemetryMessage) -> dict[str, object]:
 
     Pure mapping, no I/O. This is the "event log with a data snapshot" F-A4
     asks for - stored inside the anomaly notification's ``payload`` rather
-    than a separate table (see ``docs/02-planners/backend-anomaly-detection.md``).
+    than a separate table (see ``docs/02-planners/done/backend-anomaly-detection.md``).
     Only JSON-serializable values are included (``UUID``/``datetime`` are
     converted to strings) since ``payload`` is a JSONB column.
 

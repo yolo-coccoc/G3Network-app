@@ -95,14 +95,14 @@ these domains before a concrete task exists — when creating a new domain,
 apply the rules in [domain-boundaries.md](./domain-boundaries.md) and
 reference the correct feature code. `notifications` graduated out of this
 list (F-A2) but is intentionally minimal — see `domain-boundaries.md` and
-`docs/02-planners/backend-notifications.md` for what it does and doesn't do
+`docs/02-planners/done/backend-notifications.md` for what it does and doesn't do
 yet (no push, no recipient scoping). `drivers` also graduated out of this
 list (F-E4) — see `domain-boundaries.md` for its `drivers → vehicles`
-dependency edge and `docs/02-planners/backend-crud-drivers.md` for its
+dependency edge and `docs/02-planners/done/backend-crud-drivers.md` for its
 design (assignment-history table, partial unique indexes). `support`
 (F-I1/F-I2) and `fleet` (F-E1) also graduated out of this list — see
 `domain-boundaries.md` for their dependency edges and
-`docs/02-planners/backend-support-cases.md`/`backend-crud-fleet.md` for
+`docs/02-planners/done/backend-support-cases.md`/`backend-crud-fleet.md` for
 their design; each is intentionally partial (`support` has no partner
 directory/dispatch yet, `fleet` has no KPI rollup yet).
 

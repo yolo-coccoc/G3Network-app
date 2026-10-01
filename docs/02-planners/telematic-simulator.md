@@ -53,7 +53,7 @@ The simulator must follow these sources exactly and must not define its own sche
   `MotorData`, `SignalData`.
 - Database mapping: `backend/app/domains/telematics/models.py`, class
   `Telematic`, and `backend/app/domains/vehicles/models.py`, class `Vehicle`.
-- MQTT topic/payload/QoS: `docs/02-planners/mqtt-spec.md`.
+- MQTT topic/payload/QoS: `docs/03-specifications/mqtt-spec.md`.
 - MQTT runtime settings: `backend/app/libs/common/config.py`, variables
   `MQTT_HOST`, `MQTT_PORT`, `MQTT_USERNAME`, `MQTT_PASSWORD`, `MQTT_QOS`.
 
@@ -133,7 +133,7 @@ Each device's topic:
 g3network/telematics/{telematic_serial}/telemetry
 ```
 
-Set QoS `0`, retain `false`, exactly as in `docs/02-planners/mqtt-spec.md`.
+Set QoS `0`, retain `false`, exactly as in `docs/03-specifications/mqtt-spec.md`.
 
 ### 5.2. Payload must match TelemetryMessage
 

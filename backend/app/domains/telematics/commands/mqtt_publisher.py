@@ -3,7 +3,7 @@
 This is this backend's first-ever MQTT *publish* path - every other MQTT
 usage in the repo only subscribes (``telemetry/ingestion/mqtt_consumer.py``).
 There is no device subscribed to the command topic today and no ack
-topic defined in ``docs/02-planners/mqtt-spec.md`` 2.3, so a successful
+topic defined in ``docs/03-specifications/mqtt-spec.md`` 2.3, so a successful
 publish only means the broker accepted the message (QoS 1 PUBACK), never
 that a device received or applied it.
 """

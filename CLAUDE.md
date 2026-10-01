@@ -28,7 +28,13 @@
   then regenerate (the local `domain-model` skill has the commands)
 - `docs/02-planners/` - One implementation planner per domain/feature (step-by-step build log,
   decisions made, evidence of what was tested); read the relevant planner before resuming work
-  on a domain it covers, and add/update a planner when starting a new one
+  on a domain it covers, and add/update a planner when starting a new one.
+  Once a planner's status is ✅ Done, move it to `docs/02-planners/done/`
+  (it still records the decisions for that domain — read it before extending one)
+- `docs/03-specifications/` - External specs and wire contracts (OCPP charger
+  docs, the telematics MQTT contract `mqtt-spec.md`)
+- `docs/99-archive/` - Point-in-time or superseded documents kept for history;
+  never treat them as current
 
 ---
 

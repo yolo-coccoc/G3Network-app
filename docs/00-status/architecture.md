@@ -258,5 +258,5 @@ reverse proxy in the development environment.
   reliability.
 
 Items confirmed as needed in the future must be recorded in
-[`docs/01-requirements/future.md`](docs/01-requirements/future.md); do not
+[`docs/01-requirements/future.md`](../01-requirements/future.md); do not
 create placeholders in active source.

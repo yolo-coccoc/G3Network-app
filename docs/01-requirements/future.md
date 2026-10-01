@@ -173,7 +173,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   `driver_vehicle_assignments`), and the dead `vehicles.fleet_id` column (`String(36)`, no FK, no
   index, never queried by any code) was dropped entirely in migration `0020_fleet` — per
   repo-conventions' rule that an old placeholder must be removed, not converted, once the real
-  component exists. See `docs/02-planners/backend-crud-fleet.md`.
+  component exists. See `docs/02-planners/done/backend-crud-fleet.md`.
 
 ---
 
@@ -788,10 +788,10 @@ The items below are actual deferral decisions made in the repo, not placeholders
   detection in `telemetry/service.py`. F-A4's slice is also done — high
   battery temperature, sudden voltage drop, and new device error codes are
   detected in the same per-message flow and raise `ANOMALY_ALERT`
-  notifications; see `docs/02-planners/backend-anomaly-detection.md`. F-A5's
+  notifications; see `docs/02-planners/done/backend-anomaly-detection.md`. F-A5's
   slice is also done — a bounded time-range telemetry history query
   (`GET /telemetry/vehicles/{id}/history`), not full/unbounded history and
-  not a map; see `docs/02-planners/backend-telemetry-query-api.md` §2.2.
+  not a map; see `docs/02-planners/done/backend-telemetry-query-api.md` §2.2.
   Still open from this item: the vehicle/station map, aggregated connector
   status, and any device-ACK/MQTT-command mechanism. See items 37, 40, 41
   and 42-48 below.
@@ -903,7 +903,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   charging MVP's always-online assumption). Building this is charging-domain
   scope, not something to bolt onto the nearest-station query.
 - **Related planner/feature**: F-A2, F-C1, `charging_stations`,
-  `docs/02-planners/backend-notifications.md`.
+  `docs/02-planners/done/backend-notifications.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When resuming, this likely means an OCPP
   `StatusNotification` handler plus a status column on `ChargingConnectorModel`
@@ -936,7 +936,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   📋 Planned. No trip table, trip ID, or trip-boundary detection exists to
   key a per-trip de-dup state on.
 - **Related planner/feature**: F-A2, F-A9, `telemetry`,
-  `docs/02-planners/backend-notifications.md`.
+  `docs/02-planners/done/backend-notifications.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When F-A9 lands, revisit
   `detect_battery_alert_level` in `telemetry/service.py` - it may need a
@@ -976,7 +976,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   Building an ad hoc scoping mechanism now would be redone once `identity`
   lands.
 - **Related planner/feature**: F-A2, `notifications`, `identity` (future
-  domain), `docs/02-planners/backend-notifications.md`.
+  domain), `docs/02-planners/done/backend-notifications.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When `identity` lands, `notifications` likely needs
   a recipient/audience column or join table, and the list endpoint needs an
@@ -1016,12 +1016,12 @@ The items below are actual deferral decisions made in the repo, not placeholders
   appeared," not which subsystem it belongs to - an operator reading a
   `DEVICE_FAULT` notification can't tell a battery fire precursor from a
   minor motor fault from the alert alone.
-- **Reason for deferral**: `docs/02-planners/mqtt-spec.md` defines `errors`
+- **Reason for deferral**: `docs/03-specifications/mqtt-spec.md` defines `errors`
   as opaque strings with no code catalog anywhere in this repo's contracts.
   Inventing a code-to-category mapping without the device vendor's
   documentation would be a guess baked into the backend's business logic.
 - **Related planner/feature**: F-A4, `telemetry/service.py`,
-  `docs/02-planners/backend-anomaly-detection.md`.
+  `docs/02-planners/done/backend-anomaly-detection.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When the vendor's error code catalog is available,
   split `VehicleAnomalyType.DEVICE_FAULT` into distinct types (e.g.
@@ -1045,7 +1045,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   the precedent of starting with plain constants before promoting values to
   configuration.
 - **Related planner/feature**: F-A4, `telemetry/types.py`,
-  `docs/02-planners/backend-anomaly-detection.md`.
+  `docs/02-planners/done/backend-anomaly-detection.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When resuming, confirm real thresholds with the
   vehicle/battery vendor, then decide whether they stay as constants or move
@@ -1088,7 +1088,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   fault" would be inventing a trigger the spec doesn't ask for. Recorded
   here as a candidate rather than implemented speculatively.
 - **Related planner/feature**: F-A4, `telemetry/service.py`,
-  `docs/02-planners/backend-anomaly-detection.md`.
+  `docs/02-planners/done/backend-anomaly-detection.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: If motor fault detection is confirmed to belong
   here, decide the threshold and whether it maps to "motor fault" or is a
@@ -1114,7 +1114,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   concept here (e.g. an idle-gap threshold) ahead of F-A9 risks a second,
   conflicting definition of "trip" in the same backend.
 - **Related planner/feature**: F-A5, F-A9, item 38,
-  `docs/02-planners/backend-telemetry-query-api.md` §2.2.
+  `docs/02-planners/done/backend-telemetry-query-api.md` §2.2.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When F-A9 lands its trip concept, revisit whether
   `GET .../history` should accept a `trip_id` alongside (or instead of) a
@@ -1136,7 +1136,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   boundary table, no PostGIS containment query, and no event/notification
   wiring exist yet for this.
 - **Related planner/feature**: F-A5, `vehicles`, `telemetry`,
-  `docs/02-planners/backend-telemetry-query-api.md`.
+  `docs/02-planners/done/backend-telemetry-query-api.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When resuming, decide where geofence boundaries are
   stored (likely a `vehicles`-owned table storing a PostGIS `geography`
@@ -1264,7 +1264,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   topic. A successful publish today proves only that the broker accepted
   the message (QoS 1 PUBACK), not that any device received or applied it.
 - **Related planner/feature**: F-J2, `telematics/commands/`,
-  `docs/02-planners/backend-telematics-config-push.md`.
+  `docs/02-planners/done/backend-telematics-config-push.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: Needs a `.../command/ack` (or reported-config)
   topic in the contract, a consumer for it, a desired/reported column pair
@@ -1402,7 +1402,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   round, the constant was hardcoded with an explanatory comment rather
   than building tariff configuration - the same treatment already applied
   to F-A6/F-C6's other engineering defaults.
-- **Related planner/feature**: F-A6, `docs/02-planners/backend-operating-energy-reports.md`.
+- **Related planner/feature**: F-A6, `docs/02-planners/done/backend-operating-energy-reports.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When resumed, likely a per-tenant/time-of-use
   tariff table rather than a single setting - a `Settings`-level override
@@ -1467,7 +1467,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   backend yet (per `directory-structure.md`, a domain isn't created before
   a concrete task needs it), and no CSV export machinery exists anywhere
   in the codebase.
-- **Related planner/feature**: F-A6, `docs/02-planners/backend-operating-energy-reports.md`.
+- **Related planner/feature**: F-A6, `docs/02-planners/done/backend-operating-energy-reports.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When a `fleet` domain is justified by a concrete
   task, it should call `telemetry.get_vehicle_operating_report` per
@@ -1582,7 +1582,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   first. Per explicit instruction, **none were built this round** -
   F-A9 was suspended entirely rather than picking a partial option.
 - **Related planner/feature**: F-A9, F-E4, `drivers`, `telemetry`, items
-  38, 46, `docs/02-planners/backend-crud-drivers.md`.
+  38, 46, `docs/02-planners/done/backend-crud-drivers.md`.
 - **Date recorded**: 2026-09-18
 - **Additional notes**: When resumed, option (a) (declaration-only,
   vehicle-tagged) is the cheapest and was the recommended starting point
@@ -1613,7 +1613,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   1:N dispatch-with-its-own-acceptance-SLA table) that wasn't built
   speculatively ahead of a concrete task.
 - **Related planner/feature**: F-I4, F-I2, `support`,
-  `docs/02-planners/backend-support-cases.md`.
+  `docs/02-planners/done/backend-support-cases.md`.
 - **Date recorded**: 2026-09-18
 - **Additional notes**: When resumed, `support_cases` (F-I1/F-I2's table)
   already carries everything a dispatch needs to reference (`case_id`,
@@ -1710,7 +1710,7 @@ The items below are actual deferral decisions made in the repo, not placeholders
   duplicating its SOC-fold query - it does not exist as a callable DTO
   today.
 - **Related planner/feature**: F-E2, `fleet`, `telemetry`, `notifications`,
-  item 63, `docs/02-planners/backend-crud-fleet.md`.
+  item 63, `docs/02-planners/done/backend-crud-fleet.md`.
 - **Date recorded**: 2026-09-18
 - **Additional notes**: When resumed: (1) extract a frozen-dataclass DTO
   (e.g. `VehicleOperatingSummary` in `telemetry/types.py`) out of

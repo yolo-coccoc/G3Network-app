@@ -10,14 +10,14 @@
 > still without source. Created: 2026-09-18.
 
 1. **`drivers`** (F-E4) — ✅ Done (see
-   `docs/02-planners/backend-crud-drivers.md`). Plain CRUD plus one
+   `docs/02-planners/done/backend-crud-drivers.md`). Plain CRUD plus one
    assignment relationship to `vehicles`, no new infrastructure needed.
 2. **`support`** (F-I1, F-I2) — ✅ Done at MVP/POC scope (see
-   `docs/02-planners/backend-support-cases.md`). Ticket/SOS case CRUD with
+   `docs/02-planners/done/backend-support-cases.md`). Ticket/SOS case CRUD with
    a stored SLA deadline; F-I3 (booking) and F-I4 (partner directory +
    dispatch routing) deferred — see `future.md` items 68-69.
 3. **`fleet`** (F-E1) — ✅ Done at MVP/POC scope (see
-   `docs/02-planners/backend-crud-fleet.md`). Fleet CRUD plus a
+   `docs/02-planners/done/backend-crud-fleet.md`). Fleet CRUD plus a
    vehicle-membership history table, mirroring `drivers`'
    assignment-history pattern; F-E2 (KPI dashboard) deferred — see
    `future.md` item 72. F-E3/F-A8 remain hard-blocked on `charging_sessions`

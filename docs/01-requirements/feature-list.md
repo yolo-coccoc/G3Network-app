@@ -310,7 +310,7 @@ carries its original PRD code so you can trace it back.
   (kWh/100km, cost/km) is `null` when undefined (zero distance or fewer than two samples) rather
   than a fabricated number. Not built: CSV export, and the `fleet`-level multi-vehicle rollup this
   was originally scoped under — that domain has no active source in this backend (see
-  `docs/02-planners/backend-operating-energy-reports.md`).
+  `docs/02-planners/done/backend-operating-energy-reports.md`).
 - Note: `charging_sessions` was the original implied data source for kWh, but that table carries
   no vehicle linkage at all (the same blocker recorded for F-C6), so this round computes energy
   from the vehicle's own telemetry instead, per an explicit user decision. This is a genuine
@@ -426,7 +426,7 @@ carries its original PRD code so you can trace it back.
   see `future.md` item 10, now superseded. "Real-time location" and a live online/offline
   "status" are **not** built — no such signal exists anywhere in this backend yet (`future.md`
   item 35); F-E1's "status" column honestly reports only `vehicles.status` (the lifecycle enum).
-  See `docs/02-planners/backend-crud-fleet.md`.
+  See `docs/02-planners/done/backend-crud-fleet.md`.
 
 ### F-E2 Fleet KPI dashboard
 - **Actor:** Fleet manager
@@ -470,7 +470,7 @@ carries its original PRD code so you can trace it back.
   index. Assumption, stated plainly: driver fields (`full_name`, `phone_number`, `license_number`,
   `status`) aren't specified by the PRD beyond "Add/edit drivers"; the 1:1-at-a-time assignment
   cardinality is also an assumption, not a stated requirement. See
-  `docs/02-planners/backend-crud-drivers.md`.
+  `docs/02-planners/done/backend-crud-drivers.md`.
 
 ### F-F1 Accounts & RBAC
 - **Actor:** Admin (G3 Network)
@@ -570,7 +570,7 @@ carries its original PRD code so you can trace it back.
   CLOSED/CANCELLED case refuses further updates (409). F-I2's SOS reuses the same table
   (`case_type=SOS`) since the spec ties the two into one lifecycle. Zalo/hotline logging exists as
   a `channel` enum member with no actual integration behind it. See
-  `docs/02-planners/backend-support-cases.md`.
+  `docs/02-planners/done/backend-support-cases.md`.
 
 ### F-I4 Repair & rescue network dispatch
 - **Actor:** Customer support / CSKH (dispatches); driver (tracks status)
@@ -775,7 +775,7 @@ carries its original PRD code so you can trace it back.
 - Note: the original design implied keying this off `charging_sessions`, but that table has no
   vehicle, customer, or driver identity column at all — confirmed via the OCPP ingestion path,
   which never reads the `idToken` field OCPP would carry one in (see
-  `docs/02-planners/backend-operating-energy-reports.md`). Adding that linkage, and thereby a
+  `docs/02-planners/done/backend-operating-energy-reports.md`). Adding that linkage, and thereby a
   station-metered version of this feature that could actually satisfy NF-10, is deferred
   (`future.md`).
 
@@ -898,7 +898,7 @@ carries its original PRD code so you can trace it back.
   push per vehicle/fleet (today it's one device per call), confirmation that the device actually
   applied the config (no ack topic exists in the MQTT contract — a successful publish only proves
   the broker accepted it), and rollback (needs the same missing confirmation signal first). See
-  `docs/02-planners/backend-telematics-config-push.md`.
+  `docs/02-planners/done/backend-telematics-config-push.md`.
 
 ### F-J3 Device offline / tamper alert
 - **Actor:** System

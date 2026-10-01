@@ -115,7 +115,7 @@ fields, per the no-offset rule above.
 - The map, aggregate, alert-push, and geofencing APIs are not yet
   implemented (see §6 and `docs/01-requirements/future.md` items 46, 47).
 - Automated regression tests have been split out to
-  [`backend-automated-tests.md`](./backend-automated-tests.md).
+  [`backend-automated-tests.md`](../backend-automated-tests.md).
 
 ## 5. Extended work breakdown
 
