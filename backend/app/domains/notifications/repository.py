@@ -7,9 +7,11 @@ boundary owns the transaction.
 """
 
 from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -85,12 +87,45 @@ async def get_by_id(db: AsyncSession, notification_id: int) -> NotificationModel
     return query_result.scalar_one_or_none()
 
 
+def _list_conditions(
+    *,
+    unread_only: bool,
+    vehicle_id: UUID | None,
+    notification_type: NotificationType | None,
+    severity: NotificationSeverity | None,
+) -> list[ColumnElement[bool]]:
+    """Build the filter conditions shared by the list queries.
+
+    Args:
+        unread_only: Whether to exclude notifications already marked read.
+        vehicle_id: Only notifications about this vehicle, if given.
+        notification_type: Only notifications of this type, if given.
+        severity: Only notifications of this severity, if given.
+
+    Returns:
+        Conditions to AND together (possibly none).
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if unread_only:
+        conditions.append(NotificationModel.read_at.is_(None))
+    if vehicle_id is not None:
+        conditions.append(NotificationModel.vehicle_id == vehicle_id)
+    if notification_type is not None:
+        conditions.append(NotificationModel.notification_type == notification_type)
+    if severity is not None:
+        conditions.append(NotificationModel.severity == severity)
+    return conditions
+
+
 async def list_after_id(
     db: AsyncSession,
     *,
     after_id: int,
     limit: int,
     unread_only: bool,
+    vehicle_id: UUID | None = None,
+    notification_type: NotificationType | None = None,
+    severity: NotificationSeverity | None = None,
 ) -> list[NotificationModel]:
     """List notifications newer than a cursor, oldest first.
 
@@ -100,16 +135,23 @@ async def list_after_id(
             cursor; ``0`` returns from the beginning.
         limit: Maximum number of records to return.
         unread_only: Whether to exclude notifications already marked read.
+        vehicle_id: Only notifications about this vehicle, if given.
+        notification_type: Only notifications of this type, if given.
+        severity: Only notifications of this severity, if given.
 
     Returns:
         Notifications ordered by ``notification_id`` ascending, so the
         caller's next cursor is the last item's ID.
     """
-    conditions: list[ColumnElement[bool]] = [
-        NotificationModel.notification_id > after_id
+    conditions = [
+        NotificationModel.notification_id > after_id,
+        *_list_conditions(
+            unread_only=unread_only,
+            vehicle_id=vehicle_id,
+            notification_type=notification_type,
+            severity=severity,
+        ),
     ]
-    if unread_only:
-        conditions.append(NotificationModel.read_at.is_(None))
     query_result = await db.execute(
         select(NotificationModel)
         .where(*conditions)
@@ -117,6 +159,100 @@ async def list_after_id(
         .limit(limit)
     )
     return list(query_result.scalars().all())
+
+
+async def list_newest(
+    db: AsyncSession,
+    *,
+    limit: int,
+    unread_only: bool,
+    vehicle_id: UUID | None = None,
+    notification_type: NotificationType | None = None,
+    severity: NotificationSeverity | None = None,
+) -> list[NotificationModel]:
+    """List the newest notifications, newest first.
+
+    Args:
+        db: Current async session.
+        limit: Maximum number of records to return.
+        unread_only: Whether to exclude notifications already marked read.
+        vehicle_id: Only notifications about this vehicle, if given.
+        notification_type: Only notifications of this type, if given.
+        severity: Only notifications of this severity, if given.
+
+    Returns:
+        Notifications ordered by ``notification_id`` descending (the
+        domain's monotonic order, so ties on ``created_at`` cannot reorder).
+    """
+    conditions = _list_conditions(
+        unread_only=unread_only,
+        vehicle_id=vehicle_id,
+        notification_type=notification_type,
+        severity=severity,
+    )
+    query_result = await db.execute(
+        select(NotificationModel)
+        .where(*conditions)
+        .order_by(NotificationModel.notification_id.desc())
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())
+
+
+async def count_unread(db: AsyncSession, vehicle_id: UUID | None) -> int:
+    """Count notifications not yet marked read.
+
+    Args:
+        db: Current async session.
+        vehicle_id: Only count notifications about this vehicle, or every
+            notification when ``None``.
+
+    Returns:
+        Number of unread notifications.
+    """
+    conditions = _list_conditions(
+        unread_only=True, vehicle_id=vehicle_id, notification_type=None, severity=None
+    )
+    query_result = await db.execute(
+        select(func.count(NotificationModel.notification_id)).where(*conditions)
+    )
+    return query_result.scalar() or 0
+
+
+async def set_read_at_on_unread(
+    db: AsyncSession, *, read_at: datetime, vehicle_id: UUID | None
+) -> int:
+    """Stamp ``read_at`` on every unread notification, in one ``UPDATE``.
+
+    Only rows whose ``read_at`` is still ``NULL`` are touched, which keeps
+    the service's "the first read time is kept" rule for rows already read.
+    One statement is simply how "mark all" is expressed in SQL, not a
+    batched variant of a per-row loop: loading every unread row just to
+    stamp each one would be an unbounded read for the same result.
+
+    Args:
+        db: Current async session.
+        read_at: Timezone-aware UTC time to store.
+        vehicle_id: Only notifications about this vehicle, or every
+            notification when ``None``.
+
+    Returns:
+        Number of notifications that were marked read.
+
+    Side Effects:
+        Executes the ``UPDATE``; does not commit. Objects of the affected
+        rows already loaded in ``db`` are updated too (SQLAlchemy's default
+        session synchronization).
+    """
+    conditions = _list_conditions(
+        unread_only=True, vehicle_id=vehicle_id, notification_type=None, severity=None
+    )
+    update_result = await db.execute(
+        update(NotificationModel).where(*conditions).values(read_at=read_at)
+    )
+    # An UPDATE's result is a CursorResult (the session's execute() is only
+    # typed as Result); its rowcount is the number of rows matched.
+    return cast(CursorResult[Any], update_result).rowcount
 
 
 async def find_latest_by_vehicle_and_type(

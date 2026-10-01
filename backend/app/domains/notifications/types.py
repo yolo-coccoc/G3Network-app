@@ -31,6 +31,20 @@ class NotificationSeverity(str, enum.Enum):
     CRITICAL = "CRITICAL"
 
 
+class NotificationListOrder(str, enum.Enum):
+    """Order of a notification list.
+
+    Attributes:
+        ASC: Oldest first, after the ``after_id`` cursor - the polling
+            contract (the client passes back ``latest_notification_id``).
+        DESC: Newest first, for a notification centre; the cursor is
+            ignored.
+    """
+
+    ASC = "asc"
+    DESC = "desc"
+
+
 @dataclass(frozen=True)
 class NotificationReference:
     """Minimal reference to a notification just created.

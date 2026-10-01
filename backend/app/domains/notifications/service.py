@@ -1,12 +1,13 @@
 """Business service for the notifications domain.
 
-Holds the notification rules (mark-read keeps the first ``read_at``) and the
-public cross-domain entry points ``create_notification`` and
-``resolve_last_notified_at``. The transaction is owned by whichever entry
-boundary called in - the HTTP ``get_db`` dependency for the poll/mark-read
-endpoints, or a producer's own transaction (the telemetry ingestion worker,
-the telematics device-health monitor). This module never commits or rolls
-back on its own.
+Holds the notification rules (mark-read and mark-all-read keep the first
+``read_at``) and the public cross-domain entry points ``create_notification``
+and ``resolve_last_notified_at``. The transaction is owned by whichever
+entry boundary called in - the HTTP ``get_db`` dependency for the
+list/read/count/mark-read endpoints, or a producer's own transaction (the
+telemetry ingestion worker, the telematics device-health monitor, the
+support SOS intake request). This module never commits or rolls back on its
+own.
 """
 
 from datetime import datetime
@@ -19,9 +20,12 @@ from app.domains.notifications.exceptions import NotificationNotFoundError
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.schemas import (
     NotificationListResponse,
+    NotificationMarkAllReadResponse,
     NotificationResponse,
+    NotificationUnreadCountResponse,
 )
 from app.domains.notifications.types import (
+    NotificationListOrder,
     NotificationReference,
     NotificationSeverity,
     NotificationType,
@@ -110,25 +114,53 @@ async def list_notifications(
     after_id: int,
     limit: int,
     unread_only: bool,
+    vehicle_id: UUID | None = None,
+    notification_type: NotificationType | None = None,
+    severity: NotificationSeverity | None = None,
+    order: NotificationListOrder = NotificationListOrder.ASC,
 ) -> NotificationListResponse:
-    """List notifications newer than a cursor, for a polling client.
+    """List notifications for a polling client or a notification centre.
 
     Args:
         db: Async session owned by the HTTP boundary.
-        after_id: Only return notifications with a larger ID than this
-            cursor; ``0`` returns from the beginning.
+        after_id: With ``order=ASC``, only return notifications with a
+            larger ID than this cursor (``0`` returns from the beginning);
+            ignored with ``order=DESC``.
         limit: Maximum number of records to return.
         unread_only: Whether to exclude notifications already marked read.
+        vehicle_id: Only notifications about this vehicle, if given.
+        notification_type: Only notifications of this type, if given.
+        severity: Only notifications of this severity, if given.
+        order: ``ASC`` (default, the polling contract): oldest first after
+            the cursor. ``DESC``: the newest ``limit`` notifications, newest
+            first.
 
     Returns:
-        Notifications newer than ``after_id``, plus the cursor to pass on
-        the next poll.
+        The notifications, plus ``latest_notification_id``: the highest ID
+        returned, or ``after_id`` when nothing was returned.
     """
-    notifications = await notification_repository.list_after_id(
-        db, after_id=after_id, limit=limit, unread_only=unread_only
-    )
-    latest_notification_id = (
-        notifications[-1].notification_id if notifications else after_id
+    if order is NotificationListOrder.DESC:
+        notifications = await notification_repository.list_newest(
+            db,
+            limit=limit,
+            unread_only=unread_only,
+            vehicle_id=vehicle_id,
+            notification_type=notification_type,
+            severity=severity,
+        )
+    else:
+        notifications = await notification_repository.list_after_id(
+            db,
+            after_id=after_id,
+            limit=limit,
+            unread_only=unread_only,
+            vehicle_id=vehicle_id,
+            notification_type=notification_type,
+            severity=severity,
+        )
+    latest_notification_id = max(
+        (notification.notification_id for notification in notifications),
+        default=after_id,
     )
     return NotificationListResponse(
         notifications=[
@@ -169,3 +201,68 @@ async def mark_notification_read(
     if notification_record.read_at is None:
         await notification_repository.set_read_at(db, notification_record, utc_now())
     return to_notification_response(notification_record)
+
+
+async def get_notification(
+    db: AsyncSession, notification_id: int
+) -> NotificationResponse:
+    """Get one notification by ID, read or unread.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        notification_id: Internal ID of the notification.
+
+    Returns:
+        The notification response.
+
+    Raises:
+        NotificationNotFoundError: If the notification does not exist.
+    """
+    notification_record = await notification_repository.get_by_id(db, notification_id)
+    if notification_record is None:
+        raise NotificationNotFoundError(f"Notification '{notification_id}' not found")
+    return to_notification_response(notification_record)
+
+
+async def count_unread_notifications(
+    db: AsyncSession, vehicle_id: UUID | None
+) -> NotificationUnreadCountResponse:
+    """Count the notifications not yet marked read (a badge count).
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        vehicle_id: Only count notifications about this vehicle, or every
+            notification when ``None``.
+
+    Returns:
+        The unread count.
+    """
+    unread_count = await notification_repository.count_unread(db, vehicle_id)
+    return NotificationUnreadCountResponse(unread_count=unread_count)
+
+
+async def mark_all_notifications_read(
+    db: AsyncSession, vehicle_id: UUID | None
+) -> NotificationMarkAllReadResponse:
+    """Mark every unread notification read, keeping each first read time.
+
+    Rule:
+        Same as ``mark_notification_read``: an already-read notification
+        keeps its original ``read_at``; only unread ones are stamped, all
+        with the same time.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        vehicle_id: Only notifications about this vehicle, or every
+            notification when ``None``.
+
+    Returns:
+        How many notifications were marked read.
+
+    Side Effects:
+        One ``UPDATE`` of the unread rows; does not commit.
+    """
+    marked_count = await notification_repository.set_read_at_on_unread(
+        db, read_at=utc_now(), vehicle_id=vehicle_id
+    )
+    return NotificationMarkAllReadResponse(marked_count=marked_count)

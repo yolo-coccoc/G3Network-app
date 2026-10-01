@@ -37,16 +37,40 @@ class NotificationResponse(BaseModel):
 
 
 class NotificationListResponse(BaseModel):
-    """A page of notifications newer than the caller's cursor.
+    """A page of notifications: newer than the caller's cursor, or newest.
 
     Attributes:
-        notifications: Notifications ordered oldest first.
+        notifications: Notifications ordered oldest first (``order=asc``,
+            the polling contract) or newest first (``order=desc``).
         count: Number of notifications in this response.
         latest_notification_id: Highest ``notification_id`` returned, or the
-            caller's own ``after_id`` if nothing new was found - the value to
+            caller's own ``after_id`` if nothing was found - the value to
             pass as ``after_id`` on the next poll.
     """
 
     notifications: list[NotificationResponse]
     count: int = Field(..., ge=0)
     latest_notification_id: int = Field(..., ge=0)
+
+
+class NotificationUnreadCountResponse(BaseModel):
+    """Number of notifications not yet marked read.
+
+    Attributes:
+        unread_count: Unread notifications, for one vehicle when the request
+            named one, otherwise in total.
+    """
+
+    unread_count: int = Field(..., ge=0)
+
+
+class NotificationMarkAllReadResponse(BaseModel):
+    """Outcome of marking every unread notification read.
+
+    Attributes:
+        marked_count: Notifications that were unread and are now read;
+            already-read ones keep their first ``read_at`` and are not
+            counted.
+    """
+
+    marked_count: int = Field(..., ge=0)
