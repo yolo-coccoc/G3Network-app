@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telemetry.reports as telemetry_reports
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicles_public_service
@@ -27,23 +28,23 @@ from tests.builders import fake_db_session
 
 def test_calculate_energy_kwh_converts_soc_percent_with_capacity() -> None:
     """A summed SOC delta converts to kWh proportionally to pack capacity."""
-    assert telemetry_service.calculate_energy_kwh(20.0, 75.0) == pytest.approx(15.0)
+    assert telemetry_reports.calculate_energy_kwh(20.0, 75.0) == pytest.approx(15.0)
 
 
 def test_calculate_energy_per_100km_returns_none_without_distance() -> None:
     """Energy intensity is undefined, not zero or infinite, at zero distance."""
-    assert telemetry_service.calculate_energy_per_100km_kwh(15.0, 0.0) is None
+    assert telemetry_reports.calculate_energy_per_100km_kwh(15.0, 0.0) is None
 
 
 def test_calculate_energy_per_100km_scales_to_hundred_kilometres() -> None:
     """15 kWh over 50 km is 30 kWh/100km."""
-    result = telemetry_service.calculate_energy_per_100km_kwh(15.0, 50.0)
+    result = telemetry_reports.calculate_energy_per_100km_kwh(15.0, 50.0)
     assert result == pytest.approx(30.0)
 
 
 def test_calculate_cost_per_km_returns_none_without_distance() -> None:
     """Cost per km is undefined, not zero, at zero distance."""
-    assert telemetry_service.calculate_cost_per_km_vnd(45000.0, 0.0) is None
+    assert telemetry_reports.calculate_cost_per_km_vnd(45000.0, 0.0) is None
 
 
 def test_calculate_distance_per_day_uses_requested_window_not_observed_span() -> None:
@@ -51,7 +52,7 @@ def test_calculate_distance_per_day_uses_requested_window_not_observed_span() ->
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = start + timedelta(days=7)
 
-    result = telemetry_service.calculate_distance_per_day_km(140.0, start, end)
+    result = telemetry_reports.calculate_distance_per_day_km(140.0, start, end)
 
     assert result == pytest.approx(20.0)
 

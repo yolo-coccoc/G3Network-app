@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_public_service
+import app.domains.telemetry.detection as telemetry_detection
+import app.domains.telemetry.mappers as telemetry_mappers
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
@@ -186,7 +188,7 @@ def test_detect_battery_alert_level(
     resolves to the most severe level; rising SOC never alerts.
     """
     assert (
-        telemetry_service.detect_battery_alert_level(previous_soc, current_soc)
+        telemetry_detection.detect_battery_alert_level(previous_soc, current_soc)
         == expected_level
     )
 
@@ -214,7 +216,7 @@ def test_detect_soh_alert(
     gradual SOH degradation isn't a condition where skipping the very first
     reading carries real risk.
     """
-    assert telemetry_service.detect_soh_alert(previous_soh, current_soh) is expected
+    assert telemetry_detection.detect_soh_alert(previous_soh, current_soh) is expected
 
 
 @pytest.mark.asyncio
@@ -294,7 +296,7 @@ def test_detect_high_battery_temperature(
     as "below threshold" (not "no alert") - a fire-safety anomaly must not
     be silently skipped on a vehicle's very first message.
     """
-    anomaly = telemetry_service.detect_high_battery_temperature(
+    anomaly = telemetry_detection.detect_high_battery_temperature(
         previous_celsius, current_celsius
     )
     if expects_anomaly:
@@ -307,7 +309,7 @@ def test_detect_high_battery_temperature(
 
 def test_detect_high_battery_temperature_skips_missing_reading() -> None:
     """No anomaly when the device didn't report a temperature at all."""
-    assert telemetry_service.detect_high_battery_temperature(55.0, None) is None
+    assert telemetry_detection.detect_high_battery_temperature(55.0, None) is None
 
 
 @pytest.mark.parametrize(
@@ -327,7 +329,7 @@ def test_detect_sudden_voltage_drop(
     expects_anomaly: bool,
 ) -> None:
     """detect_sudden_voltage_drop() only fires on an absolute drop >= the threshold."""
-    anomaly = telemetry_service.detect_sudden_voltage_drop(
+    anomaly = telemetry_detection.detect_sudden_voltage_drop(
         previous_volts, current_volts
     )
     if expects_anomaly:
@@ -357,7 +359,7 @@ def test_detect_new_error_codes(
     expected_new_codes: list[str] | None,
 ) -> None:
     """detect_new_error_codes() only fires on a code absent from the previous reading."""
-    anomaly = telemetry_service.detect_new_error_codes(previous_codes, current_codes)
+    anomaly = telemetry_detection.detect_new_error_codes(previous_codes, current_codes)
     if expected_new_codes is None:
         assert anomaly is None
     else:
@@ -375,7 +377,7 @@ def test_detect_vehicle_anomalies_returns_every_detector_that_fires() -> None:
         battery_temperature=65.0, battery_voltage=650.0, errors=["E042"]
     ).message
 
-    anomalies = telemetry_service.detect_vehicle_anomalies(
+    anomalies = telemetry_detection.detect_vehicle_anomalies(
         cast(VehicleTelemetryModel, previous_telemetry), message
     )
 
@@ -395,7 +397,7 @@ def test_detect_vehicle_anomalies_reads_stored_error_codes_shape() -> None:
     )
     message = build_telemetry_envelope(errors=["E001", "E042"]).message
 
-    anomalies = telemetry_service.detect_vehicle_anomalies(
+    anomalies = telemetry_detection.detect_vehicle_anomalies(
         cast(VehicleTelemetryModel, previous_telemetry), message
     )
 
@@ -407,7 +409,7 @@ def test_detect_vehicle_anomalies_returns_empty_for_no_previous_reading() -> Non
     """A vehicle's very first message with unremarkable readings raises nothing."""
     message = build_telemetry_envelope().message
 
-    assert telemetry_service.detect_vehicle_anomalies(None, message) == []
+    assert telemetry_detection.detect_vehicle_anomalies(None, message) == []
 
 
 def test_to_telemetry_snapshot_is_json_serializable() -> None:
@@ -416,7 +418,7 @@ def test_to_telemetry_snapshot_is_json_serializable() -> None:
         battery_temperature=65.0, battery_voltage=600.0, errors=["E042"]
     ).message
 
-    snapshot = telemetry_service.to_telemetry_snapshot(message)
+    snapshot = telemetry_mappers.to_telemetry_snapshot(message)
 
     serialized = json.dumps(snapshot)  # raises TypeError on a non-JSON-safe value
     assert json.loads(serialized)["battery_temperature"] == 65.0

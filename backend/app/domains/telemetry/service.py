@@ -1,4 +1,4 @@
-"""Business service for the telemetry domain.
+"""Public business service for the telemetry domain.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A2 (Tiered
 battery alerts), F-A3 (Battery health (SOH) & cycle tracking), F-A4
@@ -9,107 +9,75 @@ computed from SOC drops in telemetry - charging_sessions carries no
 vehicle linkage), F-C6 (Per-customer energy usage, computed from SOC
 rises in the same telemetry history; "customer" is a vehicle in this MVP)
 
+This is the only telemetry module other domains may import (the
+``telematics`` device-health monitor calls ``resolve_last_telemetry_at``).
+It orchestrates I/O and delegates the pure work to internal modules:
+
+- ``time_windows`` validates the query windows;
+- ``mappers`` builds the HTTP responses from ORM rows;
+- ``reports`` computes the F-A6/F-C6 reports from a folded window;
+- ``alerting`` (backed by the pure ``detection``) raises the F-A2/F-A3/F-A4
+  notifications during ingestion.
+
+Cross-domain edges owned by this module: ``vehicles`` (existence, battery
+capacity, F-F2 activation) and ``telematics`` (serial -> vehicle mapping).
+
 Ingestion processes each message individually (``process_message``), for
-low latency and per-message transaction isolation; F-A2's threshold, F-A3's
-SOH and F-A4's anomaly detection run in that flow. A batched path (batch
+low latency and per-message transaction isolation. A batched path (batch
 lookup + bulk insert) is deferred until a benchmark needs it - see
 ``docs/01-requirements/future.md`` item 25.
 """
 
 import logging
-from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TypedDict
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.charging_stations.service as charging_stations_service
-import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_service
+import app.domains.telemetry.alerting as telemetry_alerting
+import app.domains.telemetry.mappers as telemetry_mappers
+import app.domains.telemetry.reports as telemetry_reports
 import app.domains.telemetry.repository as telemetry_repository
-from app.domains.notifications.types import NotificationSeverity, NotificationType
-from app.domains.telemetry.exceptions import (
-    TelemetryInvalidRangeError,
-    TelemetryNotFoundError,
-)
-from app.domains.telemetry.models import VehicleTelemetryModel
+import app.domains.telemetry.time_windows as telemetry_time_windows
+import app.domains.vehicles.service as vehicle_service
+from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.schemas import (
     TelemetryEnvelope,
-    TelemetryMessage,
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
-    VehicleTelemetryHistoryPoint,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
-from app.domains.telemetry.types import (
-    BATTERY_ALERT_THRESHOLDS,
-    DEFAULT_BATTERY_CAPACITY_KWH,
-    ENERGY_COST_PER_KWH_VND,
-    HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
-    SOH_ALERT_THRESHOLD_PERCENT,
-    VEHICLE_ANOMALY_SEVERITIES,
-    VOLTAGE_DROP_THRESHOLD_VOLTS,
-    BatteryAlertLevel,
-    VehicleAnomaly,
-    VehicleAnomalyType,
-    VehicleTelemetryWindowSummary,
-)
-from app.domains.vehicles import service as vehicle_service
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
-from app.libs.common.geo import location_to_coordinates
 
 logger = logging.getLogger(__name__)
 
 
-def to_vehicle_telemetry_latest_response(
-    telemetry: VehicleTelemetryModel,
-) -> VehicleTelemetryLatestResponse:
-    """Build the latest-telemetry response from the ORM model.
-
-    Pure mapping only, no I/O. Built explicitly (rather than
-    ``VehicleTelemetryLatestResponse.model_validate(telemetry,
-    from_attributes=True)``) because the ORM model stores GPS as a single
-    ``location`` geography point while the response still exposes plain
-    ``latitude``/``longitude`` fields - the two no longer line up 1:1 by
-    attribute name.
+async def _get_vehicle_reference(
+    db: AsyncSession, vehicle_id: UUID
+) -> VehicleReference:
+    """Resolve a vehicle that must exist for a telemetry read to make sense.
 
     Args:
-        telemetry: Telemetry ORM object queried by the repository.
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle to resolve.
 
     Returns:
-        Response schema with latitude/longitude decoded from ``location``.
+        The vehicle's cross-domain reference (id, VIN, battery capacity).
+
+    Raises:
+        TelemetryNotFoundError: If the vehicle does not exist or was
+            soft-deleted.
     """
-    latitude, longitude = location_to_coordinates(telemetry.location)
-    # location_to_coordinates()'s return type is generic (Optional, since
-    # charging_stations.location can be null) - vehicle_telemetry.location
-    # is NOT NULL, so this pair is never actually missing; the assertion
-    # documents that invariant for both mypy and a future reader.
-    assert latitude is not None and longitude is not None, (
-        "vehicle_telemetry.location is NOT NULL"
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, vehicle_id
     )
-    return VehicleTelemetryLatestResponse(
-        vehicle_id=telemetry.vehicle_id,
-        telematic_serial=telemetry.telematic_serial,
-        recorded_at=telemetry.recorded_at,
-        latitude=latitude,
-        longitude=longitude,
-        speed=telemetry.speed,
-        heading=telemetry.heading,
-        soc=telemetry.soc,
-        battery_voltage=telemetry.battery_voltage,
-        battery_current=telemetry.battery_current,
-        battery_temperature=telemetry.battery_temperature,
-        soh_percent=telemetry.soh_percent,
-        cycle_count=telemetry.cycle_count,
-        motor_temperature=telemetry.motor_temperature,
-        odometer=telemetry.odometer,
-        signal_strength=telemetry.signal_strength,
-        error_codes=telemetry.error_codes,
-        schema_version=telemetry.schema_version,
-    )
+    if vehicle_reference is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    return vehicle_reference
 
 
 async def get_latest_vehicle_telemetry_response(
@@ -128,12 +96,7 @@ async def get_latest_vehicle_telemetry_response(
         TelemetryNotFoundError: When the vehicle does not exist or has no
             telemetry yet.
     """
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-        db,
-        vehicle_id,
-    )
-    if vehicle_reference is None:
-        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    await _get_vehicle_reference(db, vehicle_id)
 
     telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)
     if telemetry is None:
@@ -141,13 +104,16 @@ async def get_latest_vehicle_telemetry_response(
             f"No telemetry found for vehicle with id '{vehicle_id}'"
         )
 
-    return to_vehicle_telemetry_latest_response(telemetry)
+    return telemetry_mappers.to_vehicle_telemetry_latest_response(telemetry)
 
 
 async def resolve_last_telemetry_at(
     db: AsyncSession, vehicle_id: UUID
 ) -> datetime | None:
     """Get a vehicle's last telemetry receive time. Public entry point for F-J1/F-J3.
+
+    Returns a primitive rather than the ORM row or an HTTP schema, as a
+    cross-domain call must.
 
     Args:
         db: Async session owned by the caller's entry boundary (the
@@ -162,72 +128,9 @@ async def resolve_last_telemetry_at(
         future-dated `recorded_at`, make newer arrivals invisible to it.
 
     Side Effects:
-        Performs a read-only query only; does not commit or rollback. A
-        primitive return type, not the ORM model or an HTTP response
-        schema - the correct shape for a cross-domain boundary.
+        Read-only query; does not commit or roll back.
     """
     return await telemetry_repository.find_latest_received_at(db, vehicle_id)
-
-
-def to_vehicle_telemetry_history_point(
-    telemetry: VehicleTelemetryModel,
-) -> VehicleTelemetryHistoryPoint:
-    """Build one history point from the ORM model (F-A5).
-
-    Pure mapping only, no I/O. Same ``location`` decoding as
-    ``to_vehicle_telemetry_latest_response`` - the ORM model stores GPS as a
-    single geography point, not plain latitude/longitude columns.
-
-    Args:
-        telemetry: Telemetry ORM object queried by the repository.
-
-    Returns:
-        One point with latitude/longitude decoded from ``location``.
-    """
-    latitude, longitude = location_to_coordinates(telemetry.location)
-    assert latitude is not None and longitude is not None, (
-        "vehicle_telemetry.location is NOT NULL"
-    )
-    return VehicleTelemetryHistoryPoint(
-        recorded_at=telemetry.recorded_at,
-        latitude=latitude,
-        longitude=longitude,
-        speed=telemetry.speed,
-        heading=telemetry.heading,
-        soc=telemetry.soc,
-        battery_voltage=telemetry.battery_voltage,
-        battery_current=telemetry.battery_current,
-        battery_temperature=telemetry.battery_temperature,
-        soh_percent=telemetry.soh_percent,
-        cycle_count=telemetry.cycle_count,
-        motor_temperature=telemetry.motor_temperature,
-        odometer=telemetry.odometer,
-        signal_strength=telemetry.signal_strength,
-        error_codes=telemetry.error_codes,
-        schema_version=telemetry.schema_version,
-    )
-
-
-def _normalize_time_bound(value: datetime, field_name: str) -> datetime:
-    """Require a timezone-aware bound and normalize it to UTC.
-
-    Shared by every time-windowed telemetry query (F-A5's history, F-A6's
-    operating report, F-C6's energy-usage report).
-
-    Args:
-        value: A ``start_time``/``end_time`` query parameter as parsed by
-            FastAPI/Pydantic - naive if the caller omitted a UTC offset.
-        field_name: Name to report in the error message.
-
-    Returns:
-        The value normalized to UTC.
-
-    Raises:
-        TelemetryInvalidRangeError: If ``value`` has no timezone.
-    """
-    if value.utcoffset() is None:
-        raise TelemetryInvalidRangeError(f"{field_name} must have a timezone")
-    return value.astimezone(timezone.utc)
 
 
 async def get_vehicle_telemetry_history_response(
@@ -265,29 +168,16 @@ async def get_vehicle_telemetry_history_response(
         TelemetryNotFoundError: If the vehicle does not exist or was
             soft-deleted.
     """
-    normalized_start = _normalize_time_bound(start_time, "start_time")
-    normalized_end = _normalize_time_bound(end_time, "end_time")
-
-    if normalized_end <= normalized_start:
-        raise TelemetryInvalidRangeError("end_time must be after start_time")
-
-    max_range = timedelta(days=settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS)
-    if normalized_end - normalized_start > max_range:
-        raise TelemetryInvalidRangeError(
-            "Requested range exceeds the maximum of "
-            f"{settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS} day(s)"
-        )
+    normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
+        start_time, end_time, settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS
+    )
 
     resolved_limit = (
         limit if limit is not None else settings.TELEMETRY_HISTORY_DEFAULT_LIMIT
     )
     resolved_limit = min(max(resolved_limit, 1), settings.TELEMETRY_HISTORY_MAX_LIMIT)
 
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-        db, vehicle_id
-    )
-    if vehicle_reference is None:
-        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    await _get_vehicle_reference(db, vehicle_id)
 
     records = await telemetry_repository.get_vehicle_telemetry_history(
         db,
@@ -296,7 +186,10 @@ async def get_vehicle_telemetry_history_response(
         end_time=normalized_end,
         limit=resolved_limit,
     )
-    points = [to_vehicle_telemetry_history_point(record) for record in records]
+    points = [
+        telemetry_mappers.to_vehicle_telemetry_history_point(record)
+        for record in records
+    ]
     return VehicleTelemetryHistoryResponse(
         vehicle_id=vehicle_id, points=points, count=len(points)
     )
@@ -308,7 +201,7 @@ async def _resolve_report_context(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
-) -> tuple[datetime, datetime, VehicleReference, VehicleTelemetryWindowSummary]:
+) -> telemetry_reports.VehicleReportContext:
     """Validate a report window, resolve the vehicle, and fold its telemetry.
 
     Shared by F-A6 and F-C6 - both read the same window, the same vehicle
@@ -322,8 +215,7 @@ async def _resolve_report_context(
         end_time: Inclusive upper bound; must carry a timezone.
 
     Returns:
-        ``(normalized_start, normalized_end, vehicle_reference,
-        window_summary)``.
+        The validated window, the vehicle reference and the folded summary.
 
     Raises:
         TelemetryInvalidRangeError: Either bound is missing a timezone,
@@ -337,152 +229,22 @@ async def _resolve_report_context(
             endpoints, and the vehicle lookup here is a required input
             for battery capacity anyway, not an avoidable extra query.
     """
-    normalized_start = _normalize_time_bound(start_time, "start_time")
-    normalized_end = _normalize_time_bound(end_time, "end_time")
-
-    if normalized_end <= normalized_start:
-        raise TelemetryInvalidRangeError("end_time must be after start_time")
-
-    max_range = timedelta(days=settings.TELEMETRY_REPORT_MAX_RANGE_DAYS)
-    if normalized_end - normalized_start > max_range:
-        raise TelemetryInvalidRangeError(
-            "Requested range exceeds the maximum of "
-            f"{settings.TELEMETRY_REPORT_MAX_RANGE_DAYS} day(s)"
-        )
-
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-        db, vehicle_id
+    normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
+        start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
     )
-    if vehicle_reference is None:
-        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
-
+    vehicle_reference = await _get_vehicle_reference(db, vehicle_id)
     window_summary = await telemetry_repository.get_vehicle_window_summary(
         db,
         vehicle_id=vehicle_id,
         start_time=normalized_start,
         end_time=normalized_end,
     )
-    return normalized_start, normalized_end, vehicle_reference, window_summary
-
-
-def calculate_energy_kwh(soc_percent: float, battery_capacity_kwh: float) -> float:
-    """Convert a summed SOC percentage into energy using pack capacity.
-
-    Pure function, no I/O.
-
-    Args:
-        soc_percent: Summed SOC delta (%), already clamped non-negative.
-        battery_capacity_kwh: Pack capacity to convert against - the
-            vehicle's recorded value or the engineering default.
-
-    Returns:
-        Energy in kWh.
-    """
-    return soc_percent / 100.0 * battery_capacity_kwh
-
-
-def calculate_energy_cost_vnd(energy_kwh: float) -> float:
-    """Price energy at the flat engineering-default tariff (F-A6).
-
-    Pure function, no I/O.
-
-    Args:
-        energy_kwh: Energy amount to price.
-
-    Returns:
-        Cost in VND at ``ENERGY_COST_PER_KWH_VND``.
-    """
-    return energy_kwh * ENERGY_COST_PER_KWH_VND
-
-
-def calculate_energy_per_100km_kwh(
-    energy_kwh: float, distance_km: float
-) -> float | None:
-    """Compute energy intensity, or None when no distance was recorded.
-
-    Pure function, no I/O.
-
-    Args:
-        energy_kwh: Energy consumed over the window.
-        distance_km: Distance traveled over the window.
-
-    Returns:
-        kWh per 100 km, or ``None`` if ``distance_km`` is 0 - reporting a
-        rate against zero distance would fabricate a number rather than
-        state "undefined" (a parked vehicle can still consume energy via
-        HVAC, so ``energy_kwh > 0`` here is legitimate, not a bug).
-    """
-    if distance_km <= 0:
-        return None
-    return energy_kwh / distance_km * 100.0
-
-
-def calculate_cost_per_km_vnd(
-    energy_cost_vnd: float, distance_km: float
-) -> float | None:
-    """Compute cost per kilometre, or None when no distance was recorded.
-
-    Pure function, no I/O.
-
-    Args:
-        energy_cost_vnd: Total energy cost over the window.
-        distance_km: Distance traveled over the window.
-
-    Returns:
-        VND per km, or ``None`` if ``distance_km`` is 0 - same
-        undefined-rather-than-zero reasoning as
-        ``calculate_energy_per_100km_kwh``.
-    """
-    if distance_km <= 0:
-        return None
-    return energy_cost_vnd / distance_km
-
-
-def calculate_distance_per_day_km(
-    distance_km: float, start_time: datetime, end_time: datetime
-) -> float:
-    """Compute average daily distance across the *requested* window.
-
-    Pure function, no I/O.
-
-    Args:
-        distance_km: Distance traveled over the window.
-        start_time: Normalized start of the requested window.
-        end_time: Normalized end of the requested window.
-
-    Returns:
-        km/day, using the requested span as the denominator - not the
-        observed first-to-last sample span. Dividing by the observed span
-        would silently rescale: a vehicle that reported for one hour of a
-        30-day window would read as if it drove that hour's distance
-        every day. Callers see ``sample_count``/``first_recorded_at``/
-        ``last_recorded_at`` and can judge coverage themselves. Never
-        divides by zero: the caller has already rejected
-        ``end_time <= start_time``.
-    """
-    window_days = (end_time - start_time).total_seconds() / 86400.0
-    return distance_km / window_days
-
-
-def _resolve_battery_capacity(
-    vehicle_reference: VehicleReference,
-) -> tuple[float, bool]:
-    """Resolve the pack capacity to use for a kWh conversion (F-A6/F-C6).
-
-    Pure function, no I/O.
-
-    Args:
-        vehicle_reference: The vehicle's cross-domain reference DTO.
-
-    Returns:
-        ``(battery_capacity_kwh, is_default_battery_capacity)`` - the
-        vehicle's recorded capacity if present, else
-        ``DEFAULT_BATTERY_CAPACITY_KWH`` with the flag set so the
-        response can tell a consumer the number is an estimate.
-    """
-    if vehicle_reference.battery_capacity_kwh is not None:
-        return vehicle_reference.battery_capacity_kwh, False
-    return DEFAULT_BATTERY_CAPACITY_KWH, True
+    return telemetry_reports.VehicleReportContext(
+        vehicle_reference=vehicle_reference,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        window_summary=window_summary,
+    )
 
 
 async def get_vehicle_operating_report(
@@ -502,15 +264,8 @@ async def get_vehicle_operating_report(
     netted out. Assumes telemetry is reported frequently; sparse
     telemetry silently under-counts (an entire discharge-recharge cycle
     inside a reporting gap is invisible to this method). See
-    ``VehicleOperatingReportResponse`` for the full limitations.
-
-    Rule:
-        Every derived rate (`energy_per_100km_kwh`, `distance_per_day_km`,
-        `cost_per_km_vnd`) is `None` when it's undefined - fewer than two
-        telemetry samples in the window (no interval was measurable), or
-        zero distance traveled. The raw sums (`distance_km`,
-        `energy_consumed_kwh`, `energy_cost_vnd`) are always numbers,
-        0 when nothing happened.
+    ``VehicleOperatingReportResponse`` for the full limitations and
+    ``reports.build_operating_report`` for when a rate is ``None``.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -525,59 +280,10 @@ async def get_vehicle_operating_report(
         TelemetryInvalidRangeError: See ``_resolve_report_context``.
         TelemetryNotFoundError: See ``_resolve_report_context``.
     """
-    (
-        normalized_start,
-        normalized_end,
-        vehicle_reference,
-        window_summary,
-    ) = await _resolve_report_context(
+    report_context = await _resolve_report_context(
         db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
     )
-    battery_capacity_kwh, is_default_battery_capacity = _resolve_battery_capacity(
-        vehicle_reference
-    )
-    has_measurable_interval = window_summary.sample_count >= 2
-
-    energy_consumed_kwh = calculate_energy_kwh(
-        window_summary.soc_discharge_percent, battery_capacity_kwh
-    )
-    energy_cost_vnd = calculate_energy_cost_vnd(energy_consumed_kwh)
-    energy_per_100km_kwh = (
-        calculate_energy_per_100km_kwh(energy_consumed_kwh, window_summary.distance_km)
-        if has_measurable_interval
-        else None
-    )
-    cost_per_km_vnd = (
-        calculate_cost_per_km_vnd(energy_cost_vnd, window_summary.distance_km)
-        if has_measurable_interval
-        else None
-    )
-    distance_per_day_km = (
-        calculate_distance_per_day_km(
-            window_summary.distance_km, normalized_start, normalized_end
-        )
-        if has_measurable_interval
-        else None
-    )
-
-    return VehicleOperatingReportResponse(
-        vehicle_id=vehicle_id,
-        start_time=normalized_start,
-        end_time=normalized_end,
-        sample_count=window_summary.sample_count,
-        odometer_sample_count=window_summary.odometer_sample_count,
-        first_recorded_at=window_summary.first_recorded_at,
-        last_recorded_at=window_summary.last_recorded_at,
-        distance_km=window_summary.distance_km,
-        energy_consumed_kwh=energy_consumed_kwh,
-        energy_per_100km_kwh=energy_per_100km_kwh,
-        distance_per_day_km=distance_per_day_km,
-        energy_cost_vnd=energy_cost_vnd,
-        cost_per_km_vnd=cost_per_km_vnd,
-        battery_capacity_kwh=battery_capacity_kwh,
-        is_default_battery_capacity=is_default_battery_capacity,
-        cost_per_kwh_vnd=ENERGY_COST_PER_KWH_VND,
-    )
+    return telemetry_reports.build_operating_report(report_context)
 
 
 async def get_vehicle_energy_usage_report(
@@ -609,466 +315,21 @@ async def get_vehicle_energy_usage_report(
         TelemetryInvalidRangeError: See ``_resolve_report_context``.
         TelemetryNotFoundError: See ``_resolve_report_context``.
     """
-    (
-        normalized_start,
-        normalized_end,
-        vehicle_reference,
-        window_summary,
-    ) = await _resolve_report_context(
+    report_context = await _resolve_report_context(
         db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
     )
-    battery_capacity_kwh, is_default_battery_capacity = _resolve_battery_capacity(
-        vehicle_reference
-    )
-    energy_charged_kwh = calculate_energy_kwh(
-        window_summary.soc_charge_percent, battery_capacity_kwh
-    )
-
-    return VehicleEnergyUsageResponse(
-        vehicle_id=vehicle_id,
-        start_time=normalized_start,
-        end_time=normalized_end,
-        sample_count=window_summary.sample_count,
-        first_recorded_at=window_summary.first_recorded_at,
-        last_recorded_at=window_summary.last_recorded_at,
-        energy_charged_kwh=energy_charged_kwh,
-        battery_capacity_kwh=battery_capacity_kwh,
-        is_default_battery_capacity=is_default_battery_capacity,
-    )
-
-
-def detect_battery_alert_level(
-    previous_soc: float | None, current_soc: float
-) -> BatteryAlertLevel | None:
-    """Detect whether SOC just crossed a tiered alert threshold (F-A2).
-
-    Pure function, no I/O. A crossing is ``previous_soc > threshold >=
-    current_soc`` - strict on the previous side, inclusive on the current
-    side. The asymmetry is load-bearing: it makes a reading of exactly the
-    threshold alert once and only once. If both sides were inclusive, a
-    vehicle resting at exactly the threshold would alert on every message it
-    sends while parked there.
-
-    Args:
-        previous_soc: The vehicle's previous SOC reading (%), or ``None`` if
-            this is the first telemetry ever recorded for the vehicle (in
-            which case no alert is ever raised, regardless of how low
-            ``current_soc`` is).
-        current_soc: The current message's SOC reading (%).
-
-    Returns:
-        The most severe level crossed by this single reading (a gap that
-        skips multiple thresholds, e.g. 35% to 8%, still raises exactly one
-        alert), or ``None`` if no threshold was crossed downward.
-    """
-    if previous_soc is None:
-        return None
-    crossed_level: BatteryAlertLevel | None = None
-    for level, threshold in BATTERY_ALERT_THRESHOLDS.items():
-        if previous_soc > threshold.threshold_percent >= current_soc:
-            # Iterates least to most severe; keep the last match so a
-            # multi-threshold drop resolves to the most severe one crossed.
-            crossed_level = level
-    return crossed_level
-
-
-async def _raise_battery_alert(
-    db: AsyncSession,
-    *,
-    vehicle_id: UUID,
-    alert_level: BatteryAlertLevel,
-    current_soc: float,
-    latitude: float,
-    longitude: float,
-) -> None:
-    """Resolve the nearest operational station and raise a battery alert.
-
-    Args:
-        db: Session whose transaction is owned by the worker.
-        vehicle_id: Vehicle the alert is about.
-        alert_level: Level returned by ``detect_battery_alert_level``.
-        current_soc: SOC (%) that triggered the alert.
-        latitude: Vehicle's GPS latitude at the triggering message.
-        longitude: Vehicle's GPS longitude at the triggering message.
-
-    Side Effects:
-        Writes one notification row into the session; does not commit. The
-        nearest-station lookup is a snapshot taken now, from the vehicle's
-        GPS at this exact message - it is not recomputed later, so it
-        describes where the vehicle was when it crossed the threshold, not
-        where it currently is.
-    """
-    threshold = BATTERY_ALERT_THRESHOLDS[alert_level]
-    nearest_station = await charging_stations_service.find_nearest_operational_station(
-        db, latitude=latitude, longitude=longitude
-    )
-    payload: dict[str, object] = {
-        "threshold_percent": threshold.threshold_percent,
-        "soc": current_soc,
-        "station_id": (
-            str(nearest_station.station_id) if nearest_station is not None else None
-        ),
-        "station_name": (
-            nearest_station.display_name if nearest_station is not None else None
-        ),
-        "distance_km": (
-            nearest_station.distance_km if nearest_station is not None else None
-        ),
-    }
-    await notifications_service.create_notification(
-        db,
-        notification_type=NotificationType.BATTERY_ALERT,
-        severity=threshold.severity,
-        vehicle_id=vehicle_id,
-        title=f"Battery at {current_soc:.0f}% ({alert_level.value.title()})",
-        body=(
-            f"Vehicle battery dropped to {current_soc:.1f}%, crossing the "
-            f"{threshold.threshold_percent:.0f}% threshold."
-        ),
-        payload=payload,
-    )
-    logger.info(
-        "battery alert raised",
-        extra={
-            "vehicle_id": str(vehicle_id),
-            "alert_level": alert_level.value,
-            "soc": current_soc,
-        },
-    )
-
-
-def detect_soh_alert(previous_soh: float | None, current_soh: float | None) -> bool:
-    """Detect whether battery SOH just crossed the alert threshold (F-A3).
-
-    Pure function, no I/O. Same strict-above/inclusive-below crossing shape
-    as ``detect_battery_alert_level`` - fires once on entry, not on every
-    message resting below the threshold. Unlike F-A4's fire-safety
-    detectors, a missing previous reading means "no alert" here (matching
-    F-A2): gradual SOH degradation isn't a condition where skipping the
-    very first reading carries real risk.
-
-    Args:
-        previous_soh: The vehicle's previous SOH reading (%), or ``None``
-            if this is the first reading or the device didn't report it.
-        current_soh: The current message's SOH reading (%), or ``None`` if
-            the device didn't report it.
-
-    Returns:
-        ``True`` if SOH just crossed below
-        ``SOH_ALERT_THRESHOLD_PERCENT``, else ``False``.
-    """
-    if previous_soh is None or current_soh is None:
-        return False
-    return previous_soh > SOH_ALERT_THRESHOLD_PERCENT >= current_soh
-
-
-async def _raise_soh_alert(
-    db: AsyncSession,
-    *,
-    vehicle_id: UUID,
-    current_soh: float,
-    cycle_count: int | None,
-) -> None:
-    """Raise a battery-health notification (F-A3).
-
-    Args:
-        db: Session whose transaction is owned by the worker.
-        vehicle_id: Vehicle the alert is about.
-        current_soh: SOH (%) that triggered the alert.
-        cycle_count: The vehicle's current charge/discharge cycle count,
-            nullable, included in the payload for context.
-
-    Side Effects:
-        Writes one notification row into the session; does not commit.
-    """
-    payload: dict[str, object] = {
-        "threshold_percent": SOH_ALERT_THRESHOLD_PERCENT,
-        "soh_percent": current_soh,
-        "cycle_count": cycle_count,
-    }
-    await notifications_service.create_notification(
-        db,
-        notification_type=NotificationType.SOH_ALERT,
-        severity=NotificationSeverity.WARNING,
-        vehicle_id=vehicle_id,
-        title=f"Battery health at {current_soh:.0f}%",
-        body=(
-            f"Vehicle battery SOH dropped to {current_soh:.1f}%, crossing "
-            f"the {SOH_ALERT_THRESHOLD_PERCENT:.0f}% threshold."
-        ),
-        payload=payload,
-    )
-    logger.info(
-        "SOH alert raised",
-        extra={"vehicle_id": str(vehicle_id), "soh_percent": current_soh},
-    )
-
-
-def detect_high_battery_temperature(
-    previous_celsius: float | None, current_celsius: float | None
-) -> VehicleAnomaly | None:
-    """Detect a battery temperature entering the high-temperature anomaly range (F-A4).
-
-    Pure function, no I/O. This is a level condition, not a one-time
-    crossing like F-A2's SOC thresholds - a vehicle resting above the
-    threshold would alert on every message if this fired on "at or above the
-    threshold" alone. It only fires on *entry*: unlike
-    ``detect_battery_alert_level``, a missing previous reading is treated as
-    "below threshold" rather than suppressing the alert - a fire-safety
-    anomaly must not be silently skipped just because it is the vehicle's
-    first message. It stays silent while the reading remains above the
-    threshold, and re-arms once the reading recovers below it.
-
-    Args:
-        previous_celsius: The vehicle's previous battery temperature
-            reading, or ``None`` if this is the first reading or the device
-            didn't report it.
-        current_celsius: The current message's battery temperature reading,
-            or ``None`` if the device didn't report it (in which case
-            nothing can be detected).
-
-    Returns:
-        A ``HIGH_BATTERY_TEMPERATURE`` anomaly on entry into the high range,
-        or ``None``.
-    """
-    if current_celsius is None:
-        return None
-    was_below = (
-        previous_celsius is None
-        or previous_celsius < HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS
-    )
-    if not (
-        was_below and current_celsius >= HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS
-    ):
-        return None
-    return VehicleAnomaly(
-        anomaly_type=VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE,
-        severity=VEHICLE_ANOMALY_SEVERITIES[
-            VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE
-        ],
-        evidence={
-            "threshold_celsius": HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
-            "observed_celsius": current_celsius,
-        },
-    )
-
-
-def detect_sudden_voltage_drop(
-    previous_volts: float | None, current_volts: float | None
-) -> VehicleAnomaly | None:
-    """Detect a sudden absolute drop in battery voltage between readings (F-A4).
-
-    Pure function, no I/O. Undefined without both readings, unlike the
-    high-temperature detector - a drop is a comparison between two points,
-    so a missing previous reading (first message, or device didn't report
-    voltage) means nothing can be said, and this stays silent rather than
-    guessing a baseline.
-
-    Args:
-        previous_volts: The vehicle's previous battery voltage reading, or
-            ``None``.
-        current_volts: The current message's battery voltage reading, or
-            ``None``.
-
-    Returns:
-        A ``SUDDEN_VOLTAGE_DROP`` anomaly if the drop meets or exceeds
-        ``VOLTAGE_DROP_THRESHOLD_VOLTS``, or ``None``.
-    """
-    if previous_volts is None or current_volts is None:
-        return None
-    drop_volts = previous_volts - current_volts
-    if drop_volts < VOLTAGE_DROP_THRESHOLD_VOLTS:
-        return None
-    return VehicleAnomaly(
-        anomaly_type=VehicleAnomalyType.SUDDEN_VOLTAGE_DROP,
-        severity=VEHICLE_ANOMALY_SEVERITIES[VehicleAnomalyType.SUDDEN_VOLTAGE_DROP],
-        evidence={
-            "threshold_volts": VOLTAGE_DROP_THRESHOLD_VOLTS,
-            "previous_volts": previous_volts,
-            "current_volts": current_volts,
-            "drop_volts": drop_volts,
-        },
-    )
-
-
-def detect_new_error_codes(
-    previous_codes: Sequence[str] | None, current_codes: Sequence[str] | None
-) -> VehicleAnomaly | None:
-    """Detect a device error code that wasn't present in the previous reading (F-A4).
-
-    Pure function, no I/O. F-A4 names "cell/module fault" and "motor fault"
-    as separate triggers, but the MQTT contract only carries opaque error
-    code strings with no vendor catalog to map a code to one or the other -
-    see ``VehicleAnomalyType.DEVICE_FAULT``'s docstring and
-    ``docs/01-requirements/future.md``. Only *newly appearing* codes fire an
-    anomaly; a code that was already active on the previous reading (still
-    faulted, not a new fault) or one that cleared does not.
-
-    Args:
-        previous_codes: Error codes active on the vehicle's previous
-            reading, or ``None`` if there were none.
-        current_codes: Error codes active on the current reading, or
-            ``None`` if there are none.
-
-    Returns:
-        A ``DEVICE_FAULT`` anomaly listing the newly appeared codes, or
-        ``None`` if there are none.
-    """
-    if not current_codes:
-        return None
-    new_codes = sorted(set(current_codes) - set(previous_codes or []))
-    if not new_codes:
-        return None
-    return VehicleAnomaly(
-        anomaly_type=VehicleAnomalyType.DEVICE_FAULT,
-        severity=VEHICLE_ANOMALY_SEVERITIES[VehicleAnomalyType.DEVICE_FAULT],
-        evidence={
-            "new_codes": new_codes,
-            "active_codes": sorted(current_codes),
-        },
-    )
-
-
-def detect_vehicle_anomalies(
-    previous_telemetry: VehicleTelemetryModel | None,
-    message: TelemetryMessage,
-) -> list[VehicleAnomaly]:
-    """Run every F-A4 detector against one telemetry reading.
-
-    Pure function, no I/O. A single message may legitimately trip more than
-    one detector (e.g. a battery fire event could show both high temperature
-    and a new fault code), so every detector runs independently and all
-    results are returned.
-
-    Args:
-        previous_telemetry: The vehicle's previous telemetry row, already
-            queried by the caller, or ``None`` for the vehicle's first
-            reading.
-        message: The current message already validated by Pydantic.
-
-    Returns:
-        Every anomaly detected in this reading, in detector-declaration
-        order (temperature, voltage, then fault codes); empty if none.
-    """
-    previous_temperature = (
-        previous_telemetry.battery_temperature if previous_telemetry else None
-    )
-    previous_voltage = (
-        previous_telemetry.battery_voltage if previous_telemetry else None
-    )
-    # error_codes is stored as {"codes": [...]} JSONB, or None.
-    previous_error_codes = (
-        previous_telemetry.error_codes.get("codes")
-        if previous_telemetry and previous_telemetry.error_codes
-        else None
-    )
-
-    anomalies: list[VehicleAnomaly] = []
-    temperature_anomaly = detect_high_battery_temperature(
-        previous_temperature,
-        message.battery.temperature,
-    )
-    if temperature_anomaly is not None:
-        anomalies.append(temperature_anomaly)
-    voltage_anomaly = detect_sudden_voltage_drop(
-        previous_voltage,
-        message.battery.voltage,
-    )
-    if voltage_anomaly is not None:
-        anomalies.append(voltage_anomaly)
-    fault_anomaly = detect_new_error_codes(previous_error_codes, message.errors)
-    if fault_anomaly is not None:
-        anomalies.append(fault_anomaly)
-    return anomalies
-
-
-def to_telemetry_snapshot(message: TelemetryMessage) -> dict[str, object]:
-    """Build a JSONB-safe data snapshot of a telemetry message (F-A4).
-
-    Pure mapping, no I/O. This is the "event log with a data snapshot" F-A4
-    asks for - stored inside the anomaly notification's ``payload`` rather
-    than a separate table (see ``docs/02-planners/done/backend-anomaly-detection.md``).
-    Only JSON-serializable values are included (``UUID``/``datetime`` are
-    converted to strings) since ``payload`` is a JSONB column.
-
-    Args:
-        message: The telemetry message the anomaly was detected in.
-
-    Returns:
-        A flat dict of the message's fields relevant to investigating an
-        anomaly.
-    """
-    return {
-        "message_uuid": str(message.message_uuid),
-        "recorded_at": message.recorded_at.isoformat(),
-        "latitude": message.location.latitude,
-        "longitude": message.location.longitude,
-        "speed": message.vehicle_state.speed if message.vehicle_state else None,
-        "odometer": message.vehicle_state.odometer if message.vehicle_state else None,
-        "soc": message.battery.soc,
-        "battery_voltage": message.battery.voltage,
-        "battery_current": message.battery.current,
-        "battery_temperature": message.battery.temperature,
-        "motor_temperature": message.motor.temperature if message.motor else None,
-        "error_codes": message.errors,
-        "schema_version": message.schema_version,
-    }
-
-
-_ANOMALY_TITLES: dict[VehicleAnomalyType, str] = {
-    VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE: "High battery temperature detected",
-    VehicleAnomalyType.SUDDEN_VOLTAGE_DROP: "Sudden battery voltage drop detected",
-    VehicleAnomalyType.DEVICE_FAULT: "Device fault code reported",
-}
-
-
-async def _raise_vehicle_anomaly_alert(
-    db: AsyncSession,
-    *,
-    vehicle_id: UUID,
-    anomaly: VehicleAnomaly,
-    message: TelemetryMessage,
-) -> None:
-    """Raise an F-A4 anomaly notification carrying evidence and a data snapshot.
-
-    Args:
-        db: Session whose transaction is owned by the worker.
-        vehicle_id: Vehicle the anomaly was detected on.
-        anomaly: Anomaly already detected by ``detect_vehicle_anomalies``.
-        message: The telemetry message the anomaly was detected in, used to
-            build the stored snapshot.
-
-    Side Effects:
-        Writes one notification row into the session; does not commit.
-    """
-    payload: dict[str, object] = {
-        "anomaly_type": anomaly.anomaly_type.value,
-        "evidence": anomaly.evidence,
-        "snapshot": to_telemetry_snapshot(message),
-    }
-    await notifications_service.create_notification(
-        db,
-        notification_type=NotificationType.ANOMALY_ALERT,
-        severity=anomaly.severity,
-        vehicle_id=vehicle_id,
-        title=_ANOMALY_TITLES[anomaly.anomaly_type],
-        body=(
-            f"Vehicle anomaly '{anomaly.anomaly_type.value}' detected with "
-            f"evidence {anomaly.evidence}."
-        ),
-        payload=payload,
-    )
-    logger.info(
-        "vehicle anomaly alert raised",
-        extra={
-            "vehicle_id": str(vehicle_id),
-            "anomaly_type": anomaly.anomaly_type.value,
-        },
-    )
+    return telemetry_reports.build_energy_usage_report(report_context)
 
 
 class MessageResult(TypedDict):
-    """Counters returned after processing a telemetry message."""
+    """Counters returned after processing a telemetry message.
+
+    Attributes:
+        processed: Rows inserted for the message (0 or 1).
+        skipped: 1 if the message was skipped because its serial has no
+            vehicle mapping, else 0.
+        errors: 1 if the message could not be converted into a row, else 0.
+    """
 
     processed: int
     skipped: int
@@ -1094,16 +355,12 @@ async def process_message(
       state machine advances to ``ACTIVATED`` (see
       ``vehicle_service.mark_vehicle_activated``) - a best-effort side
       channel that never affects this function's own return value.
-    - After a successful insert, F-A2 battery-threshold detection runs
-      against the vehicle's previous SOC reading; a crossing raises exactly
-      one notification (see ``detect_battery_alert_level``). F-A3's SOH
-      threshold detection runs the same way against the previous SOH
-      reading (see ``detect_soh_alert``). F-A4 anomaly detection also runs
-      against the same previous reading; a message may trip zero, one, or
-      more anomaly detectors, each raising its own notification (see
-      ``detect_vehicle_anomalies``). None of these ever affect
-      ``processed``/``skipped``/``errors`` - each is reported via a separate
-      structured log line.
+    - After a successful insert, the F-A2 battery-threshold, F-A3 SOH and
+      F-A4 anomaly detectors run against the vehicle's previous reading
+      and each alert raises its own notification (see
+      ``alerting.raise_alerts_for_reading``). None of these ever affect
+      ``processed``/``skipped``/``errors`` - each is reported via a
+      separate structured log line.
 
     Args:
         db: AsyncSession whose transaction is owned by the worker.
@@ -1119,8 +376,9 @@ async def process_message(
             worker can roll back.
 
     Side Effects:
-        May write one row into the session and emit a structured log. The
-        function does not commit or roll back.
+        May write one telemetry row and alert notifications into the
+        session and emit structured logs. The function does not commit or
+        roll back.
     """
     message = envelope.message
     mapping = await telematics_service.resolve_mapping_by_serial(
@@ -1141,13 +399,12 @@ async def process_message(
 
     # Read the previous reading before inserting this one - once the new row
     # is inserted, get_latest_vehicle_telemetry would return it instead of
-    # the actual previous reading, and the crossing could never be detected.
-    # Kept as the full ORM row (not just .soc) since F-A4's detectors also
-    # need the previous temperature/voltage/error codes.
+    # the actual previous reading, and no crossing could ever be detected.
+    # Kept as the full ORM row since the F-A2/F-A3/F-A4 detectors compare
+    # SOC, SOH, temperature, voltage and error codes.
     previous_telemetry = await telemetry_repository.get_latest_vehicle_telemetry(
         db, vehicle_id
     )
-    previous_soc = previous_telemetry.soc if previous_telemetry is not None else None
 
     try:
         telemetry_values = message.to_vehicle_telemetry_values(
@@ -1184,35 +441,11 @@ async def process_message(
         # end-to-end data flow. Best-effort side channel - never raises.
         await vehicle_service.mark_vehicle_activated(db, vehicle_id)
 
-    alert_level = detect_battery_alert_level(previous_soc, message.battery.soc)
-    if alert_level is not None:
-        await _raise_battery_alert(
-            db,
-            vehicle_id=vehicle_id,
-            alert_level=alert_level,
-            current_soc=message.battery.soc,
-            latitude=message.location.latitude,
-            longitude=message.location.longitude,
-        )
-
-    previous_soh = previous_telemetry.soh_percent if previous_telemetry else None
-    if detect_soh_alert(previous_soh, message.battery.soh_percent):
-        assert message.battery.soh_percent is not None, (
-            "detect_soh_alert() only returns True when current_soh is not None"
-        )
-        await _raise_soh_alert(
-            db,
-            vehicle_id=vehicle_id,
-            current_soh=message.battery.soh_percent,
-            cycle_count=message.battery.cycle_count,
-        )
-
-    for anomaly in detect_vehicle_anomalies(previous_telemetry, message):
-        await _raise_vehicle_anomaly_alert(
-            db,
-            vehicle_id=vehicle_id,
-            anomaly=anomaly,
-            message=message,
-        )
+    await telemetry_alerting.raise_alerts_for_reading(
+        db,
+        vehicle_id=vehicle_id,
+        previous_telemetry=previous_telemetry,
+        message=message,
+    )
 
     return {"processed": processed_count, "skipped": 0, "errors": 0}

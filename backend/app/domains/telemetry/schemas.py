@@ -50,7 +50,7 @@ class VehicleTelemetryLatestResponse(BaseModel):
         - the ORM model stores GPS as a single ``location`` geography point,
         which doesn't line up 1:1 with this schema's plain latitude/
         longitude fields. See
-        ``telemetry.service.to_vehicle_telemetry_latest_response``.
+        ``telemetry.mappers.to_vehicle_telemetry_latest_response``.
     """
 
     vehicle_id: UUID

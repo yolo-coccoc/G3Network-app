@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telemetry.mappers as telemetry_mappers
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicles_public_service
@@ -55,7 +56,7 @@ def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
         schema_version=3,
     )
 
-    response = telemetry_service.to_vehicle_telemetry_latest_response(record)
+    response = telemetry_mappers.to_vehicle_telemetry_latest_response(record)
 
     assert response.latitude == pytest.approx(10.762622)
     assert response.longitude == pytest.approx(106.660172)
@@ -69,7 +70,7 @@ def test_telemetry_history_point_decodes_location_to_lat_lon() -> None:
     now = datetime.now(timezone.utc)
     record = build_telemetry_record(vehicle_id=uuid4(), recorded_at=now)
 
-    point = telemetry_service.to_vehicle_telemetry_history_point(record)
+    point = telemetry_mappers.to_vehicle_telemetry_history_point(record)
 
     assert point.latitude == pytest.approx(10.762622)
     assert point.longitude == pytest.approx(106.660172)
