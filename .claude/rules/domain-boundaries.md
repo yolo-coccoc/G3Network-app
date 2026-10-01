@@ -10,7 +10,7 @@
 
 ## Rules
 
-- Each directory under `backend/app/domains/` is **1 bounded context**. A domain may only call another domain through that domain's **public `service.py`** (importing the DTOs/enums of its `types.py` that the service's signatures use is fine) — **never** import/query another domain's `repository.py`/`models.py`.
+- Each directory under `backend/app/domains/` is **1 bounded context**. A domain's **public surface** is exactly three modules: `service.py` (the only thing another domain *calls*), plus the DTOs/enums of `types.py` and the exceptions of `exceptions.py` that the service's signatures use or raise. Another domain **never** imports anything else from it — not `repository.py`, `models.py`, `router.py`, `schemas.py`, nor any internal module or subpackage (e.g. `telemetry.detection`, `charging_stations.ocpp_state_service`, the `ocpp/` and `ingestion/` packages).
   - This applies only **between** domains. Inside one domain, files call each other directly (e.g. `telemetry/service.py` → `telemetry/detection.py`/`telemetry/repository.py`, or the OCPP adapters → `charging_stations/ocpp_state_service.py`). A domain may keep such internal modules beside its public `service.py`; other domains never import them.
 - Cross-domain calls take and return primitives or frozen dataclass DTOs (`VehicleReference`, `TransactionSessionReference`...), never an ORM model or an HTTP schema.
 - Every edge is **one-directional** unless listed as an exception below. Adding a new edge (or a new domain) means adding a row to the table below in the same change.

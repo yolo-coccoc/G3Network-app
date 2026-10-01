@@ -1,92 +1,105 @@
 # G3Network Backend
 
-Backend FastAPI for the MVP driver assistance and electric truck fleet
-management system.
+FastAPI backend for the electric truck driver support and fleet management
+MVP. First-time setup, the daily `make` targets, the simulators and the full
+feature scope are in the [root README](../README.md); `make help` lists every
+command.
 
 ## Current scope
 
-- `vehicles` and `telematics` CRUD, including mapping devices to vehicles.
-- Receiving telemetry over MQTT and storing it in PostgreSQL/TimescaleDB.
-- `GET /api/v1/telemetry/vehicles/{vehicle_id}/latest` for reading a
-  vehicle's latest telemetry.
-- `charging_stations` → EVSE → connector topology CRUD, including station
-  directory metadata (location, power rating, connector standard, operating
-  hours, maintenance status).
-- OCPP 2.0.1 gateway and the charging session happy-path lifecycle.
-- API for reading charging sessions, events and meter values.
-
-Telemetry history API, map, alerts, device health, policy, user/RBAC and
-frontend are not yet part of the current source.
+Nine domains: vehicles (incl. device-activation state), telematics devices
+(vehicle mapping, MQTT config push, device-health monitor), telemetry (MQTT
+ingestion, latest/history, operating and energy reports, battery/SOH/anomaly
+alerts), notifications (poll-only), charging stations (topology, directory,
+nearby search, OCPP gateway), charging sessions, drivers, fleets and support
+(tickets and SOS). Not built yet: identity/RBAC, policy, billing/payment and
+the frontends. See [docs/00-status/overview.md](../docs/00-status/overview.md).
 
 ## Development
 
+The `make` targets are the normal way to run things (from the repository
+root). The raw commands, from this `backend/` directory:
+
 ```bash
-# Install dependencies
+# Install runtime dependencies plus the `dev` group (ruff, mypy, pytest,
+# import-linter, pytest-cov) - plain `uv sync` includes the dev group
 uv sync
 
-# Run development server
-uv run uvicorn app.api.main:app --reload
+# API server (make backend-dev)
+uv run uvicorn app.api.main:app --reload --port 8000
 
-# Run with specific host/port
-uv run uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+# Telemetry ingestion (make telemetry-dev)
+uv run python -m app.domains.telemetry.ingestion.entrypoint
 
-# Run the OCPP 2.0.1 gateway in a separate process
+# OCPP gateway, 2.0.1 + 1.6J (make charging-ocpp-dev)
 uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
-# Run the OCPP session happy-path simulator from the repository root
-uv run python ../simulator/charging_session_simulator.py
+# Device-health monitor (make telematics-monitor-dev)
+uv run python -m app.domains.telematics.monitoring.entrypoint
 
-# Provision station, EVSE and connector for the simulator
+# Simulators live in ../simulator; run them from here so they use this venv
 uv run python ../simulator/seed_charging_topology.py
+uv run python ../simulator/charging_session_simulator.py
 ```
 
-The OCPP gateway listens on `CHARGING_OCPP_HOST` and
-`CHARGING_OCPP_PORT` (default `0.0.0.0:9000`) and accepts only the
-`ocpp2.0.1` WebSocket subprotocol. The station identity in
+The OCPP gateway listens on `CHARGING_OCPP_HOST`:`CHARGING_OCPP_PORT`
+(default `0.0.0.0:9000`) and accepts the `ocpp2.0.1` and `ocpp1.6` WebSocket
+subprotocols; the negotiated one picks the adapter. The station identity in
 `/ocpp/{ocpp_identity}` must already exist in the charging-stations API.
 
 ## Checks
 
-```bash
-make check            # from the repo root: ruff, import-linter, mypy, tests, domain-model check
-make format           # sort imports + format with ruff
-```
-
-The PostgreSQL integration tests are skipped by default. Run them against a
-real database (needs `make infra-up`):
+From the repository root:
 
 ```bash
-make backend-test-integration
+make check                      # ruff, import-linter, mypy, smoke tests, domain-model check
+make format                     # sort imports + format with ruff
+make backend-test-integration   # PostgreSQL integration tests (needs make infra-up)
 ```
+
+The PostgreSQL integration tests in `tests/test_postgres_integration.py` are
+skipped unless `RUN_DB_INTEGRATION=1`, which `make backend-test-integration`
+sets.
 
 ## Configuration
 
-Copy `.env.example` to `.env` before running the backend. The shared schema,
-types, validation and safe defaults live in
-`app/libs/common/config.py`; `.env` only supplies values that vary by runtime
-environment, credentials and operational tuning. `DATABASE_URL` is required
-and must not be placed in source code.
+`make setup` copies `.env.example` to `.env`. Every setting is defined, typed
+and validated in `app/libs/common/config.py`; `.env.example` documents each
+one, grouped by component, with its default. Only `DATABASE_URL` is required,
+and it must never be placed in source code.
 
-## API Documentation
+## API documentation
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Project Structure
+## Project structure
 
 ```
 backend/
-├── app/               # Source code (uv package)
-│   ├── domains/       # Business domains (bounded contexts)
-│   │   ├── vehicles/  # Vehicle management (F-F2)
-│   │   ├── telematics/# Device profile and vehicle mapping (F-G1)
-│   │   ├── telemetry/ # MQTT ingestion and latest telemetry query (F-A1)
-│   │   ├── charging_stations/ # Topology and OCPP 2.0.1 (F-C1, F-G2)
-│   │   └── charging_sessions/ # Session, event and meter lifecycle (F-B2)
-│   ├── api/          # FastAPI application
-│   │   └── main.py   # Entry point
-│   └── libs/         # Shared utilities
-│       └── db/       # Database configuration
+├── app/                      # Source code (uv package)
+│   ├── domains/              # Business domains (bounded contexts)
+│   │   ├── vehicles/         # Vehicle profile and activation state (F-F2)
+│   │   ├── telematics/       # Devices, vehicle mapping, config push, health monitor (F-G1, F-J1-J3)
+│   │   ├── telemetry/        # MQTT ingestion, history, reports, alerts (F-A1-A6, F-C6)
+│   │   ├── charging_stations/# Topology, directory, nearby search, OCPP 2.0.1 + 1.6J (F-C1, F-C2, F-D1, F-G2)
+│   │   ├── charging_sessions/# Session, event and measurement lifecycle (F-B2, F-C5)
+│   │   ├── notifications/    # Notification storage and polling (F-A2)
+│   │   ├── drivers/          # Driver profile and vehicle assignments (F-E4)
+│   │   ├── fleet/            # Fleets and vehicle membership (F-E1)
+│   │   └── support/          # Support tickets and SOS (F-I1, F-I2)
+│   ├── api/
+│   │   └── main.py           # FastAPI app: routers + domain-exception handlers
+│   └── libs/
+│       ├── common/           # config, logging, errors, clock, pagination, geo
+│       └── db/               # SQLAlchemy base, session, enums, Alembic migration
+├── tests/                    # tests/<domain>/ smoke tests, shared builders/fakes,
+│                             # cross-cutting and PostgreSQL integration tests
+├── alembic.ini
 ├── pyproject.toml
 └── uv.lock
 ```
+
+Where each module belongs and which cross-domain imports are allowed:
+[`.claude/rules/directory-structure.md`](../.claude/rules/directory-structure.md)
+and [`.claude/rules/domain-boundaries.md`](../.claude/rules/domain-boundaries.md).

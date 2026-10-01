@@ -17,9 +17,11 @@ unstaged). Read the full changed files where context is needed.
 
 ## The rules (read them, don't rely on memory)
 
-- `.claude/rules/domain-boundaries.md` — cross-domain calls only via
-  `service.py` (+ its `types.py` DTOs/enums); the edge table must list every
-  cross-domain call; a new domain needs an import-linter contract.
+- `.claude/rules/domain-boundaries.md` — another domain may import only a
+  domain's `service.py`, the DTOs/enums of its `types.py` and the exceptions
+  of its `exceptions.py` (never repository/models/router/schemas/internal
+  modules); the edge table must list every cross-domain call; a new domain
+  needs an import-linter contract and ruff `banned-from` entries.
 - `.claude/rules/backend-coding-conventions.md` — `<Object><Role>` class
   names, `Request`/`Response`/`Reference` roles, `get_/find_/list_/resolve_`
   prefixes, `_by_<field>` not `_for_`, positional vs keyword-only parameters,

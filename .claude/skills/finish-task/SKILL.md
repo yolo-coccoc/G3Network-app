@@ -13,9 +13,10 @@ you can't fix; never weaken a check to make it pass.
    import-linter, mypy, smoke tests, domain-model check). If formatting
    fails, run `make format` and re-check.
 2. **Database** — if a model, the baseline migration, or a repository query
-   changed: `make db-reset` then `make backend-test-integration`. A schema
+   changed: `make db-reset`, `make db-check` (must print "No new upgrade
+   operations detected") and `make backend-test-integration`. A schema
    change must also satisfy `.claude/rules/database.md` (`.dbml` updated,
-   views regenerated).
+   views regenerated) — the `schema-change` agent does all of this.
 3. **Review** — run the `convention-reviewer` agent on the diff and fix every
    `blocker`/`major` finding (or explain why it doesn't apply).
 4. **Manual checks the tools can't do**

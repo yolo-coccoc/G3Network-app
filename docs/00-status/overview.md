@@ -50,7 +50,7 @@ bootstrap phase; `make db-reset` rebuilds the database from it).
 ## Not built yet
 
 Web portal, vehicle app, identity/RBAC, policy, billing/payment,
-and extended monitoring (full telemetry history, map, connector-status
+and extended monitoring (map/geofence search, connector-status
 aggregation, push/multi-channel delivery) have no active source in the
 repo. `notifications` has a minimal backend-storage/polling slice (F-A2)
 but not the multi-channel delivery F-F3 describes. `drivers` now has a

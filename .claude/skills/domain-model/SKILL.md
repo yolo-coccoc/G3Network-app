@@ -144,5 +144,4 @@ table sheet is the L3 detail.
 - pydbml supports core DBML only. Keep to tables, enums, refs, indexes,
   table groups, and notes (the syntax already used in the file).
 - In a DBML string, escape an apostrophe as `\'`.
-- `.claude/` is gitignored, so this skill and its scripts are local only.
   The DBML and generated views in `docs/` are the committed record.

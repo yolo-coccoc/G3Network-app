@@ -28,9 +28,10 @@ curl -s localhost:8000/health        # {"status":"healthy",...}
 ```
 
 (`make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev` run the
-same three in the foreground, one per terminal.) Optional fourth service:
-`python -m app.domains.telematics.monitoring.entrypoint` (device-silence
-monitor, F-J1/F-J3).
+same three in the foreground, one per terminal.) Optional fourth service,
+the device-silence monitor (F-J1/F-J3):
+`nohup uv run python -m app.domains.telematics.monitoring.entrypoint > $LOG/monitor.log 2>&1 &`
+(foreground: `make telematics-monitor-dev`).
 
 ## 3. Flows (from `backend/`)
 
@@ -78,6 +79,7 @@ stations, `is_online: true` right after a run), `GET /docs` for the rest.
 pkill -f "[u]vicorn app.api.main:app"
 pkill -f "[a]pp.domains.telemetry.ingestion.entrypoint"
 pkill -f "[a]pp.domains.charging_stations.ocpp.entrypoint"
+pkill -f "[a]pp.domains.telematics.monitoring.entrypoint"   # if started
 ss -ltn | grep -E ':(8000|9000) ' || echo stopped
 ```
 Run these in a **separate shell command** from the one that started the

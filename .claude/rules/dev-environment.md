@@ -11,7 +11,8 @@ pieces that don't need frequent direct code changes are Dockerized.
 
 | Component | Tool |
 |---|---|
-| Backend (`api`, and the entrypoints under `telemetry/ingestion`, `charging_stations/ocpp`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... |
+| Backend (`api`, and the entrypoints under `telemetry/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
+| Simulators (`simulator/`) | run from `backend/` with its venv: `uv run python ../simulator/...`, or the `make charging-ocpp*` targets |
 
 ## Running in Docker (`infra/docker-compose.yml`)
 
@@ -31,26 +32,37 @@ Use the Makefile as the source of truth. See the full command list:
 make help
 ```
 
+First time on a clone: `make setup` — creates `backend/.env` and
+`infra/.env` from the examples (never overwrites), runs `uv sync` (runtime
+deps plus the `dev` dependency group), enables the git hook, starts the
+infrastructure, waits for PostgreSQL, applies the migration and runs
+`make check`. Safe to re-run.
+
 Basic commands:
-- `make infra-up` — Start infrastructure (PostgreSQL)
-- `make backend-install` — Install dependencies
-- `make backend-dev` — Run the backend server
-- `make db-migrate` — Run database migrations
-- `make db-reset` — Clear the database and rebuild it from the baseline migration
-- `make db-check` — Verify the rebuilt database matches the models (`alembic check`)
-- `make check` — The full local gate (ruff, import-linter, mypy, smoke tests, domain-model check); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
-- `make backend-test-integration` — PostgreSQL integration tests (needs `make infra-up`)
-- `make charging-ocpp-dev` — Run the OCPP gateway (accepts 2.0.1 and 1.6J on port 9000)
+- `make infra-up` / `make infra-down` — Start / stop PostgreSQL and EMQX (data kept); `make infra-reset` removes the volumes (all data)
+- `make backend-install` — `uv sync` (runtime dependencies + `dev` group)
+- `make backend-dev` — API server (port 8000, auto-reload)
+- `make telemetry-dev` — MQTT telemetry ingestion
+- `make charging-ocpp-dev` — OCPP gateway (accepts 2.0.1 and 1.6J on port 9000)
+- `make telematics-monitor-dev` — Device-health (silence) monitor
+- `make db-migrate` — Apply the baseline migration to an empty database
+- `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
+- `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
+- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
+- `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests (needs `make infra-up`)
+- `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
+- `make audit` — `pip-audit` (via `uvx`) of every locked dependency
 - `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision and run the OCPP 2.0.1 simulator
-- `make charging-ocpp16-seed` / `make charging-ocpp16-sim` — Provision (one EVSE per gun) and run the OCPP 1.6J simulator (`--scenario boot|status|session`)
+- `make charging-ocpp16-seed` / `make charging-ocpp16-sim [SCENARIO=boot|status|session]` — Provision (one EVSE per gun) and run the OCPP 1.6J simulator (default scenario `boot`)
 
 See [README.md](../../README.md) for detailed setup and quick-start
 instructions.
 
 ## Environment variables
 
-- There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`). Both point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql://...@localhost:5432/...`, `MQTT_HOST=localhost`.
-- OCPP gateway settings (`backend/.env.example`): `CHARGING_OCPP_HOST`/`CHARGING_OCPP_PORT`, `CHARGING_OCPP_MAX_MESSAGE_BYTES` (largest accepted frame, default 1 MiB), `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS` (interval returned to a 1.6J charger, default 60), `CHARGING_OFFLINE_TIMEOUT_SECONDS` (no frame for this long = offline, default 180) and `CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS` (wait for a charger's answer to a request the gateway sends, default 30).
+- There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`); `make setup` copies each to `.env` if missing. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
+- Every backend setting is defined (type, validation, default) in `backend/app/libs/common/config.py` and documented with its default in `backend/.env.example`, grouped by component; only `DATABASE_URL` is required. A new setting goes in both, namespaced by component.
+- OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the 1.6J heartbeat interval, the offline threshold behind the derived `is_online`, and the timeout for a charger's answer to a gateway request.
 
 ## Claude Code tooling (checked in under `.claude/` and `.mcp.json`)
 
@@ -62,9 +74,11 @@ instructions.
 - **Agents** (`.claude/agents/`): `docs-sync` (bring docs in line with a code
   change), `convention-reviewer` (read-only rules review of a diff),
   `schema-change` (model + DBML + baseline migration + rebuild + verify).
-- **Skills** (`.claude/skills/`): `domain-model`, `ocpp16-reference`,
-  `e2e-sim` (run the stack with the simulators and check the data),
-  `new-domain`, `finish-task`.
+- **Skills** (`.claude/skills/`): `start-feature` (gather → planner from
+  `docs/02-planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
+  `domain-model`, `ocpp16-reference`, `e2e-sim` (run the stack with the
+  simulators and check the data), `finish-task`. The order to use them in is
+  in CLAUDE.md ("How a feature gets built").
 - **MCP servers** (`.mcp.json`, approved via `enabledMcpjsonServers`):
   `postgres` — `postgres-mcp` in `--access-mode=restricted` (read-only
   transactions; a write is refused), pointed at the local dev database or at

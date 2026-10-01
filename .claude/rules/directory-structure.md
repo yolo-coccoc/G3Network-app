@@ -73,26 +73,33 @@ implementation starts.
 │   │       │                           # clock (utc_now), pagination (normalize_page_window), geo
 │   │       └── db/                     # SQLAlchemy base, session, enums (enum_values), Alembic migrations
 │   │
-│   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py);
+│   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py) plus tests/libs/;
 │   │                               # shared builders.py/fakes.py; cross-cutting tests at the top level
-│   ├── pyproject.toml
+│   │                               # (API, migration smoke, PostgreSQL integration)
+│   ├── alembic.ini
+│   ├── pyproject.toml              # dependencies + dev group, ruff, mypy, import-linter contracts
 │   ├── uv.lock
-│   └── .env.example                # no production Dockerfile at this stage yet
+│   ├── README.md
+│   └── .env.example                # every setting with its default; no production Dockerfile at this stage yet
 │
 ├── infra/
 │   ├── docker-compose.yml          # defines exactly 2 services: db, broker (see dev-environment.md)
 │   ├── .env.example
 │   └── db/
-│       └── init/                   # script that enables the timescaledb, postgis extensions on DB init
+│       └── init/                   # 01-extensions.sql: enables timescaledb, postgis, uuid-ossp on DB init
 │
 ├── simulator/                      # Vehicle telemetry + OCPP charging session simulators (manual smoke testing only)
-│   ├── seed_simulator_devices.py     seed_charging_topology.py
-│   └── telematic_simulator.py        charging_session_simulator.py
+│   ├── seed_simulator_devices.py     telematic_simulator.py           # vehicle telemetry over MQTT
+│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed also does the 1.6J layout)
+│   └── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session)
 │
 ├── docs/                           # feature specs, architecture diagrams (already present)
 ├── .githooks/pre-commit            # runs `make check`; enabled per clone with `make install-hooks`
+├── .claude/                        # agent rules, skills, agents, hooks (tracked; settings.local.json is not)
 ├── .mcp.json                       # project MCP servers (read-only PostgreSQL, Context7)
-├── Makefile
+├── .vscode/                        # shared VS Code settings (settings.json) + recommended extensions (extensions.json)
+├── Makefile                        # command source of truth (`make help`; first run: `make setup`)
+├── README.md
 └── CLAUDE.md
 ```
 

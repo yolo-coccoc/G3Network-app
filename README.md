@@ -1,197 +1,234 @@
 # G3Network
 
 G3Network is a driver assistance and electric truck fleet management system.
-The current repo focuses on the backend MVP, local infrastructure and
-simulators for testing the vehicle data and charging session flows. The web
-portal and vehicle app have no source in this checkout yet.
+This repo currently holds the backend MVP, the local infrastructure and the
+simulators used to exercise the vehicle telemetry and charging flows. The web
+portal and vehicle app have no source in this repo yet.
+
+- Command reference: `make help` (the Makefile is the source of truth).
+- AI coding agents: start with [CLAUDE.md](./CLAUDE.md).
+- Progress: [docs/00-status/overview.md](./docs/00-status/overview.md) and
+  the [feature list](./docs/01-requirements/feature-list.md).
 
 ## Prerequisites
 
-- Docker Desktop is running
-- `uv`
-- `make`
+- Docker with the `docker compose` plugin (Docker Desktop or Docker Engine), running
+- [`uv`](https://docs.astral.sh/uv/) — it also provisions Python 3.12, so no
+  system Python is needed
+- `make` and `git`
 
-All commands below are run from the project root directory:
+Only for working with Claude Code in this repo (optional):
+
+- Node.js/npm — the Context7 MCP server runs through `npx`
+- `npm install -g pyright` — the Pyright LSP plugin needs `pyright-langserver`
+  on `PATH`
+
+Shared VS Code settings live in `.vscode/` (ruff on save, mypy, pytest); the
+recommended extensions are listed in `.vscode/extensions.json`.
+
+All commands below run from the repository root.
+
+## Quick start
 
 ```bash
-cd /home/duc/Workspace/G3Network-app
+make setup
 ```
 
-## 1. Starting the whole system
+`make setup` is safe to re-run. It:
 
-### Run once for initial setup
+1. creates `backend/.env` and `infra/.env` from their `.env.example` files
+   (an existing `.env` is never overwritten);
+2. runs `uv sync` in `backend/` — runtime dependencies plus the `dev`
+   dependency group (ruff, mypy, pytest, import-linter, pytest-cov);
+3. points git at `.githooks/`, so every commit runs `make check`;
+4. starts PostgreSQL and EMQX (`infra/docker-compose.yml`) and waits until
+   PostgreSQL accepts connections;
+5. applies the database migration (`alembic upgrade head`);
+6. runs `make check`.
+
+Manual equivalent, if you prefer to run the steps yourself:
 
 ```bash
 cp backend/.env.example backend/.env
-make backend-install
-```
-
-### Start the infrastructure
-
-```bash
+cp infra/.env.example infra/.env
+make backend-install     # uv sync
+make install-hooks
 make infra-up
-make db-migrate
+make db-migrate          # once PostgreSQL is up
+make check
 ```
 
-`infra-up` starts PostgreSQL and EMQX via Docker. `db-migrate` creates/updates
-the database tables.
+## Daily development
 
-### Current backend scope
+Start the infrastructure if it isn't running (`make infra-up`), then run each
+component you need in its own terminal and keep it running:
 
-- Vehicle and telematic device CRUD, including mapping devices to vehicles.
-- Receiving telemetry over MQTT and storing it in TimescaleDB.
-- API for reading a vehicle's latest telemetry.
-- Station → EVSE → Connector topology CRUD, including station directory
-  metadata (location, power rating, connector standard, operating hours,
-  maintenance status).
-- OCPP 2.0.1 and OCPP 1.6J (one gateway, negotiated per connection) and the
-  charging session lifecycle: 2.0.1 `Started → Updated/MeterValues → Ended`,
-  1.6J `StartTransaction → MeterValues → StopTransaction`.
-- Every OCPP frame is stored verbatim; 1.6J chargers also report their device
-  info, liveness, status (incl. errors) and configuration.
-- API for reading charging sessions, events, meter values and all
-  measurements (`GET /api/v1/charging-sessions/{id}/measurements`), and a
-  charger's latest configuration
-  (`GET /api/v1/charging-stations/{id}/configuration`).
+| Terminal | Command | What it runs |
+|---|---|---|
+| 1 | `make backend-dev` | API server on port 8000, auto-reload |
+| 2 | `make telemetry-dev` | MQTT telemetry ingestion (consumer + worker) |
+| 3 | `make charging-ocpp-dev` | OCPP gateway on port 9000 (2.0.1 and 1.6J) |
+| 4 | `make telematics-monitor-dev` | Device-health monitor: alerts when a device stops reporting |
 
-Not yet in the current baseline: full telemetry history API, vehicle/station
-map, aggregate connector status, battery/anomaly alerts, threshold alert
-pushes, identity/RBAC, charging policy, payment and frontend.
+Only the API is needed for plain CRUD work; start the others when you touch
+their flow. The simulators (next section) run in further terminals.
 
-### Running the application components
+Addresses once everything is up:
 
-Each command below runs in its own Terminal. Keep these Terminals running.
+- API and Swagger: <http://localhost:8000/docs> (ReDoc: <http://localhost:8000/redoc>)
+- API health check: <http://localhost:8000/health>
+- OCPP endpoint: `ws://localhost:9000/ocpp/<station-code>`
+- EMQX dashboard: <http://localhost:18083>
 
-Terminal 1 — Backend API:
+## Checks
 
 ```bash
-make backend-dev
+make check                      # the gate: ruff lint + format check, import-linter,
+                                # mypy (app + tests), smoke tests, domain-model check
+make format                     # sort imports and format with ruff
+make backend-test-integration   # PostgreSQL integration tests (needs make infra-up)
+make coverage                   # smoke tests with a coverage report (backend/htmlcov/)
+make audit                      # known-vulnerability check of locked dependencies (pip-audit)
+make db-check                   # database built by the migration matches the models
 ```
 
-Terminal 2 — Receiving data from vehicle devices:
+There is no CI yet: the pre-commit hook enabled by `make setup` (or
+`make install-hooks`) runs `make check` before every commit. Run
+`make backend-test-integration` (and `make db-check` after `make db-reset`)
+when you change the schema or a repository query.
 
-```bash
-make telemetry-dev
-```
+The schema is a single baseline migration (`0001_baseline_schema`) during the
+bootstrap phase: `make db-migrate` applies it to an empty database,
+`make db-reset` wipes the database and rebuilds it from the baseline. See
+[.claude/rules/database.md](./.claude/rules/database.md).
 
-Terminal 3 — OCPP charging station gateway (2.0.1 and 1.6J):
+## Current backend scope
 
-```bash
-make charging-ocpp-dev
-```
+- **Vehicles**: CRUD and soft delete, a device-activation state machine
+  (`PENDING → DEVICE_ASSIGNED → ACTIVATED`) and a fleet-wide activation
+  summary (`GET /api/v1/vehicles/activation-summary`).
+- **Telematics devices**: CRUD and device-to-vehicle mapping; a telemetry
+  publish-interval config push to the device over MQTT
+  (`POST /api/v1/telematics/{id}/config`); a device-health monitor that raises
+  a device-offline alert when a device goes silent.
+- **Telemetry**: MQTT ingestion into TimescaleDB; latest record, a bounded
+  time-range history, and SOC-based operating and energy-usage reports per
+  vehicle.
+- **Alerts and notifications**: battery-level, battery-health (SOH),
+  anomaly (temperature, voltage drop, device error codes) and device-offline
+  alerts, stored as notifications and read by polling
+  (`GET /api/v1/notifications?after_id=`), with mark-as-read.
+- **Charging stations**: Station → EVSE → Connector topology CRUD with
+  directory metadata (location, power rating, connector standard, operating
+  hours, maintenance status), a nearby-station search
+  (`GET /api/v1/charging-stations/nearby`) and the charger's latest
+  configuration.
+- **OCPP gateway**: OCPP 2.0.1 and OCPP 1.6J on one port, chosen per
+  connection by the negotiated subprotocol. Every frame is stored verbatim;
+  connector status (incl. 1.6J error codes) is stored as reported; 1.6J
+  chargers also report device info, liveness (`is_online` derived from
+  `last_seen_at`) and configuration.
+- **Charging sessions**: 2.0.1 `Started → Updated/MeterValues → Ended` and
+  1.6J `StartTransaction → MeterValues → StopTransaction`; read APIs for
+  sessions, events, meter values and all measurements, plus a station energy
+  total over a time window.
+- **Drivers**: profile CRUD and vehicle assignment with full history.
+- **Fleets**: CRUD and vehicle membership (added/removed by VIN) with history.
+- **Support**: support case tickets and SOS intake with a response SLA.
 
-Once started, the system exposes these main addresses:
+Not built yet: identity/RBAC, charging policy, pricing/billing/payment, push
+or multi-channel notification delivery, map and dashboards, OCPP remote
+commands and reliability (retry/reconnect/TLS), and the frontends. The full
+list of deferred items is in
+[docs/01-requirements/future.md](./docs/01-requirements/future.md).
 
-- API and Swagger: [http://localhost:8000/docs](http://localhost:8000/docs)
-- API health check: [http://localhost:8000/health](http://localhost:8000/health)
-- OCPP connection: `ws://localhost:9000/ocpp/<station-code>`
-- EMQX Dashboard: [http://localhost:18083](http://localhost:18083)
+## Running the simulators
 
-## 2. Running the simulators
+Simulators only generate test data; they are not needed with real devices or
+chargers. All of them talk to the API, so `make backend-dev` must be running.
 
-Simulators are only used to generate mock data and are not needed when
-connecting real vehicle devices or charging stations. The backend and EMQX
-must already be running; the charging station simulator additionally needs
-the OCPP gateway running.
+### Vehicle telemetry
 
-### Vehicle data simulator
-
-Open a new Terminal. Run once to create a sample vehicle and telematics
-device:
+Also needs `make telemetry-dev`. Create a sample vehicle and telematics device
+once, then start the simulator:
 
 ```bash
 cd backend
 uv run python ../simulator/seed_simulator_devices.py
-```
-
-Then run the simulator that sends location, speed and battery data over MQTT:
-
-```bash
 uv run python ../simulator/telematic_simulator.py
 ```
 
-The simulator runs continuously every 5 seconds. Press `Ctrl+C` to stop.
+The simulator publishes location, speed and battery data over MQTT every
+5 seconds until you press `Ctrl+C`.
 
-### Charging station and charging session simulator
+### OCPP 2.0.1 charging session
 
-Open a new Terminal at the project root. Create a sample topology consisting
-of one station, EVSE and connector:
-
-```bash
-make charging-ocpp-seed
-```
-
-The sample topology has station code `SIM-OCPP-001`, EVSE `1` and connector
-`1`. This command only needs to run once; a duplicate-code error means the
-topology already exists.
-
-Run a simulated charging session:
+Also needs `make charging-ocpp-dev`.
 
 ```bash
-make charging-ocpp-sim
+make charging-ocpp-seed    # once: station SIM-OCPP-001, EVSE 1, connector 1
+make charging-ocpp-sim     # one Started -> Updated/MeterValues -> Ended session
 ```
 
-The simulator connects to the gateway and sends the start-charging, meter
-value, update and end-charging flow. Results can be viewed in the logs or via
-the charging APIs in Swagger.
+A duplicate-code error from the seed means the topology already exists.
+Results can be read through the charging APIs in Swagger.
 
-To simulate an **OCPP 1.6J** charger (a dual-gun station like the Willdigits
-DC charger), provision a 1.6J-shaped topology (one EVSE per gun) and run its
-simulator:
+### OCPP 1.6J charger
+
+Also needs `make charging-ocpp-dev`. Simulates a dual-gun 1.6J charger such
+as the Willdigits DC charger:
 
 ```bash
-make charging-ocpp16-seed
-make charging-ocpp16-sim
+make charging-ocpp16-seed                    # once: station SIM-OCPP16-001, one EVSE per gun
+make charging-ocpp16-sim                     # default scenario: boot (BootNotification + Heartbeats)
+make charging-ocpp16-sim SCENARIO=status     # boot, then status reports incl. faults
+make charging-ocpp16-sim SCENARIO=session    # boot, then a full charging session on gun 1
 ```
 
-The 1.6J simulator boots, reports the charger and both guns, and runs a
-charging session with meter values (an energy reading in kWh, SoC, power,
-voltage, current, temperature and a vendor-specific measurement), then stops
-it. The charger's boot info, statuses, session, measurements and
-configuration can be read through the charging APIs in Swagger. The scenario
-and options are described in `simulator/ocpp16_charge_point_simulator.py`
-(`--scenario boot|status|session`).
+The `session` scenario authorizes, starts a transaction, sends meter values
+(energy in kWh, SoC, power, voltage, current, temperature, `Power.Offered`
+and a vendor-specific measurand) and stops it. The charger's boot info,
+statuses, session, measurements and configuration can then be read in
+Swagger. Further options are described in
+`simulator/ocpp16_charge_point_simulator.py`.
 
-### Connecting a real charging station
+## Connecting a real charging station
 
-A real charging station must first be registered as a station, EVSE and
-connector in Swagger, with an OCPP code matching the device's configuration.
-Then configure the charging station:
+Register the station, EVSE and connector in Swagger first, with an OCPP
+station code matching the device's configuration. Then configure the
+charger:
 
 ```text
-OCPP URL:       ws://<backend-host-address>:9000/ocpp/<station-code>
-Protocol:       ocpp1.6 or ocpp2.0.1 (the gateway accepts both)
+OCPP URL:   ws://<backend-host-address>:9000/ocpp/<station-code>
+Protocol:   ocpp1.6 or ocpp2.0.1 (the gateway accepts both)
 ```
 
 For an OCPP 1.6J charger register one EVSE per gun (EVSE `1` / connector `1`
 for gun 1, EVSE `2` / connector `1` for gun 2, …): 1.6J connector `n` maps to
 EVSE `n`. Connector `0` (the whole charger) needs no registration. Change the
 charger's default HMI password before connecting it. The gateway currently
-uses plain `ws://` without authentication (development mode).
+uses plain `ws://` without authentication (development mode), and the
+charger must be able to reach the machine running the backend.
 
-In a local environment, the charging station must be able to reach the
-machine running the backend.
+## Stopping
 
-## Stopping the system
-
-Press `Ctrl+C` in the Terminals running the application, then stop Docker:
+Press `Ctrl+C` in each terminal, then stop the containers:
 
 ```bash
 make infra-down
 ```
 
-Data is preserved. Do not use `make infra-reset` or `make db-reset` unless
-you intend to delete the data.
+Data is kept. `make infra-reset` (removes the volumes) and `make db-reset`
+(rebuilds the schema) both delete all data.
 
-## Main structure
+## Repository layout
 
 ```text
-backend/       Backend FastAPI and Alembic migrations
-infra/         PostgreSQL/TimescaleDB/PostGIS and EMQX
-simulator/     Vehicle and charging station data simulators
-docs/          Status, requirements, architecture and implementation planning docs
-  00-status/   Current repo status and architecture (source of truth for progress)
+backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
+infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
+simulator/    Vehicle telemetry and OCPP charging simulators
+docs/         Status, requirements, planners and specifications
+.claude/      Rules, skills and agents for AI coding agents (see CLAUDE.md)
+.githooks/    Pre-commit hook (runs make check)
+.vscode/      Shared VS Code settings
 ```
-
-See also: [CLAUDE.md](./CLAUDE.md) and
-[feature list](./docs/01-requirements/feature-list.md).

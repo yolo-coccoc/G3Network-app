@@ -827,7 +827,7 @@ carries its original PRD code so you can trace it back.
 - **Constraints:** SMS reserved as a fallback for critical alerts (e.g. battery ≤10% with no
   data connection) to control cost
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `notifications` (future domain) — the delivery leg for F-A2, F-B5, F-J3
+- **Backend domain:** `notifications` (exists as a poll-only storage slice for F-A2; push/SMS delivery not built) — the delivery leg for F-A2, F-B5, F-J3
 - **Status:** 📋 Planned
 
 ### F-G1 Tri-Ring vehicle telematics integration

@@ -13,7 +13,7 @@
 
 - Manage the environment/dependencies with **`uv`** (`pyproject.toml` + `uv.lock` are the single source of truth; don't use plain pip/poetry alongside it).
 - **Ruff** is the only formatter and linter (line length 88; it replaced Black + isort): `make format` sorts imports and formats, `make lint` runs `ruff check`, `ruff format --check`, `lint-imports` (domain-boundary contracts in `backend/pyproject.toml`) and mypy on `app` and `tests`. `make check` = lint + smoke tests + the domain-model check; the git pre-commit hook (`.githooks/pre-commit`, enabled with `make install-hooks`) runs it on every commit. A Claude Code hook also ruff-formats every Python file the agent edits.
-- Type checking: type hints are required on function signatures; use **mypy** or **Pyright** (`uv run mypy .`).
+- Type checking: type hints are required on function signatures. **mypy** (strict, configured in `backend/pyproject.toml`) is the gate: `uv run mypy app tests`, run by `make lint`/`make check`. Pyright (the editor or the Claude Code Pyright plugin) is advisory only — when the two disagree, mypy wins.
 - Each domain under `backend/app/domains/<domain_name>/` uses the following modules as needed; don't create an empty file as a placeholder:
   - `router.py` — defines endpoints (FastAPI `APIRouter`), contains no business logic.
   - `service.py` — pure Python business logic; this is the **only public interface** other domains call into.
@@ -89,7 +89,7 @@
 ## Time convention
 
 - The entire backend and database use UTC, timezone-aware.
-- Python code uses `datetime.now(timezone.utc)`; never `datetime.utcnow()`.
+- "Now" comes from `app.libs.common.clock.utc_now()` — the single source of the current time in `app/` (ORM column defaults, services, repositories, workers). Never use `datetime.utcnow()`, and don't call `datetime.now(timezone.utc)` directly in app code. Tests and the standalone simulators may build timestamps with `datetime.now(timezone.utc)`.
 - SQLAlchemy timestamps use `DateTime(timezone=True)`.
 - A timestamp coming from the API/MQTT must carry a timezone and be normalized to UTC before being stored.
 - Environment variables must be namespaced by component (`APP_`, `MQTT_`, `DB_`...); don't use a generic name prone to collision like `DEBUG`, `HOST`, or `PORT`.
@@ -101,7 +101,7 @@
 - The repository only accesses the DB; it contains no HTTP/business policy and never commits/rolls back.
 - A schema never imports a SQLAlchemy model. Shared enums/value objects live in `types.py`.
 - Partial updates use `PATCH` together with `model_dump(exclude_unset=True)`.
-- For `VehicleUpdate`, both "field not sent" and "field sent as null" mean "don't update this field"; the service filters out `None` before calling the repository. If a feature genuinely needs to clear a nullable value, it must have its own confirmed contract instead of silently relying on `null`.
+- For `VehicleUpdateRequest`, both "field not sent" and "field sent as null" mean "don't update this field"; the service filters out `None` before calling the repository. If a feature genuinely needs to clear a nullable value, it must have its own confirmed contract instead of silently relying on `null`.
 - Create/update validation must be consistent. A DB unique constraint is the last line of defense; an `IntegrityError` must be converted into the appropriate domain error.
 
 ## Query batching / premature optimization
@@ -127,7 +127,7 @@
 - Topic, QoS, batch size, queue size, and timeout must come from settings/constructor arguments; don't hard-code them once config exists.
 - The telemetry ingestion MVP doesn't use `queue.join()`/`task_done()` because the queue only lives in RAM and backlog data is allowed to be lost when the process exits.
 - The telemetry ingestion MVP keeps its queue/task in RAM. On shutdown, cancel and await the worker immediately, roll back any running transaction, and drop any message still in the queue; it doesn't drain the queue.
-- The telemetry MVP uses QoS 0, no retry, and no DLQ; a DB error must roll back the batch, log the traceback, and stop the worker.
+- The telemetry MVP processes **one message per transaction** (`telemetry/ingestion/message_worker.py`), with QoS 0, no retry, and no DLQ: a DB error rolls back that message's transaction, logs the traceback, and stops the worker (the ingestion process then exits non-zero). Batched ingestion is deferred (`future.md` item 25).
 - Use structured logging via `extra`; never use an f-string inside a logger call. Use `logger.exception()` for unexpected exceptions.
 - Never use `except Exception` outside a process/task boundary.
 - The `processed`, `skipped`, `errors`, `dropped` metrics must be clearly defined and must accurately reflect the outcome.
@@ -148,7 +148,7 @@
 - **Every table MUST have an internal ID** (never use a business key like license_plate, VIN as the PK):
   ```python
   # ✅ CORRECT: Internal ID (UUID or auto-increment, depending on the case)
-  class Vehicle(Base):
+  class VehicleModel(Base):
       __tablename__ = "vehicles"
       
       # Option 1: UUID (fits distributed systems)
@@ -161,7 +161,7 @@
       vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
   
   # ❌ WRONG: using a business key as the PK
-  class Vehicle(Base):
+  class VehicleModel(Base):
       __tablename__ = "vehicles"
       
       license_plate: Mapped[str] = mapped_column(String(20), primary_key=True)  # NEVER
@@ -173,8 +173,8 @@
 - **Foreign keys** always reference the internal ID:
   ```python
   # ✅ CORRECT
-  charging_session.vehicle_id  # → Vehicle.vehicle_id (UUID or int)
+  charging_session.vehicle_id  # → VehicleModel.vehicle_id (UUID or int)
   
   # ❌ WRONG
-  charging_session.vehicle_license_plate  # → Vehicle.license_plate (business key)
+  charging_session.vehicle_license_plate  # → VehicleModel.license_plate (business key)
   ```
