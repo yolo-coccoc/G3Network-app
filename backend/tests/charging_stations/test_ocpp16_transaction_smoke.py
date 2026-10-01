@@ -24,6 +24,7 @@ from app.domains.charging_sessions.schemas import ChargingSessionResponse
 from app.domains.charging_sessions.types import SessionEventType, SessionStatus
 from app.domains.charging_stations.exceptions import ChargingOcppMessageInputError
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
+from tests.builders import fake_db_session
 
 STATION_ID, EVSE_ID, CONNECTOR_ID = uuid4(), uuid4(), uuid4()
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
@@ -360,7 +361,7 @@ async def test_started_event_passes_the_id_tag_to_the_new_session(
     seen = _patch_repository(monkeypatch, _session())
 
     await charging_service.ingest_transaction_event(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         station_id=STATION_ID,
         evse_id=EVSE_ID,
         connector_id=CONNECTOR_ID,
@@ -384,7 +385,7 @@ async def test_ended_event_stores_stop_reason_and_meter_stop_and_completes_the_s
     _patch_repository(monkeypatch, session)
 
     result = await charging_service.ingest_transaction_event(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         station_id=STATION_ID,
         evse_id=EVSE_ID,
         connector_id=CONNECTOR_ID,
@@ -417,7 +418,7 @@ async def test_meter_stop_is_kept_even_when_a_stale_timestamp_discards_the_aggre
     _patch_repository(monkeypatch, session)
 
     await charging_service.ingest_transaction_event(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         station_id=STATION_ID,
         evse_id=EVSE_ID,
         connector_id=CONNECTOR_ID,
@@ -444,7 +445,7 @@ async def test_a_second_stop_for_a_completed_session_is_refused(
 
     with pytest.raises(ChargingSessionStateError):
         await charging_service.ingest_transaction_event(
-            object(),  # type: ignore[arg-type]
+            fake_db_session(),
             station_id=STATION_ID,
             evse_id=EVSE_ID,
             connector_id=CONNECTOR_ID,
@@ -475,7 +476,7 @@ async def test_ingest_rejects_out_of_contract_new_fields(
 
     with pytest.raises(ChargingSessionInputError):
         await charging_service.ingest_transaction_event(
-            object(),  # type: ignore[arg-type]
+            fake_db_session(),
             station_id=STATION_ID,
             evse_id=EVSE_ID,
             connector_id=CONNECTOR_ID,
@@ -496,7 +497,7 @@ async def test_ingest_without_the_new_fields_still_works_for_the_2_0_1_caller(
     _patch_repository(monkeypatch, session)
 
     await charging_service.ingest_transaction_event(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         station_id=STATION_ID,
         evse_id=EVSE_ID,
         connector_id=CONNECTOR_ID,
@@ -529,7 +530,7 @@ async def test_resolve_session_by_transaction_returns_a_reference_or_raises(
     )
 
     reference = await charging_service.resolve_session_by_transaction(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         station_id=STATION_ID,
         transaction_id="42",
     )
@@ -542,7 +543,7 @@ async def test_resolve_session_by_transaction_returns_a_reference_or_raises(
     )
     with pytest.raises(ChargingSessionNotFoundError):
         await charging_service.resolve_session_by_transaction(
-            object(),  # type: ignore[arg-type]
+            fake_db_session(),
             station_id=STATION_ID,
             transaction_id="42",
         )
@@ -566,8 +567,8 @@ async def test_has_active_session_on_connector_reflects_the_count(
 
     assert (
         await charging_service.has_active_session_on_connector(
-            object(),
-            CONNECTOR_ID,  # type: ignore[arg-type]
+            fake_db_session(),
+            CONNECTOR_ID,
         )
         is expected
     )

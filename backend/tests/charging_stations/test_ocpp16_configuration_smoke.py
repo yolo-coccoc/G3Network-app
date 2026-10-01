@@ -28,6 +28,7 @@ from app.domains.charging_stations.ocpp.ocpp16_charge_point import (
     _to_configuration_entries,
 )
 from app.domains.charging_stations.types import ConfigurationEntry
+from tests.builders import fake_db_session
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 STATION_ID = uuid4()
@@ -367,7 +368,7 @@ async def test_record_configuration_snapshot_writes_one_capture_of_all_entries(
     local = datetime(2026, 9, 24, 17, 0, tzinfo=timezone(timedelta(hours=7)))
 
     capture_id = await ocpp_state_service.record_configuration_snapshot(
-        object(),  # type: ignore[arg-type]
+        fake_db_session(),
         ocpp_identity="LSC",
         entries=[
             ConfigurationEntry("A", "1", True),
@@ -407,10 +408,10 @@ async def test_record_configuration_snapshot_stores_nothing_for_an_empty_answer(
     )
 
     result = await ocpp_state_service.record_configuration_snapshot(
-        object(),
+        fake_db_session(),
         ocpp_identity="LSC",
         entries=[],
-        captured_at=NOW,  # type: ignore[arg-type]
+        captured_at=NOW,
     )
 
     assert result is None
@@ -433,17 +434,17 @@ async def test_record_configuration_snapshot_rejects_naive_time_and_unknown_stat
 
     with pytest.raises(ChargingOcppMessageInputError):
         await ocpp_state_service.record_configuration_snapshot(
-            object(),  # type: ignore[arg-type]
+            fake_db_session(),
             ocpp_identity="LSC",
             entries=entries,
             captured_at=datetime(2026, 9, 24, 10, 0),
         )
     with pytest.raises(ChargingStationNotFoundError):
         await ocpp_state_service.record_configuration_snapshot(
-            object(),
+            fake_db_session(),
             ocpp_identity="LSC",
             entries=entries,
-            captured_at=NOW,  # type: ignore[arg-type]
+            captured_at=NOW,
         )
 
 
@@ -493,13 +494,13 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
     )
 
     empty = await charging_stations_service.get_latest_station_configuration(
-        object(),
-        STATION_ID,  # type: ignore[arg-type]
+        fake_db_session(),
+        STATION_ID,
     )
     state["latest"] = (capture_id, NOW)
     latest = await charging_stations_service.get_latest_station_configuration(
-        object(),
-        STATION_ID,  # type: ignore[arg-type]
+        fake_db_session(),
+        STATION_ID,
     )
 
     assert (empty.capture_id, empty.captured_at, empty.items) == (None, None, [])
@@ -523,6 +524,6 @@ async def test_latest_configuration_of_an_unknown_station_raises_not_found(
 
     with pytest.raises(ChargingStationNotFoundError):
         await charging_stations_service.get_latest_station_configuration(
-            object(),
-            uuid4(),  # type: ignore[arg-type]
+            fake_db_session(),
+            uuid4(),
         )

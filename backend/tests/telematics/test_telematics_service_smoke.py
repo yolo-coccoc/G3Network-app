@@ -128,7 +128,9 @@ async def test_create_telematic_rejects_vehicle_already_assigned(
         await telematics_service.create_telematic(
             fake_db_session(),
             TelematicCreateRequest(
-                telematic_serial="TBOX-TEST-002", vehicle_vin=reference.vin
+                telematic_serial="TBOX-TEST-002",
+                vehicle_vin=reference.vin,
+                firmware_version=None,
             ),
         )
 

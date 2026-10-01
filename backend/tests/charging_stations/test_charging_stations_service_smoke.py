@@ -141,7 +141,11 @@ async def test_connector_status_update_keeps_updated_at_as_the_last_admin_edit()
         status_updated_at=datetime.now(timezone.utc),
     )
 
-    sql = str(recorder.statements[0].compile(dialect=postgresql.dialect()))
+    sql = str(
+        recorder.statements[0].compile(
+            dialect=postgresql.dialect()  # type: ignore[no-untyped-call]
+        )
+    )
     assert is_updated is True
     assert "updated_at=charging_connectors.updated_at" in sql
     assert "charging_connectors.deleted_at IS NULL" in sql

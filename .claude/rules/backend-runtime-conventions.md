@@ -12,7 +12,7 @@
 ## Tooling
 
 - Manage the environment/dependencies with **`uv`** (`pyproject.toml` + `uv.lock` are the single source of truth; don't use plain pip/poetry alongside it).
-- **Ruff** is the only formatter and linter (line length 88; it replaced Black + isort): `make format` sorts imports and formats, `make lint` runs `ruff check`, `ruff format --check`, `lint-imports` (domain-boundary contracts in `backend/pyproject.toml`) and mypy. `make check` = lint + smoke tests + the domain-model check; the git pre-commit hook (`.githooks/pre-commit`, enabled with `make install-hooks`) runs it on every commit. A Claude Code hook also ruff-formats every Python file the agent edits.
+- **Ruff** is the only formatter and linter (line length 88; it replaced Black + isort): `make format` sorts imports and formats, `make lint` runs `ruff check`, `ruff format --check`, `lint-imports` (domain-boundary contracts in `backend/pyproject.toml`) and mypy on `app` and `tests`. `make check` = lint + smoke tests + the domain-model check; the git pre-commit hook (`.githooks/pre-commit`, enabled with `make install-hooks`) runs it on every commit. A Claude Code hook also ruff-formats every Python file the agent edits.
 - Type checking: type hints are required on function signatures; use **mypy** or **Pyright** (`uv run mypy .`).
 - Each domain under `backend/app/domains/<domain_name>/` uses the following modules as needed; don't create an empty file as a placeholder:
   - `router.py` — defines endpoints (FastAPI `APIRouter`), contains no business logic.

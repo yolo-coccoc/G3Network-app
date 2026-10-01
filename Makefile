@@ -124,7 +124,7 @@ lint:
 	cd backend && uv run ruff check . ../simulator
 	cd backend && uv run ruff format --check . ../simulator
 	cd backend && uv run lint-imports
-	cd backend && uv run mypy app
+	cd backend && uv run mypy app tests
 
 # Verifies the DBML design source still matches the SQLAlchemy models and the
 # generated domain-model views are current.

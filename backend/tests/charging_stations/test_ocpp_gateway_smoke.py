@@ -10,9 +10,9 @@ from websockets.typing import Subprotocol
 
 import app.domains.charging_stations.repository as charging_stations_repository
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
+from app.domains.charging_stations.ocpp.ocpp201_charge_point import OCPP201ChargePoint
 from app.domains.charging_stations.ocpp.ocpp_server import (
     SUPPORTED_SUBPROTOCOLS,
-    OCPP201ChargePoint,
     OCPPServer,
     create_charge_point,
     select_ocpp_subprotocol,
