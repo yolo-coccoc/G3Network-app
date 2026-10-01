@@ -199,6 +199,102 @@ async def test_update_support_case_sets_first_responded_at_on_acknowledge(
     assert isinstance(captured["first_responded_at"], datetime)
 
 
+async def _capture_support_case_update(
+    monkeypatch: pytest.MonkeyPatch,
+    case_record: SupportCaseModel,
+    new_status: SupportCaseStatus,
+) -> dict[str, object]:
+    """Run update_support_case to `new_status` and return the persisted values.
+
+    Args:
+        monkeypatch: Pytest fixture used to stub the repository.
+        case_record: The case as stored before the update.
+        new_status: The status the update moves the case to.
+
+    Returns:
+        The field values the service handed to `update_fields`.
+    """
+    captured: dict[str, object] = {}
+
+    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+        return case_record
+
+    async def update_fields(
+        db: AsyncSession, case_id: UUID, values: dict[str, object]
+    ) -> SupportCaseModel:
+        captured.update(values)
+        return build_support_case_record(status=new_status)
+
+    monkeypatch.setattr(support_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(support_repository, "update_fields", update_fields)
+    await support_service.update_support_case(
+        fake_db_session(),
+        case_record.case_id,
+        SupportCaseUpdateRequest(
+            status=new_status, category=None, subject=None, description=None
+        ),
+    )
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_update_support_case_keeps_existing_first_response_time_on_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolving an acknowledged case never moves its first-response time (F-I1).
+
+    Regression: every non-OPEN update used to re-stamp first_responded_at,
+    which made a late resolution look like a late first response.
+    """
+    responded_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    case_record = build_support_case_record(
+        status=SupportCaseStatus.ACKNOWLEDGED, first_responded_at=responded_at
+    )
+
+    captured = await _capture_support_case_update(
+        monkeypatch, case_record, SupportCaseStatus.RESOLVED
+    )
+
+    assert "first_responded_at" not in captured
+    assert isinstance(captured["resolved_at"], datetime)
+
+
+@pytest.mark.asyncio
+async def test_update_support_case_keeps_existing_resolved_time_on_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing a resolved case keeps its resolution time and stamps closed_at (F-I1)."""
+    now = datetime.now(timezone.utc)
+    case_record = build_support_case_record(
+        status=SupportCaseStatus.RESOLVED,
+        first_responded_at=now - timedelta(hours=2),
+        resolved_at=now - timedelta(hours=1),
+    )
+
+    captured = await _capture_support_case_update(
+        monkeypatch, case_record, SupportCaseStatus.CLOSED
+    )
+
+    assert "first_responded_at" not in captured
+    assert "resolved_at" not in captured
+    assert isinstance(captured["closed_at"], datetime)
+
+
+@pytest.mark.asyncio
+async def test_update_support_case_cancel_is_not_recorded_as_a_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelling an unanswered case stamps only closed_at (F-I1)."""
+    case_record = build_support_case_record(status=SupportCaseStatus.OPEN)
+
+    captured = await _capture_support_case_update(
+        monkeypatch, case_record, SupportCaseStatus.CANCELLED
+    )
+
+    assert "first_responded_at" not in captured
+    assert isinstance(captured["closed_at"], datetime)
+
+
 @pytest.mark.asyncio
 async def test_update_support_case_rejects_when_terminal(
     monkeypatch: pytest.MonkeyPatch,
@@ -256,3 +352,27 @@ async def test_get_support_case_raises_not_found(
 
     with pytest.raises(SupportCaseNotFoundError):
         await support_service.get_support_case(fake_db_session(), uuid4())
+
+
+def test_calculate_is_sla_breached_false_for_case_cancelled_before_due() -> None:
+    """A case cancelled before its deadline never turns breached later (F-I1)."""
+    now = datetime.now(timezone.utc)
+    case_record = build_support_case_record(
+        status=SupportCaseStatus.CANCELLED,
+        response_due_at=now - timedelta(minutes=30),
+        closed_at=now - timedelta(minutes=45),
+    )
+
+    assert support_service.calculate_is_sla_breached(case_record) is False
+
+
+def test_calculate_is_sla_breached_true_for_case_cancelled_after_due() -> None:
+    """A case cancelled only after its deadline had passed stays breached (F-I1)."""
+    now = datetime.now(timezone.utc)
+    case_record = build_support_case_record(
+        status=SupportCaseStatus.CANCELLED,
+        response_due_at=now - timedelta(minutes=30),
+        closed_at=now - timedelta(minutes=5),
+    )
+
+    assert support_service.calculate_is_sla_breached(case_record) is True

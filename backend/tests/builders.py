@@ -106,6 +106,8 @@ def build_support_case_record(
     sla_response_minutes: int = 60,
     response_due_at: datetime | None = None,
     first_responded_at: datetime | None = None,
+    resolved_at: datetime | None = None,
+    closed_at: datetime | None = None,
     driver_id: UUID | None = None,
 ) -> SupportCaseModel:
     """Create a minimal ORM support case for the service to convert into a response."""
@@ -127,8 +129,8 @@ def build_support_case_record(
         response_due_at=response_due_at
         or (now + timedelta(minutes=sla_response_minutes)),
         first_responded_at=first_responded_at,
-        resolved_at=None,
-        closed_at=None,
+        resolved_at=resolved_at,
+        closed_at=closed_at,
         created_at=now,
         updated_at=now,
         deleted_at=None,

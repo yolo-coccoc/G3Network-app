@@ -107,8 +107,9 @@ class SupportCaseResponse(BaseModel):
         first_responded_at: When the case first left OPEN, if it has.
         resolved_at: When the case reached RESOLVED, if it has.
         closed_at: When the case reached CLOSED, if it has.
-        is_sla_breached: Whether the response deadline has passed without
-            a first response yet (computed, never stored).
+        is_sla_breached: Whether the first response missed the deadline, or
+            the deadline has passed without one (a cancelled case is judged
+            at its cancellation time). Computed, never stored.
         created_at: Creation time.
         updated_at: Last update time.
     """

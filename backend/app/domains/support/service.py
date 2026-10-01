@@ -81,17 +81,25 @@ async def resolve_support_case_reference_by_id(
 def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
     """Compute whether a case's response SLA has been breached.
 
-    Never stored - recomputed at response time from `response_due_at` and,
-    if the case has already been responded to, `first_responded_at`.
+    Never stored - recomputed at response time. The deadline
+    (`response_due_at`) is compared with, in order of preference:
+    the first response time; for a case CANCELLED before anyone responded,
+    its cancellation time (`closed_at`), so the verdict is frozen once the
+    case is gone instead of turning "breached" as time passes; otherwise now.
 
     Args:
         case_record: The support case record to evaluate.
 
     Returns:
-        True if the case is past its response deadline without a first
-        response, or if the first response itself came after the deadline.
+        True if the first response came after the deadline, or if the case
+        is (or, for a cancelled case, was at cancellation) past its deadline
+        without a first response.
     """
-    reference_time = case_record.first_responded_at or datetime.now(timezone.utc)
+    reference_time = case_record.first_responded_at
+    if reference_time is None and case_record.status is SupportCaseStatus.CANCELLED:
+        reference_time = case_record.closed_at
+    if reference_time is None:
+        reference_time = datetime.now(timezone.utc)
     return reference_time > case_record.response_due_at
 
 
@@ -371,25 +379,41 @@ async def list_support_cases(
 
 
 def _apply_status_timestamps(
-    update_values: dict[str, object], new_status: SupportCaseStatus
+    update_values: dict[str, object],
+    case_record: SupportCaseModel,
+    new_status: SupportCaseStatus,
 ) -> None:
     """Set the timestamp columns implied by a status transition, in place.
+
+    `first_responded_at` and `resolved_at` record when a step *first*
+    happened, so they are only stamped when the stored case doesn't have
+    them yet - a later transition (e.g. ACKNOWLEDGED -> RESOLVED) never
+    moves an earlier timestamp, which the SLA calculation depends on.
 
     Args:
         update_values: The field values about to be persisted; mutated
             in place to add whichever timestamps the new status implies.
+        case_record: The case as currently stored, before this update.
         new_status: The status the case is transitioning to.
 
     Side Effects:
         A later status in the happy path (RESOLVED, CLOSED) also stamps
         any earlier timestamp the case hasn't recorded yet, since reaching
         that status implies every earlier step already happened even if
-        this update skipped straight past ACKNOWLEDGED/RESOLVED.
+        this update skipped straight past ACKNOWLEDGED/RESOLVED. CANCELLED
+        stamps only `closed_at`: cancelling is not a response.
     """
     now = datetime.now(timezone.utc)
-    if new_status is not SupportCaseStatus.OPEN:
+    is_response = new_status not in (
+        SupportCaseStatus.OPEN,
+        SupportCaseStatus.CANCELLED,
+    )
+    if is_response and case_record.first_responded_at is None:
         update_values.setdefault("first_responded_at", now)
-    if new_status in (SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED):
+    if (
+        new_status in (SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED)
+        and case_record.resolved_at is None
+    ):
         update_values.setdefault("resolved_at", now)
     if is_terminal_status(new_status):
         update_values["closed_at"] = now
@@ -438,7 +462,7 @@ async def update_support_case(
 
     new_status = update_values.get("status")
     if isinstance(new_status, SupportCaseStatus):
-        _apply_status_timestamps(update_values, new_status)
+        _apply_status_timestamps(update_values, case_record, new_status)
 
     updated_case_record = await support_repository.update_fields(
         db_session, case_id, update_values
