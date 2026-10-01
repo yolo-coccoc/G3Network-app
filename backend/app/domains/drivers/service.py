@@ -227,6 +227,8 @@ async def list_drivers(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: DriverStatus | None = None,
+    search_text: str | None = None,
+    vehicle_vin: str | None = None,
 ) -> DriverListResponse:
     """Get a paginated list of active drivers.
 
@@ -235,19 +237,49 @@ async def list_drivers(
         page: Page number, starting from 1.
         page_size: Maximum number of drivers per page.
         status_filter: Status filter, if any.
+        search_text: Case-insensitive substring of the full name, phone
+            number or license number, if any.
+        vehicle_vin: Only the driver currently assigned to this vehicle, if
+            given. A VIN that doesn't resolve to an active vehicle yields an
+            empty page, not an error: it is a filter, like the others.
 
     Returns:
         Paginated driver list response.
+
+    Side Effects:
+        Calls the vehicles domain's public service to resolve
+        ``vehicle_vin``. Read-only; does not commit or rollback.
     """
     page_window = normalize_page_window(page, page_size)
+
+    vehicle_id: UUID | None = None
+    if vehicle_vin is not None:
+        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
+            db_session, vehicle_vin
+        )
+        if vehicle_reference is None:
+            return DriverListResponse(
+                items=[],
+                total=0,
+                page=page_window.page,
+                page_size=page_window.page_size,
+            )
+        vehicle_id = vehicle_reference.vehicle_id
 
     driver_records = await driver_repository.list_all(
         db_session,
         offset=page_window.offset,
         limit=page_window.page_size,
         status_filter=status_filter,
+        search_text=search_text,
+        vehicle_id=vehicle_id,
     )
-    total = await driver_repository.count(db_session, status_filter)
+    total = await driver_repository.count(
+        db_session,
+        status_filter=status_filter,
+        search_text=search_text,
+        vehicle_id=vehicle_id,
+    )
 
     return DriverListResponse(
         items=[

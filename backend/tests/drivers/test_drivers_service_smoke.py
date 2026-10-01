@@ -535,3 +535,65 @@ async def test_get_driver_raises_not_found_for_unknown_driver(
 
     with pytest.raises(DriverNotFoundError):
         await driver_service.get_driver(fake_db_session(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_list_drivers_by_unknown_vehicle_vin_returns_an_empty_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /drivers?vehicle_vin= with an unknown VIN is an empty page (F-E4)."""
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    async def unexpected_query(*args: object, **kwargs: object) -> None:
+        raise AssertionError("no driver query expected for an unknown VIN")
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+    monkeypatch.setattr(driver_repository, "list_all", unexpected_query)
+    monkeypatch.setattr(driver_repository, "count", unexpected_query)
+
+    response = await driver_service.list_drivers(
+        fake_db_session(), vehicle_vin="1HGBH41JXMN109186"
+    )
+
+    assert response.items == []
+    assert response.total == 0
+
+
+@pytest.mark.asyncio
+async def test_list_drivers_passes_search_and_vehicle_filters_to_both_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The q and vehicle_vin filters reach both the page and the count (F-E4)."""
+    vehicle_id = uuid4()
+    seen: dict[str, dict[str, object]] = {}
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+        )
+
+    async def list_all(db: AsyncSession, **kwargs: object) -> list[DriverModel]:
+        seen["list"] = kwargs
+        return []
+
+    async def count(db: AsyncSession, **kwargs: object) -> int:
+        seen["count"] = kwargs
+        return 0
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(driver_repository, "list_all", list_all)
+    monkeypatch.setattr(driver_repository, "count", count)
+
+    await driver_service.list_drivers(
+        fake_db_session(), search_text="0900", vehicle_vin="1HGBH41JXMN109186"
+    )
+
+    for query_kwargs in (seen["list"], seen["count"]):
+        assert query_kwargs["search_text"] == "0900"
+        assert query_kwargs["vehicle_id"] == vehicle_id

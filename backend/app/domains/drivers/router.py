@@ -70,6 +70,19 @@ async def list_drivers_endpoint(
     status_filter: DriverStatus | None = Query(
         None, alias="status", description="Filter by status"
     ),
+    search_text: str | None = Query(
+        None,
+        alias="q",
+        min_length=1,
+        max_length=100,
+        description="Case-insensitive substring of the name, phone or license number",
+    ),
+    vehicle_vin: str | None = Query(
+        None,
+        min_length=17,
+        max_length=17,
+        description="Only the driver currently assigned to this vehicle (VIN)",
+    ),
     db_session: AsyncSession = Depends(get_db),
 ) -> DriverListResponse:
     """Get a paginated list of drivers.
@@ -78,6 +91,9 @@ async def list_drivers_endpoint(
         page: Page number.
         page_size: Number of records per page.
         status_filter: Status filter, if any.
+        search_text: Name/phone/license substring filter (`q`), if any.
+        vehicle_vin: "Who drives this vehicle now" filter, if any; an
+            unknown VIN yields an empty page.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -88,6 +104,8 @@ async def list_drivers_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
+        search_text=search_text,
+        vehicle_vin=vehicle_vin,
     )
 
 

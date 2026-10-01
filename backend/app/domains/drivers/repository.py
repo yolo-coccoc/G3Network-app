@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -97,12 +97,75 @@ async def find_by_license_number(
     return query_result.scalar_one_or_none()
 
 
+def _contains_pattern(search_text: str) -> str:
+    """Build an ``ILIKE`` pattern matching a literal substring.
+
+    ``%``, ``_`` and the escape character itself are escaped so the caller's
+    text is never treated as a wildcard.
+
+    Args:
+        search_text: Raw substring typed by the caller.
+
+    Returns:
+        ``%<escaped text>%``, to use with ``escape="\\"``.
+    """
+    escaped_text = (
+        search_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped_text}%"
+
+
+def _driver_list_conditions(
+    *,
+    status_filter: DriverStatus | None,
+    search_text: str | None,
+    vehicle_id: UUID | None,
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by `list_all` and `count`.
+
+    Args:
+        status_filter: Status filter, if any.
+        search_text: Case-insensitive substring of the full name, phone
+            number or license number, if any.
+        vehicle_id: Only the driver currently (open assignment) assigned to
+            this vehicle, if given.
+
+    Returns:
+        Conditions to AND together; always excludes soft-deleted drivers.
+    """
+    conditions: list[ColumnElement[bool]] = [DriverModel.deleted_at.is_(None)]
+
+    if status_filter:
+        conditions.append(DriverModel.status == status_filter)
+    if search_text:
+        pattern = _contains_pattern(search_text)
+        conditions.append(
+            or_(
+                DriverModel.full_name.ilike(pattern, escape="\\"),
+                DriverModel.phone_number.ilike(pattern, escape="\\"),
+                DriverModel.license_number.ilike(pattern, escape="\\"),
+            )
+        )
+    if vehicle_id is not None:
+        conditions.append(
+            DriverModel.driver_id.in_(
+                select(DriverVehicleAssignmentModel.driver_id).where(
+                    DriverVehicleAssignmentModel.vehicle_id == vehicle_id,
+                    DriverVehicleAssignmentModel.unassigned_at.is_(None),
+                )
+            )
+        )
+    return conditions
+
+
 async def list_all(
     db_session: AsyncSession,
     *,
     offset: int,
     limit: int,
     status_filter: DriverStatus | None = None,
+    search_text: str | None = None,
+    vehicle_id: UUID | None = None,
 ) -> list[DriverModel]:
     """Get a paginated list of drivers, excluding soft-deleted records.
 
@@ -111,14 +174,17 @@ async def list_all(
         offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
+        search_text: Case-insensitive substring of the full name, phone
+            number or license number, if any.
+        vehicle_id: Only the driver currently assigned to this vehicle, if
+            given.
 
     Returns:
-        List of driver records.
+        List of driver records, newest first.
     """
-    conditions: list[ColumnElement[bool]] = [DriverModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(DriverModel.status == status_filter)
+    conditions = _driver_list_conditions(
+        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
+    )
 
     query_result = await db_session.execute(
         select(DriverModel)
@@ -131,21 +197,28 @@ async def list_all(
 
 
 async def count(
-    db_session: AsyncSession, status_filter: DriverStatus | None = None
+    db_session: AsyncSession,
+    *,
+    status_filter: DriverStatus | None = None,
+    search_text: str | None = None,
+    vehicle_id: UUID | None = None,
 ) -> int:
-    """Count the total number of drivers, excluding soft-deleted records.
+    """Count the drivers matching the same filters as `list_all`.
 
     Args:
         db_session: Current database session.
         status_filter: Status filter, if any.
+        search_text: Case-insensitive substring of the full name, phone
+            number or license number, if any.
+        vehicle_id: Only the driver currently assigned to this vehicle, if
+            given.
 
     Returns:
-        Total number of drivers.
+        Total number of matching drivers.
     """
-    conditions: list[ColumnElement[bool]] = [DriverModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(DriverModel.status == status_filter)
+    conditions = _driver_list_conditions(
+        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
+    )
 
     query_result = await db_session.execute(
         select(func.count(DriverModel.driver_id)).where(and_(*conditions))
