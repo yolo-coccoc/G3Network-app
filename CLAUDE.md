@@ -19,7 +19,8 @@
   it's the **feature-level progress checklist** (source of truth for
   progress per-feature, alongside overview.md's per-domain summary); update
   a feature's status/domain fields in the same change that completes it
-- `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner)
+- `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner);
+  closed items move, number kept, to `future-resolved.md`
 - `docs/01-requirements/domain-model/` - The whole database design, built and
   planned, in one source file (`domain-model.dbml`), plus generated views:
   `overview.md` (domain map, data ownership, open decisions), one page per

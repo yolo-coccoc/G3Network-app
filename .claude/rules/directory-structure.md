@@ -87,24 +87,15 @@ Don't create these files/directories before a concrete task needs them.
 
 ## Out of current scope
 
-Other business domains already have feature codes in
-`docs/01-requirements/feature-list.md` (`identity`, `policy`,
-`billing`, `scoring`) but **have no active
-source** in `backend/app/domains/`. Don't create empty directories/files for
-these domains before a concrete task exists — when creating a new domain,
-apply the rules in [domain-boundaries.md](./domain-boundaries.md) and
-reference the correct feature code. `notifications` graduated out of this
-list (F-A2) but is intentionally minimal — see `domain-boundaries.md` and
-`docs/02-planners/done/backend-notifications.md` for what it does and doesn't do
-yet (no push, no recipient scoping). `drivers` also graduated out of this
-list (F-E4) — see `domain-boundaries.md` for its `drivers → vehicles`
-dependency edge and `docs/02-planners/done/backend-crud-drivers.md` for its
-design (assignment-history table, partial unique indexes). `support`
-(F-I1/F-I2) and `fleet` (F-E1) also graduated out of this list — see
-`domain-boundaries.md` for their dependency edges and
-`docs/02-planners/done/backend-support-cases.md`/`backend-crud-fleet.md` for
-their design; each is intentionally partial (`support` has no partner
-directory/dispatch yet, `fleet` has no KPI rollup yet).
+Domains that have feature codes in `docs/01-requirements/feature-list.md`
+but **no source yet**: `identity`, `policy`, `billing`, `scoring`. Don't
+create empty directories/files for them before a concrete task exists; when
+creating one, apply [domain-boundaries.md](./domain-boundaries.md) and
+reference the correct feature code.
+
+Some built domains are intentionally partial — `notifications` (no push, no
+recipient scoping), `support` (no partner directory/dispatch), `fleet` (no KPI
+rollup). Their planners in `docs/02-planners/done/` record what was left out.
 
 `web-portal/` (React/TS) and `vehicle-app/` (Flutter) are planned monorepo
 components with no source yet; their directory structure and coding
