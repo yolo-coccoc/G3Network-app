@@ -389,30 +389,42 @@ async def add_vehicle_to_fleet(
 async def remove_vehicle_from_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
-    vehicle_id: UUID,
+    vehicle_vin: str,
 ) -> None:
-    """Close a vehicle's active membership in a fleet.
+    """Close a vehicle's active membership in a fleet, by VIN.
+
+    Identifies the vehicle by VIN, the same way `add_vehicle_to_fleet` does.
 
     Args:
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
-        vehicle_id: Internal ID of the vehicle to remove.
+        vehicle_vin: VIN of the vehicle to remove.
 
     Raises:
         FleetNotFoundError: When the fleet does not exist.
+        FleetVehicleNotFoundError: When no active vehicle has this VIN.
         FleetMembershipNotFoundError: When the vehicle has no active
             membership in this fleet.
+
+    Side Effects:
+        Calls the vehicles domain's public service to resolve the VIN.
     """
     fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
+        db_session, vehicle_vin
+    )
+    if vehicle_reference is None:
+        raise FleetVehicleNotFoundError(f"Vehicle with VIN '{vehicle_vin}' not found")
+
     active_membership = await fleet_repository.get_active_membership_by_vehicle(
-        db_session, vehicle_id
+        db_session, vehicle_reference.vehicle_id
     )
     if active_membership is None or active_membership.fleet_id != fleet_id:
         raise FleetMembershipNotFoundError(
-            f"Vehicle with id '{vehicle_id}' has no active membership in "
+            f"Vehicle with VIN '{vehicle_vin}' has no active membership in "
             f"fleet '{fleet_id}'"
         )
 
@@ -446,8 +458,9 @@ async def list_fleet_vehicles(
         per-row call to the vehicles domain's public service - no
         batching, per this repo's no-premature-batching convention.
         A membership whose vehicle no longer resolves (soft-deleted since)
-        is silently skipped rather than raised, since it's a listing, not
-        a lookup of one specific vehicle.
+        is still listed, with ``vin``/``license_plate``/``status`` set to
+        ``None``, so every page holds ``page_size`` rows and ``total``
+        matches the rows a client can page through.
     """
     fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
     if fleet_record is None:
@@ -469,14 +482,14 @@ async def list_fleet_vehicles(
         vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
             db_session, membership_record.vehicle_id
         )
-        if vehicle_summary is None:
-            continue
         items.append(
             FleetVehicleResponse(
-                vehicle_id=vehicle_summary.vehicle_id,
-                vin=vehicle_summary.vin,
-                license_plate=vehicle_summary.license_plate,
-                status=vehicle_summary.status,
+                vehicle_id=membership_record.vehicle_id,
+                vin=vehicle_summary.vin if vehicle_summary else None,
+                license_plate=(
+                    vehicle_summary.license_plate if vehicle_summary else None
+                ),
+                status=vehicle_summary.status if vehicle_summary else None,
                 joined_at=membership_record.joined_at,
             )
         )

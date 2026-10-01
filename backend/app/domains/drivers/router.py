@@ -191,6 +191,7 @@ async def soft_delete_driver_endpoint(
 
 @router.post(
     "/{driver_id}/assignment",
+    status_code=status.HTTP_201_CREATED,
     response_model=DriverVehicleAssignmentResponse,
     summary="Assign a vehicle to a driver",
     description=(

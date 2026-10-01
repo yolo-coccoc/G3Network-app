@@ -5,7 +5,7 @@ exceptions to HTTP status codes; it contains no database queries or
 business logic.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domains.notifications.exceptions import NotificationNotFoundError
@@ -30,7 +30,9 @@ router = APIRouter(tags=["notifications"])
 )
 async def list_notifications_endpoint(
     after_id: int = 0,
-    limit: int = settings.API_DEFAULT_PAGE_SIZE,
+    limit: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
     unread_only: bool = False,
     db: AsyncSession = Depends(get_db),
 ) -> NotificationListResponse:
@@ -39,7 +41,8 @@ async def list_notifications_endpoint(
     Args:
         after_id: Only return notifications with a larger ID than this
             cursor; defaults to ``0`` (from the beginning).
-        limit: Maximum number of records to return.
+        limit: Maximum number of records to return (1 to
+            ``API_MAX_PAGE_SIZE``, like every other list endpoint).
         unread_only: Whether to exclude notifications already marked read.
         db: Database session managed by the dependency.
 

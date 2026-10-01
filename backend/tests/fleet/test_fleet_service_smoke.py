@@ -273,8 +273,17 @@ async def test_remove_vehicle_from_fleet_closes_membership(
     )
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
 
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+        )
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+
     await fleet_service.remove_vehicle_from_fleet(
-        fake_db_session(), fleet_record.fleet_id, vehicle_id
+        fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
     )
 
     assert closed == [active_membership]
@@ -296,9 +305,40 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(fleet_repository, "get_active_membership_by_vehicle", no_active)
 
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=None)
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+
     with pytest.raises(FleetMembershipNotFoundError):
         await fleet_service.remove_vehicle_from_fleet(
-            fake_db_session(), fleet_record.fleet_id, uuid4()
+            fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
+        )
+
+
+@pytest.mark.asyncio
+async def test_remove_vehicle_from_fleet_rejects_unknown_vin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """remove_vehicle_from_fleet() raises when the VIN resolves to no vehicle (F-E1)."""
+    fleet_record = build_fleet_record()
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+
+    with pytest.raises(FleetVehicleNotFoundError):
+        await fleet_service.remove_vehicle_from_fleet(
+            fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
         )
 
 
@@ -406,3 +446,63 @@ async def test_get_fleet_raises_not_found(monkeypatch: pytest.MonkeyPatch) -> No
 
     with pytest.raises(FleetNotFoundError):
         await fleet_service.get_fleet(fake_db_session(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_list_fleet_vehicles_keeps_member_whose_vehicle_was_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A member whose vehicle no longer resolves is listed, so total matches (F-E1).
+
+    Regression: such members were skipped while `total` still counted them,
+    giving short pages and an overstated total.
+    """
+    fleet_record = build_fleet_record()
+    memberships = [
+        build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
+        for _ in range(2)
+    ]
+    deleted_vehicle_id = memberships[1].vehicle_id
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def list_active(
+        db: AsyncSession, fleet_id: UUID, *, offset: int, limit: int
+    ) -> list[FleetVehicleMembershipModel]:
+        return memberships
+
+    async def count_active(db: AsyncSession, fleet_id: UUID) -> int:
+        return 2
+
+    async def resolve_summary(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> VehicleSummary | None:
+        if vehicle_id == deleted_vehicle_id:
+            return None
+        return VehicleSummary(
+            vehicle_id=vehicle_id,
+            vin="1HGBH41JXMN109186",
+            license_plate="TEST-001",
+            status=VehicleStatus.ACTIVE,
+        )
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        fleet_repository, "list_active_memberships_by_fleet", list_active
+    )
+    monkeypatch.setattr(
+        fleet_repository, "count_active_memberships_by_fleet", count_active
+    )
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
+    )
+
+    response = await fleet_service.list_fleet_vehicles(
+        fake_db_session(), fleet_record.fleet_id
+    )
+
+    assert response.total == len(response.items) == 2
+    assert response.items[1].vehicle_id == deleted_vehicle_id
+    assert response.items[1].vin is None
+    assert response.items[1].status is None

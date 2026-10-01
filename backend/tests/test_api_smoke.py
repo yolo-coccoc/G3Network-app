@@ -3,6 +3,7 @@
 import pytest
 
 from app.api.main import app, health_check
+from app.libs.common.config import settings
 
 
 def test_openapi_registers_current_backend_routes() -> None:
@@ -49,3 +50,24 @@ async def test_health_endpoint_returns_healthy_status() -> None:
 
     assert response["status"] == "healthy"
     assert "version" in response
+
+
+def test_notification_poll_limit_is_bounded_like_other_list_endpoints() -> None:
+    """The poll `limit` is capped at API_MAX_PAGE_SIZE (F-A2).
+
+    Regression: it was an unbounded int, so `limit=10**9` was accepted.
+    """
+    parameters = app.openapi()["paths"]["/api/v1/notifications"]["get"]["parameters"]
+    limit_schema = next(p for p in parameters if p["name"] == "limit")["schema"]
+
+    assert limit_schema["minimum"] == 1
+    assert limit_schema["maximum"] == settings.API_MAX_PAGE_SIZE
+
+
+def test_fleet_vehicle_removal_and_driver_assignment_contracts() -> None:
+    """Fleet removal is by VIN; driver assignment answers 201 like fleet add (F-E1/F-E4)."""
+    paths = app.openapi()["paths"]
+
+    assert "delete" in paths["/api/v1/fleets/{fleet_id}/vehicles/{vehicle_vin}"]
+    assignment = paths["/api/v1/drivers/{driver_id}/assignment"]["post"]
+    assert "201" in assignment["responses"]

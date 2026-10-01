@@ -79,17 +79,21 @@ class FleetVehicleResponse(BaseModel):
 
     Attributes:
         vehicle_id: Internal ID of the vehicle.
-        vin: VIN of the vehicle.
-        license_plate: License plate of the vehicle.
+        vin: VIN of the vehicle; ``None`` when the vehicle was soft-deleted
+            after joining (the membership is still open and still counted
+            in ``total``).
+        license_plate: License plate of the vehicle; ``None`` in the same
+            case.
         status: Vehicle lifecycle status - the only status this backend
             can honestly report; no online/offline signal exists yet.
+            ``None`` in the same case.
         joined_at: When this vehicle joined the fleet.
     """
 
     vehicle_id: UUID
-    vin: str
-    license_plate: str
-    status: VehicleStatus
+    vin: str | None
+    license_plate: str | None
+    status: VehicleStatus | None
     joined_at: datetime
 
 

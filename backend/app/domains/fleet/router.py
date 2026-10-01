@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.service as fleet_service
@@ -217,26 +217,33 @@ async def add_vehicle_to_fleet_endpoint(
 
 
 @router.delete(
-    "/{fleet_id}/vehicles/{vehicle_id}",
+    "/{fleet_id}/vehicles/{vehicle_vin}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove a vehicle from a fleet",
-    description="Close a vehicle's active membership in a fleet.",
+    description=(
+        "Close a vehicle's active membership in a fleet, identifying the "
+        "vehicle by VIN (as when it was added)."
+    ),
 )
 async def remove_vehicle_from_fleet_endpoint(
     fleet_id: UUID,
-    vehicle_id: UUID,
+    vehicle_vin: str = Path(..., min_length=17, max_length=17),
     db_session: AsyncSession = Depends(get_db),
 ) -> None:
     """Remove a vehicle from a fleet.
 
     Args:
         fleet_id: Internal ID of the fleet.
-        vehicle_id: Internal ID of the vehicle to remove.
+        vehicle_vin: VIN of the vehicle to remove.
         db_session: Database session owned by the HTTP boundary.
     """
     try:
-        await fleet_service.remove_vehicle_from_fleet(db_session, fleet_id, vehicle_id)
-    except (FleetNotFoundError, FleetMembershipNotFoundError) as error:
+        await fleet_service.remove_vehicle_from_fleet(db_session, fleet_id, vehicle_vin)
+    except (
+        FleetNotFoundError,
+        FleetVehicleNotFoundError,
+        FleetMembershipNotFoundError,
+    ) as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
         ) from error
