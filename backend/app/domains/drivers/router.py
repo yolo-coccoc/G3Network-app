@@ -35,7 +35,7 @@ router = APIRouter(tags=["drivers"])
 )
 async def create_driver_endpoint(
     driver_create_request: DriverCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Create a new driver.
 
@@ -83,7 +83,7 @@ async def list_drivers_endpoint(
         max_length=17,
         description="Only the driver currently assigned to this vehicle (VIN)",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverListResponse:
     """Get a paginated list of drivers.
 
@@ -117,7 +117,7 @@ async def list_drivers_endpoint(
 )
 async def get_driver_endpoint(
     driver_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Get the details of a driver by ID.
 
@@ -144,7 +144,7 @@ async def get_driver_endpoint(
 async def update_driver_endpoint(
     driver_id: UUID,
     driver_update_request: DriverUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Partially update a driver.
 
@@ -175,7 +175,7 @@ async def update_driver_endpoint(
 )
 async def soft_delete_driver_endpoint(
     driver_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a driver.
 
@@ -206,7 +206,7 @@ async def soft_delete_driver_endpoint(
 async def assign_vehicle_endpoint(
     driver_id: UUID,
     driver_vehicle_assign_request: DriverVehicleAssignRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverVehicleAssignmentResponse:
     """Assign a vehicle to a driver.
 
@@ -238,7 +238,7 @@ async def assign_vehicle_endpoint(
 )
 async def unassign_vehicle_endpoint(
     driver_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Unassign a driver's current vehicle.
 
@@ -269,7 +269,7 @@ async def list_driver_assignment_history_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverAssignmentHistoryResponse:
     """Get a driver's vehicle assignment history.
 

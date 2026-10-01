@@ -77,7 +77,7 @@
 ## Database session and transaction
 
 - Only the **entry boundary** creates and closes an `AsyncSession`:
-  - FastAPI uses `Depends(get_db)`.
+  - FastAPI uses `Depends(get_db, scope="function")` — **always with `scope="function"`**. `get_db` commits after its `yield`; FastAPI's default scope runs that code *after the response is sent*, so the client would see success before the commit (a follow-up request can 404 on what it just created, and a failing commit is reported as success). `tests/test_db_session_scope_smoke.py` enforces it.
   - A background worker/CLI uses `async_session_factory` from `app.libs.db.session`; it never creates its own engine or session factory.
 - The entry boundary owns the transaction:
   - The HTTP dependency or the worker's unit-of-work performs the commit/rollback.

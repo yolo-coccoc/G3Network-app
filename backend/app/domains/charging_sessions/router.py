@@ -82,7 +82,7 @@ async def list_charging_sessions_endpoint(
         None, description="Exclusive upper bound on started_at, with a timezone."
     ),
     page_query: _PageQuery = Depends(_page_query),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionListResponse:
     """List sessions newest first, optionally filtered (F-B2).
 
@@ -123,7 +123,7 @@ async def list_charging_sessions_endpoint(
     summary="View a charging session",
 )
 async def get_charging_session_endpoint(
-    session_id: UUID, db: AsyncSession = Depends(get_db)
+    session_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
 ) -> ChargingSessionDetailResponse:
     """Get the session aggregate and its read-time summary by internal UUID.
 
@@ -150,7 +150,7 @@ async def get_charging_session_endpoint(
 async def list_charging_session_events_endpoint(
     session_id: UUID,
     page_query: _PageQuery = Depends(_page_query),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionEventListResponse:
     """Get the session's lifecycle events in ascending time order.
 
@@ -183,7 +183,7 @@ async def list_charging_session_events_endpoint(
 async def list_charging_session_meter_values_endpoint(
     session_id: UUID,
     page_query: _PageQuery = Depends(_page_query),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeterValueListResponse:
     """Get the session's canonical Wh meter samples in ascending time order.
 
@@ -222,7 +222,7 @@ async def list_charging_session_measurements_endpoint(
         description="Return only this measurand, for example SoC.",
     ),
     page_query: _PageQuery = Depends(_page_query),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeasurementListResponse:
     """Get the session's measurements of every measurand, in ascending time order.
 
@@ -260,7 +260,7 @@ async def get_station_energy_summary_endpoint(
     station_id: UUID,
     start_time: datetime,
     end_time: datetime,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> StationEnergySummaryResponse:
     """Aggregate completed sessions' energy for a station over a window (F-C5).
 
@@ -298,7 +298,7 @@ async def get_station_energy_series_endpoint(
     start_time: datetime,
     end_time: datetime,
     granularity: EnergySeriesGranularity = EnergySeriesGranularity.HOUR,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> StationEnergySeriesResponse:
     """Dense hourly or daily energy series of a station (F-C5).
 

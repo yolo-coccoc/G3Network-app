@@ -34,7 +34,7 @@ router = APIRouter(tags=["telematics"])
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
 async def create_telematic_endpoint(
     telematic_create_request: TelematicCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Create a Telematic device, optionally assigned to a vehicle by VIN.
 
@@ -64,7 +64,7 @@ async def list_telematics_endpoint(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
     status_filter: TelematicStatus | None = Query(None, alias="status"),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicListResponse:
     """List devices that have not been soft-deleted.
 
@@ -88,7 +88,7 @@ async def list_telematics_endpoint(
 @router.get("/{telematic_id}", response_model=TelematicResponse)
 async def get_telematic_endpoint(
     telematic_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Get the details of a device.
 
@@ -110,7 +110,7 @@ async def get_telematic_endpoint(
 async def update_telematic_endpoint(
     telematic_id: UUID,
     telematic_update_request: TelematicUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Partially update a device.
 
@@ -140,7 +140,7 @@ async def update_telematic_endpoint(
 @router.delete("/{telematic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def soft_delete_telematic_endpoint(
     telematic_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Soft-delete a device.
 
@@ -161,7 +161,7 @@ async def soft_delete_telematic_endpoint(
 async def push_fleet_config_endpoint(
     fleet_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicFleetConfigPushResponse:
     """Push a telemetry publish-interval config to every device of a fleet (F-J2).
 
@@ -191,7 +191,7 @@ async def push_fleet_config_endpoint(
 async def push_telematic_config_endpoint(
     telematic_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicConfigResponse:
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
 

@@ -41,7 +41,7 @@ router = APIRouter(tags=["fleet"])
 )
 async def create_fleet_endpoint(
     fleet_create_request: FleetCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Create a new fleet.
 
@@ -88,7 +88,7 @@ async def list_fleets_endpoint(
         max_length=17,
         description="Only the fleet this vehicle (VIN) is currently a member of",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetListResponse:
     """Get a paginated list of fleets.
 
@@ -122,7 +122,7 @@ async def list_fleets_endpoint(
 )
 async def get_fleet_endpoint(
     fleet_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Get the details of a fleet by ID.
 
@@ -149,7 +149,7 @@ async def get_fleet_endpoint(
 async def update_fleet_endpoint(
     fleet_id: UUID,
     fleet_update_request: FleetUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Partially update a fleet.
 
@@ -177,7 +177,7 @@ async def update_fleet_endpoint(
 )
 async def soft_delete_fleet_endpoint(
     fleet_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a fleet.
 
@@ -205,7 +205,7 @@ async def soft_delete_fleet_endpoint(
 async def add_vehicle_to_fleet_endpoint(
     fleet_id: UUID,
     fleet_vehicle_add_request: FleetVehicleAddRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetMembershipResponse:
     """Add a vehicle to a fleet.
 
@@ -241,7 +241,7 @@ async def add_vehicle_to_fleet_endpoint(
 async def remove_vehicle_from_fleet_endpoint(
     fleet_id: UUID,
     vehicle_vin: str = Path(..., min_length=17, max_length=17),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Remove a vehicle from a fleet.
 
@@ -287,7 +287,7 @@ async def list_fleet_vehicles_endpoint(
         max_length=20,
         description="Case-insensitive substring of the VIN or license plate",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetVehicleListResponse:
     """Get a fleet's current vehicle list.
 
@@ -330,7 +330,7 @@ async def list_fleet_membership_history_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetMembershipHistoryResponse:
     """Get a fleet's vehicle membership history.
 
@@ -363,7 +363,7 @@ async def list_fleet_membership_history_endpoint(
 async def close_fleet_membership_endpoint(
     fleet_id: UUID,
     membership_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Close an open membership of a fleet.
 
@@ -394,7 +394,7 @@ async def close_fleet_membership_endpoint(
 async def create_geofence_endpoint(
     fleet_id: UUID,
     geofence_create_request: GeofenceCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Create a geofence for a fleet.
 
@@ -429,7 +429,7 @@ async def list_geofences_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceListResponse:
     """Get a fleet's geofences.
 
@@ -459,7 +459,7 @@ async def list_geofences_endpoint(
 async def get_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Get one geofence of a fleet.
 
@@ -489,7 +489,7 @@ async def update_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
     geofence_update_request: GeofenceUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Partially update a geofence.
 
@@ -521,7 +521,7 @@ async def update_geofence_endpoint(
 async def soft_delete_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a geofence.
 

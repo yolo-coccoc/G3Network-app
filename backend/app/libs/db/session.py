@@ -48,9 +48,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     that ``app/api/main.py`` later turns into an error response), so a
     failed request never leaves partial writes behind.
 
+    Always declare it with ``scope="function"``: FastAPI's default scope
+    runs the code after ``yield`` (the commit) only after the response has
+    been sent, so the client could see success before the data is
+    committed, or for a commit that then fails.
+
     Usage:
         @router.get("/items")
-        async def get_items(db: AsyncSession = Depends(get_db)):
+        async def get_items(db: AsyncSession = Depends(get_db, scope="function")):
             ...
 
     Yields:

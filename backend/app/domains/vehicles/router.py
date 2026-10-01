@@ -39,7 +39,7 @@ VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
 )
 async def create_vehicle_endpoint(
     vehicle_create_request: VehicleCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Create a new vehicle.
 
@@ -82,7 +82,7 @@ async def list_vehicles_endpoint(
         alias="activation_status",
         description="Filter by F-F2 activation status",
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles.
 
@@ -115,7 +115,7 @@ async def list_vehicles_endpoint(
     "Registered before /{vehicle_id} so it isn't captured as a path parameter.",
 )
 async def get_vehicle_activation_summary_endpoint(
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleActivationSummaryResponse:
     """Get the fleet-wide activation success rate (F-F2).
 
@@ -136,7 +136,7 @@ async def get_vehicle_activation_summary_endpoint(
 )
 async def get_vehicle_endpoint(
     vehicle_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Get the details of a vehicle by ID.
 
@@ -162,7 +162,7 @@ async def get_vehicle_endpoint(
 async def update_vehicle_endpoint(
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Partially update a vehicle.
 
@@ -193,7 +193,7 @@ async def update_vehicle_endpoint(
 )
 async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete (and decommission) a vehicle.
 

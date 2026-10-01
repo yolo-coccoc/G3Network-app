@@ -40,7 +40,7 @@ router = APIRouter(tags=["telemetry"])
     summary="Get the latest telemetry for a vehicle",
 )
 async def get_latest_vehicle_telemetry_endpoint(
-    vehicle_id: UUID, db: AsyncSession = Depends(get_db)
+    vehicle_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
 ) -> VehicleTelemetryLatestResponse:
     """Return the latest telemetry record for a vehicle.
 
@@ -72,7 +72,7 @@ async def get_vehicle_telemetry_history_endpoint(
         ge=1,
         le=settings.TELEMETRY_HISTORY_MAX_LIMIT,
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleTelemetryHistoryResponse:
     """Return a vehicle's telemetry history within a bounded time range (F-A5).
 
@@ -119,7 +119,7 @@ async def get_vehicle_operating_report_endpoint(
     end_time: datetime,
     granularity: ReportGranularity | None = None,
     report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleOperatingReportResponse | Response:
     """Return distance, energy consumed, and cost for a vehicle over a window (F-A6).
 
@@ -181,7 +181,7 @@ async def get_vehicle_battery_health_endpoint(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleBatteryHealthResponse:
     """Return one SOH/cycle-count point per day over a window (F-A3).
 
@@ -218,7 +218,7 @@ async def get_vehicle_energy_usage_endpoint(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleEnergyUsageResponse:
     """Return energy charged into a vehicle's pack over a window (F-C6).
 
@@ -262,7 +262,7 @@ async def list_fleet_vehicle_live_statuses_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetVehicleLiveStatusListResponse:
     """Return a fleet's current member vehicles with their live status (F-E1).
 
@@ -296,7 +296,7 @@ async def get_fleet_operating_report_endpoint(
     start_time: datetime,
     end_time: datetime,
     report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetOperatingReportResponse | Response:
     """Return per-vehicle and total distance, energy and cost of a fleet (F-A6).
 

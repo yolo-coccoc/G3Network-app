@@ -57,7 +57,7 @@ async def list_notifications_endpoint(
             "desc: the newest notifications first, after_id ignored"
         ),
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationListResponse:
     """Return notifications for a polling client or a notification centre.
 
@@ -98,7 +98,7 @@ async def count_unread_notifications_endpoint(
     vehicle_id: UUID | None = Query(
         None, description="Only count notifications about this vehicle"
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationUnreadCountResponse:
     """Return the number of notifications not yet marked read.
 
@@ -121,7 +121,7 @@ async def mark_all_notifications_read_endpoint(
     vehicle_id: UUID | None = Query(
         None, description="Only mark notifications about this vehicle"
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationMarkAllReadResponse:
     """Mark every unread notification read; read ones keep their ``read_at``.
 
@@ -141,7 +141,7 @@ async def mark_all_notifications_read_endpoint(
     summary="Get a notification",
 )
 async def get_notification_endpoint(
-    notification_id: int, db: AsyncSession = Depends(get_db)
+    notification_id: int, db: AsyncSession = Depends(get_db, scope="function")
 ) -> NotificationResponse:
     """Return one notification by ID.
 
@@ -164,7 +164,7 @@ async def get_notification_endpoint(
     summary="Mark a notification as read",
 )
 async def mark_notification_read_endpoint(
-    notification_id: int, db: AsyncSession = Depends(get_db)
+    notification_id: int, db: AsyncSession = Depends(get_db, scope="function")
 ) -> NotificationResponse:
     """Mark a notification read; marking it again keeps the first ``read_at``.
 

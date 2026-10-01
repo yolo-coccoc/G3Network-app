@@ -38,7 +38,7 @@ router = APIRouter(tags=["support"])
 )
 async def create_support_ticket_endpoint(
     support_ticket_create_request: SupportTicketCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Create a new support ticket.
 
@@ -74,7 +74,7 @@ async def create_support_ticket_endpoint(
 )
 async def create_support_sos_endpoint(
     support_sos_create_request: SupportSosCreateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Create a new SOS case.
 
@@ -138,7 +138,7 @@ async def list_support_cases_endpoint(
             "the deadline, or a late one); false: only the others"
         ),
     ),
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseListResponse:
     """Get a paginated list of support cases.
 
@@ -181,7 +181,7 @@ async def list_support_cases_endpoint(
 )
 async def get_support_case_endpoint(
     case_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Get the details of a support case by ID.
 
@@ -208,7 +208,7 @@ async def get_support_case_endpoint(
 async def update_support_case_endpoint(
     case_id: UUID,
     support_case_update_request: SupportCaseUpdateRequest,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Partially update a support case.
 
@@ -239,7 +239,7 @@ async def update_support_case_endpoint(
 )
 async def soft_delete_support_case_endpoint(
     case_id: UUID,
-    db_session: AsyncSession = Depends(get_db),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a support case.
 
