@@ -38,7 +38,7 @@ belongs to the customer or to G3 is decision D6.
 |---|---|---|---|---|---|---|
 | `telematic_id` | uuid | no | PK |  | Internal ID of the telematic device. | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
 | `telematic_serial` | varchar(50) | no | UQ |  | Serial printed on the device; also its MQTT identity, unique. | `TBX-2409-000123` |
-| `vehicle_id` | uuid | yes | FK UQ | [vehicles](vehicles.md#vehicles).vehicle_id (on delete set null) | Vehicle the device is mounted on now; NULL when unmounted. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
+| `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete set null) | Vehicle the device is mounted on now; NULL when unmounted. At most one live (not soft-deleted) device per vehicle. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `status` | telematicstatus | no |  |  | Operating status of the device. | `ACTIVE` |
 | `firmware_version` | varchar(50) | yes |  |  | Firmware currently running on the device. | `1.4.2` |
 | `telemetry_interval_seconds` | integer | yes |  |  | Publish interval last pushed to the device over MQTT (F-J2); NULL until the first push. | `10` |
@@ -56,6 +56,7 @@ belongs to the customer or to G3 is decision D6.
 - `ix_telematics_status` (status)
 - `ix_telematics_telematic_serial` (telematic_serial) unique
 - `ix_telematics_vehicle_id` (vehicle_id)
+- `uq_telematics_active_vehicle` (vehicle_id) unique - WHERE deleted_at IS NULL
 
 **Referenced by**
 

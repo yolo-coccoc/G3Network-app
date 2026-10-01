@@ -224,6 +224,33 @@ def upgrade() -> None:
     op.create_index(op.f("ix_fleets_fleet_code"), "fleets", ["fleet_code"], unique=True)
     op.create_index(op.f("ix_fleets_status"), "fleets", ["status"], unique=False)
     op.create_table(
+        "geofences",
+        sa.Column("geofence_id", sa.UUID(), nullable=False),
+        sa.Column("fleet_id", sa.UUID(), nullable=False),
+        sa.Column("name", sa.String(length=100), nullable=False),
+        sa.Column(
+            "boundary",
+            geoalchemy2.types.Geography(
+                geometry_type="POLYGON",
+                srid=4326,
+                dimension=2,
+                spatial_index=False,
+                from_text="ST_GeogFromText",
+                name="geography",
+                nullable=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["fleet_id"], ["fleets.fleet_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("geofence_id"),
+    )
+    op.create_index(
+        op.f("ix_geofences_fleet_id"), "geofences", ["fleet_id"], unique=False
+    )
+    op.create_table(
         "vehicles",
         sa.Column("vehicle_id", sa.UUID(), nullable=False),
         sa.Column("license_plate", sa.String(length=20), nullable=False),
@@ -433,6 +460,8 @@ def upgrade() -> None:
                 "ANOMALY_ALERT",
                 "SOH_ALERT",
                 "DEVICE_OFFLINE_ALERT",
+                "SOS_ALERT",
+                "GEOFENCE_ALERT",
                 name="notificationtype",
             ),
             nullable=False,
@@ -583,7 +612,13 @@ def upgrade() -> None:
             ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="SET NULL"
         ),
         sa.PrimaryKeyConstraint("telematic_id"),
-        sa.UniqueConstraint("vehicle_id", name="uq_telematics_vehicle_id"),
+    )
+    op.create_index(
+        "uq_telematics_active_vehicle",
+        "telematics",
+        ["vehicle_id"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_index(
         "ix_telematics_deleted_at", "telematics", ["deleted_at"], unique=False

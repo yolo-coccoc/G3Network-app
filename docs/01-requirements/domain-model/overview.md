@@ -20,18 +20,18 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**43 tables in 14 domains:** 17 built, 23 planned, 3 proposed.
+**43 tables in 14 domains:** 18 built, 22 planned, 3 proposed.
 
 ## Domain map
 
 ```mermaid
 flowchart LR
   identity["Identity<br/>4 planned · 1 proposed"]:::planned
-  vehicles["Vehicles<br/>1 built · 1 planned · 1 proposed"]:::partial
+  vehicles["Vehicles<br/>1 built · 1 proposed"]:::partial
   telematics["Telematics<br/>1 built"]:::built
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>2 built · 1 proposed"]:::partial
-  fleet["Fleet<br/>2 built"]:::built
+  fleet["Fleet<br/>3 built"]:::built
   charging_stations["Charging stations<br/>5 built · 1 planned"]:::partial
   charging_sessions["Charging sessions<br/>3 built"]:::built
   notifications["Notifications<br/>1 built"]:::built
@@ -78,11 +78,11 @@ Not drawn, to keep the map readable: 12 domains also point to **identity** throu
 | Domain | Status | ✅ | 📋 | 🆕 | Tables |
 |---|---|---|---|---|---|
 | [Identity](domains/identity.md) | planned | 0 | 4 | 1 | customer_accounts, users, roles, user_role_assignments, access_audit_logs |
-| [Vehicles](domains/vehicles.md) | partial | 1 | 1 | 1 | vehicles, vehicle_ownerships, geofences |
+| [Vehicles](domains/vehicles.md) | partial | 1 | 0 | 1 | vehicles, vehicle_ownerships |
 | [Telematics](domains/telematics.md) | built | 1 | 0 | 0 | telematics |
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | vehicle_telemetry |
 | [Drivers](domains/drivers.md) | partial | 2 | 0 | 1 | drivers, driver_vehicle_assignments, charging_credentials |
-| [Fleet](domains/fleet.md) | built | 2 | 0 | 0 | fleets, fleet_vehicle_memberships |
+| [Fleet](domains/fleet.md) | built | 3 | 0 | 0 | fleets, fleet_vehicle_memberships, geofences |
 | [Charging stations](domains/charging_stations.md) | partial | 5 | 1 | 0 | charging_stations, charging_evses, charging_connectors, charging_ocpp_messages, charging_station_configuration_entries, charging_reservations |
 | [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | charging_sessions, charging_session_events, charging_session_measurements |
 | [Notifications](domains/notifications.md) | built | 1 | 0 | 0 | notifications |
@@ -96,7 +96,7 @@ Not drawn, to keep the map readable: 12 domains also point to **identity** throu
 
 | Owner | Meaning | Tables |
 |---|---|---|
-| **customer** | Belongs to one customer account (tenant); carries `account_id`. | [users](domains/identity.md#users), [user_role_assignments](domains/identity.md#user_role_assignments), [vehicles](domains/vehicles.md#vehicles), [vehicle_ownerships](domains/vehicles.md#vehicle_ownerships), [geofences](domains/vehicles.md#geofences), [vehicle_telemetry](domains/telemetry.md#vehicle_telemetry), [drivers](domains/drivers.md#drivers), [driver_vehicle_assignments](domains/drivers.md#driver_vehicle_assignments), [charging_credentials](domains/drivers.md#charging_credentials), [fleets](domains/fleet.md#fleets), [fleet_vehicle_memberships](domains/fleet.md#fleet_vehicle_memberships), [notifications](domains/notifications.md#notifications), [support_cases](domains/support.md#support_cases), [maintenance_bookings](domains/support.md#maintenance_bookings), [charging_policy_assignments](domains/policy.md#charging_policy_assignments), [policy_violations](domains/policy.md#policy_violations), [payments](domains/billing.md#payments), [wallets](domains/billing.md#wallets), [wallet_transactions](domains/billing.md#wallet_transactions), [invoices](domains/billing.md#invoices), [invoice_lines](domains/billing.md#invoice_lines), [subscriptions](domains/billing.md#subscriptions), [driver_scores](domains/scoring.md#driver_scores), [trips](domains/unassigned.md#trips) |
+| **customer** | Belongs to one customer account (tenant); carries `account_id`. | [users](domains/identity.md#users), [user_role_assignments](domains/identity.md#user_role_assignments), [vehicles](domains/vehicles.md#vehicles), [vehicle_ownerships](domains/vehicles.md#vehicle_ownerships), [vehicle_telemetry](domains/telemetry.md#vehicle_telemetry), [drivers](domains/drivers.md#drivers), [driver_vehicle_assignments](domains/drivers.md#driver_vehicle_assignments), [charging_credentials](domains/drivers.md#charging_credentials), [fleets](domains/fleet.md#fleets), [fleet_vehicle_memberships](domains/fleet.md#fleet_vehicle_memberships), [geofences](domains/fleet.md#geofences), [notifications](domains/notifications.md#notifications), [support_cases](domains/support.md#support_cases), [maintenance_bookings](domains/support.md#maintenance_bookings), [charging_policy_assignments](domains/policy.md#charging_policy_assignments), [policy_violations](domains/policy.md#policy_violations), [payments](domains/billing.md#payments), [wallets](domains/billing.md#wallets), [wallet_transactions](domains/billing.md#wallet_transactions), [invoices](domains/billing.md#invoices), [invoice_lines](domains/billing.md#invoice_lines), [subscriptions](domains/billing.md#subscriptions), [driver_scores](domains/scoring.md#driver_scores), [trips](domains/unassigned.md#trips) |
 | **g3** | G3's own data, shared across all customers. | [customer_accounts](domains/identity.md#customer_accounts), [roles](domains/identity.md#roles), [access_audit_logs](domains/identity.md#access_audit_logs), [charging_stations](domains/charging_stations.md#charging_stations), [charging_evses](domains/charging_stations.md#charging_evses), [charging_connectors](domains/charging_stations.md#charging_connectors), [charging_ocpp_messages](domains/charging_stations.md#charging_ocpp_messages), [charging_station_configuration_entries](domains/charging_stations.md#charging_station_configuration_entries), [repair_partners](domains/support.md#repair_partners), [charging_policies](domains/policy.md#charging_policies), [charging_policy_versions](domains/policy.md#charging_policy_versions), [tariffs](domains/billing.md#tariffs), [subscription_plans](domains/billing.md#subscription_plans), [promotion_campaigns](domains/unassigned.md#promotion_campaigns) |
 | **two-party** | A G3 asset used by a customer (both have a stake). | [charging_reservations](domains/charging_stations.md#charging_reservations), [charging_sessions](domains/charging_sessions.md#charging_sessions), [charging_session_events](domains/charging_sessions.md#charging_session_events), [charging_session_measurements](domains/charging_sessions.md#charging_session_measurements) |
 | **undecided** | Waiting on an open decision. | [telematics](domains/telematics.md#telematics) |

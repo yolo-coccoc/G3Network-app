@@ -49,7 +49,6 @@ erDiagram
   access_audit_logs }o..o| customer_accounts : "account_id"
   vehicles }o..o| customer_accounts : "account_id"
   vehicle_ownerships }o..|| customer_accounts : "account_id"
-  geofences }o..|| customer_accounts : "account_id"
   vehicle_telemetry }o..o| customer_accounts : "account_id"
   drivers }o..o| customer_accounts : "account_id"
   drivers |o..o| users : "user_id"
@@ -57,6 +56,7 @@ erDiagram
   charging_credentials }o..|| customer_accounts : "account_id"
   fleets }o..o| customer_accounts : "account_id"
   fleet_vehicle_memberships }o..o| customer_accounts : "account_id"
+  geofences }o..o| customer_accounts : "account_id"
   charging_reservations }o..|| customer_accounts : "account_id"
   charging_sessions }o..o| customer_accounts : "account_id"
   notifications }o..o| customer_accounts : "account_id"
@@ -75,7 +75,7 @@ erDiagram
   trips }o..|| customer_accounts : "account_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](vehicles.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
 
 ## Tables
 
@@ -104,13 +104,13 @@ truck owner. Every customer-owned row points here through `account_id`.
 - [access_audit_logs](#access_audit_logs).account_id (planned)
 - [vehicles](vehicles.md#vehicles).account_id (planned)
 - [vehicle_ownerships](vehicles.md#vehicle_ownerships).account_id (planned)
-- [geofences](vehicles.md#geofences).account_id (planned)
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).account_id (planned)
 - [drivers](drivers.md#drivers).account_id (planned)
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).account_id (planned)
 - [charging_credentials](drivers.md#charging_credentials).account_id (planned)
 - [fleets](fleet.md#fleets).account_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).account_id (planned)
+- [geofences](fleet.md#geofences).account_id (planned)
 - [charging_reservations](charging_stations.md#charging_reservations).account_id (planned)
 - [charging_sessions](charging_sessions.md#charging_sessions).account_id (planned)
 - [notifications](notifications.md#notifications).account_id (planned)

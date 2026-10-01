@@ -4,13 +4,12 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 1 · 🆕 proposed: 1
+✅ built: 1 · 🆕 proposed: 1
 
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
 - A **vehicle** belongs to one customer account at a time (D1, D3).
 - **Ownership history** records every change of owner, so past data keeps its original owner.
-- A customer defines **geofences** for location alerts (F-A5).
 
 ## Diagram
 
@@ -25,14 +24,9 @@ erDiagram
     uuid vehicle_id FK
     uuid account_id FK
   }
-  geofences {
-    uuid geofence_id PK
-    uuid account_id FK
-  }
   vehicles }o..o| customer_accounts : "account_id"
   vehicle_ownerships }o..|| vehicles : "vehicle_id"
   vehicle_ownerships }o..|| customer_accounts : "account_id"
-  geofences }o..|| customer_accounts : "account_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -113,17 +107,3 @@ fleet_vehicle_memberships.
 **Indexes**
 
 - `uq_vehicle_ownerships_active_vehicle` (vehicle_id) unique - WHERE ended_at IS NULL
-
-### geofences
-
-📋 planned · owner: **customer** · features: F-A5
-
-A customer-defined area used for enter/leave alerts.
-
-| Column | Type | Null | Key | References | Meaning | Example |
-|---|---|---|---|---|---|---|
-| `geofence_id` | uuid | no | PK |  | Internal ID of the geofence. | `00000003-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account that defined it. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `name` | varchar(100) | no |  |  | Name shown in alerts. | `Kho Tân Uyên` |
-| `boundary` | geography(Polygon,4326) | no |  |  | Area as a WGS84 polygon. | `POLYGON((106.70 11.05, 106.72 11.05, 106.72 11.07, 106.70 11.07, 106.70 11.05))` |
-| `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |

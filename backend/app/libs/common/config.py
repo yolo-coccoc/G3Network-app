@@ -82,6 +82,20 @@ class Settings(BaseSettings):
             respond to an in-app support ticket (F-I1).
         SUPPORT_SOS_RESPONSE_SLA_MINUTES: Minutes allowed to first respond
             to an SOS case (F-I2's stated <=5 minute callback SLA).
+        TELEMETRY_ONLINE_THRESHOLD_SECONDS: A vehicle is "online" while its
+            newest telemetry arrived within this many seconds (computed at
+            read time; separate from the device-silence alert).
+        TELEMETRY_ENERGY_COST_PER_KWH_VND: Electricity price used by the
+            F-A6/F-C6 cost figures.
+        TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT: State of health below which
+            an F-A3 SOH alert is raised.
+        TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS: Maximum span of the F-A3
+            battery-health trend query.
+        APP_REPORT_TIMEZONE: IANA time zone that defines a "day"/"week"/
+            "month" when reports and series are bucketed; timestamps in
+            responses stay UTC.
+        CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: Maximum span of the F-C5
+            station energy time-series query.
     """
 
     model_config = SettingsConfigDict(
@@ -181,12 +195,11 @@ class Settings(BaseSettings):
     # Bound for the F-A6/F-C6 report window. Deliberately larger than
     # TELEMETRY_HISTORY_MAX_RANGE_DAYS: the history endpoint materializes
     # one JSON point per row, so its 7-day cap bounds the *response
-    # size*; this report streams a SQL aggregate and returns O(1) bytes
-    # regardless of window length, so its only real constraint is scan
-    # time. 31 days covers F-A6's "daily/weekly/monthly" requirement
-    # including the longest calendar month. A cap still exists to stop an
-    # unbounded "since 1970" request from scanning every hypertable chunk.
-    TELEMETRY_REPORT_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
+    # size*; this report streams a SQL aggregate (one row per period), so
+    # its only real constraint is scan time. 366 days lets a monthly
+    # breakdown span a year. A cap still exists to stop an unbounded
+    # "since 1970" request from scanning every hypertable chunk.
+    TELEMETRY_REPORT_MAX_RANGE_DAYS: int = Field(default=366, ge=1)
 
     # F-I1/F-I2's response-SLA minutes. Copied onto each support_cases row
     # at creation time rather than read live at breach-check time, so a
@@ -197,6 +210,29 @@ class Settings(BaseSettings):
     # in feature-list.md's "Items needing confirmation".
     SUPPORT_TICKET_RESPONSE_SLA_MINUTES: int = Field(default=60, ge=1)
     SUPPORT_SOS_RESPONSE_SLA_MINUTES: int = Field(default=5, ge=1)
+
+    # "Online" for maps and lists (F-A1/F-E1/F-J1): derived at read time from
+    # the newest telemetry receive time, never stored (database.md). Devices
+    # publish every 5-10 s, so 5 minutes of silence is a clear "offline";
+    # the much longer TELEMATICS_SILENT_THRESHOLD_MINUTES drives the alert.
+    TELEMETRY_ONLINE_THRESHOLD_SECONDS: int = Field(default=300, ge=1)
+
+    # F-A6/F-C6 cost figures: one flat tariff until time-of-use/per-tenant
+    # pricing exists (future.md item 60).
+    TELEMETRY_ENERGY_COST_PER_KWH_VND: float = Field(default=3000.0, ge=0)
+
+    # F-A3: SOH below this raises an alert; vendor-validated value pending.
+    TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT: float = Field(default=70.0, gt=0, le=100)
+
+    # F-A3 battery-health trend: one point per day, so a year is ~366 points.
+    TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS: int = Field(default=366, ge=1)
+
+    # Calendar used to cut reports and series into days/weeks/months. The
+    # operator works in Vietnam time; stored and returned timestamps stay UTC.
+    APP_REPORT_TIMEZONE: str = "Asia/Ho_Chi_Minh"
+
+    # F-C5 station energy series: hourly buckets over a month = 744 points.
+    CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
 
 
 @lru_cache

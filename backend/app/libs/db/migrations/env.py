@@ -37,6 +37,7 @@ from app.domains.drivers.models import (  # noqa: F401
 from app.domains.fleet.models import (  # noqa: F401
     FleetModel,
     FleetVehicleMembershipModel,
+    GeofenceModel,
 )
 from app.domains.notifications.models import NotificationModel  # noqa: F401
 from app.domains.support.models import SupportCaseModel  # noqa: F401

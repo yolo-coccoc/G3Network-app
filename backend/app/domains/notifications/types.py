@@ -19,6 +19,8 @@ class NotificationType(str, enum.Enum):
     ANOMALY_ALERT = "ANOMALY_ALERT"  # F-A4
     SOH_ALERT = "SOH_ALERT"  # F-A3
     DEVICE_OFFLINE_ALERT = "DEVICE_OFFLINE_ALERT"  # F-J1, F-J3 partial
+    SOS_ALERT = "SOS_ALERT"  # F-I2
+    GEOFENCE_ALERT = "GEOFENCE_ALERT"  # F-A5
 
 
 class NotificationSeverity(str, enum.Enum):

@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,4 +69,14 @@ class TelematicModel(Base):
         DateTime(timezone=True), nullable=True, index=True
     )
 
-    __table_args__ = (UniqueConstraint("vehicle_id", name="uq_telematics_vehicle_id"),)
+    # At most one LIVE device per vehicle. Partial (WHERE deleted_at IS NULL),
+    # so a soft-deleted device that still records its last vehicle doesn't
+    # block mounting a replacement (future.md item 82).
+    __table_args__ = (
+        Index(
+            "uq_telematics_active_vehicle",
+            "vehicle_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )

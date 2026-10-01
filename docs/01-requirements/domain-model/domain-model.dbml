@@ -121,6 +121,8 @@ Enum notificationtype {
   ANOMALY_ALERT
   SOH_ALERT
   DEVICE_OFFLINE_ALERT
+  SOS_ALERT
+  GEOFENCE_ALERT
 }
 
 Enum notificationseverity {
@@ -305,39 +307,23 @@ fleet_vehicle_memberships.
 @vi Tài khoản nào sở hữu xe, trong khoảng thời gian nào. Giúp dữ liệu cũ của xe đã bán vẫn thuộc chủ cũ (quyết định D3).'''
 }
 
-Table geofences {
-  geofence_id uuid [pk, note: 'Internal ID of the geofence. @vi Mã nội bộ của vùng địa lý. @example 00000003-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account that defined it. @vi Tài khoản khách hàng đã tạo vùng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  name varchar(100) [not null, note: 'Name shown in alerts. @vi Tên hiển thị trong cảnh báo. @example Kho Tân Uyên']
-  boundary "geography(Polygon,4326)" [not null, note: 'Area as a WGS84 polygon. @vi Ranh giới vùng, dạng đa giác WGS84. @example POLYGON((106.70 11.05, 106.72 11.05, 106.72 11.07, 106.70 11.07, 106.70 11.05))']
-  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
-  Note: '''@status planned @owner customer @features F-A5
-A customer-defined area used for enter/leave alerts.
-@vi-name Vùng địa lý (geofence)
-@vi Một khu vực do khách hàng định nghĩa để cảnh báo khi xe vào/ra.'''
-}
-
 Ref: vehicles.account_id > customer_accounts.account_id [delete: restrict]
 Ref: vehicle_ownerships.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: vehicle_ownerships.account_id > customer_accounts.account_id [delete: restrict]
-Ref: geofences.account_id > customer_accounts.account_id [delete: restrict]
 
 TableGroup vehicles {
   vehicles
   vehicle_ownerships
-  geofences
   Note: '''
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
 - A **vehicle** belongs to one customer account at a time (D1, D3).
 - **Ownership history** records every change of owner, so past data keeps its original owner.
-- A customer defines **geofences** for location alerts (F-A5).
 
 @vi-name Xe
 @vi Bản thân chiếc xe tải: định danh (VIN, biển số), thông số và trạng thái kích hoạt.
 - Tại mỗi thời điểm, một **xe** thuộc một tài khoản khách hàng (D1, D3).
 - **Lịch sử sở hữu** ghi lại mỗi lần đổi chủ, để dữ liệu cũ vẫn thuộc chủ cũ.
-- Khách hàng định nghĩa **vùng địa lý (geofence)** để nhận cảnh báo vị trí (F-A5).
 '''
 }
 
@@ -348,7 +334,7 @@ The truck itself: identity (VIN, plate), specs, and provisioning state.
 Table telematics {
   telematic_id uuid [pk, note: 'Internal ID of the telematic device. @vi Mã nội bộ của thiết bị telematics. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
   telematic_serial varchar(50) [not null, unique, note: 'Serial printed on the device; also its MQTT identity, unique. @vi Số serial in trên thiết bị; cũng là định danh MQTT, duy nhất. @example TBX-2409-000123']
-  vehicle_id uuid [unique, note: 'Vehicle the device is mounted on now; NULL when unmounted. @vi Xe mà thiết bị đang gắn; NULL khi đã tháo. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  vehicle_id uuid [note: 'Vehicle the device is mounted on now; NULL when unmounted. At most one live (not soft-deleted) device per vehicle. @vi Xe mà thiết bị đang gắn; NULL khi đã tháo. Mỗi xe có tối đa một thiết bị còn hiệu lực (chưa xóa mềm). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   status telematicstatus [not null, note: 'Operating status of the device. @vi Trạng thái vận hành của thiết bị. @example ACTIVE']
   firmware_version varchar(50) [note: 'Firmware currently running on the device. @vi Phiên bản firmware đang chạy trên thiết bị. @example 1.4.2']
   telemetry_interval_seconds integer [note: 'Publish interval last pushed to the device over MQTT (F-J2); NULL until the first push. @vi Chu kỳ gửi dữ liệu (giây) đã đẩy xuống thiết bị qua MQTT lần gần nhất (F-J2); NULL trước lần đẩy đầu tiên. @example 10']
@@ -360,6 +346,7 @@ Table telematics {
     status [name: 'ix_telematics_status']
     telematic_serial [unique, name: 'ix_telematics_telematic_serial']
     vehicle_id [name: 'ix_telematics_vehicle_id']
+    vehicle_id [unique, name: 'uq_telematics_active_vehicle', note: 'WHERE deleted_at IS NULL']
   }
   Note: '''@status built @owner undecided @features F-G1,F-J1,F-J2,F-J3
 One telematic device and the vehicle it is mounted on. Whether the device
@@ -586,19 +573,44 @@ Ref: fleet_vehicle_memberships.account_id > customer_accounts.account_id [delete
 Ref: fleet_vehicle_memberships.fleet_id > fleets.fleet_id [delete: restrict]
 Ref: fleet_vehicle_memberships.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
+Table geofences {
+  geofence_id uuid [pk, note: 'Internal ID of the geofence. @vi Mã nội bộ của vùng địa lý. @example 00000003-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  fleet_id uuid [not null, note: 'Fleet whose current member vehicles the area applies to. @vi Đội xe mà các xe thành viên hiện tại chịu áp dụng vùng này. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  account_id uuid [note: '@planned D1: Customer account that defined it, once accounts exist; until then a geofence is scoped to a fleet. @vi Tài khoản khách hàng đã tạo vùng, khi có tài khoản; trước đó vùng gắn với một đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  name varchar(100) [not null, note: 'Name shown in alerts. @vi Tên hiển thị trong cảnh báo. @example Kho Tân Uyên']
+  boundary "geography(POLYGON,4326)" [not null, note: 'Area as a WGS84 polygon (longitude first). No spatial index: checks always filter by fleet first. @vi Ranh giới vùng, dạng đa giác WGS84 (kinh độ trước). Không có chỉ mục không gian: luôn lọc theo đội xe trước. @example POLYGON((106.70 11.05, 106.72 11.05, 106.72 11.07, 106.70 11.07, 106.70 11.05))']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  indexes {
+    fleet_id [name: 'ix_geofences_fleet_id']
+  }
+  Note: '''@status built @owner customer @features F-A5
+An area whose entry or exit by a member vehicle of its fleet raises an alert.
+Scoped to a fleet until customer accounts exist (then it moves to the account).
+@vi-name Vùng địa lý (geofence)
+@vi Một khu vực mà khi xe thuộc đội xe đi vào hoặc ra sẽ phát cảnh báo. Gắn với đội xe cho đến khi có tài khoản khách hàng (sau đó chuyển sang tài khoản).'''
+}
+
+Ref: geofences.fleet_id > fleets.fleet_id [delete: restrict]
+Ref: geofences.account_id > customer_accounts.account_id [delete: restrict]
+
 TableGroup fleet {
   fleets
   fleet_vehicle_memberships
+  geofences
   Note: '''
 Groups of vehicles managed together by a fleet manager.
 
 - A **fleet** belongs to one customer account (D1, D2).
 - A vehicle is in at most one fleet at a time; a fleet holds many vehicles. **Memberships** keep the history.
+- A fleet's **geofences** raise an alert when a member vehicle enters or leaves them (F-A5).
 
 @vi-name Đội xe
 @vi Nhóm xe do một quản lý đội xe điều hành.
 - Một **đội xe** thuộc một tài khoản khách hàng (D1, D2).
 - Tại mỗi thời điểm, một xe thuộc tối đa một đội; một đội có nhiều xe. **Thành viên đội** lưu lại lịch sử.
+- **Vùng địa lý (geofence)** của đội xe phát cảnh báo khi xe thành viên đi vào hoặc ra (F-A5).
 '''
 }
 

@@ -50,7 +50,7 @@ each alert type is an enum value plus a payload shape.
 
 **Enum values**
 
-- `notificationtype`: BATTERY_ALERT, ANOMALY_ALERT, SOH_ALERT, DEVICE_OFFLINE_ALERT
+- `notificationtype`: BATTERY_ALERT, ANOMALY_ALERT, SOH_ALERT, DEVICE_OFFLINE_ALERT, SOS_ALERT, GEOFENCE_ALERT
 - `notificationseverity`: INFO, WARNING, CRITICAL
 
 **Indexes**

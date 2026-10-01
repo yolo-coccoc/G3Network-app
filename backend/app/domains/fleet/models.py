@@ -3,6 +3,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from geoalchemy2 import Geography
 from sqlalchemy import DateTime, ForeignKey, Index, String, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -125,4 +126,52 @@ class FleetVehicleMembershipModel(Base):
             "fleet_id",
             "joined_at",
         ),
+    )
+
+
+class GeofenceModel(Base):
+    """A fleet-scoped area whose entry or exit by a member vehicle raises an
+    alert (F-A5).
+
+    Scoped to a fleet because customer accounts (the designed owner, decision
+    D1) don't exist yet; ``account_id`` is a planned column in the DBML. A
+    geofence applies to every vehicle that is currently a member of its fleet.
+    No GIST index: the containment check always filters by ``fleet_id`` first
+    and a fleet has few geofences.
+
+    Attributes:
+        geofence_id: Primary key (UUID).
+        fleet_id: The fleet whose vehicles the area applies to. ``RESTRICT``:
+            fleets are only soft-deleted.
+        name: Name shown in alerts.
+        boundary: The area as a WGS84 ``geography(Polygon, 4326)``.
+        created_at: Creation time.
+        updated_at: Last update time.
+        deleted_at: Soft-delete time; ``None`` while the geofence is live.
+    """
+
+    __tablename__ = "geofences"
+
+    geofence_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    fleet_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fleets.fleet_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    boundary: Mapped[object] = mapped_column(
+        Geography(geometry_type="POLYGON", srid=4326, spatial_index=False),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
