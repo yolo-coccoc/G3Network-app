@@ -15,12 +15,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
 from app.domains.charging_sessions.schemas import (
+    ChargingSessionDetailResponse,
     ChargingSessionEventListResponse,
     ChargingSessionListResponse,
     ChargingSessionMeasurementListResponse,
     ChargingSessionMeterValueListResponse,
-    ChargingSessionResponse,
+    StationEnergySeriesResponse,
     StationEnergySummaryResponse,
+)
+from app.domains.charging_sessions.types import (
+    EnergySeriesGranularity,
+    SessionStatus,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -67,12 +72,26 @@ def _page_query(
     summary="List charging sessions",
 )
 async def list_charging_sessions_endpoint(
+    station_id: UUID | None = None,
+    connector_id: UUID | None = None,
+    status: SessionStatus | None = None,
+    started_from: datetime | None = Query(
+        None, description="Inclusive lower bound on started_at, with a timezone."
+    ),
+    started_to: datetime | None = Query(
+        None, description="Exclusive upper bound on started_at, with a timezone."
+    ),
     page_query: _PageQuery = Depends(_page_query),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionListResponse:
-    """List sessions newest first, to obtain session IDs for monitoring.
+    """List sessions newest first, optionally filtered (F-B2).
 
     Args:
+        station_id: Only sessions of this station.
+        connector_id: Only sessions on this connector.
+        status: Only ``active`` or only ``completed`` sessions.
+        started_from: Inclusive lower bound on ``started_at``.
+        started_to: Exclusive upper bound on ``started_at``.
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
         db: The async session whose transaction is owned by the ``get_db``
@@ -81,23 +100,32 @@ async def list_charging_sessions_endpoint(
     Returns:
         A paginated list of sessions, containing no raw payloads or fields
         outside the MVP.
+
+    Raises:
+        ChargingSessionInputError: A time bound lacks a timezone or
+            ``started_to`` is not after ``started_from`` (HTTP 400).
     """
     return await charging_session_service.list_charging_sessions(
         db,
         page=page_query.page,
         page_size=page_query.page_size,
+        station_id=station_id,
+        connector_id=connector_id,
+        status=status,
+        started_from=started_from,
+        started_to=started_to,
     )
 
 
 @router.get(
     "/charging-sessions/{session_id}",
-    response_model=ChargingSessionResponse,
+    response_model=ChargingSessionDetailResponse,
     summary="View a charging session",
 )
 async def get_charging_session_endpoint(
     session_id: UUID, db: AsyncSession = Depends(get_db)
-) -> ChargingSessionResponse:
-    """Get the session aggregate by internal UUID.
+) -> ChargingSessionDetailResponse:
+    """Get the session aggregate and its read-time summary by internal UUID.
 
     Args:
         session_id: UUID of the session to view.
@@ -105,8 +133,8 @@ async def get_charging_session_endpoint(
             dependency.
 
     Returns:
-        A session response containing no raw payloads or fields outside the
-        MVP.
+        The session plus ``duration_seconds``, the first/last SoC and the
+        maximum import power, computed from its measurements.
 
     Raises:
         ChargingSessionNotFoundError: The session does not exist (HTTP 404).
@@ -257,4 +285,45 @@ async def get_station_energy_summary_endpoint(
         station_id=station_id,
         start_time=start_time,
         end_time=end_time,
+    )
+
+
+@router.get(
+    "/charging-sessions/stations/{station_id}/energy/series",
+    response_model=StationEnergySeriesResponse,
+    summary="Get a station's energy per hour or day within a time window",
+)
+async def get_station_energy_series_endpoint(
+    station_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    granularity: EnergySeriesGranularity = EnergySeriesGranularity.HOUR,
+    db: AsyncSession = Depends(get_db),
+) -> StationEnergySeriesResponse:
+    """Dense hourly or daily energy series of a station (F-C5).
+
+    Args:
+        station_id: UUID of the station.
+        start_time: Inclusive window start; must carry a timezone.
+        end_time: Exclusive window end; must carry a timezone.
+        granularity: ``hour`` (default) or ``day``; buckets are cut in
+            ``APP_REPORT_TIMEZONE``.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
+
+    Returns:
+        One bucket per hour/day (empty ones at zero) and the total, in kWh.
+        An unknown ``station_id`` returns an all-zero series.
+
+    Raises:
+        ChargingSessionInputError: A bound lacks a timezone, ``end_time`` is
+            not after ``start_time``, or the window exceeds
+            ``CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS`` (HTTP 400).
+    """
+    return await charging_session_service.get_station_energy_series(
+        db,
+        station_id=station_id,
+        start_time=start_time,
+        end_time=end_time,
+        granularity=granularity,
     )

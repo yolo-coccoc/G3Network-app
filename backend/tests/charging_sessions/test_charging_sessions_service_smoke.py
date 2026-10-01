@@ -16,6 +16,7 @@ from app.domains.charging_sessions.exceptions import (
 )
 from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
+    ChargingSessionListFilter,
     MeterSampleInput,
     SessionEventType,
     SessionStatus,
@@ -564,12 +565,18 @@ async def test_list_charging_sessions_keeps_a_page_size_below_the_default(
     seen: dict[str, object] = {}
 
     async def list_sessions(
-        db: AsyncSession, *, offset: int, limit: int
+        db: AsyncSession,
+        *,
+        filters: ChargingSessionListFilter,
+        offset: int,
+        limit: int,
     ) -> list[ChargingSessionModel]:
         seen.update(offset=offset, limit=limit)
         return [session]
 
-    async def count_sessions(db: AsyncSession) -> int:
+    async def count_sessions(
+        db: AsyncSession, filters: ChargingSessionListFilter
+    ) -> int:
         return 7
 
     monkeypatch.setattr(charging_repository, "list_sessions", list_sessions)

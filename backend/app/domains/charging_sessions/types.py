@@ -10,6 +10,10 @@ forward (an event for an already-``COMPLETED`` session is refused, not
 applied), and a meter reading can only advance the aggregate's
 ``meter_end_wh`` forward in *time* (a sample stamped earlier than one
 already applied is discarded, not overwritten).
+
+The read side adds ``EnergySeriesGranularity`` (F-C5 time series),
+``ChargingSessionListFilter`` (F-B2 list filters) and ``StationEnergyTotal``,
+the DTO ``charging_stations`` receives for its all-stations energy report.
 """
 
 import enum
@@ -134,6 +138,61 @@ class TransactionSessionReference:
     evse_id: UUID
     connector_id: UUID
     status: SessionStatus
+
+
+class EnergySeriesGranularity(str, enum.Enum):
+    """Bucket size of the station energy time series (F-C5).
+
+    Buckets are cut in ``APP_REPORT_TIMEZONE`` (decision D4 of the
+    happy-path completion planner) and returned as UTC instants.
+
+    Attributes:
+        HOUR: One bucket per local clock hour.
+        DAY: One bucket per local calendar day.
+    """
+
+    HOUR = "hour"
+    DAY = "day"
+
+
+@dataclass(frozen=True, slots=True)
+class ChargingSessionListFilter:
+    """Optional filters of the session list (F-B2); ``None`` means "any".
+
+    Attributes:
+        station_id: Only sessions of this station.
+        connector_id: Only sessions on this connector.
+        status: Only sessions in this lifecycle status.
+        started_from: Only sessions with ``started_at >= started_from``
+            (UTC, inclusive).
+        started_to: Only sessions with ``started_at < started_to`` (UTC,
+            exclusive).
+    """
+
+    station_id: UUID | None = None
+    connector_id: UUID | None = None
+    status: SessionStatus | None = None
+    started_from: datetime | None = None
+    started_to: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StationEnergyTotal:
+    """Energy sold at one station within a window, for another domain (F-C5).
+
+    Returned by ``resolve_station_energy_total`` to ``charging_stations``,
+    which ranks every station for the all-stations report.
+
+    Attributes:
+        station_id: The station the total belongs to.
+        total_energy_wh: Sum of ``energy_delivered_wh`` of the station's
+            completed sessions that ended within the window; ``0`` if none.
+        session_count: Number of those sessions.
+    """
+
+    station_id: UUID
+    total_energy_wh: Decimal
+    session_count: int
 
 
 @dataclass(frozen=True, slots=True)

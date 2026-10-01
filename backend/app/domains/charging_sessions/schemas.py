@@ -1,9 +1,10 @@
 """Pydantic response schemas for the charging session monitoring MVP.
 
-The schemas only expose the session aggregate, lifecycle events, canonical
-Wh meter samples, the other measurements and the per-station energy summary.
-Raw OCPP payloads, authorization, payment or debt are not part of the
-contract.
+The schemas only expose the session aggregate (plus, on the detail read, a
+summary computed from its measurements), lifecycle events, canonical Wh meter
+samples, the other measurements, the per-station energy summary and the
+per-station energy time series. Raw OCPP payloads, authorization, payment or
+debt are not part of the contract.
 """
 
 from datetime import datetime
@@ -12,7 +13,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+from app.domains.charging_sessions.types import (
+    EnergySeriesGranularity,
+    SessionEventType,
+    SessionStatus,
+)
 from app.libs.common.config import settings
 
 
@@ -62,6 +67,31 @@ class ChargingSessionResponse(BaseModel):
     meter_stop_wh: Decimal | None
     created_at: datetime
     updated_at: datetime
+
+
+class ChargingSessionDetailResponse(ChargingSessionResponse):
+    """One session aggregate plus a summary computed at read time (F-B2).
+
+    The summary fields are derived from ``charging_session_measurements`` on
+    every read, never stored. OCPP 2.0.1 sessions store only the energy
+    register, so their SoC and power fields are ``null``.
+
+    Attributes:
+        duration_seconds: ``ended_at - started_at``, or now - ``started_at``
+            while the session is active; never negative.
+        soc_start_percent: Value of the session's first ``SoC`` sample,
+            nullable.
+        soc_end_percent: Value of the session's latest ``SoC`` sample,
+            nullable (the latest so far while active).
+        max_power_kw: Highest ``Power.Active.Import`` sample, converted to
+            kW (``W`` samples are divided by 1000; samples in another unit
+            are ignored), nullable.
+    """
+
+    duration_seconds: int = Field(..., ge=0)
+    soc_start_percent: float | None
+    soc_end_percent: float | None
+    max_power_kw: float | None
 
 
 class ChargingSessionListResponse(BaseModel):
@@ -214,3 +244,48 @@ class StationEnergySummaryResponse(BaseModel):
     end_time: datetime
     total_energy_kwh: float = Field(..., ge=0)
     session_count: int = Field(..., ge=0)
+
+
+class StationEnergySeriesBucketResponse(BaseModel):
+    """Energy metered at a station within one time bucket (F-C5).
+
+    Attributes:
+        bucket_start: Start of the bucket as a UTC instant; the bucket is a
+            clock hour or a calendar day of ``APP_REPORT_TIMEZONE``.
+        energy_kwh: Energy attributed to the bucket, in kWh; ``0`` for an
+            empty bucket.
+    """
+
+    bucket_start: datetime
+    energy_kwh: float = Field(..., ge=0)
+
+
+class StationEnergySeriesResponse(BaseModel):
+    """Dense energy time series of a station (F-C5).
+
+    Energy comes from energy-register deltas between consecutive readings of
+    each session (its ``meter_start_wh`` at ``started_at``, its stored
+    samples, and its latest reading), each delta attributed to the bucket of
+    the later reading; a decreasing register contributes nothing. Active
+    sessions count too, so the series can differ from the completed-session
+    summary.
+
+    Attributes:
+        station_id: UUID of the station queried.
+        start_time: Inclusive window start, in UTC.
+        end_time: Exclusive window end, in UTC.
+        granularity: ``hour`` or ``day``.
+        report_timezone: The IANA time zone the buckets were cut in.
+        total_energy_kwh: Sum of every bucket.
+        items: One bucket per hour/day from the bucket containing
+            ``start_time`` up to the one containing ``end_time``, in time
+            order, empty buckets included.
+    """
+
+    station_id: UUID
+    start_time: datetime
+    end_time: datetime
+    granularity: EnergySeriesGranularity
+    report_timezone: str
+    total_energy_kwh: float = Field(..., ge=0)
+    items: list[StationEnergySeriesBucketResponse]

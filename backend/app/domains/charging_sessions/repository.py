@@ -2,15 +2,19 @@
 
 The repository only queries, creates and flushes the aggregate/history; it
 holds no lifecycle rule (those live in the service) and never commits or
-rolls back the transaction.
+rolls back the transaction. Besides the lifecycle writes it serves the
+monitoring reads: the filtered session list, the per-session measurement
+lookups behind the session summary (first/last value, maximum per unit), and
+the per-session energy samples behind the station energy series (F-C5).
 """
 
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Sequence, func, select
+from sqlalchemy import Sequence, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.charging_sessions.models import (
     ChargingSessionEventModel,
@@ -19,6 +23,7 @@ from app.domains.charging_sessions.models import (
 )
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
+    ChargingSessionListFilter,
     SessionEventType,
     SessionStatus,
 )
@@ -77,16 +82,44 @@ async def get_session_by_id(
     return query_result.scalar_one_or_none()
 
 
+def _session_list_conditions(
+    filters: ChargingSessionListFilter,
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by ``list_sessions``/``count_sessions``.
+
+    Args:
+        filters: The optional filters, already validated (UTC bounds) by the
+            service; a ``None`` field adds no condition.
+
+    Returns:
+        The conditions, so the list and its count can never drift apart.
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if filters.station_id is not None:
+        conditions.append(ChargingSessionModel.station_id == filters.station_id)
+    if filters.connector_id is not None:
+        conditions.append(ChargingSessionModel.connector_id == filters.connector_id)
+    if filters.status is not None:
+        conditions.append(ChargingSessionModel.status == filters.status)
+    if filters.started_from is not None:
+        conditions.append(ChargingSessionModel.started_at >= filters.started_from)
+    if filters.started_to is not None:
+        conditions.append(ChargingSessionModel.started_at < filters.started_to)
+    return conditions
+
+
 async def list_sessions(
     db: AsyncSession,
     *,
+    filters: ChargingSessionListFilter,
     offset: int,
     limit: int,
 ) -> list[ChargingSessionModel]:
-    """Get the list of session aggregates, newest first.
+    """Get the list of session aggregates matching the filters, newest first.
 
     Args:
         db: The async session owned by the entry boundary.
+        filters: Optional station/connector/status/start-time filters.
         offset: The number of sessions to skip.
         limit: The maximum number of sessions to return.
 
@@ -96,6 +129,7 @@ async def list_sessions(
     """
     query_result = await db.execute(
         select(ChargingSessionModel)
+        .where(*_session_list_conditions(filters))
         .order_by(
             ChargingSessionModel.created_at.desc(),
             ChargingSessionModel.session_id.desc(),
@@ -106,17 +140,184 @@ async def list_sessions(
     return list(query_result.scalars().all())
 
 
-async def count_sessions(db: AsyncSession) -> int:
-    """Count the total number of session aggregates.
+async def count_sessions(db: AsyncSession, filters: ChargingSessionListFilter) -> int:
+    """Count the session aggregates matching the filters.
 
     Args:
         db: The async session owned by the entry boundary.
+        filters: The same filters as ``list_sessions``.
 
     Returns:
-        The total number of sessions in the database.
+        The number of matching sessions.
     """
-    query_result = await db.execute(select(func.count(ChargingSessionModel.session_id)))
+    query_result = await db.execute(
+        select(func.count(ChargingSessionModel.session_id)).where(
+            *_session_list_conditions(filters)
+        )
+    )
     return int(query_result.scalar() or 0)
+
+
+async def list_sessions_by_station_in_window(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    start_time: datetime,
+    end_time: datetime,
+) -> list[ChargingSessionModel]:
+    """Get a station's sessions that may have metered energy within a window.
+
+    A session qualifies when it started before ``end_time`` and has not
+    ended before ``start_time`` (an active session always qualifies once
+    started). Used by the station energy series (F-C5).
+
+    Args:
+        db: The current async session.
+        station_id: UUID of the station.
+        start_time: Window start (UTC, inclusive).
+        end_time: Window end (UTC, exclusive).
+
+    Returns:
+        The matching sessions ordered by start time, then UUID.
+    """
+    query_result = await db.execute(
+        select(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.started_at < end_time,
+            or_(
+                ChargingSessionModel.ended_at.is_(None),
+                ChargingSessionModel.ended_at >= start_time,
+            ),
+        )
+        .order_by(
+            ChargingSessionModel.started_at.asc(),
+            ChargingSessionModel.session_id.asc(),
+        )
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_energy_samples_before(
+    db: AsyncSession, session_id: UUID, *, end_time: datetime
+) -> list[tuple[datetime, Decimal]]:
+    """Get a session's energy-register samples taken before a point in time.
+
+    Unpaginated on purpose: the energy series needs every sample before the
+    window end, including the last one before the window start (the
+    baseline of the first delta inside the window).
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session.
+        end_time: Exclusive upper bound on ``sampled_at`` (UTC).
+
+    Returns:
+        ``(sampled_at, value_wh)`` pairs in ascending time order.
+    """
+    query_result = await db.execute(
+        select(
+            ChargingSessionMeasurementModel.sampled_at,
+            ChargingSessionMeasurementModel.value,
+        )
+        .where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
+            ChargingSessionMeasurementModel.sampled_at < end_time,
+        )
+        .order_by(
+            ChargingSessionMeasurementModel.sampled_at.asc(),
+            ChargingSessionMeasurementModel.measurement_id.asc(),
+        )
+    )
+    return [(sampled_at, value) for sampled_at, value in query_result.all()]
+
+
+async def find_first_measurement_value(
+    db: AsyncSession, session_id: UUID, *, measurand: str
+) -> Decimal | None:
+    """Get the value of a session's earliest sample of one measurand.
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session.
+        measurand: The measurand name, e.g. ``SoC``.
+
+    Returns:
+        The earliest value, or ``None`` if the session has no such sample.
+    """
+    query_result = await db.execute(
+        select(ChargingSessionMeasurementModel.value)
+        .where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == measurand,
+        )
+        .order_by(
+            ChargingSessionMeasurementModel.sampled_at.asc(),
+            ChargingSessionMeasurementModel.measurement_id.asc(),
+        )
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def find_last_measurement_value(
+    db: AsyncSession, session_id: UUID, *, measurand: str
+) -> Decimal | None:
+    """Get the value of a session's latest sample of one measurand.
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session.
+        measurand: The measurand name, e.g. ``SoC``.
+
+    Returns:
+        The latest value, or ``None`` if the session has no such sample.
+    """
+    query_result = await db.execute(
+        select(ChargingSessionMeasurementModel.value)
+        .where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == measurand,
+        )
+        .order_by(
+            ChargingSessionMeasurementModel.sampled_at.desc(),
+            ChargingSessionMeasurementModel.measurement_id.desc(),
+        )
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def list_max_measurement_values_by_unit(
+    db: AsyncSession, session_id: UUID, *, measurand: str
+) -> list[tuple[str | None, Decimal]]:
+    """Get the maximum value of one measurand of a session, per stored unit.
+
+    The unit is kept as reported (``W`` or ``kW`` for power), so the maximum
+    is taken per unit and the service converts before comparing.
+
+    Args:
+        db: The current async session.
+        session_id: UUID of the session.
+        measurand: The measurand name, e.g. ``Power.Active.Import``.
+
+    Returns:
+        ``(unit, max_value)`` pairs, one per distinct unit; empty if the
+        session has no such sample.
+    """
+    query_result = await db.execute(
+        select(
+            ChargingSessionMeasurementModel.unit,
+            func.max(ChargingSessionMeasurementModel.value),
+        )
+        .where(
+            ChargingSessionMeasurementModel.session_id == session_id,
+            ChargingSessionMeasurementModel.measurand == measurand,
+        )
+        .group_by(ChargingSessionMeasurementModel.unit)
+    )
+    return [(unit, max_value) for unit, max_value in query_result.all()]
 
 
 async def list_events(
