@@ -1,9 +1,12 @@
 """Business service for the notifications domain.
 
-The transaction is owned by whichever entry boundary called in - the HTTP
-``get_db`` dependency for the read/mark-read endpoints, or the telemetry
-ingestion worker's transaction when ``create_notification`` is called as a
-cross-domain producer. This module never commits/rollbacks on its own.
+Holds the notification rules (mark-read keeps the first ``read_at``) and the
+public cross-domain entry points ``create_notification`` and
+``resolve_last_notified_at``. The transaction is owned by whichever entry
+boundary called in - the HTTP ``get_db`` dependency for the poll/mark-read
+endpoints, or a producer's own transaction (the telemetry ingestion worker,
+the telematics device-health monitor). This module never commits or rolls
+back on its own.
 """
 
 from datetime import datetime
@@ -11,7 +14,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.notifications import repository
+import app.domains.notifications.repository as notification_repository
 from app.domains.notifications.exceptions import NotificationNotFoundError
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.schemas import (
@@ -23,19 +26,22 @@ from app.domains.notifications.types import (
     NotificationSeverity,
     NotificationType,
 )
+from app.libs.common.clock import utc_now
 
 
-def to_notification_response(notification: NotificationModel) -> NotificationResponse:
+def to_notification_response(
+    notification_record: NotificationModel,
+) -> NotificationResponse:
     """Build a notification response from the ORM model.
 
     Args:
-        notification: Notification ORM object queried or created by the
-            repository.
+        notification_record: Notification ORM object queried or created by
+            the repository.
 
     Returns:
         Response schema corresponding to the notification.
     """
-    return NotificationResponse.model_validate(notification)
+    return NotificationResponse.model_validate(notification_record)
 
 
 async def create_notification(
@@ -64,7 +70,7 @@ async def create_notification(
         A minimal reference DTO - never the ORM model - so a calling domain
         never depends on this domain's persistence details.
     """
-    notification = await repository.create_notification(
+    notification_record = await notification_repository.insert(
         db,
         notification_type=notification_type,
         severity=severity,
@@ -73,7 +79,7 @@ async def create_notification(
         body=body,
         payload=payload,
     )
-    return NotificationReference(notification_id=notification.notification_id)
+    return NotificationReference(notification_id=notification_record.notification_id)
 
 
 async def resolve_last_notified_at(
@@ -92,10 +98,10 @@ async def resolve_last_notified_at(
         `None` if none exist. A primitive return type, not the ORM model -
         the correct shape for a cross-domain boundary.
     """
-    notification = await repository.find_latest_by_vehicle_and_type(
+    notification_record = await notification_repository.find_latest_by_vehicle_and_type(
         db, vehicle_id, notification_type
     )
-    return notification.created_at if notification is not None else None
+    return notification_record.created_at if notification_record is not None else None
 
 
 async def list_notifications(
@@ -118,14 +124,16 @@ async def list_notifications(
         Notifications newer than ``after_id``, plus the cursor to pass on
         the next poll.
     """
-    notifications = await repository.list_notifications(
+    notifications = await notification_repository.list_after_id(
         db, after_id=after_id, limit=limit, unread_only=unread_only
     )
     latest_notification_id = (
         notifications[-1].notification_id if notifications else after_id
     )
     return NotificationListResponse(
-        notifications=[to_notification_response(n) for n in notifications],
+        notifications=[
+            to_notification_response(notification) for notification in notifications
+        ],
         count=len(notifications),
         latest_notification_id=latest_notification_id,
     )
@@ -134,19 +142,30 @@ async def list_notifications(
 async def mark_notification_read(
     db: AsyncSession, notification_id: int
 ) -> NotificationResponse:
-    """Mark a notification read.
+    """Mark a notification read, keeping the first read time.
+
+    Rule:
+        Idempotent - an already-read notification keeps its original
+        ``read_at`` instead of being stamped again, so the value always
+        means "first acknowledged at".
 
     Args:
         db: Async session owned by the HTTP boundary.
         notification_id: Internal ID of the notification to mark read.
 
     Returns:
-        The updated notification response.
+        The notification response, with ``read_at`` set.
 
     Raises:
         NotificationNotFoundError: If the notification does not exist.
+
+    Side Effects:
+        Sets ``read_at`` and flushes when the notification was unread; does
+        not commit.
     """
-    notification = await repository.mark_notification_read(db, notification_id)
-    if notification is None:
+    notification_record = await notification_repository.get_by_id(db, notification_id)
+    if notification_record is None:
         raise NotificationNotFoundError(f"Notification '{notification_id}' not found")
-    return to_notification_response(notification)
+    if notification_record.read_at is None:
+        await notification_repository.set_read_at(db, notification_record, utc_now())
+    return to_notification_response(notification_record)

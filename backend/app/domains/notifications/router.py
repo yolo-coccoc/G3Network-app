@@ -1,21 +1,17 @@
 """HTTP router for polling and acknowledging notifications.
 
-This module only turns requests into service calls and maps business
-exceptions to HTTP status codes; it contains no database queries or
-business logic.
+This module only turns requests into service calls; it contains no database
+queries or business logic. Domain exceptions are mapped to HTTP status codes
+centrally in ``app/api/main.py``.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.notifications.exceptions import NotificationNotFoundError
+import app.domains.notifications.service as notification_service
 from app.domains.notifications.schemas import (
     NotificationListResponse,
     NotificationResponse,
-)
-from app.domains.notifications.service import (
-    list_notifications,
-    mark_notification_read,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -49,7 +45,7 @@ async def list_notifications_endpoint(
     Returns:
         Notifications newer than ``after_id``, plus the next cursor.
     """
-    return await list_notifications(
+    return await notification_service.list_notifications(
         db, after_id=after_id, limit=limit, unread_only=unread_only
     )
 
@@ -62,21 +58,16 @@ async def list_notifications_endpoint(
 async def mark_notification_read_endpoint(
     notification_id: int, db: AsyncSession = Depends(get_db)
 ) -> NotificationResponse:
-    """Mark a notification read.
+    """Mark a notification read; marking it again keeps the first ``read_at``.
 
     Args:
         notification_id: Internal ID of the notification to mark read.
         db: Database session managed by the dependency.
 
     Returns:
-        The updated notification.
+        The notification, with ``read_at`` set.
 
     Raises:
-        HTTPException: When the notification does not exist.
+        NotificationNotFoundError: The notification does not exist (HTTP 404).
     """
-    try:
-        return await mark_notification_read(db, notification_id)
-    except NotificationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await notification_service.mark_notification_read(db, notification_id)

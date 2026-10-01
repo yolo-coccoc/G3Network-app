@@ -1,6 +1,6 @@
 """SQLAlchemy model for backend/operator-facing notifications."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
@@ -10,12 +10,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current timezone-aware UTC datetime."""
-    return datetime.now(timezone.utc)
 
 
 class NotificationModel(Base):
@@ -75,5 +71,9 @@ class NotificationModel(Base):
     __table_args__ = (Index("ix_notifications_vehicle_id", "vehicle_id"),)
 
     def __repr__(self) -> str:
-        """Return a concise debug representation of the notification."""
+        """Return a concise debug representation of the notification.
+
+        Returns:
+            ``<NotificationModel {type} #{id}>``.
+        """
         return f"<NotificationModel {self.notification_type} #{self.notification_id}>"

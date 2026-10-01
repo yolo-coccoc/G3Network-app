@@ -15,15 +15,19 @@ from uuid import uuid4
 import asyncpg  # type: ignore[import-untyped]
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.domains.charging_sessions.repository as charging_repository
+import app.domains.notifications.repository as notification_repository
+import app.domains.notifications.service as notifications_service
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
+from app.domains.notifications.models import NotificationModel
+from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
@@ -666,4 +670,64 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             gateway.wait(timeout=15)
         except subprocess.TimeoutExpired:
             gateway.kill()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_notification_insert_and_mark_read_need_no_refresh(
+    temporary_database: str,
+) -> None:
+    """A flushed notification is fully populated without a refresh (F-A2).
+
+    The identity ID comes back from ``INSERT ... RETURNING`` and
+    ``created_at``/``read_at`` are client-side values, so the service builds
+    its response straight from the object; mark-read stays idempotent.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory.begin() as db:
+            notification_record = await notification_repository.insert(
+                db,
+                notification_type=NotificationType.BATTERY_ALERT,
+                severity=NotificationSeverity.WARNING,
+                vehicle_id=None,
+                title="Battery at 18%",
+                body="Vehicle battery dropped below the threshold.",
+                payload={"soc": 18.0},
+            )
+            record_state = inspect(notification_record)
+            assert record_state.unloaded == set()
+            assert record_state.expired_attributes == set()
+            assert notification_record.notification_id > 0
+            created_at = notification_record.created_at
+            assert created_at.utcoffset() is not None
+
+        async with session_factory.begin() as db:
+            first_read = await notifications_service.mark_notification_read(
+                db, notification_record.notification_id
+            )
+        async with session_factory.begin() as db:
+            second_read = await notifications_service.mark_notification_read(
+                db, notification_record.notification_id
+            )
+
+        async with session_factory() as db:
+            stored = (
+                await db.execute(
+                    select(NotificationModel).where(
+                        NotificationModel.notification_id
+                        == notification_record.notification_id
+                    )
+                )
+            ).scalar_one()
+
+        assert stored.created_at == created_at
+        assert stored.payload == {"soc": 18.0}
+        assert first_read.read_at is not None
+        assert stored.read_at == first_read.read_at
+        assert second_read.read_at == first_read.read_at
+    finally:
         await engine.dispose()

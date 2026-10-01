@@ -1,10 +1,12 @@
 """Data access repository for the notifications domain.
 
-The repository only queries and flushes data; it does not commit or roll
-back the transaction. The entry boundary owns the transaction.
+The repository only queries, adds and flushes rows; it holds no business
+policy (e.g. whether an already-read notification keeps its ``read_at`` is
+decided by the service) and never commits or rolls back - the entry
+boundary owns the transaction.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -15,16 +17,7 @@ from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 
 
-def utc_now() -> datetime:
-    """Get the UTC timestamp used for ``read_at``.
-
-    Returns:
-        The current time with UTC timezone.
-    """
-    return datetime.now(timezone.utc)
-
-
-async def create_notification(
+async def insert(
     db: AsyncSession,
     *,
     notification_type: NotificationType,
@@ -34,7 +27,13 @@ async def create_notification(
     body: str,
     payload: dict[str, object],
 ) -> NotificationModel:
-    """Create a notification and flush to obtain its generated ID.
+    """Add a notification and flush to obtain its generated ID.
+
+    No refresh is needed: the flush's ``INSERT ... RETURNING`` fills
+    ``notification_id``, ``created_at`` is a client-side default that the
+    ORM writes back onto the object, and ``read_at`` is set explicitly, so
+    every column is loaded and reading one never triggers a lazy load
+    (which an ``AsyncSession`` cannot do implicitly).
 
     Args:
         db: Async session owned by the entry boundary.
@@ -46,25 +45,29 @@ async def create_notification(
         payload: Type-specific structured data.
 
     Returns:
-        The notification that was just persisted.
+        The notification that was just flushed, fully populated.
+
+    Side Effects:
+        Adds the row and flushes; does not commit.
     """
-    notification = NotificationModel(
+    notification_record = NotificationModel(
         notification_type=notification_type,
         severity=severity,
         vehicle_id=vehicle_id,
         title=title,
         body=body,
         payload=payload,
+        # A new notification is unread. Set explicitly rather than left unset:
+        # an attribute never assigned before the INSERT stays unloaded on the
+        # object afterwards.
+        read_at=None,
     )
-    db.add(notification)
+    db.add(notification_record)
     await db.flush()
-    await db.refresh(notification)
-    return notification
+    return notification_record
 
 
-async def get_notification_by_id(
-    db: AsyncSession, notification_id: int
-) -> NotificationModel | None:
+async def get_by_id(db: AsyncSession, notification_id: int) -> NotificationModel | None:
     """Find a notification by internal ID.
 
     Args:
@@ -74,15 +77,15 @@ async def get_notification_by_id(
     Returns:
         The matching notification, or ``None``.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(NotificationModel).where(
             NotificationModel.notification_id == notification_id
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def list_notifications(
+async def list_after_id(
     db: AsyncSession,
     *,
     after_id: int,
@@ -107,13 +110,13 @@ async def list_notifications(
     ]
     if unread_only:
         conditions.append(NotificationModel.read_at.is_(None))
-    result = await db.execute(
+    query_result = await db.execute(
         select(NotificationModel)
         .where(*conditions)
         .order_by(NotificationModel.notification_id.asc())
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
 async def find_latest_by_vehicle_and_type(
@@ -135,7 +138,7 @@ async def find_latest_by_vehicle_and_type(
         tie if two notifications land within the same tick), or ``None`` if
         none exist.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(NotificationModel)
         .where(
             NotificationModel.vehicle_id == vehicle_id,
@@ -144,31 +147,25 @@ async def find_latest_by_vehicle_and_type(
         .order_by(NotificationModel.notification_id.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def mark_notification_read(
-    db: AsyncSession, notification_id: int
-) -> NotificationModel | None:
-    """Mark a notification read if it exists and isn't already.
+async def set_read_at(
+    db: AsyncSession, notification_record: NotificationModel, read_at: datetime
+) -> None:
+    """Store the time a notification was read.
+
+    Unconditional: whether an already-read notification may be stamped
+    again is the service's decision, not this function's.
 
     Args:
         db: Current async session.
-        notification_id: Internal ID of the notification to mark read.
-
-    Returns:
-        The updated notification, or ``None`` if it does not exist.
+        notification_record: The notification to update, loaded in ``db``.
+        read_at: Timezone-aware UTC time to store.
 
     Side Effects:
-        Sets ``read_at`` and flushes; does not commit. Idempotent - marking
-        an already-read notification read again keeps the original
-        ``read_at`` instead of overwriting it.
+        Sets ``read_at`` on the object and flushes the ``UPDATE``; does not
+        commit. The object keeps the value, so no refresh is needed.
     """
-    notification = await get_notification_by_id(db, notification_id)
-    if notification is None:
-        return None
-    if notification.read_at is None:
-        notification.read_at = utc_now()
-        await db.flush()
-        await db.refresh(notification)
-    return notification
+    notification_record.read_at = read_at
+    await db.flush()
