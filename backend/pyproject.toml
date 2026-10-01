@@ -21,13 +21,17 @@ dependencies = [
     "shapely>=2.0.0",
 ]
 
-[project.optional-dependencies]
+# Development tools. A dependency *group* (PEP 735), not an optional extra:
+# `uv sync` installs the `dev` group by default, so a plain sync can never
+# uninstall the tools `make check` and the pre-commit hook need.
+[dependency-groups]
 dev = [
     "ruff>=0.5.0",
     "import-linter>=2.0",
     "mypy>=1.10.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -200,3 +204,13 @@ forbidden_modules = [
     "app.domains.vehicles.schemas",
 ]
 allow_indirect_imports = true
+
+# `make coverage`: measure the application package only, and list the
+# uncovered lines of each file in the terminal report.
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/libs/db/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

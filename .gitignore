@@ -10,11 +10,11 @@ venv/
 ENV/
 env/
 
-# UV lock file (generated, can be committed if needed)
-# uv.lock
-
-# Testing
+# Testing / coverage / dependency audit output
 .pytest_cache/
+.coverage
+htmlcov/
+backend/.audit/
 
 # Type checking
 .mypy_cache/
@@ -29,7 +29,11 @@ env/
 infra/.env
 
 # === IDE / EDITORS ===
-.vscode/
+# Shared VS Code workspace settings and recommended extensions are tracked;
+# anything else under .vscode/ (launch configs, personal tweaks) stays local.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo

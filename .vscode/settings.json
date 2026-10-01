@@ -1,0 +1,42 @@
+// Shared workspace settings (tracked in git). Personal overrides belong in your
+// user settings, not here. Matches the repo gate: ruff formats and sorts
+// imports, mypy type-checks, pytest runs from backend/.
+{
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/.ruff_cache": true,
+        "**/.mypy_cache": true,
+        "**/__init__.py": true,
+        "**/.venv": true
+    },
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+
+    // The backend's uv-managed virtualenv (created by `make setup`).
+    "python.defaultInterpreterPath": "${workspaceFolder}/backend/.venv/bin/python",
+    "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
+
+    // Ruff formats and sorts imports on save, like `make format`. fixAll is
+    // deliberately not enabled: it would delete an import you are about to use.
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        },
+        "editor.rulers": [88]
+    },
+    "ruff.importStrategy": "fromEnvironment",
+
+    // mypy is the type-checking gate (`make lint` runs `mypy app tests`).
+    "mypy-type-checker.importStrategy": "fromEnvironment",
+    "mypy-type-checker.cwd": "${workspaceFolder}/backend",
+
+    // Smoke tests; the PostgreSQL integration tests skip unless RUN_DB_INTEGRATION=1.
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.cwd": "${workspaceFolder}/backend",
+    "python.testing.pytestArgs": ["tests"]
+}
