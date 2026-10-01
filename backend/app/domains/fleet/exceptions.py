@@ -24,4 +24,14 @@ class FleetMembershipConflictError(FleetError, ConflictError):
 
 
 class FleetMembershipNotFoundError(FleetError, NotFoundError):
-    """Raised when removing a vehicle that has no active membership in the fleet."""
+    """Raised when closing a membership that is not open in the fleet.
+
+    By VIN: the vehicle has no open membership in that fleet. By membership
+    ID: the membership is unknown, belongs to another fleet, or is already
+    closed.
+    """
+
+
+class GeofenceNotFoundError(FleetError, NotFoundError):
+    """Raised when a geofence does not exist, was soft-deleted, or belongs to
+    another fleet."""

@@ -1,5 +1,6 @@
 """Smoke tests for the fleet service: fleets and vehicle membership (F-E1)."""
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,9 +15,18 @@ from app.domains.fleet.exceptions import (
     FleetMembershipNotFoundError,
     FleetNotFoundError,
     FleetVehicleNotFoundError,
+    GeofenceNotFoundError,
 )
-from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
-from app.domains.fleet.schemas import FleetCreateRequest, FleetVehicleAddRequest
+from app.domains.fleet.models import (
+    FleetModel,
+    FleetVehicleMembershipModel,
+    GeofenceModel,
+)
+from app.domains.fleet.schemas import (
+    FleetCreateRequest,
+    FleetVehicleAddRequest,
+    GeofencePolygonGeoJson,
+)
 from app.domains.vehicles.types import (
     VehicleReference,
     VehicleStatus,
@@ -508,3 +518,314 @@ async def test_list_fleet_vehicles_keeps_member_whose_vehicle_was_deleted(
     assert response.items[1].vehicle_id == deleted_vehicle_id
     assert response.items[1].vin is None
     assert response.items[1].status is None
+
+
+@pytest.mark.asyncio
+async def test_list_fleets_by_unknown_vehicle_vin_returns_an_empty_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /fleets?vehicle_vin= with an unknown VIN is an empty page, not a 404 (F-E1)."""
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    async def unexpected_query(*args: object, **kwargs: object) -> None:
+        raise AssertionError("no fleet query expected for an unknown VIN")
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+    monkeypatch.setattr(fleet_repository, "list_all", unexpected_query)
+    monkeypatch.setattr(fleet_repository, "count", unexpected_query)
+
+    response = await fleet_service.list_fleets(
+        fake_db_session(), vehicle_vin="1HGBH41JXMN109186"
+    )
+
+    assert response.items == []
+    assert response.total == 0
+
+
+@pytest.mark.asyncio
+async def test_list_fleets_passes_search_and_vehicle_filters_to_both_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The q and vehicle_vin filters reach both the page and the count (F-E1)."""
+    vehicle_id = uuid4()
+    seen: dict[str, dict[str, object]] = {}
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+        )
+
+    async def list_all(db: AsyncSession, **kwargs: object) -> list[FleetModel]:
+        seen["list"] = kwargs
+        return []
+
+    async def count(db: AsyncSession, **kwargs: object) -> int:
+        seen["count"] = kwargs
+        return 0
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(fleet_repository, "list_all", list_all)
+    monkeypatch.setattr(fleet_repository, "count", count)
+
+    await fleet_service.list_fleets(
+        fake_db_session(), search_text="hanoi", vehicle_vin="1HGBH41JXMN109186"
+    )
+
+    for query_kwargs in (seen["list"], seen["count"]):
+        assert query_kwargs["search_text"] == "hanoi"
+        assert query_kwargs["vehicle_id"] == vehicle_id
+
+
+@pytest.mark.asyncio
+async def test_list_fleet_vehicles_filters_by_status_and_text_then_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """status/q filter every resolved member, then page in memory (F-E1)."""
+    fleet_record = build_fleet_record()
+    summaries = {
+        uuid4(): ("1HGBH41JXMN100001", "51C-111.11", VehicleStatus.ACTIVE),
+        uuid4(): ("1HGBH41JXMN100002", "51C-222.22", VehicleStatus.MAINTENANCE),
+        uuid4(): ("1HGBH41JXMN100003", "30A-333.33", VehicleStatus.ACTIVE),
+        uuid4(): ("1HGBH41JXMN100004", "51C-444.44", VehicleStatus.ACTIVE),
+    }
+    memberships = [
+        build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id)
+        for vehicle_id in summaries
+    ]
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def list_all_active(
+        db: AsyncSession, fleet_id: UUID
+    ) -> list[FleetVehicleMembershipModel]:
+        return list(memberships)
+
+    async def resolve_summary(db: AsyncSession, vehicle_id: UUID) -> VehicleSummary:
+        vin, license_plate, vehicle_status = summaries[vehicle_id]
+        return VehicleSummary(
+            vehicle_id=vehicle_id,
+            vin=vin,
+            license_plate=license_plate,
+            status=vehicle_status,
+        )
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        fleet_repository, "list_all_active_memberships_by_fleet", list_all_active
+    )
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
+    )
+
+    response = await fleet_service.list_fleet_vehicles(
+        fake_db_session(),
+        fleet_record.fleet_id,
+        page=1,
+        page_size=1,
+        status_filter=VehicleStatus.ACTIVE,
+        search_text="51c",
+    )
+
+    # ACTIVE and plate containing "51c" (case-insensitive): vehicles 1 and 4.
+    assert response.total == 2
+    assert len(response.items) == 1
+    assert response.items[0].license_plate in {"51C-111.11", "51C-444.44"}
+
+
+@pytest.mark.asyncio
+async def test_close_fleet_membership_closes_an_open_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE /fleets/{id}/memberships/{id} closes an orphaned member (#84, D8)."""
+    fleet_record = build_fleet_record()
+    membership = build_membership_record(
+        fleet_id=fleet_record.fleet_id, vehicle_id=uuid4()
+    )
+    closed: list[FleetVehicleMembershipModel] = []
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def get_membership(
+        db: AsyncSession, membership_id: UUID
+    ) -> FleetVehicleMembershipModel:
+        return membership
+
+    async def close_membership(
+        db: AsyncSession,
+        membership_record: FleetVehicleMembershipModel,
+        **kwargs: object,
+    ) -> FleetVehicleMembershipModel:
+        closed.append(membership_record)
+        return membership_record
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "get_membership_by_id", get_membership)
+    monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
+
+    await fleet_service.close_fleet_membership(
+        fake_db_session(), fleet_record.fleet_id, membership.membership_id
+    )
+
+    assert closed == [membership]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("problem", ["other_fleet", "already_closed", "unknown"])
+async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
+    monkeypatch: pytest.MonkeyPatch, problem: str
+) -> None:
+    """Another fleet's, a closed or an unknown membership is a 404 (#84, D8)."""
+    fleet_record = build_fleet_record()
+    membership: FleetVehicleMembershipModel | None = build_membership_record(
+        fleet_id=uuid4() if problem == "other_fleet" else fleet_record.fleet_id,
+        vehicle_id=uuid4(),
+        left_at=datetime.now(timezone.utc) if problem == "already_closed" else None,
+    )
+    if problem == "unknown":
+        membership = None
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def get_membership(
+        db: AsyncSession, membership_id: UUID
+    ) -> FleetVehicleMembershipModel | None:
+        return membership
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "get_membership_by_id", get_membership)
+
+    with pytest.raises(FleetMembershipNotFoundError):
+        await fleet_service.close_fleet_membership(
+            fake_db_session(), fleet_record.fleet_id, uuid4()
+        )
+
+
+def test_geofence_boundary_round_trips_through_postgis_shape() -> None:
+    """A ring converted to WKB and back keeps its positions and order (F-A5)."""
+    ring = [
+        (106.70, 10.77),
+        (106.71, 10.77),
+        (106.71, 10.78),
+        (106.70, 10.78),
+        (106.70, 10.77),
+    ]
+    boundary = fleet_service.to_geofence_boundary(
+        GeofencePolygonGeoJson(coordinates=[ring])
+    )
+
+    round_tripped = fleet_service.to_geofence_polygon_geojson(boundary)
+
+    assert round_tripped.type == "Polygon"
+    assert round_tripped.coordinates == [ring]
+
+
+@pytest.mark.asyncio
+async def test_get_geofence_rejects_a_geofence_of_another_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A geofence is only reachable under its own fleet (F-A5)."""
+    fleet_record = build_fleet_record()
+    other_fleet_geofence = GeofenceModel(
+        geofence_id=uuid4(),
+        fleet_id=uuid4(),
+        name="Depot",
+        boundary=None,
+    )
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def get_geofence(db: AsyncSession, geofence_id: UUID) -> GeofenceModel:
+        return other_fleet_geofence
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "get_geofence_by_id", get_geofence)
+
+    with pytest.raises(GeofenceNotFoundError):
+        await fleet_service.get_geofence(
+            fake_db_session(), fleet_record.fleet_id, other_fleet_geofence.geofence_id
+        )
+
+
+@pytest.mark.asyncio
+async def test_list_active_member_vehicle_ids_rejects_unknown_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public member-ID lookup raises for an unknown fleet (F-E1)."""
+
+    async def no_fleet(db: AsyncSession, fleet_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", no_fleet)
+
+    with pytest.raises(FleetNotFoundError):
+        await fleet_service.list_active_member_vehicle_ids(fake_db_session(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_list_active_member_vehicle_ids_returns_oldest_member_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Member vehicle IDs come back in joining order (F-E1)."""
+    fleet_record = build_fleet_record()
+    older = build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
+    newer = build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
+    older.joined_at = newer.joined_at - timedelta(days=1)
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def list_all_active(
+        db: AsyncSession, fleet_id: UUID
+    ) -> list[FleetVehicleMembershipModel]:
+        return [newer, older]
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        fleet_repository, "list_all_active_memberships_by_fleet", list_all_active
+    )
+
+    vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
+        fake_db_session(), fleet_record.fleet_id
+    )
+
+    assert vehicle_ids == [older.vehicle_id, newer.vehicle_id]
+
+
+@pytest.mark.asyncio
+async def test_find_current_fleet_id_by_vehicle_follows_the_open_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vehicle's current fleet is its open membership's fleet, else None (F-E1)."""
+    fleet_id = uuid4()
+    vehicle_in_fleet = uuid4()
+    membership = build_membership_record(fleet_id=fleet_id, vehicle_id=vehicle_in_fleet)
+
+    async def find_active(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> FleetVehicleMembershipModel | None:
+        return membership if vehicle_id == vehicle_in_fleet else None
+
+    monkeypatch.setattr(
+        fleet_repository, "find_active_membership_by_vehicle", find_active
+    )
+
+    assert (
+        await fleet_service.find_current_fleet_id_by_vehicle(
+            fake_db_session(), vehicle_in_fleet
+        )
+        == fleet_id
+    )
+    assert (
+        await fleet_service.find_current_fleet_id_by_vehicle(fake_db_session(), uuid4())
+        is None
+    )

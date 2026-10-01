@@ -6,6 +6,7 @@ import pytest
 
 from app.api.main import app, domain_error_handler, health_check
 from app.domains.fleet.exceptions import FleetMembershipConflictError
+from app.domains.notifications.router import router as notifications_router
 from app.domains.telematics.exceptions import TelematicCommandPublishError
 from app.domains.telemetry.exceptions import TelemetryInvalidRangeError
 from app.domains.vehicles.exceptions import VehicleNotFoundError
@@ -88,6 +89,23 @@ def test_fleet_vehicle_removal_and_driver_assignment_contracts() -> None:
     assert "delete" in paths["/api/v1/fleets/{fleet_id}/vehicles/{vehicle_vin}"]
     assignment = paths["/api/v1/drivers/{driver_id}/assignment"]["post"]
     assert "201" in assignment["responses"]
+
+
+def test_people_package_routes_are_registered() -> None:
+    """Geofences, membership close-by-ID and the notification reads exist (F-A5,
+    #84, F-A2); the fixed notification paths precede ``/{notification_id}``."""
+    paths = app.openapi()["paths"]
+
+    assert "delete" in paths["/api/v1/fleets/{fleet_id}/memberships/{membership_id}"]
+    assert {"get", "post"} <= set(paths["/api/v1/fleets/{fleet_id}/geofences"])
+    assert {"get", "patch", "delete"} <= set(
+        paths["/api/v1/fleets/{fleet_id}/geofences/{geofence_id}"]
+    )
+    assert "post" in paths["/api/v1/notifications/mark-all-read"]
+    assert "get" in paths["/api/v1/notifications/{notification_id}"]
+    route_paths = [getattr(route, "path", "") for route in notifications_router.routes]
+    assert route_paths.index("/unread-count") < route_paths.index("/{notification_id}")
+    assert route_paths.index("/mark-all-read") < route_paths.index("/{notification_id}")
 
 
 def test_every_shared_error_base_has_a_registered_handler() -> None:
