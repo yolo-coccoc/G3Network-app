@@ -180,6 +180,14 @@ class VehicleTelemetryModel(Base):
             "vehicle_id",
             literal_column("recorded_at DESC"),
         ),
+        # "When did the backend last hear from this vehicle" (F-J1/F-J3
+        # device-health monitor): ordered by the backend's receive clock,
+        # which a device with a skewed clock cannot move.
+        Index(
+            "ix_vehicle_telemetry_vehicle_received",
+            "vehicle_id",
+            literal_column("received_at DESC"),
+        ),
     )
 
     def __repr__(self) -> str:

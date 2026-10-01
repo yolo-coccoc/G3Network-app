@@ -415,6 +415,7 @@ Table vehicle_telemetry {
   schema_version integer [not null, note: 'Version of the MQTT message contract the device used (F-A1). @vi Phiên bản cấu trúc bản tin MQTT mà thiết bị dùng (F-A1). @example 1']
   indexes {
     (vehicle_id, `recorded_at DESC`) [name: 'ix_vehicle_telemetry_vehicle_time']
+    (vehicle_id, `received_at DESC`) [name: 'ix_vehicle_telemetry_vehicle_received', note: 'Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.']
     message_uuid [name: 'ix_vehicle_telemetry_message_uuid']
     (telematic_id, recorded_at) [unique, name: 'uq_telematic_recorded_at']
   }

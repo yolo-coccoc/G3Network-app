@@ -67,5 +67,6 @@ One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table
 **Indexes**
 
 - `ix_vehicle_telemetry_vehicle_time` (vehicle_id, recorded_at DESC)
+- `ix_vehicle_telemetry_vehicle_received` (vehicle_id, received_at DESC) - Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.
 - `ix_vehicle_telemetry_message_uuid` (message_uuid)
 - `uq_telematic_recorded_at` (telematic_id, recorded_at) unique

@@ -709,6 +709,12 @@ def upgrade() -> None:
         ["vehicle_id", sa.literal_column("recorded_at DESC")],
         unique=False,
     )
+    op.create_index(
+        "ix_vehicle_telemetry_vehicle_received",
+        "vehicle_telemetry",
+        ["vehicle_id", sa.literal_column("received_at DESC")],
+        unique=False,
+    )
     op.create_table(
         "charging_sessions",
         sa.Column("session_id", sa.UUID(), nullable=False),

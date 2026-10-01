@@ -76,6 +76,32 @@ async def get_latest_vehicle_telemetry(
     return result.scalar_one_or_none()
 
 
+async def find_latest_received_at(
+    db: AsyncSession, vehicle_id: UUID
+) -> datetime | None:
+    """Get the newest backend receive time among a vehicle's telemetry rows.
+
+    Ordered by `received_at` (the backend's clock), not `recorded_at` (the
+    device's): a row with a future-dated `recorded_at` must not stay
+    "latest" and hide newer arrivals. Served by
+    `ix_vehicle_telemetry_vehicle_received`.
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+
+    Returns:
+        The largest `received_at`, or None if the vehicle never reported.
+    """
+    query_result = await db.execute(
+        select(VehicleTelemetryModel.received_at)
+        .where(VehicleTelemetryModel.vehicle_id == vehicle_id)
+        .order_by(VehicleTelemetryModel.received_at.desc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
 async def get_vehicle_telemetry_history(
     db: AsyncSession,
     *,

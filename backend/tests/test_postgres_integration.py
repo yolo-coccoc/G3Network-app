@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,6 +22,7 @@ from sqlalchemy.pool import NullPool
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.telemetry.repository as telemetry_repository
+import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.types import TelematicStatus
@@ -315,6 +316,81 @@ async def test_telemetry_repository_round_trip_rolls_back(
 
             assert vehicle_after_rollback is None
             assert telemetry_after_rollback is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_last_telemetry_time_follows_receive_clock_not_device_clock(
+    temporary_database: str,
+) -> None:
+    """A future-dated device clock cannot hide newer arrivals (F-J1/F-J3).
+
+    Regression: resolve_last_telemetry_at took the row with the largest
+    device `recorded_at` and returned its `received_at`, so one reading
+    stamped a day in the future stayed "latest" forever and newer arrivals
+    looked like silence (false device-offline alerts).
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    vehicle_id, telematic_id = uuid4(), uuid4()
+    serial = f"IT-TBOX-{uuid4().hex[:12]}"
+    now = datetime.now(timezone.utc)
+
+    def reading(recorded_at: datetime, received_at: datetime) -> dict[str, object]:
+        """Build one minimal telemetry row for this vehicle."""
+        return {
+            "message_uuid": uuid4(),
+            "telematic_id": telematic_id,
+            "telematic_serial": serial,
+            "vehicle_id": vehicle_id,
+            "recorded_at": recorded_at,
+            "received_at": received_at,
+            "location": coordinates_to_location(10.8, 106.7),
+            "soc": 80.0,
+            "raw_payload": {"source": "postgres-integration"},
+        }
+
+    try:
+        async with session_factory() as session:
+            session.add(
+                VehicleModel(
+                    vehicle_id=vehicle_id,
+                    license_plate=f"IT-{uuid4().hex[:12]}",
+                    vin=f"1{uuid4().hex[:16]}",
+                    make="G3Network",
+                    model="Integration Test",
+                    year=2026,
+                    status=VehicleStatus.ACTIVE,
+                )
+            )
+            await session.flush()
+            session.add(
+                TelematicModel(
+                    telematic_id=telematic_id,
+                    telematic_serial=serial,
+                    vehicle_id=vehicle_id,
+                    status=TelematicStatus.ACTIVE,
+                )
+            )
+            await session.flush()
+            # Received 2 h ago but stamped by the device a day in the future...
+            await telemetry_repository.insert_telemetry(
+                session, reading(now + timedelta(days=1), now - timedelta(hours=2))
+            )
+            # ...then a correctly stamped reading received just now.
+            await telemetry_repository.insert_telemetry(
+                session, reading(now - timedelta(minutes=1), now)
+            )
+
+            last_seen = await telemetry_service.resolve_last_telemetry_at(
+                session, vehicle_id
+            )
+
+            assert last_seen == now
+            await session.rollback()
     finally:
         await engine.dispose()
 

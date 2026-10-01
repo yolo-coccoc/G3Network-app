@@ -157,19 +157,18 @@ async def resolve_last_telemetry_at(
         vehicle_id: Internal ID of the vehicle to check.
 
     Returns:
-        The `received_at` (backend receive clock, not the device's own
-        `recorded_at`) of the vehicle's latest telemetry row, or `None` if
-        the vehicle has never reported. Using `received_at` means a device
-        with a skewed clock can't dodge the silence check by reporting a
-        `recorded_at` in the future.
+        The newest `received_at` (backend receive clock) among the vehicle's
+        telemetry rows, or `None` if the vehicle has never reported. Both
+        the value and the ordering use `received_at`, so a device whose
+        clock runs ahead can neither dodge the silence check nor, via one
+        future-dated `recorded_at`, make newer arrivals invisible to it.
 
     Side Effects:
         Performs a read-only query only; does not commit or rollback. A
         primitive return type, not the ORM model or an HTTP response
         schema - the correct shape for a cross-domain boundary.
     """
-    telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)
-    return telemetry.received_at if telemetry is not None else None
+    return await telemetry_repository.find_latest_received_at(db, vehicle_id)
 
 
 def to_vehicle_telemetry_history_point(
