@@ -52,7 +52,9 @@ FastAPI registers the following domains:
   nullable `battery_capacity_kwh` (F-A6/F-C6's kWh-conversion input).
 - `telematics`: device CRUD and mapping devices to vehicles, a periodic
   device-health monitor (F-J1/F-J3, partial) - this backend's first
-  non-event-driven background process - and a backend-to-device MQTT
+  non-event-driven background process, which judges silence from the newest
+  backend `received_at` (`telemetry.service.resolve_last_telemetry_at`), so
+  a skewed device clock can't fake silence - and a backend-to-device MQTT
   command publisher (`telematics/commands/`, F-J2 partial) - this
   backend's first-ever MQTT *publish* path, pushing a telemetry
   publish-interval change to `g3network/telematics/{serial}/command`.
@@ -60,14 +62,30 @@ FastAPI registers the following domains:
   vehicle's latest/history telemetry (including F-A3's `soh_percent`/
   `cycle_count`), and two SOC-based aggregate reports (F-A6 operating
   performance, F-C6 energy usage) computed from the same telemetry
-  history via a single window-function query.
+  history via a single window-function query. `service.py` is the public,
+  I/O-orchestrating API; the pure work lives in internal modules
+  (`time_windows.py` window validation, `mappers.py` responses,
+  `reports.py` F-A6/F-C6 calculations, `detection.py` alert detectors) and
+  `alerting.py` writes the alert notifications (it owns the
+  `notifications`/`charging_stations` edges). Ingestion
+  (`telemetry/ingestion/`: MQTT consumer -> in-memory queue -> message
+  worker) stores one message per transaction; a payload that isn't UTF-8,
+  JSON or the schema is logged and dropped, and the process exits non-zero
+  when the consumer or worker stops on its own (only a shutdown signal is a
+  clean exit).
 - `charging_stations`: Station → EVSE → Connector topology CRUD, station
   directory metadata (location, power rating, connector standard, operating
   hours, maintenance status), a nearby-station radius search (F-D1), and the
   OCPP gateway. The gateway serves **OCPP 2.0.1 and OCPP 1.6J**: it
   negotiates the WebSocket subprotocol (`ocpp2.0.1` preferred, `ocpp1.6`
   accepted) and uses one adapter class per protocol
-  (`ocpp_server.py::OCPP201ChargePoint`, `ocpp16_charge_point.py::OCPP16ChargePoint`).
+  (`ocpp201_charge_point.py::OCPP201ChargePoint`, `ocpp16_charge_point.py::OCPP16ChargePoint`);
+  `ocpp_server.py` only does the handshake, negotiation and connection
+  handling. The adapters write through the internal `ocpp_state_service.py`
+  / `ocpp_state_repository.py` (identity/topology resolution, frame log,
+  boot info, charger/connector status, configuration captures); the public
+  `service.py`/`repository.py` keep topology CRUD, the directory and geo
+  searches and the configuration read.
   A `RecordingConnection` wrapper stores every frame, both directions,
   verbatim in `charging_ocpp_messages` before it is parsed. For 1.6J the
   adapter handles `BootNotification` (device info, firmware-change warning),
@@ -116,21 +134,35 @@ FastAPI registers the following domains:
   not wired to `telemetry`, since vehicle context is client-supplied at
   case-creation time rather than fetched live. A response-SLA deadline is
   copied onto each row at creation so a later config change never rewrites
-  a past case's SLA; a CLOSED/CANCELLED case refuses further updates.
+  a past case's SLA; `first_responded_at`/`resolved_at` are stamped only
+  the first time a status implies them, and a case cancelled before any
+  response is judged at `closed_at`. A CLOSED/CANCELLED case refuses
+  further updates.
   F-I4 (partner directory/dispatch) and F-I3 (booking) are deferred.
 - `fleet`: this backend's second brand-new domain (F-E1). Fleet CRUD plus
   a `fleet_vehicle_memberships` assignment-history table mirroring
   `driver_vehicle_assignments`'s shape, with one difference: no partial
   unique index on `fleet_id` (a fleet holds many vehicles at once).
   Depends one-directionally on `vehicles` to resolve/validate a VIN on
-  membership add and to enrich F-E1's vehicle list (`vin`/`license_plate`/
-  `status`, via a new `VehicleSummary` DTO). Replaces the dead
+  membership add/remove (both by VIN) and to enrich F-E1's vehicle list
+  (`vin`/`license_plate`/`status`, via a `VehicleSummary` DTO; null for a
+  member whose vehicle was soft-deleted). Replaces the dead
   `vehicles.fleet_id` column, dropped in the same migration. F-E2 (KPI
   dashboard) is deferred.
 
 The API process runs separately via Uvicorn. Telemetry ingestion, the OCPP
 gateway, and the telematics device-health monitor each have their own
 entrypoint, sharing the same database/session configuration.
+
+Domain exceptions are mapped to HTTP once: each inherits one base in
+`app/libs/common/errors.py` (`NotFoundError` 404, `ConflictError` 409,
+`InvalidInputError` 400, `UpstreamUnavailableError` 502) and
+`app/api/main.py` registers one handler per base, answering
+`{"detail": ...}`. Shared, business-free helpers live in `app/libs/`:
+`common/clock.utc_now`, `common/pagination.normalize_page_window` (used by
+every paginated list), `common/geo`, and `db/enums.enum_values`. Between
+domains, import-linter (`backend/pyproject.toml`) allows importing only
+another domain's `service`, `types` and `exceptions` modules.
 
 ### Database
 
@@ -140,6 +172,9 @@ extensions:
 - TimescaleDB for four hypertables: `vehicle_telemetry`,
   `charging_session_events`, `charging_session_measurements` and
   `charging_ocpp_messages` (the append-only raw OCPP message log).
+  `vehicle_telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
+  latest/history reads and on `(vehicle_id, received_at DESC)` for the
+  device-health monitor's last-seen lookup.
 - PostGIS: used for `charging_stations.location` (F-C1) and
   `vehicle_telemetry.location` (both `geography(Point, 4326)` columns) —
   `charging_stations.location` has a GIST index, `vehicle_telemetry.location`

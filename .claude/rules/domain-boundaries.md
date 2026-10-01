@@ -11,11 +11,11 @@
 ## Rules
 
 - Each directory under `backend/app/domains/` is **1 bounded context**. A domain may only call another domain through that domain's **public `service.py`** (importing the DTOs/enums of its `types.py` that the service's signatures use is fine) — **never** import/query another domain's `repository.py`/`models.py`.
-  - This applies only **between** domains. Inside one domain, files call each other directly (e.g. `telemetry/ingestion/mqtt_consumer.py` → `telemetry/repository.py`, or the OCPP adapters → `charging_stations/repository.py`).
+  - This applies only **between** domains. Inside one domain, files call each other directly (e.g. `telemetry/service.py` → `telemetry/detection.py`/`telemetry/repository.py`, or the OCPP adapters → `charging_stations/ocpp_state_service.py`). A domain may keep such internal modules beside its public `service.py`; other domains never import them.
 - Cross-domain calls take and return primitives or frozen dataclass DTOs (`VehicleReference`, `TransactionSessionReference`...), never an ORM model or an HTTP schema.
 - Every edge is **one-directional** unless listed as an exception below. Adding a new edge (or a new domain) means adding a row to the table below in the same change.
 - A new domain must reference its feature code in `feature-list.md` (e.g. `F-C1`, `F-B2`).
-- **Enforced by `import-linter`**: one `forbidden` contract per domain in `backend/pyproject.toml` (`[tool.importlinter]`), run by `make lint` / `make check` and the pre-commit hook. A new domain needs its own contract (copy an existing one) and must appear in the other contracts' `source_modules`. Only direct imports are checked (`allow_indirect_imports = true`).
+- **Enforced by `import-linter`**: one `forbidden` contract per domain in `backend/pyproject.toml` (`[tool.importlinter]`), run by `make lint` / `make check` and the pre-commit hook. Each contract forbids every module of the domain except `service`, `types` and `exceptions` (the public surface), so a new internal module or subpackage must be added to its domain's `forbidden_modules`. A new domain needs its own contract (copy an existing one) and must appear in the other contracts' `source_modules`. Only direct imports are checked (`allow_indirect_imports = true`).
 
 ## Current dependency edges
 

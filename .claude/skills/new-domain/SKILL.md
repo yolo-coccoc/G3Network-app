@@ -40,8 +40,12 @@ file before writing its counterpart.
    `service.py`. Add a row per new edge to the table in
    `.claude/rules/domain-boundaries.md`, and add an import-linter contract for
    the new domain in `backend/pyproject.toml` (copy an existing
-   `[[tool.importlinter.contracts]]` block) **and** add
+   `[[tool.importlinter.contracts]]` block; its `forbidden_modules` lists
+   every module of the domain except `service`, `types` and `exceptions`,
+   including internal modules and subpackages) **and** add
    `"app.domains.<domain>"` to every other contract's `source_modules`.
+   Adding an internal module to an existing domain later means adding it to
+   that domain's `forbidden_modules`.
    `cd backend && uv run lint-imports` must report all contracts kept.
 6. **Tests** — `backend/tests/<domain>/__init__.py` (docstring only) plus
    `test_<domain>_service_smoke.py` and `test_<domain>_schema_smoke.py`.

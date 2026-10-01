@@ -20,17 +20,28 @@ implementation starts.
 │   │   │   │
 │   │   │   ├── telematics/            # Telematic device profile and mapping to vehicles (F-G1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   ├── commands/          # mqtt_publisher.py: F-J2 config-push publisher (the only MQTT publish path)
+│   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3)
 │   │   │   │
 │   │   │   ├── telemetry/             # Real-time & historical vehicle data (F-A1)
-│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  exceptions.py
+│   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   ├── time_windows.py    # internal, pure: history/report time-window validation
+│   │   │   │   ├── mappers.py         # internal, pure: ORM row/MQTT message -> responses, F-A4 snapshot
+│   │   │   │   ├── reports.py         # internal, pure: F-A6/F-C6 report calculations
+│   │   │   │   ├── detection.py       # internal, pure: F-A2/F-A3/F-A4 alert detectors
+│   │   │   │   ├── alerting.py        # internal, I/O: writes the alert notifications (owns the notifications/charging_stations edges)
 │   │   │   │   └── ingestion/         # Receives telematics data via MQTT (EMQX)
 │   │   │   │       ├── mqtt_consumer.py  message_worker.py
 │   │   │   │       └── entrypoint.py  # entrypoint for "make telemetry-dev" (runs on the host, not a container — see dev-environment.md)
 │   │   │   │
 │   │   │   ├── charging_stations/     # Station/EVSE/connector topology and OCPP (F-C1, F-G2)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   │   # service.py/repository.py: topology CRUD, directory and geo searches, configuration read
+│   │   │   │   ├── ocpp_state_service.py     # internal (ocpp/ only): identity/topology resolution, frame log, boot info, charger/connector status, GetConfiguration captures
+│   │   │   │   ├── ocpp_state_repository.py  # the matching queries
 │   │   │   │   └── ocpp/              # WebSocket server for charging station communication (OCPP 2.0.1 and 1.6J)
-│   │   │   │       ├── ocpp_server.py       # handshake, subprotocol negotiation, OCPP 2.0.1 adapter (OCPP201ChargePoint)
+│   │   │   │       ├── ocpp_server.py       # handshake, subprotocol negotiation, connection handling (no protocol handler)
+│   │   │   │       ├── ocpp201_charge_point.py # OCPP 2.0.1 adapter (OCPP201ChargePoint): TransactionEvent/MeterValues/StatusNotification + payload helpers
 │   │   │   │       ├── ocpp16_charge_point.py  # OCPP 1.6J adapter (OCPP16ChargePoint): Boot/Heartbeat/Status/Authorize/Start/Stop/MeterValues + post-boot GetConfiguration
 │   │   │   │       ├── ocpp16_measurements.py  # pure 1.6J MeterValues -> energy samples + measurements (never shares code with the 2.0.1 normalizer)
 │   │   │   │       ├── parsing.py           # protocol-neutral helpers shared by both adapters (OcppPayload, timestamp parsing/formatting)

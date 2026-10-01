@@ -23,10 +23,13 @@ Telematic Device → MQTT Broker (EMQX) → Backend Consumer → Message Queue �
 - The message worker takes each message and processes it as soon as it is in the queue
 - Each message runs in its own transaction to reduce latency and isolate failures
 
-**Batch path is retained:**
-- `batch_worker.py`, `process_batch()`, batch lookup and bulk insert are not removed
-- Not used in the MVP entrypoint; re-enabling it must be benchmarked and the
-  transaction/backpressure semantics finalized first
+**Batch path is deferred, its code removed (2026-10-01):**
+- `batch_worker.py`, `process_batch()`, the batch lookup and the bulk insert
+  were deleted under the no-preemptive-batching rule; their design is kept in
+  `docs/01-requirements/future.md` item 25 (the steps below that build or
+  preserve them are history)
+- Building it again must be benchmarked and the transaction/backpressure
+  semantics finalized first
 
 The old acceptance results below may refer to previous Alembic revisions.
 That is historical at the time it was recorded; the current migration graph is

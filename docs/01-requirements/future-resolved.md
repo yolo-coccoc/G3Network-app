@@ -57,6 +57,18 @@
 
 ---
 
+### 14. Making the `telematics.last_seen_at` update precise — Superseded
+
+- **Short description**: Only update `last_seen_at`, `updated_at`, and the row count when the new timestamp is actually greater than the current value.
+- **Purpose/role in the system**: Keeps `updated_at` semantically correct and makes the `telematics_updated` metric/log reflect the number of devices that actually changed.
+- **Reason for deferral**: The current discrepancy only affects metadata/logs; it doesn't move `last_seen_at` backward and doesn't block the MVP ingest flow.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1).
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Need to consider a suitable batch SQL approach that still keeps a single update per batch.
+- **Resolution (2026-10-01)**: Superseded. Commit `f4f718a` ("refactor(telematics): remove last seen metadata") dropped `telematics.last_seen_at` entirely; device liveness is now derived from telemetry rows (`telemetry.service.resolve_last_telemetry_at`, newest `received_at`). There is no column left to update.
+
+---
+
 ### 24. Clear separation of configuration between `config.py` and `.env` — Completed
 
 - **Short description**: Standardize the boundary between the schema/default configuration in `backend/app/libs/common/config.py` and the environment-specific runtime values in `backend/.env`.

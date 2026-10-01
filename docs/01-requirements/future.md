@@ -18,7 +18,7 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [future-resolved.md](./future-resolved.md) (currently
-items 9, 10, 12 and 24), so a reference like "`future.md` item 10" can be found
+items 9, 10, 12, 14 and 24), so a reference like "`future.md` item 10" can be found
 there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
@@ -151,7 +151,7 @@ there.
 - **Related planner/feature**: General architecture rules in `CLAUDE.md`.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Implementation requires adding the dependency via `uv`, a config contract, and the corresponding CI job.
-- **Update 2026-10-01**: the dependency and the contracts now exist (`[tool.importlinter]` in `backend/pyproject.toml`, one `forbidden` contract per domain) and run locally in `make lint`/`make check` and the git pre-commit hook. Only the CI job remains, blocked on the CI platform decision.
+- **Update 2026-10-01**: the dependency and the contracts now exist (`[tool.importlinter]` in `backend/pyproject.toml`, one `forbidden` contract per domain, forbidding every module except `service`, `types` and `exceptions`) and run locally in `make lint`/`make check` and the git pre-commit hook. Only the CI job remains, blocked on the CI platform decision.
 
 ---
 
@@ -166,25 +166,14 @@ there.
 
 ---
 
-### 14. Making the `telematics.last_seen_at` update precise
-
-- **Short description**: Only update `last_seen_at`, `updated_at`, and the row count when the new timestamp is actually greater than the current value.
-- **Purpose/role in the system**: Keeps `updated_at` semantically correct and makes the `telematics_updated` metric/log reflect the number of devices that actually changed.
-- **Reason for deferral**: The current discrepancy only affects metadata/logs; it doesn't move `last_seen_at` backward and doesn't block the MVP ingest flow.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1).
-- **Date recorded**: 2026-07-26
-- **Additional notes**: Need to consider a suitable batch SQL approach that still keeps a single update per batch.
-
----
-
 ### 15. Distinguishing a nonexistent telematic from one not yet assigned to a vehicle
 
-- **Short description**: Batch lookup returns every device including those with a null `vehicle_id`, so the service can log/report metrics for the two provisioning states separately.
+- **Short description**: The serial lookup (`telematics.service.resolve_mapping_by_serial`, used by ingestion) returns every device including those with a null `vehicle_id`, so the service can log/report metrics for the two provisioning states separately.
 - **Purpose/role in the system**: Helps operations distinguish an invalid serial from a valid device that just hasn't been assigned to a vehicle yet.
 - **Reason for deferral**: Both cases are safely skipped in the MVP, and there's no provisioning operations dashboard yet.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1), F-F2.
 - **Date recorded**: 2026-07-26
-- **Additional notes**: Implementation requires changing the mapping return type to `tuple[UUID, UUID | None]` and adding a dedicated metric.
+- **Additional notes**: Implementation requires making `TelematicVehicleMapping.vehicle_id` (`telematics/types.py`) `UUID | None` and adding a dedicated metric.
 
 ---
 
@@ -404,6 +393,13 @@ there.
   failure, and check both the consumer task and the worker task. Keep the
   lifecycle API public, avoid accessing `worker._task`, and don't pull back
   the entire old runtime orchestration unless necessary.
+- **Update 2026-10-01 — lifecycle half done**: `MessageWorker.start()` now
+  returns its task (the entrypoint no longer reads `worker._task`), and
+  `telemetry/ingestion/entrypoint.py` treats only the shutdown signal as a
+  clean end: a consumer or worker task that stops first has its exception
+  re-raised after cleanup (or a `RuntimeError` when it stopped without
+  one), so the process exits with code 1. Still open: the startup database
+  probe before accepting MQTT.
 
 ### 25. Batch processing for telemetry ingestion
 
@@ -590,8 +586,8 @@ there.
   convention in `CLAUDE.md`.
 - **Date recorded**: 2026-08-04
 - **Additional notes**:
-  - `telematics.service._response()` currently calls a separate vehicle
-    lookup for each item in `list_telematics()`. When resuming this, prefer a
+  - `telematics.service.build_telematic_response()` calls a separate
+    vehicle lookup for each item in `list_telematics()`. When resuming this, prefer a
     bulk lookup or an appropriate query projection; don't let the service
     directly import another domain's repository/model if the solution needs
     to cross a domain boundary.
@@ -733,7 +729,7 @@ there.
 - **Partial resolution (2026-09-17)**: F-A2's slice of this item is done —
   the `notifications` domain (generic table + JSONB payload,
   `GET /api/v1/notifications?after_id=`) and SOC-threshold-crossing
-  detection in `telemetry/service.py`. F-A4's slice is also done — high
+  detection in `telemetry/service.py` (now `telemetry/detection.py`). F-A4's slice is also done — high
   battery temperature, sudden voltage drop, and new device error codes are
   detected in the same per-message flow and raise `ANOMALY_ALERT`
   notifications; see `docs/02-planners/done/backend-anomaly-detection.md`. F-A5's
@@ -784,8 +780,9 @@ there.
 - **Reason for deferral**: Explicitly suspended on 2026-09-17 in favor of shipping schema
   versioning first, then confirmed out of scope under this backend's MVP/POC scope
   decision — no staleness-threshold config, computation (on-read vs. background sweep), or
-  API field exists yet. `app/libs/common/config.py` already has a commented-out
-  `CHARGING_OFFLINE_TIMEOUT_SECONDS` precedent that an equivalent
+  API field exists yet. `app/libs/common/config.py`'s
+  `CHARGING_OFFLINE_TIMEOUT_SECONDS` (a charging station's derived
+  `is_online`) is the precedent an equivalent
   `TELEMETRY_OFFLINE_THRESHOLD_SECONDS` could follow.
 - **Related planner/feature**: F-A1, `telemetry` domain.
 - **Date recorded**: 2026-09-17
@@ -887,7 +884,7 @@ there.
   `docs/02-planners/done/backend-notifications.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When F-A9 lands, revisit
-  `detect_battery_alert_level` in `telemetry/service.py` - it may need a
+  `detect_battery_alert_level` in `telemetry/detection.py` - it may need a
   trip ID parameter and per-(vehicle, trip, threshold) state instead of
   purely comparing consecutive readings.
 
@@ -905,7 +902,7 @@ there.
   simulator or in current use. Adding a margin now would be a constant with
   nothing to tune it against. Revisit if real device data shows this
   oscillation happening.
-- **Related planner/feature**: F-A2, `telemetry/service.py::detect_battery_alert_level`.
+- **Related planner/feature**: F-A2, `telemetry/detection.py::detect_battery_alert_level`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: If added, the margin should be a named setting
   (e.g. `BATTERY_ALERT_REARM_MARGIN_PERCENT`), not a bare literal, per this
@@ -960,7 +957,7 @@ there.
   `DEVICE_FAULT` anomaly.
 - **Purpose/role in the system**: F-A4 names cell/module fault and motor
   fault as two of its four triggers. Without a catalog, `telemetry/
-  service.py::detect_new_error_codes` can only say "a new error code
+  detection.py::detect_new_error_codes` can only say "a new error code
   appeared," not which subsystem it belongs to - an operator reading a
   `DEVICE_FAULT` notification can't tell a battery fire precursor from a
   minor motor fault from the alert alone.
@@ -968,7 +965,7 @@ there.
   as opaque strings with no code catalog anywhere in this repo's contracts.
   Inventing a code-to-category mapping without the device vendor's
   documentation would be a guess baked into the backend's business logic.
-- **Related planner/feature**: F-A4, `telemetry/service.py`,
+- **Related planner/feature**: F-A4, `telemetry/detection.py`,
   `docs/02-planners/done/backend-anomaly-detection.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When the vendor's error code catalog is available,
@@ -1016,7 +1013,7 @@ there.
   which has the same "not needed until real device data shows a need"
   reasoning) rather than added speculatively.
 - **Related planner/feature**: F-A4, F-A2 item 39,
-  `telemetry/service.py::detect_high_battery_temperature`.
+  `telemetry/detection.py::detect_high_battery_temperature`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: When resuming, consider a time-based cooldown (e.g.
   re-alert if still anomalous after N minutes) or a severity-tier escalation
@@ -1035,7 +1032,7 @@ there.
   motor *temperature* is not one of them; treating it as a proxy for "motor
   fault" would be inventing a trigger the spec doesn't ask for. Recorded
   here as a candidate rather than implemented speculatively.
-- **Related planner/feature**: F-A4, `telemetry/service.py`,
+- **Related planner/feature**: F-A4, `telemetry/detection.py`,
   `docs/02-planners/done/backend-anomaly-detection.md`.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: If motor fault detection is confirmed to belong
@@ -1855,6 +1852,107 @@ there.
   only for a message actually seen (for example `FirmwareStatusNotification` or
   `DiagnosticsStatusNotification` need only an empty reply; `DataTransfer` needs a documented
   `status`). The QR/app flow itself needs `RemoteStartTransaction`, which is item 74.
+
+
+### 82. A soft-deleted telematic device keeps blocking its vehicle
+
+- **Short description**: Soft-deleting a telematic device
+  (`telematics.service.soft_delete_telematic`) only sets `deleted_at`; the
+  row keeps its `vehicle_id`, and `uq_telematics_vehicle_id` is a full
+  unique constraint, not one scoped to live rows. Assigning a new device to
+  that vehicle (create or update with its VIN) passes the service's
+  live-device check (`repository.find_by_vehicle_id` ignores deleted rows)
+  and then fails at flush with a `409 TelematicConflictError`.
+- **Purpose/role in the system**: Replacing a broken or stolen device is the
+  normal provisioning path (F-G1, F-F2); today the vehicle can never get a
+  new device once its old one was deleted, short of editing the database.
+- **Reason for deferral**: Found during the 2026-10-01 source refinement,
+  which was kept behaviour-neutral apart from approved fixes; both
+  candidate fixes change the device lifecycle contract and need a decision:
+  (1) clear `vehicle_id` on soft delete (loses the "which vehicle did this
+  device belong to" history on the row), or (2) replace the constraint with
+  a partial unique index `WHERE deleted_at IS NULL`, the pattern
+  `driver_vehicle_assignments`/`fleet_vehicle_memberships` already use
+  (schema change: model, DBML, baseline migration).
+- **Related planner/feature**: `docs/02-planners/backend-crud-telematics.md`,
+  F-G1, F-F2; F-E4 in `feature-list.md` already names this as a known
+  weakness of the `telematics.vehicle_id` pattern; item 83.
+- **Date recorded**: 2026-10-01
+- **Additional notes**: Option (2) keeps history and matches
+  `database.md`'s open/close-history convention; whichever is chosen, add a
+  PostgreSQL integration test (delete device, assign a new one to the same
+  vehicle) since the bug only shows at flush time.
+
+### 83. Telematics create/update silently ignore an unknown VIN
+
+- **Short description**: `telematics.service.create_telematic` leaves the
+  new device unassigned, and `update_telematic` *unassigns* the device,
+  when the `vehicle_vin` sent matches no live vehicle, instead of
+  rejecting the request (e.g. a 404 like fleet/driver assignment by VIN).
+- **Purpose/role in the system**: A typo in the VIN produces a device that
+  looks provisioned (201/200) but never maps telemetry to a vehicle;
+  ingestion then skips every message from it, and on update an existing
+  working assignment is lost.
+- **Reason for deferral**: The behaviour is documented in both functions'
+  docstrings ("Rule:") and is part of the current API contract; changing it
+  is an API change that needs approval, which the 2026-10-01 refinement did
+  not include.
+- **Related planner/feature**: `docs/02-planners/backend-crud-telematics.md`,
+  F-G1, F-F2; item 82.
+- **Date recorded**: 2026-10-01
+- **Additional notes**: When fixed, keep `vehicle_vin: null` on update as
+  the explicit way to unassign, add a `NotFoundError`-based telematics
+  exception (mapped centrally to 404 in `app/api/main.py`), and add smoke
+  tests for the unknown-VIN case on both create and update.
+
+### 84. Fleet membership of a soft-deleted vehicle cannot be closed
+
+- **Short description**: `DELETE /fleets/{fleet_id}/vehicles/{vehicle_vin}`
+  resolves the VIN through `vehicles.service.resolve_vehicle_reference_by_vin`,
+  which excludes soft-deleted vehicles, so once a member vehicle is
+  soft-deleted its open membership answers 404 and can never be removed
+  through the API. Soft-deleting a vehicle does not close its memberships
+  either: `vehicles` does not call `fleet` (the edge is `fleet → vehicles`
+  only).
+- **Purpose/role in the system**: Such a member stays in
+  `GET /fleets/{id}/vehicles` forever (listed with `vin`/`license_plate`/
+  `status` = null) and keeps counting toward the fleet's `vehicle_count`.
+- **Reason for deferral**: Removal moved from `vehicle_id` to VIN on
+  2026-10-01 (approved API change) to match how a vehicle is added; closing
+  orphaned memberships needs a decision on who owns it - a lookup that
+  includes soft-deleted vehicles, a removal by membership ID, or closing
+  memberships when a vehicle is soft-deleted (a new `vehicles → fleet` edge
+  would create a cycle, so that would need an event/hook design instead).
+- **Related planner/feature**: `docs/02-planners/done/backend-crud-fleet.md`,
+  F-E1.
+- **Date recorded**: 2026-10-01
+- **Additional notes**: `driver_vehicle_assignments` does not have this
+  problem: a driver's assignment is closed by driver ID
+  (`DELETE /drivers/{id}/assignment`).
+
+### 85. PostgreSQL integration tests for the drivers, fleet and support repositories
+
+- **Short description**: `make backend-test-integration`
+  (`backend/tests/test_postgres_integration.py`) covers the migration,
+  the 1.6J transaction-ID sequence, telemetry, an OCPP 1.6J session end to
+  end and notifications, but none of the `drivers`, `fleet` or `support`
+  repository queries.
+- **Purpose/role in the system**: Those domains rely on behaviour only
+  PostgreSQL shows: the partial unique indexes that allow one open
+  assignment/membership (`WHERE unassigned_at IS NULL` / `WHERE left_at IS
+  NULL`), `IntegrityError` → conflict translation at flush, the
+  paging/counting of open memberships behind the fleet vehicle list, and
+  support's filters and SLA columns. The smoke tests use fakes and cannot
+  catch a wrong query or index.
+- **Reason for deferral**: Out of scope for the 2026-10-01 refinement,
+  which only added integration tests for the bugs it fixed (telemetry
+  last-seen, notifications insert/mark-read).
+- **Related planner/feature**: `docs/02-planners/backend-automated-tests.md`,
+  item 16, F-E4, F-E1, F-I1/F-I2.
+- **Date recorded**: 2026-10-01
+- **Additional notes**: Follow the existing pattern in
+  `test_postgres_integration.py` (temporary database, skipped unless
+  `RUN_DB_INTEGRATION=1`).
 
 ---
 

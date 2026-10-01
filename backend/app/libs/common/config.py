@@ -117,8 +117,8 @@ class Settings(BaseSettings):
     MQTT_WILL_QOS: int = Field(default=1, ge=0, le=2)
     MQTT_WILL_RETAIN: bool = True
 
-    # Queue used for the current per-message flow. The two batch settings below
-    # are kept so a future batch implementation can pick back up.
+    # In-RAM queue between the MQTT consumer and the per-message worker. (A
+    # batched ingestion path is deferred: future.md item 25.)
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
 
     # Bounds for the telemetry history query (F-A5). No offset/page - a

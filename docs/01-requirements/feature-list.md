@@ -418,7 +418,10 @@ carries its original PRD code so you can trace it back.
   Vehicle membership is a genuine history table (`fleet_vehicle_memberships`,
   `joined_at`/`left_at`), the same open/close shape as `driver_vehicle_assignments`, so
   `GET /fleets/{id}/memberships` gives real history and `GET /fleets/{id}/vehicles` gives the
-  current list (F-E1's "full fleet list" — `vehicle_id`, `vin`, `license_plate`, `status`). One
+  current list (F-E1's "full fleet list" — `vehicle_id`, `vin`, `license_plate`, `status`; a
+  member whose vehicle was soft-deleted is still listed, with `vin`/`license_plate`/`status` =
+  null). A vehicle joins by VIN (`POST /fleets/{id}/vehicles`) and leaves by VIN
+  (`DELETE /fleets/{id}/vehicles/{vin}`). One
   active fleet per vehicle is enforced via a partial unique index (`WHERE left_at IS NULL`), but
   unlike `driver_vehicle_assignments` there is no equivalent index on `fleet_id` — a fleet
   legitimately holds many vehicles at once. `vehicles.fleet_id` (a dead `String(36)` column with
@@ -463,7 +466,7 @@ carries its original PRD code so you can trace it back.
   column, so `GET /drivers/{id}/assignments` gives real "per-driver activity history" — a
   deliberate improvement over the existing `telematics.vehicle_id` pattern, which cannot express
   history and has two known bugs (its unique constraint isn't scoped to non-deleted rows, and
-  reassigning never auto-frees the old row). `POST /drivers/{id}/assignment` reassigns smoothly in
+  reassigning never auto-frees the old row). `POST /drivers/{id}/assignment` (201) reassigns smoothly in
   one call (auto-closing the driver's previous vehicle) rather than requiring a manual unassign
   first. One active vehicle per driver and one active driver per vehicle are enforced via two
   partial unique indexes (`WHERE unassigned_at IS NULL`) — this backend's first use of a partial
@@ -515,7 +518,8 @@ carries its original PRD code so you can trace it back.
   monitor (`telematics/monitoring/`, this backend's first non-event-driven background process)
   sweeps active devices every `TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS` (default 300s) and
   raises a `DEVICE_OFFLINE_ALERT` notification once per silence episode once a vehicle exceeds
-  `TELEMATICS_SILENT_THRESHOLD_MINUTES` (default 180) without telemetry. Not built: the
+  `TELEMATICS_SILENT_THRESHOLD_MINUTES` (default 180) without telemetry, judged from the newest
+  backend `received_at` so a skewed device clock can't fake silence. Not built: the
   per-device dashboard (SIM/data status, power status) — no such field exists anywhere in this
   backend's MQTT contract — and distinguishing a device fault from the engine being off (see
   F-J3, same gap)
@@ -567,7 +571,10 @@ carries its original PRD code so you can trace it back.
   response-SLA deadline copied onto the row at creation time so a later config change never
   rewrites a past case's SLA. `GET/PATCH/DELETE /support/cases{,/…}` cover lifecycle status
   (OPEN → ACKNOWLEDGED → RESOLVED → CLOSED, plus CANCELLED), filtering, and soft delete; a
-  CLOSED/CANCELLED case refuses further updates (409). F-I2's SOS reuses the same table
+  CLOSED/CANCELLED case refuses further updates (409). `first_responded_at`/`resolved_at` are
+  stamped only the first time a status implies them (cancelling is not a response), and
+  `is_sla_breached` compares the deadline with the first response, or `closed_at` for a case
+  cancelled before any response, or else now. F-I2's SOS reuses the same table
   (`case_type=SOS`) since the spec ties the two into one lifecycle. Zalo/hotline logging exists as
   a `channel` enum member with no actual integration behind it. See
   `docs/02-planners/done/backend-support-cases.md`.
@@ -654,7 +661,8 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telemetry`
 - **Status:** ✅ Done (MVP/POC scope) — high battery temperature (≥60°C) and sudden voltage drop
-  (≥50V between consecutive readings) are detected per-message in `telemetry/service.py`,
+  (≥50V between consecutive readings) are detected per-message (`telemetry/detection.py`,
+  raised by `telemetry/alerting.py`),
   reusing the `notifications` domain (`ANOMALY_ALERT` type) for delivery, exactly as F-A2 does
   for battery alerts; each anomaly's payload carries both its evidence and a full telemetry
   snapshot as the "event log" this feature asks for. Approximations: "cell/module fault" and
