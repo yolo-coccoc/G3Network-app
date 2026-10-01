@@ -1,0 +1,52 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run ruff check)",
+      "Bash(uv run ruff check .)",
+      "Bash(uv run ruff format --check *)",
+      "Bash(uv run mypy *)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run lint-imports)",
+      "Bash(uv run alembic current)",
+      "Bash(uv run alembic check)",
+      "Bash(make check)",
+      "Bash(make lint)",
+      "Bash(make backend-test)",
+      "Bash(make domain-model-check)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_generated_files.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\" 2>/dev/null || true",
+            "timeout": 90,
+            "statusMessage": "ruff format"
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
+  },
+  "enabledMcpjsonServers": [
+    "postgres",
+    "context7"
+  ]
+}

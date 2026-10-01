@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "uvx",
+      "args": ["--with", "mcp<2", "postgres-mcp", "--access-mode=restricted"],
+      "env": {
+        "DATABASE_URI": "${G3_MCP_DATABASE_URI:-postgresql://g3network:g3network123@localhost:5432/g3network}"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}

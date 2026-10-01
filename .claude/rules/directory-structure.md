@@ -78,6 +78,8 @@ implementation starts.
 │   └── telematic_simulator.py        charging_session_simulator.py
 │
 ├── docs/                           # feature specs, architecture diagrams (already present)
+├── .githooks/pre-commit            # runs `make check`; enabled per clone with `make install-hooks`
+├── .mcp.json                       # project MCP servers (read-only PostgreSQL, Context7)
 ├── Makefile
 └── CLAUDE.md
 ```

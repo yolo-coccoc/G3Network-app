@@ -58,6 +58,7 @@ a task touches that topic, no need to read them all every time. The
 | Repo-wide conventions | [repo-conventions.md](./.claude/rules/repo-conventions.md) | Commit, branch, PR, secrets, deferring/removing a component |
 | Database | [database.md](./.claude/rules/database.md) | Writing/reviewing a migration, changing the schema |
 | Open questions | [open-questions.md](./.claude/rules/open-questions.md) | Touching an area that's not yet decided (CI/CD, secrets management, vehicle-app protocol) |
+| Agent tooling (hooks, agents, skills, MCP, plugin) | [dev-environment.md](./.claude/rules/dev-environment.md#claude-code-tooling-checked-in-under-claude-and-mcpjson) | Choosing a project agent/skill, or a hook/MCP server misbehaves |
 | Collaboration conventions | [collaboration-conventions.md](./.claude/rules/collaboration-conventions.md) | Every prompt — not backend-task-scoped like the rest of this table |
 
 `web-portal/` and `vehicle-app/` have no active source yet — they'll get
