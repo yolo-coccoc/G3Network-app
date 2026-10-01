@@ -7,11 +7,15 @@ rating, connector standard, operating hours, maintenance status; F-C1).
 charger reports over OCPP: protocol version, boot identity
 (vendor/model/serial/firmware, ``last_boot_at``), ``last_seen_at``, the
 whole-charger status (OCPP 1.6J connector ``0``) and the derived
-``is_online``. ``ChargingConnectorResponse`` exposes the connector's reported
-status and error details (F-C2) - read-only, not part of
-``ChargingConnectorUpdateRequest``, since OCPP owns them.
-``NearbyChargingStationResponse`` is the driver-facing search result (F-D1)
-and the configuration schemas return the latest ``GetConfiguration`` capture.
+``is_online``, and the read-time ``available_connector_count`` (F-D1).
+``ChargingConnectorResponse`` exposes the connector's reported status and
+error details (F-C2) - read-only, not part of
+``ChargingConnectorUpdateRequest``, since OCPP owns them;
+``ChargingStationStatusResponse`` gathers the whole charger's status and every
+gun's status in one read (F-C2). ``NearbyChargingStationResponse`` is the
+driver-facing search result (F-D1), the configuration schemas return the
+latest ``GetConfiguration`` capture, and the energy-total schemas are the
+all-stations F-C5 report.
 Capability negotiation and status history remain deferred
 (``docs/01-requirements/future.md`` items 27 and 28).
 """
@@ -170,6 +174,9 @@ class ChargingStationResponse(BaseModel):
         maintenance_status: Admin-set maintenance state.
         connector_count: Number of active connectors across the station's
             active EVSEs, computed at read time (not stored).
+        available_connector_count: How many of those connectors last
+            reported ``Available``, computed at read time (F-D1). Counted
+            whatever the station's ``maintenance_status`` or ``is_online``.
         ocpp_protocol_version: Subprotocol of the latest connection,
             nullable until the charger first connects.
         vendor: Charger vendor from ``BootNotification``, nullable.
@@ -207,6 +214,7 @@ class ChargingStationResponse(BaseModel):
     operating_hours: str | None
     maintenance_status: ChargingStationMaintenanceStatus
     connector_count: int = Field(..., ge=0)
+    available_connector_count: int = Field(..., ge=0)
     ocpp_protocol_version: str | None
     vendor: str | None
     model: str | None
@@ -255,11 +263,15 @@ class NearbyChargingStationResponse(BaseModel):
         power_rating_kw: Nominal power rating in kW, nullable.
         connector_standard: Connector standard served, nullable.
         operating_hours: Freeform operating hours description, nullable.
-        maintenance_status: Admin-set maintenance state. "Available" only
-            reflects this field, not a live occupancy signal - see
-            ``docs/01-requirements/future.md``.
+        maintenance_status: Admin-set maintenance state.
         connector_count: Number of active connectors across the station's
             active EVSEs, computed at read time (not stored).
+        available_connector_count: How many of those connectors last
+            reported ``Available`` (F-D1). A station is "available" (the
+            ``is_available_only`` filter) when it is ``OPERATIONAL`` and this
+            is at least one; ``is_online`` is not required.
+        is_online: Derived at read time like
+            ``ChargingStationResponse.is_online``; informational only.
         distance_km: Great-circle distance from the query point, in km.
     """
 
@@ -274,6 +286,8 @@ class NearbyChargingStationResponse(BaseModel):
     operating_hours: str | None
     maintenance_status: ChargingStationMaintenanceStatus
     connector_count: int = Field(..., ge=0)
+    available_connector_count: int = Field(..., ge=0)
+    is_online: bool
     distance_km: float = Field(..., ge=0)
 
 
@@ -463,3 +477,98 @@ class ChargingStationConfigurationResponse(BaseModel):
     capture_id: UUID | None
     captured_at: datetime | None
     items: list[ChargingStationConfigurationEntryResponse]
+
+
+class ChargingStationConnectorStatusResponse(BaseModel):
+    """The reported status of one gun of a station (F-C2).
+
+    Attributes:
+        connector_id: Internal UUID of the connector.
+        evse_id: Internal UUID of the parent EVSE.
+        ocpp_evse_id: EVSE number in OCPP; for a 1.6J charger this is the gun
+            number (decision D3 of the OCPP 1.6J planner).
+        ocpp_connector_id: Connector number within the EVSE.
+        status: Last status reported via ``StatusNotification``, nullable if
+            the connector has not reported yet.
+        status_updated_at: Time that status was processed, nullable.
+        error_code: ``errorCode`` of the latest report (1.6J), nullable.
+        vendor_error_code: ``vendorErrorCode`` of the latest report, nullable.
+        status_info: Free-text ``info`` of the latest report, nullable.
+    """
+
+    connector_id: UUID
+    evse_id: UUID
+    ocpp_evse_id: int
+    ocpp_connector_id: int
+    status: ChargingConnectorStatus | None
+    status_updated_at: datetime | None
+    error_code: str | None
+    vendor_error_code: str | None
+    status_info: str | None
+
+
+class ChargingStationStatusResponse(BaseModel):
+    """The whole charger's status plus every gun's status, in one read (F-C2).
+
+    Statuses are shown as last reported; a charger that went offline keeps
+    its last statuses (stale-status handling is deferred).
+
+    Attributes:
+        station_id: Internal UUID of the station.
+        charger_status: Status of the whole charger (OCPP 1.6J connector
+            ``0``), nullable.
+        charger_status_updated_at: Time that status was processed, nullable.
+        charger_error_code: ``errorCode`` reported for the whole charger,
+            nullable.
+        charger_vendor_error_code: ``vendorErrorCode`` reported for the whole
+            charger, nullable.
+        connectors: Every active connector of the station's active EVSEs,
+            ordered by EVSE number, then connector number.
+    """
+
+    station_id: UUID
+    charger_status: ChargingConnectorStatus | None
+    charger_status_updated_at: datetime | None
+    charger_error_code: str | None
+    charger_vendor_error_code: str | None
+    connectors: list[ChargingStationConnectorStatusResponse]
+
+
+class ChargingStationEnergyTotalResponse(BaseModel):
+    """Energy sold at one station within the queried window (F-C5).
+
+    Attributes:
+        station_id: Internal UUID of the station.
+        display_name: Display name of the station.
+        total_energy_kwh: Sum of ``energy_delivered_wh`` (in kWh) of the
+            station's completed sessions that ended within the window.
+        session_count: Number of those sessions.
+    """
+
+    station_id: UUID
+    display_name: str
+    total_energy_kwh: float = Field(..., ge=0)
+    session_count: int = Field(..., ge=0)
+
+
+class ChargingStationEnergyTotalListResponse(BaseModel):
+    """Energy sold per station within a window, for every active station (F-C5).
+
+    Same semantics as the per-station
+    ``/charging-sessions/stations/{station_id}/energy`` summary, applied to
+    each non-deleted station.
+
+    Attributes:
+        start_time: Inclusive lower bound on a session's ``ended_at``, in UTC.
+        end_time: Inclusive upper bound on a session's ``ended_at``, in UTC.
+        total_energy_kwh: Sum over every listed station.
+        session_count: Sum of the listed stations' session counts.
+        items: One entry per active station (a station with no session is
+            included at zero), highest energy first; ties by display name.
+    """
+
+    start_time: datetime
+    end_time: datetime
+    total_energy_kwh: float = Field(..., ge=0)
+    session_count: int = Field(..., ge=0)
+    items: list[ChargingStationEnergyTotalResponse]

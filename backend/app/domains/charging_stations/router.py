@@ -1,13 +1,17 @@
 """HTTP router for the charging station directory and its topology.
 
 Endpoints: station/EVSE/connector CRUD with soft-delete (F-C1), the
-driver-facing nearby search (F-D1), and the latest configuration a charger
-reported over OCPP. The router only accepts HTTP dependencies and calls the
+driver-facing nearby search (F-D1), the station status view (F-C2), the
+latest configuration a charger reported over OCPP, and the all-stations
+energy report (F-C5; served here under ``/charging-sessions/stations/energy``
+because it needs the station directory, which ``charging_sessions`` may not
+read). The router only accepts HTTP dependencies and calls the
 public service; domain exceptions are mapped to status codes centrally by
 ``app/api/main.py`` (each endpoint's ``Raises:`` names them). Business rules,
 database queries, and transaction boundaries do not belong in this module.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -26,8 +30,10 @@ from app.domains.charging_stations.schemas import (
     ChargingResourceDeleteResponse,
     ChargingStationConfigurationResponse,
     ChargingStationCreateRequest,
+    ChargingStationEnergyTotalListResponse,
     ChargingStationListResponse,
     ChargingStationResponse,
+    ChargingStationStatusResponse,
     ChargingStationUpdateRequest,
     NearbyChargingStationListResponse,
 )
@@ -114,6 +120,7 @@ async def list_nearby_charging_stations_endpoint(
     connector_standard: str | None = Query(None, min_length=1, max_length=20),
     min_power_kw: float | None = Query(None, gt=0),
     is_operational_only: bool = Query(True),
+    is_available_only: bool = Query(False),
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -134,6 +141,9 @@ async def list_nearby_charging_stations_endpoint(
         connector_standard: Exact-match filter, e.g. ``"CCS2"``.
         min_power_kw: Minimum power rating filter.
         is_operational_only: Whether to only return operational stations.
+        is_available_only: Whether to only return operational stations with
+            at least one connector whose last reported status is
+            ``Available``.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
         db: Async session owned by the ``get_db`` dependency.
@@ -153,9 +163,72 @@ async def list_nearby_charging_stations_endpoint(
         connector_standard=connector_standard,
         min_power_kw=min_power_kw,
         is_operational_only=is_operational_only,
+        is_available_only=is_available_only,
         page=page,
         page_size=page_size,
     )
+
+
+@router.get(
+    "/charging-sessions/stations/energy",
+    response_model=ChargingStationEnergyTotalListResponse,
+    tags=["charging-sessions"],
+    summary="Get energy sold at every station within a time window",
+)
+async def list_station_energy_totals_endpoint(
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> ChargingStationEnergyTotalListResponse:
+    """Energy sold per active station within a window, highest first (F-C5).
+
+    Same semantics as ``/charging-sessions/stations/{station_id}/energy``
+    for each station. Lives in this router because ranking every station
+    needs the station directory, which the ``charging_sessions`` domain may
+    not read.
+
+    Args:
+        start_time: Inclusive lower bound on ``ended_at``; must carry a
+            timezone.
+        end_time: Inclusive upper bound on ``ended_at``; must carry a
+            timezone.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        Per-station totals and the grand total, in kWh.
+
+    Raises:
+        ChargingStationReportRangeError: 400 if a bound lacks a timezone or
+            ``end_time`` is not after ``start_time``.
+    """
+    return await charging_stations_service.list_station_energy_totals(
+        db, start_time=start_time, end_time=end_time
+    )
+
+
+@router.get(
+    "/charging-stations/{station_id}/connectors",
+    response_model=ChargingStationStatusResponse,
+    summary="Get the status of a station's charger and every connector",
+)
+async def get_charging_station_status_endpoint(
+    station_id: UUID, db: AsyncSession = Depends(get_db)
+) -> ChargingStationStatusResponse:
+    """Get the whole charger's status and every gun's status (F-C2).
+
+    Args:
+        station_id: UUID of the station.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        The charger (connector ``0``) status and one entry per active
+        connector, as last reported.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the station does not exist or
+            was soft-deleted.
+    """
+    return await charging_stations_service.get_charging_station_status(db, station_id)
 
 
 @router.post(

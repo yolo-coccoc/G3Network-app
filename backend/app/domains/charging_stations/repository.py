@@ -1,8 +1,10 @@
 """Asynchronous repository for charging station topology and directory queries.
 
 Holds the station/EVSE/connector CRUD queries, the identity lookups used for
-conflict checks and OCPP resolution, the connector counts, and the PostGIS
-nearest/nearby searches (F-A2, F-D1). The queries for state a charger reports
+conflict checks and OCPP resolution, the connector counts (all, and the ones
+whose last reported status is ``Available``), the station-wide connector
+listing (F-C2), and the PostGIS nearest/nearby searches (F-A2, F-D1), whose
+"available" filter is the correlated ``_has_available_connector`` subquery. The queries for state a charger reports
 about itself (frame log, liveness, boot info, status, configuration captures)
 live in ``ocpp_state_repository.py``.
 
@@ -18,7 +20,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -28,6 +30,7 @@ from app.domains.charging_stations.models import (
     ChargingStationModel,
 )
 from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
 )
 from app.libs.common.clock import utc_now
@@ -170,10 +173,60 @@ async def count_stations(
     return int(result.scalar() or 0)
 
 
+async def list_active_stations(db: AsyncSession) -> list[ChargingStationModel]:
+    """Get every non-soft-deleted station, unpaginated, in a stable order.
+
+    Used by the all-stations energy report (F-C5), which ranks every station
+    and therefore cannot page before sorting.
+
+    Args:
+        db: Current async session.
+
+    Returns:
+        Every active station, ordered by display name, then UUID.
+    """
+    result = await db.execute(
+        select(ChargingStationModel)
+        .where(ChargingStationModel.deleted_at.is_(None))
+        .order_by(
+            ChargingStationModel.display_name.asc(),
+            ChargingStationModel.station_id.asc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+def _has_available_connector() -> ColumnElement[bool]:
+    """Build the "at least one free connector" condition for a station row.
+
+    Rule (decision D3 of the happy-path completion planner): a connector is
+    free only when its last reported status is ``Available`` (the busy rule
+    of ``ChargingConnectorStatus``); soft-deleted EVSEs and connectors never
+    count, and a connector that never reported (``status IS NULL``) is not
+    free. The charger's ``is_online`` is deliberately not required.
+
+    Returns:
+        A correlated ``EXISTS`` subquery on ``charging_stations.station_id``,
+        to be used inside a ``WHERE`` over ``ChargingStationModel``.
+    """
+    return exists().where(
+        ChargingEvseModel.station_id == ChargingStationModel.station_id,
+        ChargingEvseModel.deleted_at.is_(None),
+        ChargingConnectorModel.evse_id == ChargingEvseModel.evse_id,
+        ChargingConnectorModel.deleted_at.is_(None),
+        ChargingConnectorModel.status == ChargingConnectorStatus.AVAILABLE,
+    )
+
+
 async def find_nearest_station_by_location(
     db: AsyncSession, location: WKBElement
 ) -> tuple[ChargingStationModel, float] | None:
-    """Find the nearest active, operational station to a point (F-A2).
+    """Find the nearest available station to a point (F-A2).
+
+    "Available" means not soft-deleted, ``maintenance_status ==
+    OPERATIONAL`` and at least one connector whose last reported status is
+    ``Available`` (``_has_available_connector``); the charger's liveness is
+    not consulted.
 
     Args:
         db: Current async session.
@@ -181,7 +234,7 @@ async def find_nearest_station_by_location(
 
     Returns:
         A tuple of the nearest matching station and its distance in meters,
-        or ``None`` if no active/operational station has a location set.
+        or ``None`` if no available station has a location set.
 
     Side Effects:
         Orders by the ``<->`` KNN operator so the query can use
@@ -195,6 +248,7 @@ async def find_nearest_station_by_location(
             ChargingStationModel.location.is_not(None),
             ChargingStationModel.maintenance_status
             == ChargingStationMaintenanceStatus.OPERATIONAL,
+            _has_available_connector(),
         )
         .order_by(ChargingStationModel.location.distance_centroid(location))
         .limit(1)
@@ -214,6 +268,7 @@ async def list_nearby_stations(
     connector_standard: str | None,
     min_power_kw: Decimal | None,
     is_operational_only: bool,
+    is_available_only: bool,
     offset: int,
     limit: int,
 ) -> list[tuple[ChargingStationModel, float]]:
@@ -228,9 +283,10 @@ async def list_nearby_stations(
         min_power_kw: Minimum ``power_rating_kw``, or ``None`` to not
             filter by it.
         is_operational_only: Whether to only return stations with
-            ``maintenance_status == OPERATIONAL``. Same approximation of
-            "available" as ``find_nearest_station_by_location`` (F-A2) -
-            admin-set, not a live occupancy signal.
+            ``maintenance_status == OPERATIONAL`` (admin-set).
+        is_available_only: Whether to only return operational stations with
+            at least one ``Available`` connector - the same rule as
+            ``find_nearest_station_by_location`` (F-A2).
         offset: Number of records to skip.
         limit: Maximum number of records to return.
 
@@ -250,6 +306,7 @@ async def list_nearby_stations(
         connector_standard=connector_standard,
         min_power_kw=min_power_kw,
         is_operational_only=is_operational_only,
+        is_available_only=is_available_only,
     )
     distance_meters = func.ST_Distance(ChargingStationModel.location, location)
     result = await db.execute(
@@ -270,6 +327,7 @@ async def count_nearby_stations(
     connector_standard: str | None,
     min_power_kw: Decimal | None,
     is_operational_only: bool,
+    is_available_only: bool,
 ) -> int:
     """Count stations within a radius of a point, with the same filters as
     ``list_nearby_stations``.
@@ -284,6 +342,8 @@ async def count_nearby_stations(
             filter by it.
         is_operational_only: Whether to only count stations with
             ``maintenance_status == OPERATIONAL``.
+        is_available_only: Whether to only count operational stations with
+            at least one ``Available`` connector.
 
     Returns:
         Number of matching stations.
@@ -294,6 +354,7 @@ async def count_nearby_stations(
         connector_standard=connector_standard,
         min_power_kw=min_power_kw,
         is_operational_only=is_operational_only,
+        is_available_only=is_available_only,
     )
     result = await db.execute(
         select(func.count(ChargingStationModel.station_id)).where(*conditions)
@@ -308,6 +369,7 @@ def _nearby_station_conditions(
     connector_standard: str | None,
     min_power_kw: Decimal | None,
     is_operational_only: bool,
+    is_available_only: bool,
 ) -> list[ColumnElement[bool]]:
     """Build the shared WHERE conditions for a nearby-station query (F-D1).
 
@@ -318,6 +380,9 @@ def _nearby_station_conditions(
         min_power_kw: Minimum power filter, or ``None`` to skip it.
         is_operational_only: Whether to require ``maintenance_status ==
             OPERATIONAL``.
+        is_available_only: Whether to require ``maintenance_status ==
+            OPERATIONAL`` and at least one ``Available`` connector
+            (``_has_available_connector``); implies ``is_operational_only``.
 
     Returns:
         Conditions shared by ``list_nearby_stations`` and
@@ -328,11 +393,13 @@ def _nearby_station_conditions(
         ChargingStationModel.location.is_not(None),
         func.ST_DWithin(ChargingStationModel.location, location, radius_meters),
     ]
-    if is_operational_only:
+    if is_operational_only or is_available_only:
         conditions.append(
             ChargingStationModel.maintenance_status
             == ChargingStationMaintenanceStatus.OPERATIONAL
         )
+    if is_available_only:
+        conditions.append(_has_available_connector())
     if connector_standard is not None:
         conditions.append(ChargingStationModel.connector_standard == connector_standard)
     if min_power_kw is not None:
@@ -364,6 +431,73 @@ async def count_connectors_by_station_id(db: AsyncSession, station_id: UUID) -> 
         )
     )
     return int(result.scalar() or 0)
+
+
+async def count_available_connectors_by_station_id(
+    db: AsyncSession, station_id: UUID
+) -> int:
+    """Count a station's connectors whose last reported status is ``Available``.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the parent station.
+
+    Returns:
+        Number of active connectors, across the station's active EVSEs,
+        whose ``status`` is ``Available`` (F-D1). A connector that never
+        reported is not counted.
+    """
+    result = await db.execute(
+        select(func.count(ChargingConnectorModel.connector_id))
+        .select_from(ChargingConnectorModel)
+        .join(
+            ChargingEvseModel,
+            ChargingConnectorModel.evse_id == ChargingEvseModel.evse_id,
+        )
+        .where(
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
+            ChargingConnectorModel.deleted_at.is_(None),
+            ChargingConnectorModel.status == ChargingConnectorStatus.AVAILABLE,
+        )
+    )
+    return int(result.scalar() or 0)
+
+
+async def list_connectors_by_station_id(
+    db: AsyncSession, station_id: UUID
+) -> list[tuple[ChargingConnectorModel, int]]:
+    """Get every active connector of a station with its EVSE's OCPP number (F-C2).
+
+    Unpaginated: a station has a handful of guns and the status view needs
+    all of them at once.
+
+    Args:
+        db: Current async session.
+        station_id: UUID of the parent station.
+
+    Returns:
+        ``(connector, ocpp_evse_id)`` pairs for the active connectors of the
+        station's active EVSEs, ordered by OCPP EVSE number, then OCPP
+        connector number.
+    """
+    result = await db.execute(
+        select(ChargingConnectorModel, ChargingEvseModel.ocpp_evse_id)
+        .join(
+            ChargingEvseModel,
+            ChargingConnectorModel.evse_id == ChargingEvseModel.evse_id,
+        )
+        .where(
+            ChargingEvseModel.station_id == station_id,
+            ChargingEvseModel.deleted_at.is_(None),
+            ChargingConnectorModel.deleted_at.is_(None),
+        )
+        .order_by(
+            ChargingEvseModel.ocpp_evse_id.asc(),
+            ChargingConnectorModel.ocpp_connector_id.asc(),
+        )
+    )
+    return [(connector, int(ocpp_evse_id)) for connector, ocpp_evse_id in result.all()]
 
 
 async def update_charging_station(

@@ -357,7 +357,7 @@ def test_station_response_derives_is_online_from_last_seen(
     station = _station(last_seen_at=last_seen)
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, now=NOW
+        station, connector_count=2, available_connector_count=1, now=NOW
     )
 
     assert response.is_online is expected
@@ -377,7 +377,7 @@ def test_station_response_carries_the_device_fields() -> None:
     )
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, now=NOW
+        station, connector_count=2, available_connector_count=1, now=NOW
     )
 
     assert (

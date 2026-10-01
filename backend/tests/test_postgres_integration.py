@@ -10,7 +10,7 @@ import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import asyncpg  # type: ignore[import-untyped]
 import pytest
@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 import app.domains.charging_sessions.repository as charging_repository
+import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.repository as telematics_repository
@@ -29,6 +31,10 @@ import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
+from app.domains.charging_sessions.types import (
+    EnergySeriesGranularity,
+    SessionStatus,
+)
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.exceptions import TelematicConflictError
@@ -1055,4 +1061,346 @@ async def test_operating_report_periods_sum_to_the_whole_window(
         assert len(monthly_report.periods) == 1
         assert monthly_report.periods[0].distance_km == 130.0
     finally:
+        await engine.dispose()
+
+
+async def _provision_located_station(
+    engine: object,
+    *,
+    identity: str,
+    longitude: float,
+    connector_statuses: list[str | None],
+    maintenance_status: str = "OPERATIONAL",
+) -> tuple[UUID, list[UUID]]:
+    """Insert a located station with one EVSE/connector per given gun status.
+
+    Returns the station ID and the connector IDs, in EVSE-number order.
+    """
+    now = datetime.now(timezone.utc)
+    station_id = uuid4()
+    connector_ids: list[UUID] = []
+    async with engine.begin() as connection:  # type: ignore[attr-defined]
+        await connection.execute(
+            text(
+                "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
+                "location, maintenance_status, created_at, updated_at) VALUES "
+                "(:s, :i, :i, ST_GeogFromText(:p), "
+                "CAST(:m AS chargingstationmaintenancestatus), :t, :t)"
+            ),
+            {
+                "s": station_id,
+                "i": identity,
+                "p": f"SRID=4326;POINT({longitude} 10.0)",
+                "m": maintenance_status,
+                "t": now,
+            },
+        )
+        for evse_number, connector_status in enumerate(connector_statuses, start=1):
+            evse_id, connector_id = uuid4(), uuid4()
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
+                    "created_at, updated_at) VALUES (:e, :s, :n, :t, :t)"
+                ),
+                {"e": evse_id, "s": station_id, "n": evse_number, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connectors (connector_id, evse_id, "
+                    "ocpp_connector_id, status, status_updated_at, created_at, "
+                    "updated_at) VALUES (:c, :e, 1, "
+                    "CAST(:st AS chargingconnectorstatus), :t, :t, :t)"
+                ),
+                {
+                    "c": connector_id,
+                    "e": evse_id,
+                    "st": connector_status,
+                    "t": now,
+                },
+            )
+            connector_ids.append(connector_id)
+    return station_id, connector_ids
+
+
+@pytest.mark.asyncio
+async def test_station_availability_counts_only_available_connectors_on_postgres(
+    temporary_database: str,
+) -> None:
+    """D3 on real PostGIS: OPERATIONAL + >=1 active Available connector, online not needed.
+
+    Query point at longitude 106.0020. From nearest to farthest:
+    deleted-gun (0.0002 away, its only Available gun is soft-deleted), maintenance
+    (0.0005, Available but UNDER_MAINTENANCE), busy (0.0010, Charging only) and
+    free (0.0020, one Charging and one Available gun). Only "free" is available.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        free_id, _ = await _provision_located_station(
+            engine,
+            identity="AV-FREE",
+            longitude=106.0,
+            connector_statuses=["Charging", "Available"],
+        )
+        busy_id, _ = await _provision_located_station(
+            engine,
+            identity="AV-BUSY",
+            longitude=106.001,
+            connector_statuses=["Charging"],
+        )
+        maintenance_id, _ = await _provision_located_station(
+            engine,
+            identity="AV-MAINT",
+            longitude=106.0015,
+            connector_statuses=["Available"],
+            maintenance_status="UNDER_MAINTENANCE",
+        )
+        deleted_gun_id, deleted_connectors = await _provision_located_station(
+            engine,
+            identity="AV-DELETED",
+            longitude=106.0018,
+            connector_statuses=["Available", None],
+        )
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE charging_connectors SET deleted_at = now() "
+                    "WHERE connector_id = :c"
+                ),
+                {"c": deleted_connectors[0]},
+            )
+
+        async with session_factory() as db:
+            nearest = await charging_stations_service.find_nearest_operational_station(
+                db, latitude=10.0, longitude=106.002
+            )
+            available_only = (
+                await charging_stations_service.list_nearby_charging_stations(
+                    db,
+                    latitude=10.0,
+                    longitude=106.002,
+                    radius_km=5,
+                    is_available_only=True,
+                )
+            )
+            operational = await charging_stations_service.list_nearby_charging_stations(
+                db, latitude=10.0, longitude=106.002, radius_km=5
+            )
+            free_detail = await charging_stations_service.get_charging_station(
+                db, free_id
+            )
+            maintenance_detail = await charging_stations_service.get_charging_station(
+                db, maintenance_id
+            )
+            free_status = await charging_stations_service.get_charging_station_status(
+                db, free_id
+            )
+
+        assert nearest is not None and nearest.station_id == free_id
+        assert [item.station_id for item in available_only.items] == [free_id]
+        assert available_only.total == 1
+        # Without the filter: every OPERATIONAL station, nearest first.
+        assert [
+            (item.station_id, item.available_connector_count)
+            for item in operational.items
+        ] == [(deleted_gun_id, 0), (busy_id, 0), (free_id, 1)]
+        assert all(item.is_online is False for item in operational.items)
+        assert (free_detail.connector_count, free_detail.available_connector_count) == (
+            2,
+            1,
+        )
+        # The raw count ignores maintenance; the "available" filter does not.
+        assert maintenance_detail.available_connector_count == 1
+        assert [
+            (gun.ocpp_evse_id, gun.status.value if gun.status else None)
+            for gun in free_status.connectors
+        ] == [(1, "Charging"), (2, "Available")]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
+    temporary_database: str,
+) -> None:
+    """D5 on real data: per-delta attribution, local-day buckets, matching totals.
+
+    One completed session 09:40Z-10:20Z (meter 1000 -> 4000 Wh) with samples at
+    09:55 (2000), 10:10 (3500) and 10:20 (4000): 1 kWh lands in the 09:00 hour,
+    2 kWh in the 10:00 hour, and all 3 kWh in the local (UTC+7) day.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    t0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+    session_id = uuid4()
+    try:
+        station_id, connector_ids = await _provision_located_station(
+            engine, identity="SERIES-1", longitude=106.5, connector_statuses=[None]
+        )
+        async with engine.begin() as connection:
+            evse_id = await connection.scalar(
+                text("SELECT evse_id FROM charging_connectors WHERE connector_id = :c"),
+                {"c": connector_ids[0]},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_sessions (session_id, station_id, evse_id, "
+                    "connector_id, ocpp_transaction_id, status, started_at, ended_at, "
+                    "meter_start_wh, meter_end_wh, meter_end_sampled_at, "
+                    "energy_delivered_wh, created_at, updated_at) VALUES "
+                    "(:x, :s, :e, :c, 'SERIES-TX', 'completed', :start, :end, "
+                    "1000, 4000, :end, 3000, :start, :end)"
+                ),
+                {
+                    "x": session_id,
+                    "s": station_id,
+                    "e": evse_id,
+                    "c": connector_ids[0],
+                    "start": t0 + timedelta(minutes=40),
+                    "end": t0 + timedelta(hours=1, minutes=20),
+                },
+            )
+            for minutes, value_wh in ((55, 2000), (70, 3500), (80, 4000)):
+                await connection.execute(
+                    text(
+                        "INSERT INTO charging_session_measurements (measurement_id, "
+                        "sampled_at, session_id, measurand, value, unit) VALUES "
+                        "(:m, :t, :x, 'Energy.Active.Import.Register', :v, 'Wh')"
+                    ),
+                    {
+                        "m": uuid4(),
+                        "t": t0 + timedelta(minutes=minutes),
+                        "x": session_id,
+                        "v": value_wh,
+                    },
+                )
+
+        async with session_factory() as db:
+            hourly = await charging_sessions_service.get_station_energy_series(
+                db,
+                station_id=station_id,
+                start_time=t0,
+                end_time=t0 + timedelta(hours=3),
+                granularity=EnergySeriesGranularity.HOUR,
+            )
+            daily = await charging_sessions_service.get_station_energy_series(
+                db,
+                station_id=station_id,
+                start_time=t0,
+                end_time=t0 + timedelta(days=1),
+                granularity=EnergySeriesGranularity.DAY,
+            )
+            totals = await charging_stations_service.list_station_energy_totals(
+                db, start_time=t0, end_time=t0 + timedelta(days=1)
+            )
+            completed = await charging_sessions_service.list_charging_sessions(
+                db,
+                page=1,
+                page_size=10,
+                station_id=station_id,
+                status=SessionStatus.COMPLETED,
+            )
+            active = await charging_sessions_service.list_charging_sessions(
+                db,
+                page=1,
+                page_size=10,
+                station_id=station_id,
+                status=SessionStatus.ACTIVE,
+            )
+
+        assert [(item.bucket_start, item.energy_kwh) for item in hourly.items] == [
+            (t0, 1.0),
+            (t0 + timedelta(hours=1), 2.0),
+            (t0 + timedelta(hours=2), 0.0),
+        ]
+        # 09:00Z is 16:00 in Asia/Ho_Chi_Minh: the local day began 17:00Z the
+        # day before, and the window reaches into the next local day.
+        assert [item.bucket_start for item in daily.items] == [
+            datetime(2026, 9, 30, 17, 0, tzinfo=timezone.utc),
+            datetime(2026, 10, 1, 17, 0, tzinfo=timezone.utc),
+        ]
+        assert [item.energy_kwh for item in daily.items] == [3.0, 0.0]
+        station_total = next(
+            item for item in totals.items if item.station_id == station_id
+        )
+        assert (station_total.total_energy_kwh, station_total.session_count) == (
+            3.0,
+            1,
+        )
+        assert (completed.total, active.total) == (1, 0)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ocpp201_boot_notification_stores_device_info_and_liveness(
+    temporary_database: str,
+) -> None:
+    """The 2.0.1 simulator now boots first: vendor/model/firmware, last_boot_at, last_seen_at."""
+    port = _free_port()
+    simulator_dir = _backend_root().parent / "simulator"
+    environment = os.environ | {
+        "DATABASE_URL": temporary_database,
+        "CHARGING_OCPP_HOST": "127.0.0.1",
+        "CHARGING_OCPP_PORT": str(port),
+    }
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    await _provision_station(engine, "BOOT-201", [1])
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
+        cwd=_backend_root(),
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        _wait_for_port(port)
+        run_201 = await asyncio.to_thread(
+            subprocess.run,
+            [
+                sys.executable,
+                str(simulator_dir / "charging_session_simulator.py"),
+                "--url",
+                f"ws://127.0.0.1:{port}",
+                "--identity",
+                "BOOT-201",
+                "--transaction-id",
+                "BOOT-TX-201",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert run_201.returncode == 0, run_201.stdout + run_201.stderr
+
+        async with engine.connect() as connection:
+            station = (
+                await connection.execute(
+                    text(
+                        "SELECT ocpp_protocol_version, vendor, model, firmware_version, "
+                        "last_boot_at IS NOT NULL AS booted, "
+                        "last_seen_at IS NOT NULL AS seen "
+                        "FROM charging_stations WHERE ocpp_identity = 'BOOT-201'"
+                    )
+                )
+            ).one()
+
+        assert tuple(station) == (
+            "ocpp2.0.1",
+            "G3Network-Sim",
+            "SIM-201",
+            "SIM-201-1.0",
+            True,
+            True,
+        )
+    finally:
+        gateway.terminate()
+        try:
+            gateway.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            gateway.kill()
         await engine.dispose()

@@ -21,3 +21,7 @@ class ChargingTopologyConflictError(ConflictError):
 
 class ChargingOcppMessageInputError(InvalidInputError):
     """An OCPP message to be logged violates the storage contract."""
+
+
+class ChargingStationReportRangeError(InvalidInputError):
+    """A report time window lacks a timezone or does not move forward (F-C5)."""

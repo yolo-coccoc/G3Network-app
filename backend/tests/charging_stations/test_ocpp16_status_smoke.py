@@ -505,7 +505,7 @@ def test_station_response_exposes_the_charger_level_status() -> None:
     )
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, now=NOW
+        station, connector_count=2, available_connector_count=1, now=NOW
     )
 
     assert response.charger_status is ChargingConnectorStatus.FAULTED

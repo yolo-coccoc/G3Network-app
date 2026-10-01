@@ -6,7 +6,8 @@ status a charger reports over OCPP (F-C2, both protocols, also used for the
 whole charger's connector ``0``); ``OcppMessageDirection`` tags rows of the
 verbatim frame log; ``ConfigurationEntry`` carries one ``GetConfiguration``
 key into the OCPP state service; ``NearestChargingStationReference`` is the
-DTO ``telemetry`` receives from ``find_nearest_operational_station`` (F-A2).
+DTO ``telemetry`` receives from ``find_nearest_operational_station`` (F-A2,
+now occupancy-aware: at least one ``Available`` connector is required).
 Administrative/technical status history and capability negotiation remain
 deferred (``docs/01-requirements/future.md`` items 27 and 28).
 """
@@ -102,11 +103,12 @@ class ConfigurationEntry:
 class NearestChargingStationReference:
     """A station resolved as nearest to a given point (F-A2).
 
-    "Available" is approximated as "not soft-deleted and not under
-    maintenance/out of service". The charger's derived ``is_online`` and its
-    connectors' reported statuses exist but are not consulted yet: making
-    availability online- and occupancy-aware is deferred
-    (``docs/01-requirements/future.md`` item 76).
+    "Available" (decision D3 of the happy-path completion planner) means not
+    soft-deleted, ``maintenance_status == OPERATIONAL`` and at least one
+    connector whose last reported status is ``Available``. The charger's
+    derived ``is_online`` is deliberately not consulted, so a charger that
+    went offline with a gun last reported ``Available`` still qualifies
+    (stale-status handling: ``docs/01-requirements/future.md`` item 76).
 
     Attributes:
         station_id: Internal UUID of the station.
