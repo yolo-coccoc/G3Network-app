@@ -99,15 +99,15 @@ class MeasurementInput:
 class TransactionIngestResult:
     """The result of processing one TransactionEvent in the happy path.
 
+    Each call appends exactly one event, so no count is carried.
+
     Attributes:
         session_id: The UUID of the aggregate created or updated.
         status: The status after processing the event.
-        event_count: The number of events appended in this call.
     """
 
     session_id: UUID
     status: SessionStatus
-    event_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,15 +135,14 @@ class TransactionSessionReference:
 
 @dataclass(frozen=True, slots=True)
 class MeterIngestResult:
-    """The result of processing one MeterValues message in the happy path.
+    """The result of storing one energy-register sample in the happy path.
+
+    Each call stores exactly one sample, so no count is carried.
 
     Attributes:
         session_id: The UUID of the aggregate that was updated.
-        status: The aggregate's status after the batch.
-        accepted_count: The number of samples persisted; always one on a
-            successful call.
+        status: The aggregate's status after the sample.
     """
 
     session_id: UUID
     status: SessionStatus
-    accepted_count: int

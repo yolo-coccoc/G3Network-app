@@ -218,16 +218,16 @@ async def test_ingest_measurements_refuses_a_completed_or_unknown_session(
 
     with pytest.raises(ChargingSessionStateError):
         await charging_service.ingest_measurements(
-            object(),
+            object(),  # type: ignore[arg-type]
             session_id=completed.session_id,
-            samples=[sample],  # type: ignore[arg-type]
+            samples=[sample],
         )
     _patch_for_measurements(monkeypatch, None)
     with pytest.raises(ChargingSessionNotFoundError):
         await charging_service.ingest_measurements(
-            object(),
+            object(),  # type: ignore[arg-type]
             session_id=uuid4(),
-            samples=[sample],  # type: ignore[arg-type]
+            samples=[sample],
         )
 
     assert inserted == []
@@ -266,10 +266,32 @@ async def test_ingest_measurements_rejects_out_of_contract_samples(
 
     with pytest.raises(ChargingSessionInputError):
         await charging_service.ingest_measurements(
-            object(),
+            object(),  # type: ignore[arg-type]
             session_id=session.session_id,
-            samples=[sample],  # type: ignore[arg-type]
+            samples=[sample],
         )
+
+
+@pytest.mark.asyncio
+async def test_ingest_measurements_validates_every_sample_before_the_first_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One invalid sample in a payload means no row of that payload is written."""
+    session = _active_session()
+    inserted = _patch_for_measurements(monkeypatch, session)
+    samples = [
+        MeasurementInput(sampled_at=NOW, measurand="SoC", value=Decimal(50)),
+        MeasurementInput(sampled_at=NOW, measurand="", value=Decimal(1)),
+    ]
+
+    with pytest.raises(ChargingSessionInputError):
+        await charging_service.ingest_measurements(
+            object(),  # type: ignore[arg-type]
+            session_id=session.session_id,
+            samples=samples,
+        )
+
+    assert inserted == []
 
 
 @pytest.mark.asyncio
@@ -305,8 +327,8 @@ async def test_list_measurements_passes_the_measurand_filter_and_paginates(
         return 1
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "list_session_measurements", list_rows)
-    monkeypatch.setattr(charging_repository, "count_session_measurements", count_rows)
+    monkeypatch.setattr(charging_repository, "list_measurements", list_rows)
+    monkeypatch.setattr(charging_repository, "count_measurements", count_rows)
 
     response = await charging_service.list_charging_session_measurements(
         object(),  # type: ignore[arg-type]

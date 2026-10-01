@@ -92,7 +92,10 @@ async def test_charging_service_runs_started_meter_ended_flow(
     )
 
     assert started.status is SessionStatus.ACTIVE
-    assert meter.accepted_count == 1
+    assert (meter.session_id, meter.status) == (
+        session.session_id,
+        SessionStatus.ACTIVE,
+    )
     assert ended.status is SessionStatus.COMPLETED
     assert session.meter_end_wh == Decimal("1750")
     assert session.energy_delivered_wh == Decimal("750")
@@ -289,8 +292,10 @@ async def test_ingest_meter_values_ignores_stale_sample(
     async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
         inserted.append(cast(Decimal, kwargs["value"]))
 
+    touched_at = watermark + timedelta(hours=1)
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
     monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
+    monkeypatch.setattr(charging_service, "utc_now", lambda: touched_at)
 
     result = await charging_service.ingest_meter_values(
         fake_db_session(),
@@ -305,7 +310,13 @@ async def test_ingest_meter_values_ignores_stale_sample(
     # ...but the aggregate's watermark and meter reading are untouched.
     assert session.meter_end_wh == Decimal("1500")
     assert session.meter_end_sampled_at == watermark
-    assert result.accepted_count == 1
+    assert (result.session_id, result.status) == (
+        session.session_id,
+        SessionStatus.ACTIVE,
+    )
+    # updated_at still records the activity: no other column changed, so the
+    # column's onupdate alone would not have fired.
+    assert session.updated_at == touched_at
 
 
 @pytest.mark.asyncio
@@ -542,3 +553,32 @@ async def test_get_station_energy_summary_rejects_non_positive_range() -> None:
             start_time=same_instant,
             end_time=same_instant,
         )
+
+
+@pytest.mark.asyncio
+async def test_list_charging_sessions_keeps_a_page_size_below_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A small page_size is honoured, not raised to the default page size."""
+    session = build_charging_session()
+    seen: dict[str, object] = {}
+
+    async def list_sessions(
+        db: AsyncSession, *, offset: int, limit: int
+    ) -> list[ChargingSessionModel]:
+        seen.update(offset=offset, limit=limit)
+        return [session]
+
+    async def count_sessions(db: AsyncSession) -> int:
+        return 7
+
+    monkeypatch.setattr(charging_repository, "list_sessions", list_sessions)
+    monkeypatch.setattr(charging_repository, "count_sessions", count_sessions)
+
+    response = await charging_service.list_charging_sessions(
+        fake_db_session(), page=2, page_size=3
+    )
+
+    assert seen == {"offset": 3, "limit": 3}
+    assert (response.total, response.page, response.page_size) == (7, 2, 3)
+    assert [item.session_id for item in response.items] == [session.session_id]

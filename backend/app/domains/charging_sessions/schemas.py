@@ -1,8 +1,9 @@
 """Pydantic response schemas for the charging session monitoring MVP.
 
-The schemas only expose the session aggregate, lifecycle events and
-canonical Wh meter samples. Raw OCPP payloads, authorization, payment or
-debt are not part of the contract.
+The schemas only expose the session aggregate, lifecycle events, canonical
+Wh meter samples, the other measurements and the per-station energy summary.
+Raw OCPP payloads, authorization, payment or debt are not part of the
+contract.
 """
 
 from datetime import datetime
@@ -109,8 +110,6 @@ class ChargingSessionMeterValueResponse(BaseModel):
         value_wh: The energy value in Wh - the OCPP adapter owns
             normalizing measurand/unit into this canonical form (F-B2).
     """
-
-    model_config = ConfigDict(from_attributes=True)
 
     meter_value_id: UUID
     sampled_at: datetime

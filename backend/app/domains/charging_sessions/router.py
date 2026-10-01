@@ -1,21 +1,19 @@
 """Read-only HTTP router for the charging session monitoring MVP.
 
-The router only accepts HTTP dependencies, calls the public monitoring
-service and converts domain exceptions into status codes. It does not
-expose raw OCPP payloads or command transport at this stage.
+The router only accepts HTTP dependencies and calls the public monitoring
+service; domain exceptions are mapped to status codes centrally in
+``app/api/main.py``. It does not expose raw OCPP payloads or command
+transport at this stage.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
-from app.domains.charging_sessions.exceptions import (
-    ChargingSessionInputError,
-    ChargingSessionNotFoundError,
-)
 from app.domains.charging_sessions.schemas import (
     ChargingSessionEventListResponse,
     ChargingSessionListResponse,
@@ -30,25 +28,53 @@ from app.libs.db.session import get_db
 router = APIRouter(tags=["charging-sessions"])
 
 
-@router.get(
-    "/charging-sessions",
-    response_model=ChargingSessionListResponse,
-    summary="List charging sessions",
-)
-async def list_charging_sessions_endpoint(
+@dataclass(frozen=True)
+class _PageQuery:
+    """The ``page``/``page_size`` query parameters shared by every list endpoint.
+
+    Attributes:
+        page: The page, starting at one.
+        page_size: The maximum number of items in the page.
+    """
+
+    page: int
+    page_size: int
+
+
+def _page_query(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
+) -> _PageQuery:
+    """Read and validate the pagination query parameters (FastAPI dependency).
+
+    Args:
+        page: The page, starting at one.
+        page_size: The maximum number of items in the page.
+
+    Returns:
+        The validated page request.
+    """
+    return _PageQuery(page=page, page_size=page_size)
+
+
+@router.get(
+    "/charging-sessions",
+    response_model=ChargingSessionListResponse,
+    summary="List charging sessions",
+)
+async def list_charging_sessions_endpoint(
+    page_query: _PageQuery = Depends(_page_query),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionListResponse:
     """List sessions newest first, to obtain session IDs for monitoring.
 
     Args:
-        page: The page, starting at one.
-        page_size: The maximum number of sessions in the page.
+        page_query: The page and page size (``page``/``page_size`` query
+            parameters).
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -58,8 +84,8 @@ async def list_charging_sessions_endpoint(
     """
     return await charging_session_service.list_charging_sessions(
         db,
-        page=page,
-        page_size=page_size,
+        page=page_query.page,
+        page_size=page_query.page_size,
     )
 
 
@@ -83,14 +109,9 @@ async def get_charging_session_endpoint(
         MVP.
 
     Raises:
-        HTTPException: ``404`` if the session does not exist.
+        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    try:
-        return await charging_session_service.get_charging_session(db, session_id)
-    except ChargingSessionNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_session_service.get_charging_session(db, session_id)
 
 
 @router.get(
@@ -100,20 +121,15 @@ async def get_charging_session_endpoint(
 )
 async def list_charging_session_events_endpoint(
     session_id: UUID,
-    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
-    page_size: int = Query(
-        settings.API_DEFAULT_PAGE_SIZE,
-        ge=1,
-        le=settings.API_MAX_PAGE_SIZE,
-    ),
+    page_query: _PageQuery = Depends(_page_query),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionEventListResponse:
     """Get the session's lifecycle events in ascending time order.
 
     Args:
         session_id: UUID of the session whose events to view.
-        page: The page, starting at one.
-        page_size: The maximum number of events in the page.
+        page_query: The page and page size (``page``/``page_size`` query
+            parameters).
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -121,19 +137,14 @@ async def list_charging_session_events_endpoint(
         A paginated event history.
 
     Raises:
-        HTTPException: ``404`` if the session does not exist.
+        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    try:
-        return await charging_session_service.list_charging_session_events(
-            db,
-            session_id,
-            page=page,
-            page_size=page_size,
-        )
-    except ChargingSessionNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_session_service.list_charging_session_events(
+        db,
+        session_id,
+        page=page_query.page,
+        page_size=page_query.page_size,
+    )
 
 
 @router.get(
@@ -143,20 +154,15 @@ async def list_charging_session_events_endpoint(
 )
 async def list_charging_session_meter_values_endpoint(
     session_id: UUID,
-    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
-    page_size: int = Query(
-        settings.API_DEFAULT_PAGE_SIZE,
-        ge=1,
-        le=settings.API_MAX_PAGE_SIZE,
-    ),
+    page_query: _PageQuery = Depends(_page_query),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionMeterValueListResponse:
     """Get the session's canonical Wh meter samples in ascending time order.
 
     Args:
         session_id: UUID of the session whose meter to view.
-        page: The page, starting at one.
-        page_size: The maximum number of samples in the page.
+        page_query: The page and page size (``page``/``page_size`` query
+            parameters).
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -164,19 +170,14 @@ async def list_charging_session_meter_values_endpoint(
         A paginated meter history.
 
     Raises:
-        HTTPException: ``404`` if the session does not exist.
+        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    try:
-        return await charging_session_service.list_charging_session_meter_values(
-            db,
-            session_id,
-            page=page,
-            page_size=page_size,
-        )
-    except ChargingSessionNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_session_service.list_charging_session_meter_values(
+        db,
+        session_id,
+        page=page_query.page,
+        page_size=page_query.page_size,
+    )
 
 
 @router.get(
@@ -192,12 +193,7 @@ async def list_charging_session_measurements_endpoint(
         max_length=60,
         description="Return only this measurand, for example SoC.",
     ),
-    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
-    page_size: int = Query(
-        settings.API_DEFAULT_PAGE_SIZE,
-        ge=1,
-        le=settings.API_MAX_PAGE_SIZE,
-    ),
+    page_query: _PageQuery = Depends(_page_query),
     db: AsyncSession = Depends(get_db),
 ) -> ChargingSessionMeasurementListResponse:
     """Get the session's measurements of every measurand, in ascending time order.
@@ -207,8 +203,8 @@ async def list_charging_session_measurements_endpoint(
     Args:
         session_id: UUID of the session whose measurements to view.
         measurand: Optional filter on the measurand name.
-        page: The page, starting at one.
-        page_size: The maximum number of measurements in the page.
+        page_query: The page and page size (``page``/``page_size`` query
+            parameters).
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -216,20 +212,15 @@ async def list_charging_session_measurements_endpoint(
         A paginated measurement history.
 
     Raises:
-        HTTPException: ``404`` if the session does not exist.
+        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    try:
-        return await charging_session_service.list_charging_session_measurements(
-            db,
-            session_id,
-            measurand=measurand,
-            page=page,
-            page_size=page_size,
-        )
-    except ChargingSessionNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_session_service.list_charging_session_measurements(
+        db,
+        session_id,
+        measurand=measurand,
+        page=page_query.page,
+        page_size=page_query.page_size,
+    )
 
 
 @router.get(
@@ -258,17 +249,12 @@ async def get_station_energy_summary_endpoint(
         docstring.
 
     Raises:
-        HTTPException: ``400`` if either timestamp lacks a timezone or
-            ``end_time`` isn't after ``start_time``.
+        ChargingSessionInputError: Either timestamp lacks a timezone or
+            ``end_time`` isn't after ``start_time`` (HTTP 400).
     """
-    try:
-        return await charging_session_service.get_station_energy_summary(
-            db,
-            station_id=station_id,
-            start_time=start_time,
-            end_time=end_time,
-        )
-    except ChargingSessionInputError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-        ) from error
+    return await charging_session_service.get_station_energy_summary(
+        db,
+        station_id=station_id,
+        start_time=start_time,
+        end_time=end_time,
+    )

@@ -1,10 +1,11 @@
 """Minimal async repository for the charging session happy path.
 
 The repository only queries, creates and flushes the aggregate/history; it
-does not commit or roll back the transaction.
+holds no lifecycle rule (those live in the service) and never commits or
+rolls back the transaction.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -21,19 +22,12 @@ from app.domains.charging_sessions.types import (
     SessionEventType,
     SessionStatus,
 )
+from app.libs.common.clock import utc_now
 
 # Integer transaction IDs for OCPP 1.6J, which requires the backend to assign
-# them. Created by migration 0024; declared here only to call nextval().
+# them. The sequence is created by the ``0001_baseline_schema`` migration (it
+# is not part of the model metadata); declared here only to call nextval().
 _OCPP16_TRANSACTION_ID_SEQUENCE = Sequence("charging_ocpp16_transaction_id_seq")
-
-
-def utc_now() -> datetime:
-    """Get the UTC time used when updating a session aggregate.
-
-    Returns:
-        The current time as a timezone-aware UTC ``datetime``.
-    """
-    return datetime.now(timezone.utc)
 
 
 async def get_session_by_transaction(
@@ -54,13 +48,13 @@ async def get_session_by_transaction(
     # Reconnect, unknown-transaction and duplicate resolution are production
     # contracts deferred for later; the repository only provides a primitive
     # lookup for the MVP.
-    result = await db.execute(
+    query_result = await db.execute(
         select(ChargingSessionModel).where(
             ChargingSessionModel.station_id == station_id,
             ChargingSessionModel.ocpp_transaction_id == transaction_id,
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
 async def get_session_by_id(
@@ -75,15 +69,15 @@ async def get_session_by_id(
     Returns:
         The matching aggregate, or ``None`` if it does not exist.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(ChargingSessionModel).where(
             ChargingSessionModel.session_id == session_id
         )
     )
-    return result.scalar_one_or_none()
+    return query_result.scalar_one_or_none()
 
 
-async def list_charging_sessions(
+async def list_sessions(
     db: AsyncSession,
     *,
     offset: int,
@@ -100,7 +94,7 @@ async def list_charging_sessions(
         Sessions sorted stably by descending creation time and descending
         UUID, to make it easy to find a session just run by the simulator.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(ChargingSessionModel)
         .order_by(
             ChargingSessionModel.created_at.desc(),
@@ -109,7 +103,7 @@ async def list_charging_sessions(
         .offset(offset)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
 async def count_sessions(db: AsyncSession) -> int:
@@ -121,11 +115,11 @@ async def count_sessions(db: AsyncSession) -> int:
     Returns:
         The total number of sessions in the database.
     """
-    result = await db.execute(select(func.count(ChargingSessionModel.session_id)))
-    return int(result.scalar() or 0)
+    query_result = await db.execute(select(func.count(ChargingSessionModel.session_id)))
+    return int(query_result.scalar() or 0)
 
 
-async def list_charging_session_events(
+async def list_events(
     db: AsyncSession,
     session_id: UUID,
     *,
@@ -143,7 +137,7 @@ async def list_charging_session_events(
     Returns:
         The event history, stably paginated.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(ChargingSessionEventModel)
         .where(ChargingSessionEventModel.session_id == session_id)
         .order_by(
@@ -153,10 +147,10 @@ async def list_charging_session_events(
         .offset(offset)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
-async def count_session_events(db: AsyncSession, session_id: UUID) -> int:
+async def count_events(db: AsyncSession, session_id: UUID) -> int:
     """Count the lifecycle events of a session.
 
     Args:
@@ -166,15 +160,15 @@ async def count_session_events(db: AsyncSession, session_id: UUID) -> int:
     Returns:
         The total number of events for the session.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(func.count(ChargingSessionEventModel.event_id)).where(
             ChargingSessionEventModel.session_id == session_id
         )
     )
-    return int(result.scalar() or 0)
+    return int(query_result.scalar() or 0)
 
 
-async def list_charging_session_meter_values(
+async def list_energy_measurements(
     db: AsyncSession,
     session_id: UUID,
     *,
@@ -195,7 +189,7 @@ async def list_charging_session_meter_values(
     Returns:
         The energy history, stably paginated.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(ChargingSessionMeasurementModel)
         .where(
             ChargingSessionMeasurementModel.session_id == session_id,
@@ -208,10 +202,10 @@ async def list_charging_session_meter_values(
         .offset(offset)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
-async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
+async def count_energy_measurements(db: AsyncSession, session_id: UUID) -> int:
     """Count the energy-register samples of a session.
 
     Args:
@@ -221,13 +215,13 @@ async def count_session_meter_values(db: AsyncSession, session_id: UUID) -> int:
     Returns:
         The total number of energy-register samples for the session.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(func.count(ChargingSessionMeasurementModel.measurement_id)).where(
             ChargingSessionMeasurementModel.session_id == session_id,
             ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
         )
     )
-    return int(result.scalar() or 0)
+    return int(query_result.scalar() or 0)
 
 
 async def get_station_energy_summary(
@@ -254,7 +248,7 @@ async def get_station_energy_summary(
         the same zero result - this function doesn't check that the station
         exists.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(
             func.coalesce(func.sum(ChargingSessionModel.energy_delivered_wh), 0),
             func.count(ChargingSessionModel.session_id),
@@ -266,7 +260,7 @@ async def get_station_energy_summary(
             ChargingSessionModel.ended_at <= end_time,
         )
     )
-    total_energy_wh, session_count = result.one()
+    total_energy_wh, session_count = query_result.one()
     return Decimal(total_energy_wh), int(session_count)
 
 
@@ -304,7 +298,10 @@ async def create_session(
         Adds an ORM record and calls ``flush`` to obtain the UUID / detect
         constraint violations.
     """
-    session = ChargingSessionModel(
+    # One clock read for both timestamps, so a new aggregate starts with
+    # created_at == updated_at instead of two model defaults a tick apart.
+    created_at = utc_now()
+    session_record = ChargingSessionModel(
         station_id=station_id,
         evse_id=evse_id,
         connector_id=connector_id,
@@ -313,11 +310,12 @@ async def create_session(
         started_at=started_at,
         meter_start_wh=meter_start_wh,
         id_tag=id_tag,
-        updated_at=utc_now(),
+        created_at=created_at,
+        updated_at=created_at,
     )
-    db.add(session)
+    db.add(session_record)
     await db.flush()
-    return session
+    return session_record
 
 
 async def insert_event(
@@ -346,15 +344,15 @@ async def insert_event(
         Adds a history record and calls ``flush`` in the current
         transaction.
     """
-    event = ChargingSessionEventModel(
+    event_record = ChargingSessionEventModel(
         session_id=session_id,
         event_occurred_at=event_occurred_at,
         event_type=event_type,
         seq_no=seq_no,
     )
-    db.add(event)
+    db.add(event_record)
     await db.flush()
-    return event
+    return event_record
 
 
 async def insert_measurement(
@@ -390,7 +388,7 @@ async def insert_measurement(
         Adds a record and calls ``flush`` in the current transaction. The
         table is append-only.
     """
-    measurement = ChargingSessionMeasurementModel(
+    measurement_record = ChargingSessionMeasurementModel(
         session_id=session_id,
         sampled_at=sampled_at,
         measurand=measurand,
@@ -400,9 +398,9 @@ async def insert_measurement(
         phase=phase,
         location=location,
     )
-    db.add(measurement)
+    db.add(measurement_record)
     await db.flush()
-    return measurement
+    return measurement_record
 
 
 async def next_ocpp16_transaction_id(db: AsyncSession) -> int:
@@ -418,8 +416,10 @@ async def next_ocpp16_transaction_id(db: AsyncSession) -> int:
         Advances the sequence. A sequence is not transactional, so a rolled-back
         transaction leaves a harmless gap in the numbers.
     """
-    result = await db.execute(select(_OCPP16_TRANSACTION_ID_SEQUENCE.next_value()))
-    return int(result.scalar_one())
+    query_result = await db.execute(
+        select(_OCPP16_TRANSACTION_ID_SEQUENCE.next_value())
+    )
+    return int(query_result.scalar_one())
 
 
 async def count_active_sessions_by_connector_id(
@@ -434,7 +434,7 @@ async def count_active_sessions_by_connector_id(
     Returns:
         The number of sessions with status ``active`` on the connector.
     """
-    result = await db.execute(
+    query_result = await db.execute(
         select(func.count())
         .select_from(ChargingSessionModel)
         .where(
@@ -442,10 +442,10 @@ async def count_active_sessions_by_connector_id(
             ChargingSessionModel.status == SessionStatus.ACTIVE,
         )
     )
-    return int(result.scalar_one())
+    return int(query_result.scalar_one())
 
 
-async def list_session_measurements(
+async def list_measurements(
     db: AsyncSession,
     session_id: UUID,
     *,
@@ -472,7 +472,7 @@ async def list_session_measurements(
         statement = statement.where(
             ChargingSessionMeasurementModel.measurand == measurand
         )
-    result = await db.execute(
+    query_result = await db.execute(
         statement.order_by(
             ChargingSessionMeasurementModel.sampled_at.asc(),
             ChargingSessionMeasurementModel.measurement_id.asc(),
@@ -480,10 +480,10 @@ async def list_session_measurements(
         .offset(offset)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    return list(query_result.scalars().all())
 
 
-async def count_session_measurements(
+async def count_measurements(
     db: AsyncSession, session_id: UUID, *, measurand: str | None
 ) -> int:
     """Count a session's measurements.
@@ -503,5 +503,5 @@ async def count_session_measurements(
         statement = statement.where(
             ChargingSessionMeasurementModel.measurand == measurand
         )
-    result = await db.execute(statement)
-    return int(result.scalar() or 0)
+    query_result = await db.execute(statement)
+    return int(query_result.scalar() or 0)

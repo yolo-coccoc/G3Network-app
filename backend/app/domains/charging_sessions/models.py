@@ -3,9 +3,12 @@
 The module stores the session aggregate, TransactionEvent history and the
 measurements (canonical Wh energy samples and, for OCPP 1.6J, other measurands)
 of each session.
+
+The status and event-type enums store their public values (``active``,
+``Started``) via ``enum_values``, not the Python member names.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -23,28 +26,9 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Get the current time in UTC to use as the model's default value.
-
-    Returns:
-        The current time as a timezone-aware UTC ``datetime``.
-    """
-    return datetime.now(timezone.utc)
-
-
-def enum_values(enum_type: type[object]) -> list[str]:
-    """Get the enum values so PostgreSQL stores the correct public contract.
-
-    Args:
-        enum_type: An enum whose members carry a ``value`` attribute.
-
-    Returns:
-        The list of values in the enum's declaration order.
-    """
-    return [member.value for member in enum_type]  # type: ignore[attr-defined]
+from app.libs.db.enums import enum_values
 
 
 class ChargingSessionModel(Base):
