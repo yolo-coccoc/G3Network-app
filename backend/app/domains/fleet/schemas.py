@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.domains.fleet.types import FleetStatus
 from app.domains.vehicles.types import VehicleStatus
@@ -46,8 +46,6 @@ class FleetResponse(_FleetInputFields):
         created_at: Creation time.
         updated_at: Last update time.
     """
-
-    model_config = ConfigDict(from_attributes=True)
 
     fleet_id: UUID = Field(..., description="Fleet ID (internal)")
     vehicle_count: int = Field(..., ge=0, description="Number of member vehicles")

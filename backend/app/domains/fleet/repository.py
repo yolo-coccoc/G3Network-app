@@ -1,6 +1,6 @@
 """Repository querying the fleet tables; contains no business rules."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
 from app.domains.fleet.types import FleetStatus
-from app.libs.common.config import settings
+from app.libs.common.clock import utc_now
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> FleetModel:
@@ -76,15 +76,16 @@ async def find_by_fleet_code(
 
 async def list_all(
     db_session: AsyncSession,
-    skip: int = 0,
-    limit: int = settings.API_DEFAULT_PAGE_SIZE,
+    *,
+    offset: int,
+    limit: int,
     status_filter: FleetStatus | None = None,
 ) -> list[FleetModel]:
     """Get a paginated list of fleets, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
-        skip: Number of records to skip.
+        offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
 
@@ -100,7 +101,7 @@ async def list_all(
         select(FleetModel)
         .where(and_(*conditions))
         .order_by(FleetModel.created_at.desc())
-        .offset(skip)
+        .offset(offset)
         .limit(limit)
     )
     return list(query_result.scalars().all())
@@ -150,7 +151,7 @@ async def update_fields(
         if hasattr(fleet_record, field_name):
             setattr(fleet_record, field_name, value)
 
-    fleet_record.updated_at = datetime.now(timezone.utc)
+    fleet_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(fleet_record)
     return fleet_record
@@ -170,14 +171,14 @@ async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | 
     if not fleet_record:
         return None
 
-    fleet_record.deleted_at = datetime.now(timezone.utc)
+    fleet_record.deleted_at = utc_now()
     fleet_record.status = FleetStatus.INACTIVE
     await db_session.flush()
     await db_session.refresh(fleet_record)
     return fleet_record
 
 
-async def get_active_membership_by_vehicle(
+async def find_active_membership_by_vehicle(
     db_session: AsyncSession, vehicle_id: UUID
 ) -> FleetVehicleMembershipModel | None:
     """Find the open membership for a vehicle, if any.
@@ -384,7 +385,7 @@ async def close_membership(
         The closed membership record.
     """
     membership_record.left_at = left_at
-    membership_record.updated_at = datetime.now(timezone.utc)
+    membership_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(membership_record)
     return membership_record

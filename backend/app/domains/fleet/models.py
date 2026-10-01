@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for the fleet domain."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, text
@@ -9,12 +9,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.fleet.types import FleetStatus
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current UTC time with timezone info."""
-    return datetime.now(timezone.utc)
 
 
 class FleetModel(Base):

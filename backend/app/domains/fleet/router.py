@@ -1,18 +1,15 @@
-"""FastAPI router for the HTTP endpoints of the fleet domain."""
+"""FastAPI router for the HTTP endpoints of the fleet domain.
+
+Domain exceptions are not caught here: `app/api/main.py` maps each shared
+base (`NotFoundError` -> 404, `ConflictError` -> 409) to its HTTP status.
+"""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.service as fleet_service
-from app.domains.fleet.exceptions import (
-    FleetConflictError,
-    FleetMembershipConflictError,
-    FleetMembershipNotFoundError,
-    FleetNotFoundError,
-    FleetVehicleNotFoundError,
-)
 from app.domains.fleet.schemas import (
     FleetCreateRequest,
     FleetListResponse,
@@ -49,13 +46,11 @@ async def create_fleet_endpoint(
 
     Returns:
         Created fleet.
+
+    Raises:
+        FleetConflictError: 409 when the fleet code is already used.
     """
-    try:
-        return await fleet_service.create_fleet(db_session, fleet_create_request)
-    except FleetConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await fleet_service.create_fleet(db_session, fleet_create_request)
 
 
 @router.get(
@@ -88,7 +83,9 @@ async def list_fleets_endpoint(
     Returns:
         Paginated list of fleets.
     """
-    return await fleet_service.list_fleets(db_session, page, page_size, status_filter)
+    return await fleet_service.list_fleets(
+        db_session, page=page, page_size=page_size, status_filter=status_filter
+    )
 
 
 @router.get(
@@ -109,13 +106,12 @@ async def get_fleet_endpoint(
 
     Returns:
         Fleet details.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist or was
+            soft-deleted.
     """
-    try:
-        return await fleet_service.get_fleet(db_session, fleet_id)
-    except FleetNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await fleet_service.get_fleet(db_session, fleet_id)
 
 
 @router.patch(
@@ -138,19 +134,13 @@ async def update_fleet_endpoint(
 
     Returns:
         Updated fleet.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist or was
+            soft-deleted.
+        FleetConflictError: 409 when the new fleet code is already used.
     """
-    try:
-        return await fleet_service.update_fleet(
-            db_session, fleet_id, fleet_update_request
-        )
-    except FleetNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except FleetConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await fleet_service.update_fleet(db_session, fleet_id, fleet_update_request)
 
 
 @router.delete(
@@ -171,13 +161,12 @@ async def soft_delete_fleet_endpoint(
 
     Returns:
         Success message.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist or was already
+            soft-deleted.
     """
-    try:
-        return await fleet_service.soft_delete_fleet(db_session, fleet_id)
-    except FleetNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await fleet_service.soft_delete_fleet(db_session, fleet_id)
 
 
 @router.post(
@@ -201,19 +190,17 @@ async def add_vehicle_to_fleet_endpoint(
 
     Returns:
         The resulting open membership.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist.
+        FleetVehicleNotFoundError: 404 when the VIN does not resolve to a
+            vehicle.
+        FleetMembershipConflictError: 409 when the vehicle is already
+            actively in a different fleet.
     """
-    try:
-        return await fleet_service.add_vehicle_to_fleet(
-            db_session, fleet_id, fleet_vehicle_add_request
-        )
-    except (FleetNotFoundError, FleetVehicleNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except FleetMembershipConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await fleet_service.add_vehicle_to_fleet(
+        db_session, fleet_id, fleet_vehicle_add_request
+    )
 
 
 @router.delete(
@@ -236,17 +223,14 @@ async def remove_vehicle_from_fleet_endpoint(
         fleet_id: Internal ID of the fleet.
         vehicle_vin: VIN of the vehicle to remove.
         db_session: Database session owned by the HTTP boundary.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist.
+        FleetVehicleNotFoundError: 404 when no active vehicle has this VIN.
+        FleetMembershipNotFoundError: 404 when the vehicle has no active
+            membership in this fleet.
     """
-    try:
-        await fleet_service.remove_vehicle_from_fleet(db_session, fleet_id, vehicle_vin)
-    except (
-        FleetNotFoundError,
-        FleetVehicleNotFoundError,
-        FleetMembershipNotFoundError,
-    ) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    await fleet_service.remove_vehicle_from_fleet(db_session, fleet_id, vehicle_vin)
 
 
 @router.get(
@@ -276,15 +260,13 @@ async def list_fleet_vehicles_endpoint(
 
     Returns:
         Paginated list of vehicles currently in the fleet.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist.
     """
-    try:
-        return await fleet_service.list_fleet_vehicles(
-            db_session, fleet_id, page, page_size
-        )
-    except FleetNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await fleet_service.list_fleet_vehicles(
+        db_session, fleet_id, page=page, page_size=page_size
+    )
 
 
 @router.get(
@@ -314,12 +296,10 @@ async def list_fleet_membership_history_endpoint(
 
     Returns:
         Paginated membership history.
+
+    Raises:
+        FleetNotFoundError: 404 when the fleet does not exist.
     """
-    try:
-        return await fleet_service.list_fleet_membership_history(
-            db_session, fleet_id, page, page_size
-        )
-    except FleetNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await fleet_service.list_fleet_membership_history(
+        db_session, fleet_id, page=page, page_size=page_size
+    )

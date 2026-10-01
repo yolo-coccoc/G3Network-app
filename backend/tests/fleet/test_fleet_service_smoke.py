@@ -106,7 +106,7 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        fleet_repository, "get_active_membership_by_vehicle", no_active_membership
+        fleet_repository, "find_active_membership_by_vehicle", no_active_membership
     )
     monkeypatch.setattr(fleet_repository, "insert_membership", insert_membership)
 
@@ -181,7 +181,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        fleet_repository, "get_active_membership_by_vehicle", active_membership
+        fleet_repository, "find_active_membership_by_vehicle", active_membership
     )
     monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
 
@@ -226,7 +226,7 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        fleet_repository, "get_active_membership_by_vehicle", active_membership
+        fleet_repository, "find_active_membership_by_vehicle", active_membership
     )
     monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
 
@@ -254,7 +254,7 @@ async def test_remove_vehicle_from_fleet_closes_membership(
     async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
         return fleet_record
 
-    async def get_active(
+    async def find_active(
         db: AsyncSession, vehicle_id: UUID
     ) -> FleetVehicleMembershipModel:
         return active_membership
@@ -269,7 +269,7 @@ async def test_remove_vehicle_from_fleet_closes_membership(
 
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(
-        fleet_repository, "get_active_membership_by_vehicle", get_active
+        fleet_repository, "find_active_membership_by_vehicle", find_active
     )
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
 
@@ -303,7 +303,9 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
         return None
 
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(fleet_repository, "get_active_membership_by_vehicle", no_active)
+    monkeypatch.setattr(
+        fleet_repository, "find_active_membership_by_vehicle", no_active
+    )
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
         return VehicleReference(vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=None)
@@ -427,12 +429,12 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
     monkeypatch.setattr(fleet_repository, "soft_delete", soft_delete)
 
-    result = await fleet_service.soft_delete_fleet(
+    deletion_response = await fleet_service.soft_delete_fleet(
         fake_db_session(), fleet_record.fleet_id
     )
 
     assert len(closed) == 2
-    assert result == {"message": "Fleet deleted successfully"}
+    assert deletion_response == {"message": "Fleet deleted successfully"}
 
 
 @pytest.mark.asyncio

@@ -1,22 +1,21 @@
 """Business service and public contract of the fleet domain.
 
 This module holds the business rules for fleet records and fleet-vehicle
-membership. Other domains may only call the public `resolve_*` functions to
-obtain internal DTOs, and must never receive the ORM model or HTTP response
-schema of the fleet domain. This domain depends on the `vehicles` domain's
+membership. No other domain calls into it yet; one that does must go through
+this service and must never receive the ORM model or HTTP response schema of
+the fleet domain. This domain depends on the `vehicles` domain's
 public service to resolve a VIN into a vehicle and to enrich a response with
 a vehicle's VIN/license plate/status - the same one-directional edge shape
 already established by `telematics -> vehicles` and `drivers -> vehicles`.
 """
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.fleet.repository as fleet_repository
 import app.domains.vehicles.service as vehicle_service
-from app.domains.fleet import repository as fleet_repository
 from app.domains.fleet.exceptions import (
     FleetConflictError,
     FleetMembershipConflictError,
@@ -36,43 +35,10 @@ from app.domains.fleet.schemas import (
     FleetVehicleListResponse,
     FleetVehicleResponse,
 )
-from app.domains.fleet.types import FleetReference, FleetStatus
+from app.domains.fleet.types import FleetStatus
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
-
-
-def to_fleet_reference(fleet_record: FleetModel) -> FleetReference:
-    """Convert an ORM record into a minimal DTO for other domains.
-
-    Args:
-        fleet_record: An active fleet record.
-
-    Returns:
-        DTO containing the internal ID and name of the fleet.
-    """
-    return FleetReference(
-        fleet_id=fleet_record.fleet_id,
-        name=fleet_record.name,
-    )
-
-
-async def resolve_fleet_reference_by_id(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-) -> FleetReference | None:
-    """Find an active fleet by ID and return its internal DTO.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-
-    Returns:
-        `FleetReference` if the fleet is found; otherwise `None`.
-
-    Side Effects:
-        Performs a read-only query only; does not commit or rollback.
-    """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    return to_fleet_reference(fleet_record) if fleet_record else None
+from app.libs.common.pagination import normalize_page_window
 
 
 def to_membership_response(
@@ -122,8 +88,14 @@ async def build_fleet_response(
     vehicle_count = await fleet_repository.count_active_memberships_by_fleet(
         db_session, fleet_record.fleet_id
     )
-    return FleetResponse.model_validate(
-        {**fleet_record.__dict__, "vehicle_count": vehicle_count}
+    return FleetResponse(
+        fleet_id=fleet_record.fleet_id,
+        fleet_code=fleet_record.fleet_code,
+        name=fleet_record.name,
+        status=fleet_record.status,
+        vehicle_count=vehicle_count,
+        created_at=fleet_record.created_at,
+        updated_at=fleet_record.updated_at,
     )
 
 
@@ -187,6 +159,7 @@ async def get_fleet(
 
 async def list_fleets(
     db_session: AsyncSession,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: FleetStatus | None = None,
@@ -202,12 +175,13 @@ async def list_fleets(
     Returns:
         Paginated fleet list response.
     """
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     fleet_records = await fleet_repository.list_all(
-        db_session, skip, page_size, status_filter
+        db_session,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        status_filter=status_filter,
     )
     total = await fleet_repository.count(db_session, status_filter)
 
@@ -217,8 +191,8 @@ async def list_fleets(
             for fleet_record in fleet_records
         ],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -308,7 +282,7 @@ async def soft_delete_fleet(
     )
     for membership_record in active_memberships:
         await fleet_repository.close_membership(
-            db_session, membership_record, left_at=datetime.now(timezone.utc)
+            db_session, membership_record, left_at=utc_now()
         )
 
     fleet_record = await fleet_repository.soft_delete(db_session, fleet_id)
@@ -360,7 +334,7 @@ async def add_vehicle_to_fleet(
             f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
         )
 
-    existing_membership = await fleet_repository.get_active_membership_by_vehicle(
+    existing_membership = await fleet_repository.find_active_membership_by_vehicle(
         db_session, vehicle_reference.vehicle_id
     )
     if existing_membership is not None:
@@ -376,7 +350,7 @@ async def add_vehicle_to_fleet(
             db_session,
             fleet_id=fleet_id,
             vehicle_id=vehicle_reference.vehicle_id,
-            joined_at=datetime.now(timezone.utc),
+            joined_at=utc_now(),
         )
     except IntegrityError as error:
         raise FleetMembershipConflictError(
@@ -419,7 +393,7 @@ async def remove_vehicle_from_fleet(
     if vehicle_reference is None:
         raise FleetVehicleNotFoundError(f"Vehicle with VIN '{vehicle_vin}' not found")
 
-    active_membership = await fleet_repository.get_active_membership_by_vehicle(
+    active_membership = await fleet_repository.find_active_membership_by_vehicle(
         db_session, vehicle_reference.vehicle_id
     )
     if active_membership is None or active_membership.fleet_id != fleet_id:
@@ -429,13 +403,14 @@ async def remove_vehicle_from_fleet(
         )
 
     await fleet_repository.close_membership(
-        db_session, active_membership, left_at=datetime.now(timezone.utc)
+        db_session, active_membership, left_at=utc_now()
     )
 
 
 async def list_fleet_vehicles(
     db_session: AsyncSession,
     fleet_id: UUID,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> FleetVehicleListResponse:
@@ -466,23 +441,21 @@ async def list_fleet_vehicles(
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     membership_records = await fleet_repository.list_active_memberships_by_fleet(
-        db_session, fleet_id, offset=skip, limit=page_size
+        db_session, fleet_id, offset=page_window.offset, limit=page_window.page_size
     )
     total = await fleet_repository.count_active_memberships_by_fleet(
         db_session, fleet_id
     )
 
-    items = []
+    fleet_vehicle_responses = []
     for membership_record in membership_records:
         vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
             db_session, membership_record.vehicle_id
         )
-        items.append(
+        fleet_vehicle_responses.append(
             FleetVehicleResponse(
                 vehicle_id=membership_record.vehicle_id,
                 vin=vehicle_summary.vin if vehicle_summary else None,
@@ -495,13 +468,17 @@ async def list_fleet_vehicles(
         )
 
     return FleetVehicleListResponse(
-        items=items, total=total, page=page, page_size=page_size
+        items=fleet_vehicle_responses,
+        total=total,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
 async def list_fleet_membership_history(
     db_session: AsyncSession,
     fleet_id: UUID,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> FleetMembershipHistoryResponse:
@@ -528,23 +505,26 @@ async def list_fleet_membership_history(
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     membership_records = await fleet_repository.list_memberships_by_fleet(
-        db_session, fleet_id, offset=skip, limit=page_size
+        db_session, fleet_id, offset=page_window.offset, limit=page_window.page_size
     )
     total = await fleet_repository.count_memberships_by_fleet(db_session, fleet_id)
 
-    items = []
+    membership_responses = []
     for membership_record in membership_records:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
             db_session, membership_record.vehicle_id
         )
         vehicle_vin = vehicle_reference.vin if vehicle_reference else None
-        items.append(to_membership_response(membership_record, vehicle_vin))
+        membership_responses.append(
+            to_membership_response(membership_record, vehicle_vin)
+        )
 
     return FleetMembershipHistoryResponse(
-        items=items, total=total, page=page, page_size=page_size
+        items=membership_responses,
+        total=total,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
