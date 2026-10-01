@@ -1,8 +1,9 @@
-"""FastAPI router for Telematic device CRUD and the F-J2 config push.
+"""FastAPI router for Telematic device CRUD and the F-J2 config pushes.
 
 Handlers only translate HTTP to service calls. Domain exceptions are not
 caught here: `app/api/main.py` maps each shared error base once
-(`TelematicNotFoundError` and `TelematicVehicleNotFoundError` -> 404,
+(`TelematicNotFoundError`, `TelematicVehicleNotFoundError` and the fleet
+push's `FleetNotFoundError` -> 404,
 `TelematicConflictError` and
 `TelematicNotConfigurableError` -> 409, `TelematicCommandPublishError` ->
 502) with the same `{"detail": message}` body for every router.
@@ -18,6 +19,7 @@ from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicConfigResponse,
     TelematicCreateRequest,
+    TelematicFleetConfigPushResponse,
     TelematicListResponse,
     TelematicResponse,
     TelematicUpdateRequest,
@@ -151,6 +153,38 @@ async def soft_delete_telematic_endpoint(
             soft-deleted (404).
     """
     await telematics_service.soft_delete_telematic(db_session, telematic_id)
+
+
+@router.post(
+    "/fleets/{fleet_id}/config", response_model=TelematicFleetConfigPushResponse
+)
+async def push_fleet_config_endpoint(
+    fleet_id: UUID,
+    telematic_config_push_request: TelematicConfigPushRequest,
+    db_session: AsyncSession = Depends(get_db),
+) -> TelematicFleetConfigPushResponse:
+    """Push a telemetry publish-interval config to every device of a fleet (F-J2).
+
+    Answers 200 even when some vehicles were skipped or failed: the
+    partial outcome is in the per-vehicle results (planner D9).
+
+    Args:
+        fleet_id: Internal ID of the fleet.
+        telematic_config_push_request: Desired telemetry publish interval.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The count per outcome and one result per active fleet member.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is soft-deleted
+            (404).
+    """
+    return await telematics_service.push_fleet_config(
+        db_session,
+        fleet_id,
+        telematic_config_push_request,
+    )
 
 
 @router.post("/{telematic_id}/config", response_model=TelematicConfigResponse)

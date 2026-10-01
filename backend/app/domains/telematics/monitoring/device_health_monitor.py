@@ -14,12 +14,13 @@ anywhere in this backend's data.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.notifications.service as notifications_service
+import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
@@ -108,7 +109,6 @@ async def check_devices_for_silence(db_session: AsyncSession) -> None:
     """
     devices = await telematics_repository.list_active_with_vehicle(db_session)
     now = utc_now()
-    threshold = timedelta(minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES)
     checked_count = 0
     alerted_count = 0
     skipped_count = 0
@@ -136,7 +136,8 @@ async def check_devices_for_silence(db_session: AsyncSession) -> None:
             skipped_count += 1
             continue
 
-        if now - last_seen_at < threshold:
+        # The same rule as TelematicResponse.is_silent (one shared helper).
+        if not silence_rule.calculate_is_device_silent(last_seen_at, now=now):
             continue
 
         last_notified_at = await notifications_service.resolve_last_notified_at(

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
+import app.domains.telemetry.service as telemetry_public_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
@@ -33,6 +34,23 @@ from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
 
 UNKNOWN_VIN = "1HGBH41JXMN999999"
+
+
+@pytest.fixture(autouse=True)
+def vehicle_never_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every mounted vehicle look like it never reported telemetry.
+
+    ``build_telematic_response`` derives the F-J1 health fields through the
+    telemetry public service; these tests are not about health, so the
+    lookups return "no telemetry" instead of touching the fake session.
+    """
+
+    async def no_last_telemetry_at(db_session: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(
+        telemetry_public_service, "resolve_last_telemetry_at", no_last_telemetry_at
+    )
 
 
 @pytest.mark.asyncio
@@ -165,6 +183,11 @@ async def test_build_telematic_response_handles_never_configured_device() -> Non
     assert telematic_response.vehicle_vin is None
     assert telematic_response.telemetry_interval_seconds is None
     assert telematic_response.config_pushed_at is None
+    # F-J1: an unmounted device has no health to report.
+    assert telematic_response.last_seen_at is None
+    assert telematic_response.is_online is False
+    assert telematic_response.is_silent is False
+    assert telematic_response.last_signal_strength_dbm is None
 
 
 @pytest.mark.asyncio

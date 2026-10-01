@@ -44,6 +44,8 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert "/api/v1/vehicles/activation-summary" in paths
     # F-J2: push a telemetry publish-interval config to a device over MQTT.
     assert "/api/v1/telematics/{telematic_id}/config" in paths
+    # F-J2 (D9): the fleet-wide config push, one result per member.
+    assert "post" in paths["/api/v1/telematics/fleets/{fleet_id}/config"]
     # F-A6/F-C6: per-vehicle SOC-based operating and energy-usage reports.
     assert "/api/v1/telemetry/vehicles/{vehicle_id}/operating-report" in paths
     assert "/api/v1/telemetry/vehicles/{vehicle_id}/energy-usage" in paths
@@ -106,6 +108,27 @@ def test_people_package_routes_are_registered() -> None:
     route_paths = [getattr(route, "path", "") for route in notifications_router.routes]
     assert route_paths.index("/unread-count") < route_paths.index("/{notification_id}")
     assert route_paths.index("/mark-all-read") < route_paths.index("/{notification_id}")
+
+
+def test_telematic_response_exposes_device_health_fields() -> None:
+    """Device reads carry the F-J1 health fields; the fleet push reports per vehicle."""
+    schemas = app.openapi()["components"]["schemas"]
+
+    telematic_fields = schemas["TelematicResponse"]["properties"]
+    assert {
+        "last_seen_at",
+        "is_online",
+        "is_silent",
+        "last_signal_strength_dbm",
+    } <= set(telematic_fields)
+    fleet_push_fields = schemas["TelematicFleetConfigPushResponse"]["properties"]
+    assert {
+        "fleet_id",
+        "published_count",
+        "skipped_count",
+        "failed_count",
+        "results",
+    } <= set(fleet_push_fields)
 
 
 def test_every_shared_error_base_has_a_registered_handler() -> None:

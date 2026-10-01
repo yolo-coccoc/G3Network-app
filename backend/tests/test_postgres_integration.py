@@ -1853,3 +1853,84 @@ async def test_support_filters_and_sos_alert_on_postgres(
             await db.rollback()
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_device_health_fields_follow_real_telemetry_on_postgres(
+    temporary_database: str,
+) -> None:
+    """A fresh reading is online; one back-dated past the silence threshold is
+    silent; an unmounted device has no health (F-J1, D2)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    now = datetime.now(timezone.utc)
+    silent_received_at = now - timedelta(
+        minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 5
+    )
+    try:
+        async with session_factory() as db:
+            online_vehicle = _integration_vehicle(license_plate="IT-HEALTH-ON")
+            silent_vehicle = _integration_vehicle(license_plate="IT-HEALTH-OFF")
+            db.add_all([online_vehicle, silent_vehicle])
+            await db.flush()
+            devices: dict[str, TelematicModel] = {}
+            for label, vehicle_id in (
+                ("online", online_vehicle.vehicle_id),
+                ("silent", silent_vehicle.vehicle_id),
+                ("unmounted", None),
+            ):
+                devices[label] = TelematicModel(
+                    telematic_id=uuid4(),
+                    telematic_serial=f"IT-TBOX-{uuid4().hex[:12]}",
+                    vehicle_id=vehicle_id,
+                    status=TelematicStatus.ACTIVE,
+                )
+                db.add(devices[label])
+            await db.flush()
+            for label, received_at, signal_strength in (
+                ("online", now - timedelta(seconds=30), -67),
+                ("silent", silent_received_at, -95),
+            ):
+                device = devices[label]
+                await telemetry_repository.insert_telemetry(
+                    db,
+                    {
+                        "message_uuid": uuid4(),
+                        "telematic_id": device.telematic_id,
+                        "telematic_serial": device.telematic_serial,
+                        "vehicle_id": device.vehicle_id,
+                        "recorded_at": received_at,
+                        "received_at": received_at,
+                        "location": coordinates_to_location(10.8, 106.7),
+                        "soc": 80.0,
+                        "signal_strength": signal_strength,
+                        "raw_payload": {"source": "postgres-integration"},
+                    },
+                )
+
+            online = await telematics_service.get_telematic(
+                db, devices["online"].telematic_id
+            )
+            silent = await telematics_service.get_telematic(
+                db, devices["silent"].telematic_id
+            )
+            unmounted = await telematics_service.get_telematic(
+                db, devices["unmounted"].telematic_id
+            )
+
+            assert online.last_seen_at is not None
+            assert online.is_online is True
+            assert online.is_silent is False
+            assert online.last_signal_strength_dbm == -67
+            assert silent.last_seen_at == silent_received_at
+            assert silent.is_online is False
+            assert silent.is_silent is True
+            assert silent.last_signal_strength_dbm == -95
+            assert unmounted.last_seen_at is None
+            assert unmounted.is_online is False
+            assert unmounted.is_silent is False
+            await db.rollback()
+    finally:
+        await engine.dispose()
