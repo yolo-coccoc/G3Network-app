@@ -2,8 +2,10 @@
 
 > Feature code: F-A1, F-A2, F-A3, F-A4, F-A5, F-A6, F-B2, F-C1, F-C2, F-C5,
 > F-C6, F-D1, F-E1, F-E4, F-F2, F-G1, F-G2, F-I1, F-I2, F-J1, F-J2, F-J3
-> Status: 🚧 In progress — phase A (schema + settings) done 2026-10-01;
-> phases B and C pending
+> Status: ✅ Done (MVP/POC, happy path) 2026-10-01 — phases A (schema +
+> settings), B (four work packages) and C (fleet views, geofence alerts,
+> device health, fleet push), end-to-end run and convention review done;
+> what stays out is listed in §2.1 and §6
 > Created: 2026-10-01
 >
 > Inputs: four read-only gap analyses (2026-10-01) of every built/in-progress
@@ -27,7 +29,7 @@ recommended option for each; every row is cheap to revisit.
 |---|---|---|---|---|
 | D1 | Scope | Every (a)-class gap, incl. geofencing, report breakdowns, F-C5 time series, OCPP 2.0.1 Boot/Heartbeat (F-G2 "2.0.1-ready") | Small items only | ✅ Agent choice 2026-10-01 |
 | D2 | "Online" vehicle | Newest telemetry `received_at` within `TELEMETRY_ONLINE_THRESHOLD_SECONDS` (300), computed at read time | Reuse the 180-min silence threshold (too coarse for a map) | ✅ Agent choice |
-| D3 | "Available" station | ≥1 connector whose last status is `Available` (D4 busy rule), station not deleted and OPERATIONAL; `is_online` NOT required (2.0.1 chargers never stamp liveness) | Also require online; keep maintenance-only | ✅ Agent choice |
+| D3 | "Available" station | ≥1 connector whose last status is `Available` (D4 busy rule), station not deleted and OPERATIONAL; `is_online` NOT required (2.0.1 chargers never stamp liveness) | Also require online; keep maintenance-only | ✅ Agent choice (premise corrected — see the notes below) |
 | D4 | Report calendar | Buckets in `APP_REPORT_TIMEZONE` (`Asia/Ho_Chi_Minh`); timestamps stay UTC | UTC buckets | ✅ Agent choice |
 | D5 | F-C5 time-slot attribution | Energy-register deltas between consecutive samples, bucketed by sample time | Whole session kWh at `ended_at` (wrong across slot boundaries) | ✅ Agent choice |
 | D6 | Geofence owner | **Fleet** (`geofences.fleet_id`; applies to the fleet's current member vehicles). Designed owner is the customer account (D1 of the domain model), which doesn't exist; `account_id` stays a planned column | Per-vehicle geofences; defer until identity | ✅ Agent choice |
@@ -37,6 +39,35 @@ recommended option for each; every row is cheap to revisit.
 | D10 | Unknown VIN on telematics create/update (#83) | 404 `TelematicVehicleNotFoundError`; explicit `vehicle_vin: null` still unassigns | Keep silent unassign | ✅ Agent choice |
 | D11 | Devices of a soft-deleted vehicle | Ignored by ingestion mapping and the silence monitor (telematics checks the vehicle via the existing `telematics → vehicles` edge) | Unassign on vehicle delete (needs a `vehicles → telematics` cycle) | ✅ Agent choice |
 | D12 | SOS from a hotline call | `SupportSosCreateRequest.channel` (default `IN_APP`); location required only for `IN_APP` | TICKET workaround (wrong SLA) | ✅ Agent choice |
+
+Notes found while building (2026-10-01):
+
+- **D3's stated premise was wrong, the decision stands.** "2.0.1 chargers
+  never stamp liveness" is false: the raw message log
+  (`ocpp/raw_log.py` → `ocpp_state_service`) stamps `last_seen_at` for every
+  inbound frame of *either* protocol, so 2.0.1 stations already reported a
+  meaningful `is_online`. `is_online` is still not required for
+  "available" — the connector's last status is the availability signal,
+  and stale statuses of an offline charger stay `future.md` item 76.
+- **D13 of the OCPP planner is reopened** (as D1 scoped it): the 2.0.1
+  adapter now handles `BootNotification` (device info and `last_boot_at`
+  via `ocpp_state_service.record_charger_boot`, heartbeat interval
+  `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS`) and `Heartbeat`; the 2.0.1
+  simulator boots first. The rest of 2.0.1 parity (stop reason, `idToken`,
+  non-energy measurands) stays `future.md` item 78, so a 2.0.1 session's
+  SoC/power summary fields (F-B2) are null.
+- **Edges actually added** (`domain-boundaries.md`, commit `7dd982c`):
+  `telemetry → fleet`, `telematics → fleet`, `support → notifications`, plus
+  new calls on existing edges — `telematics → telemetry`
+  (`resolve_vehicle_live_status`), `charging_stations → charging_sessions`
+  (`resolve_station_energy_total`, the all-stations energy endpoint is
+  served by `charging_stations` because it owns the station directory);
+  the docs sync added the remaining ones to the table: `telemetry →
+  vehicles` (`resolve_vehicle_summary_by_id`, fleet live positions) and
+  `telematics → vehicles` (D11's soft-deleted-vehicle check).
+- **Not built inside this round's scope:** the fleet operating report has no
+  day/week/month breakdown (only the per-vehicle report does); F-C6
+  (`energy-usage`) is unchanged.
 
 ### 2.1 Out of scope (deferred, unchanged)
 
@@ -117,17 +148,65 @@ geofence entry/exit detection in ingestion → `GEOFENCE_ALERT`.
 - [x] **Phase A — schema + settings** (2026-10-01): models, baseline,
   DBML (18 built tables), settings; `make db-reset`, `make db-check` clean,
   `make check`, integration 6/6.
-- [ ] **Phase B** — four parallel worktree agents (telemetry, charging,
-  devices, people); review, merge, gate.
-- [ ] **Phase C** — consumers of phase B's public functions.
-- [ ] **Verify and document** — `e2e-sim`, `convention-reviewer`,
-  `docs-sync`, feature-list statuses.
+- [x] **Phase B** (2026-10-01) — four parallel worktree agents, reviewed,
+  merged and gated:
+  - B-devices: `a37592c` (#83/D10, #82 update pre-check, D11), `40a1afc`
+    (`GET /vehicles?activation_status=`).
+  - B-telemetry: `135ec9b` (`/latest` `received_at`/`is_online`, station
+    coordinates in the battery alert, settings for tariff and SOH threshold,
+    `/battery-health`, operating-report `granularity` + `format=csv`,
+    `resolve_vehicle_live_status`/`resolve_vehicle_operating_summary`).
+  - B-charging: `6d11f09` (session summary, list filters, energy series),
+    `50886d6` (2.0.1 Boot/Heartbeat), `3d41760` (availability D3,
+    `/charging-stations/{id}/connectors`, all-stations energy).
+  - B-people: `7b7d8cc` (notifications), `112adbd` (SOS channel,
+    `SOS_ALERT`, support filters), `433dfab` (driver filters), `0feb9f3`
+    (fleet filters, membership close by ID, geofence CRUD, public lookups),
+    `f9e1908` (PostgreSQL integration tests, #85).
+- [x] **Phase C** (2026-10-01) — `23e8584` (device health on the
+  telematics API via `monitoring/silence_rule.py`, fleet-wide config push
+  `POST /telematics/fleets/{fleet_id}/config`), `ac78ffc`
+  (`/telemetry/fleets/{fleet_id}/vehicles/latest`,
+  `/telemetry/fleets/{fleet_id}/operating-report[?format=csv]`, geofence
+  entry/exit → `GEOFENCE_ALERT` in ingestion via `telemetry/geofencing.py`),
+  `7dd982c` (import-linter contract for `geofencing`, a smoke test that
+  fails when a domain module is missing from its contract, new edges in
+  `domain-boundaries.md`).
+- [ ] **Verify and document** — `e2e-sim`, `convention-reviewer` (running);
+  `docs-sync` done 2026-10-01 (feature list, status docs, `future.md`,
+  rules — see §5).
 
 ## 5. Verification
 
-Filled in per phase.
+| Phase | Command | Result |
+|---|---|---|
+| A | `make db-reset`, `make db-check` | clean ("No new upgrade operations detected") |
+| A | `make check`; `RUN_DB_INTEGRATION=1` integration suite | pass; 6/6 |
+| B + C | `make check` (ruff, import-linter, mypy, smoke tests, domain-model check) | pass — 553 passed, 18 skipped (the integration tests) at the start of the docs sync; 562 passed, 18 skipped at `c4764f4` (after the review follow-ups `3cb5f40`, `c4764f4`); "18 built tables match the models; views are up to date" |
+| B + C | `make backend-test-integration` (`RUN_DB_INTEGRATION=1`) | 18/18 pass (new: replace-after-delete device, battery-health day buckets, report periods incl. a reading at the inclusive end, drivers/fleet/geofence/support/SOS-notification tests) |
+| docs | `make check` after the docs sync | pass |
+
+| e2e | `e2e-sim` against the real stack (API, MQTT ingestion, OCPP gateway, PostgreSQL) | pass: geofence ENTER then EXIT alerts over real MQTT; fleet live positions (online, signal); device health (online, not silent); fleet operating report + CSV TOTAL row; fleet-wide config push (1 published); hotline SOS → `SOS_ALERT`; nearby `is_available_only` with `available_connector_count`/`is_online`; station connectors view; 1.6J session summary (SoC 40→95 %, 120 kW); session filters; hourly energy series and all-stations totals; 2.0.1 Boot + session completed; zero ERROR lines in all service logs |
+| review | `convention-reviewer` over `37caa93^..HEAD` | no blocker/major; minor keyword-only findings fixed in `c4764f4`; nested-schema naming and parent/child id pairs left (documented exception) |
+
+**Found by the end-to-end run, fixed in `3cb5f40`:** every write endpoint
+answered before its transaction committed — FastAPI runs a `yield`
+dependency's teardown (our commit) after the response unless it is declared
+`scope="function"`. The 2.0.1 seed got 404 creating an EVSE right after
+creating its station. All 81 `Depends(get_db)` now use
+`scope="function"`; `tests/test_db_session_scope_smoke.py` enforces it.
+
+Docs synced 2026-10-01: `feature-list.md` (all touched features, NF-02,
+NF-18), `docs/00-status/overview.md`, `docs/00-status/architecture.md`,
+`future.md` (items 18, 35, 47, 49, 54, 63, 82-85 moved to
+`future-resolved.md`; dated updates on 33, 37, 50, 60, 72, 76, 78; new item
+86), `.claude/rules/` (`directory-structure.md`, `database.md`,
+`domain-boundaries.md`, `dev-environment.md`), the `ocpp16-reference`
+skill, `README.md`'s scope summary, and a dated note on D13 in
+`backend-ocpp16-charger-integration.md`.
 
 ## 6. Deferred / follow-ups
 
-Section 2.1; geofence `account_id` once identity exists (future.md item to
-add with phase C).
+Section 2.1; geofence `account_id` once customer accounts exist
+(`future.md` item 86, decision D6). Partly addressed items that stay open
+with a dated update: `future.md` 33, 37, 50, 60, 72, 76, 78.

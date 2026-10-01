@@ -18,8 +18,8 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [future-resolved.md](./future-resolved.md) (currently
-items 9, 10, 12, 14 and 24), so a reference like "`future.md` item 10" can be found
-there.
+items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
+"`future.md` item 10" can be found there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
 
@@ -219,36 +219,6 @@ there.
   handler (which would duplicate output), and avoid logging the same traceback
   at multiple boundaries without adding new context. The backend observability
   stack must be decided before adding any new dependency or infrastructure.
-
----
-
-### 18. API to assign/unassign a telematic device for a vehicle
-
-- **Short description**: Add the provisioning use case allowing an Admin to
-  assign, change, or remove a telematic from a vehicle; telemetry already has
-  the `telematics` table, foreign key, and unique constraint, but the vehicles
-  domain has no corresponding business API yet.
-- **Purpose/role in the system**:
-  - Completes the "assign device" part of the Vehicle Management feature.
-  - Ensures a vehicle has at most one telematic and prevents a device from
-    being assigned incorrectly.
-  - Allows operating ingestion without having to insert/update the mapping via
-    manual SQL.
-  - Has a clear contract for replace/unassign, conflicts, and nonexistent
-    device/vehicle.
-- **Reason for deferral**: The initial vehicles CRUD MVP excluded
-  provisioning from scope; telemetry ingestion currently only needs the
-  mapping to exist for lookup, and no Admin workflow for device management has
-  been built yet.
-- **Related planner/feature**: `backend-crud-vehicles.md`,
-  `backend-telemetry-ingestion.md` (F-F2, F-A1).
-- **Date recorded**: 2026-07-27
-- **Additional notes**: Since the telematic model/repository belongs to the
-  telemetry domain, vehicles must not import these internal modules directly.
-  Before implementing, decide the router/use-case owner; if vehicles
-  orchestrates it, it must call the public API in `telemetry/service.py`. The
-  operation must be atomic and must translate unique/FK `IntegrityError` into
-  a clear domain conflict.
 
 ---
 
@@ -739,6 +709,7 @@ there.
   Still open from this item: the vehicle/station map, aggregated connector
   status, and any device-ACK/MQTT-command mechanism. See items 37, 40, 41
   and 42-48 below.
+- **Update 2026-10-01**: more of this item now exists (`docs/02-planners/done/backend-happy-path-completion.md`): the vehicle "map" data (`GET /telemetry/vehicles/{id}/latest` with `is_online`, fleet member positions via `GET /telemetry/fleets/{fleet_id}/vehicles/latest`), a per-station connector status view (`GET /charging-stations/{id}/connectors`) and per-station `available_connector_count` in the directory and nearby search, and geofence alerts (F-A5). Still open: a status view aggregated across all stations or a fleet, the device ACK (item 52) and pushing alert thresholds to devices (item 59).
 
 ### 34. Batched connector-count query for the station directory list endpoint
 
@@ -766,39 +737,6 @@ there.
   station_id`, filling in `0` for stations with no active connectors) and
   have `list_charging_stations` call it once instead of looping per station.
   Benchmark first rather than assuming it's needed.
-
----
-
-### 35. Online/offline status flag for F-A1
-
-- **Short description**: A per-vehicle/telematic online/offline status flag, derived from
-  telemetry ingestion (e.g. "offline" if no message received within a configurable
-  threshold).
-- **Purpose/role in the system**: F-A1 names "online/offline flag maintained" as a stated
-  constraint — fleet-facing screens need a live status signal beyond just "a latest record
-  exists," since a stale latest record still looks like data if nothing marks it stale.
-- **Reason for deferral**: Explicitly suspended on 2026-09-17 in favor of shipping schema
-  versioning first, then confirmed out of scope under this backend's MVP/POC scope
-  decision — no staleness-threshold config, computation (on-read vs. background sweep), or
-  API field exists yet. `app/libs/common/config.py`'s
-  `CHARGING_OFFLINE_TIMEOUT_SECONDS` (a charging station's derived
-  `is_online`) is the precedent an equivalent
-  `TELEMETRY_OFFLINE_THRESHOLD_SECONDS` could follow.
-- **Related planner/feature**: F-A1, `telemetry` domain.
-- **Date recorded**: 2026-09-17
-- **Additional notes**: When resuming, decide with the user whether the flag is computed
-  on read (compare `received_at`/`recorded_at` to now against a threshold, no new column)
-  or maintained by a background job (needs its own state and a definition of "flap"
-  handling); on-read is the simpler MVP-consistent default but hasn't been confirmed.
-- **Partial resolution (2026-09-17)**: F-J1/F-J3's periodic device-health monitor
-  (`telematics/monitoring/`) now computes silence the "background job" way this item
-  described, using the same `received_at`-vs-threshold comparison the "on-read" option
-  would have used, but it only produces a one-shot `DEVICE_OFFLINE_ALERT` notification per
-  silence episode - it does **not** persist a queryable online/offline flag/field anywhere
-  (no new column on `vehicles`/`telematics`, no API field). A fleet-facing screen wanting
-  "is this vehicle online right now" as a stored, queryable value still has nothing to read
-  - only the alert history via `GET /api/v1/notifications`. Resuming this item now means
-  deciding whether that's sufficient or a real flag/field is still wanted.
 
 ---
 
@@ -864,6 +802,7 @@ there.
   online/offline (heartbeat) half of this item is also still open.
 
 - **Partial resolution (2026-09-24)**: an `is_online` flag (derived from `last_seen_at`) now exists on stations, but nothing consumes it: F-A2/F-D1 still don't filter on it or on connector status, and a connector's last status is not invalidated when its charger goes offline — see items 49 and 76.
+- **Update 2026-10-01**: the occupancy half is built through item 49 (an available station needs at least one connector whose last status is `Available`). The online half was deliberately not wired in (decision D3 of `docs/02-planners/done/backend-happy-path-completion.md`): `is_online` is returned by the nearby search but not required, because the connector status is the availability signal. What is left of this item is item 76 (stale statuses of an offline charger).
 
 ### 38. True per-trip de-duplication for F-A2 battery alerts
 
@@ -1066,30 +1005,6 @@ there.
   raw time range, and whether trip boundaries should be persisted or
   computed on read.
 
-### 47. Geofencing for F-A5 (boundary config + in/out-of-zone alerts)
-
-- **Short description**: F-A5's geofencing half - geofence boundary
-  configuration (per vehicle/fleet, on `vehicles`) and in/out-of-zone
-  entry/exit detection and alerting (on `telemetry`) - is entirely
-  deferred. Only the location/history-query half of F-A5 was implemented.
-- **Purpose/role in the system**: Lets fleet managers define a geographic
-  boundary per vehicle/fleet and get alerted when a vehicle enters or
-  exits it - named in F-A5's Output ("in/out-of-zone alerts") and cited as
-  supporting the internal vehicle-repossession process.
-- **Reason for deferral**: Deferred by explicit request when F-A5's backend
-  was scoped, to ship the location-history half first. No geofence
-  boundary table, no PostGIS containment query, and no event/notification
-  wiring exist yet for this.
-- **Related planner/feature**: F-A5, `vehicles`, `telemetry`,
-  `docs/02-planners/done/backend-telemetry-query-api.md`.
-- **Date recorded**: 2026-09-17
-- **Additional notes**: When resuming, decide where geofence boundaries are
-  stored (likely a `vehicles`-owned table storing a PostGIS `geography`
-  polygon per vehicle/fleet), how entry/exit is detected (a `ST_Contains`/
-  `ST_Within` check per incoming telemetry point vs. a periodic batch
-  check), and whether in/out-of-zone events reuse the `notifications`
-  domain the way F-A2/F-A4 do.
-
 ### 48. TimescaleDB retention policy for `vehicle_telemetry`
 
 - **Short description**: F-A5's "trip history retained ≥6 months" constraint
@@ -1109,37 +1024,6 @@ there.
   `add_retention_policy`/compression policy via a migration once real
   storage volume justifies it, and confirm the actual retention window (the
   PRD only says "≥6 months," not an upper bound) as a business decision.
-
-### 49. Connector-status-aware availability for F-A2/F-D1
-
-- **Short description**: F-A2's nearest-operational-station lookup and
-  F-D1's nearby-station search both approximate "available" as
-  `deleted_at IS NULL AND maintenance_status = OPERATIONAL` — an admin-set
-  directory field, not a live signal. F-C2 now gives this backend a real
-  per-connector status (`Available`/`Occupied`/`Reserved`/`Unavailable`/
-  `Faulted`), but neither query reads it yet.
-- **Purpose/role in the system**: A station with every connector
-  `Occupied` or `Faulted` still shows up as "available" today - refining
-  both queries to also require at least one connector in `Available`
-  status would make "available" mean something closer to what a driver
-  actually needs.
-- **Reason for deferral**: F-C2 was scoped as storing the status column
-  only, not wiring it into other domains' queries - that's a second,
-  separate change (a join from `charging_stations`/`charging_connectors`
-  through `charging_evses`, filtered per station) that wasn't part of the
-  F-C2/F-D1 round. Item 37 already flagged this exact resume path before
-  F-C2 existed; this item narrows it now that the missing piece (the
-  status column) is actually there.
-- **Related planner/feature**: F-A2, F-D1, F-C2, item 37,
-  `charging_stations/repository.py`.
-- **Date recorded**: 2026-09-17
-- **Additional notes**: When resuming, add a repository query joining
-  `charging_connectors` (`status = 'Available'`) through `charging_evses`
-  to `charging_stations`, and decide whether "available" should require
-  *any* available connector or a minimum count - a business decision, not
-  a technical one.
-
-- **Update 2026-09-24 (decision D4)**: `ChargingConnectorStatus` now has ten values (2.0.1's five plus 1.6J's `Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing`). When this item is built use the busy rule: a connector is free only when `Available`; `Occupied`, `Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE` and `Finishing` are busy (`Suspended*` are normal pauses, not faults); `Reserved`, `Unavailable` and `Faulted` are not free either.
 
 ### 50. F-J1's per-device health dashboard (SIM/power status, firmware view)
 
@@ -1164,6 +1048,7 @@ there.
   accordingly and surface them on a per-device endpoint. Don't build a
   "dashboard" UI here regardless - that's the admin portal's job; this
   repo's part is only the data.
+- **Update 2026-10-01**: the last-seen half of the dashboard data is built (`docs/02-planners/done/backend-happy-path-completion.md`): every telematics device response carries `last_seen_at`, `is_online`, `is_silent` (the monitor's own rule, `telematics/monitoring/silence_rule.py`) and `last_signal_strength_dbm` (from the newest telemetry), all derived at read time. SIM/data status and power status still have no source, as described above.
 
 ### 51. F-J3's power-loss-vs-signal-loss discrimination
 
@@ -1232,22 +1117,6 @@ there.
 - **Date recorded**: 2026-09-17
 - **Additional notes**: Needs per-device previous-value history (a simple
   "previous interval" column, or a small history table) plus item 52.
-
-### 54. Fleet- and vehicle-group-scoped config push (F-J2)
-
-- **Short description**: F-J2 says "push per vehicle/fleet"; today it is
-  one device per HTTP call.
-- **Purpose/role in the system**: Ops updating an interval fleet-wide
-  today must call the endpoint once per device.
-- **Reason for deferral**: Writing a fleet-wide push loop now would be a
-  preemptive batched operation - the runtime conventions' "no premature
-  batching" rule forbids building this ahead of a demonstrated need (same
-  reasoning as items 5, 29, 34).
-- **Related planner/feature**: F-J2.
-- **Date recorded**: 2026-09-17
-- **Additional notes**: A simple per-device loop calling the existing
-  endpoint N times is the right shape when this is picked up - only batch
-  the underlying publish if a benchmark shows the loop is too slow.
 
 ### 55. Reliable command delivery via an outbox table and dispatcher worker (F-J2)
 
@@ -1353,6 +1222,7 @@ there.
   tariff table rather than a single setting - a `Settings`-level override
   (e.g. `TELEMETRY_ENERGY_COST_PER_KWH_VND`) would only half-satisfy the
   constraint (one global scalar, still no time-of-use).
+- **Update 2026-10-01**: the constant is gone: the price is now the setting `TELEMETRY_ENERGY_COST_PER_KWH_VND` (default 3000.0, read at call time by the per-vehicle and fleet reports) - the "one global scalar" half this item anticipated. A time-of-use or per-tenant tariff is still open (and overlaps F-C8's tariff design).
 
 ### 61. Vendor-confirmed battery capacity and a vehicle-model catalog
 
@@ -1399,25 +1269,6 @@ there.
   fleet account?) before the column can be populated meaningfully.
 
 - **Update 2026-09-24**: `charging_sessions` now has an `id_tag` column (OCPP 1.6J), the first identity-bearing field on a session, but it is an unvalidated string: there is still no vehicle/customer/driver identity and no `Authorize` validation, and the 2.0.1 path still ignores `idToken`. The blocker described here is unchanged.
-
-### 63. Fleet-level rollup and CSV export for F-A6
-
-- **Short description**: F-A6's stated output includes a multi-vehicle
-  fleet view and CSV export. This round only ships the per-vehicle JSON
-  endpoint.
-- **Purpose/role in the system**: A fleet manager comparing vehicles or
-  exporting a report for offline analysis needs more than one API call
-  per vehicle.
-- **Reason for deferral**: No `fleet` domain has active source in this
-  backend yet (per `directory-structure.md`, a domain isn't created before
-  a concrete task needs it), and no CSV export machinery exists anywhere
-  in the codebase.
-- **Related planner/feature**: F-A6, `docs/02-planners/done/backend-operating-energy-reports.md`.
-- **Date recorded**: 2026-09-17
-- **Additional notes**: When a `fleet` domain is justified by a concrete
-  task, it should call `telemetry.get_vehicle_operating_report` per
-  vehicle rather than duplicating the SOC-fold query - the aggregation
-  belongs at the fleet layer, not inside `telemetry`.
 
 ### 64. SOC dead-band or current-integration energy method for F-A6/F-C6
 
@@ -1668,6 +1519,7 @@ there.
   ignition/duty concept, per item 46) - ship `distance_per_day_km`
   instead of inventing a field with that name. F-E3 and F-A8 remain
   separately blocked (items above) even once this item is resolved.
+- **Update 2026-10-01**: blocker (1) is resolved: `telemetry.service.resolve_vehicle_operating_summary` returns a frozen `VehicleOperatingSummary` DTO, and the fleet rollup exists as `GET /telemetry/fleets/{fleet_id}/operating-report[?format=csv]` (item 63) - F-E2's km/kWh/cost-per-km columns, aggregated and per vehicle, with export. Blocker (2) is only partly resolved: `notifications` has an unread count per vehicle (`GET /notifications/unread-count?vehicle_id=`), returned as an HTTP schema, not a count over a time window as a DTO. Still missing: SOH and alert columns in the fleet view, a time-bucketed fleet view, and "utilization rate". Ownership changed too: `telemetry → fleet` now exists (decision D7 of `docs/02-planners/done/backend-happy-path-completion.md`), so a dashboard inside `fleet` calling `telemetry` would form a cycle - extend the telemetry-owned fleet views instead, or decide a new owner first.
 
 ### 73. OCPP transport security for real chargers
 
@@ -1752,6 +1604,7 @@ there.
   this is built: a gun is free only when `Available`; `Preparing`,
   `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing` and `Occupied` are
   busy, and `Suspended*` are normal, not faults.
+- **Update 2026-10-01**: half of this item is built through item 49: F-A2/F-D1 "available" now requires at least one connector whose last status is `Available`. Requiring `is_online` was decided against for now (decision D3 of `docs/02-planners/done/backend-happy-path-completion.md`), and last statuses are still not invalidated when a charger goes offline (`GET /charging-stations/{id}/connectors` returns them as last reported). Both 1.6J and 2.0.1 stations now report a meaningful `is_online` (the raw log stamps `last_seen_at` for every inbound frame of either protocol). The open part is unchanged: stale-status handling, and whether "available" should also need the charger online.
 
 ### 77. Non-transaction (station-level, clock-aligned) metering
 
@@ -1780,6 +1633,7 @@ there.
 - **Date recorded**: 2026-09-24
 - **Additional notes**: The unified `charging_session_measurements` table
   already accepts non-energy measurands; only the 2.0.1 extraction is missing.
+- **Update 2026-10-01**: `BootNotification` (vendor, model, serial, firmware and `last_boot_at` stored through `ocpp_state_service.record_charger_boot`; heartbeat interval `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS` returned) and `Heartbeat` are now handled by the 2.0.1 adapter too - decision D13 of the 1.6J planner was reopened for this by `docs/02-planners/done/backend-happy-path-completion.md`, and the 2.0.1 simulator sends a `BootNotification` first. Still open: stop reason, `idToken`, non-energy measurands (so a 2.0.1 session's SoC/power summary fields stay null) and a post-boot configuration capture.
 
 ### 79. Raw OCPP message log: read API and retention
 
@@ -1853,106 +1707,29 @@ there.
   `DiagnosticsStatusNotification` need only an empty reply; `DataTransfer` needs a documented
   `status`). The QR/app flow itself needs `RemoteStartTransaction`, which is item 74.
 
+### 86. Move geofences from the fleet to the customer account
 
-### 82. A soft-deleted telematic device keeps blocking its vehicle
-
-- **Short description**: Soft-deleting a telematic device
-  (`telematics.service.soft_delete_telematic`) only sets `deleted_at`; the
-  row keeps its `vehicle_id`, and `uq_telematics_vehicle_id` is a full
-  unique constraint, not one scoped to live rows. Assigning a new device to
-  that vehicle (create or update with its VIN) passes the service's
-  live-device check (`repository.find_by_vehicle_id` ignores deleted rows)
-  and then fails at flush with a `409 TelematicConflictError`.
-- **Purpose/role in the system**: Replacing a broken or stolen device is the
-  normal provisioning path (F-G1, F-F2); today the vehicle can never get a
-  new device once its old one was deleted, short of editing the database.
-- **Reason for deferral**: Found during the 2026-10-01 source refinement,
-  which was kept behaviour-neutral apart from approved fixes; both
-  candidate fixes change the device lifecycle contract and need a decision:
-  (1) clear `vehicle_id` on soft delete (loses the "which vehicle did this
-  device belong to" history on the row), or (2) replace the constraint with
-  a partial unique index `WHERE deleted_at IS NULL`, the pattern
-  `driver_vehicle_assignments`/`fleet_vehicle_memberships` already use
-  (schema change: model, DBML, baseline migration).
-- **Related planner/feature**: `docs/02-planners/backend-crud-telematics.md`,
-  F-G1, F-F2; F-E4 in `feature-list.md` already names this as a known
-  weakness of the `telematics.vehicle_id` pattern; item 83.
+- **Short description**: `geofences` belongs to a fleet today (`geofences.fleet_id`, applied to
+  the fleet's current member vehicles). Once customer accounts exist, a geofence should belong to
+  the customer account that defined it (`geofences.account_id`, already designed as a planned
+  column in `domain-model.dbml`) and be applicable to any of that account's vehicles or fleets.
+- **Purpose/role in the system**: The domain model's tenant is the customer account (decision D1
+  of the domain model): a customer with several fleets, or an individual truck owner with no
+  fleet, should not have to duplicate an area per fleet, and a vehicle that is in no fleet is
+  never checked today. Account ownership is also what recipient scoping of `GEOFENCE_ALERT`s and
+  access control on the geofence API will need (items 40, 71 - same identity gap).
+- **Reason for deferral**: There is no customer account table and no `identity` domain yet;
+  decision D6 of `docs/02-planners/done/backend-happy-path-completion.md` scoped geofences to a fleet as the closest existing owner rather than block
+  F-A5. Adding `account_id` now would be a placeholder column with no table to reference.
+- **Related planner/feature**: `docs/02-planners/done/backend-happy-path-completion.md` (D6, D7), F-A5, F-F1 (`identity`), `fleet`, `telemetry`
+  (`telemetry/geofencing.py`), item 47 (resolved), item 40.
 - **Date recorded**: 2026-10-01
-- **Additional notes**: Option (2) keeps history and matches
-  `database.md`'s open/close-history convention; whichever is chosen, add a
-  PostgreSQL integration test (delete device, assign a new one to the same
-  vehicle) since the bug only shows at flush time.
-
-### 83. Telematics create/update silently ignore an unknown VIN
-
-- **Short description**: `telematics.service.create_telematic` leaves the
-  new device unassigned, and `update_telematic` *unassigns* the device,
-  when the `vehicle_vin` sent matches no live vehicle, instead of
-  rejecting the request (e.g. a 404 like fleet/driver assignment by VIN).
-- **Purpose/role in the system**: A typo in the VIN produces a device that
-  looks provisioned (201/200) but never maps telemetry to a vehicle;
-  ingestion then skips every message from it, and on update an existing
-  working assignment is lost.
-- **Reason for deferral**: The behaviour is documented in both functions'
-  docstrings ("Rule:") and is part of the current API contract; changing it
-  is an API change that needs approval, which the 2026-10-01 refinement did
-  not include.
-- **Related planner/feature**: `docs/02-planners/backend-crud-telematics.md`,
-  F-G1, F-F2; item 82.
-- **Date recorded**: 2026-10-01
-- **Additional notes**: When fixed, keep `vehicle_vin: null` on update as
-  the explicit way to unassign, add a `NotFoundError`-based telematics
-  exception (mapped centrally to 404 in `app/api/main.py`), and add smoke
-  tests for the unknown-VIN case on both create and update.
-
-### 84. Fleet membership of a soft-deleted vehicle cannot be closed
-
-- **Short description**: `DELETE /fleets/{fleet_id}/vehicles/{vehicle_vin}`
-  resolves the VIN through `vehicles.service.resolve_vehicle_reference_by_vin`,
-  which excludes soft-deleted vehicles, so once a member vehicle is
-  soft-deleted its open membership answers 404 and can never be removed
-  through the API. Soft-deleting a vehicle does not close its memberships
-  either: `vehicles` does not call `fleet` (the edge is `fleet → vehicles`
-  only).
-- **Purpose/role in the system**: Such a member stays in
-  `GET /fleets/{id}/vehicles` forever (listed with `vin`/`license_plate`/
-  `status` = null) and keeps counting toward the fleet's `vehicle_count`.
-- **Reason for deferral**: Removal moved from `vehicle_id` to VIN on
-  2026-10-01 (approved API change) to match how a vehicle is added; closing
-  orphaned memberships needs a decision on who owns it - a lookup that
-  includes soft-deleted vehicles, a removal by membership ID, or closing
-  memberships when a vehicle is soft-deleted (a new `vehicles → fleet` edge
-  would create a cycle, so that would need an event/hook design instead).
-- **Related planner/feature**: `docs/02-planners/done/backend-crud-fleet.md`,
-  F-E1.
-- **Date recorded**: 2026-10-01
-- **Additional notes**: `driver_vehicle_assignments` does not have this
-  problem: a driver's assignment is closed by driver ID
-  (`DELETE /drivers/{id}/assignment`).
-
-### 85. PostgreSQL integration tests for the drivers, fleet and support repositories
-
-- **Short description**: `make backend-test-integration`
-  (`backend/tests/test_postgres_integration.py`) covers the migration,
-  the 1.6J transaction-ID sequence, telemetry, an OCPP 1.6J session end to
-  end and notifications, but none of the `drivers`, `fleet` or `support`
-  repository queries.
-- **Purpose/role in the system**: Those domains rely on behaviour only
-  PostgreSQL shows: the partial unique indexes that allow one open
-  assignment/membership (`WHERE unassigned_at IS NULL` / `WHERE left_at IS
-  NULL`), `IntegrityError` → conflict translation at flush, the
-  paging/counting of open memberships behind the fleet vehicle list, and
-  support's filters and SLA columns. The smoke tests use fakes and cannot
-  catch a wrong query or index.
-- **Reason for deferral**: Out of scope for the 2026-10-01 refinement,
-  which only added integration tests for the bugs it fixed (telemetry
-  last-seen, notifications insert/mark-read).
-- **Related planner/feature**: `docs/02-planners/backend-automated-tests.md`,
-  item 16, F-E4, F-E1, F-I1/F-I2.
-- **Date recorded**: 2026-10-01
-- **Additional notes**: Follow the existing pattern in
-  `test_postgres_integration.py` (temporary database, skipped unless
-  `RUN_DB_INTEGRATION=1`).
+- **Additional notes**: When customer accounts land: add `account_id` (FK to
+  `customer_accounts`), decide whether `fleet_id` stays as an optional narrower scope, and
+  change the containment lookup used by ingestion from "the vehicle's current fleet" to "the
+  vehicle's account (and fleet, if kept)". Follow the DBML-first procedure in
+  `.claude/rules/database.md`; `fleet.service.list_geofences_containing` is the only query to
+  change on the read side.
 
 ---
 

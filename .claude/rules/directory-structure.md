@@ -21,15 +21,17 @@ implementation starts.
 │   │   │   ├── telematics/            # Telematic device profile and mapping to vehicles (F-G1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │   ├── commands/          # mqtt_publisher.py: F-J2 config-push publisher (the only MQTT publish path)
-│   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3)
+│   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3);
+│   │   │   │                          # silence_rule.py: pure silence rule shared by the monitor and the API's is_silent
 │   │   │   │
 │   │   │   ├── telemetry/             # Real-time & historical vehicle data (F-A1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │   ├── time_windows.py    # internal, pure: history/report time-window validation
 │   │   │   │   ├── mappers.py         # internal, pure: ORM row/MQTT message -> responses, F-A4 snapshot
-│   │   │   │   ├── reports.py         # internal, pure: F-A6/F-C6 report calculations
+│   │   │   │   ├── reports.py         # internal, pure: F-A3/F-A6/F-C6 report calculations, fleet rollup, CSV
 │   │   │   │   ├── detection.py       # internal, pure: F-A2/F-A3/F-A4 alert detectors
 │   │   │   │   ├── alerting.py        # internal, I/O: writes the alert notifications (owns the notifications/charging_stations edges)
+│   │   │   │   ├── geofencing.py      # internal, I/O: F-A5 geofence entry/exit per reading -> GEOFENCE_ALERT (owns the ingestion's fleet edge)
 │   │   │   │   └── ingestion/         # Receives telematics data via MQTT (EMQX)
 │   │   │   │       ├── mqtt_consumer.py  message_worker.py
 │   │   │   │       └── entrypoint.py  # entrypoint for "make telemetry-dev" (runs on the host, not a container — see dev-environment.md)
@@ -41,7 +43,7 @@ implementation starts.
 │   │   │   │   ├── ocpp_state_repository.py  # the matching queries
 │   │   │   │   └── ocpp/              # WebSocket server for charging station communication (OCPP 2.0.1 and 1.6J)
 │   │   │   │       ├── ocpp_server.py       # handshake, subprotocol negotiation, connection handling (no protocol handler)
-│   │   │   │       ├── ocpp201_charge_point.py # OCPP 2.0.1 adapter (OCPP201ChargePoint): TransactionEvent/MeterValues/StatusNotification + payload helpers
+│   │   │   │       ├── ocpp201_charge_point.py # OCPP 2.0.1 adapter (OCPP201ChargePoint): Boot/Heartbeat/TransactionEvent/MeterValues/StatusNotification + payload helpers
 │   │   │   │       ├── ocpp16_charge_point.py  # OCPP 1.6J adapter (OCPP16ChargePoint): Boot/Heartbeat/Status/Authorize/Start/Stop/MeterValues + post-boot GetConfiguration
 │   │   │   │       ├── ocpp16_measurements.py  # pure 1.6J MeterValues -> energy samples + measurements (never shares code with the 2.0.1 normalizer)
 │   │   │   │       ├── parsing.py           # protocol-neutral helpers shared by both adapters (OcppPayload, timestamp parsing/formatting)
@@ -61,9 +63,9 @@ implementation starts.
 │   │   │   ├── support/               # Support case tickets and SOS intake (F-I1, F-I2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   └── fleet/                 # Fleet CRUD and vehicle membership (F-E1)
+│   │   │   └── fleet/                 # Fleet CRUD, vehicle membership and geofences (F-E1, F-A5)
 │   │   │       └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
-│   │   │           # models.py has 2 tables: FleetModel, FleetVehicleMembershipModel
+│   │   │           # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
 │   │   │
 │   │   ├── api/
 │   │   │   └── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
@@ -118,7 +120,9 @@ reference the correct feature code.
 
 Some built domains are intentionally partial — `notifications` (no push, no
 recipient scoping), `support` (no partner directory/dispatch), `fleet` (no KPI
-rollup). Their planners in `docs/02-planners/done/` record what was left out.
+dashboard; its live-position and operating-rollup views live in `telemetry`,
+which depends on `fleet`, not the reverse). Their planners in
+`docs/02-planners/done/` record what was left out.
 
 `web-portal/` (React/TS) and `vehicle-app/` (Flutter) are planned monorepo
 components with no source yet; their directory structure and coding

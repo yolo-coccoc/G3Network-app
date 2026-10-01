@@ -22,11 +22,11 @@
 | From → To | Calls (public service) | For |
 |---|---|---|
 | `telemetry` → `telematics` | serial → `(telematic_id, vehicle_id)` resolution | F-A1 ingestion |
-| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `mark_vehicle_activated` on a vehicle's first telemetry | F-A6/F-C6 reports, F-F2 |
+| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `resolve_vehicle_summary_by_id` (VIN/plate/status in the fleet live-position list); `mark_vehicle_activated` on a vehicle's first telemetry | F-A6/F-C6 reports, F-E1, F-F2 |
 | `telemetry` → `notifications` | raise battery / anomaly / SOH alerts | F-A2, F-A4, F-A3 |
 | `telemetry` → `charging_stations` | nearest available station (≥1 `Available` connector) for the alert payload | F-A2 |
 | `telemetry` → `fleet` | `list_active_member_vehicle_ids` (fleet live positions, fleet report rollup), `find_current_fleet_id_by_vehicle` + `list_geofences_containing` (geofence entry/exit alerts) | F-E1, F-A6, F-A5 |
-| `telematics` → `vehicles` | resolve/validate the vehicle mapping; `mark_device_assigned` when a device is linked | F-G1, F-F2 |
+| `telematics` → `vehicles` | resolve/validate the vehicle mapping (a soft-deleted vehicle maps nothing); `mark_device_assigned` when a device is linked | F-G1, F-F2, F-J1 |
 | `telematics` → `telemetry` | `resolve_last_telemetry_at` (device-health monitor), `resolve_vehicle_live_status` (device health on the API) | F-J1/F-J3 |
 | `telematics` → `notifications` | raise device-offline alerts | F-J1/F-J3 |
 | `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push) | F-J2 |
@@ -46,6 +46,7 @@ an explicit exception rather than being treated as a violation.
 
 - **`notifications`** is a leaf: it stores/reads notifications and depends on no domain.
 - **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `future.md` before reopening.
-- **`telematics`'s F-J2 config-push publisher** reads only its own repository and publishes over MQTT directly: no domain edge.
+- **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.
+- **`fleet`** calls only `vehicles`; `telemetry` and `telematics` call `fleet`. Fleet-wide telemetry views (live positions, the operating rollup) and geofence detection therefore live in `telemetry` (`/telemetry/fleets/{fleet_id}/...`, `telemetry/geofencing.py`) — never add a `fleet → telemetry` call, it would close a cycle.
 - **`support`** is deliberately **not** wired to `telemetry`: vehicle context (VIN, location, error code) is client-supplied at case creation.
 - **`identity`** (auth & RBAC), once it exists, becomes the foundational domain: every domain may depend on it, it depends on none. Don't create a placeholder before a concrete task.

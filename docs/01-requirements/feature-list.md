@@ -69,15 +69,19 @@ carries its original PRD code so you can trace it back.
 - **Backend domain:** `telemetry` (threshold detection); `notifications` (storage/delivery)
 - **Status:** ✅ Done (MVP/POC scope) — SOC-threshold crossing detection runs inside telemetry
   ingestion; a crossing raises a notification (`notifications` domain) carrying the nearest
-  operational station and its distance, queryable via `GET /api/v1/notifications`. Since there is
-  no mobile app in this backend's scope, delivery is backend-storage-plus-portal-polling, not a
-  push to a device — the app-level constraints ("must work while backgrounded", a navigation
-  button) don't apply here. "1 alert per threshold per trip" is approximated as "1 alert per
-  threshold crossing" (previous SOC above, current at-or-below), since no trip concept exists yet
-  (F-A9 is still Planned); "nearest available station" only reflects `deleted_at`/
-  `maintenance_status`, since no live occupancy/online signal exists. NF-01/NF-03 are not
-  measured — this backend's current scope is MVP/POC, not a performance/uptime target (see
-  `future.md`).
+  available station, its distance and its coordinates (`station_latitude`/`station_longitude`,
+  for a navigation hand-off), queryable via `GET /api/v1/notifications` (filterable by
+  `vehicle_id`, `notification_type`, `severity`, newest-first with `order=desc`; unread count and
+  mark-all-read exist). Since there is no mobile app in this backend's scope, delivery is
+  backend-storage-plus-portal-polling, not a push to a device — the app-level constraints ("must
+  work while backgrounded", a navigation button) don't apply here. "1 alert per threshold per
+  trip" is approximated as "1 alert per threshold crossing" (previous SOC above, current
+  at-or-below), since no trip concept exists yet (F-A9 is still Planned). "Nearest available
+  station" (2026-10-01, decision D3 of `docs/02-planners/done/backend-happy-path-completion.md`) means
+  not deleted, `OPERATIONAL`, and at least one connector whose last reported status is
+  `Available`; the charger's `is_online` is not required and a stale status after a charger goes
+  offline is not invalidated (`future.md` item 76). NF-01/NF-03 are not measured — this backend's
+  current scope is MVP/POC, not a performance/uptime target (see `future.md`).
 
 ### F-A9 Empty-trip (deadhead) detection
 - **Actor:** Driver (declares load status); System (infers automatically)
@@ -88,7 +92,7 @@ carries its original PRD code so you can trace it back.
 - **Constraints:** Manual declaration ≤2 taps; automatic inference accuracy target ≥90% vs.
   declared status; both sources are cross-checked
 - **Priority · Release:** Should · P1.5
-- **Backend domain:** `telemetry` (automatic inference); `drivers` (manual declaration — future domain)
+- **Backend domain:** `telemetry` (automatic inference); `drivers` (manual declaration — the domain exists, F-E4; the declaration itself is not built)
 - **Status:** 📋 Planned
 - Note: empty-km data collected from P1 onward is meant to feed the Phase 2 backhaul
   optimization feature (out of scope here).
@@ -135,8 +139,12 @@ carries its original PRD code so you can trace it back.
 - **Status:** ✅ Done (MVP/POC scope) — `GET /charging-stations/nearby` returns stations within a
   capped radius (`CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM`, default 200 km), nearest first, filtered
   by `connector_standard` (exact match) and `min_power_kw`, using the same PostGIS `ST_DWithin`/KNN
-  approach as F-A2's nearest-station lookup. "Availability" reflects `maintenance_status` only —
-  the same admin-set approximation F-A2 uses, not a live occupancy signal (`future.md` item 37)
+  approach as F-A2's nearest-station lookup. Each result carries `available_connector_count`
+  (connectors whose last reported status is `Available`, computed at read time) and the derived
+  `is_online`; `is_available_only=true` keeps only stations that are `OPERATIONAL` with at least
+  one available connector (2026-10-01, the same rule as F-A2; `is_online` is informational, not
+  required). Not built: invalidating a stale status when a charger goes offline (`future.md`
+  item 76)
 
 ### F-D2 Navigation to station
 - **Actor:** Driver
@@ -249,8 +257,12 @@ carries its original PRD code so you can trace it back.
 - **Status:** ✅ Done (MVP/POC scope) — `POST /support/sos` records the case (location, error code,
   vehicle/driver context) with the ≤5-minute response-SLA deadline stored on the row. The backend's
   job ends at recording the handoff: the callback itself is a human action taken after this call
-  returns, per this feature's own stated business decision. Forwarding to F-I4 is not built — see
-  `docs/01-requirements/future.md`.
+  returns, per this feature's own stated business decision. Since 2026-10-01 every new SOS also
+  raises a `CRITICAL` `SOS_ALERT` notification in the same transaction (case/vehicle/driver IDs,
+  VIN, channel, category, coordinates, error code, `response_due_at`), so the polling console sees
+  it without listing cases; and the request takes a `channel` (default `IN_APP`) so a
+  hotline-fallback SOS is recorded as an SOS with the SOS SLA — coordinates are required only for
+  `IN_APP`. Forwarding to F-I4 is not built — see `docs/01-requirements/future.md` item 68.
 
 ### F-I3 Maintenance scheduling
 - **Actor:** Driver
@@ -277,17 +289,24 @@ carries its original PRD code so you can trace it back.
 - **Non-functional requirements:** NF-08 (consent & audit log for any access to location data —
   this is personal-data tracking under Decree 13/2023)
 - **Priority · Release:** Must · P1.0
-- **Backend domain:** `vehicles` (geofence-boundary config); `telemetry` (GPS/speed history, trip
-  segmentation, geofence events)
-- **Status:** ✅ Done (MVP/POC scope) — "live location" is served by F-A1's existing
-  `GET /telemetry/vehicles/{id}/latest`. "Trip replay" is served by a new
-  `GET /telemetry/vehicles/{id}/history` endpoint returning a vehicle's telemetry points within a
-  required, capped time range (default 7-day max span, `TELEMETRY_HISTORY_MAX_RANGE_DAYS`),
-  ordered chronologically for the frontend to draw a route polyline — not segmented trips; this
-  backend has no trip concept (`future.md` items 38, 46). Geofencing (boundary config +
-  in/out-of-zone events/alerts) is entirely deferred (`future.md` item 47), as is the ≥6-month
-  retention constraint as an enforced policy (`future.md` item 48) and NF-08's consent/audit-log
-  requirement (no `identity` domain yet, same gap as every other personal-data-adjacent endpoint)
+- **Backend domain:** `fleet` (geofence-boundary config, fleet-scoped for now); `telemetry`
+  (GPS/speed history, geofence entry/exit detection; trip segmentation not built)
+- **Status:** ✅ Done (MVP/POC scope) — "live location" is served by F-A1's
+  `GET /telemetry/vehicles/{id}/latest` (with `is_online`) and, fleet-wide, by
+  `GET /telemetry/fleets/{fleet_id}/vehicles/latest` (F-E1). "Trip replay" is served by
+  `GET /telemetry/vehicles/{id}/history` returning a vehicle's telemetry points within a required,
+  capped time range (default 7-day max span, `TELEMETRY_HISTORY_MAX_RANGE_DAYS`), ordered
+  chronologically for the frontend to draw a route polyline — not segmented trips; this backend
+  has no trip concept (`future.md` items 38, 46). **Geofencing** (2026-10-01): a fleet manager
+  defines polygons per **fleet** (`/fleets/{fleet_id}/geofences` CRUD, GeoJSON `Polygon`, stored
+  as `geography(POLYGON, 4326)` in the new `geofences` table); telemetry ingestion compares the
+  geofences covering a vehicle's previous and current reading (in the vehicle's current fleet,
+  `ST_Covers`, a boundary point counts as inside) and raises one `GEOFENCE_ALERT` notification
+  per area entered or left. A vehicle's first reading and a vehicle in no fleet raise nothing.
+  "Per vehicle" geofences are not built — the fleet scope is an adaptation until customer
+  accounts exist (`future.md` item 86). Still deferred: the ≥6-month retention constraint as an
+  enforced policy (`future.md` item 48) and NF-08's consent/audit-log requirement (no `identity`
+  domain yet, same gap as every other personal-data-adjacent endpoint)
 - Note: the source also mentions this feature supports the internal vehicle-repossession
   process — that's usage context, not an additional software requirement.
 
@@ -300,17 +319,23 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.1
 - **Backend domain:** `telemetry` (corrected from `fleet`, which has no active source — see note)
 - **Status:** ✅ Done (MVP/POC scope) — `GET /telemetry/vehicles/{vehicle_id}/operating-report`
-  computes distance/energy/cost over a time window (max 31 days) directly from
-  `vehicle_telemetry`: energy consumed is the sum of positive SOC drops between consecutive
-  samples, converted to kWh via the vehicle's recorded `battery_capacity_kwh` (new nullable
-  column) or a documented engineering-default fallback (75 kWh, flagged in the response);
-  distance is the sum of positive odometer deltas; cost uses a hardcoded engineering-default VND/
-  kWh constant, not yet configurable (the stated constraint is knowingly unmet, see `future.md`).
-  km/day divides by the requested window, not the observed sample span. Every derived rate
-  (kWh/100km, cost/km) is `null` when undefined (zero distance or fewer than two samples) rather
-  than a fabricated number. Not built: CSV export, and the `fleet`-level multi-vehicle rollup this
-  was originally scoped under — that domain has no active source in this backend (see
-  `docs/02-planners/done/backend-operating-energy-reports.md`).
+  computes distance/energy/cost over a time window (max 366 days,
+  `TELEMETRY_REPORT_MAX_RANGE_DAYS`) directly from `vehicle_telemetry`: energy consumed is the sum
+  of positive SOC drops between consecutive samples, converted to kWh via the vehicle's recorded
+  `battery_capacity_kwh` (nullable column) or a documented engineering-default fallback (75 kWh,
+  flagged in the response); distance is the sum of positive odometer deltas. km/day divides by
+  the requested window, not the observed sample span. Every derived rate (kWh/100km, cost/km) is
+  `null` when undefined (zero distance or fewer than two samples) rather than a fabricated number.
+  Since 2026-10-01: an optional `granularity=day|week|month` adds per-period rows (periods cut in
+  `APP_REPORT_TIMEZONE`, ISO weeks, first/last period clipped to the window; periods sum to the
+  window), `format=csv` exports the same report, and the electricity price is a setting
+  (`TELEMETRY_ENERGY_COST_PER_KWH_VND`, one flat VND/kWh — time-of-use or per-tenant pricing is
+  still `future.md` item 60). The fleet-level view is
+  `GET /telemetry/fleets/{fleet_id}/operating-report[?format=csv]`: one row per current member
+  vehicle plus fleet totals whose rates are recomputed from the summed distance/energy (the CSV
+  ends with a `TOTAL` row); it has no period breakdown. It is served by `telemetry` through a
+  `telemetry → fleet` edge (planner D7), not by `fleet` (see
+  `docs/02-planners/done/backend-happy-path-completion.md`).
 - Note: `charging_sessions` was the original implied data source for kWh, but that table carries
   no vehicle linkage at all (the same blocker recorded for F-C6), so this round computes energy
   from the vehicle's own telemetry instead, per an explicit user decision. This is a genuine
@@ -376,8 +401,10 @@ carries its original PRD code so you can trace it back.
 - **Backend domain:** `charging_stations`
 - **Status:** ✅ Done — station records carry GPS (PostGIS geography), power rating, a computed
   connector count, connector standard, operating hours, and maintenance status, plus full CRUD
-  (migration `0005_station_directory_fields`). "Map view" is satisfied by exposing lat/lon in the
-  API response; actual map rendering is a frontend concern (F-D1, out of this repo)
+  (now part of the single baseline migration `0001_baseline_schema`). Since 2026-10-01 the station
+  response also carries a read-time `available_connector_count` next to the derived `is_online`.
+  "Map view" is satisfied by exposing lat/lon in the API response; actual map rendering is a
+  frontend concern (F-D1, out of this repo)
 
 ### F-C5 Station-level energy output
 - **Actor:** G3 Energy operations
@@ -388,7 +415,15 @@ carries its original PRD code so you can trace it back.
   sums `energy_delivered_wh` (converted to kWh) and counts completed sessions ending within a
   required, timezone-checked window; both bounds are otherwise unbounded (an ordinary table, not
   a hypertable, so no max-range cap like F-A5's). An unknown `station_id` returns a zero summary
-  rather than a 404 - this domain doesn't own station existence
+  rather than a 404 - this domain doesn't own station existence. Since 2026-10-01, for
+  time-of-day analysis: `GET /charging-sessions/stations/{station_id}/energy/series?granularity=hour|day`
+  returns a dense kWh series over `[start_time, end_time)` (max
+  `CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS`, default 31), buckets cut in `APP_REPORT_TIMEZONE`, built
+  from energy-register deltas between consecutive readings attributed to the later reading's
+  bucket (active sessions included), so energy is split across slot boundaries rather than booked
+  whole at `ended_at`; and `GET /charging-sessions/stations/energy` lists the per-station totals
+  for every active station, highest first (served by `charging_stations`, which owns the station
+  directory). Not built: non-transaction clock-aligned metering (`future.md` item 77)
 
 ### F-C8 Dynamic pricing by generation source & time-of-day
 - **Actor:** G3 Energy (configures tariffs); driver (sees current price)
@@ -426,10 +461,17 @@ carries its original PRD code so you can trace it back.
   unlike `driver_vehicle_assignments` there is no equivalent index on `fleet_id` — a fleet
   legitimately holds many vehicles at once. `vehicles.fleet_id` (a dead `String(36)` column with
   no FK, no index, never queried by any code) is dropped and replaced by this membership table —
-  see `future.md` item 10, now superseded. "Real-time location" and a live online/offline
-  "status" are **not** built — no such signal exists anywhere in this backend yet (`future.md`
-  item 35); F-E1's "status" column honestly reports only `vehicles.status` (the lifecycle enum).
-  See `docs/02-planners/done/backend-crud-fleet.md`.
+  see `future.md` item 10, now superseded. Filter/search (2026-10-01): `GET /fleets` takes `q`
+  (name or fleet code, case-insensitive) and `vehicle_vin` ("which fleet is this vehicle in"), and
+  `GET /fleets/{id}/vehicles` takes `status` (vehicle lifecycle) and `q` (VIN or plate substring).
+  A membership whose vehicle was soft-deleted is closed by ID
+  (`DELETE /fleets/{fleet_id}/memberships/{membership_id}`). "Real-time location" and the online
+  "status" are served by `GET /telemetry/fleets/{fleet_id}/vehicles/latest` (paged members, oldest
+  first, with VIN/plate/lifecycle status, the newest position, `recorded_at`/`received_at`,
+  `is_online` = newest telemetry within `TELEMETRY_ONLINE_THRESHOLD_SECONDS`, and signal strength),
+  owned by `telemetry` through the one-directional `telemetry → fleet` edge. See
+  `docs/02-planners/done/backend-crud-fleet.md` and
+  `docs/02-planners/done/backend-happy-path-completion.md`.
 
 ### F-E2 Fleet KPI dashboard
 - **Actor:** Fleet manager
@@ -437,11 +479,13 @@ carries its original PRD code so you can trace it back.
   filter; export
 - **Priority · Release:** Must · P1.1
 - **Backend domain:** `fleet` (data portion; dashboard UI is client-side)
-- **Status:** 📋 Planned — deferred this round in favor of F-E1 (see `docs/01-requirements/
-  future.md`); needs a DTO refactor in `telemetry` (its F-A6 report function currently returns an
-  HTTP response schema, which coding-conventions forbids passing across a domain boundary) plus a
-  new `notifications` count-by-vehicle function for the "alerts" column. `fleet` itself now has
-  active source.
+- **Status:** 📋 Planned — deferred in favor of F-E1 (see `docs/01-requirements/future.md` item
+  72). Partly unblocked on 2026-10-01: the km/kWh/cost-per-km half exists as the fleet operating
+  report (`GET /telemetry/fleets/{fleet_id}/operating-report`, aggregated and per-vehicle, CSV —
+  see F-A6) and `telemetry.service.resolve_vehicle_operating_summary` returns a DTO other domains
+  may call. Still missing: SOH and alert columns in the same view (`notifications` only has an
+  unread count per vehicle, not a count over a window as a DTO), a time-bucketed fleet view, and
+  "utilization rate", which has no backing data (no trip/duty concept).
 
 ### F-E3 Charging & warranty report
 - **Actor:** Fleet manager
@@ -465,14 +509,16 @@ carries its original PRD code so you can trace it back.
   (`driver_vehicle_assignments`, `assigned_at`/`unassigned_at`), not a single current-vehicle
   column, so `GET /drivers/{id}/assignments` gives real "per-driver activity history" — a
   deliberate improvement over the existing `telematics.vehicle_id` pattern, which cannot express
-  history and has two known bugs (its unique constraint isn't scoped to non-deleted rows, and
-  reassigning never auto-frees the old row). `POST /drivers/{id}/assignment` (201) reassigns smoothly in
+  history and never auto-frees the old row on reassignment (its other known bug, a unique
+  constraint not scoped to non-deleted rows, was fixed on 2026-10-01 — `future.md` item 82). `POST /drivers/{id}/assignment` (201) reassigns smoothly in
   one call (auto-closing the driver's previous vehicle) rather than requiring a manual unassign
   first. One active vehicle per driver and one active driver per vehicle are enforced via two
   partial unique indexes (`WHERE unassigned_at IS NULL`) — this backend's first use of a partial
   index. Assumption, stated plainly: driver fields (`full_name`, `phone_number`, `license_number`,
   `status`) aren't specified by the PRD beyond "Add/edit drivers"; the 1:1-at-a-time assignment
-  cardinality is also an assumption, not a stated requirement. See
+  cardinality is also an assumption, not a stated requirement. Since 2026-10-01 `GET /drivers`
+  also takes `q` (case-insensitive substring of name, phone or license number; LIKE wildcards are
+  matched literally) and `vehicle_vin` (the driver currently assigned to that vehicle). See
   `docs/02-planners/done/backend-crud-drivers.md`.
 
 ### F-F1 Accounts & RBAC
@@ -519,10 +565,14 @@ carries its original PRD code so you can trace it back.
   sweeps active devices every `TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS` (default 300s) and
   raises a `DEVICE_OFFLINE_ALERT` notification once per silence episode once a vehicle exceeds
   `TELEMATICS_SILENT_THRESHOLD_MINUTES` (default 180) without telemetry, judged from the newest
-  backend `received_at` so a skewed device clock can't fake silence. Not built: the
-  per-device dashboard (SIM/data status, power status) — no such field exists anywhere in this
-  backend's MQTT contract — and distinguishing a device fault from the engine being off (see
-  F-J3, same gap)
+  backend `received_at` so a skewed device clock can't fake silence. Devices on a soft-deleted
+  vehicle are skipped (2026-10-01). The dashboard's data half is partly built (2026-10-01): every
+  `TelematicResponse` (get/list/create/update) carries `last_seen_at`, `is_online` (newest
+  telemetry within `TELEMETRY_ONLINE_THRESHOLD_SECONDS`), `is_silent` (the monitor's own rule,
+  shared through `telematics/monitoring/silence_rule.py`) and `last_signal_strength_dbm`, derived
+  at read time; firmware version was already a device field. Not built: SIM/data status and power
+  status — no such field exists anywhere in this backend's MQTT contract (`future.md` item 50) —
+  and distinguishing a device fault from the engine being off (see F-J3, same gap)
 
 ### F-K1 Driver safety scoring
 - **Actor:** System (computes); fleet manager (views weekly report)
@@ -574,10 +624,12 @@ carries its original PRD code so you can trace it back.
   CLOSED/CANCELLED case refuses further updates (409). `first_responded_at`/`resolved_at` are
   stamped only the first time a status implies them (cancelling is not a response), and
   `is_sla_breached` compares the deadline with the first response, or `closed_at` for a case
-  cancelled before any response, or else now. F-I2's SOS reuses the same table
+  cancelled before any response, or else now. Since 2026-10-01 the case list also filters by
+  `category`, `channel`, `driver_id`, `awaiting_response` and `sla_breached` (the SQL form of the
+  same breach rule, judged at one instant per request). F-I2's SOS reuses the same table
   (`case_type=SOS`) since the spec ties the two into one lifecycle. Zalo/hotline logging exists as
-  a `channel` enum member with no actual integration behind it. See
-  `docs/02-planners/done/backend-support-cases.md`.
+  a `channel` value with no actual integration behind it. No proactive SLA-breach monitor
+  (`future.md` item 70). See `docs/02-planners/done/backend-support-cases.md`.
 
 ### F-I4 Repair & rescue network dispatch
 - **Actor:** Customer support / CSKH (dispatches); driver (tracks status)
@@ -630,11 +682,14 @@ carries its original PRD code so you can trace it back.
   `TelemetryMessage`/`vehicle_telemetry`, defaults to 1 for backward compatibility) are
   implemented. This backend's current scope is an MVP/POC: non-functional concerns like
   scale/performance and anything beyond a basic security posture are intentionally not
-  pursued yet, so the following are deferred rather than blocking completion — the
-  online/offline flag (future.md item 35), NF-01 latency measurement, NF-04 300→1,200+
-  scale-testing, and NF-06 device mTLS/certificate identity (MQTT currently supports only
-  optional username/password) (future.md item 36). History/retention query API tracked
-  separately in future.md item 33.
+  pursued yet, so the following are deferred rather than blocking completion — NF-01 latency
+  measurement, NF-04 300→1,200+ scale-testing, and NF-06 device mTLS/certificate identity (MQTT
+  currently supports only optional username/password) (future.md item 36). The online/offline flag
+  is built (2026-10-01, `future.md` item 35 resolved): `GET /telemetry/vehicles/{id}/latest` adds
+  `received_at` and a read-time `is_online` (newest telemetry received within
+  `TELEMETRY_ONLINE_THRESHOLD_SECONDS`, default 300 s; nothing is stored), and the same flag is
+  exposed per fleet (F-E1) and per device (F-J1). Devices on a soft-deleted vehicle no longer map
+  their telemetry to it. History query: F-A5; retention policy: future.md item 48.
 
 ### F-A3 Battery health (SOH) & cycle tracking
 - **Actor:** System
@@ -645,12 +700,16 @@ carries its original PRD code so you can trace it back.
 - **Backend domain:** `telemetry`
 - **Status:** ✅ Done (MVP/POC scope) — `soh_percent`/`cycle_count` are now part of the MQTT
   battery payload and `vehicle_telemetry`, exposed via the existing latest/history endpoints.
-  Below-threshold detection reuses the same crossing-rule pattern as F-A2/F-A4
-  (`SOH_ALERT_THRESHOLD_PERCENT = 70.0`, an engineering default, not vendor-confirmed), raising a
-  `SOH_ALERT` notification. "Estimated capacity fade over time" is served by charting
-  `soh_percent` across F-A5's history endpoint — no separate trend/regression computation exists.
-  "Updated ≥1×/day" is trivially satisfied since telemetry updates far more often whenever the
-  field is present
+  Below-threshold detection reuses the same crossing-rule pattern as F-A2/F-A4, raising a
+  `SOH_ALERT` notification; the threshold is a setting since 2026-10-01
+  (`TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT`, default 70.0 — an engineering default, not
+  vendor-confirmed). "Estimated capacity fade over time" (2026-10-01):
+  `GET /telemetry/vehicles/{id}/battery-health?start_time=&end_time=` returns one point per
+  `APP_REPORT_TIMEZONE` day that has a reading — the day's last SOH, last cycle count and an
+  estimated usable capacity (SOH × the vehicle's recorded `battery_capacity_kwh`, when recorded) —
+  over up to `TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS` (366); days without a reading are omitted,
+  not interpolated, and no regression/forecast is computed. "Updated ≥1×/day" is trivially
+  satisfied since telemetry updates far more often whenever the field is present
 
 ### F-A4 Anomaly detection
 - **Actor:** System
@@ -665,8 +724,10 @@ carries its original PRD code so you can trace it back.
   raised by `telemetry/alerting.py`),
   reusing the `notifications` domain (`ANOMALY_ALERT` type) for delivery, exactly as F-A2 does
   for battery alerts; each anomaly's payload carries both its evidence and a full telemetry
-  snapshot as the "event log" this feature asks for. Approximations: "cell/module fault" and
-  "motor fault" cannot be told apart from the MQTT contract's opaque error code strings, so both
+  snapshot as the "event log" this feature asks for; since 2026-10-01 that log can be read per
+  vehicle and per type (`GET /notifications?vehicle_id=&notification_type=ANOMALY_ALERT&severity=`,
+  `order=desc` for newest first, `GET /notifications/{id}` for one entry). Approximations:
+  "cell/module fault" and "motor fault" cannot be told apart from the MQTT contract's opaque error code strings, so both
   collapse into one generic `DEVICE_FAULT` anomaly pending a vendor error-code catalog
   (`future.md` item 42); both thresholds are unvalidated engineering defaults, not
   vendor-confirmed (`future.md` item 43); an anomaly alerts once on entry and stays silent while
@@ -722,7 +783,13 @@ carries its original PRD code so you can trace it back.
   (`future.md` item 27, a deliberately deferred reliability path, not a gap in this round);
   orphaned-session and offline back-fill handling (waiting for real-charger logs); `idTag`
   validation and vehicle linkage (items 26/62); a duplicate `Started` still surfaces a raw
-  `IntegrityError` instead of a domain exception (`future.md` item 66)
+  `IntegrityError` instead of a domain exception (`future.md` item 66). Since 2026-10-01 the
+  session detail (`GET /charging-sessions/{id}`) adds `duration_seconds`, `soc_start_percent`,
+  `soc_end_percent` and `max_power_kw`, computed at read time from the stored measurements (SoC
+  and power exist only where the charger sends them — today only the 1.6J path stores non-energy
+  measurands, `future.md` item 78), and the session list filters by `station_id`,
+  `connector_id`, `status` and a `started_from`/`started_to` window. Cost is not part of the log:
+  pricing belongs to the future `billing` domain
 
 ### F-B3 Policy-violation matching & flagging
 - **Actor:** System
@@ -757,8 +824,11 @@ carries its original PRD code so you can trace it back.
   1.6J the connector also stores `errorCode`/`vendorErrorCode`/`info`, and connector `0` (the whole
   charger) is stored on the station (`charger_status`, `charger_error_code`, …) because it has no
   topology row. Stations expose a derived `is_online` (`last_seen_at` within
-  `CHARGING_OFFLINE_TIMEOUT_SECONDS`), but a connector's last status is **not** invalidated when
-  its charger goes offline (`future.md` item 76). Not built: fault alerting (item 75). NF-02's
+  `CHARGING_OFFLINE_TIMEOUT_SECONDS`, stamped by every inbound frame of either protocol), but a
+  connector's last status is **not** invalidated when its charger goes offline (`future.md` item
+  76). Since 2026-10-01 `GET /charging-stations/{station_id}/connectors` returns the whole
+  charger's status plus every gun's status and error details in one read, and the per-connector
+  status now drives F-A2/F-D1 availability. Not built: fault alerting (item 75). NF-02's
   ≤30s/≥99% targets aren't measured (MVP/POC scope, no monitoring yet); no out-of-order guard
   (in-order arrival is this MVP's assumption, `future.md` item 27). Verified against a simulator
   only; see `docs/02-planners/backend-ocpp16-charger-integration.md`
@@ -815,7 +885,9 @@ carries its original PRD code so you can trace it back.
   (end-to-end data flow confirmed). `GET /vehicles/activation-summary` reports the fleet-wide
   success rate (`activated_count / attempted_count`, where "attempted" = `DEVICE_ASSIGNED` +
   `ACTIVATED`). NF-06 (device identity/certificate) is not built — no PKI/certificate issuance
-  exists anywhere in this backend
+  exists anywhere in this backend. Since 2026-10-01 `GET /vehicles` also filters by
+  `activation_status` (combinable with `status`), so operations can list the vehicles still
+  waiting for a device or for their first telemetry
 - Note: the source also describes a physical handover checklist alongside this item — that's an
   operational process, not a software requirement; only the activation flow and data-flow
   confirmation are in scope here.
@@ -843,7 +915,12 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telematics`
 - **Status:** 🚧 In progress — device CRUD + vehicle mapping exist and ingestion works
-  end-to-end; real Tri-Ring spec compliance is unconfirmed (blocked on #10)
+  end-to-end. Mapping fixes (2026-10-01): a VIN that matches no live vehicle on create/update is
+  rejected (404) instead of silently leaving the device unassigned (an explicit
+  `vehicle_vin: null` still unassigns); a soft-deleted device no longer blocks a replacement
+  (partial unique index `uq_telematics_active_vehicle`, `WHERE deleted_at IS NULL`); and a device
+  whose vehicle was soft-deleted no longer maps telemetry. Real Tri-Ring spec compliance is
+  unconfirmed (blocked on "Items needing confirmation" #10)
 
 ### F-G2 Charging station integration (OCPP)
 - **Actor:** System
@@ -854,7 +931,9 @@ carries its original PRD code so you can trace it back.
   OCPP version decision (see "Items needing confirmation" #11).
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `charging_stations`
-- **Status:** 🚧 In progress — both **OCPP 2.0.1** (`TransactionEvent`/`MeterValues`/
+- **Status:** 🚧 In progress — both **OCPP 2.0.1** (`BootNotification`/`Heartbeat` since
+  2026-10-01 — device info and `last_boot_at` stored, heartbeat interval
+  `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS` returned —, `TransactionEvent`/`MeterValues`/
   `StatusNotification`) and **OCPP 1.6J** are supported by one gateway that negotiates the
   subprotocol and uses one adapter per protocol (decided 2026-09-24; the first real charger,
   Willdigits DC, speaks 1.6J). For 1.6J the gateway answers `BootNotification`/`Heartbeat`,
@@ -866,7 +945,8 @@ carries its original PRD code so you can trace it back.
   simulators only; the real-charger bring-up (planner Step 10) has not happened yet.** Still open:
   the NF-05 production security profile — dev mode intentionally allows no TLS/no auth, per
   `tech-decisions.md` (`future.md` item 73) —, remote commands from the API (item 74), fault
-  alerting (item 75) and the reliability path (item 27)
+  alerting (item 75), the rest of 2.0.1 parity (stop reason, `idToken`, non-energy measurands;
+  item 78) and the reliability path (item 27)
 
 ### F-G3 Data pipeline (ETL)
 - **Actor:** System
@@ -901,12 +981,16 @@ carries its original PRD code so you can trace it back.
   telemetry publish-interval change to a device over MQTT (`g3network/telematics/{serial}/command`,
   QoS 1, this backend's first-ever MQTT publish), fail-closed: the interval is only recorded on
   `telematics` once the broker accepts the message (PUBACK), never before. Verified end-to-end with
-  `mosquitto_sub`. Not built: local alert thresholds (only send-frequency is implemented — no
-  device-side threshold semantics are defined anywhere, same hardware-contract gap as F-G1),
-  push per vehicle/fleet (today it's one device per call), confirmation that the device actually
+  `mosquitto_sub`. Push per fleet (2026-10-01): `POST /telematics/fleets/{fleet_id}/config`
+  sends the same body to the device of every current fleet member, one at a time through the same
+  publish-then-record path, and answers 200 with one `published`/`skipped`/`failed` result per
+  vehicle (a vehicle that is soft-deleted, has no live device or whose device is not `ACTIVE` is
+  skipped; a failed publish does not stop the loop). Not built: local alert thresholds (only
+  send-frequency is implemented — no device-side threshold semantics are defined anywhere, same
+  hardware-contract gap as F-G1, `future.md` item 59), confirmation that the device actually
   applied the config (no ack topic exists in the MQTT contract — a successful publish only proves
-  the broker accepted it), and rollback (needs the same missing confirmation signal first). See
-  `docs/02-planners/done/backend-telematics-config-push.md`.
+  the broker accepted it, item 52), and rollback (needs the same missing confirmation signal
+  first, item 53). See `docs/02-planners/done/backend-telematics-config-push.md`.
 
 ### F-J3 Device offline / tamper alert
 - **Actor:** System
@@ -919,7 +1003,8 @@ carries its original PRD code so you can trace it back.
 - **Priority · Release:** Must · P1.0
 - **Backend domain:** `telematics`
 - **Status:** ✅ Done (MVP/POC scope, partial) — the "device offline" half is built, sharing the
-  same periodic monitor and `DEVICE_OFFLINE_ALERT` notification as F-J1. Not built: distinguishing
+  same periodic monitor and `DEVICE_OFFLINE_ALERT` notification as F-J1 (devices on a soft-deleted
+  vehicle are ignored since 2026-10-01). Not built: distinguishing
   sudden power loss from ordinary signal loss - no signal exists anywhere in this backend to tell
   the two apart (a per-device Last Will only exists for the backend's own MQTT consumer process,
   not per-telematic-device). NF-09 (≥48h on-device store-and-forward) and NF-06 (device identity)
@@ -943,7 +1028,7 @@ feature at all).
 | Code | Category | Requirement | Target / Threshold | Linked feature(s) | Backend status |
 |---|---|---|---|---|---|
 | NF-01 | Performance | Vehicle telemetry → system latency | ≤30s p95 (target ≤10s) while online | F-A1, F-A2, F-G1 | 🚧 not yet measured |
-| NF-02 | Performance | Connector status latency (OCPP) | ≤30s | F-C2, F-G2 | 📋 no connector status implemented yet (see F-C2) |
+| NF-02 | Performance | Connector status latency (OCPP) | ≤30s | F-C2, F-G2 | 🚧 connector status implemented for both protocols (see F-C2); latency not measured |
 | NF-05 | Security | Encryption & key management | TLS 1.2+ in transit, encrypted at rest, secrets in a vault (never hardcoded) | F-H1, F-G2 | 🚧 dev mode intentionally has no TLS/auth |
 | NF-06 | Security | Device identity & authentication | mTLS/certificate or a unique per-device token, revocable | F-A1, F-F1 (partial), F-F2, F-G1, F-J1, F-J2, F-J3 | 📋 |
 | NF-07 | Security | Penetration testing | Mandatory before Gate 2; zero critical findings to go live | — | 📋 |
@@ -954,7 +1039,7 @@ feature at all).
 | NF-15 | Backup & DR | Backup & disaster recovery | RPO ≤15 min · RTO ≤4h; recovery drill 2×/year | — | 📋 |
 | NF-16 | Data lifecycle | Retention & schema versioning | Hot 12 months (time-series) / cold 5 years (matches warranty period); schema is versioned & backward-compatible | F-A3 (implied), F-B1 (implied), F-G3 | 📋 |
 | NF-17 | Localization | Language & formats | Vietnamese by default; VND/km/kWh; multi-language ready (Laos, China for GMS) | — | ⚪ N/A (frontend) |
-| NF-18 | Maintainability | Modular code, tests, API docs | Clear module boundaries; tests for critical flows (battery alert, charging session, reconciliation, payment); OpenAPI | — | 🚧 smoke tests + 2 skipped-by-default Postgres integration tests exist |
+| NF-18 | Maintainability | Modular code, tests, API docs | Clear module boundaries; tests for critical flows (battery alert, charging session, reconciliation, payment); OpenAPI | — | 🚧 smoke tests + 18 skipped-by-default Postgres integration tests (`RUN_DB_INTEGRATION=1`) exist |
 | NF-20 | Forecast model quality | Accuracy & retrainability | Remaining-range forecast error ≤10% (p50) / ≤15% (p90); station-load forecast measured weekly; every model must be retrainable from accumulated data | F-A7, F-C7, F-D6, F-D3 (inherits) | 📋 |
 | NF-22 | Security & Compliance *(merged from F-G4)* | Data governance & security | Encryption in transit & at rest; RBAC; audit log; Decree 13/2023 compliance; retention policy (hot 12mo/cold 5yr); driver consent at activation | (platform-wide) | 📋 |
 

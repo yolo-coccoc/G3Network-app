@@ -62,7 +62,8 @@ instructions.
 
 - There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`); `make setup` copies each to `.env` if missing. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
 - Every backend setting is defined (type, validation, default) in `backend/app/libs/common/config.py` and documented with its default in `backend/.env.example`, grouped by component; only `DATABASE_URL` is required. A new setting goes in both, namespaced by component.
-- OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the 1.6J heartbeat interval, the offline threshold behind the derived `is_online`, and the timeout for a charger's answer to a gateway request.
+- OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the heartbeat interval returned at boot (both protocols), the offline threshold behind the derived `is_online`, and the timeout for a charger's answer to a gateway request.
+- `APP_REPORT_TIMEZONE` (default `Asia/Ho_Chi_Minh`) is the calendar for every report or series cut into days/weeks/months/hours; stored and returned timestamps stay UTC.
 
 ## Claude Code tooling (checked in under `.claude/` and `.mcp.json`)
 

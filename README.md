@@ -107,37 +107,48 @@ bootstrap phase: `make db-migrate` applies it to an empty database,
 - **Vehicles**: CRUD and soft delete, a device-activation state machine
   (`PENDING → DEVICE_ASSIGNED → ACTIVATED`) and a fleet-wide activation
   summary (`GET /api/v1/vehicles/activation-summary`).
-- **Telematics devices**: CRUD and device-to-vehicle mapping; a telemetry
-  publish-interval config push to the device over MQTT
-  (`POST /api/v1/telematics/{id}/config`); a device-health monitor that raises
-  a device-offline alert when a device goes silent.
-- **Telemetry**: MQTT ingestion into TimescaleDB; latest record, a bounded
-  time-range history, and SOC-based operating and energy-usage reports per
-  vehicle.
+- **Telematics devices**: CRUD and device-to-vehicle mapping with read-time
+  health (`last_seen_at`, `is_online`, `is_silent`, signal strength); a
+  telemetry publish-interval config push over MQTT to one device
+  (`POST /api/v1/telematics/{id}/config`) or a whole fleet
+  (`POST /api/v1/telematics/fleets/{fleet_id}/config`); a device-health
+  monitor that raises a device-offline alert when a device goes silent.
+- **Telemetry**: MQTT ingestion into TimescaleDB; latest record with an
+  online flag, a bounded time-range history, a daily battery-health trend,
+  SOC-based operating (day/week/month breakdown, CSV) and energy-usage
+  reports per vehicle, and fleet views (member positions, operating rollup)
+  under `/api/v1/telemetry/fleets/{fleet_id}/`.
 - **Alerts and notifications**: battery-level, battery-health (SOH),
-  anomaly (temperature, voltage drop, device error codes) and device-offline
-  alerts, stored as notifications and read by polling
-  (`GET /api/v1/notifications?after_id=`), with mark-as-read.
+  anomaly (temperature, voltage drop, device error codes), device-offline,
+  geofence entry/exit and SOS alerts, stored as notifications and read by
+  polling (`GET /api/v1/notifications?after_id=`, filterable, newest-first
+  on request), with unread count and mark-as-read.
 - **Charging stations**: Station → EVSE → Connector topology CRUD with
   directory metadata (location, power rating, connector standard, operating
-  hours, maintenance status), a nearby-station search
-  (`GET /api/v1/charging-stations/nearby`) and the charger's latest
-  configuration.
+  hours, maintenance status, available-connector count), a nearby-station
+  search with an availability filter
+  (`GET /api/v1/charging-stations/nearby`), a per-station connector status
+  view and the charger's latest configuration.
 - **OCPP gateway**: OCPP 2.0.1 and OCPP 1.6J on one port, chosen per
-  connection by the negotiated subprotocol. Every frame is stored verbatim;
-  connector status (incl. 1.6J error codes) is stored as reported; 1.6J
-  chargers also report device info, liveness (`is_online` derived from
-  `last_seen_at`) and configuration.
+  connection by the negotiated subprotocol. Every frame is stored verbatim
+  and refreshes the station's liveness (`is_online` derived from
+  `last_seen_at`); connector status (incl. 1.6J error codes) is stored as
+  reported; both protocols record the charger's device info at boot; 1.6J
+  chargers also report their configuration.
 - **Charging sessions**: 2.0.1 `Started → Updated/MeterValues → Ended` and
   1.6J `StartTransaction → MeterValues → StopTransaction`; read APIs for
-  sessions, events, meter values and all measurements, plus a station energy
-  total over a time window.
-- **Drivers**: profile CRUD and vehicle assignment with full history.
-- **Fleets**: CRUD and vehicle membership (added/removed by VIN) with history.
-- **Support**: support case tickets and SOS intake with a response SLA.
+  sessions (with duration, SoC and peak-power summary, filters), events,
+  meter values and all measurements, plus station energy totals and an
+  hourly/daily energy series.
+- **Drivers**: profile CRUD (search, current-vehicle filter) and vehicle
+  assignment with full history.
+- **Fleets**: CRUD and vehicle membership (added/removed by VIN) with
+  history, list filters, and geofences that raise entry/exit alerts.
+- **Support**: support case tickets and SOS intake (in-app or hotline) with
+  a response SLA, list filters, and an SOS alert notification.
 
 Not built yet: identity/RBAC, charging policy, pricing/billing/payment, push
-or multi-channel notification delivery, map and dashboards, OCPP remote
+or multi-channel notification delivery, KPI dashboards, OCPP remote
 commands and reliability (retry/reconnect/TLS), and the frontends. The full
 list of deferred items is in
 [docs/01-requirements/future.md](./docs/01-requirements/future.md).
