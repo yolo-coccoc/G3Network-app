@@ -1,7 +1,8 @@
 """Pure mappings from telemetry ORM rows and MQTT messages to other shapes.
 
 Feature code: F-A1 (latest telemetry and the live-status DTO), F-A5
-(history points), F-A4 (the anomaly notification's data snapshot).
+(history points), F-A4 (the anomaly notification's data snapshot), F-E1
+(a fleet member's live-status row).
 
 Internal to the telemetry domain: other domains never import this module
 (they go through ``telemetry/service.py``). Every function here is a pure
@@ -15,18 +16,21 @@ attribute name.
 """
 
 from typing import Any
+from uuid import UUID
 
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
+    FleetVehicleLiveStatusResponse,
     TelemetryMessage,
     VehicleTelemetryHistoryPoint,
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.types import VehicleLiveStatusReference
+from app.domains.vehicles.types import VehicleSummary
 from app.libs.common.geo import location_to_coordinates
 
 
-def _to_coordinates(telemetry: VehicleTelemetryModel) -> tuple[float, float]:
+def to_coordinates(telemetry: VehicleTelemetryModel) -> tuple[float, float]:
     """Decode a telemetry row's NOT NULL ``location`` into latitude/longitude.
 
     Args:
@@ -57,7 +61,7 @@ def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
         and ``VehicleTelemetryLatestResponse`` have in common, with
         latitude/longitude decoded from ``location``.
     """
-    latitude, longitude = _to_coordinates(telemetry)
+    latitude, longitude = to_coordinates(telemetry)
     return {
         "recorded_at": telemetry.recorded_at,
         "latitude": latitude,
@@ -111,7 +115,7 @@ def to_vehicle_live_status_reference(
     Returns:
         The vehicle's position, timestamps, online flag and signal strength.
     """
-    latitude, longitude = _to_coordinates(telemetry)
+    latitude, longitude = to_coordinates(telemetry)
     return VehicleLiveStatusReference(
         vehicle_id=telemetry.vehicle_id,
         latitude=latitude,
@@ -120,6 +124,43 @@ def to_vehicle_live_status_reference(
         received_at=telemetry.received_at,
         is_online=is_online,
         signal_strength_dbm=telemetry.signal_strength,
+    )
+
+
+def to_fleet_vehicle_live_status_response(
+    vehicle_id: UUID,
+    vehicle_summary: VehicleSummary | None,
+    live_status: VehicleLiveStatusReference | None,
+) -> FleetVehicleLiveStatusResponse:
+    """Build one fleet-map row from a member's vehicle data and live status (F-E1).
+
+    Args:
+        vehicle_id: Internal ID of the member vehicle.
+        vehicle_summary: The vehicle's display data, or ``None`` when the
+            vehicle was soft-deleted after joining.
+        live_status: The vehicle's newest position and online flag, or
+            ``None`` when it has never reported.
+
+    Returns:
+        The row; vehicle fields are ``None`` without a summary, position
+        fields are ``None`` and ``is_online`` is ``False`` without a live
+        status.
+    """
+    return FleetVehicleLiveStatusResponse(
+        vehicle_id=vehicle_id,
+        vin=vehicle_summary.vin if vehicle_summary is not None else None,
+        license_plate=(
+            vehicle_summary.license_plate if vehicle_summary is not None else None
+        ),
+        vehicle_status=vehicle_summary.status if vehicle_summary is not None else None,
+        latitude=live_status.latitude if live_status is not None else None,
+        longitude=live_status.longitude if live_status is not None else None,
+        recorded_at=live_status.recorded_at if live_status is not None else None,
+        received_at=live_status.received_at if live_status is not None else None,
+        is_online=live_status.is_online if live_status is not None else False,
+        signal_strength_dbm=(
+            live_status.signal_strength_dbm if live_status is not None else None
+        ),
     )
 
 

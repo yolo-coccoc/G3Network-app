@@ -4,12 +4,12 @@ Feature code: F-A1 (Real-time vehicle telemetry ingestion, latest reading
 and online status), F-A2 (Tiered battery alerts), F-A3 (Battery health
 (SOH) & cycle tracking, incl. the daily trend), F-A4 (Anomaly detection),
 F-A5 (Location, trip history & geofencing - the time-range history query
-only; geofencing itself is deferred, see docs/01-requirements/future.md),
-F-A6 (Operating performance report, computed from SOC drops in telemetry -
-charging_sessions carries no vehicle linkage - with an optional
-day/week/month breakdown), F-C6 (Per-customer energy usage, computed from
-SOC rises in the same telemetry history; "customer" is a vehicle in this
-MVP)
+and geofence entry/exit alerts), F-A6 (Operating performance report,
+computed from SOC drops in telemetry - charging_sessions carries no
+vehicle linkage - with an optional day/week/month breakdown, and the
+fleet rollup), F-C6 (Per-customer energy usage, computed from SOC rises in
+the same telemetry history; "customer" is a vehicle in this MVP), F-E1
+(fleet live positions)
 
 This is the only telemetry module other domains may import. Public
 cross-domain functions (primitives or frozen DTOs from ``types.py`` only):
@@ -25,10 +25,14 @@ It orchestrates I/O and delegates the pure work to internal modules:
 - ``mappers`` builds the HTTP responses and DTOs from ORM rows;
 - ``reports`` computes the F-A6/F-C6 reports and the F-A3 trend;
 - ``alerting`` (backed by the pure ``detection``) raises the F-A2/F-A3/F-A4
-  notifications during ingestion.
+  notifications during ingestion;
+- ``geofencing`` raises the F-A5 geofence entry/exit notifications during
+  ingestion.
 
 Cross-domain edges owned by this module: ``vehicles`` (existence, battery
-capacity, F-F2 activation) and ``telematics`` (serial -> vehicle mapping).
+capacity, display data, F-F2 activation), ``telematics`` (serial ->
+vehicle mapping) and ``fleet`` (a fleet's current member vehicles for the
+fleet-wide views, planner D7).
 
 "Online" (planner D2) is derived at read time from the newest
 ``received_at`` and ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS``; it is
@@ -48,8 +52,10 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.fleet.service as fleet_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.alerting as telemetry_alerting
+import app.domains.telemetry.geofencing as telemetry_geofencing
 import app.domains.telemetry.mappers as telemetry_mappers
 import app.domains.telemetry.reports as telemetry_reports
 import app.domains.telemetry.repository as telemetry_repository
@@ -58,6 +64,8 @@ import app.domains.vehicles.service as vehicle_service
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import (
+    FleetOperatingReportResponse,
+    FleetVehicleLiveStatusListResponse,
     TelemetryEnvelope,
     VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
@@ -74,6 +82,7 @@ from app.domains.telemetry.types import (
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
+from app.libs.common.pagination import normalize_page_window
 
 logger = logging.getLogger(__name__)
 
@@ -585,6 +594,158 @@ async def get_vehicle_energy_usage_report(
     return telemetry_reports.build_energy_usage_report(report_context)
 
 
+async def list_fleet_vehicle_live_statuses(
+    db: AsyncSession,
+    fleet_id: UUID,
+    *,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+) -> FleetVehicleLiveStatusListResponse:
+    """List a fleet's member vehicles with their newest position (F-E1 fleet map).
+
+    Pages over the fleet's current member list (oldest member first) and
+    resolves each vehicle on the page one by one: its display data through
+    the vehicles domain and its live status through
+    ``resolve_vehicle_live_status`` - two to three simple queries per
+    vehicle, no batching (MVP rule). A member soft-deleted after joining
+    stays in the list (its membership is still open) with ``None`` vehicle
+    fields; a member that never reported has ``None`` position fields and
+    ``is_online`` ``False``.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        fleet_id: Internal ID of the fleet.
+        page: Requested page (1-based), clamped by ``normalize_page_window``.
+        page_size: Requested page size, clamped the same way.
+
+    Returns:
+        One page of member vehicles, with the member count as ``total``.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or was soft-deleted
+            (raised by the fleet domain; mapped to 404).
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
+        db, fleet_id
+    )
+    page_window = normalize_page_window(page, page_size)
+    page_vehicle_ids = member_vehicle_ids[
+        page_window.offset : page_window.offset + page_window.page_size
+    ]
+
+    items = []
+    for vehicle_id in page_vehicle_ids:
+        vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
+            db, vehicle_id
+        )
+        live_status = await resolve_vehicle_live_status(db, vehicle_id)
+        items.append(
+            telemetry_mappers.to_fleet_vehicle_live_status_response(
+                vehicle_id, vehicle_summary, live_status
+            )
+        )
+    return FleetVehicleLiveStatusListResponse(
+        items=items,
+        total=len(member_vehicle_ids),
+        page=page_window.page,
+        page_size=page_window.page_size,
+    )
+
+
+async def get_fleet_operating_report(
+    db: AsyncSession,
+    fleet_id: UUID,
+    *,
+    start_time: datetime,
+    end_time: datetime,
+) -> FleetOperatingReportResponse:
+    """Get the operating performance of a fleet's current members (F-A6 rollup).
+
+    Validates the window like the per-vehicle report, then folds each
+    current member vehicle's telemetry over it (one vehicle lookup and one
+    aggregate query per vehicle, no batching - MVP rule) and hands the
+    additive figures to ``reports.build_fleet_operating_report``, which
+    sums them before deriving any fleet-wide rate. A member vehicle
+    soft-deleted since joining no longer resolves and is left out of the
+    report.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        fleet_id: Internal ID of the fleet.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+
+    Returns:
+        One row per included vehicle (oldest member first) and the totals.
+
+    Raises:
+        TelemetryInvalidRangeError: Either bound is missing a timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
+        FleetNotFoundError: The fleet does not exist or was soft-deleted
+            (raised by the fleet domain; mapped to 404).
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
+        start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
+    )
+    member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
+        db, fleet_id
+    )
+
+    report_vehicles: list[telemetry_reports.FleetReportVehicle] = []
+    for vehicle_id in member_vehicle_ids:
+        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+            db, vehicle_id
+        )
+        if vehicle_reference is None:
+            continue
+        window_summary = await telemetry_repository.get_vehicle_window_summary(
+            db,
+            vehicle_id=vehicle_id,
+            start_time=normalized_start,
+            end_time=normalized_end,
+        )
+        operating_summary = telemetry_reports.build_operating_summary(
+            telemetry_reports.VehicleReportContext(
+                vehicle_reference=vehicle_reference,
+                start_time=normalized_start,
+                end_time=normalized_end,
+                window_summary=window_summary,
+            )
+        )
+        report_vehicles.append(
+            telemetry_reports.FleetReportVehicle(
+                vin=vehicle_reference.vin, operating_summary=operating_summary
+            )
+        )
+
+    return telemetry_reports.build_fleet_operating_report(
+        fleet_id,
+        start_time=normalized_start,
+        end_time=normalized_end,
+        report_vehicles=report_vehicles,
+    )
+
+
+def serialize_fleet_operating_report_csv(report: FleetOperatingReportResponse) -> str:
+    """Serialize a fleet operating report as CSV for the export endpoint (F-A6).
+
+    Args:
+        report: Report returned by ``get_fleet_operating_report``.
+
+    Returns:
+        CSV text: a header row, one row per vehicle, then a ``TOTAL`` row;
+        UTC ISO 8601 timestamps.
+    """
+    return telemetry_reports.serialize_fleet_operating_report_csv(report)
+
+
 class MessageResult(TypedDict):
     """Counters returned after processing a telemetry message.
 
@@ -622,7 +783,12 @@ async def process_message(
     - After a successful insert, the F-A2 battery-threshold, F-A3 SOH and
       F-A4 anomaly detectors run against the vehicle's previous reading
       and each alert raises its own notification (see
-      ``alerting.raise_alerts_for_reading``). None of these ever affect
+      ``alerting.raise_alerts_for_reading``), then F-A5's geofence check
+      compares the previous and current position against the vehicle's
+      current fleet's geofences and raises one ``GEOFENCE_ALERT`` per
+      geofence entered or left (see
+      ``geofencing.raise_geofence_alerts_for_reading``; nothing without a
+      previous reading or a fleet). None of these ever affect
       ``processed``/``skipped``/``errors`` - each is reported via a
       separate structured log line.
 
@@ -708,6 +874,12 @@ async def process_message(
         await vehicle_service.mark_vehicle_activated(db, vehicle_id)
 
     await telemetry_alerting.raise_alerts_for_reading(
+        db,
+        vehicle_id=vehicle_id,
+        previous_telemetry=previous_telemetry,
+        message=message,
+    )
+    await telemetry_geofencing.raise_geofence_alerts_for_reading(
         db,
         vehicle_id=vehicle_id,
         previous_telemetry=previous_telemetry,

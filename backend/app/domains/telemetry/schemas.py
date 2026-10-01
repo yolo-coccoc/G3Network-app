@@ -3,12 +3,13 @@ Pydantic schemas for MQTT telemetry message validation and the HTTP query API.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A3 (Battery
 health trend), F-A5 (Location, trip history & geofencing - the history
-query only; geofencing itself is deferred, see
-docs/01-requirements/future.md), F-A6 (Operating performance report and
-its per-period breakdown), F-C6 (Per-customer energy usage)
+query; geofence alerts are notifications, no schema here), F-A6
+(Operating performance report, its per-period breakdown and the fleet
+rollup), F-C6 (Per-customer energy usage), F-E1 (fleet live positions)
 
 Two separate contracts live here and never share a class: the HTTP
-responses (``Vehicle*Response``/``VehicleTelemetryHistoryPoint``) and the
+responses (``Vehicle*Response``/``Fleet*Response``/
+``VehicleTelemetryHistoryPoint``) and the
 MQTT message (``TelemetryMessage`` and its ``Telemetry*Payload`` parts),
 which the consumer validates before putting it on the queue. The MQTT
 message comes from the telematic device and carries no internal system ID.
@@ -22,6 +23,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from app.domains.telemetry.types import ReportGranularity
+from app.domains.vehicles.types import VehicleStatus
+from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 
 
@@ -347,6 +350,147 @@ class VehicleEnergyUsageResponse(BaseModel):
     energy_charged_kwh: float = Field(..., ge=0)
     battery_capacity_kwh: float = Field(..., gt=0)
     is_default_battery_capacity: bool
+
+
+class FleetVehicleLiveStatusResponse(BaseModel):
+    """One member vehicle of a fleet with its newest position (F-E1 fleet map).
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        vin: VIN of the vehicle; ``None`` when the vehicle was soft-deleted
+            after joining (its membership is still open and still counted
+            in ``total``).
+        license_plate: License plate; ``None`` in the same case.
+        vehicle_status: Vehicle lifecycle status; ``None`` in the same case.
+        latitude: GPS latitude of the newest reading, or ``None`` if the
+            vehicle has never reported.
+        longitude: GPS longitude of the newest reading, or ``None``.
+        recorded_at: Device timestamp of the newest reading (UTC), or
+            ``None``.
+        received_at: Backend receive time of that reading (UTC), or
+            ``None``.
+        is_online: ``True`` while the vehicle's newest telemetry arrived
+            within ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS`` of now
+            (planner D2); ``False`` for a vehicle that never reported.
+        signal_strength_dbm: Signal strength of the newest reading in dBm,
+            or ``None``.
+    """
+
+    vehicle_id: UUID
+    vin: str | None = None
+    license_plate: str | None = None
+    vehicle_status: VehicleStatus | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    recorded_at: datetime | None = None
+    received_at: datetime | None = None
+    is_online: bool
+    signal_strength_dbm: int | None = None
+
+
+class FleetVehicleLiveStatusListResponse(BaseModel):
+    """A fleet's member vehicles with their newest positions, paginated (F-E1).
+
+    Members are ordered oldest member first.
+    """
+
+    items: list[FleetVehicleLiveStatusResponse] = Field(
+        ..., description="Member vehicles with their newest position"
+    )
+    total: int = Field(..., ge=0, description="Total number of member vehicles")
+    page: int = Field(..., ge=1, description="Current page")
+    page_size: int = Field(
+        ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Number of items per page"
+    )
+
+
+class FleetVehicleOperatingReportRow(BaseModel):
+    """One vehicle's figures inside a fleet operating report (F-A6).
+
+    Same method and ``None`` rules as ``VehicleOperatingReportResponse``:
+    a rate is ``None`` with fewer than two samples or zero distance.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        vin: VIN of the vehicle.
+        sample_count: Telemetry rows inside the window.
+        distance_km: Distance traveled in the window.
+        energy_consumed_kwh: Energy inferred from SOC drops.
+        energy_per_100km_kwh: Energy intensity, or ``None`` if undefined.
+        energy_cost_vnd: ``energy_consumed_kwh`` priced at the report's
+            ``cost_per_kwh_vnd``.
+        cost_per_km_vnd: Cost per kilometre, or ``None`` if undefined.
+        battery_capacity_kwh: Pack capacity used for the kWh conversion.
+        is_default_battery_capacity: ``True`` if the vehicle has no
+            recorded capacity and the engineering default was used.
+    """
+
+    vehicle_id: UUID
+    vin: str
+    sample_count: int = Field(..., ge=0)
+    distance_km: float = Field(..., ge=0)
+    energy_consumed_kwh: float = Field(..., ge=0)
+    energy_per_100km_kwh: float | None = Field(None, ge=0)
+    energy_cost_vnd: float = Field(..., ge=0)
+    cost_per_km_vnd: float | None = Field(None, ge=0)
+    battery_capacity_kwh: float = Field(..., gt=0)
+    is_default_battery_capacity: bool
+
+
+class FleetOperatingReportTotals(BaseModel):
+    """Fleet-wide totals of a fleet operating report (F-A6).
+
+    Sums are added across vehicles; every rate is recomputed from the
+    summed numerator and denominator, never averaged across vehicles (an
+    average would weight a parked vehicle like a busy one).
+
+    Attributes:
+        vehicle_count: Vehicles included in the report.
+        sample_count: Telemetry rows across every vehicle.
+        distance_km: Sum of the vehicles' distances.
+        energy_consumed_kwh: Sum of the vehicles' consumed energy.
+        energy_per_100km_kwh: ``energy_consumed_kwh`` per 100 km of
+            ``distance_km``, or ``None`` when the fleet traveled no
+            distance.
+        energy_cost_vnd: ``energy_consumed_kwh`` priced at the report's
+            ``cost_per_kwh_vnd``.
+        cost_per_km_vnd: ``energy_cost_vnd`` per km of ``distance_km``, or
+            ``None`` when the fleet traveled no distance.
+    """
+
+    vehicle_count: int = Field(..., ge=0)
+    sample_count: int = Field(..., ge=0)
+    distance_km: float = Field(..., ge=0)
+    energy_consumed_kwh: float = Field(..., ge=0)
+    energy_per_100km_kwh: float | None = Field(None, ge=0)
+    energy_cost_vnd: float = Field(..., ge=0)
+    cost_per_km_vnd: float | None = Field(None, ge=0)
+
+
+class FleetOperatingReportResponse(BaseModel):
+    """Operating performance of a fleet's current members over a window (F-A6).
+
+    Covers the vehicles with an open membership when the report is run
+    (not the members at the time of each reading); a member vehicle
+    soft-deleted since joining is left out. Same accuracy limits as the
+    per-vehicle report (``VehicleOperatingReportResponse``).
+
+    Attributes:
+        fleet_id: Internal ID of the fleet.
+        start_time: Normalized (UTC) lower bound actually used.
+        end_time: Normalized (UTC) upper bound actually used.
+        cost_per_kwh_vnd: Flat tariff used for the cost figures
+            (``settings.TELEMETRY_ENERGY_COST_PER_KWH_VND``).
+        vehicles: One row per included vehicle, oldest member first.
+        totals: Fleet-wide sums and the rates recomputed from them.
+    """
+
+    fleet_id: UUID
+    start_time: datetime
+    end_time: datetime
+    cost_per_kwh_vnd: float = Field(..., ge=0)
+    vehicles: list[FleetVehicleOperatingReportRow]
+    totals: FleetOperatingReportTotals
 
 
 class TelemetryLocationPayload(BaseModel):

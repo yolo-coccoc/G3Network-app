@@ -2,8 +2,13 @@
 
 This module only turns requests into service calls; it contains no
 database queries or business logic. Domain exceptions are not caught here:
-``app/api/main.py`` maps ``TelemetryNotFoundError`` to 404 and
-``TelemetryInvalidRangeError`` to 400 through their shared bases.
+``app/api/main.py`` maps ``TelemetryNotFoundError`` (and the fleet
+domain's ``FleetNotFoundError``, raised through the fleet-wide views) to
+404 and ``TelemetryInvalidRangeError`` to 400 through their shared bases.
+
+The fleet-wide views live here, under ``/fleets/{fleet_id}/...``, rather
+than in the fleet domain, so the only edge is ``telemetry -> fleet``
+(planner D7 of ``backend-happy-path-completion.md``).
 """
 
 from datetime import datetime
@@ -14,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.schemas import (
+    FleetOperatingReportResponse,
+    FleetVehicleLiveStatusListResponse,
     VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
@@ -239,3 +246,97 @@ async def get_vehicle_energy_usage_endpoint(
     return await telemetry_service.get_vehicle_energy_usage_report(
         db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
     )
+
+
+@router.get(
+    "/fleets/{fleet_id}/vehicles/latest",
+    response_model=FleetVehicleLiveStatusListResponse,
+    summary="Get the newest position and online flag of every vehicle in a fleet",
+)
+async def list_fleet_vehicle_live_statuses_endpoint(
+    fleet_id: UUID,
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+        description="Number of records per page",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> FleetVehicleLiveStatusListResponse:
+    """Return a fleet's current member vehicles with their live status (F-E1).
+
+    Args:
+        fleet_id: Internal ID of the fleet.
+        page: Page number.
+        page_size: Number of records per page.
+        db: Database session managed by the dependency.
+
+    Returns:
+        One page of member vehicles (oldest member first) with their VIN,
+        plate, status, newest position and online flag.
+
+    Raises:
+        FleetNotFoundError: HTTP 404 - the fleet does not exist or was
+            soft-deleted.
+    """
+    return await telemetry_service.list_fleet_vehicle_live_statuses(
+        db, fleet_id, page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/fleets/{fleet_id}/operating-report",
+    response_model=FleetOperatingReportResponse,
+    summary="Get a fleet's operating performance over a time window",
+    responses={200: {"content": {"text/csv": {}}}},
+)
+async def get_fleet_operating_report_endpoint(
+    fleet_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
+    db: AsyncSession = Depends(get_db),
+) -> FleetOperatingReportResponse | Response:
+    """Return per-vehicle and total distance, energy and cost of a fleet (F-A6).
+
+    Covers the fleet's current member vehicles. Totals are sums; fleet
+    rates are recomputed from the sums, never averaged. See
+    ``FleetOperatingReportResponse`` for the accuracy limits.
+
+    Args:
+        fleet_id: Internal ID of the fleet.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        report_format: ``json`` (default) or ``csv`` (query parameter
+            ``format``) - CSV has one row per vehicle plus a final
+            ``TOTAL`` row.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The fleet operating report, as JSON or as a ``text/csv``
+        attachment.
+
+    Raises:
+        TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
+        FleetNotFoundError: HTTP 404 - the fleet does not exist or was
+            soft-deleted.
+    """
+    fleet_report = await telemetry_service.get_fleet_operating_report(
+        db, fleet_id, start_time=start_time, end_time=end_time
+    )
+    if report_format is ReportFormat.CSV:
+        return Response(
+            content=telemetry_service.serialize_fleet_operating_report_csv(
+                fleet_report
+            ),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="fleet-operating-report-{fleet_id}.csv"'
+                )
+            },
+        )
+    return fleet_report

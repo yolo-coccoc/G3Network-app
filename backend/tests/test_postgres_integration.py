@@ -61,6 +61,7 @@ from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.telemetry.types import ReportGranularity
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
@@ -1932,5 +1933,219 @@ async def test_device_health_fields_follow_real_telemetry_on_postgres(
             assert unmounted.is_online is False
             assert unmounted.is_silent is False
             await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+def _integration_envelope(
+    telematic_serial: str, recorded_at: datetime, latitude: float, longitude: float
+) -> TelemetryEnvelope:
+    """Build a validated telemetry message at one position.
+
+    Args:
+        telematic_serial: Serial of the reporting device.
+        recorded_at: Device timestamp of the reading.
+        latitude: GPS latitude.
+        longitude: GPS longitude.
+
+    Returns:
+        The envelope ``process_message`` takes (SOC 80, no other fields).
+    """
+    message = TelemetryMessage.model_validate(
+        {
+            "message_uuid": str(uuid4()),
+            "telematic_serial": telematic_serial,
+            "recorded_at": recorded_at.isoformat(),
+            "location": {"latitude": latitude, "longitude": longitude},
+            "battery": {"soc": 80.0},
+        }
+    )
+    return TelemetryEnvelope(message=message, raw_payload={"source": "integration"})
+
+
+@pytest.mark.asyncio
+async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
+    temporary_database: str,
+) -> None:
+    """F-A5: a member vehicle driving into, then out of, a fleet polygon raises
+    one ENTER and one EXIT GEOFENCE_ALERT, in the reading's transaction."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    square_ring = [
+        (106.70, 10.77),
+        (106.71, 10.77),
+        (106.71, 10.78),
+        (106.70, 10.78),
+        (106.70, 10.77),
+    ]
+    try:
+        async with session_factory() as db:
+            # The seeded previous reading sits at (10.8, 106.7): outside.
+            vehicle = await _seed_vehicle_readings(
+                db, [{"recorded_at": _september_2026(1, 1), "soc": 80.0}]
+            )
+            telematic_serial = (
+                await db.execute(
+                    select(TelematicModel.telematic_serial).where(
+                        TelematicModel.vehicle_id == vehicle.vehicle_id
+                    )
+                )
+            ).scalar_one()
+            fleet = await fleet_repository.insert(
+                db, {"fleet_code": "GF-01", "name": "Geofence Fleet"}
+            )
+            await fleet_repository.insert_membership(
+                db,
+                fleet_id=fleet.fleet_id,
+                vehicle_id=vehicle.vehicle_id,
+                joined_at=datetime.now(timezone.utc),
+            )
+            geofence = await fleet_service.create_geofence(
+                db,
+                fleet.fleet_id,
+                GeofenceCreateRequest(
+                    name="Depot",
+                    boundary=GeofencePolygonGeoJson(coordinates=[square_ring]),
+                ),
+            )
+
+            entered = await telemetry_service.process_message(
+                db,
+                _integration_envelope(
+                    telematic_serial, _september_2026(1, 2), 10.775, 106.705
+                ),
+            )
+            left = await telemetry_service.process_message(
+                db,
+                _integration_envelope(
+                    telematic_serial, _september_2026(1, 3), 10.80, 106.705
+                ),
+            )
+            alerts = list(
+                (
+                    await db.execute(
+                        select(NotificationModel)
+                        .where(
+                            NotificationModel.vehicle_id == vehicle.vehicle_id,
+                            NotificationModel.notification_type
+                            == NotificationType.GEOFENCE_ALERT,
+                        )
+                        .order_by(NotificationModel.notification_id)
+                    )
+                ).scalars()
+            )
+            # Read everything before the rollback expires the ORM rows.
+            fleet_id = fleet.fleet_id
+            alert_payloads = [alert.payload for alert in alerts]
+            alert_severities = [alert.severity for alert in alerts]
+            await db.rollback()
+
+        assert entered["processed"] == 1
+        assert left["processed"] == 1
+        assert [payload["transition"] for payload in alert_payloads] == [
+            "ENTER",
+            "EXIT",
+        ]
+        enter_payload = alert_payloads[0]
+        assert enter_payload["geofence_id"] == str(geofence.geofence_id)
+        assert enter_payload["geofence_name"] == "Depot"
+        assert enter_payload["fleet_id"] == str(fleet_id)
+        assert enter_payload["latitude"] == pytest.approx(10.775)
+        assert enter_payload["recorded_at"] == _september_2026(1, 2).isoformat()
+        assert enter_payload["previous_recorded_at"] == (
+            _september_2026(1, 1).isoformat()
+        )
+        assert alert_payloads[1]["previous_recorded_at"] == (
+            _september_2026(1, 2).isoformat()
+        )
+        assert alert_severities == [NotificationSeverity.WARNING] * 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fleet_operating_report_totals_sum_members_on_postgres(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-A6: the fleet rollup folds each member's telemetry and recomputes
+    the fleet rates from the summed distance and energy."""
+    monkeypatch.setattr(settings, "TELEMETRY_ENERGY_COST_PER_KWH_VND", 3000.0)
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            # 200 kWh packs: 10% = 20 kWh over 50 km; 30% = 60 kWh over 250 km.
+            first_vehicle = await _seed_vehicle_readings(
+                db,
+                [
+                    {
+                        "recorded_at": _september_2026(1, 1),
+                        "soc": 90.0,
+                        "odometer": 1000.0,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 5),
+                        "soc": 80.0,
+                        "odometer": 1050.0,
+                    },
+                ],
+            )
+            second_vehicle = await _seed_vehicle_readings(
+                db,
+                [
+                    {
+                        "recorded_at": _september_2026(1, 2),
+                        "soc": 70.0,
+                        "odometer": 0.0,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 6),
+                        "soc": 40.0,
+                        "odometer": 250.0,
+                    },
+                ],
+            )
+            fleet = await fleet_repository.insert(
+                db, {"fleet_code": "RU-01", "name": "Rollup Fleet"}
+            )
+            joined_at = datetime.now(timezone.utc)
+            for offset_seconds, member_vehicle in enumerate(
+                (first_vehicle, second_vehicle)
+            ):
+                await fleet_repository.insert_membership(
+                    db,
+                    fleet_id=fleet.fleet_id,
+                    vehicle_id=member_vehicle.vehicle_id,
+                    joined_at=joined_at + timedelta(seconds=offset_seconds),
+                )
+
+            report = await telemetry_service.get_fleet_operating_report(
+                db,
+                fleet.fleet_id,
+                start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
+                end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            )
+            await db.rollback()
+
+        assert [row.vehicle_id for row in report.vehicles] == [
+            first_vehicle.vehicle_id,
+            second_vehicle.vehicle_id,
+        ]
+        assert [row.energy_per_100km_kwh for row in report.vehicles] == [
+            pytest.approx(40.0),
+            pytest.approx(24.0),
+        ]
+        assert report.totals.vehicle_count == 2
+        assert report.totals.sample_count == 4
+        assert report.totals.distance_km == pytest.approx(300.0)
+        assert report.totals.energy_consumed_kwh == pytest.approx(80.0)
+        # 80 kWh / 300 km, not the mean of 40 and 24 (32).
+        assert report.totals.energy_per_100km_kwh == pytest.approx(80.0 / 3.0)
+        assert report.totals.energy_cost_vnd == pytest.approx(240_000.0)
+        assert report.totals.cost_per_km_vnd == pytest.approx(800.0)
     finally:
         await engine.dispose()

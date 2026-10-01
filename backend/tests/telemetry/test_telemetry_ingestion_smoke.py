@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_stations.service as charging_stations_service
+import app.domains.fleet.service as fleet_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_public_service
 import app.domains.telemetry.alerting as telemetry_alerting
@@ -34,6 +35,25 @@ from tests.builders import (
     build_telemetry_record,
     fake_db_session,
 )
+
+
+def _patch_vehicle_in_no_fleet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the F-A5 geofence check find no fleet for the vehicle.
+
+    ``process_message`` runs the geofence check whenever a previous reading
+    exists; these tests are about the other alerts, so the vehicle is in no
+    fleet and the check stops before any geofence lookup.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+
+    async def no_current_fleet(db: AsyncSession, vehicle_id: UUID) -> UUID | None:
+        return None
+
+    monkeypatch.setattr(
+        fleet_service, "find_current_fleet_id_by_vehicle", no_current_fleet
+    )
 
 
 @pytest.mark.asyncio
@@ -148,6 +168,7 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification
     )
+    _patch_vehicle_in_no_fleet(monkeypatch)
 
     result = await telemetry_service.process_message(
         fake_db_session(), build_telemetry_envelope(soc=18.0)
@@ -266,6 +287,7 @@ async def test_process_message_raises_soh_alert_on_crossing(
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification
     )
+    _patch_vehicle_in_no_fleet(monkeypatch)
 
     result = await telemetry_service.process_message(
         fake_db_session(),
@@ -473,6 +495,7 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification
     )
+    _patch_vehicle_in_no_fleet(monkeypatch)
 
     result = await telemetry_service.process_message(
         fake_db_session(),

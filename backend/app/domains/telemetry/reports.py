@@ -2,16 +2,20 @@
 
 Feature code: F-A6 (Operating performance report, computed from SOC drops
 in telemetry - charging_sessions carries no vehicle linkage - with an
-optional per-period breakdown and CSV export), F-C6 (Per-customer energy
-usage, computed from SOC rises in the same telemetry history; "customer"
-is a vehicle in this MVP), F-A3 (daily battery-health trend).
+optional per-period breakdown and CSV export, and the fleet rollup), F-C6
+(Per-customer energy usage, computed from SOC rises in the same telemetry
+history; "customer" is a vehicle in this MVP), F-A3 (daily battery-health
+trend).
 
 Internal to the telemetry domain: other domains never import this module
 (they go through ``telemetry/service.py``). Everything here is pure - the
 service validates the window, looks up the vehicle and folds the window's
 telemetry (``repository.get_vehicle_window_summary``, and
 ``list_vehicle_period_summaries`` for a breakdown), then hands the result
-to the ``build_*`` functions here. The only non-argument input is
+to the ``build_*`` functions here. A fleet rollup is built from its member
+vehicles' additive ``VehicleOperatingSummary`` values: the sums are added
+first and every fleet-wide rate is recomputed from them. The only
+non-argument input is
 ``settings.TELEMETRY_ENERGY_COST_PER_KWH_VND``, read at call time.
 
 Accuracy limits (see the response schemas for the full list): energy is
@@ -25,8 +29,12 @@ import io
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from app.domains.telemetry.schemas import (
+    FleetOperatingReportResponse,
+    FleetOperatingReportTotals,
+    FleetVehicleOperatingReportRow,
     VehicleBatteryHealthPoint,
     VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
@@ -69,6 +77,42 @@ OPERATING_REPORT_CSV_COLUMNS: tuple[str, ...] = (
     "battery_capacity_kwh",
     "cost_per_kwh_vnd",
 )
+
+
+# Column order of the fleet F-A6 CSV export: one row per vehicle, then one
+# final row whose vehicle_id is FLEET_TOTAL_ROW_LABEL. The window and the
+# tariff are repeated on every row so a row stays meaningful on its own.
+FLEET_OPERATING_REPORT_CSV_COLUMNS: tuple[str, ...] = (
+    "vehicle_id",
+    "vin",
+    "start_time",
+    "end_time",
+    "sample_count",
+    "distance_km",
+    "energy_consumed_kwh",
+    "energy_per_100km_kwh",
+    "energy_cost_vnd",
+    "cost_per_km_vnd",
+    "battery_capacity_kwh",
+    "is_default_battery_capacity",
+    "cost_per_kwh_vnd",
+)
+
+# vehicle_id cell of the fleet CSV's final totals row.
+FLEET_TOTAL_ROW_LABEL = "TOTAL"
+
+
+@dataclass(frozen=True)
+class FleetReportVehicle:
+    """One member vehicle's input to a fleet operating report (F-A6).
+
+    Attributes:
+        vin: VIN of the vehicle, shown in its report row.
+        operating_summary: The vehicle's additive figures over the window.
+    """
+
+    vin: str
+    operating_summary: VehicleOperatingSummary
 
 
 @dataclass(frozen=True)
@@ -376,6 +420,105 @@ def build_operating_summary(
     )
 
 
+def build_fleet_vehicle_operating_row(
+    report_vehicle: FleetReportVehicle, *, cost_per_kwh_vnd: float
+) -> FleetVehicleOperatingReportRow:
+    """Compute one vehicle's row of a fleet operating report (F-A6).
+
+    Args:
+        report_vehicle: The vehicle's VIN and additive window figures.
+        cost_per_kwh_vnd: Tariff for the cost figures.
+
+    Returns:
+        The row; a rate is ``None`` with fewer than
+        ``MIN_SAMPLES_FOR_RATES`` samples or zero distance, as in the
+        per-vehicle report.
+    """
+    operating_summary = report_vehicle.operating_summary
+    energy_cost_vnd = calculate_energy_cost_vnd(
+        operating_summary.energy_consumed_kwh, cost_per_kwh_vnd
+    )
+    energy_per_100km_kwh: float | None = None
+    cost_per_km_vnd: float | None = None
+    if operating_summary.sample_count >= MIN_SAMPLES_FOR_RATES:
+        energy_per_100km_kwh = calculate_energy_per_100km_kwh(
+            operating_summary.energy_consumed_kwh, operating_summary.distance_km
+        )
+        cost_per_km_vnd = calculate_cost_per_km_vnd(
+            energy_cost_vnd, operating_summary.distance_km
+        )
+    return FleetVehicleOperatingReportRow(
+        vehicle_id=operating_summary.vehicle_id,
+        vin=report_vehicle.vin,
+        sample_count=operating_summary.sample_count,
+        distance_km=operating_summary.distance_km,
+        energy_consumed_kwh=operating_summary.energy_consumed_kwh,
+        energy_per_100km_kwh=energy_per_100km_kwh,
+        energy_cost_vnd=energy_cost_vnd,
+        cost_per_km_vnd=cost_per_km_vnd,
+        battery_capacity_kwh=operating_summary.battery_capacity_kwh,
+        is_default_battery_capacity=operating_summary.is_default_battery_capacity,
+    )
+
+
+def build_fleet_operating_report(
+    fleet_id: UUID,
+    *,
+    start_time: datetime,
+    end_time: datetime,
+    report_vehicles: list[FleetReportVehicle],
+) -> FleetOperatingReportResponse:
+    """Assemble the F-A6 fleet rollup from its members' additive figures.
+
+    Rule:
+        Totals add up the vehicles' sample counts, distances and energies;
+        the total cost prices the summed energy, and each total rate is
+        the summed energy/cost over the summed distance (``None`` when the
+        fleet traveled no distance) - never an average of per-vehicle
+        rates. Any distance implies a measured interval, so the totals
+        need no sample-count gate. The tariff is read once from
+        ``settings.TELEMETRY_ENERGY_COST_PER_KWH_VND``.
+
+    Args:
+        fleet_id: Internal ID of the fleet.
+        start_time: Normalized (UTC) lower bound used.
+        end_time: Normalized (UTC) upper bound used.
+        report_vehicles: Included member vehicles, in report order.
+
+    Returns:
+        The fleet report with one row per vehicle and the totals.
+    """
+    cost_per_kwh_vnd = settings.TELEMETRY_ENERGY_COST_PER_KWH_VND
+    vehicle_rows = [
+        build_fleet_vehicle_operating_row(
+            report_vehicle, cost_per_kwh_vnd=cost_per_kwh_vnd
+        )
+        for report_vehicle in report_vehicles
+    ]
+    total_distance_km = sum(row.distance_km for row in vehicle_rows)
+    total_energy_kwh = sum(row.energy_consumed_kwh for row in vehicle_rows)
+    total_cost_vnd = calculate_energy_cost_vnd(total_energy_kwh, cost_per_kwh_vnd)
+    totals = FleetOperatingReportTotals(
+        vehicle_count=len(vehicle_rows),
+        sample_count=sum(row.sample_count for row in vehicle_rows),
+        distance_km=total_distance_km,
+        energy_consumed_kwh=total_energy_kwh,
+        energy_per_100km_kwh=calculate_energy_per_100km_kwh(
+            total_energy_kwh, total_distance_km
+        ),
+        energy_cost_vnd=total_cost_vnd,
+        cost_per_km_vnd=calculate_cost_per_km_vnd(total_cost_vnd, total_distance_km),
+    )
+    return FleetOperatingReportResponse(
+        fleet_id=fleet_id,
+        start_time=start_time,
+        end_time=end_time,
+        cost_per_kwh_vnd=cost_per_kwh_vnd,
+        vehicles=vehicle_rows,
+        totals=totals,
+    )
+
+
 def _format_csv_value(value: object) -> str:
     """Render one CSV cell: UTC ISO 8601 timestamps, empty for ``None``.
 
@@ -432,6 +575,52 @@ def serialize_operating_report_csv(report: VehicleOperatingReportResponse) -> st
             [
                 _format_csv_value(csv_row[column])
                 for column in OPERATING_REPORT_CSV_COLUMNS
+            ]
+        )
+    return buffer.getvalue()
+
+
+def serialize_fleet_operating_report_csv(report: FleetOperatingReportResponse) -> str:
+    """Serialize an F-A6 fleet operating report as CSV text.
+
+    One header row (``FLEET_OPERATING_REPORT_CSV_COLUMNS``), one row per
+    vehicle, then a final row whose ``vehicle_id`` is ``TOTAL`` holding
+    the totals (its ``vin``, ``battery_capacity_kwh`` and
+    ``is_default_battery_capacity`` cells are empty).
+
+    Args:
+        report: The fleet report to export.
+
+    Returns:
+        CSV text (``csv`` module defaults: comma separator, CRLF rows).
+    """
+    shared_values: dict[str, object] = {
+        "start_time": report.start_time,
+        "end_time": report.end_time,
+        "cost_per_kwh_vnd": report.cost_per_kwh_vnd,
+    }
+    csv_rows: list[dict[str, object]] = [
+        {**vehicle_row.model_dump(), **shared_values} for vehicle_row in report.vehicles
+    ]
+    csv_rows.append(
+        {
+            **report.totals.model_dump(),
+            **shared_values,
+            "vehicle_id": FLEET_TOTAL_ROW_LABEL,
+            "vin": None,
+            "battery_capacity_kwh": None,
+            "is_default_battery_capacity": None,
+        }
+    )
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(FLEET_OPERATING_REPORT_CSV_COLUMNS)
+    for csv_row in csv_rows:
+        writer.writerow(
+            [
+                _format_csv_value(csv_row[column])
+                for column in FLEET_OPERATING_REPORT_CSV_COLUMNS
             ]
         )
     return buffer.getvalue()

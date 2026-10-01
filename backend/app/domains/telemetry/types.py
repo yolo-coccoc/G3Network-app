@@ -1,12 +1,14 @@
 """Enums, thresholds and small DTOs shared across the telemetry domain's layers.
 
 Feature code: F-A1 (live status), F-A2 (Tiered battery alerts), F-A4
-(Anomaly detection), F-A3 (Battery health (SOH) & cycle tracking), F-A6
-(Operating performance report), F-C6 (Per-customer energy usage)
+(Anomaly detection), F-A3 (Battery health (SOH) & cycle tracking), F-A5
+(geofence transitions), F-A6 (Operating performance report), F-C6
+(Per-customer energy usage)
 
 Scope: the alert levels/anomaly types and their thresholds and severities
-(read by ``detection.py`` and ``alerting.py``), the report granularity and
-output format, the folded-window/per-period/per-day DTOs the repository
+(read by ``detection.py`` and ``alerting.py``), the geofence transition
+kind (``geofencing.py``), the report granularity and output format, the
+folded-window/per-period/per-day DTOs the repository
 hands to ``reports.py`` and the service, the public cross-domain DTOs
 returned by ``service.py`` (``VehicleLiveStatusReference``,
 ``VehicleOperatingSummary``), and the default battery capacity. Every
@@ -149,6 +151,16 @@ class VehicleTelemetryWindowSummary:
 # spec really is this value." The report echoes is_default_battery_capacity
 # so a consumer never mistakes the estimate for a recorded spec.
 DEFAULT_BATTERY_CAPACITY_KWH = 75.0
+
+
+class GeofenceTransition(str, enum.Enum):
+    """Direction a vehicle crossed a fleet geofence's boundary in (F-A5).
+
+    Carried as ``transition`` in a ``GEOFENCE_ALERT`` notification payload.
+    """
+
+    ENTER = "ENTER"  # previous reading outside, current reading inside
+    EXIT = "EXIT"  # previous reading inside, current reading outside
 
 
 class ReportGranularity(str, enum.Enum):
