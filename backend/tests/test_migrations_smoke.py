@@ -1,4 +1,4 @@
-"""Smoke test for the current baseline migration graph."""
+"""Smoke test for the single bootstrap-phase baseline migration."""
 
 from pathlib import Path
 
@@ -11,22 +11,24 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def test_migration_graph_has_one_current_head() -> None:
-    """The migration graph has exactly one baseline head for the charging MVP."""
-    backend_root = _backend_root()
-    script = ScriptDirectory.from_config(Config(str(backend_root / "alembic.ini")))
+def test_migration_graph_is_one_baseline_revision() -> None:
+    """The bootstrap phase keeps exactly one migration, which is also the head."""
+    script = ScriptDirectory.from_config(Config(str(_backend_root() / "alembic.ini")))
 
-    assert script.get_heads() == ["0026_charging_config_snapshots"]
+    assert script.get_heads() == ["0001_baseline_schema"]
+    assert [revision.revision for revision in script.walk_revisions()] == [
+        "0001_baseline_schema"
+    ]
 
 
-def test_reset_migration_uses_application_allowlist() -> None:
-    """The reset migration must never drop alembic_version or an extension."""
+def test_baseline_clear_step_spares_extensions_and_alembic_version() -> None:
+    """The clear step must never drop alembic_version or an extension object."""
     migration = (
-        _backend_root()
-        / "app/libs/db/migrations/versions/0001_reset_application_schema.py"
+        _backend_root() / "app/libs/db/migrations/versions/0001_baseline_schema.py"
     )
     source = migration.read_text(encoding="utf-8")
 
-    assert "_APPLICATION_TABLES" in source
-    assert 'DROP TABLE IF EXISTS "alembic_version"' not in source
+    assert "c.relname <> 'alembic_version'" in source
+    assert "d.deptype = 'e'" in source
     assert "DROP EXTENSION" not in source
+    assert "DROP SCHEMA" not in source

@@ -152,36 +152,10 @@ extensions:
   `vehicle_telemetry`/vehicle geofencing.
 - `uuid-ossp` for the local database.
 
-The current Alembic baseline consists of:
-
-```text
-0001_reset_application_schema
-0002_vehicles_telematics
-0003_create_vehicle_telemetry
-0004_create_charging_mvp_schema
-0005_station_directory_fields
-0006_telemetry_location_geo
-0007_telemetry_schema_version
-0008_notifications
-0009_anomaly_notification_type
-0010_charging_connector_status
-0011_vehicle_activation_status
-0012_telemetry_battery_health
-0013_soh_alert_notification_type
-0014_device_offline_alert
-0015_telematic_config_push
-0016_vehicle_battery_capacity
-0017_charging_ingest_fields
-0018_drivers
-0019_support_cases
-0020_fleet
-0021_charging_ocpp_raw_log
-0022_charging_station_device
-0023_charging_status_details
-0024_charging_session_fields
-0025_charging_measurements
-0026_charging_config_snapshots
-```
+The schema is a single Alembic migration, `0001_baseline_schema`. During the
+bootstrap phase (no data worth keeping) a schema change edits that migration
+instead of adding a revision, and `make db-reset` clears the database and
+rebuilds it; see `.claude/rules/database.md`.
 
 The charging MVP only supports pre-provisioned topology and the happy path
 (2.0.1: `Started → Updated/MeterValues → Ended`; 1.6J: `StartTransaction →

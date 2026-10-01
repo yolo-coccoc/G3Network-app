@@ -8,8 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +29,7 @@ from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
+from app.libs.common.geo import coordinates_to_location
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DB_INTEGRATION") != "1",
@@ -176,10 +176,10 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                 ).scalars()
             )
 
-        # Pinned to the current Alembic head. This assertion was stale
-        # (hardcoded to an old head) until F-B2 - it went unnoticed only
-        # because this suite is skipped unless RUN_DB_INTEGRATION=1.
-        assert version == "0026_charging_config_snapshots"
+        # Pinned to the single bootstrap-phase baseline revision (see
+        # .claude/rules/database.md): a schema change edits that revision
+        # instead of adding a new one, so the head never moves.
+        assert version == "0001_baseline_schema"
         assert len(tables) == 11
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
@@ -191,127 +191,6 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
             "charging_ocpp_messages",
             "charging_session_measurements",
         }
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_measurements_migration_copies_energy_rows_and_downgrade_restores_only_energy(
-    temporary_database: str,
-) -> None:
-    """The unification keeps every existing energy sample; downgrading keeps only energy.
-
-    The database is first taken back to 0024 (the old ``charging_session_meter_values``
-    table), given real samples, upgraded to 0025 and then downgraded again.
-    """
-    now = datetime.now(timezone.utc)
-    station_id, evse_id, connector_id, session_id = uuid4(), uuid4(), uuid4(), uuid4()
-    sample_ids = [uuid4(), uuid4()]
-    engine = create_async_engine(temporary_database, poolclass=NullPool)
-    try:
-        _run_alembic(temporary_database, "downgrade", "0024_charging_session_fields")
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
-                    "maintenance_status, created_at, updated_at) "
-                    "VALUES (:s, :i, 'x', 'OPERATIONAL', :t, :t)"
-                ),
-                {"s": station_id, "i": f"IT-{uuid4().hex[:12]}", "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, created_at, updated_at) VALUES (:e, :s, 1, :t, :t)"
-                ),
-                {"e": evse_id, "s": station_id, "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_connectors (connector_id, evse_id, ocpp_connector_id, created_at, updated_at) VALUES (:c, :e, 1, :t, :t)"
-                ),
-                {"c": connector_id, "e": evse_id, "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_sessions (session_id, station_id, evse_id, connector_id, "
-                    "ocpp_transaction_id, status, started_at, created_at, updated_at) "
-                    "VALUES (:x, :s, :e, :c, 'TX-IT', 'active', :t, :t, :t)"
-                ),
-                {
-                    "x": session_id,
-                    "s": station_id,
-                    "e": evse_id,
-                    "c": connector_id,
-                    "t": now,
-                },
-            )
-            for index, sample_id in enumerate(sample_ids):
-                await connection.execute(
-                    text(
-                        "INSERT INTO charging_session_meter_values "
-                        "(meter_value_id, sampled_at, session_id, value_wh) "
-                        "VALUES (:m, :at, :x, :v)"
-                    ),
-                    {
-                        "m": sample_id,
-                        "at": now + timedelta(seconds=index),
-                        "x": session_id,
-                        "v": Decimal("1250.500") + index,
-                    },
-                )
-
-        _run_alembic(temporary_database, "upgrade", "0025_charging_measurements")
-
-        async with engine.connect() as connection:
-            rows = (
-                await connection.execute(
-                    text(
-                        "SELECT measurement_id, measurand, value, unit, context "
-                        "FROM charging_session_measurements ORDER BY sampled_at"
-                    )
-                )
-            ).all()
-            old_table_exists = await connection.scalar(
-                text("SELECT to_regclass('charging_session_meter_values') IS NOT NULL")
-            )
-        assert old_table_exists is False
-        assert [
-            row.measurement_id for row in rows
-        ] == sample_ids  # same IDs, same order
-        assert [row.value for row in rows] == [Decimal("1250.5"), Decimal("1251.5")]
-        assert {(row.measurand, row.unit, row.context) for row in rows} == {
-            ("Energy.Active.Import.Register", "Wh", None)
-        }
-
-        # A non-energy measurement cannot be represented in the old table.
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_session_measurements "
-                    "(measurement_id, sampled_at, session_id, measurand, value, unit) "
-                    "VALUES (:m, :at, :x, 'SoC', 80, 'Percent')"
-                ),
-                {"m": uuid4(), "at": now, "x": session_id},
-            )
-
-        _run_alembic(temporary_database, "downgrade", "0024_charging_session_fields")
-
-        async with engine.connect() as connection:
-            restored = (
-                await connection.execute(
-                    text(
-                        "SELECT meter_value_id, value_wh FROM charging_session_meter_values "
-                        "ORDER BY sampled_at"
-                    )
-                )
-            ).all()
-        assert [row.meter_value_id for row in restored] == sample_ids
-        assert [row.value_wh for row in restored] == [
-            Decimal("1250.500"),
-            Decimal("1251.500"),
-        ]  # the SoC row is gone: only energy fits the old table
-
-        _run_alembic(temporary_database, "upgrade", "head")
     finally:
         await engine.dispose()
 
@@ -341,96 +220,6 @@ async def test_ocpp16_transaction_id_sequence_is_32_bit_and_increasing(
         assert details.data_type == "integer"
         assert details.max_value == 2147483647
         assert details.cycle is False
-    finally:
-        await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_status_migration_downgrade_converts_1_6_statuses_and_upgrade_restores_them(
-    temporary_database: str,
-) -> None:
-    """Downgrading 0023 with data present rebuilds the enum without losing rows.
-
-    PostgreSQL cannot drop enum values, so the downgrade converts every
-    1.6J-only connector status to ``Occupied`` and recreates the type; a later
-    upgrade must bring all ten values back.
-    """
-    labels_sql = text(
-        "SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid "
-        "WHERE t.typname = 'chargingconnectorstatus'"
-    )
-    now = datetime.now(timezone.utc)
-    station_id, evse_id, connector_id = uuid4(), uuid4(), uuid4()
-    engine = create_async_engine(temporary_database, poolclass=NullPool)
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_stations (station_id, ocpp_identity, "
-                    "display_name, maintenance_status, created_at, updated_at, "
-                    "charger_status) VALUES (:s, :i, 'x', 'OPERATIONAL', :t, :t, 'Faulted')"
-                ),
-                {"s": station_id, "i": f"IT-{uuid4().hex[:12]}", "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
-                    "created_at, updated_at) VALUES (:e, :s, 1, :t, :t)"
-                ),
-                {"e": evse_id, "s": station_id, "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_connectors (connector_id, evse_id, "
-                    "ocpp_connector_id, status, error_code, created_at, updated_at) "
-                    "VALUES (:c, :e, 1, 'SuspendedEVSE', 'NoError', :t, :t)"
-                ),
-                {"c": connector_id, "e": evse_id, "t": now},
-            )
-            assert len((await connection.execute(labels_sql)).all()) == 10
-
-        _run_alembic(temporary_database, "downgrade", "0022_charging_station_device")
-
-        async with engine.connect() as connection:
-            status = await connection.scalar(
-                text(
-                    "SELECT status::text FROM charging_connectors WHERE connector_id = :c"
-                ),
-                {"c": connector_id},
-            )
-            labels = set((await connection.execute(labels_sql)).scalars())
-            new_columns = set(
-                (
-                    await connection.execute(
-                        text(
-                            "SELECT column_name FROM information_schema.columns "
-                            "WHERE table_name IN ('charging_connectors', 'charging_stations') "
-                            "AND column_name IN ('error_code', 'status_info', "
-                            "'charger_status', 'charger_error_code')"
-                        )
-                    )
-                ).scalars()
-            )
-        assert status == "Occupied"
-        assert labels == {"Available", "Occupied", "Reserved", "Unavailable", "Faulted"}
-        assert new_columns == set()
-
-        _run_alembic(temporary_database, "upgrade", "head")
-
-        async with engine.connect() as connection:
-            restored = set((await connection.execute(labels_sql)).scalars())
-        assert restored == {
-            "Available",
-            "Occupied",
-            "Reserved",
-            "Unavailable",
-            "Faulted",
-            "Preparing",
-            "Charging",
-            "SuspendedEV",
-            "SuspendedEVSE",
-            "Finishing",
-        }
     finally:
         await engine.dispose()
 
@@ -483,8 +272,7 @@ async def test_telemetry_repository_round_trip_rolls_back(
                     "vehicle_id": vehicle_id,
                     "recorded_at": recorded_at,
                     "received_at": recorded_at,
-                    "latitude": 10.8,
-                    "longitude": 106.7,
+                    "location": coordinates_to_location(10.8, 106.7),
                     "speed": 42.0,
                     "heading": 180.0,
                     "soc": 80.0,

@@ -1,49 +1,61 @@
 # Database
 
 > Read this file when writing/reviewing a migration or changing the schema.
+> Rationale for individual tables, columns and indexes lives in the DBML notes
+> (`docs/01-requirements/domain-model/`) and the planners, not here.
 
-During the bootstrap phase, the local database is allowed to fully reset the
-business schema. The current migration graph consists of
-`0001_reset_application_schema` and the following baseline revisions for
-vehicles/telematics, vehicle telemetry, the charging MVP, the charging
-station directory fields, the telemetry location unification, the telemetry
-schema-versioning column, the notifications table, the anomaly notification
-type, the connector status columns, the vehicle activation state machine,
-the telemetry battery-health columns, two more notification types, the
-telematics config-push tracking columns (F-J2), the vehicle
-battery-capacity column (F-A6/F-C6), the charging-ingest
-correctness columns (F-B2), the drivers domain baseline (F-E4), the
-support_cases table (F-I1/F-I2), and the fleet domain baseline plus the
-removal of the dead `vehicles.fleet_id` column (F-E1), and the OCPP 1.6J
-work (the raw OCPP message log, charger device/liveness columns, the widened
-connector status with error details, session idTag/stop reason/meterStop with a
-transaction-ID sequence, the unified measurements table, and configuration
-snapshots)
-(current head:
-`0026_charging_config_snapshots`). The reset migration only drops
-tables/types owned by the application; it never drops `alembic_version`,
-PostGIS, TimescaleDB, or other system objects. Never use this reset process
-on a database holding data that must be preserved.
+## Design source
 
-- **The design source is `docs/01-requirements/domain-model/domain-model.dbml`.** A migration that changes the schema must update it in the same change (flip the table to `@status built`, make types exact, drop `@planned` from columns that now exist), regenerate the views, and pass the `domain-model` skill's `check`. New tables are designed there as `@status planned` before their migration is written.
-- A single PostgreSQL instance, with `timescaledb`, `postgis`, and `uuid-ossp` enabled (init script in `infra/db/init/`).
-- The current time-series tables are vehicle telemetry, charging session events, **charging session measurements** (which replaced `charging_session_meter_values` in `0025`) and the **raw OCPP message log** (`charging_ocpp_messages`); all four are created as **hypertables** (TimescaleDB). The `charging_sessions` aggregate table, the station/EVSE/connector topology tables, `charging_station_configuration_entries`, and `notifications` are ordinary relational tables.
-- `notifications` (F-A2) is a single generic table with a JSONB `payload` shared by every alert-producing feature — a `notification_type` enum member and a payload shape, not a new table, is how each alert type (`BATTERY_ALERT`/F-A2, `ANOMALY_ALERT`/F-A4, `SOH_ALERT`/F-A3, `DEVICE_OFFLINE_ALERT`/F-J1+F-J3, and a future F-B5 type) plugs in. `notification_id` (BIGINT, monotonic) doubles as the poll cursor for `GET /api/v1/notifications?after_id=`.
-- Both `vehicle_telemetry.location` and `charging_stations.location` (F-C1) store GPS as `geography(Point, 4326)` — unified onto PostGIS by `future.md` item 9 (previously `vehicle_telemetry` used two plain `DOUBLE PRECISION` columns). The one deliberate difference between them: `charging_stations.location` has an explicit GIST index; `vehicle_telemetry.location` doesn't — it's a high-frequency hypertable write path (every 5-10s per vehicle) with no current spatial query need, so the index is deferred to avoid paying write-side cost for a capability nothing uses yet (see `Geography(..., spatial_index=False)` in both domains' `models.py`, which also avoids GeoAlchemy2's automatic duplicate-index DDL hook). `charging_stations` now has a radius-search API (F-D1, `GET /charging-stations/nearby`, `ST_DWithin` + KNN ordering); `vehicle_telemetry` still has no map/geofence search API. Shared lat/lon ↔ geography conversion helpers live in `app/libs/common/geo.py` (`coordinates_to_location`/`location_to_coordinates`), used by both domains.
-- Table naming defaults to plural, `snake_case` (`vehicles`, `charging_sessions`, `vehicle_telemetry`...). Don't create tables like `alerts`, `policy_configs`, or other future-domain tables before their contract is confirmed.
-- Migrations are managed with Alembic, located under `backend/app/libs/db/migrations/`. Revision IDs must stay ≤32 characters (the default `alembic_version.version_num` column width) — the migration filename can be more descriptive than the `revision` string itself (see `0002`/`0005`/`0006`).
-- F-A2's nearest-station lookup (`charging_stations/repository.py::find_nearest_station_by_location`) is the first query in the codebase to actually use `ix_charging_stations_location` — ordered by GeoAlchemy2's `distance_centroid` (`<->` KNN operator) for index use, with a separate `func.ST_Distance(...)` (meters) for the reported distance. F-D1's `list_nearby_stations`/`count_nearby_stations` reuse the same index, adding `func.ST_DWithin(...)` for the radius filter (geography column, so the bound is native meters).
-- `charging_connectors.status` (F-C2) is an enum with `values_callable=enum_values` (a duplicated-per-domain helper, `charging_stations/models.py`), storing the protocol's status *values* (e.g. `"Available"`, `"SuspendedEVSE"`), not the Python member names — deliberately different from `charging_stations.maintenance_status`, which stores member names. Since `0023` the type holds **ten** values: OCPP 2.0.1's five (`Available`, `Occupied`, `Reserved`, `Unavailable`, `Faulted`) plus OCPP 1.6J's `Preparing`, `Charging`, `SuspendedEV`, `SuspendedEVSE`, `Finishing` (a connector is free only when `Available`). PostgreSQL cannot drop enum values, so the `0023` downgrade converts the five 1.6J-only values to `Occupied` and rebuilds the type; `ALTER TYPE … ADD VALUE` runs in Alembic's `autocommit_block`. The same type is reused by `charging_stations.charger_status` (OCPP 1.6J connector `0`, the whole charger).
-- `telematics.telemetry_interval_seconds`/`config_pushed_at` (F-J2) and `vehicles.battery_capacity_kwh` (F-A6/F-C6) are all nullable with no server default, following `0012`'s "a historical/existing row genuinely has no value" rationale rather than fabricating one.
-- `driver_vehicle_assignments` (F-E4) is this backend's first use of a **partial unique index** (`postgresql_where=sa.text("unassigned_at IS NULL")` in the migration, `postgresql_where=text(...)` on the SQLAlchemy `Index(...)` in `models.py`): `uq_driver_vehicle_assignments_active_vehicle` and `uq_driver_vehicle_assignments_active_driver` each enforce "at most one open (`unassigned_at IS NULL`) row" per vehicle/driver, while still allowing unlimited closed history rows for the same vehicle/driver. This is deliberately different from — and fixes — the pre-existing `telematics.vehicle_id` `UniqueConstraint("vehicle_id")`, which has no such predicate and therefore still blocks reassignment when the owning row is merely soft-deleted.
-- F-A6/F-C6's per-vehicle report (`telemetry/repository.py::get_vehicle_window_summary`) is the first query in the codebase to use a window function (`lag()` over `vehicle_telemetry` partitioned by vehicle, ordered by `recorded_at`) — it reuses the existing `ix_vehicle_telemetry_vehicle_time` index for both the time-range filter and the window's sort order; no new index was added.
-- `charging_session_events.seq_no` and `charging_sessions.meter_end_sampled_at` (F-B2) are both nullable, no server default, same "existing row genuinely has no value" rationale as above — backfilling `seq_no` with `0` specifically would collide with a real OCPP `seqNo` of 0. Neither has an index: `seq_no` isn't deduplicated on yet (that's `future.md` item 27), and `meter_end_sampled_at` is only ever read alongside its own row, never filtered/sorted on.
-- `support_cases` (F-I1/F-I2) is one table discriminated by a `case_type` enum (`TICKET`/`SOS`), not two tables — the spec ties an SOS case into the same lifecycle as a ticket. Its `location` column uses `Geography(..., spatial_index=False)` with no GIST index, like `vehicle_telemetry.location` and unlike `charging_stations.location` — it's only ever an input snapshot at case-creation time, never a search target (F-I4's nearest-partner routing, which would justify one, is deferred). `response_due_at` has a **partial** index (`WHERE first_responded_at IS NULL`) so an eventual SLA-breach query only scans cases still awaiting a first response.
-- `fleet_vehicle_memberships` (F-E1) reuses `driver_vehicle_assignments`' open/close history-table shape (`joined_at`/`left_at`, a partial unique index on `vehicle_id` `WHERE left_at IS NULL`), with one structural difference: **no** equivalent partial unique index on `fleet_id` — a fleet legitimately holds many vehicles at once, unlike the driver/vehicle 1:1 assumption. Migration `0020_fleet` also drops `vehicles.fleet_id` (added in `0002`, a dead `String(36)` column with no FK, no index, and no reader anywhere in the codebase) rather than converting it to a FK as `future.md` item 10 originally planned — see that item's resolution note for why the plan changed.
-- **OCPP 1.6J columns and tables (`0021`–`0026`)**, all following `0012`'s "a row that never had a value genuinely has none" rationale for nullable columns without a server default:
-  - `charging_ocpp_messages` (`0021`, hypertable on `occurred_at`, PK `(message_id, occurred_at)`, FK `RESTRICT` to `charging_stations`): every OCPP frame, both directions, as the exact text (`raw_frame TEXT`), append-only, no read API and no retention policy yet (`future.md` item 79). Written by `RecordingConnection` in its own transaction, before the frame is parsed. Contains RFID `idTag`s — never copy frames into application logs.
-  - `charging_stations` (`0022`, `0023`): `ocpp_protocol_version`, `vendor`, `model`, `serial_number`, `firmware_version`, `last_boot_at`, `last_seen_at` and the connector-0 columns `charger_status`, `charger_status_updated_at`, `charger_error_code`, `charger_vendor_error_code`. Device-reported writes use `UPDATE … SET updated_at = updated_at`, so `updated_at` keeps meaning "last administrator edit". `is_online` is **derived at read time** from `last_seen_at`, never stored.
-  - `charging_connectors` (`0023`): `error_code`, `vendor_error_code`, `status_info` (replaced by every status report — a report without them clears the old values).
-  - `charging_sessions` (`0024`): `id_tag` (20), `stop_reason` (30), `meter_stop_wh` (the charger's own closing reading, kept apart from `meter_end_wh`, which follows the latest sample); plus the sequence `charging_ocpp16_transaction_id_seq` (`AS integer`, `MAXVALUE 2147483647`, `NO CYCLE`) from which the backend assigns OCPP 1.6J's integer `transactionId`. A sequence is not transactional — a rolled-back transaction leaves a harmless gap.
-  - `charging_session_measurements` (`0025`, hypertable on `sampled_at`, PK `(measurement_id, sampled_at)`, index `(session_id, measurand, sampled_at)`): every measurand of a session (`measurand`, `value Numeric(24,6)`, `unit`, `context`, `phase`, `location`); the energy register is stored as canonical Wh with unit `Wh`. `0025` copies every row of the former `charging_session_meter_values` and drops it; its downgrade restores **only** the energy rows.
-  - `charging_station_configuration_entries` (`0026`): append-only capture of a charger's `GetConfiguration` answer, one row per key, rows of one capture sharing `capture_id`/`captured_at`, index `(station_id, captured_at)`.
+- **The design source is `docs/01-requirements/domain-model/domain-model.dbml`.** A schema change updates it in the same change (flip the table to `@status built`, make types exact, drop `@planned` from columns that now exist), regenerates the views, and passes the `domain-model` skill's `check`. New tables are designed there as `@status planned` before any migration is written.
+- Don't create tables for a future domain (`alerts`, `policy_configs`, ...) before its contract is confirmed.
+
+## Migrations — bootstrap phase (no real data yet)
+
+The schema is **one** Alembic migration:
+`backend/app/libs/db/migrations/versions/0001_baseline_schema.py`. There is no
+migration history to preserve, so a schema change never adds a revision:
+
+1. Change the SQLAlchemy model(s) and the `.dbml` (see above).
+2. Edit `0001_baseline_schema.py` to match: hand-edit it, or regenerate the
+   table section with `alembic revision --autogenerate` against an **empty**
+   database that has only the extensions, then re-apply the hand-written parts
+   listed in its module docstring (clear step, sequence, hypertables, and the
+   indexes/server defaults the models don't declare) and delete the bogus
+   `drop_table('spatial_ref_sys')` autogenerate emits.
+3. Run `make db-reset`: `alembic stamp --purge base` forgets the old revision
+   without running a downgrade, then `upgrade head` clears every application
+   object and recreates the schema.
+4. Run the tests, including `RUN_DB_INTEGRATION=1` for the PostgreSQL suite.
+
+Invariants of the baseline:
+- The clear step drops only tables, sequences and enum types in `public` that
+  no extension owns. It never drops `alembic_version`, `spatial_ref_sys`, an
+  extension or a schema (`backend/tests/test_migrations_smoke.py` guards this).
+- `downgrade()` is the same clear step: there is no earlier schema.
+- **Never run `make db-reset` (or the baseline) on a database whose data must
+  be kept.** When real data first has to survive, freeze the baseline: from
+  then on every change is a new, immutable migration and this section is
+  rewritten.
+
+General Alembic rules: the revision ID must stay ≤32 characters (the
+`alembic_version.version_num` width); a migration file is formatted with Black
+and isort even though the repo-wide formatter run excludes `versions/`; every
+model module must be imported in `migrations/env.py` so autogenerate sees it.
+
+## Platform
+
+- One PostgreSQL 16 instance with `timescaledb`, `postgis` and `uuid-ossp` (init script in `infra/db/init/`).
+- **Hypertables** (TimescaleDB, 1-day chunks, time column part of the primary key): `vehicle_telemetry`, `charging_session_events`, `charging_session_measurements`, `charging_ocpp_messages`. Every other table is an ordinary relational table.
+
+## Conventions
+
+- Table names are plural `snake_case`; every table has an internal ID primary key (see `backend-runtime-conventions.md`).
+- **Enums** store Python member names by default. An enum that mirrors a protocol (e.g. `chargingconnectorstatus`) uses `values_callable=enum_values` to store the protocol's values (`"Available"`, `"SuspendedEVSE"`) instead. PostgreSQL cannot drop an enum value; widening one is just an edit of the baseline in this phase.
+- **Nullable without a server default** when an existing or historical row genuinely has no value — never fabricate one (e.g. `0` for an OCPP `seqNo` would collide with a real value).
+- **GPS** is `geography(Point, 4326)`, declared with `Geography(..., spatial_index=False)`. Add an explicit GIST index only when a spatial query needs it (`charging_stations.location` has one; the high-frequency `vehicle_telemetry.location` and the input-only `support_cases.location` deliberately don't). Conversion helpers: `app/libs/common/geo.py`.
+- **Open/close history tables** (`driver_vehicle_assignments`, `fleet_vehicle_memberships`) enforce "at most one open row" with a **partial unique index** (`WHERE unassigned_at IS NULL` / `WHERE left_at IS NULL`), so closed history rows are unlimited.
+- **Device-reported writes** to a row an administrator also edits (`charging_stations` device/liveness columns) use `UPDATE … SET updated_at = updated_at`, so `updated_at` keeps meaning "last administrator edit".
+- **Derived state is computed at read time**, not stored (e.g. a station's `is_online` from `last_seen_at`).
+- **Alert-producing features share `notifications`** (JSONB `payload`): add a `notification_type` member and a payload shape, never a new table. `notification_id` (BIGINT) doubles as the poll cursor.
+- **Energy** is stored as canonical Wh (unit `Wh`) in `charging_session_measurements`.
+- `charging_ocpp_messages.raw_frame` contains RFID `idTag`s: never copy frames into application logs.

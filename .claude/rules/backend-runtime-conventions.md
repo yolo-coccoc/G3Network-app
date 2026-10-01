@@ -25,12 +25,12 @@
   - `exceptions.py` — pure Python domain exceptions; the router converts them into the appropriate transport-level error.
 - Naming: `snake_case` for variables/functions/modules, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants.
 - All I/O (DB, HTTP, MQTT) uses **async/await**.
-- Migrations: **Alembic** (`uv run alembic ...`), each migration has a clear message.
-  Confirmed exception for the current bootstrap phase: wiping the legacy
-  migration graph and rebuilding a new baseline via a reset migration plus
-  the schema-creation migrations that follow. Once the baseline is locked in,
-  new migrations must be immutable and must never modify a migration already
-  merged into `main`.
+- Migrations: **Alembic** (`uv run alembic ...`). During the bootstrap phase
+  there is exactly **one** migration, `0001_baseline_schema`, edited in place
+  on every schema change and applied with `make db-reset` (clear + rebuild) —
+  the full procedure is in [`database.md`](./database.md). Once real data
+  must be preserved, the baseline is frozen and every later change becomes a
+  new, immutable migration.
 
 ## Docstrings and comments
 

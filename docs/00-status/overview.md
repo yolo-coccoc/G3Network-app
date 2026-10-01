@@ -27,7 +27,8 @@ For technical depth (components, diagram, database, infra), see
 
 ## Database
 
-Current Alembic head: `0026_charging_config_snapshots`.
+Single baseline migration: `0001_baseline_schema` (edited in place during the
+bootstrap phase; `make db-reset` rebuilds the database from it).
 
 ## Not built yet
 

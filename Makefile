@@ -27,7 +27,7 @@ help:
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate     - Run Alembic migrations"
-	@echo "  make db-reset       - Reset the database (wipes all data)"
+	@echo "  make db-reset       - Clear the database and rebuild it from the baseline (wipes all data)"
 	@echo ""
 
 # === INFRASTRUCTURE ===
@@ -108,8 +108,12 @@ db-migrate:
 	cd backend && uv run alembic upgrade head
 	@echo "✓ Database migrated"
 
+# Bootstrap phase: the schema is one baseline migration that is edited in place,
+# so the recorded revision may no longer exist. "stamp --purge" forgets it without
+# running any downgrade; the baseline's upgrade then clears every application
+# object and recreates the schema. Never run this on a database with real data.
 db-reset:
-	@echo "⚠️  Resetting database to its initial state..."
-	cd backend && uv run alembic downgrade base
+	@echo "⚠️  Clearing the database and rebuilding it from the baseline migration..."
+	cd backend && uv run alembic stamp --purge base
 	cd backend && uv run alembic upgrade head
 	@echo "✓ Database reset"
