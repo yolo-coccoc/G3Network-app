@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from app.domains.support.types import (
     SupportCaseCategory,
@@ -113,8 +113,6 @@ class SupportCaseResponse(BaseModel):
         created_at: Creation time.
         updated_at: Last update time.
     """
-
-    model_config = ConfigDict(from_attributes=True)
 
     case_id: UUID
     case_type: SupportCaseType

@@ -1,17 +1,15 @@
-"""FastAPI router for the HTTP endpoints of the support domain."""
+"""FastAPI router for the HTTP endpoints of the support domain.
+
+Domain exceptions are not caught here: `app/api/main.py` maps each shared
+base (`NotFoundError` -> 404, `ConflictError` -> 409) to its HTTP status.
+"""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.support.service as support_service
-from app.domains.support.exceptions import (
-    SupportCaseNotFoundError,
-    SupportCaseStateError,
-    SupportDriverNotFoundError,
-    SupportVehicleNotFoundError,
-)
 from app.domains.support.schemas import (
     SupportCaseListResponse,
     SupportCaseResponse,
@@ -45,15 +43,16 @@ async def create_support_ticket_endpoint(
 
     Returns:
         Created support ticket.
+
+    Raises:
+        SupportVehicleNotFoundError: 404 when a VIN was supplied but does not
+            resolve to a vehicle.
+        SupportDriverNotFoundError: 404 when a driver ID was supplied but
+            does not resolve to a driver.
     """
-    try:
-        return await support_service.create_support_ticket(
-            db_session, support_ticket_create_request
-        )
-    except (SupportVehicleNotFoundError, SupportDriverNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await support_service.create_support_ticket(
+        db_session, support_ticket_create_request
+    )
 
 
 @router.post(
@@ -75,15 +74,16 @@ async def create_support_sos_endpoint(
 
     Returns:
         Created SOS case.
+
+    Raises:
+        SupportVehicleNotFoundError: 404 when a VIN was supplied but does not
+            resolve to a vehicle.
+        SupportDriverNotFoundError: 404 when a driver ID was supplied but
+            does not resolve to a driver.
     """
-    try:
-        return await support_service.create_support_sos(
-            db_session, support_sos_create_request
-        )
-    except (SupportVehicleNotFoundError, SupportDriverNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await support_service.create_support_sos(
+        db_session, support_sos_create_request
+    )
 
 
 @router.get(
@@ -124,11 +124,11 @@ async def list_support_cases_endpoint(
     """
     return await support_service.list_support_cases(
         db_session,
-        page,
-        page_size,
-        status_filter,
-        case_type_filter,
-        vehicle_id,
+        page=page,
+        page_size=page_size,
+        status_filter=status_filter,
+        case_type_filter=case_type_filter,
+        vehicle_id_filter=vehicle_id,
     )
 
 
@@ -150,13 +150,12 @@ async def get_support_case_endpoint(
 
     Returns:
         Support case details.
+
+    Raises:
+        SupportCaseNotFoundError: 404 when the case does not exist or was
+            soft-deleted.
     """
-    try:
-        return await support_service.get_support_case(db_session, case_id)
-    except SupportCaseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await support_service.get_support_case(db_session, case_id)
 
 
 @router.patch(
@@ -179,19 +178,16 @@ async def update_support_case_endpoint(
 
     Returns:
         Updated support case.
+
+    Raises:
+        SupportCaseNotFoundError: 404 when the case does not exist or was
+            soft-deleted.
+        SupportCaseStateError: 409 when the case is already CLOSED or
+            CANCELLED.
     """
-    try:
-        return await support_service.update_support_case(
-            db_session, case_id, support_case_update_request
-        )
-    except SupportCaseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except SupportCaseStateError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await support_service.update_support_case(
+        db_session, case_id, support_case_update_request
+    )
 
 
 @router.delete(
@@ -212,10 +208,9 @@ async def soft_delete_support_case_endpoint(
 
     Returns:
         Success message.
+
+    Raises:
+        SupportCaseNotFoundError: 404 when the case does not exist or was
+            already soft-deleted.
     """
-    try:
-        return await support_service.soft_delete_support_case(db_session, case_id)
-    except SupportCaseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await support_service.soft_delete_support_case(db_session, case_id)

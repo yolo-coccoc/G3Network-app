@@ -1,6 +1,6 @@
 """SQLAlchemy ORM model for the support_cases table in the support domain."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
@@ -16,12 +16,8 @@ from app.domains.support.types import (
     SupportCaseStatus,
     SupportCaseType,
 )
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current UTC time with timezone info."""
-    return datetime.now(timezone.utc)
 
 
 class SupportCaseModel(Base):

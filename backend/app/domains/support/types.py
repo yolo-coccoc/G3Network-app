@@ -1,8 +1,6 @@
-"""Shared internal data types and DTOs used within the support domain."""
+"""Shared internal data types used within the support domain."""
 
 import enum
-from dataclasses import dataclass
-from uuid import UUID
 
 
 class SupportCaseType(str, enum.Enum):
@@ -55,6 +53,9 @@ class SupportCaseStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+# Statuses after which a case accepts no further update (the service refuses
+# any PATCH with `SupportCaseStateError`) and which stamp `closed_at`. Private:
+# callers ask `is_terminal_status()` so the rule lives in one place.
 _TERMINAL_STATUSES = frozenset({SupportCaseStatus.CLOSED, SupportCaseStatus.CANCELLED})
 
 
@@ -68,22 +69,3 @@ def is_terminal_status(status: SupportCaseStatus) -> bool:
         True if the status is CLOSED or CANCELLED.
     """
     return status in _TERMINAL_STATUSES
-
-
-@dataclass(frozen=True)
-class SupportCaseReference:
-    """Minimal information for other domains to reference a support case.
-
-    Not consumed by any caller yet - established for consistency with
-    every other CRUD domain in this backend, each of which exposes a
-    `resolve_*` DTO for cross-domain lookups.
-
-    Attributes:
-        case_id: Internal ID of the support case.
-        case_type: Whether this case is a ticket or an SOS.
-        status: Current lifecycle status of the case.
-    """
-
-    case_id: UUID
-    case_type: SupportCaseType
-    status: SupportCaseStatus

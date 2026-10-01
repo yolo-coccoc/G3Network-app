@@ -1,22 +1,22 @@
 """Business service and public contract of the support domain.
 
 This module holds the business rules for support case tickets (F-I1) and
-SOS reports (F-I2). Other domains may only call the public `resolve_*`
-function to obtain an internal DTO, and must never receive the ORM model or
-HTTP response schema of the support domain. This domain depends on the
+SOS reports (F-I2). No other domain calls into it yet; one that does must go
+through this service and must never receive the ORM model or HTTP response
+schema of the support domain. This domain depends on the
 `vehicles` and `drivers` domains' public services to resolve a VIN/driver ID
 into an internal reference - both one-directional edges, the same shape as
 the existing `telematics -> vehicles` edge.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
+import app.domains.support.repository as support_repository
 import app.domains.vehicles.service as vehicle_service
-from app.domains.support import repository as support_repository
 from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
@@ -33,49 +33,14 @@ from app.domains.support.schemas import (
 )
 from app.domains.support.types import (
     SupportCaseChannel,
-    SupportCaseReference,
     SupportCaseStatus,
     SupportCaseType,
     is_terminal_status,
 )
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
-
-
-def to_support_case_reference(case_record: SupportCaseModel) -> SupportCaseReference:
-    """Convert an ORM record into a minimal DTO for other domains.
-
-    Args:
-        case_record: An active support case record.
-
-    Returns:
-        DTO containing the internal ID, case type, and status of the case.
-    """
-    return SupportCaseReference(
-        case_id=case_record.case_id,
-        case_type=case_record.case_type,
-        status=case_record.status,
-    )
-
-
-async def resolve_support_case_reference_by_id(
-    db_session: AsyncSession,
-    case_id: UUID,
-) -> SupportCaseReference | None:
-    """Find an active support case by ID and return its internal DTO.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        case_id: Internal ID of the support case.
-
-    Returns:
-        `SupportCaseReference` if the case is found; otherwise `None`.
-
-    Side Effects:
-        Performs a read-only query only; does not commit or rollback.
-    """
-    case_record = await support_repository.get_by_id(db_session, case_id)
-    return to_support_case_reference(case_record) if case_record else None
+from app.libs.common.pagination import normalize_page_window
 
 
 def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
@@ -99,7 +64,7 @@ def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
     if reference_time is None and case_record.status is SupportCaseStatus.CANCELLED:
         reference_time = case_record.closed_at
     if reference_time is None:
-        reference_time = datetime.now(timezone.utc)
+        reference_time = utc_now()
     return reference_time > case_record.response_due_at
 
 
@@ -133,15 +98,29 @@ async def build_support_case_response(
 
     latitude, longitude = location_to_coordinates(case_record.location)
 
-    return SupportCaseResponse.model_validate(
-        {
-            **case_record.__dict__,
-            "vehicle_vin": case_record.vin,
-            "driver_name": driver_name,
-            "latitude": latitude,
-            "longitude": longitude,
-            "is_sla_breached": calculate_is_sla_breached(case_record),
-        }
+    return SupportCaseResponse(
+        case_id=case_record.case_id,
+        case_type=case_record.case_type,
+        category=case_record.category,
+        channel=case_record.channel,
+        status=case_record.status,
+        vehicle_id=case_record.vehicle_id,
+        vehicle_vin=case_record.vin,
+        driver_id=case_record.driver_id,
+        driver_name=driver_name,
+        error_code=case_record.error_code,
+        latitude=latitude,
+        longitude=longitude,
+        subject=case_record.subject,
+        description=case_record.description,
+        sla_response_minutes=case_record.sla_response_minutes,
+        response_due_at=case_record.response_due_at,
+        first_responded_at=case_record.first_responded_at,
+        resolved_at=case_record.resolved_at,
+        closed_at=case_record.closed_at,
+        is_sla_breached=calculate_is_sla_breached(case_record),
+        created_at=case_record.created_at,
+        updated_at=case_record.updated_at,
     )
 
 
@@ -192,11 +171,80 @@ async def _resolve_case_context(
     return resolved_vehicle_id, resolved_vin, driver_id
 
 
+async def _insert_case(
+    db_session: AsyncSession,
+    case_create_request: SupportTicketCreateRequest | SupportSosCreateRequest,
+    *,
+    case_type: SupportCaseType,
+    channel: SupportCaseChannel,
+    subject: str,
+    sla_response_minutes: int,
+) -> SupportCaseResponse:
+    """Validate a new case's context, insert it as OPEN and build its response.
+
+    The shared body of `create_support_ticket` and `create_support_sos`:
+    the two differ only in the values passed as keyword arguments.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        case_create_request: The validated ticket or SOS request; supplies
+            the vehicle/driver context, category, description, error code
+            and location.
+        case_type: Whether the case is a ticket or an SOS.
+        channel: Where the case originated.
+        subject: Short subject line to store.
+        sla_response_minutes: Response SLA for this case type; the deadline
+            `response_due_at` is now plus this many minutes.
+
+    Returns:
+        Response for the newly created case.
+
+    Raises:
+        SupportVehicleNotFoundError: When a VIN was supplied but doesn't
+            resolve to a vehicle.
+        SupportDriverNotFoundError: When a driver ID was supplied but
+            doesn't resolve to a driver.
+
+    Side Effects:
+        Inserts one `support_cases` row (flushed, not committed).
+    """
+    vehicle_id, vin, driver_id = await _resolve_case_context(
+        db_session,
+        vehicle_vin=case_create_request.vehicle_vin,
+        driver_id=case_create_request.driver_id,
+    )
+
+    created_at = utc_now()
+    case_record = await support_repository.insert(
+        db_session,
+        {
+            "case_type": case_type,
+            "category": case_create_request.category,
+            "channel": channel,
+            "status": SupportCaseStatus.OPEN,
+            "vehicle_id": vehicle_id,
+            "driver_id": driver_id,
+            "vin": vin,
+            "error_code": case_create_request.error_code,
+            "location": coordinates_to_location(
+                case_create_request.latitude,
+                case_create_request.longitude,
+            ),
+            "subject": subject,
+            "description": case_create_request.description,
+            "sla_response_minutes": sla_response_minutes,
+            "response_due_at": created_at + timedelta(minutes=sla_response_minutes),
+        },
+    )
+
+    return await build_support_case_response(db_session, case_record)
+
+
 async def create_support_ticket(
     db_session: AsyncSession,
     support_ticket_create_request: SupportTicketCreateRequest,
 ) -> SupportCaseResponse:
-    """Create a new in-app support ticket (F-I1).
+    """Create a new support ticket (F-I1) with the ticket response SLA.
 
     Args:
         db_session: Database session owned by the entry boundary.
@@ -212,45 +260,21 @@ async def create_support_ticket(
         SupportDriverNotFoundError: When a driver ID was supplied but
             doesn't resolve to a driver.
     """
-    vehicle_id, vin, driver_id = await _resolve_case_context(
+    return await _insert_case(
         db_session,
-        vehicle_vin=support_ticket_create_request.vehicle_vin,
-        driver_id=support_ticket_create_request.driver_id,
+        support_ticket_create_request,
+        case_type=SupportCaseType.TICKET,
+        channel=support_ticket_create_request.channel,
+        subject=support_ticket_create_request.subject,
+        sla_response_minutes=settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES,
     )
-
-    created_at = datetime.now(timezone.utc)
-    sla_response_minutes = settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES
-
-    case_record = await support_repository.insert(
-        db_session,
-        {
-            "case_type": SupportCaseType.TICKET,
-            "category": support_ticket_create_request.category,
-            "channel": support_ticket_create_request.channel,
-            "status": SupportCaseStatus.OPEN,
-            "vehicle_id": vehicle_id,
-            "driver_id": driver_id,
-            "vin": vin,
-            "error_code": support_ticket_create_request.error_code,
-            "location": coordinates_to_location(
-                support_ticket_create_request.latitude,
-                support_ticket_create_request.longitude,
-            ),
-            "subject": support_ticket_create_request.subject,
-            "description": support_ticket_create_request.description,
-            "sla_response_minutes": sla_response_minutes,
-            "response_due_at": created_at + timedelta(minutes=sla_response_minutes),
-        },
-    )
-
-    return await build_support_case_response(db_session, case_record)
 
 
 async def create_support_sos(
     db_session: AsyncSession,
     support_sos_create_request: SupportSosCreateRequest,
 ) -> SupportCaseResponse:
-    """Create a new SOS report (F-I2).
+    """Create a new SOS report (F-I2) with the SOS response SLA.
 
     Args:
         db_session: Database session owned by the entry boundary.
@@ -267,43 +291,20 @@ async def create_support_sos(
             doesn't resolve to a driver.
 
     Side Effects:
-        The subject is auto-filled ("SOS - <category>") since an SOS is a
-        button tap with no free-text subject. The backend's own job ends
-        at recording the case - the callback itself (F-I2's <=5 minute
-        SLA) is a human action taken after this call returns.
+        The channel is always IN_APP and the subject is auto-filled
+        ("SOS - <category>") since an SOS is a button tap with no free-text
+        subject. The backend's own job ends at recording the case - the
+        callback itself (F-I2's <=5 minute SLA) is a human action taken
+        after this call returns.
     """
-    vehicle_id, vin, driver_id = await _resolve_case_context(
+    return await _insert_case(
         db_session,
-        vehicle_vin=support_sos_create_request.vehicle_vin,
-        driver_id=support_sos_create_request.driver_id,
+        support_sos_create_request,
+        case_type=SupportCaseType.SOS,
+        channel=SupportCaseChannel.IN_APP,
+        subject=f"SOS - {support_sos_create_request.category.value}",
+        sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
     )
-
-    created_at = datetime.now(timezone.utc)
-    sla_response_minutes = settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES
-
-    case_record = await support_repository.insert(
-        db_session,
-        {
-            "case_type": SupportCaseType.SOS,
-            "category": support_sos_create_request.category,
-            "channel": SupportCaseChannel.IN_APP,
-            "status": SupportCaseStatus.OPEN,
-            "vehicle_id": vehicle_id,
-            "driver_id": driver_id,
-            "vin": vin,
-            "error_code": support_sos_create_request.error_code,
-            "location": coordinates_to_location(
-                support_sos_create_request.latitude,
-                support_sos_create_request.longitude,
-            ),
-            "subject": f"SOS - {support_sos_create_request.category.value}",
-            "description": support_sos_create_request.description,
-            "sla_response_minutes": sla_response_minutes,
-            "response_due_at": created_at + timedelta(minutes=sla_response_minutes),
-        },
-    )
-
-    return await build_support_case_response(db_session, case_record)
 
 
 async def get_support_case(
@@ -332,6 +333,7 @@ async def get_support_case(
 
 async def list_support_cases(
     db_session: AsyncSession,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: SupportCaseStatus | None = None,
@@ -351,20 +353,21 @@ async def list_support_cases(
     Returns:
         Paginated support case list response.
     """
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     case_records = await support_repository.list_all(
         db_session,
-        skip,
-        page_size,
-        status_filter,
-        case_type_filter,
-        vehicle_id_filter,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        status_filter=status_filter,
+        case_type_filter=case_type_filter,
+        vehicle_id_filter=vehicle_id_filter,
     )
     total = await support_repository.count(
-        db_session, status_filter, case_type_filter, vehicle_id_filter
+        db_session,
+        status_filter=status_filter,
+        case_type_filter=case_type_filter,
+        vehicle_id_filter=vehicle_id_filter,
     )
 
     return SupportCaseListResponse(
@@ -373,8 +376,8 @@ async def list_support_cases(
             for case_record in case_records
         ],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -403,20 +406,20 @@ def _apply_status_timestamps(
         this update skipped straight past ACKNOWLEDGED/RESOLVED. CANCELLED
         stamps only `closed_at`: cancelling is not a response.
     """
-    now = datetime.now(timezone.utc)
+    transition_at = utc_now()
     is_response = new_status not in (
         SupportCaseStatus.OPEN,
         SupportCaseStatus.CANCELLED,
     )
     if is_response and case_record.first_responded_at is None:
-        update_values.setdefault("first_responded_at", now)
+        update_values.setdefault("first_responded_at", transition_at)
     if (
         new_status in (SupportCaseStatus.RESOLVED, SupportCaseStatus.CLOSED)
         and case_record.resolved_at is None
     ):
-        update_values.setdefault("resolved_at", now)
+        update_values.setdefault("resolved_at", transition_at)
     if is_terminal_status(new_status):
-        update_values["closed_at"] = now
+        update_values["closed_at"] = transition_at
 
 
 async def update_support_case(

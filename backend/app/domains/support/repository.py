@@ -1,6 +1,5 @@
 """Repository querying the support_cases table; contains no business rules."""
 
-from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +9,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.support.models import SupportCaseModel
 from app.domains.support.types import SupportCaseStatus, SupportCaseType
-from app.libs.common.config import settings
+from app.libs.common.clock import utc_now
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> SupportCaseModel:
@@ -53,8 +52,9 @@ async def get_by_id(db_session: AsyncSession, case_id: UUID) -> SupportCaseModel
 
 async def list_all(
     db_session: AsyncSession,
-    skip: int = 0,
-    limit: int = settings.API_DEFAULT_PAGE_SIZE,
+    *,
+    offset: int,
+    limit: int,
     status_filter: SupportCaseStatus | None = None,
     case_type_filter: SupportCaseType | None = None,
     vehicle_id_filter: UUID | None = None,
@@ -63,7 +63,7 @@ async def list_all(
 
     Args:
         db_session: Current database session.
-        skip: Number of records to skip.
+        offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
         case_type_filter: Case type filter, if any.
@@ -85,7 +85,7 @@ async def list_all(
         select(SupportCaseModel)
         .where(and_(*conditions))
         .order_by(SupportCaseModel.created_at.desc())
-        .offset(skip)
+        .offset(offset)
         .limit(limit)
     )
     return list(query_result.scalars().all())
@@ -93,6 +93,7 @@ async def list_all(
 
 async def count(
     db_session: AsyncSession,
+    *,
     status_filter: SupportCaseStatus | None = None,
     case_type_filter: SupportCaseType | None = None,
     vehicle_id_filter: UUID | None = None,
@@ -144,7 +145,7 @@ async def update_fields(
         if hasattr(case_record, field_name):
             setattr(case_record, field_name, value)
 
-    case_record.updated_at = datetime.now(timezone.utc)
+    case_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(case_record)
     return case_record
@@ -166,7 +167,7 @@ async def soft_delete(
     if not case_record:
         return None
 
-    case_record.deleted_at = datetime.now(timezone.utc)
+    case_record.deleted_at = utc_now()
     await db_session.flush()
     await db_session.refresh(case_record)
     return case_record
