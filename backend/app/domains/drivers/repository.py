@@ -1,6 +1,6 @@
 """Repository querying the drivers tables; contains no business rules."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
 from app.domains.drivers.types import DriverStatus
-from app.libs.common.config import settings
+from app.libs.common.clock import utc_now
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> DriverModel:
@@ -99,15 +99,16 @@ async def find_by_license_number(
 
 async def list_all(
     db_session: AsyncSession,
-    skip: int = 0,
-    limit: int = settings.API_DEFAULT_PAGE_SIZE,
+    *,
+    offset: int,
+    limit: int,
     status_filter: DriverStatus | None = None,
 ) -> list[DriverModel]:
     """Get a paginated list of drivers, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
-        skip: Number of records to skip.
+        offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
 
@@ -123,7 +124,7 @@ async def list_all(
         select(DriverModel)
         .where(and_(*conditions))
         .order_by(DriverModel.created_at.desc())
-        .offset(skip)
+        .offset(offset)
         .limit(limit)
     )
     return list(query_result.scalars().all())
@@ -173,7 +174,7 @@ async def update_fields(
         if hasattr(driver_record, field_name):
             setattr(driver_record, field_name, value)
 
-    driver_record.updated_at = datetime.now(timezone.utc)
+    driver_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(driver_record)
     return driver_record
@@ -193,14 +194,14 @@ async def soft_delete(db_session: AsyncSession, driver_id: UUID) -> DriverModel 
     if not driver_record:
         return None
 
-    driver_record.deleted_at = datetime.now(timezone.utc)
+    driver_record.deleted_at = utc_now()
     driver_record.status = DriverStatus.INACTIVE
     await db_session.flush()
     await db_session.refresh(driver_record)
     return driver_record
 
 
-async def get_active_assignment_by_vehicle(
+async def find_active_assignment_by_vehicle(
     db_session: AsyncSession, vehicle_id: UUID
 ) -> DriverVehicleAssignmentModel | None:
     """Find the open assignment for a vehicle, if any.
@@ -223,7 +224,7 @@ async def get_active_assignment_by_vehicle(
     return query_result.scalar_one_or_none()
 
 
-async def get_active_assignment_by_driver(
+async def find_active_assignment_by_driver(
     db_session: AsyncSession, driver_id: UUID
 ) -> DriverVehicleAssignmentModel | None:
     """Find the open assignment for a driver, if any.
@@ -345,7 +346,7 @@ async def close_assignment(
         The closed assignment record.
     """
     assignment_record.unassigned_at = unassigned_at
-    assignment_record.updated_at = datetime.now(timezone.utc)
+    assignment_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(assignment_record)
     return assignment_record

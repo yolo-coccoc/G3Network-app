@@ -1,18 +1,15 @@
-"""FastAPI router for the HTTP endpoints of the drivers domain."""
+"""FastAPI router for the HTTP endpoints of the drivers domain.
+
+Domain exceptions are not caught here: `app/api/main.py` maps each shared
+base (`NotFoundError` -> 404, `ConflictError` -> 409) to its HTTP status.
+"""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
-from app.domains.drivers.exceptions import (
-    DriverAssignmentConflictError,
-    DriverAssignmentNotFoundError,
-    DriverConflictError,
-    DriverNotFoundError,
-    DriverVehicleNotFoundError,
-)
 from app.domains.drivers.schemas import (
     DriverAssignmentHistoryResponse,
     DriverCreateRequest,
@@ -48,16 +45,12 @@ async def create_driver_endpoint(
 
     Returns:
         Created driver.
+
+    Raises:
+        DriverConflictError: 409 when the phone number or license number is
+            already used by another driver.
     """
-    try:
-        return await driver_service.create_driver(
-            db_session,
-            driver_create_request,
-        )
-    except DriverConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await driver_service.create_driver(db_session, driver_create_request)
 
 
 @router.get(
@@ -92,9 +85,9 @@ async def list_drivers_endpoint(
     """
     return await driver_service.list_drivers(
         db_session,
-        page,
-        page_size,
-        status_filter,
+        page=page,
+        page_size=page_size,
+        status_filter=status_filter,
     )
 
 
@@ -116,13 +109,12 @@ async def get_driver_endpoint(
 
     Returns:
         Driver details.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist or was
+            soft-deleted.
     """
-    try:
-        return await driver_service.get_driver(db_session, driver_id)
-    except DriverNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await driver_service.get_driver(db_session, driver_id)
 
 
 @router.patch(
@@ -145,21 +137,16 @@ async def update_driver_endpoint(
 
     Returns:
         Updated driver.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist or was
+            soft-deleted.
+        DriverConflictError: 409 when the new phone number or license number
+            is already used by another driver.
     """
-    try:
-        return await driver_service.update_driver(
-            db_session,
-            driver_id,
-            driver_update_request,
-        )
-    except DriverNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except DriverConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await driver_service.update_driver(
+        db_session, driver_id, driver_update_request
+    )
 
 
 @router.delete(
@@ -180,13 +167,12 @@ async def soft_delete_driver_endpoint(
 
     Returns:
         Success message.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist or was
+            already soft-deleted.
     """
-    try:
-        return await driver_service.soft_delete_driver(db_session, driver_id)
-    except DriverNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await driver_service.soft_delete_driver(db_session, driver_id)
 
 
 @router.post(
@@ -213,21 +199,17 @@ async def assign_vehicle_endpoint(
 
     Returns:
         The resulting open assignment.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist.
+        DriverVehicleNotFoundError: 404 when the VIN does not resolve to a
+            vehicle.
+        DriverAssignmentConflictError: 409 when the vehicle is already
+            actively assigned to a different driver.
     """
-    try:
-        return await driver_service.assign_vehicle_to_driver(
-            db_session,
-            driver_id,
-            driver_vehicle_assign_request,
-        )
-    except (DriverNotFoundError, DriverVehicleNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except DriverAssignmentConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await driver_service.assign_vehicle_to_driver(
+        db_session, driver_id, driver_vehicle_assign_request
+    )
 
 
 @router.delete(
@@ -245,13 +227,13 @@ async def unassign_vehicle_endpoint(
     Args:
         driver_id: Internal ID of the driver.
         db_session: Database session owned by the HTTP boundary.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist.
+        DriverAssignmentNotFoundError: 404 when the driver has no active
+            assignment.
     """
-    try:
-        await driver_service.unassign_vehicle_from_driver(db_session, driver_id)
-    except (DriverNotFoundError, DriverAssignmentNotFoundError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    await driver_service.unassign_vehicle_from_driver(db_session, driver_id)
 
 
 @router.get(
@@ -281,15 +263,10 @@ async def list_driver_assignment_history_endpoint(
 
     Returns:
         Paginated assignment history.
+
+    Raises:
+        DriverNotFoundError: 404 when the driver does not exist.
     """
-    try:
-        return await driver_service.list_driver_assignment_history(
-            db_session,
-            driver_id,
-            page,
-            page_size,
-        )
-    except DriverNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await driver_service.list_driver_assignment_history(
+        db_session, driver_id, page=page, page_size=page_size
+    )

@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.domains.drivers.types import DriverStatus
 from app.libs.common.config import settings
@@ -55,8 +55,6 @@ class DriverResponse(_DriverInputFields):
         created_at: Creation time.
         updated_at: Last update time.
     """
-
-    model_config = ConfigDict(from_attributes=True)
 
     driver_id: UUID = Field(..., description="Driver ID (internal)")
     current_vehicle_id: UUID | None = Field(

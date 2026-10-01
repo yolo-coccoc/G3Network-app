@@ -51,7 +51,7 @@ async def test_driver_service_creates_driver_response(
     )
     monkeypatch.setattr(driver_repository, "insert", insert_driver)
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", no_active_assignment
+        driver_repository, "find_active_assignment_by_driver", no_active_assignment
     )
 
     response = await driver_service.create_driver(
@@ -112,15 +112,15 @@ async def test_driver_service_soft_delete_returns_success(
         return record
 
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", no_active_assignment
+        driver_repository, "find_active_assignment_by_driver", no_active_assignment
     )
     monkeypatch.setattr(driver_repository, "soft_delete", soft_delete)
 
-    result = await driver_service.soft_delete_driver(
+    deletion_response = await driver_service.soft_delete_driver(
         fake_db_session(), record.driver_id
     )
 
-    assert result == {"message": "Driver deleted successfully"}
+    assert deletion_response == {"message": "Driver deleted successfully"}
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,7 @@ async def test_driver_service_soft_delete_closes_active_assignment_first(
     )
     closed: dict[str, object] = {}
 
-    async def get_active(
+    async def find_active(
         db: AsyncSession, driver_id: UUID
     ) -> DriverVehicleAssignmentModel:
         return active_assignment
@@ -153,7 +153,7 @@ async def test_driver_service_soft_delete_closes_active_assignment_first(
         return record
 
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", get_active
+        driver_repository, "find_active_assignment_by_driver", find_active
     )
     monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
     monkeypatch.setattr(driver_repository, "soft_delete", soft_delete)
@@ -200,10 +200,10 @@ async def test_assign_vehicle_to_driver_succeeds(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_vehicle", no_active_by_vehicle
+        driver_repository, "find_active_assignment_by_vehicle", no_active_by_vehicle
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", no_active_by_driver
+        driver_repository, "find_active_assignment_by_driver", no_active_by_driver
     )
     monkeypatch.setattr(driver_repository, "insert_assignment", insert_assignment)
 
@@ -278,7 +278,7 @@ async def test_assign_vehicle_to_driver_rejects_vehicle_assigned_elsewhere(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_vehicle", active_by_vehicle
+        driver_repository, "find_active_assignment_by_vehicle", active_by_vehicle
     )
     monkeypatch.setattr(driver_repository, "insert_assignment", fail_if_called)
 
@@ -323,7 +323,7 @@ async def test_assign_vehicle_to_driver_is_idempotent_for_same_vehicle(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_vehicle", active_by_vehicle
+        driver_repository, "find_active_assignment_by_vehicle", active_by_vehicle
     )
     monkeypatch.setattr(driver_repository, "insert_assignment", fail_if_called)
     monkeypatch.setattr(driver_repository, "close_assignment", fail_if_called)
@@ -388,10 +388,10 @@ async def test_assign_vehicle_to_driver_auto_closes_previous_assignment(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_vehicle", no_active_by_vehicle
+        driver_repository, "find_active_assignment_by_vehicle", no_active_by_vehicle
     )
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", active_by_driver
+        driver_repository, "find_active_assignment_by_driver", active_by_driver
     )
     monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
     monkeypatch.setattr(driver_repository, "insert_assignment", insert_assignment)
@@ -421,7 +421,7 @@ async def test_unassign_vehicle_from_driver_closes_assignment(
     async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
         return driver_record
 
-    async def get_active(
+    async def find_active(
         db: AsyncSession, driver_id: UUID
     ) -> DriverVehicleAssignmentModel:
         return active_assignment
@@ -436,7 +436,7 @@ async def test_unassign_vehicle_from_driver_closes_assignment(
 
     monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(
-        driver_repository, "get_active_assignment_by_driver", get_active
+        driver_repository, "find_active_assignment_by_driver", find_active
     )
     monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
 
@@ -461,7 +461,9 @@ async def test_unassign_vehicle_from_driver_rejects_when_no_active_assignment(
         return None
 
     monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(driver_repository, "get_active_assignment_by_driver", no_active)
+    monkeypatch.setattr(
+        driver_repository, "find_active_assignment_by_driver", no_active
+    )
 
     with pytest.raises(DriverAssignmentNotFoundError):
         await driver_service.unassign_vehicle_from_driver(

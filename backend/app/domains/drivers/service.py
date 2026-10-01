@@ -9,14 +9,13 @@ a vehicle's VIN - the same one-directional edge shape already established by
 `telematics -> vehicles`.
 """
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.repository as driver_repository
 import app.domains.vehicles.service as vehicle_service
-from app.domains.drivers import repository as driver_repository
 from app.domains.drivers.exceptions import (
     DriverAssignmentConflictError,
     DriverAssignmentNotFoundError,
@@ -35,7 +34,9 @@ from app.domains.drivers.schemas import (
     DriverVehicleAssignRequest,
 )
 from app.domains.drivers.types import DriverReference, DriverStatus
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
+from app.libs.common.pagination import normalize_page_window
 
 
 def to_driver_reference(driver_record: DriverModel) -> DriverReference:
@@ -123,7 +124,7 @@ async def build_driver_response(
         `vehicles.repository`/`models` directly. Read-only; does not
         commit or rollback.
     """
-    active_assignment = await driver_repository.get_active_assignment_by_driver(
+    active_assignment = await driver_repository.find_active_assignment_by_driver(
         db_session, driver_record.driver_id
     )
     current_vehicle_id: UUID | None = None
@@ -134,12 +135,16 @@ async def build_driver_response(
         )
         current_vehicle_id = active_assignment.vehicle_id
         current_vehicle_vin = vehicle_reference.vin if vehicle_reference else None
-    return DriverResponse.model_validate(
-        {
-            **driver_record.__dict__,
-            "current_vehicle_id": current_vehicle_id,
-            "current_vehicle_vin": current_vehicle_vin,
-        }
+    return DriverResponse(
+        driver_id=driver_record.driver_id,
+        full_name=driver_record.full_name,
+        phone_number=driver_record.phone_number,
+        license_number=driver_record.license_number,
+        status=driver_record.status,
+        current_vehicle_id=current_vehicle_id,
+        current_vehicle_vin=current_vehicle_vin,
+        created_at=driver_record.created_at,
+        updated_at=driver_record.updated_at,
     )
 
 
@@ -218,6 +223,7 @@ async def get_driver(
 
 async def list_drivers(
     db_session: AsyncSession,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: DriverStatus | None = None,
@@ -233,18 +239,13 @@ async def list_drivers(
     Returns:
         Paginated driver list response.
     """
-    page = max(page, settings.API_DEFAULT_PAGE)
-    if page_size < 1:
-        page_size = settings.API_DEFAULT_PAGE_SIZE
-    elif page_size > settings.API_MAX_PAGE_SIZE:
-        page_size = settings.API_MAX_PAGE_SIZE
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     driver_records = await driver_repository.list_all(
         db_session,
-        skip,
-        page_size,
-        status_filter,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        status_filter=status_filter,
     )
     total = await driver_repository.count(db_session, status_filter)
 
@@ -254,8 +255,8 @@ async def list_drivers(
             for driver_record in driver_records
         ],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -359,12 +360,12 @@ async def soft_delete_driver(
         transaction as the soft delete, so a deleted driver never holds a
         vehicle hostage against the active-assignment partial unique index.
     """
-    active_assignment = await driver_repository.get_active_assignment_by_driver(
+    active_assignment = await driver_repository.find_active_assignment_by_driver(
         db_session, driver_id
     )
     if active_assignment is not None:
         await driver_repository.close_assignment(
-            db_session, active_assignment, unassigned_at=datetime.now(timezone.utc)
+            db_session, active_assignment, unassigned_at=utc_now()
         )
 
     driver_record = await driver_repository.soft_delete(db_session, driver_id)
@@ -422,7 +423,7 @@ async def assign_vehicle_to_driver(
         )
 
     vehicle_active_assignment = (
-        await driver_repository.get_active_assignment_by_vehicle(
+        await driver_repository.find_active_assignment_by_vehicle(
             db_session, vehicle_reference.vehicle_id
         )
     )
@@ -436,14 +437,14 @@ async def assign_vehicle_to_driver(
             "already assigned to another driver"
         )
 
-    driver_active_assignment = await driver_repository.get_active_assignment_by_driver(
+    driver_active_assignment = await driver_repository.find_active_assignment_by_driver(
         db_session, driver_id
     )
     if driver_active_assignment is not None:
         await driver_repository.close_assignment(
             db_session,
             driver_active_assignment,
-            unassigned_at=datetime.now(timezone.utc),
+            unassigned_at=utc_now(),
         )
 
     try:
@@ -451,7 +452,7 @@ async def assign_vehicle_to_driver(
             db_session,
             driver_id=driver_id,
             vehicle_id=vehicle_reference.vehicle_id,
-            assigned_at=datetime.now(timezone.utc),
+            assigned_at=utc_now(),
         )
     except IntegrityError as error:
         raise DriverAssignmentConflictError(
@@ -479,7 +480,7 @@ async def unassign_vehicle_from_driver(
     if driver_record is None:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
-    active_assignment = await driver_repository.get_active_assignment_by_driver(
+    active_assignment = await driver_repository.find_active_assignment_by_driver(
         db_session, driver_id
     )
     if active_assignment is None:
@@ -488,13 +489,14 @@ async def unassign_vehicle_from_driver(
         )
 
     await driver_repository.close_assignment(
-        db_session, active_assignment, unassigned_at=datetime.now(timezone.utc)
+        db_session, active_assignment, unassigned_at=utc_now()
     )
 
 
 async def list_driver_assignment_history(
     db_session: AsyncSession,
     driver_id: UUID,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> DriverAssignmentHistoryResponse:
@@ -521,23 +523,26 @@ async def list_driver_assignment_history(
     if driver_record is None:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(max(page_size, 1), settings.API_MAX_PAGE_SIZE)
-    skip = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     assignment_records = await driver_repository.list_assignments_by_driver(
-        db_session, driver_id, offset=skip, limit=page_size
+        db_session, driver_id, offset=page_window.offset, limit=page_window.page_size
     )
     total = await driver_repository.count_assignments_by_driver(db_session, driver_id)
 
-    items = []
+    assignment_responses = []
     for assignment_record in assignment_records:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
             db_session, assignment_record.vehicle_id
         )
         vehicle_vin = vehicle_reference.vin if vehicle_reference else None
-        items.append(to_assignment_response(assignment_record, vehicle_vin))
+        assignment_responses.append(
+            to_assignment_response(assignment_record, vehicle_vin)
+        )
 
     return DriverAssignmentHistoryResponse(
-        items=items, total=total, page=page, page_size=page_size
+        items=assignment_responses,
+        total=total,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )

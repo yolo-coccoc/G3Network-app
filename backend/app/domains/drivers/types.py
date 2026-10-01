@@ -16,10 +16,9 @@ class DriverStatus(str, enum.Enum):
 class DriverReference:
     """Minimal information for other domains to reference a driver.
 
-    Not consumed by any caller yet - established for consistency with
-    every other CRUD domain in this backend, each of which exposes a
-    `resolve_*` DTO for cross-domain lookups (see `VehicleReference`,
-    `TelematicVehicleMapping`).
+    Returned by `resolve_driver_reference_by_id`; the `support` domain
+    uses it to validate a case's driver and to fill `driver_name` in its
+    case responses.
 
     Attributes:
         driver_id: Internal ID of the driver.
