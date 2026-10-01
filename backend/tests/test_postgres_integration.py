@@ -17,26 +17,45 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.service as charging_stations_service
+import app.domains.drivers.repository as driver_repository
+import app.domains.fleet.repository as fleet_repository
+import app.domains.fleet.service as fleet_service
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
+import app.domains.support.repository as support_repository
+import app.domains.support.service as support_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
-from app.domains.charging_sessions.types import (
-    EnergySeriesGranularity,
-    SessionStatus,
+from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
+from app.domains.fleet.schemas import (
+    GeofenceCreateRequest,
+    GeofencePolygonGeoJson,
+    GeofenceUpdateRequest,
 )
 from app.domains.notifications.models import NotificationModel
-from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.domains.notifications.types import (
+    NotificationListOrder,
+    NotificationSeverity,
+    NotificationType,
+)
+from app.domains.support.schemas import SupportSosCreateRequest
+from app.domains.support.types import (
+    SupportCaseCategory,
+    SupportCaseChannel,
+    SupportCaseStatus,
+    SupportCaseType,
+)
 from app.domains.telematics.exceptions import TelematicConflictError
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
@@ -1403,4 +1422,434 @@ async def test_ocpp201_boot_notification_stores_device_info_and_liveness(
             gateway.wait(timeout=15)
         except subprocess.TimeoutExpired:
             gateway.kill()
+        await engine.dispose()
+
+
+def _integration_vehicle(*, license_plate: str) -> VehicleModel:
+    """Build an unsaved, active vehicle with a random 17-character VIN."""
+    return VehicleModel(
+        vehicle_id=uuid4(),
+        license_plate=license_plate,
+        vin=f"IT{uuid4().hex[:15]}".upper(),
+        make="G3Network",
+        model="Integration Test",
+        year=2026,
+        status=VehicleStatus.ACTIVE,
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_assignment_indexes_and_list_filters_on_postgres(
+    temporary_database: str,
+) -> None:
+    """One open assignment per vehicle and per driver; q/vehicle filters (F-E4, #85)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            first_vehicle = _integration_vehicle(license_plate="IT-DRV-001")
+            second_vehicle = _integration_vehicle(license_plate="IT-DRV-002")
+            db.add_all([first_vehicle, second_vehicle])
+            await db.flush()
+            alice = await driver_repository.insert(
+                db,
+                {
+                    "full_name": "Alice Nguyen",
+                    "phone_number": "0901000001",
+                    "license_number": "LIC-50%-A",
+                },
+            )
+            bob = await driver_repository.insert(
+                db,
+                {
+                    "full_name": "Bob Tran",
+                    "phone_number": "0901000002",
+                    "license_number": "LIC-B",
+                },
+            )
+            now = datetime.now(timezone.utc)
+            await driver_repository.insert_assignment(
+                db,
+                driver_id=alice.driver_id,
+                vehicle_id=first_vehicle.vehicle_id,
+                assigned_at=now,
+            )
+
+            # A second open assignment on the same vehicle, or for the same
+            # driver, breaks one of the two partial unique indexes.
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    await driver_repository.insert_assignment(
+                        db,
+                        driver_id=bob.driver_id,
+                        vehicle_id=first_vehicle.vehicle_id,
+                        assigned_at=now,
+                    )
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    await driver_repository.insert_assignment(
+                        db,
+                        driver_id=alice.driver_id,
+                        vehicle_id=second_vehicle.vehicle_id,
+                        assigned_at=now,
+                    )
+
+            # Closed history rows are unlimited: close, then reopen.
+            open_assignment = await driver_repository.find_active_assignment_by_driver(
+                db, alice.driver_id
+            )
+            assert open_assignment is not None
+            await driver_repository.close_assignment(
+                db, open_assignment, unassigned_at=now + timedelta(minutes=1)
+            )
+            await driver_repository.insert_assignment(
+                db,
+                driver_id=bob.driver_id,
+                vehicle_id=first_vehicle.vehicle_id,
+                assigned_at=now + timedelta(minutes=2),
+            )
+
+            by_vehicle = await driver_repository.list_all(
+                db, offset=0, limit=10, vehicle_id=first_vehicle.vehicle_id
+            )
+            by_name = await driver_repository.list_all(
+                db, offset=0, limit=10, search_text="alice"
+            )
+            by_phone = await driver_repository.list_all(
+                db, offset=0, limit=10, search_text="000002"
+            )
+            # "%" is matched literally, never as a wildcard.
+            by_percent = await driver_repository.list_all(
+                db, offset=0, limit=10, search_text="50%"
+            )
+            no_wildcard = await driver_repository.count(db, search_text="%")
+            unassigned_vehicle = await driver_repository.count(
+                db, vehicle_id=second_vehicle.vehicle_id
+            )
+
+            assert [driver.driver_id for driver in by_vehicle] == [bob.driver_id]
+            assert [driver.driver_id for driver in by_name] == [alice.driver_id]
+            assert [driver.driver_id for driver in by_phone] == [bob.driver_id]
+            assert [driver.driver_id for driver in by_percent] == [alice.driver_id]
+            assert no_wildcard == 1
+            assert unassigned_vehicle == 0
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fleet_membership_index_filters_and_geofences_on_postgres(
+    temporary_database: str,
+) -> None:
+    """One active fleet per vehicle, fleet filters, close-by-ID and geofence
+    containment against a real polygon (F-E1, F-A5, #84, #85)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    square_ring = [
+        (106.70, 10.77),
+        (106.71, 10.77),
+        (106.71, 10.78),
+        (106.70, 10.78),
+        (106.70, 10.77),
+    ]
+    try:
+        async with session_factory() as db:
+            vehicle = _integration_vehicle(license_plate="IT-FLT-001")
+            db.add(vehicle)
+            await db.flush()
+            hanoi = await fleet_repository.insert(
+                db, {"fleet_code": "HN-01", "name": "Hanoi Trucks"}
+            )
+            saigon = await fleet_repository.insert(
+                db, {"fleet_code": "SG-01", "name": "Saigon Trucks"}
+            )
+            now = datetime.now(timezone.utc)
+            membership = await fleet_repository.insert_membership(
+                db,
+                fleet_id=hanoi.fleet_id,
+                vehicle_id=vehicle.vehicle_id,
+                joined_at=now,
+            )
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    await fleet_repository.insert_membership(
+                        db,
+                        fleet_id=saigon.fleet_id,
+                        vehicle_id=vehicle.vehicle_id,
+                        joined_at=now,
+                    )
+
+            by_vehicle = await fleet_repository.list_all(
+                db, offset=0, limit=10, vehicle_id=vehicle.vehicle_id
+            )
+            by_code = await fleet_repository.list_all(
+                db, offset=0, limit=10, search_text="sg-"
+            )
+            by_name_count = await fleet_repository.count(db, search_text="TRUCKS")
+            assert [fleet.fleet_id for fleet in by_vehicle] == [hanoi.fleet_id]
+            assert [fleet.fleet_id for fleet in by_code] == [saigon.fleet_id]
+            assert by_name_count == 2
+            assert await fleet_service.find_current_fleet_id_by_vehicle(
+                db, vehicle.vehicle_id
+            ) == (hanoi.fleet_id)
+            assert await fleet_service.list_active_member_vehicle_ids(
+                db, hanoi.fleet_id
+            ) == [vehicle.vehicle_id]
+
+            geofence = await fleet_service.create_geofence(
+                db,
+                hanoi.fleet_id,
+                GeofenceCreateRequest(
+                    name="Depot",
+                    boundary=GeofencePolygonGeoJson(coordinates=[square_ring]),
+                ),
+            )
+            assert geofence.boundary.coordinates == [square_ring]
+
+            inside = await fleet_service.list_geofences_containing(
+                db, hanoi.fleet_id, 10.775, 106.705
+            )
+            outside = await fleet_service.list_geofences_containing(
+                db, hanoi.fleet_id, 10.80, 106.705
+            )
+            other_fleet = await fleet_service.list_geofences_containing(
+                db, saigon.fleet_id, 10.775, 106.705
+            )
+            assert [reference.geofence_id for reference in inside] == [
+                geofence.geofence_id
+            ]
+            assert inside[0].name == "Depot"
+            assert outside == []
+            assert other_fleet == []
+
+            # Moving the boundary away and then deleting it both take effect.
+            moved_ring = [(lon + 1.0, lat) for lon, lat in square_ring]
+            moved = await fleet_service.update_geofence(
+                db,
+                hanoi.fleet_id,
+                geofence.geofence_id,
+                GeofenceUpdateRequest(
+                    name=None, boundary=GeofencePolygonGeoJson(coordinates=[moved_ring])
+                ),
+            )
+            assert moved.name == "Depot"
+            assert moved.boundary.coordinates == [moved_ring]
+            assert (
+                await fleet_service.list_geofences_containing(
+                    db, hanoi.fleet_id, 10.775, 106.705
+                )
+                == []
+            )
+            await fleet_service.soft_delete_geofence(
+                db, hanoi.fleet_id, geofence.geofence_id
+            )
+            assert (
+                await fleet_service.list_geofences_containing(
+                    db, hanoi.fleet_id, 10.775, 107.705
+                )
+                == []
+            )
+            listed = await fleet_service.list_geofences(db, hanoi.fleet_id)
+            assert listed.total == 0
+
+            # #84: close the membership by ID; a second close is a 404.
+            await fleet_service.close_fleet_membership(
+                db, hanoi.fleet_id, membership.membership_id
+            )
+            assert (
+                await fleet_service.find_current_fleet_id_by_vehicle(
+                    db, vehicle.vehicle_id
+                )
+                is None
+            )
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_support_filters_and_sos_alert_on_postgres(
+    temporary_database: str,
+) -> None:
+    """SLA/awaiting filters agree with is_sla_breached; an SOS raises an
+    SOS_ALERT that the notification reads and mark-all-read see (F-I1, F-I2,
+    F-A2, #85)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            vehicle = _integration_vehicle(license_plate="IT-SUP-001")
+            db.add(vehicle)
+            await db.flush()
+            driver = await driver_repository.insert(
+                db,
+                {
+                    "full_name": "Chi Le",
+                    "phone_number": "0901000003",
+                    "license_number": "LIC-C",
+                },
+            )
+            now = datetime.now(timezone.utc)
+            past_due = now - timedelta(hours=1)
+            future_due = now + timedelta(hours=1)
+
+            async def insert_case(
+                label: str,
+                *,
+                status: SupportCaseStatus,
+                response_due_at: datetime,
+                first_responded_at: datetime | None = None,
+                closed_at: datetime | None = None,
+                channel: SupportCaseChannel = SupportCaseChannel.IN_APP,
+            ) -> tuple[str, object]:
+                case_record = await support_repository.insert(
+                    db,
+                    {
+                        "case_type": SupportCaseType.TICKET,
+                        "category": SupportCaseCategory.TECHNICAL,
+                        "channel": channel,
+                        "status": status,
+                        "driver_id": driver.driver_id,
+                        "subject": label,
+                        "sla_response_minutes": 60,
+                        "response_due_at": response_due_at,
+                        "first_responded_at": first_responded_at,
+                        "closed_at": closed_at,
+                    },
+                )
+                return label, case_record.case_id
+
+            case_ids = dict(
+                [
+                    await insert_case(
+                        "open_overdue",
+                        status=SupportCaseStatus.OPEN,
+                        response_due_at=past_due,
+                    ),
+                    await insert_case(
+                        "open_in_time",
+                        status=SupportCaseStatus.OPEN,
+                        response_due_at=future_due,
+                        channel=SupportCaseChannel.ZALO,
+                    ),
+                    await insert_case(
+                        "answered_late",
+                        status=SupportCaseStatus.ACKNOWLEDGED,
+                        response_due_at=past_due,
+                        first_responded_at=now,
+                    ),
+                    await insert_case(
+                        "cancelled_in_time",
+                        status=SupportCaseStatus.CANCELLED,
+                        response_due_at=past_due,
+                        closed_at=past_due - timedelta(minutes=5),
+                    ),
+                    await insert_case(
+                        "closed_in_time",
+                        status=SupportCaseStatus.CLOSED,
+                        response_due_at=future_due,
+                        first_responded_at=now,
+                        closed_at=now,
+                    ),
+                ]
+            )
+            labels_by_case_id = {case_id: label for label, case_id in case_ids.items()}
+
+            async def labels(**filters: object) -> set[str]:
+                case_list = await support_service.list_support_cases(
+                    db,
+                    page_size=100,
+                    **filters,  # type: ignore[arg-type]
+                )
+                assert case_list.total == len(case_list.items)
+                if "sla_breached_filter" in filters:
+                    assert all(
+                        item.is_sla_breached is filters["sla_breached_filter"]
+                        for item in case_list.items
+                    )
+                return {labels_by_case_id[item.case_id] for item in case_list.items}
+
+            assert await labels(sla_breached_filter=True) == {
+                "open_overdue",
+                "answered_late",
+            }
+            assert await labels(sla_breached_filter=False) == {
+                "open_in_time",
+                "cancelled_in_time",
+                "closed_in_time",
+            }
+            assert await labels(awaiting_response_filter=True) == {
+                "open_overdue",
+                "open_in_time",
+            }
+            assert await labels(awaiting_response_filter=False) == {
+                "answered_late",
+                "cancelled_in_time",
+                "closed_in_time",
+            }
+            assert await labels(channel_filter=SupportCaseChannel.ZALO) == {
+                "open_in_time"
+            }
+            assert len(await labels(driver_id_filter=driver.driver_id)) == 5
+            assert await labels(category_filter=SupportCaseCategory.BILLING) == set()
+
+            sos = await support_service.create_support_sos(
+                db,
+                SupportSosCreateRequest.model_validate(
+                    {
+                        "vehicle_vin": vehicle.vin,
+                        "driver_id": str(driver.driver_id),
+                        "latitude": 10.8,
+                        "longitude": 106.7,
+                        "error_code": "E-042",
+                    }
+                ),
+            )
+            assert sos.channel is SupportCaseChannel.IN_APP
+
+            sos_alerts = await notifications_service.list_notifications(
+                db,
+                after_id=0,
+                limit=10,
+                unread_only=True,
+                vehicle_id=vehicle.vehicle_id,
+                notification_type=NotificationType.SOS_ALERT,
+                severity=NotificationSeverity.CRITICAL,
+                order=NotificationListOrder.DESC,
+            )
+            assert sos_alerts.count == 1
+            sos_alert = sos_alerts.notifications[0]
+            assert sos_alert.payload["case_id"] == str(sos.case_id)
+            assert sos_alert.payload["vehicle_vin"] == vehicle.vin
+            assert sos_alert.payload["latitude"] == pytest.approx(10.8)
+            assert sos_alert.payload["error_code"] == "E-042"
+
+            unread = await notifications_service.count_unread_notifications(
+                db, vehicle.vehicle_id
+            )
+            first_mark = await notifications_service.mark_all_notifications_read(
+                db, vehicle.vehicle_id
+            )
+            second_mark = await notifications_service.mark_all_notifications_read(
+                db, vehicle.vehicle_id
+            )
+            stored = await notifications_service.get_notification(
+                db, sos_alert.notification_id
+            )
+            assert unread.unread_count == 1
+            assert first_mark.marked_count == 1
+            assert second_mark.marked_count == 0
+            assert stored.read_at is not None
+            assert (
+                await notifications_service.count_unread_notifications(db, None)
+            ).unread_count == 0
+            await db.rollback()
+    finally:
         await engine.dispose()
