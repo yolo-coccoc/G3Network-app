@@ -1,6 +1,6 @@
 """SQLAlchemy ORM model for the vehicle record in the vehicles domain."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, Double, Integer, String
@@ -9,12 +9,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current UTC time with timezone info."""
-    return datetime.now(timezone.utc)
 
 
 class VehicleModel(Base):
@@ -35,8 +31,10 @@ class VehicleModel(Base):
             nullable - not every vehicle's spec has been recorded. The
             F-A6/F-C6 reports fall back to a documented default when it's
             NULL. Nominal, not SOH-adjusted.
-        created_at: Creation time
-        updated_at: Last update time
+        created_at: Creation time.
+        updated_at: Last update time, refreshed by the ORM ``onupdate`` hook
+            on every flushed UPDATE of the row.
+        deleted_at: Soft-delete timestamp; NULL while the vehicle is live.
     """
 
     __tablename__ = "vehicles"

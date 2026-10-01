@@ -1,15 +1,17 @@
-"""FastAPI router for the HTTP endpoints of the vehicles domain."""
+"""FastAPI router for the HTTP endpoints of the vehicles domain.
+
+Handlers only translate HTTP to service calls. Domain exceptions are not
+caught here: `app/api/main.py` maps each shared error base once
+(`VehicleNotFoundError` -> 404, `VehicleConflictError` -> 409) with the
+same `{"detail": message}` body for every router.
+"""
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.vehicles.service as vehicle_service
-from app.domains.vehicles.exceptions import (
-    VehicleConflictError,
-    VehicleNotFoundError,
-)
 from app.domains.vehicles.schemas import (
     VehicleActivationSummaryResponse,
     VehicleCreateRequest,
@@ -22,6 +24,10 @@ from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["vehicles"])
+
+# Body of a successful DELETE /vehicles/{vehicle_id}: part of the HTTP
+# contract, so it lives in the router rather than in the service.
+VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
 
 
 @router.post(
@@ -42,17 +48,15 @@ async def create_vehicle_endpoint(
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
-        Created vehicle
+        Created vehicle.
+
+    Raises:
+        VehicleConflictError: The license plate or VIN already exists (409).
     """
-    try:
-        return await vehicle_service.create_vehicle(
-            db_session,
-            vehicle_create_request,
-        )
-    except VehicleConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await vehicle_service.create_vehicle(
+        db_session,
+        vehicle_create_request,
+    )
 
 
 @router.get(
@@ -83,13 +87,13 @@ async def list_vehicles_endpoint(
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
-        Paginated list of vehicles
+        Paginated list of vehicles.
     """
     return await vehicle_service.list_vehicles(
         db_session,
-        page,
-        page_size,
-        status_filter,
+        page=page,
+        page_size=page_size,
+        status_filter=status_filter,
     )
 
 
@@ -129,17 +133,14 @@ async def get_vehicle_endpoint(
     Args:
         vehicle_id: Internal ID of the vehicle.
         db_session: Database session owned by the HTTP boundary.
-        db: Database session
 
     Returns:
-        Vehicle details
+        Vehicle details.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
-    try:
-        return await vehicle_service.get_vehicle(db_session, vehicle_id)
-    except VehicleNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await vehicle_service.get_vehicle(db_session, vehicle_id)
 
 
 @router.patch(
@@ -161,22 +162,17 @@ async def update_vehicle_endpoint(
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
-        Updated vehicle
+        Updated vehicle.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
+        VehicleConflictError: The new license plate or VIN is already in use (409).
     """
-    try:
-        return await vehicle_service.update_vehicle(
-            db_session,
-            vehicle_id,
-            vehicle_update_request,
-        )
-    except VehicleNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except VehicleConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await vehicle_service.update_vehicle(
+        db_session,
+        vehicle_id,
+        vehicle_update_request,
+    )
 
 
 @router.delete(
@@ -189,19 +185,17 @@ async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
     db_session: AsyncSession = Depends(get_db),
 ) -> dict[str, str]:
-    """Soft-delete a vehicle.
+    """Soft-delete (and decommission) a vehicle.
 
     Args:
         vehicle_id: Internal ID of the vehicle.
         db_session: Database session owned by the HTTP boundary.
-        db: Database session
 
     Returns:
-        Success message
+        The confirmation body ``{"message": "Vehicle deleted successfully"}``.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
-    try:
-        return await vehicle_service.soft_delete_vehicle(db_session, vehicle_id)
-    except VehicleNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    await vehicle_service.soft_delete_vehicle(db_session, vehicle_id)
+    return {"message": VEHICLE_DELETED_MESSAGE}

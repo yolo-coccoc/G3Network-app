@@ -1,6 +1,11 @@
-"""Repository querying the vehicles table; contains no business rules."""
+"""Repository querying the vehicles table; contains no business rules.
 
-from datetime import datetime, timezone
+Only the vehicles service calls this module; other domains go through
+``vehicles/service.py``. Every lookup excludes soft-deleted rows. Functions
+flush when they need a generated value or a constraint error, and never
+commit or roll back - the entry boundary owns the transaction.
+"""
+
 from typing import Any
 from uuid import UUID
 
@@ -10,7 +15,6 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
-from app.libs.common.config import settings
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleModel:
@@ -21,7 +25,11 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleMod
         values: Fields used to initialize the ORM record.
 
     Returns:
-        The newly created vehicle record.
+        The newly created vehicle record, reloaded after the flush.
+
+    Raises:
+        IntegrityError: When the VIN or license plate already exists;
+            raised by the flush for the service to convert.
     """
     vehicle_record = VehicleModel(**values)
     db_session.add(vehicle_record)
@@ -94,15 +102,16 @@ async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None
 
 async def list_all(
     db_session: AsyncSession,
-    skip: int = 0,
-    limit: int = settings.API_DEFAULT_PAGE_SIZE,
+    *,
+    offset: int,
+    limit: int,
     status_filter: VehicleStatus | None = None,
 ) -> list[VehicleModel]:
-    """Get a paginated list of vehicles, excluding soft-deleted records.
+    """Get a page of vehicles, newest first, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
-        skip: Number of records to skip.
+        offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
 
@@ -118,7 +127,7 @@ async def list_all(
         select(VehicleModel)
         .where(and_(*conditions))
         .order_by(VehicleModel.created_at.desc())
-        .offset(skip)
+        .offset(offset)
         .limit(limit)
     )
     return list(query_result.scalars().all())
@@ -134,7 +143,7 @@ async def count(
         status_filter: Status filter, if any.
 
     Returns:
-        Total number of vehicles.
+        Total number of vehicles matching the filter.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
 
@@ -173,15 +182,27 @@ async def count_by_activation_status(
 async def update_fields(
     db_session: AsyncSession, vehicle_id: UUID, values: dict[str, Any]
 ) -> VehicleModel | None:
-    """Update the specified fields of a vehicle.
+    """Update the specified fields of a live vehicle.
+
+    Also used for a soft delete: the service passes ``deleted_at`` (and the
+    status it decides on) like any other field.
 
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
-        values: Fields to update.
+        values: Fields to update, keyed by ORM attribute name. A key that is
+            not an attribute of ``VehicleModel`` is ignored.
 
     Returns:
-        The updated vehicle record, or None if not found.
+        The updated vehicle record, or None if not found or soft-deleted.
+
+    Raises:
+        IntegrityError: When the new values break a unique constraint (VIN,
+            license plate); raised by the flush for the service to convert.
+
+    Side Effects:
+        Flushes the UPDATE and reloads the record. ``updated_at`` is set by
+        the column's ``onupdate`` hook as part of that flushed UPDATE.
     """
     vehicle_record = await get_by_id(db_session, vehicle_id)
     if not vehicle_record:
@@ -191,30 +212,6 @@ async def update_fields(
         if hasattr(vehicle_record, field_name):
             setattr(vehicle_record, field_name, value)
 
-    vehicle_record.updated_at = datetime.now(timezone.utc)
-    await db_session.flush()
-    await db_session.refresh(vehicle_record)
-    return vehicle_record
-
-
-async def soft_delete(
-    db_session: AsyncSession, vehicle_id: UUID
-) -> VehicleModel | None:
-    """Soft-delete a vehicle by updating deleted_at and status.
-
-    Args:
-        db_session: Current database session.
-        vehicle_id: Internal ID of the vehicle.
-
-    Returns:
-        The vehicle record after soft delete, or None if not found.
-    """
-    vehicle_record = await get_by_id(db_session, vehicle_id)
-    if not vehicle_record:
-        return None
-
-    vehicle_record.deleted_at = datetime.now(timezone.utc)
-    vehicle_record.status = VehicleStatus.DECOMMISSIONED
     await db_session.flush()
     await db_session.refresh(vehicle_record)
     return vehicle_record

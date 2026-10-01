@@ -1,9 +1,11 @@
 """Business service and public contract of the vehicles domain.
 
 This module holds the business rules for the vehicle record. Other domains
-may only call the public `resolve_*` functions to obtain internal DTOs, and
-must never receive the ORM model or HTTP response schema of the vehicles
-domain.
+may only call the `resolve_*` functions (which return internal DTOs) and the
+F-F2 activation hooks `mark_device_assigned`/`mark_vehicle_activated`; they
+never receive the ORM model or HTTP response schema of the vehicles domain.
+None of the functions commit or roll back - the caller's entry boundary owns
+the transaction.
 """
 
 from uuid import UUID
@@ -30,7 +32,9 @@ from app.domains.vehicles.types import (
     VehicleStatus,
     VehicleSummary,
 )
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
+from app.libs.common.pagination import normalize_page_window
 
 
 def to_vehicle_response(vehicle_record: VehicleModel) -> VehicleResponse:
@@ -157,8 +161,9 @@ async def mark_device_assigned(db_session: AsyncSession, vehicle_id: UUID) -> No
         operation, so it never raises back into the caller's flow.
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
-    if vehicle_record is None or vehicle_record.activation_status != (
-        VehicleActivationStatus.PENDING
+    if (
+        vehicle_record is None
+        or vehicle_record.activation_status is not VehicleActivationStatus.PENDING
     ):
         return
     await vehicle_repository.update_fields(
@@ -308,33 +313,34 @@ async def get_vehicle(
 
 async def list_vehicles(
     db_session: AsyncSession,
+    *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
 ) -> VehicleListResponse:
-    """Get a paginated list of active vehicles.
+    """Get a paginated list of vehicles that are not soft-deleted.
 
     Args:
         db_session: Current database session.
-        page: Page number, starting from 1.
-        page_size: Maximum number of vehicles per page.
+        page: Page number, starting from 1; clamped by
+            `normalize_page_window`.
+        page_size: Maximum number of vehicles per page; clamped to
+            `1..API_MAX_PAGE_SIZE`.
         status_filter: Status filter, if any.
 
     Returns:
-        Paginated vehicle list response.
-    """
-    page = max(page, settings.API_DEFAULT_PAGE)
-    if page_size < 1:
-        page_size = settings.API_DEFAULT_PAGE_SIZE
-    elif page_size > settings.API_MAX_PAGE_SIZE:
-        page_size = settings.API_MAX_PAGE_SIZE
-    skip = (page - 1) * page_size
+        Paginated vehicle list response carrying the normalized page and
+        page size.
 
+    Side Effects:
+        Two read-only queries (the page, then the total count).
+    """
+    page_window = normalize_page_window(page, page_size)
     vehicle_records = await vehicle_repository.list_all(
         db_session,
-        skip,
-        page_size,
-        status_filter,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        status_filter=status_filter,
     )
     total = await vehicle_repository.count(db_session, status_filter)
 
@@ -343,8 +349,8 @@ async def list_vehicles(
             to_vehicle_response(vehicle_record) for vehicle_record in vehicle_records
         ],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -425,21 +431,29 @@ async def update_vehicle(
 async def soft_delete_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
-) -> dict[str, str]:
-    """Soft-delete a vehicle.
+) -> None:
+    """Soft-delete a vehicle and decommission it.
+
+    Rule:
+        A soft-deleted vehicle is also moved to `DECOMMISSIONED`, so a row
+        read later (history, audit) never claims a deleted vehicle is still
+        `ACTIVE`.
 
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
 
-    Returns:
-        Success deletion message.
-
     Raises:
         VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
+
+    Side Effects:
+        Writes `deleted_at` and `status` in one flushed UPDATE; does not
+        commit.
     """
-    vehicle_record = await vehicle_repository.soft_delete(db_session, vehicle_id)
+    vehicle_record = await vehicle_repository.update_fields(
+        db_session,
+        vehicle_id,
+        {"status": VehicleStatus.DECOMMISSIONED, "deleted_at": utc_now()},
+    )
     if not vehicle_record:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
-
-    return {"message": "Vehicle deleted successfully"}
