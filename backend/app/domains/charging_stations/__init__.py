@@ -1,1 +1,1 @@
-"""Bounded context for managing charging stations, topology, and technical status."""
+"""Bounded context for charging stations: topology, directory, and the OCPP gateway."""

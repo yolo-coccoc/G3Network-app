@@ -15,7 +15,6 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.charging_stations.repository as charging_stations_repository
 from app.domains.charging_stations.models import (
     ChargingConnectorModel,
     ChargingOcppMessageModel,
@@ -26,7 +25,6 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     OcppMessageDirection,
 )
-from app.libs.common.clock import utc_now
 
 
 async def update_connector_status(
@@ -38,7 +36,7 @@ async def update_connector_status(
     error_code: str | None = None,
     vendor_error_code: str | None = None,
     status_info: str | None = None,
-) -> ChargingConnectorModel | None:
+) -> bool:
     """Set a connector's live status from an OCPP ``StatusNotification`` (F-C2).
 
     Args:
@@ -53,29 +51,38 @@ async def update_connector_status(
         status_info: Free-text ``info`` of this report, if any.
 
     Returns:
-        The updated connector, or ``None`` if it is no longer active.
+        ``True`` if an active (not soft-deleted) connector was updated.
 
     Side Effects:
-        Assigns ``status``/``status_updated_at`` and the three detail fields
-        (a report without them **clears** the old values, because the latest
-        report is the truth about the connector), updates ``updated_at``,
-        flushes, and refreshes; does not commit. No out-of-order guard —
-        in-order message arrival is this MVP's existing assumption (see
+        Issues one ``UPDATE`` of ``status``/``status_updated_at`` and the three
+        detail fields (a report without them **clears** the old values, because
+        the latest report is the truth about the connector) and flushes; does
+        not commit. ``updated_at`` is deliberately left unchanged: a
+        device-reported status is not an administrator's edit
+        (``.claude/rules/database.md``). No out-of-order guard — in-order
+        message arrival is this MVP's existing assumption (see
         ``docs/01-requirements/future.md`` item 27); the incoming timestamp
         is not compared against the stored one.
     """
-    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
-    if connector is None:
-        return None
-    connector.status = status
-    connector.status_updated_at = status_updated_at
-    connector.error_code = error_code
-    connector.vendor_error_code = vendor_error_code
-    connector.status_info = status_info
-    connector.updated_at = utc_now()
+    result = await db.execute(
+        update(ChargingConnectorModel)
+        .where(
+            ChargingConnectorModel.connector_id == connector_id,
+            ChargingConnectorModel.deleted_at.is_(None),
+        )
+        .values(
+            status=status,
+            status_updated_at=status_updated_at,
+            error_code=error_code,
+            vendor_error_code=vendor_error_code,
+            status_info=status_info,
+            # Assigning the column to itself suppresses the model's
+            # ``onupdate`` so updated_at keeps meaning "last admin edit".
+            updated_at=ChargingConnectorModel.updated_at,
+        )
+    )
     await db.flush()
-    await db.refresh(connector)
-    return connector
+    return bool(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def insert_ocpp_message(

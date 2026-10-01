@@ -1,10 +1,19 @@
-"""Business service for charging topology CRUD and soft-delete.
+"""Public service of the charging_stations domain.
 
-The service is where pre-provisioning invariants are enforced: a station must
-exist before an EVSE, an EVSE must belong to a station before a connector,
-topology identities must not be reused even after the old record was
-soft-deleted, and OCPP must not create topology on its own. The transaction
-is owned by FastAPI's ``get_db``; this module does not commit/rollback.
+Holds topology CRUD with soft-delete (station -> EVSE -> connector, F-C1), the
+directory reads (station list/detail with the derived ``is_online``), the
+nearest-operational-station lookup other domains call (F-A2, used by
+``telemetry``), the driver-facing nearby search (F-D1), and the read of the
+latest configuration a charger reported. This is the only module another
+domain may import; the OCPP gateway's own writes live in the internal
+``ocpp_state_service.py``.
+
+Pre-provisioning invariants are enforced here: a station must exist before an
+EVSE, an EVSE must belong to a station before a connector, and topology
+identities are never reused, even after the old record was soft-deleted.
+Functions run inside the caller's transaction (FastAPI's ``get_db`` for HTTP,
+the ingestion worker's for ``find_nearest_operational_station``) and never
+commit or roll back.
 """
 
 from collections.abc import Mapping
@@ -16,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
-from app.domains.charging_stations import repository
+import app.domains.charging_stations.repository as charging_stations_repository
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
@@ -57,6 +66,18 @@ from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 from app.libs.common.pagination import normalize_page_window
 
 
+def _to_optional_float(value: Decimal | None) -> float | None:
+    """Convert a nullable ``Numeric`` column value into the float the API uses.
+
+    Args:
+        value: The stored decimal (e.g. ``power_rating_kw``), or ``None``.
+
+    Returns:
+        ``float(value)``, or ``None`` when no value is stored.
+    """
+    return float(value) if value is not None else None
+
+
 def to_charging_station_response(
     station: ChargingStationModel,
     *,
@@ -93,11 +114,7 @@ def to_charging_station_response(
         display_name=station.display_name,
         latitude=latitude,
         longitude=longitude,
-        power_rating_kw=(
-            float(station.power_rating_kw)
-            if station.power_rating_kw is not None
-            else None
-        ),
+        power_rating_kw=_to_optional_float(station.power_rating_kw),
         connector_standard=station.connector_standard,
         operating_hours=station.operating_hours,
         maintenance_status=station.maintenance_status,
@@ -147,11 +164,11 @@ def to_charging_connector_response(
     return ChargingConnectorResponse.model_validate(connector)
 
 
-def _clean_update_values(data: Mapping[str, object]) -> dict[str, object]:
+def _clean_update_values(requested_fields: Mapping[str, object]) -> dict[str, object]:
     """Drop ``None`` fields per the backend's PATCH convention.
 
     Args:
-        data: Mapping from ``model_dump(exclude_unset=True)``.
+        requested_fields: Mapping from ``model_dump(exclude_unset=True)``.
 
     Returns:
         Mapping containing only the fields with values to update.
@@ -162,18 +179,20 @@ def _clean_update_values(data: Mapping[str, object]) -> dict[str, object]:
         update".
     """
     return {
-        field_name: value for field_name, value in data.items() if value is not None
+        field_name: value
+        for field_name, value in requested_fields.items()
+        if value is not None
     }
 
 
 async def create_charging_station(
-    db: AsyncSession, station_data: ChargingStationCreateRequest
+    db: AsyncSession, station_create_request: ChargingStationCreateRequest
 ) -> ChargingStationResponse:
     """Create a new station after checking the OCPP identity table-wide.
 
     Args:
         db: Async session owned by the HTTP boundary.
-        station_data: Station data, already Pydantic-validated.
+        station_create_request: Station data, already Pydantic-validated.
 
     Returns:
         The newly created station response.
@@ -182,31 +201,33 @@ async def create_charging_station(
         ChargingTopologyConflictError: If the identity already exists, even
             if soft-deleted.
     """
-    if await repository.get_station_by_identity(db, station_data.ocpp_identity):
+    if await charging_stations_repository.get_station_by_identity(
+        db, station_create_request.ocpp_identity
+    ):
         raise ChargingTopologyConflictError(
-            f"OCPP identity '{station_data.ocpp_identity}' already exists"
+            f"OCPP identity '{station_create_request.ocpp_identity}' already exists"
         )
     maintenance_status = (
-        station_data.maintenance_status
-        if station_data.maintenance_status is not None
+        station_create_request.maintenance_status
+        if station_create_request.maintenance_status is not None
         else ChargingStationMaintenanceStatus.OPERATIONAL
     )
     power_rating_kw = (
-        Decimal(str(station_data.power_rating_kw))
-        if station_data.power_rating_kw is not None
+        Decimal(str(station_create_request.power_rating_kw))
+        if station_create_request.power_rating_kw is not None
         else None
     )
     try:
-        station = await repository.create_charging_station(
+        station = await charging_stations_repository.create_charging_station(
             db,
-            ocpp_identity=station_data.ocpp_identity,
-            display_name=station_data.display_name,
+            ocpp_identity=station_create_request.ocpp_identity,
+            display_name=station_create_request.display_name,
             location=coordinates_to_location(
-                station_data.latitude, station_data.longitude
+                station_create_request.latitude, station_create_request.longitude
             ),
             power_rating_kw=power_rating_kw,
-            connector_standard=station_data.connector_standard,
-            operating_hours=station_data.operating_hours,
+            connector_standard=station_create_request.connector_standard,
+            operating_hours=station_create_request.operating_hours,
             maintenance_status=maintenance_status,
         )
     except IntegrityError as error:
@@ -241,16 +262,18 @@ async def list_charging_stations(
         not commit or rollback.
     """
     page_window = normalize_page_window(page, page_size)
-    stations = await repository.list_charging_stations(
+    stations = await charging_stations_repository.list_charging_stations(
         db,
         offset=page_window.offset,
         limit=page_window.page_size,
     )
-    total = await repository.count_stations(db)
+    total = await charging_stations_repository.count_stations(db)
     items = []
     for station in stations:
-        connector_count = await repository.count_connectors_by_station_id(
-            db, station.station_id
+        connector_count = (
+            await charging_stations_repository.count_connectors_by_station_id(
+                db, station.station_id
+            )
         )
         items.append(
             to_charging_station_response(station, connector_count=connector_count)
@@ -279,10 +302,12 @@ async def get_charging_station(
         ChargingStationNotFoundError: If the station does not exist or was
             soft-deleted.
     """
-    station = await repository.get_station_by_id(db, station_id)
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
     if station is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    connector_count = await repository.count_connectors_by_station_id(db, station_id)
+    connector_count = await charging_stations_repository.count_connectors_by_station_id(
+        db, station_id
+    )
     return to_charging_station_response(station, connector_count=connector_count)
 
 
@@ -301,12 +326,15 @@ async def find_nearest_operational_station(
         A minimal reference DTO for the nearest active, operational station
         with a known location - never the ORM model - or ``None`` if none
         qualifies. "Operational" only reflects the admin-set
-        ``maintenance_status``; there is no live occupancy signal (see
+        ``maintenance_status``; the charger's ``is_online`` and connector
+        statuses are not consulted yet (see
         ``NearestChargingStationReference``'s docstring).
     """
     query_point = coordinates_to_location(latitude, longitude)
     assert query_point is not None, "latitude/longitude are both required here"
-    match = await repository.find_nearest_station_by_location(db, query_point)
+    match = await charging_stations_repository.find_nearest_station_by_location(
+        db, query_point
+    )
     if match is None:
         return None
     station, distance_meters = match
@@ -348,11 +376,7 @@ def to_nearby_charging_station_response(
         display_name=station.display_name,
         latitude=latitude,
         longitude=longitude,
-        power_rating_kw=(
-            float(station.power_rating_kw)
-            if station.power_rating_kw is not None
-            else None
-        ),
+        power_rating_kw=_to_optional_float(station.power_rating_kw),
         connector_standard=station.connector_standard,
         operating_hours=station.operating_hours,
         maintenance_status=station.maintenance_status,
@@ -361,7 +385,7 @@ def to_nearby_charging_station_response(
     )
 
 
-async def find_nearby_charging_stations(
+async def list_nearby_charging_stations(
     db: AsyncSession,
     *,
     latitude: float,
@@ -419,28 +443,30 @@ async def find_nearby_charging_stations(
     radius_meters = radius_km * 1000
     min_power_decimal = Decimal(str(min_power_kw)) if min_power_kw is not None else None
 
-    matches = await repository.list_nearby_stations(
+    matches = await charging_stations_repository.list_nearby_stations(
         db,
         location=query_point,
         radius_meters=radius_meters,
         connector_standard=connector_standard,
         min_power_kw=min_power_decimal,
-        operational_only=is_operational_only,
+        is_operational_only=is_operational_only,
         offset=page_window.offset,
         limit=page_window.page_size,
     )
-    total = await repository.count_nearby_stations(
+    total = await charging_stations_repository.count_nearby_stations(
         db,
         location=query_point,
         radius_meters=radius_meters,
         connector_standard=connector_standard,
         min_power_kw=min_power_decimal,
-        operational_only=is_operational_only,
+        is_operational_only=is_operational_only,
     )
     items = []
     for station, distance_meters in matches:
-        connector_count = await repository.count_connectors_by_station_id(
-            db, station.station_id
+        connector_count = (
+            await charging_stations_repository.count_connectors_by_station_id(
+                db, station.station_id
+            )
         )
         items.append(
             to_nearby_charging_station_response(
@@ -458,14 +484,16 @@ async def find_nearby_charging_stations(
 
 
 async def update_charging_station(
-    db: AsyncSession, station_id: UUID, station_data: ChargingStationUpdateRequest
+    db: AsyncSession,
+    station_id: UUID,
+    station_update_request: ChargingStationUpdateRequest,
 ) -> ChargingStationResponse:
     """PATCH a station and check for identity conflicts before flushing.
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station to update.
-        station_data: PATCH fields, already Pydantic-validated.
+        station_update_request: PATCH fields, already Pydantic-validated.
 
     Returns:
         The updated station response.
@@ -476,46 +504,59 @@ async def update_charging_station(
         ChargingTopologyConflictError: If the new identity is already in
             use.
     """
-    station = await repository.get_station_by_id(db, station_id)
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
     if station is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     if (
-        station_data.ocpp_identity is not None
-        and station_data.ocpp_identity != station.ocpp_identity
-        and await repository.get_station_by_identity(db, station_data.ocpp_identity)
+        station_update_request.ocpp_identity is not None
+        and station_update_request.ocpp_identity != station.ocpp_identity
+        and await charging_stations_repository.get_station_by_identity(
+            db, station_update_request.ocpp_identity
+        )
     ):
         raise ChargingTopologyConflictError(
-            f"OCPP identity '{station_data.ocpp_identity}' already exists"
+            f"OCPP identity '{station_update_request.ocpp_identity}' already exists"
         )
 
     update_data = _clean_update_values(
-        station_data.model_dump(
+        station_update_request.model_dump(
             exclude_unset=True, exclude={"latitude", "longitude", "power_rating_kw"}
         )
     )
     # latitude/longitude map to one DB column (location) and power_rating_kw
     # needs a float->Decimal conversion - both handled separately from the
     # generic _clean_update_values pass above.
-    if station_data.latitude is not None and station_data.longitude is not None:
+    if (
+        station_update_request.latitude is not None
+        and station_update_request.longitude is not None
+    ):
         update_data["location"] = coordinates_to_location(
-            station_data.latitude, station_data.longitude
+            station_update_request.latitude, station_update_request.longitude
         )
-    if station_data.power_rating_kw is not None:
-        update_data["power_rating_kw"] = Decimal(str(station_data.power_rating_kw))
+    if station_update_request.power_rating_kw is not None:
+        update_data["power_rating_kw"] = Decimal(
+            str(station_update_request.power_rating_kw)
+        )
     if not update_data:
-        connector_count = await repository.count_connectors_by_station_id(
-            db, station_id
+        connector_count = (
+            await charging_stations_repository.count_connectors_by_station_id(
+                db, station_id
+            )
         )
         return to_charging_station_response(station, connector_count=connector_count)
     try:
-        updated = await repository.update_charging_station(db, station_id, update_data)
+        updated = await charging_stations_repository.update_charging_station(
+            db, station_id, update_data
+        )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "Station OCPP identity already exists"
         ) from error
     if updated is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    connector_count = await repository.count_connectors_by_station_id(db, station_id)
+    connector_count = await charging_stations_repository.count_connectors_by_station_id(
+        db, station_id
+    )
     return to_charging_station_response(updated, connector_count=connector_count)
 
 
@@ -540,20 +581,20 @@ async def soft_delete_charging_station(
         ``deleted_at``; does not physically delete records and does not
         commit on its own.
     """
-    if not await repository.soft_delete_station(db, station_id):
+    if not await charging_stations_repository.soft_delete_station(db, station_id):
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     return ChargingResourceDeleteResponse(message="Charging station soft-deleted")
 
 
 async def create_charging_evse(
-    db: AsyncSession, station_id: UUID, evse_data: ChargingEvseCreateRequest
+    db: AsyncSession, station_id: UUID, evse_create_request: ChargingEvseCreateRequest
 ) -> ChargingEvseResponse:
     """Create an EVSE only if the parent station is active and the identity is unused.
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the parent station.
-        evse_data: EVSE identity, already validated.
+        evse_create_request: EVSE identity, already validated.
 
     Returns:
         The newly created EVSE response.
@@ -562,17 +603,19 @@ async def create_charging_evse(
         ChargingStationNotFoundError: If the parent station is not active.
         ChargingTopologyConflictError: If the EVSE identity already exists.
     """
-    if await repository.get_station_by_id(db, station_id) is None:
+    if await charging_stations_repository.get_station_by_id(db, station_id) is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    if await repository.get_evse_by_identity(db, station_id, evse_data.ocpp_evse_id):
+    if await charging_stations_repository.get_evse_by_identity(
+        db, station_id, evse_create_request.ocpp_evse_id
+    ):
         raise ChargingTopologyConflictError(
-            f"EVSE ID '{evse_data.ocpp_evse_id}' already exists in station"
+            f"EVSE ID '{evse_create_request.ocpp_evse_id}' already exists in station"
         )
     try:
-        evse = await repository.create_charging_evse(
+        evse = await charging_stations_repository.create_charging_evse(
             db,
             station_id=station_id,
-            ocpp_evse_id=evse_data.ocpp_evse_id,
+            ocpp_evse_id=evse_create_request.ocpp_evse_id,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -602,16 +645,16 @@ async def list_charging_evses(
     Raises:
         ChargingStationNotFoundError: If the parent station is not active.
     """
-    if await repository.get_station_by_id(db, station_id) is None:
+    if await charging_stations_repository.get_station_by_id(db, station_id) is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     page_window = normalize_page_window(page, page_size)
-    evses = await repository.list_charging_evses(
+    evses = await charging_stations_repository.list_charging_evses(
         db,
         station_id=station_id,
         offset=page_window.offset,
         limit=page_window.page_size,
     )
-    total = await repository.count_evses(db, station_id)
+    total = await charging_stations_repository.count_evses(db, station_id)
     return ChargingEvseListResponse(
         items=[to_charging_evse_response(evse) for evse in evses],
         total=total,
@@ -634,21 +677,21 @@ async def get_charging_evse(db: AsyncSession, evse_id: UUID) -> ChargingEvseResp
         ChargingEvseNotFoundError: If the EVSE does not exist or was
             deleted.
     """
-    evse = await repository.get_evse_by_id(db, evse_id)
+    evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
     if evse is None:
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     return to_charging_evse_response(evse)
 
 
 async def update_charging_evse(
-    db: AsyncSession, evse_id: UUID, evse_data: ChargingEvseUpdateRequest
+    db: AsyncSession, evse_id: UUID, evse_update_request: ChargingEvseUpdateRequest
 ) -> ChargingEvseResponse:
     """PATCH an EVSE while keeping its identity unique within the parent station.
 
     Args:
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the EVSE to update.
-        evse_data: PATCH fields, already validated.
+        evse_update_request: PATCH fields, already validated.
 
     Returns:
         The updated EVSE response.
@@ -658,24 +701,28 @@ async def update_charging_evse(
         ChargingTopologyConflictError: If the new identity conflicts within
             the station.
     """
-    evse = await repository.get_evse_by_id(db, evse_id)
+    evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
     if evse is None:
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     if (
-        evse_data.ocpp_evse_id is not None
-        and evse_data.ocpp_evse_id != evse.ocpp_evse_id
-        and await repository.get_evse_by_identity(
-            db, evse.station_id, evse_data.ocpp_evse_id
+        evse_update_request.ocpp_evse_id is not None
+        and evse_update_request.ocpp_evse_id != evse.ocpp_evse_id
+        and await charging_stations_repository.get_evse_by_identity(
+            db, evse.station_id, evse_update_request.ocpp_evse_id
         )
     ):
         raise ChargingTopologyConflictError(
-            f"EVSE ID '{evse_data.ocpp_evse_id}' already exists in station"
+            f"EVSE ID '{evse_update_request.ocpp_evse_id}' already exists in station"
         )
-    update_data = _clean_update_values(evse_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(
+        evse_update_request.model_dump(exclude_unset=True)
+    )
     if not update_data:
         return to_charging_evse_response(evse)
     try:
-        updated = await repository.update_charging_evse(db, evse_id, update_data)
+        updated = await charging_stations_repository.update_charging_evse(
+            db, evse_id, update_data
+        )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
             "EVSE identity already exists in station"
@@ -704,20 +751,22 @@ async def soft_delete_charging_evse(
         Marks the EVSE and its child connectors; does not physically delete
         and does not commit.
     """
-    if not await repository.soft_delete_evse(db, evse_id):
+    if not await charging_stations_repository.soft_delete_evse(db, evse_id):
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     return ChargingResourceDeleteResponse(message="EVSE soft-deleted")
 
 
 async def create_charging_connector(
-    db: AsyncSession, evse_id: UUID, connector_data: ChargingConnectorCreateRequest
+    db: AsyncSession,
+    evse_id: UUID,
+    connector_create_request: ChargingConnectorCreateRequest,
 ) -> ChargingConnectorResponse:
     """Create a connector only if the parent EVSE is active and the identity is unused.
 
     Args:
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the parent EVSE.
-        connector_data: Connector identity, already validated.
+        connector_create_request: Connector identity, already validated.
 
     Returns:
         The newly created connector response.
@@ -727,19 +776,20 @@ async def create_charging_connector(
         ChargingTopologyConflictError: If the connector identity already
             exists.
     """
-    if await repository.get_evse_by_id(db, evse_id) is None:
+    if await charging_stations_repository.get_evse_by_id(db, evse_id) is None:
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
-    if await repository.get_connector_by_identity(
-        db, evse_id, connector_data.ocpp_connector_id
+    if await charging_stations_repository.get_connector_by_identity(
+        db, evse_id, connector_create_request.ocpp_connector_id
     ):
         raise ChargingTopologyConflictError(
-            f"Connector ID '{connector_data.ocpp_connector_id}' already exists in EVSE"
+            f"Connector ID '{connector_create_request.ocpp_connector_id}' "
+            "already exists in EVSE"
         )
     try:
-        connector = await repository.create_charging_connector(
+        connector = await charging_stations_repository.create_charging_connector(
             db,
             evse_id=evse_id,
-            ocpp_connector_id=connector_data.ocpp_connector_id,
+            ocpp_connector_id=connector_create_request.ocpp_connector_id,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -769,16 +819,16 @@ async def list_charging_connectors(
     Raises:
         ChargingEvseNotFoundError: If the parent EVSE is not active.
     """
-    if await repository.get_evse_by_id(db, evse_id) is None:
+    if await charging_stations_repository.get_evse_by_id(db, evse_id) is None:
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     page_window = normalize_page_window(page, page_size)
-    connectors = await repository.list_charging_connectors(
+    connectors = await charging_stations_repository.list_charging_connectors(
         db,
         evse_id=evse_id,
         offset=page_window.offset,
         limit=page_window.page_size,
     )
-    total = await repository.count_connectors(db, evse_id)
+    total = await charging_stations_repository.count_connectors(db, evse_id)
     return ChargingConnectorListResponse(
         items=[to_charging_connector_response(connector) for connector in connectors],
         total=total,
@@ -803,21 +853,23 @@ async def get_charging_connector(
         ChargingConnectorNotFoundError: If the connector does not exist or
             was deleted.
     """
-    connector = await repository.get_connector_by_id(db, connector_id)
+    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
     if connector is None:
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return to_charging_connector_response(connector)
 
 
 async def update_charging_connector(
-    db: AsyncSession, connector_id: UUID, connector_data: ChargingConnectorUpdateRequest
+    db: AsyncSession,
+    connector_id: UUID,
+    connector_update_request: ChargingConnectorUpdateRequest,
 ) -> ChargingConnectorResponse:
     """PATCH a connector while keeping its identity unique within the parent EVSE.
 
     Args:
         db: Async session owned by the HTTP boundary.
         connector_id: UUID of the connector to update.
-        connector_data: PATCH fields, already validated.
+        connector_update_request: PATCH fields, already validated.
 
     Returns:
         The updated connector response.
@@ -827,24 +879,27 @@ async def update_charging_connector(
         ChargingTopologyConflictError: If the new identity conflicts within
             the EVSE.
     """
-    connector = await repository.get_connector_by_id(db, connector_id)
+    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
     if connector is None:
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     if (
-        connector_data.ocpp_connector_id is not None
-        and connector_data.ocpp_connector_id != connector.ocpp_connector_id
-        and await repository.get_connector_by_identity(
-            db, connector.evse_id, connector_data.ocpp_connector_id
+        connector_update_request.ocpp_connector_id is not None
+        and connector_update_request.ocpp_connector_id != connector.ocpp_connector_id
+        and await charging_stations_repository.get_connector_by_identity(
+            db, connector.evse_id, connector_update_request.ocpp_connector_id
         )
     ):
         raise ChargingTopologyConflictError(
-            f"Connector ID '{connector_data.ocpp_connector_id}' already exists in EVSE"
+            f"Connector ID '{connector_update_request.ocpp_connector_id}' "
+            "already exists in EVSE"
         )
-    update_data = _clean_update_values(connector_data.model_dump(exclude_unset=True))
+    update_data = _clean_update_values(
+        connector_update_request.model_dump(exclude_unset=True)
+    )
     if not update_data:
         return to_charging_connector_response(connector)
     try:
-        updated = await repository.update_charging_connector(
+        updated = await charging_stations_repository.update_charging_connector(
             db, connector_id, update_data
         )
     except IntegrityError as error:
@@ -875,7 +930,7 @@ async def soft_delete_charging_connector(
         Marks ``deleted_at`` within the current transaction; does not commit
         on its own.
     """
-    if not await repository.soft_delete_connector(db, connector_id):
+    if not await charging_stations_repository.soft_delete_connector(db, connector_id):
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return ChargingResourceDeleteResponse(message="Connector soft-deleted")
 
@@ -900,7 +955,7 @@ async def get_latest_station_configuration(
     Side Effects:
         Performs up to three read queries; does not commit.
     """
-    station = await repository.get_station_by_id(db, station_id)
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
     if station is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     latest = await ocpp_state_repository.get_latest_configuration_capture(

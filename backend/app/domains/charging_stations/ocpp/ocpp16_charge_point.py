@@ -19,6 +19,7 @@ charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 
 import asyncio
 import logging
+from typing import Final
 from uuid import UUID
 
 from ocpp.exceptions import OCPPError
@@ -49,6 +50,11 @@ from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Width of ``charging_sessions.stop_reason`` (owned by the charging_sessions
+# domain, which exposes no constant for it): a longer vendor ``reason`` is
+# truncated to fit, while the raw frame log keeps the original text.
+_STOP_REASON_MAX_LENGTH: Final[int] = 30
 
 
 class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
@@ -233,9 +239,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     _evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db,
-                    ocpp_identity=self.id,
-                    ocpp_connector_id=connector_id,
+                    db, self.id, connector_id
                 )
                 await ocpp_state_service.update_connector_status(
                     db,
@@ -323,9 +327,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 evse_id,
                 connector_uuid,
             ) = await ocpp_state_service.resolve_ocpp16_topology(
-                db,
-                ocpp_identity=self.id,
-                ocpp_connector_id=connector_id,
+                db, self.id, connector_id
             )
             if await charging_sessions_service.has_active_session_on_connector(
                 db, connector_uuid
@@ -381,8 +383,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         lists, so a single vendor-specific stop reason or measurand would make
         the library reject the whole message and leave the session open forever.
         The fields the backend relies on are validated here instead, and a
-        ``reason`` longer than the 30-character column is truncated (the raw
-        frame in the message log keeps the original).
+        ``reason`` longer than its column (``_STOP_REASON_MAX_LENGTH``) is
+        truncated (the raw frame in the message log keeps the original).
 
         Args:
             meter_stop: Meter reading at the end, in Wh.
@@ -418,7 +420,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         extraction = extract_v16_measurements(transaction_data or [])
         async with self.session_factory.begin() as db:
             station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, ocpp_identity=self.id
+                db, self.id
             )
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=transaction_key
@@ -435,7 +437,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 seq_no=None,
                 meter_end_wh=closing_meter_wh,
                 meter_end_sampled_at=stopped_at,
-                stop_reason=reason[:30] if reason else None,
+                stop_reason=reason[:_STOP_REASON_MAX_LENGTH] if reason else None,
                 meter_stop_wh=closing_meter_wh,
             )
         self._log_skipped_samples("StopTransaction", extraction)
@@ -507,7 +509,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             return call_result.MeterValues()
         async with self.session_factory.begin() as db:
             station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, ocpp_identity=self.id
+                db, self.id
             )
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=str(int(transaction_id))

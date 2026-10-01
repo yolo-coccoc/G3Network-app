@@ -219,6 +219,42 @@ async def test_record_charger_boot_overwrites_device_fields_without_warning_on_f
 
 
 @pytest.mark.asyncio
+async def test_record_charger_boot_warns_but_accepts_when_the_update_matches_no_row(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A station deleted between load and update is logged, never raised."""
+    station = SimpleNamespace(station_id=uuid4(), firmware_version=None)
+
+    async def fake_get(db: object, identity: str, **_: Any) -> Any:
+        return station
+
+    async def no_row(db: object, station_id: Any, **kwargs: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        charging_stations_repository, "get_station_by_identity", fake_get
+    )
+    monkeypatch.setattr(ocpp_state_repository, "update_station_boot_info", no_row)
+
+    with caplog.at_level(logging.WARNING):
+        await ocpp_state_service.record_charger_boot(
+            object(),  # type: ignore[arg-type]
+            ocpp_identity="LSC",
+            vendor="V",
+            model="M",
+            serial_number=None,
+            firmware_version=None,
+            booted_at=NOW,
+        )
+
+    assert [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Charger boot info matched no active station"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_record_charger_boot_warns_when_firmware_changes(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

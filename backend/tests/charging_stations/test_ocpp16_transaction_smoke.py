@@ -61,8 +61,13 @@ def _patch_start(
     ids = count(1)
     record: dict[str, Any] = {"ingest": [], "allocated": []}
 
-    async def fake_resolve(db: object, **kwargs: Any) -> tuple[Any, Any, Any]:
-        record["resolve"] = kwargs
+    async def fake_resolve(
+        db: object, ocpp_identity: str, ocpp_connector_id: int
+    ) -> tuple[Any, Any, Any]:
+        record["resolve"] = {
+            "ocpp_identity": ocpp_identity,
+            "ocpp_connector_id": ocpp_connector_id,
+        }
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
     async def fake_has_active(db: object, connector_id: Any) -> bool:
@@ -227,7 +232,7 @@ def _patch_stop(
 ) -> list[dict[str, Any]]:
     ingested: list[dict[str, Any]] = []
 
-    async def fake_station(db: object, **kwargs: Any) -> Any:
+    async def fake_station(db: object, ocpp_identity: str) -> Any:
         return STATION_ID
 
     async def fake_reference(db: object, **kwargs: Any) -> Any:

@@ -1,15 +1,19 @@
-"""Pydantic schemas for pre-provisioned charging topology.
+"""Pydantic request/response schemas of the charging_stations HTTP API.
 
-``ChargingStationCreateRequest``/``ChargingStationUpdateRequest``/
-``ChargingStationResponse`` expose directory/descriptive metadata (location,
-power rating, connector standard, operating hours, maintenance status) per
-F-C1, plus the OCPP identity, internal IDs, and timestamps.
-``ChargingConnectorResponse`` also exposes the connector's live OCPP status
-per F-C2 (read-only - not part of ``ChargingConnectorUpdateRequest``, since
-it's OCPP-owned, not admin-editable). Capability negotiation, heartbeat-based
-connection status, and other device information remain deferred alongside
-the technical status path; they are not included in the active HTTP
-contract.
+``ChargingStationCreateRequest``/``ChargingStationUpdateRequest`` carry the
+admin-editable directory metadata (OCPP identity, name, location, power
+rating, connector standard, operating hours, maintenance status; F-C1).
+``ChargingStationResponse`` returns that metadata plus the read-only state the
+charger reports over OCPP: protocol version, boot identity
+(vendor/model/serial/firmware, ``last_boot_at``), ``last_seen_at``, the
+whole-charger status (OCPP 1.6J connector ``0``) and the derived
+``is_online``. ``ChargingConnectorResponse`` exposes the connector's reported
+status and error details (F-C2) - read-only, not part of
+``ChargingConnectorUpdateRequest``, since OCPP owns them.
+``NearbyChargingStationResponse`` is the driver-facing search result (F-D1)
+and the configuration schemas return the latest ``GetConfiguration`` capture.
+Capability negotiation and status history remain deferred
+(``docs/01-requirements/future.md`` items 27 and 28).
 """
 
 from datetime import datetime
@@ -152,7 +156,7 @@ class ChargingStationUpdateRequest(BaseModel):
 
 
 class ChargingStationResponse(BaseModel):
-    """Active station information without technical status or raw payload.
+    """An active station: directory metadata plus the state its charger reports.
 
     Attributes:
         station_id: Internal UUID.

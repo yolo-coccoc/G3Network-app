@@ -532,7 +532,8 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             gun_statuses = (
                 await connection.execute(
                     text(
-                        "SELECT e.ocpp_evse_id, c.status::text, c.error_code "
+                        "SELECT e.ocpp_evse_id, c.status::text, c.error_code, "
+                        "c.updated_at = c.created_at AS updated_at_kept "
                         "FROM charging_connectors c JOIN charging_evses e USING (evse_id) "
                         "WHERE e.station_id = :s ORDER BY e.ocpp_evse_id"
                     ),
@@ -618,9 +619,10 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             "Available",
             "NoError",
         )
+        # Device-reported status never bumps updated_at (last admin edit).
         assert [tuple(row) for row in gun_statuses] == [
-            (1, "Available", "NoError"),
-            (2, "Available", "NoError"),
+            (1, "Available", "NoError", True),
+            (2, "Available", "NoError", True),
         ]
         # The session: allocated ID, idTag, reason, closing meter, energy.
         assert (session.ocpp_transaction_id, session.status) == ("1", "completed")

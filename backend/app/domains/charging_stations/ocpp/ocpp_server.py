@@ -24,7 +24,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 from websockets.typing import Subprotocol
 
-from app.domains.charging_stations import repository
+import app.domains.charging_stations.repository as charging_stations_repository
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from app.domains.charging_stations.ocpp.ocpp201_charge_point import (
     OCPP201ChargePoint,
@@ -261,7 +261,7 @@ class OCPPServer:
                 + " or ".join(SUPPORTED_SUBPROTOCOLS),
             )
         async with self.session_factory.begin() as db:
-            station = await repository.get_station_by_identity(
+            station = await charging_stations_repository.get_station_by_identity(
                 db, identity, include_deleted=False
             )
         if station is None:
@@ -280,9 +280,9 @@ class OCPPServer:
 
         Side Effects:
             Creates the adapter for the negotiated subprotocol
-            (``create_charge_point``) over a ``RecordingConnection`` and waits for ``python-ocpp`` to read
-            messages until the station disconnects or the handler is
-            cancelled. Every frame is stored verbatim in its own transaction.
+            (``create_charge_point``) over a ``RecordingConnection`` and
+            waits for ``python-ocpp`` to read messages until the station
+            disconnects or the handler is cancelled. Every frame is stored verbatim in its own transaction.
             Handler errors (including a failure to store a frame) are
             logged; ``CancelledError`` is re-raised so shutdown keeps working.
             If the station was soft-deleted between the handshake and this
@@ -300,7 +300,7 @@ class OCPPServer:
         # deferred; the MVP keeps state on this exact connection and lets
         # the process boundary own the socket lifecycle.
         async with self.session_factory.begin() as db:
-            station = await repository.get_station_by_identity(
+            station = await charging_stations_repository.get_station_by_identity(
                 db, identity, include_deleted=False
             )
         if station is None:

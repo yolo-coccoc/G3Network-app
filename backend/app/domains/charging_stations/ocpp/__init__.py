@@ -1,1 +1,1 @@
-"""OCPP 2.0.1 gateway for the charging_stations bounded context."""
+"""OCPP gateway (2.0.1 and 1.6J) for the charging_stations bounded context."""

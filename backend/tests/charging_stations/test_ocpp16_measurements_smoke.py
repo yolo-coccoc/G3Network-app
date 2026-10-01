@@ -269,7 +269,7 @@ def _patch(
     """Record every service call the handlers make, in order."""
     calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def fake_station(db: object, **kwargs: Any) -> Any:
+    async def fake_station(db: object, ocpp_identity: str) -> Any:
         return STATION_ID
 
     async def fake_reference(db: object, **kwargs: Any) -> Any:

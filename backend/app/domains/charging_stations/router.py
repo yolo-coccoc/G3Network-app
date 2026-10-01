@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.charging_stations.service as charging_service
+import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
@@ -44,12 +44,13 @@ router = APIRouter(tags=["charging-stations"])
     summary="Create a charging station",
 )
 async def create_charging_station_endpoint(
-    station_data: ChargingStationCreateRequest, db: AsyncSession = Depends(get_db)
+    station_create_request: ChargingStationCreateRequest,
+    db: AsyncSession = Depends(get_db),
 ) -> ChargingStationResponse:
     """Create a pre-provisioned station.
 
     Args:
-        station_data: Station creation payload, already Pydantic-validated.
+        station_create_request: Station creation payload, already Pydantic-validated.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -59,7 +60,9 @@ async def create_charging_station_endpoint(
         ChargingTopologyConflictError: 409 if the OCPP identity already
             exists, even on a soft-deleted station.
     """
-    return await charging_service.create_charging_station(db, station_data)
+    return await charging_stations_service.create_charging_station(
+        db, station_create_request
+    )
 
 
 @router.get(
@@ -90,7 +93,7 @@ async def list_charging_stations_endpoint(
         RequestValidationError: 422 (raised by FastAPI) if a query
             parameter is out of range; the service raises no domain error.
     """
-    return await charging_service.list_charging_stations(
+    return await charging_stations_service.list_charging_stations(
         db,
         page=page,
         page_size=page_size,
@@ -102,7 +105,7 @@ async def list_charging_stations_endpoint(
     response_model=NearbyChargingStationListResponse,
     summary="Find charging stations near a point",
 )
-async def find_nearby_charging_stations_endpoint(
+async def list_nearby_charging_stations_endpoint(
     latitude: float = Query(..., ge=-90, le=90),
     longitude: float = Query(..., ge=-180, le=180),
     radius_km: float = Query(
@@ -142,7 +145,7 @@ async def find_nearby_charging_stations_endpoint(
         RequestValidationError: 422 (raised by FastAPI) if a query
             parameter is out of range; the service raises no domain error.
     """
-    return await charging_service.find_nearby_charging_stations(
+    return await charging_stations_service.list_nearby_charging_stations(
         db,
         latitude=latitude,
         longitude=longitude,
@@ -163,14 +166,14 @@ async def find_nearby_charging_stations_endpoint(
 )
 async def create_charging_evse_endpoint(
     station_id: UUID,
-    evse_data: ChargingEvseCreateRequest,
+    evse_create_request: ChargingEvseCreateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ChargingEvseResponse:
     """Create an EVSE belonging to an active station.
 
     Args:
         station_id: UUID of the parent station.
-        evse_data: EVSE identity payload.
+        evse_create_request: EVSE identity payload.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -182,7 +185,9 @@ async def create_charging_evse_endpoint(
         ChargingTopologyConflictError: 409 if the EVSE identity already
             exists in the station.
     """
-    return await charging_service.create_charging_evse(db, station_id, evse_data)
+    return await charging_stations_service.create_charging_evse(
+        db, station_id, evse_create_request
+    )
 
 
 @router.get(
@@ -215,7 +220,7 @@ async def list_charging_evses_endpoint(
         ChargingStationNotFoundError: 404 if the parent station is not
             active.
     """
-    return await charging_service.list_charging_evses(
+    return await charging_stations_service.list_charging_evses(
         db, station_id, page=page, page_size=page_size
     )
 
@@ -228,14 +233,14 @@ async def list_charging_evses_endpoint(
 )
 async def create_charging_connector_endpoint(
     evse_id: UUID,
-    connector_data: ChargingConnectorCreateRequest,
+    connector_create_request: ChargingConnectorCreateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ChargingConnectorResponse:
     """Create a connector belonging to an active EVSE.
 
     Args:
         evse_id: UUID of the parent EVSE.
-        connector_data: Connector identity payload.
+        connector_create_request: Connector identity payload.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -246,7 +251,9 @@ async def create_charging_connector_endpoint(
         ChargingTopologyConflictError: 409 if the connector identity
             already exists in the EVSE.
     """
-    return await charging_service.create_charging_connector(db, evse_id, connector_data)
+    return await charging_stations_service.create_charging_connector(
+        db, evse_id, connector_create_request
+    )
 
 
 @router.get(
@@ -278,7 +285,7 @@ async def list_charging_connectors_endpoint(
     Raises:
         ChargingEvseNotFoundError: 404 if the parent EVSE is not active.
     """
-    return await charging_service.list_charging_connectors(
+    return await charging_stations_service.list_charging_connectors(
         db, evse_id, page=page, page_size=page_size
     )
 
@@ -304,7 +311,7 @@ async def get_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_service.get_charging_station(db, station_id)
+    return await charging_stations_service.get_charging_station(db, station_id)
 
 
 @router.get(
@@ -332,7 +339,9 @@ async def get_charging_station_configuration_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_service.get_latest_station_configuration(db, station_id)
+    return await charging_stations_service.get_latest_station_configuration(
+        db, station_id
+    )
 
 
 @router.patch(
@@ -342,14 +351,14 @@ async def get_charging_station_configuration_endpoint(
 )
 async def update_charging_station_endpoint(
     station_id: UUID,
-    station_data: ChargingStationUpdateRequest,
+    station_update_request: ChargingStationUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ChargingStationResponse:
     """PATCH a station with the fields sent in the request.
 
     Args:
         station_id: UUID of the station to update.
-        station_data: PATCH payload, already validated.
+        station_update_request: PATCH payload, already validated.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -361,7 +370,9 @@ async def update_charging_station_endpoint(
         ChargingTopologyConflictError: 409 if the new OCPP identity is
             already in use.
     """
-    return await charging_service.update_charging_station(db, station_id, station_data)
+    return await charging_stations_service.update_charging_station(
+        db, station_id, station_update_request
+    )
 
 
 @router.delete(
@@ -385,7 +396,7 @@ async def soft_delete_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_service.soft_delete_charging_station(db, station_id)
+    return await charging_stations_service.soft_delete_charging_station(db, station_id)
 
 
 @router.get(
@@ -409,7 +420,7 @@ async def get_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_service.get_charging_evse(db, evse_id)
+    return await charging_stations_service.get_charging_evse(db, evse_id)
 
 
 @router.patch(
@@ -419,14 +430,14 @@ async def get_charging_evse_endpoint(
 )
 async def update_charging_evse_endpoint(
     evse_id: UUID,
-    evse_data: ChargingEvseUpdateRequest,
+    evse_update_request: ChargingEvseUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ChargingEvseResponse:
     """PATCH an EVSE with the fields sent in the request.
 
     Args:
         evse_id: UUID of the EVSE to update.
-        evse_data: PATCH payload, already validated.
+        evse_update_request: PATCH payload, already validated.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -438,7 +449,9 @@ async def update_charging_evse_endpoint(
         ChargingTopologyConflictError: 409 if the new identity already
             exists in the station.
     """
-    return await charging_service.update_charging_evse(db, evse_id, evse_data)
+    return await charging_stations_service.update_charging_evse(
+        db, evse_id, evse_update_request
+    )
 
 
 @router.delete(
@@ -462,7 +475,7 @@ async def soft_delete_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_service.soft_delete_charging_evse(db, evse_id)
+    return await charging_stations_service.soft_delete_charging_evse(db, evse_id)
 
 
 @router.get(
@@ -486,7 +499,7 @@ async def get_charging_connector_endpoint(
         ChargingConnectorNotFoundError: 404 if the connector does not exist
             or was soft-deleted.
     """
-    return await charging_service.get_charging_connector(db, connector_id)
+    return await charging_stations_service.get_charging_connector(db, connector_id)
 
 
 @router.patch(
@@ -496,14 +509,14 @@ async def get_charging_connector_endpoint(
 )
 async def update_charging_connector_endpoint(
     connector_id: UUID,
-    connector_data: ChargingConnectorUpdateRequest,
+    connector_update_request: ChargingConnectorUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> ChargingConnectorResponse:
     """PATCH a connector with the fields sent in the request.
 
     Args:
         connector_id: UUID of the connector to update.
-        connector_data: PATCH payload, already validated.
+        connector_update_request: PATCH payload, already validated.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -515,8 +528,8 @@ async def update_charging_connector_endpoint(
         ChargingTopologyConflictError: 409 if the new identity already
             exists in the EVSE.
     """
-    return await charging_service.update_charging_connector(
-        db, connector_id, connector_data
+    return await charging_stations_service.update_charging_connector(
+        db, connector_id, connector_update_request
     )
 
 
@@ -541,4 +554,6 @@ async def soft_delete_charging_connector_endpoint(
         ChargingConnectorNotFoundError: 404 if the connector does not exist
             or was soft-deleted.
     """
-    return await charging_service.soft_delete_charging_connector(db, connector_id)
+    return await charging_stations_service.soft_delete_charging_connector(
+        db, connector_id
+    )

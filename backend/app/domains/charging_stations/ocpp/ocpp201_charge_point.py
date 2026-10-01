@@ -167,7 +167,7 @@ def parse_ocpp_evse_reference(evse: OcppPayload | None) -> tuple[int, int]:
 
 
 class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
-    """``python-ocpp`` OCPP 2.0.1 adapter attaching an accepted WebSocket to a station identity.
+    """``python-ocpp`` 2.0.1 adapter attaching an accepted WebSocket to a station.
 
     Attributes:
         id: Station identity used by ``ChargePoint`` when dispatching OCPP.
@@ -238,6 +238,27 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         Returns:
             A valid empty response for TransactionEvent.
 
+        Raises:
+            KeyError: If ``event_type`` is not one of the three 2.0.1 values.
+            ValueError: If ``transactionInfo`` has no ``transactionId``, the
+                ``evse`` object lacks its EVSE or connector, a timestamp has
+                no timezone, or an energy-register sample uses an
+                uninterpretable unit.
+            ChargingStationNotFoundError: If ``self.id`` is not
+                pre-provisioned.
+            ChargingEvseNotFoundError: If the EVSE is not pre-provisioned
+                under this station.
+            ChargingConnectorNotFoundError: If the connector is not
+                pre-provisioned under that EVSE.
+            ChargingSessionInputError: If the event violates the session
+                contract.
+            ChargingSessionNotFoundError: If a non-``Started`` event names an
+                unknown transaction.
+            ChargingSessionStateError: If the session is already completed.
+
+            ``python-ocpp`` turns any of these into a ``CALLERROR`` without
+            closing the connection; the transaction rolls back entirely.
+
         Side Effects:
             Calls the public ``charging_sessions`` service within an atomic
             transaction; the EVSE -> session mapping is only updated after
@@ -262,10 +283,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 evse_id,
                 connector_id,
             ) = await ocpp_state_service.resolve_ocpp_topology(
-                db,
-                ocpp_identity=self.id,
-                ocpp_evse_id=ocpp_evse_id,
-                ocpp_connector_id=ocpp_connector_id,
+                db, self.id, ocpp_evse_id, ocpp_connector_id
             )
             result = await charging_sessions_service.ingest_transaction_event(
                 db,
@@ -318,6 +336,18 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
 
         Returns:
             A valid empty response for MeterValues.
+
+        Raises:
+            KeyError: If no session was started for ``evse_id`` on this
+                connection (see the comment below), or a sample group lacks
+                ``timestamp``/``sampled_value``.
+            ValueError: If a timestamp has no timezone or an energy-register
+                sample uses an uninterpretable unit.
+            ChargingSessionInputError: If a sample violates the session
+                contract.
+            ChargingSessionNotFoundError: If the mapped session no longer
+                exists.
+            ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
             Calls ``ingest_meter_values`` for each sample on the same
@@ -372,7 +402,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 five status labels.
 
         Side Effects:
-            Calls the public ``charging_stations`` service within an atomic
+            Calls the internal OCPP state service within an atomic
             transaction; rolls back entirely on any of the above. No
             try/except here - ``python-ocpp`` already wraps every handler
             invocation, logs the traceback, and replies with a
@@ -388,10 +418,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 _evse_id,
                 connector_uuid,
             ) = await ocpp_state_service.resolve_ocpp_topology(
-                db,
-                ocpp_identity=self.id,
-                ocpp_evse_id=evse_id,
-                ocpp_connector_id=connector_id,
+                db, self.id, evse_id, connector_id
             )
             await ocpp_state_service.update_connector_status(
                 db,

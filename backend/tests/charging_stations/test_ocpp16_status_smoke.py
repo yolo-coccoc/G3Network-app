@@ -68,8 +68,12 @@ def _patch_service(
         "charger": [],
     }
 
-    async def fake_resolve(db: object, **kwargs: Any) -> tuple[Any, Any, Any]:
-        calls["resolve"].append(kwargs)
+    async def fake_resolve(
+        db: object, ocpp_identity: str, ocpp_connector_id: int
+    ) -> tuple[Any, Any, Any]:
+        calls["resolve"].append(
+            {"ocpp_identity": ocpp_identity, "ocpp_connector_id": ocpp_connector_id}
+        )
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
     async def fake_connector(db: object, **kwargs: Any) -> None:
@@ -256,7 +260,7 @@ async def test_unprovisioned_gun_propagates_the_error(
 ) -> None:
     """A status for a gun that was never provisioned is an error, not auto-created."""
 
-    async def missing(db: object, **kwargs: Any) -> Any:
+    async def missing(db: object, *args: Any) -> Any:
         raise ChargingConnectorNotFoundError("no such connector")
 
     monkeypatch.setattr(ocpp_state_service, "resolve_ocpp16_topology", missing)
@@ -277,7 +281,7 @@ async def test_2_0_1_status_notification_still_stores_occupied_without_error_fie
     """The 2.0.1 handler is unchanged: only status and time, no 1.6J error fields."""
     captured: list[dict[str, Any]] = []
 
-    async def fake_resolve(db: object, **kwargs: Any) -> tuple[Any, Any, Any]:
+    async def fake_resolve(db: object, *args: Any) -> tuple[Any, Any, Any]:
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
     async def fake_update(db: object, **kwargs: Any) -> None:
@@ -318,16 +322,22 @@ async def test_resolve_ocpp16_topology_maps_gun_n_to_evse_n_connector_1(
     """Gun n is EVSE n holding connector 1 (decision D3)."""
     seen: dict[str, Any] = {}
 
-    async def fake_resolve(db: object, **kwargs: Any) -> tuple[Any, Any, Any]:
-        seen.update(kwargs)
+    async def fake_resolve(
+        db: object, ocpp_identity: str, ocpp_evse_id: int, ocpp_connector_id: int
+    ) -> tuple[Any, Any, Any]:
+        seen.update(
+            ocpp_identity=ocpp_identity,
+            ocpp_evse_id=ocpp_evse_id,
+            ocpp_connector_id=ocpp_connector_id,
+        )
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
     monkeypatch.setattr(ocpp_state_service, "resolve_ocpp_topology", fake_resolve)
 
     result = await ocpp_state_service.resolve_ocpp16_topology(
         object(),  # type: ignore[arg-type]
-        ocpp_identity="LSC",
-        ocpp_connector_id=connector,
+        "LSC",
+        connector,
     )
 
     assert result == (STATION_ID, EVSE_ID, CONNECTOR_ID)
@@ -347,8 +357,8 @@ async def test_resolve_ocpp16_topology_rejects_connector_zero_and_negatives(
     with pytest.raises(ChargingOcppMessageInputError):
         await ocpp_state_service.resolve_ocpp16_topology(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
-            ocpp_connector_id=connector,
+            "LSC",
+            connector,
         )
 
 

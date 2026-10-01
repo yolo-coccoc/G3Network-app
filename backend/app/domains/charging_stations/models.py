@@ -1,19 +1,29 @@
-"""Minimal SQLAlchemy models for charging station topology.
+"""SQLAlchemy models for charging stations, their topology and OCPP device state.
 
-The module describes the three active topology tables of the ideal MVP.
-Stations, EVSEs, and connectors are pre-provisioned. ``ChargingStationModel``
-also carries directory/descriptive metadata (location, power rating,
-connector standard, operating hours, maintenance status) per F-C1, and
-``ChargingConnectorModel`` carries a live OCPP-reported status per F-C2.
-Heartbeat-based online/offline connection status, administrative status,
-capability negotiation, and other device metadata are still not part of
-this step's persistence contract — see ``docs/01-requirements/future.md``
-items 27 and 28. ``ChargingOcppMessageModel`` is the verbatim, append-only
-log of every OCPP frame exchanged with a station (both protocols).
+Five tables:
+
+* ``ChargingStationModel``, ``ChargingEvseModel``, ``ChargingConnectorModel``:
+  the pre-provisioned topology (OCPP never creates it). A station carries its
+  directory metadata (location, power rating, connector standard, operating
+  hours, maintenance status; F-C1) and the device state its charger reports:
+  boot identity (vendor/model/serial/firmware), liveness (``last_seen_at``,
+  from which ``is_online`` is derived at read time) and the whole-charger
+  status of OCPP 1.6J connector ``0``. A connector carries its live
+  ``StatusNotification`` status and error details (F-C2).
+* ``ChargingOcppMessageModel``: the verbatim, append-only log of every OCPP
+  frame exchanged with a station (both protocols; a hypertable).
+* ``ChargingStationConfigurationEntryModel``: append-only ``GetConfiguration``
+  captures.
+
+Device-reported columns never bump ``updated_at``, which keeps meaning "last
+administrator edit". Still deferred: administrative/technical status history,
+capability negotiation and stale-status handling (``docs/01-requirements/
+future.md`` items 27, 28 and 76).
 """
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Final
 from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
@@ -43,9 +53,15 @@ from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
 from app.libs.db.enums import enum_values
 
+# Width of the columns holding a negotiated WebSocket subprotocol
+# (``charging_ocpp_messages.ocpp_subprotocol`` and
+# ``charging_stations.ocpp_protocol_version``); the OCPP state service
+# validates against it before writing.
+OCPP_SUBPROTOCOL_MAX_LENGTH: Final[int] = 20
+
 
 class ChargingStationModel(Base):
-    """Record of a station pre-provisioned in the MVP.
+    """A pre-provisioned station: directory metadata plus charger-reported state.
 
     Attributes:
         station_id: Internal UUID.
@@ -123,7 +139,9 @@ class ChargingStationModel(Base):
         nullable=False,
         default=ChargingStationMaintenanceStatus.OPERATIONAL,
     )
-    ocpp_protocol_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ocpp_protocol_version: Mapped[str | None] = mapped_column(
+        String(OCPP_SUBPROTOCOL_MAX_LENGTH), nullable=True
+    )
     vendor: Mapped[str | None] = mapped_column(String(100), nullable=True)
     model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     serial_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -234,7 +252,8 @@ class ChargingConnectorModel(Base):
         status_info: The free-text ``info`` field of the latest report,
             nullable.
         created_at: Time the record was created.
-        updated_at: Time the record was last updated.
+        updated_at: Time the record was last updated by an admin edit; the
+            OCPP-reported status columns above do not bump it.
         deleted_at: Soft-delete time, nullable.
 
     Invariants:
@@ -328,7 +347,9 @@ class ChargingOcppMessageModel(Base):
         ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
         nullable=False,
     )
-    ocpp_subprotocol: Mapped[str] = mapped_column(String(20), nullable=False)
+    ocpp_subprotocol: Mapped[str] = mapped_column(
+        String(OCPP_SUBPROTOCOL_MAX_LENGTH), nullable=False
+    )
     direction: Mapped[OcppMessageDirection] = mapped_column(
         SQLEnum(
             OcppMessageDirection,

@@ -1,9 +1,16 @@
-"""Asynchronous repository for charging station topology.
+"""Asynchronous repository for charging station topology and directory queries.
 
-The repository only queries and flushes data; it does not commit or roll back
-the transaction. Checks belonging to the business boundary — such as parent
-existence, identity conflicts, and cascading soft-delete — are orchestrated
-by the service via the public functions here.
+Holds the station/EVSE/connector CRUD queries, the identity lookups used for
+conflict checks and OCPP resolution, the connector counts, and the PostGIS
+nearest/nearby searches (F-A2, F-D1). The queries for state a charger reports
+about itself (frame log, liveness, boot info, status, configuration captures)
+live in ``ocpp_state_repository.py``.
+
+The repository only queries and flushes data; it never commits or rolls back.
+Business checks — parent existence and identity conflicts — belong to the
+service. The soft-delete cascade (station -> EVSEs -> connectors, EVSE ->
+connectors) is done here, inside one flush, because it is a pure consequence
+of the parent row's ``deleted_at`` with no rule to decide.
 """
 
 from collections.abc import Mapping
@@ -11,7 +18,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -71,24 +78,23 @@ async def create_charging_station(
 
 
 async def get_station_by_id(
-    db: AsyncSession, station_id: UUID, *, include_deleted: bool = False
+    db: AsyncSession, station_id: UUID
 ) -> ChargingStationModel | None:
-    """Find a station by internal ID.
+    """Find an active (not soft-deleted) station by internal ID.
 
     Args:
         db: Current async session.
         station_id: Internal UUID.
-        include_deleted: Whether to allow resolving a soft-deleted record.
 
     Returns:
-        The matching station, or None.
+        The matching active station, or ``None``.
     """
-    conditions: list[ColumnElement[bool]] = [
-        ChargingStationModel.station_id == station_id
-    ]
-    if not include_deleted:
-        conditions.append(ChargingStationModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingStationModel).where(and_(*conditions)))
+    result = await db.execute(
+        select(ChargingStationModel).where(
+            ChargingStationModel.station_id == station_id,
+            ChargingStationModel.deleted_at.is_(None),
+        )
+    )
     return result.scalar_one_or_none()
 
 
@@ -112,7 +118,7 @@ async def get_station_by_identity(
     ]
     if not include_deleted:
         conditions.append(ChargingStationModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingStationModel).where(and_(*conditions)))
+    result = await db.execute(select(ChargingStationModel).where(*conditions))
     return result.scalar_one_or_none()
 
 
@@ -132,10 +138,9 @@ async def list_charging_stations(
     Returns:
         List of active stations ordered by creation time descending.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
         select(ChargingStationModel)
-        .where(and_(*conditions))
+        .where(ChargingStationModel.deleted_at.is_(None))
         .order_by(
             ChargingStationModel.created_at.desc(),
             ChargingStationModel.station_id.desc(),
@@ -157,9 +162,10 @@ async def count_stations(
     Returns:
         Number of non-soft-deleted stations.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
     result = await db.execute(
-        select(func.count(ChargingStationModel.station_id)).where(and_(*conditions))
+        select(func.count(ChargingStationModel.station_id)).where(
+            ChargingStationModel.deleted_at.is_(None)
+        )
     )
     return int(result.scalar() or 0)
 
@@ -207,7 +213,7 @@ async def list_nearby_stations(
     radius_meters: float,
     connector_standard: str | None,
     min_power_kw: Decimal | None,
-    operational_only: bool,
+    is_operational_only: bool,
     offset: int,
     limit: int,
 ) -> list[tuple[ChargingStationModel, float]]:
@@ -221,7 +227,7 @@ async def list_nearby_stations(
             (e.g. ``"CCS2"``), or ``None`` to not filter by it.
         min_power_kw: Minimum ``power_rating_kw``, or ``None`` to not
             filter by it.
-        operational_only: Whether to only return stations with
+        is_operational_only: Whether to only return stations with
             ``maintenance_status == OPERATIONAL``. Same approximation of
             "available" as ``find_nearest_station_by_location`` (F-A2) -
             admin-set, not a live occupancy signal.
@@ -243,7 +249,7 @@ async def list_nearby_stations(
         radius_meters=radius_meters,
         connector_standard=connector_standard,
         min_power_kw=min_power_kw,
-        operational_only=operational_only,
+        is_operational_only=is_operational_only,
     )
     distance_meters = func.ST_Distance(ChargingStationModel.location, location)
     result = await db.execute(
@@ -263,7 +269,7 @@ async def count_nearby_stations(
     radius_meters: float,
     connector_standard: str | None,
     min_power_kw: Decimal | None,
-    operational_only: bool,
+    is_operational_only: bool,
 ) -> int:
     """Count stations within a radius of a point, with the same filters as
     ``list_nearby_stations``.
@@ -276,7 +282,7 @@ async def count_nearby_stations(
             or ``None`` to not filter by it.
         min_power_kw: Minimum ``power_rating_kw``, or ``None`` to not
             filter by it.
-        operational_only: Whether to only count stations with
+        is_operational_only: Whether to only count stations with
             ``maintenance_status == OPERATIONAL``.
 
     Returns:
@@ -287,7 +293,7 @@ async def count_nearby_stations(
         radius_meters=radius_meters,
         connector_standard=connector_standard,
         min_power_kw=min_power_kw,
-        operational_only=operational_only,
+        is_operational_only=is_operational_only,
     )
     result = await db.execute(
         select(func.count(ChargingStationModel.station_id)).where(*conditions)
@@ -301,7 +307,7 @@ def _nearby_station_conditions(
     radius_meters: float,
     connector_standard: str | None,
     min_power_kw: Decimal | None,
-    operational_only: bool,
+    is_operational_only: bool,
 ) -> list[ColumnElement[bool]]:
     """Build the shared WHERE conditions for a nearby-station query (F-D1).
 
@@ -310,7 +316,7 @@ def _nearby_station_conditions(
         radius_meters: Maximum distance from ``location``, in meters.
         connector_standard: Exact-match filter, or ``None`` to skip it.
         min_power_kw: Minimum power filter, or ``None`` to skip it.
-        operational_only: Whether to require ``maintenance_status ==
+        is_operational_only: Whether to require ``maintenance_status ==
             OPERATIONAL``.
 
     Returns:
@@ -322,7 +328,7 @@ def _nearby_station_conditions(
         ChargingStationModel.location.is_not(None),
         func.ST_DWithin(ChargingStationModel.location, location, radius_meters),
     ]
-    if operational_only:
+    if is_operational_only:
         conditions.append(
             ChargingStationModel.maintenance_status
             == ChargingStationMaintenanceStatus.OPERATIONAL
@@ -466,23 +472,22 @@ async def create_charging_evse(
     return evse
 
 
-async def get_evse_by_id(
-    db: AsyncSession, evse_id: UUID, *, include_deleted: bool = False
-) -> ChargingEvseModel | None:
-    """Find an EVSE by internal ID.
+async def get_evse_by_id(db: AsyncSession, evse_id: UUID) -> ChargingEvseModel | None:
+    """Find an active (not soft-deleted) EVSE by internal ID.
 
     Args:
         db: Current async session.
         evse_id: UUID of the EVSE to query.
-        include_deleted: Whether to include soft-deleted records.
 
     Returns:
-        The matching EVSE, or ``None``.
+        The matching active EVSE, or ``None``.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingEvseModel.evse_id == evse_id]
-    if not include_deleted:
-        conditions.append(ChargingEvseModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingEvseModel).where(and_(*conditions)))
+    result = await db.execute(
+        select(ChargingEvseModel).where(
+            ChargingEvseModel.evse_id == evse_id,
+            ChargingEvseModel.deleted_at.is_(None),
+        )
+    )
     return result.scalar_one_or_none()
 
 
@@ -510,7 +515,7 @@ async def get_evse_by_identity(
     ]
     if not include_deleted:
         conditions.append(ChargingEvseModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingEvseModel).where(and_(*conditions)))
+    result = await db.execute(select(ChargingEvseModel).where(*conditions))
     return result.scalar_one_or_none()
 
 
@@ -651,24 +656,23 @@ async def create_charging_connector(
 
 
 async def get_connector_by_id(
-    db: AsyncSession, connector_id: UUID, *, include_deleted: bool = False
+    db: AsyncSession, connector_id: UUID
 ) -> ChargingConnectorModel | None:
-    """Find a connector by internal ID.
+    """Find an active (not soft-deleted) connector by internal ID.
 
     Args:
         db: Current async session.
         connector_id: UUID of the connector to query.
-        include_deleted: Whether to include soft-deleted records.
 
     Returns:
-        The matching connector, or ``None``.
+        The matching active connector, or ``None``.
     """
-    conditions: list[ColumnElement[bool]] = [
-        ChargingConnectorModel.connector_id == connector_id
-    ]
-    if not include_deleted:
-        conditions.append(ChargingConnectorModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingConnectorModel).where(and_(*conditions)))
+    result = await db.execute(
+        select(ChargingConnectorModel).where(
+            ChargingConnectorModel.connector_id == connector_id,
+            ChargingConnectorModel.deleted_at.is_(None),
+        )
+    )
     return result.scalar_one_or_none()
 
 
@@ -696,7 +700,7 @@ async def get_connector_by_identity(
     ]
     if not include_deleted:
         conditions.append(ChargingConnectorModel.deleted_at.is_(None))
-    result = await db.execute(select(ChargingConnectorModel).where(and_(*conditions)))
+    result = await db.execute(select(ChargingConnectorModel).where(*conditions))
     return result.scalar_one_or_none()
 
 
@@ -794,7 +798,8 @@ async def soft_delete_connector(db: AsyncSession, connector_id: UUID) -> bool:
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:
         return False
-    connector.deleted_at = utc_now()
-    connector.updated_at = utc_now()
+    now = utc_now()
+    connector.deleted_at = now
+    connector.updated_at = now
     await db.flush()
     return True
