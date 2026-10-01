@@ -8,7 +8,7 @@ is owned by FastAPI's ``get_db``; this module does not commit/rollback.
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -51,8 +51,10 @@ from app.domains.charging_stations.types import (
     ChargingStationMaintenanceStatus,
     NearestChargingStationReference,
 )
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
+from app.libs.common.pagination import normalize_page_window
 
 
 def to_charging_station_response(
@@ -80,7 +82,7 @@ def to_charging_station_response(
         charger's device info, and ``is_online`` (``last_seen_at`` within
         ``CHARGING_OFFLINE_TIMEOUT_SECONDS``; ``False`` if never seen).
     """
-    checked_at = now if now is not None else datetime.now(timezone.utc)
+    checked_at = now if now is not None else utc_now()
     is_online = station.last_seen_at is not None and (
         checked_at - station.last_seen_at
     ) <= timedelta(seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS)
@@ -238,15 +240,11 @@ async def list_charging_stations(
         throughput needs it, see ``docs/01-requirements/future.md``); does
         not commit or rollback.
     """
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(
-        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
-    )
-    offset = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
     stations = await repository.list_charging_stations(
         db,
-        offset=offset,
-        limit=page_size,
+        offset=page_window.offset,
+        limit=page_window.page_size,
     )
     total = await repository.count_stations(db)
     items = []
@@ -260,8 +258,8 @@ async def list_charging_stations(
     return ChargingStationListResponse(
         items=items,
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -414,11 +412,7 @@ async def find_nearby_charging_stations(
     radius_km = min(
         max(radius_km, 0.001), settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM
     )
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(
-        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
-    )
-    offset = (page - 1) * page_size
+    page_window = normalize_page_window(page, page_size)
 
     query_point = coordinates_to_location(latitude, longitude)
     assert query_point is not None, "latitude/longitude are both required here"
@@ -432,8 +426,8 @@ async def find_nearby_charging_stations(
         connector_standard=connector_standard,
         min_power_kw=min_power_decimal,
         operational_only=is_operational_only,
-        offset=offset,
-        limit=page_size,
+        offset=page_window.offset,
+        limit=page_window.page_size,
     )
     total = await repository.count_nearby_stations(
         db,
@@ -458,8 +452,8 @@ async def find_nearby_charging_stations(
     return NearbyChargingStationListResponse(
         items=items,
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -610,19 +604,19 @@ async def list_charging_evses(
     """
     if await repository.get_station_by_id(db, station_id) is None:
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(
-        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
-    )
+    page_window = normalize_page_window(page, page_size)
     evses = await repository.list_charging_evses(
-        db, station_id=station_id, offset=(page - 1) * page_size, limit=page_size
+        db,
+        station_id=station_id,
+        offset=page_window.offset,
+        limit=page_window.page_size,
     )
     total = await repository.count_evses(db, station_id)
     return ChargingEvseListResponse(
         items=[to_charging_evse_response(evse) for evse in evses],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 
@@ -777,19 +771,19 @@ async def list_charging_connectors(
     """
     if await repository.get_evse_by_id(db, evse_id) is None:
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
-    page = max(page, settings.API_DEFAULT_PAGE)
-    page_size = min(
-        max(page_size, settings.API_DEFAULT_PAGE_SIZE), settings.API_MAX_PAGE_SIZE
-    )
+    page_window = normalize_page_window(page, page_size)
     connectors = await repository.list_charging_connectors(
-        db, evse_id=evse_id, offset=(page - 1) * page_size, limit=page_size
+        db,
+        evse_id=evse_id,
+        offset=page_window.offset,
+        limit=page_window.page_size,
     )
     total = await repository.count_connectors(db, evse_id)
     return ChargingConnectorListResponse(
         items=[to_charging_connector_response(connector) for connector in connectors],
         total=total,
-        page=page,
-        page_size=page_size,
+        page=page_window.page,
+        page_size=page_window.page_size,
     )
 
 

@@ -12,7 +12,7 @@ items 27 and 28. ``ChargingOcppMessageModel`` is the verbatim, append-only
 log of every OCPP frame exchanged with a station (both protocols).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -39,33 +39,9 @@ from app.domains.charging_stations.types import (
     ChargingStationMaintenanceStatus,
     OcppMessageDirection,
 )
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Get the UTC timestamp used for defaults and soft-delete timestamps.
-
-    Returns:
-        The current time as a timezone-aware UTC ``datetime``.
-    """
-    return datetime.now(timezone.utc)
-
-
-def enum_values(enum_type: type[object]) -> list[str]:
-    """Get the enum values so PostgreSQL stores the correct public contract.
-
-    Duplicated locally rather than imported from ``charging_sessions`` —
-    importing another domain's ``models.py`` is forbidden by
-    ``domain-boundaries.md``; every domain that needs this duplicates it,
-    the same way ``utc_now()`` above is duplicated per domain.
-
-    Args:
-        enum_type: An enum whose members carry a ``value`` attribute.
-
-    Returns:
-        The list of values in the enum's declaration order.
-    """
-    return [member.value for member in enum_type]  # type: ignore[attr-defined]
+from app.libs.db.enums import enum_values
 
 
 class ChargingStationModel(Base):

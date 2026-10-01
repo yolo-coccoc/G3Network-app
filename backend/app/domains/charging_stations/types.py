@@ -31,7 +31,7 @@ class ChargingConnectorStatus(str, enum.Enum):
     """Live status of a connector as reported by OCPP ``StatusNotification`` (F-C2).
 
     The values are the exact labels the protocols use (stored as values, not
-    Python member names — see ``models.py``'s ``enum_values()`` helper):
+    Python member names — see ``app.libs.db.enums.enum_values``):
     OCPP 2.0.1's ``ConnectorStatusEnumType`` (``Available``, ``Occupied``,
     ``Reserved``, ``Unavailable``, ``Faulted``) **plus** the five OCPP 1.6J
     statuses that have no 2.0.1 equivalent, so a 1.6J charger's status is kept

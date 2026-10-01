@@ -18,7 +18,7 @@ Scope: this module only records frames. It never inspects, filters, or
 rewrites them, and it exposes no read API (the table is queried with SQL).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +27,7 @@ from websockets.typing import Data
 
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_stations.types import OcppMessageDirection
+from app.libs.common.clock import utc_now
 
 
 class RecordingConnection:
@@ -87,7 +88,7 @@ class RecordingConnection:
         frame = await self._connection.recv()
         # Stamp the time before the database round trip so ``occurred_at`` is
         # the receive time, not the time the write finished.
-        received_at = datetime.now(timezone.utc)
+        received_at = utc_now()
         await self._record(OcppMessageDirection.CP_TO_CSMS, frame, received_at)
         return frame
 
@@ -107,9 +108,7 @@ class RecordingConnection:
             handed to the WebSocket.
         """
         await self._connection.send(message)
-        await self._record(
-            OcppMessageDirection.CSMS_TO_CP, message, datetime.now(timezone.utc)
-        )
+        await self._record(OcppMessageDirection.CSMS_TO_CP, message, utc_now())
 
     async def _record(
         self, direction: OcppMessageDirection, frame: Data, occurred_at: datetime

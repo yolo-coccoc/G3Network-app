@@ -1,22 +1,19 @@
-"""HTTP router for station, EVSE, and connector topology CRUD.
+"""HTTP router for the charging station directory and its topology.
 
-The router only accepts HTTP dependencies, calls the public service, and
-translates domain exceptions into status codes. Business rules, database
-queries, and transaction boundaries do not belong in this module.
+Endpoints: station/EVSE/connector CRUD with soft-delete (F-C1), the
+driver-facing nearby search (F-D1), and the latest configuration a charger
+reported over OCPP. The router only accepts HTTP dependencies and calls the
+public service; domain exceptions are mapped to status codes centrally by
+``app/api/main.py`` (each endpoint's ``Raises:`` names them). Business rules,
+database queries, and transaction boundaries do not belong in this module.
 """
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_stations.service as charging_service
-from app.domains.charging_stations.exceptions import (
-    ChargingConnectorNotFoundError,
-    ChargingEvseNotFoundError,
-    ChargingStationNotFoundError,
-    ChargingTopologyConflictError,
-)
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
@@ -59,14 +56,10 @@ async def create_charging_station_endpoint(
         HTTP response for the newly created station.
 
     Raises:
-        HTTPException: ``409`` if the OCPP identity already exists.
+        ChargingTopologyConflictError: 409 if the OCPP identity already
+            exists, even on a soft-deleted station.
     """
-    try:
-        return await charging_service.create_charging_station(db, station_data)
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.create_charging_station(db, station_data)
 
 
 @router.get(
@@ -92,6 +85,10 @@ async def list_charging_stations_endpoint(
 
     Returns:
         HTTP response with the list of stations.
+
+    Raises:
+        RequestValidationError: 422 (raised by FastAPI) if a query
+            parameter is out of range; the service raises no domain error.
     """
     return await charging_service.list_charging_stations(
         db,
@@ -140,6 +137,10 @@ async def find_nearby_charging_stations_endpoint(
 
     Returns:
         HTTP response with the matching stations, nearest first.
+
+    Raises:
+        RequestValidationError: 422 (raised by FastAPI) if a query
+            parameter is out of range; the service raises no domain error.
     """
     return await charging_service.find_nearby_charging_stations(
         db,
@@ -176,19 +177,12 @@ async def create_charging_evse_endpoint(
         HTTP response for the newly created EVSE.
 
     Raises:
-        HTTPException: ``404`` if the station does not exist; ``409`` if the
-            EVSE identity is duplicated.
+        ChargingStationNotFoundError: 404 if the parent station is not
+            active.
+        ChargingTopologyConflictError: 409 if the EVSE identity already
+            exists in the station.
     """
-    try:
-        return await charging_service.create_charging_evse(db, station_id, evse_data)
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.create_charging_evse(db, station_id, evse_data)
 
 
 @router.get(
@@ -218,16 +212,12 @@ async def list_charging_evses_endpoint(
         HTTP response with the list of EVSEs.
 
     Raises:
-        HTTPException: ``404`` if the parent station is not active.
+        ChargingStationNotFoundError: 404 if the parent station is not
+            active.
     """
-    try:
-        return await charging_service.list_charging_evses(
-            db, station_id, page=page, page_size=page_size
-        )
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.list_charging_evses(
+        db, station_id, page=page, page_size=page_size
+    )
 
 
 @router.post(
@@ -252,21 +242,11 @@ async def create_charging_connector_endpoint(
         HTTP response for the newly created connector.
 
     Raises:
-        HTTPException: ``404`` if the EVSE does not exist; ``409`` if the
-            connector identity is duplicated.
+        ChargingEvseNotFoundError: 404 if the parent EVSE is not active.
+        ChargingTopologyConflictError: 409 if the connector identity
+            already exists in the EVSE.
     """
-    try:
-        return await charging_service.create_charging_connector(
-            db, evse_id, connector_data
-        )
-    except ChargingEvseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.create_charging_connector(db, evse_id, connector_data)
 
 
 @router.get(
@@ -296,16 +276,11 @@ async def list_charging_connectors_endpoint(
         HTTP response with the list of connectors.
 
     Raises:
-        HTTPException: ``404`` if the parent EVSE is not active.
+        ChargingEvseNotFoundError: 404 if the parent EVSE is not active.
     """
-    try:
-        return await charging_service.list_charging_connectors(
-            db, evse_id, page=page, page_size=page_size
-        )
-    except ChargingEvseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.list_charging_connectors(
+        db, evse_id, page=page, page_size=page_size
+    )
 
 
 @router.get(
@@ -326,14 +301,10 @@ async def get_charging_station_endpoint(
         HTTP response with the station.
 
     Raises:
-        HTTPException: ``404`` if the station does not exist or was deleted.
+        ChargingStationNotFoundError: 404 if the station does not exist or
+            was soft-deleted.
     """
-    try:
-        return await charging_service.get_charging_station(db, station_id)
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.get_charging_station(db, station_id)
 
 
 @router.get(
@@ -358,14 +329,10 @@ async def get_charging_station_configuration_endpoint(
         The newest capture's keys, sorted by name.
 
     Raises:
-        HTTPException: ``404`` if the station does not exist or was deleted.
+        ChargingStationNotFoundError: 404 if the station does not exist or
+            was soft-deleted.
     """
-    try:
-        return await charging_service.get_latest_station_configuration(db, station_id)
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.get_latest_station_configuration(db, station_id)
 
 
 @router.patch(
@@ -389,21 +356,12 @@ async def update_charging_station_endpoint(
         HTTP response with the updated station.
 
     Raises:
-        HTTPException: ``404`` if the station does not exist; ``409`` if the
-            new identity is duplicated.
+        ChargingStationNotFoundError: 404 if the station does not exist or
+            was soft-deleted.
+        ChargingTopologyConflictError: 409 if the new OCPP identity is
+            already in use.
     """
-    try:
-        return await charging_service.update_charging_station(
-            db, station_id, station_data
-        )
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.update_charging_station(db, station_id, station_data)
 
 
 @router.delete(
@@ -424,14 +382,10 @@ async def soft_delete_charging_station_endpoint(
         HTTP response confirming the soft-delete.
 
     Raises:
-        HTTPException: ``404`` if the station does not exist or was deleted.
+        ChargingStationNotFoundError: 404 if the station does not exist or
+            was soft-deleted.
     """
-    try:
-        return await charging_service.soft_delete_charging_station(db, station_id)
-    except ChargingStationNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.soft_delete_charging_station(db, station_id)
 
 
 @router.get(
@@ -452,14 +406,10 @@ async def get_charging_evse_endpoint(
         HTTP response with the EVSE.
 
     Raises:
-        HTTPException: ``404`` if the EVSE does not exist or was deleted.
+        ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
+            soft-deleted.
     """
-    try:
-        return await charging_service.get_charging_evse(db, evse_id)
-    except ChargingEvseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.get_charging_evse(db, evse_id)
 
 
 @router.patch(
@@ -483,19 +433,12 @@ async def update_charging_evse_endpoint(
         HTTP response with the updated EVSE.
 
     Raises:
-        HTTPException: ``404`` if the EVSE does not exist; ``409`` if the new
-            identity is duplicated within the station.
+        ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
+            soft-deleted.
+        ChargingTopologyConflictError: 409 if the new identity already
+            exists in the station.
     """
-    try:
-        return await charging_service.update_charging_evse(db, evse_id, evse_data)
-    except ChargingEvseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.update_charging_evse(db, evse_id, evse_data)
 
 
 @router.delete(
@@ -516,14 +459,10 @@ async def soft_delete_charging_evse_endpoint(
         HTTP response confirming the soft-delete.
 
     Raises:
-        HTTPException: ``404`` if the EVSE does not exist or was deleted.
+        ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
+            soft-deleted.
     """
-    try:
-        return await charging_service.soft_delete_charging_evse(db, evse_id)
-    except ChargingEvseNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.soft_delete_charging_evse(db, evse_id)
 
 
 @router.get(
@@ -544,15 +483,10 @@ async def get_charging_connector_endpoint(
         HTTP response with the connector.
 
     Raises:
-        HTTPException: ``404`` if the connector does not exist or was
-            deleted.
+        ChargingConnectorNotFoundError: 404 if the connector does not exist
+            or was soft-deleted.
     """
-    try:
-        return await charging_service.get_charging_connector(db, connector_id)
-    except ChargingConnectorNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.get_charging_connector(db, connector_id)
 
 
 @router.patch(
@@ -576,21 +510,14 @@ async def update_charging_connector_endpoint(
         HTTP response with the updated connector.
 
     Raises:
-        HTTPException: ``404`` if the connector does not exist; ``409`` if
-            the new identity is duplicated within the EVSE.
+        ChargingConnectorNotFoundError: 404 if the connector does not exist
+            or was soft-deleted.
+        ChargingTopologyConflictError: 409 if the new identity already
+            exists in the EVSE.
     """
-    try:
-        return await charging_service.update_charging_connector(
-            db, connector_id, connector_data
-        )
-    except ChargingConnectorNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except ChargingTopologyConflictError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(error)
-        ) from error
+    return await charging_service.update_charging_connector(
+        db, connector_id, connector_data
+    )
 
 
 @router.delete(
@@ -611,12 +538,7 @@ async def soft_delete_charging_connector_endpoint(
         HTTP response confirming the soft-delete.
 
     Raises:
-        HTTPException: ``404`` if the connector does not exist or was
-            deleted.
+        ChargingConnectorNotFoundError: 404 if the connector does not exist
+            or was soft-deleted.
     """
-    try:
-        return await charging_service.soft_delete_charging_connector(db, connector_id)
-    except ChargingConnectorNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await charging_service.soft_delete_charging_connector(db, connector_id)

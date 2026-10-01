@@ -77,7 +77,8 @@ async def test_find_nearby_charging_stations_clamps_radius_and_paginates(
         settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM * 1000
     )
     assert response.page == settings.API_DEFAULT_PAGE
-    assert response.page_size == settings.API_DEFAULT_PAGE_SIZE
+    # normalize_page_window floors a non-positive page size at 1.
+    assert response.page_size == 1
     assert len(response.items) == 1
     assert response.items[0].distance_km == pytest.approx(1.5)
     assert response.items[0].connector_count == 2

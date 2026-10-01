@@ -7,7 +7,6 @@ by the service via the public functions here.
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -24,15 +23,7 @@ from app.domains.charging_stations.models import (
 from app.domains.charging_stations.types import (
     ChargingStationMaintenanceStatus,
 )
-
-
-def utc_now() -> datetime:
-    """Get the UTC timestamp used for updates and soft-deletes.
-
-    Returns:
-        The current time with UTC timezone.
-    """
-    return datetime.now(timezone.utc)
+from app.libs.common.clock import utc_now
 
 
 async def create_charging_station(

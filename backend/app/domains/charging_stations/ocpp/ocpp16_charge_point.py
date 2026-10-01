@@ -19,7 +19,6 @@ charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from uuid import UUID
 
 from ocpp.exceptions import OCPPError
@@ -28,8 +27,8 @@ from ocpp.v16 import ChargePoint, call, call_result
 from ocpp.v16.enums import Action, AuthorizationStatus, RegistrationStatus
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions import service as charging_sessions_service
 from app.domains.charging_sessions.types import SessionEventType
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     V16Extraction,
@@ -46,6 +45,7 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ConfigurationEntry,
 )
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         Side Effects:
             Updates the station's device fields in an atomic transaction.
         """
-        booted_at = datetime.now(timezone.utc)
+        booted_at = utc_now()
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
@@ -145,7 +145,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 booted_at=booted_at,
             )
         return call_result.BootNotification(
-            current_time=format_ocpp_timestamp(datetime.now(timezone.utc)),
+            current_time=format_ocpp_timestamp(utc_now()),
             interval=settings.CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS,
             status=RegistrationStatus.accepted,
         )
@@ -164,9 +164,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             The server's current UTC time, which the charger uses to sync its
             clock.
         """
-        return call_result.Heartbeat(
-            current_time=format_ocpp_timestamp(datetime.now(timezone.utc))
-        )
+        return call_result.Heartbeat(current_time=format_ocpp_timestamp(utc_now()))
 
     @on(Action.status_notification)  # type: ignore[untyped-decorator]
     async def on_status_notification(
@@ -217,9 +215,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         reported_status = ChargingConnectorStatus(status)
         reported_at = (
-            parse_ocpp_timestamp(timestamp)
-            if timestamp is not None
-            else datetime.now(timezone.utc)
+            parse_ocpp_timestamp(timestamp) if timestamp is not None else utc_now()
         )
         async with self.session_factory.begin() as db:
             if connector_id == 0:
@@ -628,7 +624,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     db,
                     ocpp_identity=self.id,
                     entries=entries,
-                    captured_at=datetime.now(timezone.utc),
+                    captured_at=utc_now(),
                 )
         except Exception:
             logger.exception(
