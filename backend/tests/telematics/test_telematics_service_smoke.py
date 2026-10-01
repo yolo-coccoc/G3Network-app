@@ -14,6 +14,7 @@ import app.domains.telematics.service as telematics_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
+    TelematicConflictError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
 )
@@ -40,7 +41,7 @@ async def test_telematic_service_resolves_vehicle_vin(
         vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
     )
 
-    async def no_existing_serial(db: AsyncSession, serial: str) -> None:
+    async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
         return None
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
@@ -54,17 +55,16 @@ async def test_telematic_service_resolves_vehicle_vin(
     ) -> TelematicModel:
         return record
 
-    async def no_assigned_vehicle(statement: object) -> None:
+    async def no_assigned_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
         return None
-
-    class FakeDatabase:
-        async def scalar(self, statement: object) -> None:
-            return await no_assigned_vehicle(statement)
 
     async def mark_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
         return None
 
-    monkeypatch.setattr(telematics_repository, "get_by_serial", no_existing_serial)
+    monkeypatch.setattr(telematics_repository, "find_by_serial", no_existing_serial)
+    monkeypatch.setattr(
+        telematics_repository, "find_by_vehicle_id", no_assigned_vehicle
+    )
     monkeypatch.setattr(telematics_repository, "insert", insert_telematic)
     monkeypatch.setattr(
         vehicles_public_service,
@@ -77,12 +77,11 @@ async def test_telematic_service_resolves_vehicle_vin(
         resolve_id,
     )
     # F-F2's activation hook fires since a vehicle_id resolves; mocked out
-    # since FakeDatabase only implements .scalar(), and this test is about
-    # VIN resolution, not activation.
+    # since this test is about VIN resolution, not activation.
     monkeypatch.setattr(vehicles_public_service, "mark_device_assigned", mark_assigned)
 
     response = await telematics_service.create_telematic(
-        cast(AsyncSession, FakeDatabase()),
+        fake_db_session(),
         TelematicCreateRequest(
             telematic_serial=record.telematic_serial,
             vehicle_vin=reference.vin,
@@ -93,6 +92,113 @@ async def test_telematic_service_resolves_vehicle_vin(
 
     assert response.vehicle_id == vehicle_id
     assert response.vehicle_vin == reference.vin
+
+
+@pytest.mark.asyncio
+async def test_create_telematic_rejects_vehicle_already_assigned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vehicle that already carries a live device can't get a second one."""
+    vehicle_id = uuid4()
+    reference = VehicleReference(
+        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+    )
+
+    async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
+        return None
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return reference
+
+    async def assigned_device(db: AsyncSession, value: UUID) -> TelematicModel:
+        assert value == vehicle_id
+        return build_telematic_record(vehicle_id)
+
+    async def fail_if_called(db: AsyncSession, values: dict[str, object]) -> None:
+        raise AssertionError("insert must not run for an already-assigned vehicle")
+
+    monkeypatch.setattr(telematics_repository, "find_by_serial", no_existing_serial)
+    monkeypatch.setattr(telematics_repository, "find_by_vehicle_id", assigned_device)
+    monkeypatch.setattr(telematics_repository, "insert", fail_if_called)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+
+    with pytest.raises(TelematicConflictError):
+        await telematics_service.create_telematic(
+            fake_db_session(),
+            TelematicCreateRequest(
+                telematic_serial="TBOX-TEST-002", vehicle_vin=reference.vin
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_build_telematic_response_handles_never_configured_device() -> None:
+    """A device that never had a config pushed builds with null F-J2 fields.
+
+    Regression for the old ``__dict__`` spread, which needed the create path
+    to pre-set ``telemetry_interval_seconds``/``config_pushed_at`` to None.
+    """
+    now = datetime.now(timezone.utc)
+    telematic_record = TelematicModel(
+        telematic_id=uuid4(),
+        telematic_serial="TBOX-TEST-003",
+        vehicle_id=None,
+        status=TelematicStatus.ACTIVE,
+        firmware_version=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    telematic_response = await telematics_service.build_telematic_response(
+        fake_db_session(), telematic_record
+    )
+
+    assert telematic_response.vehicle_vin is None
+    assert telematic_response.telemetry_interval_seconds is None
+    assert telematic_response.config_pushed_at is None
+
+
+@pytest.mark.asyncio
+async def test_list_telematics_normalizes_page_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """list_telematics() clamps page/page_size and passes the offset as a keyword."""
+    list_arguments: dict[str, object] = {}
+
+    async def list_all(
+        db_session: AsyncSession,
+        *,
+        offset: int,
+        limit: int,
+        status_filter: TelematicStatus | None = None,
+    ) -> list[TelematicModel]:
+        list_arguments.update(offset=offset, limit=limit, status_filter=status_filter)
+        return []
+
+    async def count(
+        db_session: AsyncSession, status_filter: TelematicStatus | None = None
+    ) -> int:
+        return 0
+
+    monkeypatch.setattr(telematics_repository, "list_all", list_all)
+    monkeypatch.setattr(telematics_repository, "count", count)
+
+    telematic_list_response = await telematics_service.list_telematics(
+        fake_db_session(),
+        page=0,
+        page_size=0,
+        status_filter=TelematicStatus.MAINTENANCE,
+    )
+
+    assert list_arguments == {
+        "offset": 0,
+        "limit": 1,
+        "status_filter": TelematicStatus.MAINTENANCE,
+    }
+    assert telematic_list_response.page == 1
+    assert telematic_list_response.page_size == 1
 
 
 def test_build_command_topic_uses_device_serial() -> None:

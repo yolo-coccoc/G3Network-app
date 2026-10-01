@@ -14,7 +14,7 @@ anywhere in this backend's data.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
+from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
 
@@ -67,17 +68,17 @@ async def run_health_check_tick() -> None:
         ``check_devices_for_silence`` for the actual logic. This split
         mirrors ``process_message(db, ...)``/the OCPP handlers elsewhere in
         this repo: the transaction-opening wrapper isn't unit tested
-        directly, the ``db``-accepting function it calls is.
+        directly, the session-accepting function it calls is.
     """
-    async with async_session_factory.begin() as db:
-        await check_devices_for_silence(db)
+    async with async_session_factory.begin() as db_session:
+        await check_devices_for_silence(db_session)
 
 
-async def check_devices_for_silence(db: AsyncSession) -> None:
+async def check_devices_for_silence(db_session: AsyncSession) -> None:
     """Run one sweep of active devices, alerting on newly-silent ones.
 
     Args:
-        db: Session whose transaction is owned by the caller
+        db_session: Session whose transaction is owned by the caller
             (``run_health_check_tick`` in production; a test's fake session
             when unit tested directly).
 
@@ -90,8 +91,8 @@ async def check_devices_for_silence(db: AsyncSession) -> None:
         request path. May write one notification row per newly-silent
         device; does not commit.
     """
-    devices = await telematics_repository.list_active_with_vehicle(db)
-    now = datetime.now(timezone.utc)
+    devices = await telematics_repository.list_active_with_vehicle(db_session)
+    now = utc_now()
     threshold = timedelta(minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES)
     checked_count = 0
     alerted_count = 0
@@ -104,7 +105,9 @@ async def check_devices_for_silence(db: AsyncSession) -> None:
         vehicle_id = device.vehicle_id
         assert vehicle_id is not None, "query filters out unassigned devices"
 
-        last_seen_at = await telemetry_service.resolve_last_telemetry_at(db, vehicle_id)
+        last_seen_at = await telemetry_service.resolve_last_telemetry_at(
+            db_session, vehicle_id
+        )
         if last_seen_at is None:
             # Never reported - a provisioning gap (F-F2), not silence;
             # there's no anchor to measure silence duration against.
@@ -115,7 +118,7 @@ async def check_devices_for_silence(db: AsyncSession) -> None:
             continue
 
         last_notified_at = await notifications_service.resolve_last_notified_at(
-            db,
+            db_session,
             vehicle_id=vehicle_id,
             notification_type=NotificationType.DEVICE_OFFLINE_ALERT,
         )
@@ -125,7 +128,7 @@ async def check_devices_for_silence(db: AsyncSession) -> None:
             continue
 
         await _raise_device_offline_alert(
-            db,
+            db_session,
             device=device,
             vehicle_id=vehicle_id,
             last_seen_at=last_seen_at,
@@ -144,7 +147,7 @@ async def check_devices_for_silence(db: AsyncSession) -> None:
 
 
 async def _raise_device_offline_alert(
-    db: AsyncSession,
+    db_session: AsyncSession,
     *,
     device: TelematicModel,
     vehicle_id: UUID,
@@ -154,7 +157,7 @@ async def _raise_device_offline_alert(
     """Raise a device-offline notification (F-J1, F-J3 partial).
 
     Args:
-        db: Session whose transaction is owned by the monitor tick.
+        db_session: Session whose transaction is owned by the monitor tick.
         device: The telematic device that's gone silent.
         vehicle_id: The device's assigned vehicle.
         last_seen_at: The device's last telemetry receive time.
@@ -172,7 +175,7 @@ async def _raise_device_offline_alert(
         "threshold_minutes": settings.TELEMATICS_SILENT_THRESHOLD_MINUTES,
     }
     await notifications_service.create_notification(
-        db,
+        db_session,
         notification_type=NotificationType.DEVICE_OFFLINE_ALERT,
         severity=NotificationSeverity.WARNING,
         vehicle_id=vehicle_id,

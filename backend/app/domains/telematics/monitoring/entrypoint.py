@@ -1,4 +1,12 @@
-"""Entrypoint process for the telematics device-health monitor (F-J1, F-J3 partial)."""
+"""Entrypoint process for the telematics device-health monitor (F-J1, F-J3 partial).
+
+Run on the host with ``make telematics-monitor-dev``
+(``python -m app.domains.telematics.monitoring.entrypoint``). It owns the
+process lifecycle only: logging setup, SIGINT/SIGTERM handling and closing
+the shared database engine; the periodic sweep itself lives in
+``device_health_monitor``. A failed tick stops the process (exit code 1)
+rather than being retried.
+"""
 
 import asyncio
 import logging
@@ -14,9 +22,14 @@ logger = logging.getLogger(__name__)
 async def run() -> None:
     """Start the monitor and shut down gracefully on SIGINT/SIGTERM.
 
+    Raises:
+        Exception: Whatever a monitor tick raised, propagated unchanged
+            after cleanup so ``main`` can exit with a failure code.
+
     Side Effects:
-        Registers signal handlers and closes the shared database engine
-        after the monitor stops.
+        Configures logging, registers SIGINT/SIGTERM handlers that set the
+        monitor's stop event, and - whether the monitor stops cleanly or
+        fails - closes the shared database engine and removes the handlers.
     """
     configure_logging()
     stop_event = asyncio.Event()
@@ -36,6 +49,9 @@ async def run() -> None:
 
 def main() -> None:
     """Run the event loop for the device health monitor.
+
+    A ``KeyboardInterrupt`` before the signal handlers are installed is
+    logged and treated as a normal stop.
 
     Raises:
         SystemExit: With code 1 if the monitor exits due to an unexpected

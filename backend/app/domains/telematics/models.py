@@ -1,6 +1,6 @@
 """SQLAlchemy model for the physical Telematic device."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
@@ -9,12 +9,8 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.telematics.types import TelematicStatus
+from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-
-
-def utc_now() -> datetime:
-    """Return the current UTC time with timezone info."""
-    return datetime.now(timezone.utc)
 
 
 class TelematicModel(Base):
@@ -33,7 +29,10 @@ class TelematicModel(Base):
             "the value we wish we'd sent".
         config_pushed_at: When ``telemetry_interval_seconds`` was last
             successfully pushed, NULL until the first push.
-        deleted_at: Soft-delete timestamp.
+        created_at: Creation time.
+        updated_at: Last update time, refreshed by the ORM ``onupdate`` hook
+            on every flushed UPDATE of the row.
+        deleted_at: Soft-delete timestamp; NULL while the device is live.
     """
 
     __tablename__ = "telematics"
