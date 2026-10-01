@@ -12,6 +12,7 @@ import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import ChargingOcppMessageInputError
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import OcppMessageDirection
+from tests.fakes import FakeSessionFactory
 
 STATION_ID = uuid4()
 
@@ -38,35 +39,6 @@ class _FakeConnection:
         self._events.append("send")
 
 
-class _FakeTransaction:
-    """Async context manager mimicking ``async_sessionmaker.begin()``."""
-
-    def __init__(self, factory: "_FakeSessionFactory") -> None:
-        self._factory = factory
-
-    async def __aenter__(self) -> object:
-        db = object()
-        self._factory.sessions.append(db)
-        self._factory.entered += 1
-        return db
-
-    async def __aexit__(self, *_: object) -> bool:
-        self._factory.exited += 1
-        return False
-
-
-class _FakeSessionFactory:
-    """Counts how many independent transactions the wrapper opens."""
-
-    def __init__(self) -> None:
-        self.entered = 0
-        self.exited = 0
-        self.sessions: list[object] = []
-
-    def begin(self) -> _FakeTransaction:
-        return _FakeTransaction(self)
-
-
 def _recording_connection(
     events: list[str],
     frames: list[Any],
@@ -74,7 +46,7 @@ def _recording_connection(
     *,
     fail_send: bool = False,
     fail_record: bool = False,
-) -> tuple[RecordingConnection, _FakeSessionFactory, list[dict[str, Any]]]:
+) -> tuple[RecordingConnection, FakeSessionFactory, list[dict[str, Any]]]:
     """Build a wrapper around fakes and capture every recorded frame."""
     recorded: list[dict[str, Any]] = []
 
@@ -85,7 +57,7 @@ def _recording_connection(
         recorded.append({"db": db, **kwargs})
 
     monkeypatch.setattr(charging_stations_service, "record_ocpp_message", fake_record)
-    factory = _FakeSessionFactory()
+    factory = FakeSessionFactory()
     connection = RecordingConnection(
         _FakeConnection(events, frames, fail_send=fail_send),  # type: ignore[arg-type]
         station_id=STATION_ID,

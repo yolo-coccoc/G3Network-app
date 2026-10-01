@@ -23,28 +23,16 @@ from app.domains.charging_stations.ocpp.parsing import (
 )
 from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
 from app.libs.common.config import settings
+from tests.fakes import FakeSessionFactory
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
-
-
-class _FakeTransaction:
-    async def __aenter__(self) -> object:
-        return object()
-
-    async def __aexit__(self, *_: object) -> bool:
-        return False
-
-
-class _FakeSessionFactory:
-    def begin(self) -> _FakeTransaction:
-        return _FakeTransaction()
 
 
 def _charge_point() -> OCPP16ChargePoint:
     return OCPP16ChargePoint(
         "LSC",
         object(),  # type: ignore[arg-type]
-        _FakeSessionFactory(),  # type: ignore[arg-type]
+        FakeSessionFactory(),  # type: ignore[arg-type]
     )
 
 

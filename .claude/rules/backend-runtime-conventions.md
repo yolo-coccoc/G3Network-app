@@ -137,7 +137,7 @@
 
 1. Look for a similar pattern already existing in another domain/entrypoint.
 2. Don't create a new engine, session factory, config, or logger if a shared implementation already exists.
-3. Run Black, isort, Ruff, and mypy along with the existing test suite. The backend currently has automated smoke tests plus two PostgreSQL integration tests that are skipped by default; state clearly which test scope was run, and why, if the integration tests weren't run.
+3. Run Black, isort, Ruff, and mypy along with the existing test suite. The backend has smoke tests under `backend/tests/<domain>/` (shared helpers in `tests/builders.py` and `tests/fakes.py`) plus PostgreSQL integration tests in `tests/test_postgres_integration.py`, skipped unless `RUN_DB_INTEGRATION=1`; state clearly which test scope was run, and why, if the integration tests weren't run.
 4. Check that `__init__.py` only contains a docstring.
 5. Don't leave a placeholder/TODO for a component that's definitely needed later — move it to `docs/01-requirements/future.md` instead.
 6. Review migrations for timezone handling, FK, index, constraint, PostGIS/TimescaleDB, upgrade, and downgrade correctness.

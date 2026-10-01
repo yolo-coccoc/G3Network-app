@@ -55,6 +55,25 @@ without their own rule do not need a direct test.
 
 ## 4. Proposed test structure
 
+> **Update 2026-10-01 — current layout.** The single-file layout below grew to
+> a 3,821-line `test_service_smoke.py`, so the suite was reorganized by domain
+> (same 265 test functions, nothing added or removed):
+>
+> - `backend/tests/<domain>/test_<domain>_*_smoke.py` — service, schema and
+>   OCPP tests per domain (`vehicles/`, `drivers/`, `fleet/`, `support/`,
+>   `telematics/`, `telemetry/`, `notifications/`, `charging_stations/`,
+>   `charging_sessions/`, plus `libs/` for shared helpers).
+> - `backend/tests/builders.py` — shared in-memory ORM-record/message builders
+>   (`build_vehicle_record()`, `fake_db_session()`...).
+> - `backend/tests/fakes.py` — shared database test doubles
+>   (`FakeSessionFactory`).
+> - Top level: cross-cutting tests only — `test_api_smoke.py`,
+>   `test_migrations_smoke.py`, `test_postgres_integration.py`.
+>
+> `tests/` and each domain folder are packages (docstring-only
+> `__init__.py`), so helpers are imported as `from tests.builders import ...`.
+> The file names in 4.1–4.5 and in the evidence below are historical.
+
 ### 4.1. `backend/tests/test_api_smoke.py`
 
 About 2 tests:

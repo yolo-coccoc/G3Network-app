@@ -61,6 +61,8 @@ implementation starts.
 │   │       ├── common/                 # config, logging — shared, contains NO business logic
 │   │       └── db/                     # Shared SQLAlchemy base, Alembic migrations
 │   │
+│   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py);
+│   │                               # shared builders.py/fakes.py; cross-cutting tests at the top level
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   └── .env.example                # no production Dockerfile at this stage yet

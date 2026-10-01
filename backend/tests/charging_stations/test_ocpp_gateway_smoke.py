@@ -17,23 +17,7 @@ from app.domains.charging_stations.ocpp.ocpp_server import (
     create_charge_point,
     select_ocpp_subprotocol,
 )
-
-
-class _FakeTransaction:
-    """Async context manager mimicking ``async_sessionmaker.begin()``."""
-
-    async def __aenter__(self) -> object:
-        return object()
-
-    async def __aexit__(self, *_: object) -> bool:
-        return False
-
-
-class _FakeSessionFactory:
-    """Session factory whose transactions need no database."""
-
-    def begin(self) -> _FakeTransaction:
-        return _FakeTransaction()
+from tests.fakes import FakeSessionFactory
 
 
 def _request(path: str, subprotocols: str | None) -> Request:
@@ -53,7 +37,7 @@ def _server(monkeypatch: pytest.MonkeyPatch, *, station_exists: bool) -> OCPPSer
     monkeypatch.setattr(
         charging_stations_repository, "get_station_by_identity", fake_get_station
     )
-    return OCPPServer(session_factory=_FakeSessionFactory())  # type: ignore[arg-type]
+    return OCPPServer(session_factory=FakeSessionFactory())  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -155,7 +139,7 @@ def test_create_charge_point_picks_the_adapter_for_the_negotiated_protocol(
         subprotocol,
         "LSC",
         object(),  # type: ignore[arg-type]
-        _FakeSessionFactory(),  # type: ignore[arg-type]
+        FakeSessionFactory(),  # type: ignore[arg-type]
     )
 
     assert type(charge_point) is expected_class
@@ -168,7 +152,7 @@ def test_1_6_adapter_handles_only_the_messages_implemented_so_far() -> None:
     charge_point = OCPP16ChargePoint(
         "LSC",
         object(),  # type: ignore[arg-type]
-        _FakeSessionFactory(),  # type: ignore[arg-type]
+        FakeSessionFactory(),  # type: ignore[arg-type]
     )
 
     handled = {
