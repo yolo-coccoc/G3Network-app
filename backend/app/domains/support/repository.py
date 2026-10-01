@@ -1,14 +1,19 @@
 """Repository querying the support_cases table; contains no business rules."""
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.support.models import SupportCaseModel
-from app.domains.support.types import SupportCaseStatus, SupportCaseType
+from app.domains.support.types import (
+    SupportCaseListFilter,
+    SupportCaseStatus,
+    is_terminal_status,
+)
 from app.libs.common.clock import utc_now
 
 
@@ -50,36 +55,97 @@ async def get_by_id(db_session: AsyncSession, case_id: UUID) -> SupportCaseModel
     return query_result.scalar_one_or_none()
 
 
+def _case_list_conditions(
+    case_list_filter: SupportCaseListFilter, *, evaluated_at: datetime
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by `list_all` and `count`.
+
+    The awaiting-response and SLA-breach conditions are the SQL form of
+    `is_terminal_status` and the service's `calculate_is_sla_breached`;
+    a change to either rule must change these conditions too, or a case's
+    `is_sla_breached` field would disagree with the filter that listed it.
+
+    Args:
+        case_list_filter: The filters to apply.
+        evaluated_at: "Now" for the SLA-breach condition, so one request
+            judges every case against the same instant.
+
+    Returns:
+        Conditions to AND together; always excludes soft-deleted cases.
+    """
+    conditions: list[ColumnElement[bool]] = [SupportCaseModel.deleted_at.is_(None)]
+
+    if case_list_filter.status:
+        conditions.append(SupportCaseModel.status == case_list_filter.status)
+    if case_list_filter.case_type:
+        conditions.append(SupportCaseModel.case_type == case_list_filter.case_type)
+    if case_list_filter.vehicle_id:
+        conditions.append(SupportCaseModel.vehicle_id == case_list_filter.vehicle_id)
+    if case_list_filter.category:
+        conditions.append(SupportCaseModel.category == case_list_filter.category)
+    if case_list_filter.channel:
+        conditions.append(SupportCaseModel.channel == case_list_filter.channel)
+    if case_list_filter.driver_id:
+        conditions.append(SupportCaseModel.driver_id == case_list_filter.driver_id)
+
+    if case_list_filter.is_awaiting_response is not None:
+        terminal_statuses = [
+            status for status in SupportCaseStatus if is_terminal_status(status)
+        ]
+        is_awaiting_response = and_(
+            SupportCaseModel.first_responded_at.is_(None),
+            SupportCaseModel.status.not_in(terminal_statuses),
+        )
+        conditions.append(
+            is_awaiting_response
+            if case_list_filter.is_awaiting_response
+            else not_(is_awaiting_response)
+        )
+
+    if case_list_filter.is_sla_breached is not None:
+        # Same reference time as calculate_is_sla_breached: the first
+        # response; else, for a case cancelled unanswered, its cancellation
+        # time; else now. Never NULL, so NOT() below is a true complement.
+        reference_time = func.coalesce(
+            SupportCaseModel.first_responded_at,
+            case(
+                (
+                    SupportCaseModel.status == SupportCaseStatus.CANCELLED,
+                    SupportCaseModel.closed_at,
+                )
+            ),
+            evaluated_at,
+        )
+        is_sla_breached = reference_time > SupportCaseModel.response_due_at
+        conditions.append(
+            is_sla_breached
+            if case_list_filter.is_sla_breached
+            else not_(is_sla_breached)
+        )
+    return conditions
+
+
 async def list_all(
     db_session: AsyncSession,
+    case_list_filter: SupportCaseListFilter,
     *,
     offset: int,
     limit: int,
-    status_filter: SupportCaseStatus | None = None,
-    case_type_filter: SupportCaseType | None = None,
-    vehicle_id_filter: UUID | None = None,
+    evaluated_at: datetime,
 ) -> list[SupportCaseModel]:
     """Get a paginated list of support cases, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
+        case_list_filter: The filters to apply.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        status_filter: Status filter, if any.
-        case_type_filter: Case type filter, if any.
-        vehicle_id_filter: Vehicle ID filter, if any.
+        evaluated_at: "Now" for the SLA-breach filter.
 
     Returns:
         List of support case records, newest first.
     """
-    conditions: list[ColumnElement[bool]] = [SupportCaseModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(SupportCaseModel.status == status_filter)
-    if case_type_filter:
-        conditions.append(SupportCaseModel.case_type == case_type_filter)
-    if vehicle_id_filter:
-        conditions.append(SupportCaseModel.vehicle_id == vehicle_id_filter)
+    conditions = _case_list_conditions(case_list_filter, evaluated_at=evaluated_at)
 
     query_result = await db_session.execute(
         select(SupportCaseModel)
@@ -93,30 +159,21 @@ async def list_all(
 
 async def count(
     db_session: AsyncSession,
+    case_list_filter: SupportCaseListFilter,
     *,
-    status_filter: SupportCaseStatus | None = None,
-    case_type_filter: SupportCaseType | None = None,
-    vehicle_id_filter: UUID | None = None,
+    evaluated_at: datetime,
 ) -> int:
-    """Count the total number of support cases, excluding soft-deleted records.
+    """Count the support cases matching the same filters as `list_all`.
 
     Args:
         db_session: Current database session.
-        status_filter: Status filter, if any.
-        case_type_filter: Case type filter, if any.
-        vehicle_id_filter: Vehicle ID filter, if any.
+        case_list_filter: The filters to apply.
+        evaluated_at: "Now" for the SLA-breach filter.
 
     Returns:
         Total number of matching support cases.
     """
-    conditions: list[ColumnElement[bool]] = [SupportCaseModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(SupportCaseModel.status == status_filter)
-    if case_type_filter:
-        conditions.append(SupportCaseModel.case_type == case_type_filter)
-    if vehicle_id_filter:
-        conditions.append(SupportCaseModel.vehicle_id == vehicle_id_filter)
+    conditions = _case_list_conditions(case_list_filter, evaluated_at=evaluated_at)
 
     query_result = await db_session.execute(
         select(func.count(SupportCaseModel.case_id)).where(and_(*conditions))

@@ -1,6 +1,8 @@
 """Shared internal data types used within the support domain."""
 
 import enum
+from dataclasses import dataclass
+from uuid import UUID
 
 
 class SupportCaseType(str, enum.Enum):
@@ -69,3 +71,34 @@ def is_terminal_status(status: SupportCaseStatus) -> bool:
         True if the status is CLOSED or CANCELLED.
     """
     return status in _TERMINAL_STATUSES
+
+
+@dataclass(frozen=True)
+class SupportCaseListFilter:
+    """The filters of a support case list query (F-I1/F-I2), all optional.
+
+    Built by the service from the HTTP query and handed to the repository,
+    so the list and count queries always apply the same filters.
+
+    Attributes:
+        status: Only cases in this status.
+        case_type: Only tickets or only SOS cases.
+        vehicle_id: Only cases about this vehicle.
+        category: Only cases in this category.
+        channel: Only cases from this channel.
+        driver_id: Only cases raised by this driver.
+        is_awaiting_response: ``True``: only cases nobody has responded to
+            yet that are not terminal; ``False``: only the others.
+        is_sla_breached: ``True``: only cases whose response SLA is breached
+            (the rule of the service's ``calculate_is_sla_breached``);
+            ``False``: only the others.
+    """
+
+    status: SupportCaseStatus | None = None
+    case_type: SupportCaseType | None = None
+    vehicle_id: UUID | None = None
+    category: SupportCaseCategory | None = None
+    channel: SupportCaseChannel | None = None
+    driver_id: UUID | None = None
+    is_awaiting_response: bool | None = None
+    is_sla_breached: bool | None = None

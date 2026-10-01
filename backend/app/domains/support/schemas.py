@@ -52,9 +52,12 @@ class SupportSosCreateRequest(BaseModel):
     """HTTP request data for an SOS report (F-I2).
 
     Unlike a ticket, there is no `subject` (a button tap has no free-text
-    subject - the service fills one in) and location is required, not
-    optional, matching F-I2's stated input ("current location, active
-    error code").
+    subject - the service fills one in). `channel` (D12) records where the
+    SOS came from: an `IN_APP` SOS is the driver's button tap and must
+    carry the device's GPS fix, matching F-I2's stated input ("current
+    location, active error code"); an SOS logged by an operator from a
+    hotline call or a Zalo message may have no location, but a given one
+    still needs both coordinates.
     """
 
     vehicle_vin: str | None = Field(
@@ -64,12 +67,37 @@ class SupportSosCreateRequest(BaseModel):
     category: SupportCaseCategory = Field(
         default=SupportCaseCategory.BREAKDOWN, description="Case category"
     )
+    channel: SupportCaseChannel = Field(
+        default=SupportCaseChannel.IN_APP,
+        description="Where the SOS came from; location is required for IN_APP",
+    )
     description: str | None = Field(None, description="Free-text details")
     error_code: str | None = Field(
         None, max_length=50, description="Active device/vehicle error code, if any"
     )
-    latitude: float = Field(..., ge=-90, le=90, description="Current GPS latitude")
-    longitude: float = Field(..., ge=-180, le=180, description="Current GPS longitude")
+    latitude: float | None = Field(
+        None, ge=-90, le=90, description="Current GPS latitude"
+    )
+    longitude: float | None = Field(
+        None, ge=-180, le=180, description="Current GPS longitude"
+    )
+
+    @model_validator(mode="after")
+    def _require_location_for_in_app(self) -> "SupportSosCreateRequest":
+        """Require a location for an in-app SOS, and coordinates in pairs.
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: If exactly one of latitude/longitude is provided, or
+                the channel is IN_APP and no location is provided.
+        """
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must be provided together")
+        if self.channel is SupportCaseChannel.IN_APP and self.latitude is None:
+            raise ValueError("an IN_APP SOS requires latitude and longitude")
+        return self
 
 
 class SupportCaseUpdateRequest(BaseModel):

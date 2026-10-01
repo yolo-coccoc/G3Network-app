@@ -17,7 +17,12 @@ from app.domains.support.schemas import (
     SupportSosCreateRequest,
     SupportTicketCreateRequest,
 )
-from app.domains.support.types import SupportCaseStatus, SupportCaseType
+from app.domains.support.types import (
+    SupportCaseCategory,
+    SupportCaseChannel,
+    SupportCaseStatus,
+    SupportCaseType,
+)
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -60,7 +65,12 @@ async def create_support_ticket_endpoint(
     status_code=status.HTTP_201_CREATED,
     response_model=SupportCaseResponse,
     summary="Report an SOS/roadside incident",
-    description="Create a new SOS case (F-I2) with the driver's current location.",
+    description=(
+        "Create a new SOS case (F-I2) and raise a CRITICAL SOS_ALERT "
+        "notification. An IN_APP SOS (the default channel) requires the "
+        "driver's current location; an operator logging a HOTLINE/ZALO SOS "
+        "may omit it."
+    ),
 )
 async def create_support_sos_endpoint(
     support_sos_create_request: SupportSosCreateRequest,
@@ -107,6 +117,27 @@ async def list_support_cases_endpoint(
         None, alias="case_type", description="Filter by case type"
     ),
     vehicle_id: UUID | None = Query(None, description="Filter by vehicle ID"),
+    category_filter: SupportCaseCategory | None = Query(
+        None, alias="category", description="Filter by category"
+    ),
+    channel_filter: SupportCaseChannel | None = Query(
+        None, alias="channel", description="Filter by origin channel"
+    ),
+    driver_id: UUID | None = Query(None, description="Filter by driver ID"),
+    awaiting_response: bool | None = Query(
+        None,
+        description=(
+            "true: only cases with no first response that are not CLOSED or "
+            "CANCELLED; false: only the others"
+        ),
+    ),
+    sla_breached: bool | None = Query(
+        None,
+        description=(
+            "true: only cases whose response SLA is breached (no response by "
+            "the deadline, or a late one); false: only the others"
+        ),
+    ),
     db_session: AsyncSession = Depends(get_db),
 ) -> SupportCaseListResponse:
     """Get a paginated list of support cases.
@@ -117,6 +148,11 @@ async def list_support_cases_endpoint(
         status_filter: Status filter, if any.
         case_type_filter: Case type filter, if any.
         vehicle_id: Vehicle ID filter, if any.
+        category_filter: Category filter, if any.
+        channel_filter: Channel filter, if any.
+        driver_id: Driver ID filter, if any.
+        awaiting_response: Awaiting-first-response filter, if any.
+        sla_breached: SLA-breach filter, if any.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -129,6 +165,11 @@ async def list_support_cases_endpoint(
         status_filter=status_filter,
         case_type_filter=case_type_filter,
         vehicle_id_filter=vehicle_id,
+        category_filter=category_filter,
+        channel_filter=channel_filter,
+        driver_id_filter=driver_id,
+        awaiting_response_filter=awaiting_response,
+        sla_breached_filter=sla_breached,
     )
 
 

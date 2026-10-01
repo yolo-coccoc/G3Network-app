@@ -7,9 +7,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
+import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
 import app.domains.support.service as support_service
 import app.domains.vehicles.service as vehicles_public_service
+from app.domains.notifications.types import (
+    NotificationReference,
+    NotificationSeverity,
+    NotificationType,
+)
 from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
@@ -25,9 +31,11 @@ from app.domains.support.schemas import (
 from app.domains.support.types import (
     SupportCaseCategory,
     SupportCaseChannel,
+    SupportCaseListFilter,
     SupportCaseStatus,
     SupportCaseType,
 )
+from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import build_support_case_record, fake_db_session
 
@@ -141,7 +149,15 @@ async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
             sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
         )
 
+    async def create_notification(
+        db: AsyncSession, **kwargs: object
+    ) -> NotificationReference:
+        return NotificationReference(notification_id=1)
+
     monkeypatch.setattr(support_repository, "insert", insert)
+    monkeypatch.setattr(
+        notifications_service, "create_notification", create_notification
+    )
 
     await support_service.create_support_sos(
         fake_db_session(),
@@ -160,6 +176,122 @@ async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
     assert captured["channel"] == SupportCaseChannel.IN_APP
     assert captured["sla_response_minutes"] == settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES
     assert captured["subject"] == "SOS - BREAKDOWN"
+
+
+@pytest.mark.asyncio
+async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hotline SOS (D12) keeps its channel and SOS SLA, needs no location,
+    and raises one CRITICAL SOS_ALERT carrying the case context (F-I2)."""
+    vehicle_id = uuid4()
+    vin = "1HGBH41JXMN109186"
+    captured_values: dict[str, object] = {}
+    captured_notifications: list[dict[str, object]] = []
+
+    async def resolve_vin(db: AsyncSession, vehicle_vin: str) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin=vehicle_vin, battery_capacity_kwh=None
+        )
+
+    async def insert(db: AsyncSession, values: dict[str, object]) -> SupportCaseModel:
+        captured_values.update(values)
+        case_record = build_support_case_record(
+            case_type=SupportCaseType.SOS,
+            sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
+        )
+        case_record.channel = SupportCaseChannel.HOTLINE
+        case_record.vehicle_id = vehicle_id
+        case_record.vin = vin
+        case_record.error_code = "E-042"
+        return case_record
+
+    async def create_notification(
+        db: AsyncSession, **kwargs: object
+    ) -> NotificationReference:
+        captured_notifications.append(kwargs)
+        return NotificationReference(notification_id=1)
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(support_repository, "insert", insert)
+    monkeypatch.setattr(
+        notifications_service, "create_notification", create_notification
+    )
+
+    response = await support_service.create_support_sos(
+        fake_db_session(),
+        SupportSosCreateRequest.model_validate(
+            {"vehicle_vin": vin, "channel": "HOTLINE", "error_code": "E-042"}
+        ),
+    )
+
+    assert captured_values["channel"] == SupportCaseChannel.HOTLINE
+    assert captured_values["location"] is None
+    assert (
+        captured_values["sla_response_minutes"]
+        == settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES
+    )
+    assert len(captured_notifications) == 1
+    notification = captured_notifications[0]
+    assert notification["notification_type"] is NotificationType.SOS_ALERT
+    assert notification["severity"] is NotificationSeverity.CRITICAL
+    assert notification["vehicle_id"] == vehicle_id
+    payload = notification["payload"]
+    assert isinstance(payload, dict)
+    assert payload["case_id"] == str(response.case_id)
+    assert payload["vehicle_id"] == str(vehicle_id)
+    assert payload["vehicle_vin"] == vin
+    assert payload["channel"] == "HOTLINE"
+    assert payload["error_code"] == "E-042"
+    assert payload["latitude"] is None
+    assert payload["longitude"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_support_cases_applies_the_same_filters_to_page_and_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every list filter reaches both the page and the count query, judged at
+    one shared instant (F-I1/F-I2)."""
+    driver_id = uuid4()
+    seen: dict[str, tuple[object, object]] = {}
+
+    async def list_all(
+        db: AsyncSession, case_list_filter: object, **kwargs: object
+    ) -> list[SupportCaseModel]:
+        seen["list"] = (case_list_filter, kwargs["evaluated_at"])
+        return []
+
+    async def count(
+        db: AsyncSession, case_list_filter: object, **kwargs: object
+    ) -> int:
+        seen["count"] = (case_list_filter, kwargs["evaluated_at"])
+        return 0
+
+    monkeypatch.setattr(support_repository, "list_all", list_all)
+    monkeypatch.setattr(support_repository, "count", count)
+
+    response = await support_service.list_support_cases(
+        fake_db_session(),
+        category_filter=SupportCaseCategory.CHARGING,
+        channel_filter=SupportCaseChannel.ZALO,
+        driver_id_filter=driver_id,
+        awaiting_response_filter=True,
+        sla_breached_filter=False,
+    )
+
+    assert response.total == 0
+    assert seen["list"] == seen["count"]
+    case_list_filter = seen["list"][0]
+    assert case_list_filter == SupportCaseListFilter(
+        category=SupportCaseCategory.CHARGING,
+        channel=SupportCaseChannel.ZALO,
+        driver_id=driver_id,
+        is_awaiting_response=True,
+        is_sla_breached=False,
+    )
 
 
 @pytest.mark.asyncio

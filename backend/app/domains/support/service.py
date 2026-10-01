@@ -5,8 +5,10 @@ SOS reports (F-I2). No other domain calls into it yet; one that does must go
 through this service and must never receive the ORM model or HTTP response
 schema of the support domain. This domain depends on the
 `vehicles` and `drivers` domains' public services to resolve a VIN/driver ID
-into an internal reference - both one-directional edges, the same shape as
-the existing `telematics -> vehicles` edge.
+into an internal reference, and on the `notifications` domain's public
+service to raise an `SOS_ALERT` for every new SOS (F-I2) - all
+one-directional edges, the same shape as the existing `telematics ->
+vehicles` and `telemetry -> notifications` edges.
 """
 
 from datetime import timedelta
@@ -15,8 +17,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
+import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
 import app.domains.vehicles.service as vehicle_service
+from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
@@ -32,7 +36,9 @@ from app.domains.support.schemas import (
     SupportTicketCreateRequest,
 )
 from app.domains.support.types import (
+    SupportCaseCategory,
     SupportCaseChannel,
+    SupportCaseListFilter,
     SupportCaseStatus,
     SupportCaseType,
     is_terminal_status,
@@ -51,6 +57,8 @@ def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
     the first response time; for a case CANCELLED before anyone responded,
     its cancellation time (`closed_at`), so the verdict is frozen once the
     case is gone instead of turning "breached" as time passes; otherwise now.
+    The repository's ``sla_breached`` list filter is the SQL form of this
+    rule; change both together.
 
     Args:
         case_record: The support case record to evaluate.
@@ -270,16 +278,55 @@ async def create_support_ticket(
     )
 
 
+def build_sos_alert_payload(
+    support_case_response: SupportCaseResponse,
+) -> dict[str, object]:
+    """Build the ``SOS_ALERT`` notification payload for a new SOS case.
+
+    Pure mapping only, no I/O. Every key is always present (``None`` when
+    the case has no such value) so a consumer reads one fixed shape; values
+    are JSON-ready (UUIDs and times as strings).
+
+    Args:
+        support_case_response: The SOS case just created.
+
+    Returns:
+        ``case_id``, ``vehicle_id``, ``vehicle_vin``, ``driver_id``,
+        ``channel``, ``category``, ``latitude``, ``longitude``,
+        ``error_code`` and ``response_due_at``.
+    """
+    return {
+        "case_id": str(support_case_response.case_id),
+        "vehicle_id": (
+            str(support_case_response.vehicle_id)
+            if support_case_response.vehicle_id is not None
+            else None
+        ),
+        "vehicle_vin": support_case_response.vehicle_vin,
+        "driver_id": (
+            str(support_case_response.driver_id)
+            if support_case_response.driver_id is not None
+            else None
+        ),
+        "channel": support_case_response.channel.value,
+        "category": support_case_response.category.value,
+        "latitude": support_case_response.latitude,
+        "longitude": support_case_response.longitude,
+        "error_code": support_case_response.error_code,
+        "response_due_at": support_case_response.response_due_at.isoformat(),
+    }
+
+
 async def create_support_sos(
     db_session: AsyncSession,
     support_sos_create_request: SupportSosCreateRequest,
 ) -> SupportCaseResponse:
-    """Create a new SOS report (F-I2) with the SOS response SLA.
+    """Create a new SOS report (F-I2) and raise its ``SOS_ALERT``.
 
     Args:
         db_session: Database session owned by the entry boundary.
         support_sos_create_request: Request data that has passed Pydantic
-            validation.
+            validation (an ``IN_APP`` SOS always carries a location).
 
     Returns:
         Response for the newly created SOS case.
@@ -291,20 +338,39 @@ async def create_support_sos(
             doesn't resolve to a driver.
 
     Side Effects:
-        The channel is always IN_APP and the subject is auto-filled
-        ("SOS - <category>") since an SOS is a button tap with no free-text
-        subject. The backend's own job ends at recording the case - the
-        callback itself (F-I2's <=5 minute SLA) is a human action taken
-        after this call returns.
+        Inserts the case with the request's channel (D12: ``IN_APP`` by
+        default, ``HOTLINE``/``ZALO`` when an operator logs a call) and the
+        SOS response SLA, whatever the channel; the subject is auto-filled
+        ("SOS - <category>") since an SOS has no free-text subject. Then
+        writes one CRITICAL ``SOS_ALERT`` notification through the
+        notifications domain's public service, in the same transaction, so
+        the case and its alert are committed or rolled back together. The
+        backend's own job ends there - the callback itself (F-I2's <=5
+        minute SLA) is a human action taken after this call returns.
     """
-    return await _insert_case(
+    support_case_response = await _insert_case(
         db_session,
         support_sos_create_request,
         case_type=SupportCaseType.SOS,
-        channel=SupportCaseChannel.IN_APP,
+        channel=support_sos_create_request.channel,
         subject=f"SOS - {support_sos_create_request.category.value}",
         sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
     )
+
+    vehicle_label = support_case_response.vehicle_vin or "unknown vehicle"
+    await notifications_service.create_notification(
+        db_session,
+        notification_type=NotificationType.SOS_ALERT,
+        severity=NotificationSeverity.CRITICAL,
+        vehicle_id=support_case_response.vehicle_id,
+        title=f"SOS ({support_case_response.category.value}) - {vehicle_label}",
+        body=(
+            f"SOS received via {support_case_response.channel.value}; respond "
+            f"within {support_case_response.sla_response_minutes} minutes."
+        ),
+        payload=build_sos_alert_payload(support_case_response),
+    )
+    return support_case_response
 
 
 async def get_support_case(
@@ -339,6 +405,11 @@ async def list_support_cases(
     status_filter: SupportCaseStatus | None = None,
     case_type_filter: SupportCaseType | None = None,
     vehicle_id_filter: UUID | None = None,
+    category_filter: SupportCaseCategory | None = None,
+    channel_filter: SupportCaseChannel | None = None,
+    driver_id_filter: UUID | None = None,
+    awaiting_response_filter: bool | None = None,
+    sla_breached_filter: bool | None = None,
 ) -> SupportCaseListResponse:
     """Get a paginated list of active support cases, newest first.
 
@@ -349,25 +420,41 @@ async def list_support_cases(
         status_filter: Status filter, if any.
         case_type_filter: Case type filter, if any.
         vehicle_id_filter: Vehicle ID filter, if any.
+        category_filter: Category filter, if any.
+        channel_filter: Channel filter, if any.
+        driver_id_filter: Driver ID filter, if any.
+        awaiting_response_filter: ``True`` keeps only cases with no first
+            response that are not CLOSED/CANCELLED; ``False`` the others.
+        sla_breached_filter: ``True`` keeps only cases whose
+            ``is_sla_breached`` is true (no response past the deadline, or a
+            late response); ``False`` the others.
 
     Returns:
         Paginated support case list response.
     """
     page_window = normalize_page_window(page, page_size)
+    case_list_filter = SupportCaseListFilter(
+        status=status_filter,
+        case_type=case_type_filter,
+        vehicle_id=vehicle_id_filter,
+        category=category_filter,
+        channel=channel_filter,
+        driver_id=driver_id_filter,
+        is_awaiting_response=awaiting_response_filter,
+        is_sla_breached=sla_breached_filter,
+    )
+    # One instant for the whole request, so the page and its total agree.
+    evaluated_at = utc_now()
 
     case_records = await support_repository.list_all(
         db_session,
+        case_list_filter,
         offset=page_window.offset,
         limit=page_window.page_size,
-        status_filter=status_filter,
-        case_type_filter=case_type_filter,
-        vehicle_id_filter=vehicle_id_filter,
+        evaluated_at=evaluated_at,
     )
     total = await support_repository.count(
-        db_session,
-        status_filter=status_filter,
-        case_type_filter=case_type_filter,
-        vehicle_id_filter=vehicle_id_filter,
+        db_session, case_list_filter, evaluated_at=evaluated_at
     )
 
     return SupportCaseListResponse(

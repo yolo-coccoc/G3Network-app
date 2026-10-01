@@ -7,7 +7,7 @@ from app.domains.support.schemas import (
     SupportSosCreateRequest,
     SupportTicketCreateRequest,
 )
-from app.domains.support.types import SupportCaseCategory
+from app.domains.support.types import SupportCaseCategory, SupportCaseChannel
 
 
 def test_support_ticket_create_request_requires_coordinates_together() -> None:
@@ -35,9 +35,9 @@ def test_support_ticket_create_request_requires_coordinates_together() -> None:
         )
 
 
-def test_support_sos_create_request_requires_coordinates() -> None:
-    """F-I2's SOS request requires a location, unlike the optional one on a ticket."""
-    SupportSosCreateRequest(
+def test_support_sos_create_request_requires_coordinates_for_in_app() -> None:
+    """An in-app SOS (the default channel) requires a location (F-I2, D12)."""
+    sos_request = SupportSosCreateRequest(
         vehicle_vin=None,
         driver_id=None,
         description=None,
@@ -45,5 +45,21 @@ def test_support_sos_create_request_requires_coordinates() -> None:
         latitude=10.8,
         longitude=106.7,
     )
+    assert sos_request.channel is SupportCaseChannel.IN_APP
     with pytest.raises(ValidationError):
-        SupportSosCreateRequest()  # type: ignore[call-arg]
+        SupportSosCreateRequest.model_validate({})
+
+
+@pytest.mark.parametrize("channel", ["HOTLINE", "ZALO"])
+def test_support_sos_create_request_allows_no_location_off_app(channel: str) -> None:
+    """An SOS logged from a hotline call or Zalo may omit the location (D12)."""
+    sos_request = SupportSosCreateRequest.model_validate({"channel": channel})
+
+    assert sos_request.latitude is None
+    assert sos_request.longitude is None
+
+
+def test_support_sos_create_request_still_requires_coordinates_together() -> None:
+    """Off-app, a given location still needs both coordinates (D12)."""
+    with pytest.raises(ValidationError):
+        SupportSosCreateRequest.model_validate({"channel": "HOTLINE", "latitude": 10.8})
