@@ -1,8 +1,9 @@
 """OCPP 2.0.1 adapter for one connected charge point.
 
 This module holds the adapter class for the ``ocpp2.0.1`` subprotocol
-(``OCPP201ChargePoint``: ``TransactionEvent``, ``MeterValues``,
-``StatusNotification``) and its payload helpers, mirroring
+(``OCPP201ChargePoint``: ``BootNotification``, ``Heartbeat``,
+``TransactionEvent``, ``MeterValues``, ``StatusNotification``) and its payload
+helpers, mirroring
 ``ocpp16_charge_point.py``/``ocpp16_measurements.py`` for 1.6J. The two
 adapters never share payload code: the protocols shape a ``SampledValue``
 differently (2.0.1 has a nested ``unitOfMeasure`` with a multiplier, 1.6J a
@@ -27,7 +28,12 @@ from uuid import UUID
 
 from ocpp.routing import on
 from ocpp.v201 import ChargePoint, call_result
-from ocpp.v201.enums import Action, ConnectorStatusEnumType, TransactionEventEnumType
+from ocpp.v201.enums import (
+    Action,
+    ConnectorStatusEnumType,
+    RegistrationStatusEnumType,
+    TransactionEventEnumType,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
@@ -39,10 +45,13 @@ from app.domains.charging_sessions.types import (
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
+    format_ocpp_timestamp,
     parse_ocpp_timestamp,
 )
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import ChargingConnectorStatus
+from app.libs.common.clock import utc_now
+from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +215,76 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         super().__init__(identity, connection, logger=logger)
         self.session_factory = session_factory
         self._session_by_evse: dict[int, UUID] = {}
+
+    @on(Action.boot_notification)  # type: ignore[untyped-decorator]
+    async def on_boot_notification(
+        self,
+        charging_station: OcppPayload,
+        reason: str,
+        **_: object,
+    ) -> call_result.BootNotification:
+        """Record the charging station's identity and accept the boot (F-G2).
+
+        Mirrors the 1.6J adapter: an unprovisioned station never gets here
+        (the handshake rejects it), so the boot is always ``Accepted``.
+        ``reason`` (``PowerUp``, ``FirmwareUpdate``...) is not stored; the
+        frame itself stays in the raw message log.
+
+        Args:
+            charging_station: The ``chargingStation`` object, snake_cased by
+                ``python-ocpp`` into a plain dict - see the module
+                docstring. ``model`` and ``vendor_name`` are required by the
+                2.0.1 schema; ``serial_number`` and ``firmware_version`` are
+                optional; ``modem`` is not stored.
+            reason: OCPP ``BootReasonEnumType`` label, not stored.
+            **_: Other optional OCPP fields (``customData``).
+
+        Returns:
+            ``Accepted`` with the server's current time (the station syncs its
+            clock from it) and the heartbeat interval in seconds
+            (``CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS``).
+
+        Raises:
+            ChargingStationNotFoundError: If the station was soft-deleted
+                after the handshake; ``python-ocpp`` then answers
+                ``CALLERROR`` without closing the connection.
+
+        Side Effects:
+            Updates the station's device fields and ``last_boot_at`` in an
+            atomic transaction (``ocpp_state_service.record_charger_boot``).
+        """
+        del reason
+        booted_at = utc_now()
+        async with self.session_factory.begin() as db:
+            await ocpp_state_service.record_charger_boot(
+                db,
+                ocpp_identity=self.id,
+                vendor=str(charging_station["vendor_name"]),
+                model=str(charging_station["model"]),
+                serial_number=charging_station.get("serial_number"),
+                firmware_version=charging_station.get("firmware_version"),
+                booted_at=booted_at,
+            )
+        return call_result.BootNotification(
+            current_time=format_ocpp_timestamp(utc_now()),
+            interval=settings.CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS,
+            status=RegistrationStatusEnumType.accepted,
+        )
+
+    @on(Action.heartbeat)  # type: ignore[untyped-decorator]
+    async def on_heartbeat(self, **_: object) -> call_result.Heartbeat:
+        """Answer a heartbeat with the server's current time (F-G2).
+
+        Liveness (``last_seen_at``) is already recorded for every inbound
+        frame by the raw message log, so nothing else is stored here.
+
+        Args:
+            **_: A 2.0.1 ``Heartbeat`` has no fields besides ``customData``.
+
+        Returns:
+            The server's current UTC time.
+        """
+        return call_result.Heartbeat(current_time=format_ocpp_timestamp(utc_now()))
 
     @on(Action.transaction_event)  # type: ignore[untyped-decorator]
     async def on_transaction_event(

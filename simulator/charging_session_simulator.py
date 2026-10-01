@@ -22,6 +22,10 @@ from websockets.typing import Subprotocol
 
 OCPP_SUBPROTOCOL = "ocpp2.0.1"
 DEFAULT_METER_VALUES_WH = (Decimal("1250"), Decimal("1500"))
+# Identity reported in the BootNotification sent before the session.
+SIMULATED_VENDOR = "G3Network-Sim"
+SIMULATED_MODEL = "SIM-201"
+SIMULATED_FIRMWARE_VERSION = "SIM-201-1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,12 +186,13 @@ class OCPPChargingSessionSimulator:
         print(f"ACK action={action} unique_id={unique_id}")
 
     async def run(self) -> None:
-        """Run Started → MeterValues → Updated → Ended, then close the socket.
+        """Run BootNotification → Started → MeterValues → Updated → Ended, then close.
 
         Side Effects:
-            Creates a session on the gateway and waits for a successful ACK for
-            each CALL. The context manager closes the connection right after
-            the ``Ended`` ACK.
+            Records the simulated charger's boot identity and creates a session
+            on the gateway, waiting for a successful ACK for each CALL. The
+            context manager closes the connection right after the ``Ended``
+            ACK.
         """
         uri = (
             f"{self.config.url.rstrip('/')}/ocpp/{quote(self.config.identity, safe='')}"
@@ -202,6 +207,18 @@ class OCPPChargingSessionSimulator:
                 print(
                     f"CONNECTED identity={self.config.identity} "
                     f"subprotocol={websocket.subprotocol}"
+                )
+                await self._send_call(
+                    websocket,
+                    action="BootNotification",
+                    payload={
+                        "chargingStation": {
+                            "model": SIMULATED_MODEL,
+                            "vendorName": SIMULATED_VENDOR,
+                            "firmwareVersion": SIMULATED_FIRMWARE_VERSION,
+                        },
+                        "reason": "PowerUp",
+                    },
                 )
                 await self._send_call(
                     websocket,
