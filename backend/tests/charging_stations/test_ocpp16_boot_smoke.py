@@ -9,6 +9,8 @@ from uuid import uuid4
 import pytest
 from ocpp.v16.enums import RegistrationStatus
 
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import (
@@ -67,7 +69,7 @@ async def test_boot_notification_accepts_with_only_the_required_fields(
     async def fake_record(db: object, **kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr(charging_stations_service, "record_charger_boot", fake_record)
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
 
     response = await _charge_point().on_boot_notification(
         charge_point_vendor="Willdigits", charge_point_model="240kW"
@@ -92,7 +94,7 @@ async def test_boot_notification_returns_a_parseable_current_time(
     async def fake_record(db: object, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(charging_stations_service, "record_charger_boot", fake_record)
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
     before = datetime.now(timezone.utc) - timedelta(seconds=1)
 
     response = await _charge_point().on_boot_notification(
@@ -128,7 +130,7 @@ async def test_boot_notification_prefers_charge_point_serial_number(
     async def fake_record(db: object, **kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr(charging_stations_service, "record_charger_boot", fake_record)
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
 
     await _charge_point().on_boot_notification(
         charge_point_vendor="V",
@@ -151,7 +153,7 @@ async def test_boot_notification_for_unknown_station_propagates_the_error(
     async def fake_record(db: object, **kwargs: Any) -> None:
         raise ChargingStationNotFoundError("gone")
 
-    monkeypatch.setattr(charging_stations_service, "record_charger_boot", fake_record)
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
 
     with pytest.raises(ChargingStationNotFoundError):
         await _charge_point().on_boot_notification(
@@ -188,9 +190,7 @@ def _patch_boot_repository(
     monkeypatch.setattr(
         charging_stations_repository, "get_station_by_identity", fake_get
     )
-    monkeypatch.setattr(
-        charging_stations_repository, "update_station_boot_info", fake_update
-    )
+    monkeypatch.setattr(ocpp_state_repository, "update_station_boot_info", fake_update)
     return updates
 
 
@@ -203,7 +203,7 @@ async def test_record_charger_boot_overwrites_device_fields_without_warning_on_f
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
-        await charging_stations_service.record_charger_boot(
+        await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             vendor="V",
@@ -227,7 +227,7 @@ async def test_record_charger_boot_warns_when_firmware_changes(
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
-        await charging_stations_service.record_charger_boot(
+        await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             vendor="V",
@@ -256,7 +256,7 @@ async def test_record_charger_boot_does_not_warn_when_firmware_is_unchanged_or_u
 
     with caplog.at_level(logging.WARNING):
         for reported in ("FW-1", None):
-            await charging_stations_service.record_charger_boot(
+            await ocpp_state_service.record_charger_boot(
                 object(),  # type: ignore[arg-type]
                 ocpp_identity="LSC",
                 vendor="V",
@@ -277,7 +277,7 @@ async def test_record_charger_boot_rejects_missing_station_and_naive_time(
     _patch_boot_repository(monkeypatch, None)
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.record_charger_boot(
+        await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             vendor="V",
@@ -287,7 +287,7 @@ async def test_record_charger_boot_rejects_missing_station_and_naive_time(
             booted_at=NOW,
         )
     with pytest.raises(ChargingOcppMessageInputError):
-        await charging_stations_service.record_charger_boot(
+        await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             vendor="V",

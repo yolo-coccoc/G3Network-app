@@ -1,7 +1,7 @@
 """Turn OCPP 1.6J ``MeterValues`` payloads into storable measurements.
 
 This is the 1.6J counterpart of the 2.0.1 energy normalizer in
-``ocpp_server.py`` and must **not** share code with it: the two protocols shape
+``ocpp201_charge_point.py`` and must **not** share code with it: the two protocols shape
 a ``SampledValue`` differently (1.6J has a flat ``unit`` string, 2.0.1 a nested
 ``unitOfMeasure`` with a multiplier), and reusing the 2.0.1 function would
 silently store a ``kWh`` reading as Wh (1000x too small).

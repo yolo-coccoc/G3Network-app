@@ -14,6 +14,8 @@ from ocpp.exceptions import NotImplementedError as OcppNotImplementedError
 from ocpp.v16 import call, call_result
 from websockets.exceptions import ConnectionClosed
 
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import (
@@ -61,7 +63,7 @@ def _snapshot_recorder(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         recorded.append(kwargs)
 
     monkeypatch.setattr(
-        charging_stations_service, "record_configuration_snapshot", fake_snapshot
+        ocpp_state_service, "record_configuration_snapshot", fake_snapshot
     )
     return recorded
 
@@ -181,7 +183,7 @@ async def test_an_unexpected_failure_is_logged_at_the_task_boundary_not_raised(
 
     charge_point.call = fake_call
     monkeypatch.setattr(
-        charging_stations_service, "record_configuration_snapshot", failing_snapshot
+        ocpp_state_service, "record_configuration_snapshot", failing_snapshot
     )
 
     with caplog.at_level(logging.ERROR):
@@ -272,7 +274,7 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
     async def fake_boot(db: object, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(charging_stations_service, "record_charger_boot", fake_boot)
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_boot)
 
     async def handler(connection: Any) -> None:
         charge_point = OCPP16ChargePoint(
@@ -360,11 +362,11 @@ async def test_record_configuration_snapshot_writes_one_capture_of_all_entries(
         charging_stations_repository, "get_station_by_identity", fake_get
     )
     monkeypatch.setattr(
-        charging_stations_repository, "insert_configuration_entry", fake_insert
+        ocpp_state_repository, "insert_configuration_entry", fake_insert
     )
     local = datetime(2026, 9, 24, 17, 0, tzinfo=timezone(timedelta(hours=7)))
 
-    capture_id = await charging_stations_service.record_configuration_snapshot(
+    capture_id = await ocpp_state_service.record_configuration_snapshot(
         object(),  # type: ignore[arg-type]
         ocpp_identity="LSC",
         entries=[
@@ -401,10 +403,10 @@ async def test_record_configuration_snapshot_stores_nothing_for_an_empty_answer(
         charging_stations_repository, "get_station_by_identity", fake_get
     )
     monkeypatch.setattr(
-        charging_stations_repository, "insert_configuration_entry", fake_insert
+        ocpp_state_repository, "insert_configuration_entry", fake_insert
     )
 
-    result = await charging_stations_service.record_configuration_snapshot(
+    result = await ocpp_state_service.record_configuration_snapshot(
         object(),
         ocpp_identity="LSC",
         entries=[],
@@ -430,14 +432,14 @@ async def test_record_configuration_snapshot_rejects_naive_time_and_unknown_stat
     entries = [ConfigurationEntry("A", "1", False)]
 
     with pytest.raises(ChargingOcppMessageInputError):
-        await charging_stations_service.record_configuration_snapshot(
+        await ocpp_state_service.record_configuration_snapshot(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             entries=entries,
             captured_at=datetime(2026, 9, 24, 10, 0),
         )
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.record_configuration_snapshot(
+        await ocpp_state_service.record_configuration_snapshot(
             object(),
             ocpp_identity="LSC",
             entries=entries,
@@ -482,10 +484,10 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_station)
     monkeypatch.setattr(
-        charging_stations_repository, "get_latest_configuration_capture", fake_latest
+        ocpp_state_repository, "get_latest_configuration_capture", fake_latest
     )
     monkeypatch.setattr(
-        charging_stations_repository,
+        ocpp_state_repository,
         "list_configuration_entries_by_capture_id",
         fake_entries,
     )

@@ -8,6 +8,8 @@ from uuid import uuid4
 import pytest
 from ocpp.v16.enums import ChargePointErrorCode, ChargePointStatus
 
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import (
@@ -20,7 +22,7 @@ from app.domains.charging_stations.models import (
     ChargingStationModel,
 )
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
-from app.domains.charging_stations.ocpp.ocpp_server import OCPP201ChargePoint
+from app.domains.charging_stations.ocpp.ocpp201_charge_point import OCPP201ChargePoint
 from app.domains.charging_stations.schemas import ChargingConnectorResponse
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
@@ -76,15 +78,9 @@ def _patch_service(
     async def fake_charger(db: object, **kwargs: Any) -> None:
         calls["charger"].append(kwargs)
 
-    monkeypatch.setattr(
-        charging_stations_service, "resolve_ocpp16_topology", fake_resolve
-    )
-    monkeypatch.setattr(
-        charging_stations_service, "update_connector_status", fake_connector
-    )
-    monkeypatch.setattr(
-        charging_stations_service, "update_charger_status", fake_charger
-    )
+    monkeypatch.setattr(ocpp_state_service, "resolve_ocpp16_topology", fake_resolve)
+    monkeypatch.setattr(ocpp_state_service, "update_connector_status", fake_connector)
+    monkeypatch.setattr(ocpp_state_service, "update_charger_status", fake_charger)
     return calls
 
 
@@ -263,7 +259,7 @@ async def test_unprovisioned_gun_propagates_the_error(
     async def missing(db: object, **kwargs: Any) -> Any:
         raise ChargingConnectorNotFoundError("no such connector")
 
-    monkeypatch.setattr(charging_stations_service, "resolve_ocpp16_topology", missing)
+    monkeypatch.setattr(ocpp_state_service, "resolve_ocpp16_topology", missing)
 
     with pytest.raises(ChargingConnectorNotFoundError):
         await _charge_point().on_status_notification(
@@ -287,12 +283,8 @@ async def test_2_0_1_status_notification_still_stores_occupied_without_error_fie
     async def fake_update(db: object, **kwargs: Any) -> None:
         captured.append(kwargs)
 
-    monkeypatch.setattr(
-        charging_stations_service, "resolve_ocpp_topology", fake_resolve
-    )
-    monkeypatch.setattr(
-        charging_stations_service, "update_connector_status", fake_update
-    )
+    monkeypatch.setattr(ocpp_state_service, "resolve_ocpp_topology", fake_resolve)
+    monkeypatch.setattr(ocpp_state_service, "update_connector_status", fake_update)
     charge_point = OCPP201ChargePoint(
         "LSC",
         object(),  # type: ignore[arg-type]
@@ -330,11 +322,9 @@ async def test_resolve_ocpp16_topology_maps_gun_n_to_evse_n_connector_1(
         seen.update(kwargs)
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
-    monkeypatch.setattr(
-        charging_stations_service, "resolve_ocpp_topology", fake_resolve
-    )
+    monkeypatch.setattr(ocpp_state_service, "resolve_ocpp_topology", fake_resolve)
 
-    result = await charging_stations_service.resolve_ocpp16_topology(
+    result = await ocpp_state_service.resolve_ocpp16_topology(
         object(),  # type: ignore[arg-type]
         ocpp_identity="LSC",
         ocpp_connector_id=connector,
@@ -355,7 +345,7 @@ async def test_resolve_ocpp16_topology_rejects_connector_zero_and_negatives(
 ) -> None:
     """Connector 0 has no topology row; callers must use the charger-level path."""
     with pytest.raises(ChargingOcppMessageInputError):
-        await charging_stations_service.resolve_ocpp16_topology(
+        await ocpp_state_service.resolve_ocpp16_topology(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             ocpp_connector_id=connector,
@@ -381,11 +371,11 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
         charging_stations_repository, "get_station_by_identity", fake_get
     )
     monkeypatch.setattr(
-        charging_stations_repository, "update_station_charger_status", fake_update
+        ocpp_state_repository, "update_station_charger_status", fake_update
     )
     local = datetime(2026, 9, 24, 17, 0, tzinfo=timezone(timedelta(hours=7)))
 
-    await charging_stations_service.update_charger_status(
+    await ocpp_state_service.update_charger_status(
         object(),  # type: ignore[arg-type]
         ocpp_identity="LSC",
         status=ChargingConnectorStatus.FAULTED,
@@ -397,7 +387,7 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
     assert written[0]["status_updated_at"] == NOW
     assert written[0]["error_code"] == "HighTemperature"
     with pytest.raises(ChargingOcppMessageInputError):
-        await charging_stations_service.update_charger_status(
+        await ocpp_state_service.update_charger_status(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             status=ChargingConnectorStatus.FAULTED,
@@ -407,7 +397,7 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
         )
     station = None
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.update_charger_status(
+        await ocpp_state_service.update_charger_status(
             object(),  # type: ignore[arg-type]
             ocpp_identity="LSC",
             status=ChargingConnectorStatus.FAULTED,
@@ -428,23 +418,21 @@ async def test_update_connector_status_passes_the_error_fields_to_the_repository
         captured.append(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        charging_stations_repository, "update_connector_status", fake_update
-    )
+    monkeypatch.setattr(ocpp_state_repository, "update_connector_status", fake_update)
     common: dict[str, Any] = {
         "connector_id": CONNECTOR_ID,
         "status": ChargingConnectorStatus.FAULTED,
         "status_updated_at": NOW,
     }
 
-    await charging_stations_service.update_connector_status(
+    await ocpp_state_service.update_connector_status(
         object(),  # type: ignore[arg-type]
         error_code="ConnectorLockFailure",
         vendor_error_code="3",
         status_info="lock",
         **common,
     )
-    await charging_stations_service.update_connector_status(
+    await ocpp_state_service.update_connector_status(
         object(),  # type: ignore[arg-type]
         **common,
     )

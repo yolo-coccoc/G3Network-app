@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import ServerConnection
 from websockets.typing import Data
 
-from app.domains.charging_stations import service as charging_stations_service
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_stations.types import OcppMessageDirection
 
 
@@ -128,7 +128,7 @@ class RecordingConnection:
             frame if isinstance(frame, str) else frame.decode("utf-8", errors="replace")
         )
         async with self._session_factory.begin() as db:
-            await charging_stations_service.record_ocpp_message(
+            await ocpp_state_service.record_ocpp_message(
                 db,
                 station_id=self._station_id,
                 occurred_at=occurred_at,

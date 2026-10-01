@@ -1,0 +1,420 @@
+"""Internal service for the state OCPP chargers report: used only by ``ocpp/``.
+
+``service.py`` is the domain's public interface (topology CRUD, the
+directory/nearby searches, the configuration read). This module holds the
+business rules behind the OCPP gateway's writes, which no other domain may
+call: resolving an OCPP identity/EVSE/connector into internal IDs (both
+protocols), appending raw frames to the message log, recording boot identity,
+charger (connector ``0``) and connector status, and ``GetConfiguration``
+captures. Every function runs inside a transaction owned by the gateway's
+entry boundary and never commits or rolls back; OCPP must never create
+topology on its own.
+"""
+
+import logging
+from collections.abc import Sequence
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.repository as charging_stations_repository
+from app.domains.charging_stations.exceptions import (
+    ChargingConnectorNotFoundError,
+    ChargingEvseNotFoundError,
+    ChargingOcppMessageInputError,
+    ChargingStationNotFoundError,
+)
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ConfigurationEntry,
+    OcppMessageDirection,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def record_ocpp_message(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    occurred_at: datetime,
+    ocpp_subprotocol: str,
+    direction: OcppMessageDirection,
+    raw_frame: str,
+) -> None:
+    """Append one raw OCPP frame to the verbatim message log.
+
+    Rule:
+        The frame is stored exactly as given; it is never parsed,
+        normalized, or truncated here. Only the metadata around it is
+        validated. Called by the OCPP gateway's connection wrapper in its own
+        transaction, so a rolled-back handler never erases the record of
+        what arrived.
+
+    Args:
+        db: Async session owned by the gateway's logging boundary.
+        station_id: UUID of the station the frame was exchanged with.
+        occurred_at: When the frame was received or sent; must carry a
+            timezone and is normalized to UTC.
+        ocpp_subprotocol: Negotiated WebSocket subprotocol (at most 20
+            characters, e.g. ``ocpp1.6``).
+        direction: Whether the frame was inbound or outbound.
+        raw_frame: The exact frame text.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``occurred_at`` lacks a timezone or
+            ``ocpp_subprotocol`` is empty or longer than 20 characters.
+
+    Side Effects:
+        Appends one row and flushes within the caller's transaction; does not
+        commit or roll back. For an inbound frame it also records the station's
+        liveness (``last_seen_at`` and ``ocpp_protocol_version``) in the same
+        transaction, since any frame proves the charger is alive; this works
+        for both protocols without touching their handlers.
+    """
+    if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("occurred_at must have a timezone")
+    if not ocpp_subprotocol or len(ocpp_subprotocol) > 20:
+        raise ChargingOcppMessageInputError("ocpp_subprotocol must be 1-20 characters")
+    occurred_at_utc = occurred_at.astimezone(timezone.utc)
+    await ocpp_state_repository.insert_ocpp_message(
+        db,
+        station_id=station_id,
+        occurred_at=occurred_at_utc,
+        ocpp_subprotocol=ocpp_subprotocol,
+        direction=direction,
+        raw_frame=raw_frame,
+    )
+    if direction is OcppMessageDirection.CP_TO_CSMS:
+        await ocpp_state_repository.touch_station_seen(
+            db,
+            station_id,
+            seen_at=occurred_at_utc,
+            ocpp_protocol_version=ocpp_subprotocol,
+        )
+
+
+async def record_charger_boot(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    vendor: str,
+    model: str,
+    serial_number: str | None,
+    firmware_version: str | None,
+    booted_at: datetime,
+) -> None:
+    """Store the device identity from an OCPP ``BootNotification``.
+
+    Rule:
+        The latest boot is the truth about the physical charger, so all four
+        device fields are overwritten (a field the charger no longer reports
+        becomes ``NULL``). A **firmware change** relative to a previously
+        stored non-null value is logged as a structured ``WARNING`` - the
+        stored value is the baseline for noticing a firmware swap; alerting on
+        it is deferred (``future.md`` #75).
+
+    Args:
+        db: Async session owned by the OCPP gateway's action transaction.
+        ocpp_identity: Identity of the station that booted.
+        vendor: ``chargePointVendor`` from the message.
+        model: ``chargePointModel`` from the message.
+        serial_number: Charger serial number, or ``None``.
+        firmware_version: Reported firmware version, or ``None``.
+        booted_at: Time of the boot, timezone-aware.
+
+    Raises:
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+        ChargingOcppMessageInputError: If ``booted_at`` lacks a timezone.
+
+    Side Effects:
+        Updates the station row within the caller's transaction; does not
+        commit or roll back.
+    """
+    if booted_at.tzinfo is None or booted_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("booted_at must have a timezone")
+    station = await charging_stations_repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    if (
+        station.firmware_version is not None
+        and firmware_version is not None
+        and station.firmware_version != firmware_version
+    ):
+        logger.warning(
+            "Charger firmware version changed",
+            extra={
+                "ocpp_identity": ocpp_identity,
+                "previous_firmware_version": station.firmware_version,
+                "firmware_version": firmware_version,
+            },
+        )
+    await ocpp_state_repository.update_station_boot_info(
+        db,
+        station.station_id,
+        vendor=vendor,
+        model=model,
+        serial_number=serial_number,
+        firmware_version=firmware_version,
+        booted_at=booted_at.astimezone(timezone.utc),
+    )
+
+
+async def update_charger_status(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+    error_code: str | None,
+    vendor_error_code: str | None,
+) -> None:
+    """Record the status of the whole charger (OCPP 1.6J connector ``0``).
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Identity of the station that reported.
+        status: Reported status of the whole charger.
+        status_updated_at: Timestamp of the report, timezone-aware.
+        error_code: Reported ``errorCode``, stored as sent.
+        vendor_error_code: Reported ``vendorErrorCode``, or ``None``.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``status_updated_at`` lacks a
+            timezone.
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+
+    Side Effects:
+        Updates the station row within the caller's transaction; does not
+        commit or roll back.
+    """
+    if status_updated_at.tzinfo is None or status_updated_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("status_updated_at must have a timezone")
+    station = await charging_stations_repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    await ocpp_state_repository.update_station_charger_status(
+        db,
+        station.station_id,
+        status=status,
+        status_updated_at=status_updated_at.astimezone(timezone.utc),
+        error_code=error_code,
+        vendor_error_code=vendor_error_code,
+    )
+
+
+async def update_connector_status(
+    db: AsyncSession,
+    *,
+    connector_id: UUID,
+    status: ChargingConnectorStatus,
+    status_updated_at: datetime,
+    error_code: str | None = None,
+    vendor_error_code: str | None = None,
+    status_info: str | None = None,
+) -> None:
+    """Record a connector's live status from an OCPP ``StatusNotification``. Public entry point for F-C2.
+
+    Args:
+        db: Async session owned by the caller's entry boundary (the OCPP
+            gateway's own transaction).
+        connector_id: UUID of the connector the station reported on.
+        status: New live status.
+        status_updated_at: Timestamp the station reported, already parsed
+            and normalized to UTC.
+        error_code: ``errorCode`` of the report (OCPP 1.6J), stored as sent.
+        vendor_error_code: ``vendorErrorCode`` of the report, if any.
+        status_info: Free-text ``info`` of the report, if any.
+
+    Raises:
+        ChargingConnectorNotFoundError: If the connector is not active.
+    """
+    updated = await ocpp_state_repository.update_connector_status(
+        db,
+        connector_id,
+        status=status,
+        status_updated_at=status_updated_at,
+        error_code=error_code,
+        vendor_error_code=vendor_error_code,
+        status_info=status_info,
+    )
+    if updated is None:
+        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
+
+
+async def resolve_ocpp_topology(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    ocpp_evse_id: int,
+    ocpp_connector_id: int,
+) -> tuple[UUID, UUID, UUID]:
+    """Resolve OCPP topology into internal UUID primitives for the adapter.
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+        ocpp_evse_id: EVSE ID in the OCPP message.
+        ocpp_connector_id: Connector ID in the OCPP message.
+
+    Returns:
+        Tuple ``(station_id, evse_id, connector_id)`` to pass to the
+        ``charging_sessions`` domain without exposing the ORM model.
+
+    Raises:
+        ChargingStationNotFoundError: If the station has not been
+            pre-provisioned or was soft-deleted.
+        ChargingEvseNotFoundError: If the EVSE does not belong to an active
+            station.
+        ChargingConnectorNotFoundError: If the connector does not belong to
+            an active EVSE.
+    """
+    station = await charging_stations_repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+
+    evse = await charging_stations_repository.get_evse_by_identity(
+        db, station.station_id, ocpp_evse_id, include_deleted=False
+    )
+    if evse is None:
+        raise ChargingEvseNotFoundError(
+            f"OCPP EVSE '{ocpp_evse_id}' not found in station"
+        )
+
+    connector = await charging_stations_repository.get_connector_by_identity(
+        db, evse.evse_id, ocpp_connector_id, include_deleted=False
+    )
+    if connector is None:
+        raise ChargingConnectorNotFoundError(
+            f"OCPP connector '{ocpp_connector_id}' not found in EVSE"
+        )
+    return station.station_id, evse.evse_id, connector.connector_id
+
+
+async def resolve_ocpp16_topology(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    ocpp_connector_id: int,
+) -> tuple[UUID, UUID, UUID]:
+    """Resolve an OCPP 1.6J connector number into internal topology IDs.
+
+    Rule:
+        OCPP 1.6J has no EVSE level, so gun ``n`` (``n >= 1``) is provisioned
+        as EVSE ``n`` holding connector ``1`` (decision D3 of the OCPP 1.6J
+        planner). Connector ``0`` means the whole charger and has no topology
+        row: callers must use ``update_charger_status`` for it instead.
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+        ocpp_connector_id: Connector number in the 1.6J message; must be
+            positive.
+
+    Returns:
+        Tuple ``(station_id, evse_id, connector_id)``.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``ocpp_connector_id`` is not positive.
+        ChargingStationNotFoundError: If the station is not pre-provisioned.
+        ChargingEvseNotFoundError: If EVSE ``n`` is not provisioned.
+        ChargingConnectorNotFoundError: If EVSE ``n`` has no connector ``1``.
+    """
+    if ocpp_connector_id < 1:
+        raise ChargingOcppMessageInputError(
+            "OCPP 1.6J connector 0 is the whole charger and has no topology row"
+        )
+    return await resolve_ocpp_topology(
+        db,
+        ocpp_identity=ocpp_identity,
+        ocpp_evse_id=ocpp_connector_id,
+        ocpp_connector_id=1,
+    )
+
+
+async def resolve_station_id_by_identity(
+    db: AsyncSession, *, ocpp_identity: str
+) -> UUID:
+    """Resolve an OCPP identity into the station's internal ID.
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        ocpp_identity: Station identity from the WebSocket path.
+
+    Returns:
+        The internal UUID of the active station.
+
+    Raises:
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+    """
+    station = await charging_stations_repository.get_station_by_identity(
+        db, ocpp_identity, include_deleted=False
+    )
+    if station is None:
+        raise ChargingStationNotFoundError(f"OCPP station '{ocpp_identity}' not found")
+    return station.station_id
+
+
+async def record_configuration_snapshot(
+    db: AsyncSession,
+    *,
+    ocpp_identity: str,
+    entries: Sequence[ConfigurationEntry],
+    captured_at: datetime,
+) -> UUID | None:
+    """Store one capture of a charger's configuration (``GetConfiguration``).
+
+    Rule:
+        Append-only: every call adds a new capture; earlier captures are never
+        touched, so the history shows whether a charger's settings changed. All
+        rows of a capture share a new ``capture_id`` and ``captured_at``. A
+        capture with no entries stores nothing (there would be nothing to read
+        back) and returns ``None``.
+
+    Args:
+        db: Async session owned by the OCPP gateway's transaction.
+        ocpp_identity: Identity of the station that answered.
+        entries: The configuration keys the charger reported.
+        captured_at: When the answer was received; must carry a timezone.
+
+    Returns:
+        The new capture's ID, or ``None`` if ``entries`` was empty.
+
+    Raises:
+        ChargingOcppMessageInputError: If ``captured_at`` lacks a timezone.
+        ChargingStationNotFoundError: If the station is not pre-provisioned or
+            was soft-deleted.
+
+    Side Effects:
+        Inserts one row per entry within the caller's transaction; does not
+        commit or roll back.
+    """
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        raise ChargingOcppMessageInputError("captured_at must have a timezone")
+    station_id = await resolve_station_id_by_identity(db, ocpp_identity=ocpp_identity)
+    if not entries:
+        return None
+    capture_id = uuid4()
+    captured_at_utc = captured_at.astimezone(timezone.utc)
+    for entry in entries:
+        await ocpp_state_repository.insert_configuration_entry(
+            db,
+            station_id=station_id,
+            capture_id=capture_id,
+            captured_at=captured_at_utc,
+            config_key=entry.key,
+            value=entry.value,
+            is_readonly=entry.is_readonly,
+        )
+    return capture_id

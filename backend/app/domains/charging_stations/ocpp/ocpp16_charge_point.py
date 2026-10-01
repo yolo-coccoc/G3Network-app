@@ -28,9 +28,9 @@ from ocpp.v16 import ChargePoint, call, call_result
 from ocpp.v16.enums import Action, AuthorizationStatus, RegistrationStatus
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions import service as charging_sessions_service
 from app.domains.charging_sessions.types import SessionEventType
-from app.domains.charging_stations import service as charging_stations_service
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     V16Extraction,
     extract_v16_measurements,
@@ -135,7 +135,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         booted_at = datetime.now(timezone.utc)
         async with self.session_factory.begin() as db:
-            await charging_stations_service.record_charger_boot(
+            await ocpp_state_service.record_charger_boot(
                 db,
                 ocpp_identity=self.id,
                 vendor=charge_point_vendor,
@@ -223,7 +223,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         )
         async with self.session_factory.begin() as db:
             if connector_id == 0:
-                await charging_stations_service.update_charger_status(
+                await ocpp_state_service.update_charger_status(
                     db,
                     ocpp_identity=self.id,
                     status=reported_status,
@@ -236,12 +236,12 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     _station_id,
                     _evse_id,
                     connector_uuid,
-                ) = await charging_stations_service.resolve_ocpp16_topology(
+                ) = await ocpp_state_service.resolve_ocpp16_topology(
                     db,
                     ocpp_identity=self.id,
                     ocpp_connector_id=connector_id,
                 )
-                await charging_stations_service.update_connector_status(
+                await ocpp_state_service.update_connector_status(
                     db,
                     connector_id=connector_uuid,
                     status=reported_status,
@@ -326,7 +326,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 station_id,
                 evse_id,
                 connector_uuid,
-            ) = await charging_stations_service.resolve_ocpp16_topology(
+            ) = await ocpp_state_service.resolve_ocpp16_topology(
                 db,
                 ocpp_identity=self.id,
                 ocpp_connector_id=connector_id,
@@ -421,7 +421,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         transaction_key = str(int(transaction_id))
         extraction = extract_v16_measurements(transaction_data or [])
         async with self.session_factory.begin() as db:
-            station_id = await charging_stations_service.resolve_station_id_by_identity(
+            station_id = await ocpp_state_service.resolve_station_id_by_identity(
                 db, ocpp_identity=self.id
             )
             reference = await charging_sessions_service.resolve_session_by_transaction(
@@ -510,7 +510,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             )
             return call_result.MeterValues()
         async with self.session_factory.begin() as db:
-            station_id = await charging_stations_service.resolve_station_id_by_identity(
+            station_id = await ocpp_state_service.resolve_station_id_by_identity(
                 db, ocpp_identity=self.id
             )
             reference = await charging_sessions_service.resolve_session_by_transaction(
@@ -624,7 +624,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     },
                 )
             async with self.session_factory.begin() as db:
-                await charging_stations_service.record_configuration_snapshot(
+                await ocpp_state_service.record_configuration_snapshot(
                     db,
                     ocpp_identity=self.id,
                     entries=entries,

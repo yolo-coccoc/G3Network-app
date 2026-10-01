@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import ChargingConnectorNotFoundError
@@ -90,12 +92,10 @@ async def test_update_connector_status_raises_not_found_for_inactive_connector(
     async def no_update(db: AsyncSession, connector_id: UUID, **kwargs: object) -> None:
         return None
 
-    monkeypatch.setattr(
-        charging_stations_repository, "update_connector_status", no_update
-    )
+    monkeypatch.setattr(ocpp_state_repository, "update_connector_status", no_update)
 
     with pytest.raises(ChargingConnectorNotFoundError):
-        await charging_stations_service.update_connector_status(
+        await ocpp_state_service.update_connector_status(
             fake_db_session(),
             connector_id=uuid4(),
             status=ChargingConnectorStatus.OCCUPIED,

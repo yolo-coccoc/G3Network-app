@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 import pytest
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
-import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_stations.exceptions import ChargingOcppMessageInputError
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import OcppMessageDirection
@@ -56,7 +56,7 @@ def _recording_connection(
         events.append(f"recorded:{kwargs['direction'].value}")
         recorded.append({"db": db, **kwargs})
 
-    monkeypatch.setattr(charging_stations_service, "record_ocpp_message", fake_record)
+    monkeypatch.setattr(ocpp_state_service, "record_ocpp_message", fake_record)
     factory = FakeSessionFactory()
     connection = RecordingConnection(
         _FakeConnection(events, frames, fail_send=fail_send),  # type: ignore[arg-type]
@@ -204,18 +204,16 @@ async def test_record_ocpp_message_normalizes_time_to_utc_and_keeps_frame_verbat
     async def fake_insert(db: object, **kwargs: Any) -> None:
         captured.update(kwargs)
 
-    monkeypatch.setattr(
-        charging_stations_repository, "insert_ocpp_message", fake_insert
-    )
+    monkeypatch.setattr(ocpp_state_repository, "insert_ocpp_message", fake_insert)
 
     async def fake_touch(db: object, station_id: UUID, **kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(charging_stations_repository, "touch_station_seen", fake_touch)
+    monkeypatch.setattr(ocpp_state_repository, "touch_station_seen", fake_touch)
     frame = ' [2, "1",  "Heartbeat", {} ] \n'  # odd whitespace must survive
     local = datetime(2026, 9, 24, 8, 0, tzinfo=timezone(timedelta(hours=7)))
 
-    await charging_stations_service.record_ocpp_message(
+    await ocpp_state_service.record_ocpp_message(
         object(),  # type: ignore[arg-type]
         station_id=STATION_ID,
         occurred_at=local,
@@ -251,12 +249,10 @@ async def test_record_ocpp_message_rejects_invalid_metadata(
         nonlocal called
         called = True
 
-    monkeypatch.setattr(
-        charging_stations_repository, "insert_ocpp_message", fake_insert
-    )
+    monkeypatch.setattr(ocpp_state_repository, "insert_ocpp_message", fake_insert)
 
     with pytest.raises(ChargingOcppMessageInputError):
-        await charging_stations_service.record_ocpp_message(
+        await ocpp_state_service.record_ocpp_message(
             object(),  # type: ignore[arg-type]
             station_id=STATION_ID,
             occurred_at=occurred_at,
@@ -281,17 +277,15 @@ async def test_record_ocpp_message_marks_station_seen_for_inbound_frames_only(
     async def fake_touch(db: object, station_id: UUID, **kwargs: Any) -> None:
         touched.append({"station_id": station_id, **kwargs})
 
-    monkeypatch.setattr(
-        charging_stations_repository, "insert_ocpp_message", fake_insert
-    )
-    monkeypatch.setattr(charging_stations_repository, "touch_station_seen", fake_touch)
+    monkeypatch.setattr(ocpp_state_repository, "insert_ocpp_message", fake_insert)
+    monkeypatch.setattr(ocpp_state_repository, "touch_station_seen", fake_touch)
     moment = datetime(2026, 9, 24, 8, 0, tzinfo=timezone(timedelta(hours=7)))
 
     for direction in (
         OcppMessageDirection.CP_TO_CSMS,
         OcppMessageDirection.CSMS_TO_CP,
     ):
-        await charging_stations_service.record_ocpp_message(
+        await ocpp_state_service.record_ocpp_message(
             object(),  # type: ignore[arg-type]
             station_id=STATION_ID,
             occurred_at=moment,

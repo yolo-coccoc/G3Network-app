@@ -13,7 +13,7 @@ from ocpp.v16.enums import AuthorizationStatus
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
@@ -76,9 +76,7 @@ def _patch_start(
     async def fake_ingest(db: object, **kwargs: Any) -> None:
         record["ingest"].append(kwargs)
 
-    monkeypatch.setattr(
-        charging_stations_service, "resolve_ocpp16_topology", fake_resolve
-    )
+    monkeypatch.setattr(ocpp_state_service, "resolve_ocpp16_topology", fake_resolve)
     monkeypatch.setattr(
         charging_service, "has_active_session_on_connector", fake_has_active
     )
@@ -248,7 +246,7 @@ def _patch_stop(
         ingested.append(kwargs)
 
     monkeypatch.setattr(
-        charging_stations_service, "resolve_station_id_by_identity", fake_station
+        ocpp_state_service, "resolve_station_id_by_identity", fake_station
     )
     monkeypatch.setattr(
         charging_service, "resolve_session_by_transaction", fake_reference

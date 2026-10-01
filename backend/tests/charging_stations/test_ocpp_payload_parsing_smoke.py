@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.domains.charging_stations.ocpp.ocpp_server import (
+from app.domains.charging_stations.ocpp.ocpp201_charge_point import (
     extract_meter_samples,
     parse_ocpp_evse_reference,
     parse_ocpp_transaction_id,

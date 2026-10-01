@@ -11,7 +11,7 @@ import pytest
 from ocpp.v16.enums import Action
 
 import app.domains.charging_sessions.service as charging_service
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionNotFoundError,
     ChargingSessionStateError,
@@ -296,7 +296,7 @@ def _patch(
         calls.append(("event", kwargs))
 
     monkeypatch.setattr(
-        charging_stations_service, "resolve_station_id_by_identity", fake_station
+        ocpp_state_service, "resolve_station_id_by_identity", fake_station
     )
     monkeypatch.setattr(
         charging_service, "resolve_session_by_transaction", fake_reference
