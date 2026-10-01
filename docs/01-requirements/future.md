@@ -423,14 +423,21 @@ there.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` Step 16
   (F-A1, F-A5).
 - **Date recorded**: 2026-07-30
-- **Additional notes**: The batch code is still kept in
-  `backend/app/domains/telemetry/ingestion/batch_worker.py`,
-  `telemetry.service.process_batch()`,
-  `telematics.service.resolve_mappings_by_serial()`, and
-  `telemetry.repository.bulk_insert_telemetry()`, but the active entrypoint
-  doesn't call it. Before re-enabling it, benchmark a representative workload,
-  settle the transaction/failure semantics and backpressure, and update the
-  corresponding smoke/E2E tests.
+- **Additional notes**: Before building it, benchmark a representative
+  workload, settle the transaction/failure semantics and backpressure, and
+  add smoke/E2E tests.
+- **Update 2026-10-01 — dormant code removed**: per the "no preemptive
+  batching" rule (`.claude/rules/backend-runtime-conventions.md`), the unused
+  implementation was deleted rather than kept. Its shape, for whoever picks
+  this up: a `BatchWorker` drained the queue every `TELEMETRY_FLUSH_INTERVAL`
+  seconds or `TELEMETRY_BATCH_SIZE` messages; `telemetry.service.process_batch`
+  resolved all serials in one `telematics` call
+  (`resolve_mappings_by_serial`, an `IN (...)` lookup), skipped unmapped
+  messages, and wrote the rest with one Core multi-row
+  `INSERT ... ON CONFLICT DO NOTHING` (`bulk_insert_telemetry`), returning
+  processed/skipped counts. It never ran alert detection - a revived version
+  must. The code is in git history before commit "refactor: cross-domain
+  foundations" (2026-10-01).
 
 ### 26. Extended charging sessions business logic
 

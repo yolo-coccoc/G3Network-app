@@ -6,7 +6,6 @@ this module to resolve device-vehicle mappings; they must not access
 """
 
 import logging
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -59,27 +58,6 @@ async def resolve_mapping_by_serial(
         rollback.
     """
     return await repository.find_mapping_by_serial(db, serial)
-
-
-async def resolve_mappings_by_serial(
-    db: AsyncSession,
-    serials: Sequence[str],
-) -> dict[str, TelematicVehicleMapping]:
-    """Resolve a batch of telematic serials into device-vehicle mappings.
-
-    Args:
-        db: Database session owned by the entry boundary.
-        serials: Physical serials to look up.
-
-    Returns:
-        Dict mapping serial to ``(telematic_id, vehicle_id)``; invalid
-        mappings do not appear in the result.
-
-    Side Effects:
-        Performs a single read-only query in the current session; does not
-        commit or rollback.
-    """
-    return await repository.find_mappings_by_serial(db, serials)
 
 
 async def build_telematic_response(

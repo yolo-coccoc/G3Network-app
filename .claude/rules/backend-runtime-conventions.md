@@ -96,7 +96,7 @@
 
 ## Layer boundary and exceptions
 
-- The router handles the HTTP request/response/status code and converts a domain exception into an `HTTPException`.
+- The HTTP layer handles request/response/status codes: routers for the happy path, and `app/api/main.py`'s exception handlers for domain exceptions (one per shared base in `app/libs/common/errors.py`; see `backend-coding-conventions.md` §6).
 - The service never imports FastAPI, never raises `HTTPException`, and only contains business logic.
 - The repository only accesses the DB; it contains no HTTP/business policy and never commits/rolls back.
 - A schema never imports a SQLAlchemy model. Shared enums/value objects live in `types.py`.

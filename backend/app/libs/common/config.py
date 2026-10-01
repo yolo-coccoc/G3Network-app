@@ -35,8 +35,6 @@ class Settings(BaseSettings):
         MQTT_WILL_QOS: QoS of the MQTT Last Will.
         MQTT_WILL_RETAIN: Whether to retain the MQTT Last Will.
         TELEMETRY_QUEUE_SIZE: In-memory queue capacity.
-        TELEMETRY_BATCH_SIZE: Batch worker setting kept for a future phase.
-        TELEMETRY_FLUSH_INTERVAL: Batch window kept for a future phase.
         TELEMETRY_HISTORY_MAX_RANGE_DAYS: Maximum span allowed between
             start_time/end_time on the telemetry history query (F-A5).
         TELEMETRY_HISTORY_DEFAULT_LIMIT: Default max points returned per
@@ -122,8 +120,6 @@ class Settings(BaseSettings):
     # Queue used for the current per-message flow. The two batch settings below
     # are kept so a future batch implementation can pick back up.
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
-    TELEMETRY_BATCH_SIZE: int = Field(default=100, ge=1)
-    TELEMETRY_FLUSH_INTERVAL: float = Field(default=30.0, gt=0)
 
     # Bounds for the telemetry history query (F-A5). No offset/page - a
     # range with more points than the limit is narrowed by the caller
@@ -200,12 +196,6 @@ class Settings(BaseSettings):
     # in feature-list.md's "Items needing confirmation".
     SUPPORT_TICKET_RESPONSE_SLA_MINUTES: int = Field(default=60, ge=1)
     SUPPORT_SOS_RESPONSE_SLA_MINUTES: int = Field(default=5, ge=1)
-
-    # The old production planner's timeout/retry/raw-payload settings are
-    # commented out in the ideal MVP; the corresponding source will come back
-    # when item 27 in future.md is picked up.
-    # CHARGING_HEARTBEAT_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
-    # CHARGING_METER_STALE_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
 
 
 @lru_cache

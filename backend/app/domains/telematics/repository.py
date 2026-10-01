@@ -5,7 +5,6 @@ Other domains must use the public service so they do not depend directly on
 this domain's model or internal SQL.
 """
 
-from collections.abc import Sequence
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -74,44 +73,6 @@ async def find_mapping_by_serial(
         if mapping_row
         else None
     )
-
-
-async def find_mappings_by_serial(
-    db_session: AsyncSession,
-    serials: Sequence[str],
-) -> dict[str, TelematicVehicleMapping]:
-    """Return device-vehicle mappings for multiple serials in a single query.
-
-    Args:
-        db: Database session owned by the entry boundary.
-        serials: Physical serials to look up.
-
-    Returns:
-        Dict mapping ``telematic_serial`` to ``(telematic_id, vehicle_id)``.
-        Devices that do not exist, have been soft-deleted, or have not been
-        assigned a vehicle are excluded.
-    """
-    unique_serials = list(set(serials))
-    if not unique_serials:
-        return {}
-
-    query_result = await db_session.execute(
-        select(
-            TelematicModel.telematic_id,
-            TelematicModel.vehicle_id,
-            TelematicModel.telematic_serial,
-        )
-        .where(TelematicModel.telematic_serial.in_(unique_serials))
-        .where(TelematicModel.deleted_at.is_(None))
-        .where(TelematicModel.vehicle_id.is_not(None))
-    )
-    return {
-        row.telematic_serial: TelematicVehicleMapping(
-            telematic_id=row.telematic_id,
-            vehicle_id=row.vehicle_id,
-        )
-        for row in query_result.all()
-    }
 
 
 async def list_active_with_vehicle(

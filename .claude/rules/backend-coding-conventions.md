@@ -248,8 +248,19 @@ ChargingStationNotFoundError
 ChargingTopologyConflictError
 ```
 
-Only the service layer raises domain exceptions. Only the router converts a
-domain exception into an `HTTPException` or the corresponding status code.
+Only the service layer raises domain exceptions. Every domain exception
+inherits from exactly one shared base in `app/libs/common/errors.py`, which
+decides its HTTP status: `NotFoundError` (404), `ConflictError` (409 —
+duplicates and disallowed state transitions), `InvalidInputError` (400 —
+input that passes schema validation but breaks a business rule),
+`UpstreamUnavailableError` (502). A domain may add its own root
+(`DriverError(DomainError)`) and combine it with a base
+(`class DriverNotFoundError(DriverError, NotFoundError)`).
+
+Conversion to HTTP happens only in the HTTP layer: `app/api/main.py`
+registers one handler per base, so routers **don't** wrap service calls in
+`try/except` for these. A router catches a domain exception only when that
+endpoint needs a different status than the base implies.
 
 ## 7. Functions and methods
 
@@ -276,6 +287,7 @@ resolve_   look up or map via a repository/service
 create_    create
 update_    update
 soft_delete_ soft-delete
+has_/is_   boolean check with no side effect (has_active_session_on_connector)
 ```
 
 Don't name a function `get_` if it writes data. If the operation is a soft
@@ -286,7 +298,7 @@ delete, spell out `soft_delete_` instead of just `delete_`.
 The repository is called through a domain-scoped module alias:
 
 ```python
-from app.domains.vehicles import repository as vehicle_repository
+import app.domains.vehicles.repository as vehicle_repository
 
 vehicle_record = await vehicle_repository.find_by_vin(db_session, vin)
 ```
@@ -457,12 +469,17 @@ Standard domain abbreviations are kept as-is: `UUID`, `VIN`, `EVSE`, `OCPP`,
 
 ## 9. Import rules and layer boundary
 
-Import a module via a domain-scoped alias:
+Import a module via a domain-scoped alias, in the `import ... as` form
+(the dominant style in this codebase):
 
 ```python
-from app.domains.vehicles import repository as vehicle_repository
-from app.domains.vehicles import service as vehicle_service
+import app.domains.vehicles.repository as vehicle_repository
+import app.domains.vehicles.service as vehicle_service
 ```
+
+Don't import individual functions from another module's service/repository
+(`from app.domains.x.service import create_x`): the alias keeps the owning
+module visible at every call site.
 
 Don't use wildcard imports. `__init__.py` only contains a module docstring —
 never export or import objects.

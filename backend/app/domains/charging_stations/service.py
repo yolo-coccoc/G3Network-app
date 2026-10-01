@@ -52,7 +52,7 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingStationMaintenanceStatus,
     ConfigurationEntry,
-    NearestChargingStation,
+    NearestChargingStationReference,
     OcppMessageDirection,
 )
 from app.libs.common.config import settings
@@ -296,7 +296,7 @@ async def get_charging_station(
 
 async def find_nearest_operational_station(
     db: AsyncSession, *, latitude: float, longitude: float
-) -> NearestChargingStation | None:
+) -> NearestChargingStationReference | None:
     """Find the nearest operational station to a point. Public entry point for F-A2.
 
     Args:
@@ -310,7 +310,7 @@ async def find_nearest_operational_station(
         with a known location - never the ORM model - or ``None`` if none
         qualifies. "Operational" only reflects the admin-set
         ``maintenance_status``; there is no live occupancy signal (see
-        ``NearestChargingStation``'s docstring).
+        ``NearestChargingStationReference``'s docstring).
     """
     query_point = coordinates_to_location(latitude, longitude)
     assert query_point is not None, "latitude/longitude are both required here"
@@ -322,7 +322,7 @@ async def find_nearest_operational_station(
     assert station_latitude is not None and station_longitude is not None, (
         "query filters out stations with a NULL location"
     )
-    return NearestChargingStation(
+    return NearestChargingStationReference(
         station_id=station.station_id,
         display_name=station.display_name,
         latitude=station_latitude,
@@ -398,7 +398,7 @@ async def find_nearby_charging_stations(
             filter.
         is_operational_only: Whether to only return stations with
             ``maintenance_status == OPERATIONAL`` - same approximation of
-            "available" as F-A2 (see ``NearestChargingStation``'s
+            "available" as F-A2 (see ``NearestChargingStationReference``'s
             docstring and ``docs/01-requirements/future.md``).
         page: Page number starting at one; lower values are clamped to the
             default.

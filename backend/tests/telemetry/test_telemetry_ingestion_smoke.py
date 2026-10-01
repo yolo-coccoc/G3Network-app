@@ -15,7 +15,7 @@ import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.charging_stations.types import (
-    NearestChargingStation,
+    NearestChargingStationReference,
 )
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.types import TelematicVehicleMapping
@@ -118,7 +118,7 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
 
     async def no_nearest_station(
         db: AsyncSession, *, latitude: float, longitude: float
-    ) -> NearestChargingStation | None:
+    ) -> NearestChargingStationReference | None:
         return None
 
     async def record_notification(db: AsyncSession, **kwargs: object) -> None:

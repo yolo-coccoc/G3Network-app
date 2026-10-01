@@ -98,7 +98,7 @@ class ConfigurationEntry:
 
 
 @dataclass(frozen=True)
-class NearestChargingStation:
+class NearestChargingStationReference:
     """A station resolved as nearest to a given point (F-A2).
 
     "Available" is approximated as "not soft-deleted and not under

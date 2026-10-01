@@ -22,13 +22,13 @@
 | From → To | Calls (public service) | For |
 |---|---|---|
 | `telemetry` → `telematics` | serial → `(telematic_id, vehicle_id)` resolution | F-A1 ingestion |
-| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity) | F-A6/F-C6 reports |
+| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `mark_vehicle_activated` on a vehicle's first telemetry | F-A6/F-C6 reports, F-F2 |
 | `telemetry` → `notifications` | raise battery / anomaly / SOH alerts | F-A2, F-A4, F-A3 |
 | `telemetry` → `charging_stations` | nearest operational station for the alert payload | F-A2 |
-| `telematics` → `vehicles` | resolve/validate the vehicle mapping | F-G1 |
+| `telematics` → `vehicles` | resolve/validate the vehicle mapping; `mark_device_assigned` when a device is linked | F-G1, F-F2 |
 | `telematics` → `telemetry` | `resolve_last_telemetry_at` (device-health monitor) | F-J1/F-J3 |
 | `telematics` → `notifications` | raise device-offline alerts | F-J1/F-J3 |
-| `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId` | F-B2 |
+| `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector` | F-B2 |
 | `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` | F-E4 |
 | `support` → `vehicles` | `resolve_vehicle_reference_by_vin` | F-I1/F-I2 |
 | `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`) | F-I1/F-I2 |

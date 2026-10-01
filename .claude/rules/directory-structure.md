@@ -24,7 +24,7 @@ implementation starts.
 │   │   │   ├── telemetry/             # Real-time & historical vehicle data (F-A1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  exceptions.py
 │   │   │   │   └── ingestion/         # Receives telematics data via MQTT (EMQX)
-│   │   │   │       ├── mqtt_consumer.py  batch_worker.py  message_worker.py
+│   │   │   │       ├── mqtt_consumer.py  message_worker.py
 │   │   │   │       └── entrypoint.py  # entrypoint for "make telemetry-dev" (runs on the host, not a container — see dev-environment.md)
 │   │   │   │
 │   │   │   ├── charging_stations/     # Station/EVSE/connector topology and OCPP (F-C1, F-G2)
@@ -58,8 +58,9 @@ implementation starts.
 │   │   │   └── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
 │   │   │
 │   │   └── libs/
-│   │       ├── common/                 # config, logging — shared, contains NO business logic
-│   │       └── db/                     # Shared SQLAlchemy base, Alembic migrations
+│   │       ├── common/                 # shared, NO business logic: config, logging, errors (domain-exception bases),
+│   │       │                           # clock (utc_now), pagination (normalize_page_window), geo
+│   │       └── db/                     # SQLAlchemy base, session, enums (enum_values), Alembic migrations
 │   │
 │   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py);
 │   │                               # shared builders.py/fakes.py; cross-cutting tests at the top level

@@ -2,14 +2,12 @@
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 
-This module contains both the singular operations used by the current MVP
-flow and the batch operations kept for reuse when real throughput needs
-optimization. The repository does not own the transaction: the entry
+Single-row operations for the per-message ingestion flow, plus the query
+API's reads. The repository does not own the transaction: the entry
 boundary passes in the session and decides whether to commit or roll back.
 """
 
 import logging
-from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
@@ -255,46 +253,3 @@ async def get_vehicle_window_summary(
         first_recorded_at=first_recorded_at,
         last_recorded_at=last_recorded_at,
     )
-
-
-async def bulk_insert_telemetry(
-    db: AsyncSession,
-    messages: Sequence[dict[str, object]],
-) -> int:
-    """
-    Bulk insert telemetry data into the database.
-
-    Uses SQLAlchemy Core insert (not ORM add_all) to optimize performance.
-
-    Args:
-        db: AsyncSession used to operate on the database
-        messages: List of dicts, each dict is 1 row of data
-                  (output from TelemetryMessage.to_vehicle_telemetry_values())
-
-    Returns:
-        Number of rows inserted
-
-    Note:
-        - Does not use ORM add_all because it is slow for large batches
-        - Uses Core insert with values() to take advantage of PostgreSQL's
-          bulk insert
-        - The entry boundary owns the transaction and commit/rollback
-    """
-    if not messages:
-        return 0
-
-    # Build insert statement
-    stmt = insert(VehicleTelemetryModel).values(messages)
-
-    # Execute
-    result = cast(CursorResult[Any], await db.execute(stmt))
-
-    logger.debug(
-        "bulk_insert_telemetry",
-        extra={
-            "rows_requested": len(messages),
-            "rows_inserted": result.rowcount,
-        },
-    )
-
-    return result.rowcount
