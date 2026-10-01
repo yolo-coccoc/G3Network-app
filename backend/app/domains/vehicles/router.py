@@ -19,7 +19,7 @@ from app.domains.vehicles.schemas import (
     VehicleResponse,
     VehicleUpdateRequest,
 )
-from app.domains.vehicles.types import VehicleStatus
+from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -63,7 +63,8 @@ async def create_vehicle_endpoint(
     "/",
     response_model=VehicleListResponse,
     summary="Get the list of vehicles",
-    description="Get the list of vehicles with pagination and status filtering.",
+    description="Get the list of vehicles with pagination, filterable by status "
+    "and by F-F2 activation status (both filters combine with AND).",
 )
 async def list_vehicles_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
@@ -76,6 +77,11 @@ async def list_vehicles_endpoint(
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Filter by status"
     ),
+    activation_status_filter: VehicleActivationStatus | None = Query(
+        None,
+        alias="activation_status",
+        description="Filter by F-F2 activation status",
+    ),
     db_session: AsyncSession = Depends(get_db),
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles.
@@ -83,7 +89,10 @@ async def list_vehicles_endpoint(
     Args:
         page: Page number.
         page_size: Number of records per page.
-        status_filter: Status filter, if any.
+        status_filter: Lifecycle status filter (query parameter
+            ``status``), if any.
+        activation_status_filter: F-F2 activation status filter (query
+            parameter ``activation_status``), if any.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -94,6 +103,7 @@ async def list_vehicles_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
+        activation_status_filter=activation_status_filter,
     )
 
 

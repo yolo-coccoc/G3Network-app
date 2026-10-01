@@ -10,9 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.router as vehicle_router
 import app.domains.vehicles.service as vehicle_service
+from app.api.main import app
 from app.domains.vehicles.exceptions import VehicleNotFoundError
 from app.domains.vehicles.models import VehicleModel
-from app.domains.vehicles.schemas import VehicleCreateRequest
+from app.domains.vehicles.schemas import VehicleCreateRequest, VehicleListResponse
 from app.domains.vehicles.types import (
     VehicleActivationStatus,
     VehicleStatus,
@@ -134,12 +135,16 @@ async def test_list_vehicles_normalizes_page_window(
         offset: int,
         limit: int,
         status_filter: VehicleStatus | None = None,
+        activation_status_filter: VehicleActivationStatus | None = None,
     ) -> list[VehicleModel]:
         list_arguments.update(offset=offset, limit=limit, status_filter=status_filter)
         return [build_vehicle_record()]
 
     async def count(
-        db_session: AsyncSession, status_filter: VehicleStatus | None = None
+        db_session: AsyncSession,
+        *,
+        status_filter: VehicleStatus | None = None,
+        activation_status_filter: VehicleActivationStatus | None = None,
     ) -> int:
         return 1
 
@@ -304,3 +309,97 @@ async def test_get_vehicle_activation_summary_handles_zero_attempted(
     assert summary.attempted_count == 0
     assert summary.activated_count == 0
     assert summary.activation_rate_percent is None
+
+
+@pytest.mark.asyncio
+async def test_list_vehicles_combines_status_and_activation_status_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """list_vehicles() passes both filters to the page query and the count (F-F2)."""
+    list_filters: dict[str, object] = {}
+    count_filters: dict[str, object] = {}
+
+    async def list_all(
+        db_session: AsyncSession,
+        *,
+        offset: int,
+        limit: int,
+        status_filter: VehicleStatus | None = None,
+        activation_status_filter: VehicleActivationStatus | None = None,
+    ) -> list[VehicleModel]:
+        list_filters.update(
+            status_filter=status_filter,
+            activation_status_filter=activation_status_filter,
+        )
+        return []
+
+    async def count(
+        db_session: AsyncSession,
+        *,
+        status_filter: VehicleStatus | None = None,
+        activation_status_filter: VehicleActivationStatus | None = None,
+    ) -> int:
+        count_filters.update(
+            status_filter=status_filter,
+            activation_status_filter=activation_status_filter,
+        )
+        return 0
+
+    monkeypatch.setattr(vehicle_repository, "list_all", list_all)
+    monkeypatch.setattr(vehicle_repository, "count", count)
+
+    vehicle_list_response = await vehicle_service.list_vehicles(
+        fake_db_session(),
+        status_filter=VehicleStatus.ACTIVE,
+        activation_status_filter=VehicleActivationStatus.DEVICE_ASSIGNED,
+    )
+
+    expected_filters = {
+        "status_filter": VehicleStatus.ACTIVE,
+        "activation_status_filter": VehicleActivationStatus.DEVICE_ASSIGNED,
+    }
+    assert list_filters == expected_filters
+    assert count_filters == expected_filters
+    assert vehicle_list_response.total == 0
+
+
+@pytest.mark.asyncio
+async def test_list_vehicles_endpoint_forwards_activation_status_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The router hands the activation_status query value to the service (F-F2)."""
+    service_arguments: dict[str, object] = {}
+
+    async def list_vehicles(
+        db_session: AsyncSession, **kwargs: object
+    ) -> VehicleListResponse:
+        service_arguments.update(kwargs)
+        return VehicleListResponse(items=[], total=0, page=1, page_size=20)
+
+    monkeypatch.setattr(vehicle_service, "list_vehicles", list_vehicles)
+
+    await vehicle_router.list_vehicles_endpoint(
+        page=1,
+        page_size=20,
+        status_filter=None,
+        activation_status_filter=VehicleActivationStatus.PENDING,
+        db_session=fake_db_session(),
+    )
+
+    assert service_arguments["activation_status_filter"] is (
+        VehicleActivationStatus.PENDING
+    )
+    assert service_arguments["status_filter"] is None
+
+
+def test_list_vehicles_openapi_exposes_activation_status_query() -> None:
+    """GET /vehicles documents both the status and activation_status filters."""
+    list_path = next(
+        path
+        for path in app.openapi()["paths"]
+        if path.rstrip("/") == "/api/v1/vehicles"
+    )
+    parameters = app.openapi()["paths"][list_path]["get"]["parameters"]
+    parameter_names = {parameter["name"] for parameter in parameters}
+
+    assert {"status", "activation_status"} <= parameter_names

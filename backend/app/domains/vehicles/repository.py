@@ -100,12 +100,35 @@ async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None
     return query_result.scalar_one_or_none()
 
 
+def _build_list_conditions(
+    status_filter: VehicleStatus | None,
+    activation_status_filter: VehicleActivationStatus | None,
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by ``list_all`` and ``count``.
+
+    Args:
+        status_filter: Lifecycle status filter, if any.
+        activation_status_filter: F-F2 activation status filter, if any.
+
+    Returns:
+        Conditions to AND together: always "not soft-deleted", plus one per
+        filter given.
+    """
+    conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
+    if status_filter is not None:
+        conditions.append(VehicleModel.status == status_filter)
+    if activation_status_filter is not None:
+        conditions.append(VehicleModel.activation_status == activation_status_filter)
+    return conditions
+
+
 async def list_all(
     db_session: AsyncSession,
     *,
     offset: int,
     limit: int,
     status_filter: VehicleStatus | None = None,
+    activation_status_filter: VehicleActivationStatus | None = None,
 ) -> list[VehicleModel]:
     """Get a page of vehicles, newest first, excluding soft-deleted records.
 
@@ -113,15 +136,14 @@ async def list_all(
         db_session: Current database session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        status_filter: Status filter, if any.
+        status_filter: Lifecycle status filter, if any.
+        activation_status_filter: F-F2 activation status filter, if any;
+            combined with ``status_filter`` by AND.
 
     Returns:
         List of vehicle records.
     """
-    conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(VehicleModel.status == status_filter)
+    conditions = _build_list_conditions(status_filter, activation_status_filter)
 
     query_result = await db_session.execute(
         select(VehicleModel)
@@ -134,21 +156,23 @@ async def list_all(
 
 
 async def count(
-    db_session: AsyncSession, status_filter: VehicleStatus | None = None
+    db_session: AsyncSession,
+    *,
+    status_filter: VehicleStatus | None = None,
+    activation_status_filter: VehicleActivationStatus | None = None,
 ) -> int:
     """Count the total number of vehicles, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
-        status_filter: Status filter, if any.
+        status_filter: Lifecycle status filter, if any.
+        activation_status_filter: F-F2 activation status filter, if any;
+            combined with ``status_filter`` by AND.
 
     Returns:
-        Total number of vehicles matching the filter.
+        Total number of vehicles matching the filters.
     """
-    conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
-
-    if status_filter:
-        conditions.append(VehicleModel.status == status_filter)
+    conditions = _build_list_conditions(status_filter, activation_status_filter)
 
     query_result = await db_session.execute(
         select(func.count(VehicleModel.vehicle_id)).where(and_(*conditions))

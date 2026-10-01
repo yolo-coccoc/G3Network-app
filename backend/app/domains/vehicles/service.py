@@ -317,6 +317,7 @@ async def list_vehicles(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
+    activation_status_filter: VehicleActivationStatus | None = None,
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles that are not soft-deleted.
 
@@ -326,7 +327,9 @@ async def list_vehicles(
             `normalize_page_window`.
         page_size: Maximum number of vehicles per page; clamped to
             `1..API_MAX_PAGE_SIZE`.
-        status_filter: Status filter, if any.
+        status_filter: Lifecycle status filter, if any.
+        activation_status_filter: F-F2 activation status filter, if any;
+            combined with `status_filter` by AND.
 
     Returns:
         Paginated vehicle list response carrying the normalized page and
@@ -341,8 +344,13 @@ async def list_vehicles(
         offset=page_window.offset,
         limit=page_window.page_size,
         status_filter=status_filter,
+        activation_status_filter=activation_status_filter,
     )
-    total = await vehicle_repository.count(db_session, status_filter)
+    total = await vehicle_repository.count(
+        db_session,
+        status_filter=status_filter,
+        activation_status_filter=activation_status_filter,
+    )
 
     return VehicleListResponse(
         items=[
