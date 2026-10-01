@@ -170,6 +170,14 @@ class MQTTConsumer:
             )
         except asyncio.QueueFull:
             logger.warning("Queue full, message dropped")
+        except UnicodeDecodeError as error:
+            # Must be caught here: an exception escaping this method ends the
+            # `async for` loop in `run()`, which would stop all ingestion
+            # because of a single malformed message.
+            logger.warning(
+                "Payload is not valid UTF-8, message dropped",
+                extra={"error": str(error), "topic": str(message.topic)},
+            )
         except json.JSONDecodeError as error:
             logger.warning(
                 "Invalid JSON payload",
