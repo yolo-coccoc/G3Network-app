@@ -46,6 +46,10 @@ file before writing its counterpart.
    `"app.domains.<domain>"` to every other contract's `source_modules`.
    Adding an internal module to an existing domain later means adding it to
    that domain's `forbidden_modules`.
+   Also add `"app.domains.<domain>"`, `"app.domains.<domain>.service"` and
+   `"app.domains.<domain>.repository"` to ruff's
+   `[tool.ruff.lint.flake8-import-conventions] banned-from` list (ICN003
+   enforces the `import app.domains.x.service as x_service` style).
    `cd backend && uv run lint-imports` must report all contracts kept.
 6. **Tests** — `backend/tests/<domain>/__init__.py` (docstring only) plus
    `test_<domain>_service_smoke.py` and `test_<domain>_schema_smoke.py`.

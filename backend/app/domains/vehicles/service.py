@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.vehicles import repository as vehicle_repository
+import app.domains.vehicles.repository as vehicle_repository
 from app.domains.vehicles.exceptions import (
     VehicleConflictError,
     VehicleNotFoundError,

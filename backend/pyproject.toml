@@ -50,7 +50,42 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-extend-select = ["I"]
+# I: import sorting. ICN003: enforce backend-coding-conventions.md §9 - a
+# domain's service/repository is imported as a module alias
+# (`import app.domains.x.service as x_service`), never
+# `from app.domains.x import service` or `from app.domains.x.service import f`.
+extend-select = ["I", "ICN003"]
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = [
+    "app.domains.charging_sessions",
+    "app.domains.charging_sessions.service",
+    "app.domains.charging_sessions.repository",
+    "app.domains.charging_stations",
+    "app.domains.charging_stations.service",
+    "app.domains.charging_stations.repository",
+    "app.domains.drivers",
+    "app.domains.drivers.service",
+    "app.domains.drivers.repository",
+    "app.domains.fleet",
+    "app.domains.fleet.service",
+    "app.domains.fleet.repository",
+    "app.domains.notifications",
+    "app.domains.notifications.service",
+    "app.domains.notifications.repository",
+    "app.domains.support",
+    "app.domains.support.service",
+    "app.domains.support.repository",
+    "app.domains.telematics",
+    "app.domains.telematics.service",
+    "app.domains.telematics.repository",
+    "app.domains.telemetry",
+    "app.domains.telemetry.service",
+    "app.domains.telemetry.repository",
+    "app.domains.vehicles",
+    "app.domains.vehicles.service",
+    "app.domains.vehicles.repository",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "tests"]

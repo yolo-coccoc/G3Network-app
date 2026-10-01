@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telematics import service as telematics_service
+import app.domains.telematics.service as telematics_service
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicConfigResponse,

@@ -15,7 +15,8 @@ from aiomqtt import MqttError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telematics import repository as telematics_repository
+import app.domains.telematics.repository as telematics_repository
+import app.domains.vehicles.service as vehicle_service
 from app.domains.telematics.commands import mqtt_publisher
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
@@ -33,7 +34,6 @@ from app.domains.telematics.schemas import (
     TelematicUpdateRequest,
 )
 from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
-from app.domains.vehicles import service as vehicle_service
 from app.libs.common.clock import utc_now
 from app.libs.common.pagination import normalize_page_window
 
