@@ -44,3 +44,4 @@ Thumbs.db
 # === LOGS ===
 *.log
 logs/
+.claude/worktrees/
