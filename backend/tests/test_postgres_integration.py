@@ -151,7 +151,10 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
             version = await connection.scalar(
                 text("SELECT version_num FROM alembic_version")
             )
-            tables = set((await connection.execute(text("""
+            tables = set(
+                (
+                    await connection.execute(
+                        text("""
                             SELECT table_name
                             FROM information_schema.tables
                             WHERE table_schema = 'public'
@@ -164,7 +167,10 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                                 'charging_ocpp_messages',
                                 'charging_station_configuration_entries'
                             )
-                            """))).scalars())
+                            """)
+                    )
+                ).scalars()
+            )
             hypertables = set(
                 (
                     await connection.execute(

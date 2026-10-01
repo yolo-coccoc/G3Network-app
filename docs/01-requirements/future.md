@@ -151,6 +151,7 @@ there.
 - **Related planner/feature**: General architecture rules in `CLAUDE.md`.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Implementation requires adding the dependency via `uv`, a config contract, and the corresponding CI job.
+- **Update 2026-10-01**: the dependency and the contracts now exist (`[tool.importlinter]` in `backend/pyproject.toml`, one `forbidden` contract per domain) and run locally in `make lint`/`make check` and the git pre-commit hook. Only the CI job remains, blocked on the CI platform decision.
 
 ---
 

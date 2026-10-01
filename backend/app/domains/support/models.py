@@ -5,9 +5,8 @@ from uuid import UUID, uuid4
 
 from geoalchemy2 import Geography
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import DateTime
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 

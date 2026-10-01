@@ -48,18 +48,15 @@ The OCPP gateway listens on `CHARGING_OCPP_HOST` and
 ## Checks
 
 ```bash
-uv run pytest
-uv run ruff check .
-uv run black --check .
-uv run isort --check-only .
-uv run mypy .
+make check            # from the repo root: ruff, import-linter, mypy, tests, domain-model check
+make format           # sort imports + format with ruff
 ```
 
-Two PostgreSQL integration tests are marked skip by default. Run them when
-you want to test against a real database:
+The PostgreSQL integration tests are skipped by default. Run them against a
+real database (needs `make infra-up`):
 
 ```bash
-RUN_DB_INTEGRATION=1 uv run pytest tests/test_postgres_integration.py
+make backend-test-integration
 ```
 
 ## Configuration

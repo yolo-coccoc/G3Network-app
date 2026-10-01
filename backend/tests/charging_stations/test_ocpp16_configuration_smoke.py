@@ -276,7 +276,9 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
 
     async def handler(connection: Any) -> None:
         charge_point = OCPP16ChargePoint(
-            "LSC", connection, _CountingFactory()  # type: ignore[arg-type]
+            "LSC",
+            connection,
+            _CountingFactory(),  # type: ignore[arg-type]
         )
         try:
             await charge_point.start()
@@ -286,11 +288,15 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
             await charge_point.cancel_background_tasks()
 
     async with websockets.serve(
-        handler, "localhost", 0, subprotocols=["ocpp1.6"]  # type: ignore[list-item]
+        handler,
+        "localhost",
+        0,
+        subprotocols=["ocpp1.6"],  # type: ignore[list-item]
     ) as server:
         port = server.sockets[0].getsockname()[1]
         async with websockets.connect(
-            f"ws://localhost:{port}", subprotocols=["ocpp1.6"]  # type: ignore[list-item]
+            f"ws://localhost:{port}",
+            subprotocols=["ocpp1.6"],  # type: ignore[list-item]
         ) as client:
             await client.send(
                 json.dumps(
@@ -399,7 +405,10 @@ async def test_record_configuration_snapshot_stores_nothing_for_an_empty_answer(
     )
 
     result = await charging_stations_service.record_configuration_snapshot(
-        object(), ocpp_identity="LSC", entries=[], captured_at=NOW  # type: ignore[arg-type]
+        object(),
+        ocpp_identity="LSC",
+        entries=[],
+        captured_at=NOW,  # type: ignore[arg-type]
     )
 
     assert result is None
@@ -429,7 +438,10 @@ async def test_record_configuration_snapshot_rejects_naive_time_and_unknown_stat
         )
     with pytest.raises(ChargingStationNotFoundError):
         await charging_stations_service.record_configuration_snapshot(
-            object(), ocpp_identity="LSC", entries=entries, captured_at=NOW  # type: ignore[arg-type]
+            object(),
+            ocpp_identity="LSC",
+            entries=entries,
+            captured_at=NOW,  # type: ignore[arg-type]
         )
 
 
@@ -479,11 +491,13 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
     )
 
     empty = await charging_stations_service.get_latest_station_configuration(
-        object(), STATION_ID  # type: ignore[arg-type]
+        object(),
+        STATION_ID,  # type: ignore[arg-type]
     )
     state["latest"] = (capture_id, NOW)
     latest = await charging_stations_service.get_latest_station_configuration(
-        object(), STATION_ID  # type: ignore[arg-type]
+        object(),
+        STATION_ID,  # type: ignore[arg-type]
     )
 
     assert (empty.capture_id, empty.captured_at, empty.items) == (None, None, [])
@@ -507,5 +521,6 @@ async def test_latest_configuration_of_an_unknown_station_raises_not_found(
 
     with pytest.raises(ChargingStationNotFoundError):
         await charging_stations_service.get_latest_station_configuration(
-            object(), uuid4()  # type: ignore[arg-type]
+            object(),
+            uuid4(),  # type: ignore[arg-type]
         )

@@ -218,12 +218,16 @@ async def test_ingest_measurements_refuses_a_completed_or_unknown_session(
 
     with pytest.raises(ChargingSessionStateError):
         await charging_service.ingest_measurements(
-            object(), session_id=completed.session_id, samples=[sample]  # type: ignore[arg-type]
+            object(),
+            session_id=completed.session_id,
+            samples=[sample],  # type: ignore[arg-type]
         )
     _patch_for_measurements(monkeypatch, None)
     with pytest.raises(ChargingSessionNotFoundError):
         await charging_service.ingest_measurements(
-            object(), session_id=uuid4(), samples=[sample]  # type: ignore[arg-type]
+            object(),
+            session_id=uuid4(),
+            samples=[sample],  # type: ignore[arg-type]
         )
 
     assert inserted == []
@@ -262,7 +266,9 @@ async def test_ingest_measurements_rejects_out_of_contract_samples(
 
     with pytest.raises(ChargingSessionInputError):
         await charging_service.ingest_measurements(
-            object(), session_id=session.session_id, samples=[sample]  # type: ignore[arg-type]
+            object(),
+            session_id=session.session_id,
+            samples=[sample],  # type: ignore[arg-type]
         )
 
 

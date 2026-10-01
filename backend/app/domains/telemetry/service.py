@@ -89,9 +89,9 @@ def to_vehicle_telemetry_latest_response(
     # charging_stations.location can be null) - vehicle_telemetry.location
     # is NOT NULL, so this pair is never actually missing; the assertion
     # documents that invariant for both mypy and a future reader.
-    assert (
-        latitude is not None and longitude is not None
-    ), "vehicle_telemetry.location is NOT NULL"
+    assert latitude is not None and longitude is not None, (
+        "vehicle_telemetry.location is NOT NULL"
+    )
     return VehicleTelemetryLatestResponse(
         vehicle_id=telemetry.vehicle_id,
         telematic_serial=telemetry.telematic_serial,
@@ -188,9 +188,9 @@ def to_vehicle_telemetry_history_point(
         One point with latitude/longitude decoded from ``location``.
     """
     latitude, longitude = location_to_coordinates(telemetry.location)
-    assert (
-        latitude is not None and longitude is not None
-    ), "vehicle_telemetry.location is NOT NULL"
+    assert latitude is not None and longitude is not None, (
+        "vehicle_telemetry.location is NOT NULL"
+    )
     return VehicleTelemetryHistoryPoint(
         recorded_at=telemetry.recorded_at,
         latitude=latitude,
@@ -1208,9 +1208,9 @@ async def process_message(
 
     previous_soh = previous_telemetry.soh_percent if previous_telemetry else None
     if detect_soh_alert(previous_soh, message.battery.soh_percent):
-        assert (
-            message.battery.soh_percent is not None
-        ), "detect_soh_alert() only returns True when current_soh is not None"
+        assert message.battery.soh_percent is not None, (
+            "detect_soh_alert() only returns True when current_soh is not None"
+        )
         await _raise_soh_alert(
             db,
             vehicle_id=vehicle_id,

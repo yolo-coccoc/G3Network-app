@@ -534,13 +534,15 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             ``docs/01-requirements/future.md`` item 31).
         """
         async with self.session_factory.begin() as db:
-            _station_id, _evse_id, connector_uuid = (
-                await charging_stations_service.resolve_ocpp_topology(
-                    db,
-                    ocpp_identity=self.id,
-                    ocpp_evse_id=evse_id,
-                    ocpp_connector_id=connector_id,
-                )
+            (
+                _station_id,
+                _evse_id,
+                connector_uuid,
+            ) = await charging_stations_service.resolve_ocpp_topology(
+                db,
+                ocpp_identity=self.id,
+                ocpp_evse_id=evse_id,
+                ocpp_connector_id=connector_id,
             )
             await charging_stations_service.update_connector_status(
                 db,

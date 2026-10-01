@@ -563,7 +563,8 @@ async def test_has_active_session_on_connector_reflects_the_count(
 
     assert (
         await charging_service.has_active_session_on_connector(
-            object(), CONNECTOR_ID  # type: ignore[arg-type]
+            object(),
+            CONNECTOR_ID,  # type: ignore[arg-type]
         )
         is expected
     )

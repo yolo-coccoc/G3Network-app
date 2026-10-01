@@ -579,4 +579,4 @@ async def test_find_active_vehicle_ignores_soft_deleted_record():
 - [ ] The repository doesn't commit/rollback and contains no business policy.
 - [ ] A pure mapper performs no I/O.
 - [ ] Docstrings/comments were updated when the logic changed.
-- [ ] Black, isort, Ruff, mypy, and the appropriate smoke tests were run.
+- [ ] `make check` passes (ruff, import-linter, mypy, smoke tests, domain-model check); `make backend-test-integration` too for schema/repository changes.

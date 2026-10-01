@@ -36,6 +36,9 @@ Basic commands:
 - `make backend-install` — Install dependencies
 - `make backend-dev` — Run the backend server
 - `make db-migrate` — Run database migrations
+- `make db-reset` — Clear the database and rebuild it from the baseline migration
+- `make check` — The full local gate (ruff, import-linter, mypy, smoke tests, domain-model check); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
+- `make backend-test-integration` — PostgreSQL integration tests (needs `make infra-up`)
 - `make charging-ocpp-dev` — Run the OCPP gateway (accepts 2.0.1 and 1.6J on port 9000)
 - `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision and run the OCPP 2.0.1 simulator
 - `make charging-ocpp16-seed` / `make charging-ocpp16-sim` — Provision (one EVSE per gun) and run the OCPP 1.6J simulator (`--scenario boot|status|session`)

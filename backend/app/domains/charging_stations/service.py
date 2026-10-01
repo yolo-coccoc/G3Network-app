@@ -319,9 +319,9 @@ async def find_nearest_operational_station(
         return None
     station, distance_meters = match
     station_latitude, station_longitude = location_to_coordinates(station.location)
-    assert (
-        station_latitude is not None and station_longitude is not None
-    ), "query filters out stations with a NULL location"
+    assert station_latitude is not None and station_longitude is not None, (
+        "query filters out stations with a NULL location"
+    )
     return NearestChargingStation(
         station_id=station.station_id,
         display_name=station.display_name,

@@ -23,9 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "black>=24.0.0",
-    "isort>=5.13.0",
     "ruff>=0.5.0",
+    "import-linter>=2.0",
     "mypy>=1.10.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
@@ -38,20 +37,19 @@ packages = ["app"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-extend-exclude = 'app/libs/db/migrations/versions/'
-force-exclude = 'app/libs/db/migrations/versions/'
-
-[tool.isort]
-profile = "black"
-line_length = 88
-skip_glob = ["app/libs/db/migrations/versions/*"]
-
+# Ruff is the single formatter + linter (it replaced Black and isort on
+# 2026-10-01). The "I" rules sort imports the way isort's black profile did.
+# The bootstrap-phase baseline migration is formatted like any other file:
+# it is edited in place, so there is no merged history to protect.
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "tests"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -70,3 +68,74 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "shapely.*"
 ignore_missing_imports = true
+
+# Domain boundaries (.claude/rules/domain-boundaries.md): another domain may
+# use a domain's service.py (and the DTOs/enums of its types.py), never its
+# repository or models. One contract per domain. allow_indirect_imports keeps
+# the legitimate chain "fleet -> vehicles.service -> vehicles.repository" from
+# counting as a violation: only direct imports are checked. Run: make lint.
+[tool.importlinter]
+root_package = "app"
+
+[[tool.importlinter.contracts]]
+name = "Only charging_sessions uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.charging_sessions.repository", "app.domains.charging_sessions.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only charging_stations uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.charging_stations.repository", "app.domains.charging_stations.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only drivers uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.drivers.repository", "app.domains.drivers.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only fleet uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.fleet.repository", "app.domains.fleet.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only notifications uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.notifications.repository", "app.domains.notifications.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only support uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.support.repository", "app.domains.support.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only telematics uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.telematics.repository", "app.domains.telematics.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only telemetry uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.vehicles"]
+forbidden_modules = ["app.domains.telemetry.repository", "app.domains.telemetry.models"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only vehicles uses its own repository and models"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry"]
+forbidden_modules = ["app.domains.vehicles.repository", "app.domains.vehicles.models"]
+allow_indirect_imports = true

@@ -232,12 +232,14 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     vendor_error_code=vendor_error_code,
                 )
             else:
-                _station_id, _evse_id, connector_uuid = (
-                    await charging_stations_service.resolve_ocpp16_topology(
-                        db,
-                        ocpp_identity=self.id,
-                        ocpp_connector_id=connector_id,
-                    )
+                (
+                    _station_id,
+                    _evse_id,
+                    connector_uuid,
+                ) = await charging_stations_service.resolve_ocpp16_topology(
+                    db,
+                    ocpp_identity=self.id,
+                    ocpp_connector_id=connector_id,
                 )
                 await charging_stations_service.update_connector_status(
                     db,
@@ -320,12 +322,14 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         started_at = parse_ocpp_timestamp(timestamp)
         async with self.session_factory.begin() as db:
-            station_id, evse_id, connector_uuid = (
-                await charging_stations_service.resolve_ocpp16_topology(
-                    db,
-                    ocpp_identity=self.id,
-                    ocpp_connector_id=connector_id,
-                )
+            (
+                station_id,
+                evse_id,
+                connector_uuid,
+            ) = await charging_stations_service.resolve_ocpp16_topology(
+                db,
+                ocpp_identity=self.id,
+                ocpp_connector_id=connector_id,
             )
             if await charging_sessions_service.has_active_session_on_connector(
                 db, connector_uuid

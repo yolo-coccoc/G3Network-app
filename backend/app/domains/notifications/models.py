@@ -3,9 +3,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column

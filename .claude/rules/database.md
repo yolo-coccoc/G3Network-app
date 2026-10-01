@@ -38,9 +38,9 @@ Invariants of the baseline:
   rewritten.
 
 General Alembic rules: the revision ID must stay ≤32 characters (the
-`alembic_version.version_num` width); a migration file is formatted with Black
-and isort even though the repo-wide formatter run excludes `versions/`; every
-model module must be imported in `migrations/env.py` so autogenerate sees it.
+`alembic_version.version_num` width); the migration is formatted by ruff like
+any other file; every model module must be imported in `migrations/env.py` so
+autogenerate sees it.
 
 ## Platform
 

@@ -1,7 +1,7 @@
 # G3Network - Makefile
 # Common commands used for development
 
-.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test db-migrate db-reset
+.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test backend-test-integration format lint domain-model-check check install-hooks db-migrate db-reset
 
 # Default: show help
 help:
@@ -24,6 +24,13 @@ help:
 	@echo "  make charging-ocpp16-sim - Run the OCPP 1.6J charge-point simulator"
 	@echo "  make telematics-monitor-dev - Run the device-silence health monitor"
 	@echo "  make backend-test    - Run tests"
+	@echo "  make backend-test-integration - Run the PostgreSQL integration tests (needs infra-up)"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make format         - Sort imports and format (ruff)"
+	@echo "  make lint           - Ruff lint + format check, import-linter, mypy"
+	@echo "  make check          - lint + backend-test + domain-model-check (the pre-commit gate)"
+	@echo "  make install-hooks  - Use the repo's git hooks (.githooks/pre-commit runs make check)"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-migrate     - Run Alembic migrations"
@@ -100,6 +107,37 @@ telematics-monitor-dev:
 backend-test:
 	@echo "Running backend tests..."
 	cd backend && uv run pytest
+
+backend-test-integration:
+	@echo "Running PostgreSQL integration tests (creates and drops a temporary database)..."
+	cd backend && RUN_DB_INTEGRATION=1 uv run pytest tests/test_postgres_integration.py
+
+# === QUALITY ===
+
+# Ruff is the only formatter: "--select I --fix" sorts imports, "format" lays out code.
+format:
+	cd backend && uv run ruff check --select I --fix . ../simulator
+	cd backend && uv run ruff format . ../simulator
+
+lint:
+	cd backend && uv run ruff check . ../simulator
+	cd backend && uv run ruff format --check . ../simulator
+	cd backend && uv run lint-imports
+	cd backend && uv run mypy app
+
+# Verifies the DBML design source still matches the SQLAlchemy models and the
+# generated domain-model views are current.
+domain-model-check:
+	uv run --project backend --with pydbml --with openpyxl python .claude/skills/domain-model/scripts/domain_model.py check
+
+# The gate the pre-commit hook runs. The PostgreSQL integration tests are not
+# part of it (they need the database); run backend-test-integration for schema work.
+check: lint backend-test domain-model-check
+	@echo "✓ All checks passed"
+
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "✓ Git now runs .githooks/pre-commit (make check) before every commit"
 
 # === DATABASE ===
 

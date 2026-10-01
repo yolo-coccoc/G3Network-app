@@ -15,7 +15,7 @@
 - Cross-domain calls take and return primitives or frozen dataclass DTOs (`VehicleReference`, `TransactionSessionReference`...), never an ORM model or an HTTP schema.
 - Every edge is **one-directional** unless listed as an exception below. Adding a new edge (or a new domain) means adding a row to the table below in the same change.
 - A new domain must reference its feature code in `feature-list.md` (e.g. `F-C1`, `F-B2`).
-- `import-linter` isn't installed yet (deferred to CI, `future.md` item 11), so review imports manually: no `from app.domains.<other>.repository`/`.models` outside `<other>`.
+- **Enforced by `import-linter`**: one `forbidden` contract per domain in `backend/pyproject.toml` (`[tool.importlinter]`), run by `make lint` / `make check` and the pre-commit hook. A new domain needs its own contract (copy an existing one) and must appear in the other contracts' `source_modules`. Only direct imports are checked (`allow_indirect_imports = true`).
 
 ## Current dependency edges
 
@@ -35,9 +35,9 @@
 | `fleet` → `vehicles` | `resolve_vehicle_reference_by_vin`, `resolve_vehicle_summary_by_id` | F-E1 |
 
 **Only exception — `telematics ↔ telemetry` is bidirectional** (ingestion one
-way, device-health monitoring the other). When `import-linter` is added, this
-pair needs an explicit allowed-cycle exception rather than being treated as a
-violation.
+way, device-health monitoring the other). The current `forbidden` contracts
+don't check cycles; if an acyclic/layers contract is ever added, this pair needs
+an explicit exception rather than being treated as a violation.
 
 ## Domain roles worth knowing
 
