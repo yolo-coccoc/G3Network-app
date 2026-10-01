@@ -1,31 +1,23 @@
 """HTTP router for reading vehicle telemetry data.
 
-This module only turns requests into service calls and maps business
-exceptions to HTTP status codes; it contains no database queries or
-business logic.
+This module only turns requests into service calls; it contains no
+database queries or business logic. Domain exceptions are not caught here:
+``app/api/main.py`` maps ``TelemetryNotFoundError`` to 404 and
+``TelemetryInvalidRangeError`` to 400 through their shared bases.
 """
 
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telemetry.exceptions import (
-    TelemetryInvalidRangeError,
-    TelemetryNotFoundError,
-)
+import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.schemas import (
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
-)
-from app.domains.telemetry.service import (
-    get_latest_vehicle_telemetry_response,
-    get_vehicle_energy_usage_report,
-    get_vehicle_operating_report,
-    get_vehicle_telemetry_history_response,
 )
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -38,7 +30,7 @@ router = APIRouter(tags=["telemetry"])
     response_model=VehicleTelemetryLatestResponse,
     summary="Get the latest telemetry for a vehicle",
 )
-async def get_latest_vehicle_telemetry(
+async def get_latest_vehicle_telemetry_endpoint(
     vehicle_id: UUID, db: AsyncSession = Depends(get_db)
 ) -> VehicleTelemetryLatestResponse:
     """Return the latest telemetry record for a vehicle.
@@ -51,14 +43,10 @@ async def get_latest_vehicle_telemetry(
         The latest telemetry record.
 
     Raises:
-        HTTPException: When the vehicle does not exist or has no telemetry yet.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted, or has no telemetry yet.
     """
-    try:
-        return await get_latest_vehicle_telemetry_response(db, vehicle_id)
-    except TelemetryNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
+    return await telemetry_service.get_latest_vehicle_telemetry_response(db, vehicle_id)
 
 
 @router.get(
@@ -95,27 +83,19 @@ async def get_vehicle_telemetry_history_endpoint(
         Telemetry points ordered chronologically (oldest first).
 
     Raises:
-        HTTPException: ``400`` if the time range is invalid (missing
-            timezone, ``end_time`` not after ``start_time``, or the span
-            exceeds the configured maximum); ``404`` if the vehicle does not
-            exist or has been soft deleted.
+        TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
+            was soft-deleted.
     """
-    try:
-        return await get_vehicle_telemetry_history_response(
-            db,
-            vehicle_id=vehicle_id,
-            start_time=start_time,
-            end_time=end_time,
-            limit=limit,
-        )
-    except TelemetryNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except TelemetryInvalidRangeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-        ) from error
+    return await telemetry_service.get_vehicle_telemetry_history_response(
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        limit=limit,
+    )
 
 
 @router.get(
@@ -145,21 +125,15 @@ async def get_vehicle_operating_report_endpoint(
         The operating report over the normalized time window.
 
     Raises:
-        HTTPException: ``400`` if the time range is invalid; ``404`` if
-            the vehicle does not exist or has been soft deleted.
+        TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
+            was soft-deleted.
     """
-    try:
-        return await get_vehicle_operating_report(
-            db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
-        )
-    except TelemetryNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except TelemetryInvalidRangeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-        ) from error
+    return await telemetry_service.get_vehicle_operating_report(
+        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+    )
 
 
 @router.get(
@@ -190,18 +164,12 @@ async def get_vehicle_energy_usage_endpoint(
         The energy-usage report over the normalized time window.
 
     Raises:
-        HTTPException: ``400`` if the time range is invalid; ``404`` if
-            the vehicle does not exist or has been soft deleted.
+        TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
+            was soft-deleted.
     """
-    try:
-        return await get_vehicle_energy_usage_report(
-            db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
-        )
-    except TelemetryNotFoundError as error:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=str(error)
-        ) from error
-    except TelemetryInvalidRangeError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)
-        ) from error
+    return await telemetry_service.get_vehicle_energy_usage_report(
+        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+    )
