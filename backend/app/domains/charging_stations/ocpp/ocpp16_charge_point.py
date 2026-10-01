@@ -19,7 +19,6 @@ charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 
 import asyncio
 import logging
-from typing import Final
 from uuid import UUID
 
 from ocpp.exceptions import OCPPError
@@ -30,7 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions.types import SessionEventType
+from app.domains.charging_sessions.types import (
+    STOP_REASON_MAX_LENGTH,
+    SessionEventType,
+)
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     V16Extraction,
     extract_v16_measurements,
@@ -50,11 +52,6 @@ from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Width of ``charging_sessions.stop_reason`` (owned by the charging_sessions
-# domain, which exposes no constant for it): a longer vendor ``reason`` is
-# truncated to fit, while the raw frame log keeps the original text.
-_STOP_REASON_MAX_LENGTH: Final[int] = 30
 
 
 class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
@@ -383,7 +380,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         lists, so a single vendor-specific stop reason or measurand would make
         the library reject the whole message and leave the session open forever.
         The fields the backend relies on are validated here instead, and a
-        ``reason`` longer than its column (``_STOP_REASON_MAX_LENGTH``) is
+        ``reason`` longer than its column (``STOP_REASON_MAX_LENGTH``) is
         truncated (the raw frame in the message log keeps the original).
 
         Args:
@@ -437,7 +434,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 seq_no=None,
                 meter_end_wh=closing_meter_wh,
                 meter_end_sampled_at=stopped_at,
-                stop_reason=reason[:_STOP_REASON_MAX_LENGTH] if reason else None,
+                stop_reason=reason[:STOP_REASON_MAX_LENGTH] if reason else None,
                 meter_stop_wh=closing_meter_wh,
             )
         self._log_skipped_samples("StopTransaction", extraction)

@@ -25,7 +25,11 @@ from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+from app.domains.charging_sessions.types import (
+    STOP_REASON_MAX_LENGTH,
+    SessionEventType,
+    SessionStatus,
+)
 from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
 from app.libs.db.enums import enum_values
@@ -113,7 +117,9 @@ class ChargingSessionModel(Base):
         Numeric(24, 3), nullable=True
     )
     id_tag: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    stop_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(
+        String(STOP_REASON_MAX_LENGTH), nullable=True
+    )
     meter_stop_wh: Mapped[Decimal | None] = mapped_column(Numeric(24, 3), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now

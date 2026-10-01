@@ -25,6 +25,9 @@ ENERGY_ACTIVE_IMPORT_REGISTER: Final[str] = "Energy.Active.Import.Register"
 # Unit of every stored energy-register value: the OCPP adapter normalizes
 # Wh/kWh into Wh before the value reaches this domain.
 ENERGY_UNIT_WH: Final[str] = "Wh"
+# Width of ``charging_sessions.stop_reason``. Public so an adapter that
+# receives a longer vendor reason can truncate it to fit before ingesting.
+STOP_REASON_MAX_LENGTH: Final[int] = 30
 
 
 class SessionStatus(str, enum.Enum):
