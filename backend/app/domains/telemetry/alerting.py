@@ -30,11 +30,11 @@ from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
-    SOH_ALERT_THRESHOLD_PERCENT,
     BatteryAlertLevel,
     VehicleAnomaly,
     VehicleAnomalyType,
 )
+from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,10 @@ async def _raise_battery_alert(
         nearest-station lookup is a snapshot taken now, from the vehicle's
         GPS at this exact message - it is not recomputed later, so it
         describes where the vehicle was when it crossed the threshold, not
-        where it currently is.
+        where it currently is. The payload carries the station's id, name,
+        coordinates (``station_latitude``/``station_longitude``, so a client
+        can route there without a second lookup) and distance - all
+        ``None`` when no operational station exists.
     """
     threshold = BATTERY_ALERT_THRESHOLDS[alert_level]
     nearest_station = await charging_stations_service.find_nearest_operational_station(
@@ -85,6 +88,12 @@ async def _raise_battery_alert(
         ),
         "station_name": (
             nearest_station.display_name if nearest_station is not None else None
+        ),
+        "station_latitude": (
+            nearest_station.latitude if nearest_station is not None else None
+        ),
+        "station_longitude": (
+            nearest_station.longitude if nearest_station is not None else None
         ),
         "distance_km": (
             nearest_station.distance_km if nearest_station is not None else None
@@ -130,9 +139,12 @@ async def _raise_soh_alert(
 
     Side Effects:
         Writes one notification row into the session; does not commit.
+        Reads ``settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT`` for the
+        payload and body.
     """
+    threshold_percent = settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT
     payload: dict[str, object] = {
-        "threshold_percent": SOH_ALERT_THRESHOLD_PERCENT,
+        "threshold_percent": threshold_percent,
         "soh_percent": current_soh,
         "cycle_count": cycle_count,
     }
@@ -144,7 +156,7 @@ async def _raise_soh_alert(
         title=f"Battery health at {current_soh:.0f}%",
         body=(
             f"Vehicle battery SOH dropped to {current_soh:.1f}%, crossing "
-            f"the {SOH_ALERT_THRESHOLD_PERCENT:.0f}% threshold."
+            f"the {threshold_percent:.0f}% threshold."
         ),
         payload=payload,
     )
@@ -242,7 +254,11 @@ async def raise_alerts_for_reading(
         )
 
     previous_soh = previous_telemetry.soh_percent if previous_telemetry else None
-    if telemetry_detection.detect_soh_alert(previous_soh, message.battery.soh_percent):
+    if telemetry_detection.detect_soh_alert(
+        previous_soh,
+        message.battery.soh_percent,
+        settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT,
+    ):
         assert message.battery.soh_percent is not None, (
             "detect_soh_alert() only returns True when current_soh is not None"
         )

@@ -17,7 +17,6 @@ from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
     HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS,
-    SOH_ALERT_THRESHOLD_PERCENT,
     VEHICLE_ANOMALY_SEVERITIES,
     VOLTAGE_DROP_THRESHOLD_VOLTS,
     BatteryAlertLevel,
@@ -60,7 +59,11 @@ def detect_battery_alert_level(
     return crossed_level
 
 
-def detect_soh_alert(previous_soh: float | None, current_soh: float | None) -> bool:
+def detect_soh_alert(
+    previous_soh: float | None,
+    current_soh: float | None,
+    threshold_percent: float,
+) -> bool:
     """Detect whether battery SOH just crossed the alert threshold (F-A3).
 
     Same strict-above/inclusive-below crossing shape as
@@ -75,14 +78,17 @@ def detect_soh_alert(previous_soh: float | None, current_soh: float | None) -> b
             if this is the first reading or the device didn't report it.
         current_soh: The current message's SOH reading (%), or ``None`` if
             the device didn't report it.
+        threshold_percent: SOH (%) the alert fires at - the caller passes
+            ``settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT`` so this
+            function stays pure.
 
     Returns:
-        ``True`` if SOH just crossed below
-        ``SOH_ALERT_THRESHOLD_PERCENT``, else ``False``.
+        ``True`` if SOH just crossed below ``threshold_percent``, else
+        ``False``.
     """
     if previous_soh is None or current_soh is None:
         return False
-    return previous_soh > SOH_ALERT_THRESHOLD_PERCENT >= current_soh
+    return previous_soh > threshold_percent >= current_soh
 
 
 def detect_high_battery_temperature(

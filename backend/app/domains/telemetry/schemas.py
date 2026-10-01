@@ -1,10 +1,11 @@
 """
 Pydantic schemas for MQTT telemetry message validation and the HTTP query API.
 
-Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A5 (Location,
-trip history & geofencing - the history query only; geofencing itself is
-deferred, see docs/01-requirements/future.md), F-A6 (Operating performance
-report), F-C6 (Per-customer energy usage)
+Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-A3 (Battery
+health trend), F-A5 (Location, trip history & geofencing - the history
+query only; geofencing itself is deferred, see
+docs/01-requirements/future.md), F-A6 (Operating performance report and
+its per-period breakdown), F-C6 (Per-customer energy usage)
 
 Two separate contracts live here and never share a class: the HTTP
 responses (``Vehicle*Response``/``VehicleTelemetryHistoryPoint``) and the
@@ -20,6 +21,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.domains.telemetry.types import ReportGranularity
 from app.libs.common.geo import coordinates_to_location
 
 
@@ -47,6 +49,10 @@ class VehicleTelemetryLatestResponse(BaseModel):
         error_codes: Error codes from the device.
         schema_version: Version of the MQTT message schema the device used
             to send this record (F-A1).
+        received_at: When the backend received this record, in UTC.
+        is_online: ``True`` while the vehicle's newest telemetry arrived
+            within ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS`` of now;
+            computed at read time, never stored (planner D2).
 
     Note:
         No longer built via ``model_validate(orm_obj, from_attributes=True)``
@@ -74,6 +80,8 @@ class VehicleTelemetryLatestResponse(BaseModel):
     signal_strength: int | None
     error_codes: dict[str, list[str]] | None
     schema_version: int
+    received_at: datetime
+    is_online: bool
 
 
 class VehicleTelemetryHistoryPoint(BaseModel):
@@ -95,9 +103,9 @@ class VehicleTelemetryHistoryPoint(BaseModel):
         battery_current: Battery current, A.
         battery_temperature: Battery temperature, °C.
         soh_percent: Battery State of Health, remaining capacity vs. new
-            (F-A3), nullable. Charting this field across a queried time
-            range is how "estimated capacity fade over time" (F-A3) is
-            served - no separate trend/regression endpoint exists.
+            (F-A3), nullable. The daily trend with an estimated capacity
+            is served by ``VehicleBatteryHealthResponse``; no regression
+            or forecast is computed.
         cycle_count: Charge/discharge cycle count (F-A3), nullable.
         motor_temperature: Motor temperature, °C.
         odometer: Total distance traveled, km.
@@ -146,6 +154,48 @@ class VehicleTelemetryHistoryResponse(BaseModel):
     count: int = Field(..., ge=0)
 
 
+class VehicleOperatingReportPeriod(BaseModel):
+    """One calendar period of a broken-down F-A6 operating report.
+
+    Same metrics and ``None`` rules as ``VehicleOperatingReportResponse``,
+    over the period instead of the whole window. A reading's delta from
+    the previous reading counts in the reading's own period, even when the
+    previous reading lies in the period before.
+
+    Attributes:
+        period_start: Start of the period (local midnight of
+            ``settings.APP_REPORT_TIMEZONE`` as UTC), or the window start
+            for a clipped first period.
+        period_end: Start of the next period, or the window end for a
+            clipped last period.
+        sample_count: Telemetry rows inside the period.
+        odometer_sample_count: Rows whose ``odometer`` was not NULL.
+        first_recorded_at: Earliest reading in the period, or ``None``.
+        last_recorded_at: Latest reading in the period, or ``None``.
+        distance_km: Distance traveled in the period.
+        energy_consumed_kwh: Energy inferred from SOC drops.
+        energy_per_100km_kwh: Energy intensity, or ``None`` if undefined.
+        distance_per_day_km: Average daily distance over the period's
+            span, or ``None`` if fewer than two samples.
+        energy_cost_vnd: ``energy_consumed_kwh`` priced at the report's
+            ``cost_per_kwh_vnd``.
+        cost_per_km_vnd: Cost per kilometre, or ``None`` if undefined.
+    """
+
+    period_start: datetime
+    period_end: datetime
+    sample_count: int = Field(..., ge=0)
+    odometer_sample_count: int = Field(..., ge=0)
+    first_recorded_at: datetime | None = None
+    last_recorded_at: datetime | None = None
+    distance_km: float = Field(..., ge=0)
+    energy_consumed_kwh: float = Field(..., ge=0)
+    energy_per_100km_kwh: float | None = Field(None, ge=0)
+    distance_per_day_km: float | None = Field(None, ge=0)
+    energy_cost_vnd: float = Field(..., ge=0)
+    cost_per_km_vnd: float | None = Field(None, ge=0)
+
+
 class VehicleOperatingReportResponse(BaseModel):
     """Per-vehicle operating performance over a queried window (F-A6).
 
@@ -183,8 +233,14 @@ class VehicleOperatingReportResponse(BaseModel):
             the vehicle's recorded value, or the engineering default.
         is_default_battery_capacity: ``True`` if the vehicle has no
             recorded ``battery_capacity_kwh`` and the default was used.
-        cost_per_kwh_vnd: Flat engineering-default tariff used for the
-            cost figures - not vendor-confirmed, not configurable yet.
+        cost_per_kwh_vnd: Flat tariff used for the cost figures
+            (``settings.TELEMETRY_ENERGY_COST_PER_KWH_VND``).
+        granularity: Period breakdown requested, or ``None`` when only the
+            whole-window aggregate was asked for.
+        periods: The same metrics per calendar period of
+            ``settings.APP_REPORT_TIMEZONE`` (first/last clipped to the
+            window), or ``None`` without ``granularity``. The periods' sums
+            add up to the whole-window sums.
     """
 
     vehicle_id: UUID
@@ -203,6 +259,53 @@ class VehicleOperatingReportResponse(BaseModel):
     battery_capacity_kwh: float = Field(..., gt=0)
     is_default_battery_capacity: bool
     cost_per_kwh_vnd: float = Field(..., ge=0)
+    granularity: ReportGranularity | None = None
+    periods: list[VehicleOperatingReportPeriod] | None = None
+
+
+class VehicleBatteryHealthPoint(BaseModel):
+    """A vehicle's battery health on one day (F-A3).
+
+    Attributes:
+        day_start: Local midnight of the day in
+            ``settings.APP_REPORT_TIMEZONE``, as a UTC timestamp.
+        soh_percent: SOH (%) of the day's last reading that reported it,
+            or ``None``.
+        cycle_count: Cycle count of the day's last reading that reported
+            it, or ``None``.
+        estimated_capacity_kwh: ``soh_percent`` / 100 x the vehicle's
+            recorded battery capacity, or ``None`` when either is unknown
+            (the engineering default capacity is deliberately not used).
+    """
+
+    day_start: datetime
+    soh_percent: float | None = None
+    cycle_count: int | None = None
+    estimated_capacity_kwh: float | None = None
+
+
+class VehicleBatteryHealthResponse(BaseModel):
+    """Daily battery-health trend of one vehicle over a window (F-A3).
+
+    Days without any SOH or cycle-count reading are omitted, so ``points``
+    can have gaps; nothing is interpolated.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle queried.
+        start_time: Normalized (UTC) lower bound actually used.
+        end_time: Normalized (UTC) upper bound actually used.
+        battery_capacity_kwh: The vehicle's recorded nominal pack capacity,
+            or ``None`` if not recorded.
+        points: One point per day with data, oldest first.
+        count: Number of points.
+    """
+
+    vehicle_id: UUID
+    start_time: datetime
+    end_time: datetime
+    battery_capacity_kwh: float | None = None
+    points: list[VehicleBatteryHealthPoint]
+    count: int = Field(..., ge=0)
 
 
 class VehicleEnergyUsageResponse(BaseModel):

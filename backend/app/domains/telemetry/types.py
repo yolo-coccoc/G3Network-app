@@ -1,20 +1,26 @@
 """Enums, thresholds and small DTOs shared across the telemetry domain's layers.
 
-Feature code: F-A2 (Tiered battery alerts), F-A4 (Anomaly detection),
-F-A3 (Battery health (SOH) & cycle tracking), F-A6 (Operating performance
-report), F-C6 (Per-customer energy usage)
+Feature code: F-A1 (live status), F-A2 (Tiered battery alerts), F-A4
+(Anomaly detection), F-A3 (Battery health (SOH) & cycle tracking), F-A6
+(Operating performance report), F-C6 (Per-customer energy usage)
 
 Scope: the alert levels/anomaly types and their thresholds and severities
-(read by ``detection.py`` and ``alerting.py``), the folded-window DTO the
-repository hands to ``reports.py``, and the report engineering defaults
-(battery capacity, tariff). Every numeric threshold and default here is an
-engineering value, not vendor-confirmed, and not configurable yet - see
-``docs/01-requirements/future.md``. No FastAPI/Pydantic/SQLAlchemy imports.
+(read by ``detection.py`` and ``alerting.py``), the report granularity and
+output format, the folded-window/per-period/per-day DTOs the repository
+hands to ``reports.py`` and the service, the public cross-domain DTOs
+returned by ``service.py`` (``VehicleLiveStatusReference``,
+``VehicleOperatingSummary``), and the default battery capacity. Every
+numeric threshold and default here is an engineering value, not
+vendor-confirmed. The SOH alert threshold and the energy tariff are not
+here: they are settings (``TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT``,
+``TELEMETRY_ENERGY_COST_PER_KWH_VND``), read at call time. No
+FastAPI/Pydantic/SQLAlchemy imports.
 """
 
 import enum
 from dataclasses import dataclass, field
 from datetime import datetime
+from uuid import UUID
 
 from app.domains.notifications.types import NotificationSeverity
 
@@ -97,13 +103,6 @@ class VehicleAnomaly:
     evidence: dict[str, object] = field(default_factory=dict)
 
 
-# Engineering default, not vendor-confirmed - see docs/01-requirements/future.md.
-# A single threshold, not tiers like BATTERY_ALERT_THRESHOLDS: F-A3 only asks
-# for "alert when SOH drops below a configured threshold," not multiple
-# severity levels.
-SOH_ALERT_THRESHOLD_PERCENT = 70.0
-
-
 @dataclass(frozen=True)
 class VehicleTelemetryWindowSummary:
     """Folded telemetry deltas for one vehicle over one time window (F-A6/F-C6).
@@ -151,9 +150,125 @@ class VehicleTelemetryWindowSummary:
 # so a consumer never mistakes the estimate for a recorded spec.
 DEFAULT_BATTERY_CAPACITY_KWH = 75.0
 
-# Engineering default, not a confirmed tariff - see
-# docs/01-requirements/future.md. F-A6's own constraint says "cost formula
-# must be configurable (electricity price varies)" - that is knowingly
-# unmet this round. Flat rate only: no time-of-use, no per-station tariff,
-# no tax or demand charges.
-ENERGY_COST_PER_KWH_VND = 3000.0
+
+class ReportGranularity(str, enum.Enum):
+    """Calendar period an F-A6 operating report is broken down by.
+
+    Periods are cut in ``settings.APP_REPORT_TIMEZONE`` (planner D4); a
+    week is an ISO week starting on Monday. Each value is also the
+    PostgreSQL ``date_trunc`` field name the repository groups by.
+    """
+
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class ReportFormat(str, enum.Enum):
+    """Output format of a report endpoint (F-A6)."""
+
+    JSON = "json"
+    CSV = "csv"
+
+
+@dataclass(frozen=True)
+class TelemetryReportPeriod:
+    """One calendar period of a broken-down report window (F-A6).
+
+    Attributes:
+        bucket_start: Unclipped start of the calendar period (local
+            midnight in the report time zone, as a UTC timestamp) - the
+            key the repository's ``date_trunc`` grouping produces.
+        period_start: Start of the period clipped to the requested window
+            (UTC).
+        period_end: End of the period clipped to the requested window
+            (UTC); the next period's ``bucket_start`` when not clipped.
+    """
+
+    bucket_start: datetime
+    period_start: datetime
+    period_end: datetime
+
+
+@dataclass(frozen=True)
+class VehicleBatteryHealthDay:
+    """A vehicle's battery health on one report-time-zone day (F-A3).
+
+    Attributes:
+        day_start: Local midnight of the day in
+            ``settings.APP_REPORT_TIMEZONE``, as a UTC timestamp.
+        soh_percent: SOH (%) of the day's last reading that reported one,
+            or ``None`` if no reading that day did.
+        cycle_count: Cycle count of the day's last reading that reported
+            one, or ``None`` if no reading that day did.
+    """
+
+    day_start: datetime
+    soh_percent: float | None
+    cycle_count: int | None
+
+
+@dataclass(frozen=True)
+class VehicleLiveStatusReference:
+    """A vehicle's newest position and connectivity, for other domains (F-A1).
+
+    Returned by ``telemetry.service.resolve_vehicle_live_status``.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        latitude: GPS latitude of the newest reading (by ``recorded_at``).
+        longitude: GPS longitude of the newest reading.
+        recorded_at: Device timestamp of the newest reading (UTC).
+        received_at: Backend receive time of that same reading (UTC).
+        is_online: ``True`` while the vehicle's newest *received* telemetry
+            arrived within ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS``
+            (planner D2); computed at read time, never stored.
+        signal_strength_dbm: Signal strength of the newest reading in dBm,
+            or ``None`` if the device didn't report it.
+    """
+
+    vehicle_id: UUID
+    latitude: float
+    longitude: float
+    recorded_at: datetime
+    received_at: datetime
+    is_online: bool
+    signal_strength_dbm: int | None
+
+
+@dataclass(frozen=True)
+class VehicleOperatingSummary:
+    """Additive operating figures of one vehicle over one window (F-A6, F-E1).
+
+    Returned by ``telemetry.service.resolve_vehicle_operating_summary`` so a
+    fleet rollup can sum numerators and denominators across vehicles
+    instead of averaging per-vehicle rates.
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        start_time: Normalized (UTC) lower bound actually used.
+        end_time: Normalized (UTC) upper bound actually used.
+        distance_km: Distance traveled in the window (sum of positive
+            odometer deltas).
+        energy_consumed_kwh: Energy inferred from summed SOC drops,
+            converted with ``battery_capacity_kwh``.
+        sample_count: Telemetry rows inside the window.
+        odometer_sample_count: Rows whose ``odometer`` was not NULL.
+        first_recorded_at: Earliest reading in the window, or ``None``.
+        last_recorded_at: Latest reading in the window, or ``None``.
+        battery_capacity_kwh: Pack capacity used for the kWh conversion.
+        is_default_battery_capacity: ``True`` if the vehicle has no
+            recorded capacity and ``DEFAULT_BATTERY_CAPACITY_KWH`` was used.
+    """
+
+    vehicle_id: UUID
+    start_time: datetime
+    end_time: datetime
+    distance_km: float
+    energy_consumed_kwh: float
+    sample_count: int
+    odometer_sample_count: int
+    first_recorded_at: datetime | None
+    last_recorded_at: datetime | None
+    battery_capacity_kwh: float
+    is_default_battery_capacity: bool

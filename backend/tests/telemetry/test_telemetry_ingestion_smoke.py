@@ -1,6 +1,7 @@
 """Smoke tests for telemetry ingestion and the alert detectors (F-A1, F-A2, F-A3, F-A4)."""
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.service as telematics_public_service
+import app.domains.telemetry.alerting as telemetry_alerting
 import app.domains.telemetry.detection as telemetry_detection
 import app.domains.telemetry.mappers as telemetry_mappers
 import app.domains.telemetry.repository as telemetry_repository
@@ -26,7 +28,12 @@ from app.domains.telemetry.types import (
     BatteryAlertLevel,
     VehicleAnomalyType,
 )
-from tests.builders import build_telemetry_envelope, fake_db_session
+from app.libs.common.config import settings
+from tests.builders import (
+    build_telemetry_envelope,
+    build_telemetry_record,
+    fake_db_session,
+)
 
 
 @pytest.mark.asyncio
@@ -216,7 +223,10 @@ def test_detect_soh_alert(
     gradual SOH degradation isn't a condition where skipping the very first
     reading carries real risk.
     """
-    assert telemetry_detection.detect_soh_alert(previous_soh, current_soh) is expected
+    assert (
+        telemetry_detection.detect_soh_alert(previous_soh, current_soh, 70.0)
+        is expected
+    )
 
 
 @pytest.mark.asyncio
@@ -481,3 +491,86 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     assert payload["anomaly_type"] == VehicleAnomalyType.HIGH_BATTERY_TEMPERATURE.value
     snapshot = cast(dict[str, object], payload["snapshot"])
     assert snapshot["battery_temperature"] == 65.0
+
+
+@pytest.mark.asyncio
+async def test_battery_alert_payload_carries_station_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The F-A2 payload includes the nearest station's latitude/longitude."""
+    vehicle_id = uuid4()
+    previous_telemetry = build_telemetry_record(
+        vehicle_id=vehicle_id, recorded_at=datetime(2026, 8, 26, tzinfo=timezone.utc)
+    )
+    previous_telemetry.soc = 25.0
+    station = NearestChargingStationReference(
+        station_id=uuid4(),
+        display_name="Depot A",
+        latitude=10.81,
+        longitude=106.71,
+        distance_km=1.4,
+    )
+    created_notifications: list[dict[str, object]] = []
+
+    async def nearest_station(
+        db: AsyncSession, *, latitude: float, longitude: float
+    ) -> NearestChargingStationReference:
+        return station
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        charging_stations_service, "find_nearest_operational_station", nearest_station
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+
+    await telemetry_alerting.raise_alerts_for_reading(
+        fake_db_session(),
+        vehicle_id=vehicle_id,
+        previous_telemetry=previous_telemetry,
+        message=build_telemetry_envelope(soc=18.0).message,
+    )
+
+    payload = cast(dict[str, object], created_notifications[0]["payload"])
+    assert payload["station_id"] == str(station.station_id)
+    assert payload["station_latitude"] == 10.81
+    assert payload["station_longitude"] == 106.71
+    assert payload["distance_km"] == 1.4
+
+
+@pytest.mark.asyncio
+async def test_soh_alert_uses_configured_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT is read when the reading arrives."""
+    vehicle_id = uuid4()
+    previous_telemetry = build_telemetry_record(
+        vehicle_id=vehicle_id,
+        recorded_at=datetime(2026, 8, 26, tzinfo=timezone.utc),
+        soh_percent=82.0,
+    )
+    created_notifications: list[dict[str, object]] = []
+
+    async def record_notification(db: AsyncSession, **kwargs: object) -> None:
+        created_notifications.append(kwargs)
+
+    monkeypatch.setattr(
+        notifications_service, "create_notification", record_notification
+    )
+    monkeypatch.setattr(settings, "TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT", 80.0)
+
+    await telemetry_alerting.raise_alerts_for_reading(
+        fake_db_session(),
+        vehicle_id=vehicle_id,
+        previous_telemetry=previous_telemetry,
+        message=build_telemetry_envelope(soc=80.0, soh_percent=79.0).message,
+    )
+
+    assert len(created_notifications) == 1
+    call = created_notifications[0]
+    assert call["notification_type"] is NotificationType.SOH_ALERT
+    payload = cast(dict[str, object], call["payload"])
+    assert payload["threshold_percent"] == 80.0

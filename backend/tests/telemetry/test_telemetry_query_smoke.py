@@ -56,7 +56,9 @@ def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
         schema_version=3,
     )
 
-    response = telemetry_mappers.to_vehicle_telemetry_latest_response(record)
+    response = telemetry_mappers.to_vehicle_telemetry_latest_response(
+        record, is_online=False
+    )
 
     assert response.latitude == pytest.approx(10.762622)
     assert response.longitude == pytest.approx(106.660172)

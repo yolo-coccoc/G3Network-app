@@ -9,16 +9,18 @@ database queries or business logic. Domain exceptions are not caught here:
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telemetry.service as telemetry_service
 from app.domains.telemetry.schemas import (
+    VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
+from app.domains.telemetry.types import ReportFormat, ReportGranularity
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -102,13 +104,16 @@ async def get_vehicle_telemetry_history_endpoint(
     "/vehicles/{vehicle_id}/operating-report",
     response_model=VehicleOperatingReportResponse,
     summary="Get a vehicle's operating performance over a time window",
+    responses={200: {"content": {"text/csv": {}}}},
 )
 async def get_vehicle_operating_report_endpoint(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    granularity: ReportGranularity | None = None,
+    report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
     db: AsyncSession = Depends(get_db),
-) -> VehicleOperatingReportResponse:
+) -> VehicleOperatingReportResponse | Response:
     """Return distance, energy consumed, and cost for a vehicle over a window (F-A6).
 
     Energy is inferred from SOC drops in the vehicle's own telemetry, not
@@ -119,10 +124,17 @@ async def get_vehicle_operating_report_endpoint(
         vehicle_id: Internal ID of the vehicle.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        granularity: Optional ``day``/``week``/``month`` breakdown in
+            ``settings.APP_REPORT_TIMEZONE``; omitted keeps the single
+            whole-window aggregate.
+        report_format: ``json`` (default) or ``csv`` (query parameter
+            ``format``) - CSV has one row per period, or one row for the
+            whole window.
         db: Database session managed by the dependency.
 
     Returns:
-        The operating report over the normalized time window.
+        The operating report over the normalized time window, as JSON or
+        as a ``text/csv`` attachment.
 
     Raises:
         TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
@@ -131,7 +143,61 @@ async def get_vehicle_operating_report_endpoint(
         TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
             was soft-deleted.
     """
-    return await telemetry_service.get_vehicle_operating_report(
+    operating_report = await telemetry_service.get_vehicle_operating_report(
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        granularity=granularity,
+    )
+    if report_format is ReportFormat.CSV:
+        return Response(
+            content=telemetry_service.serialize_vehicle_operating_report_csv(
+                operating_report
+            ),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="operating-report-{vehicle_id}.csv"'
+                )
+            },
+        )
+    return operating_report
+
+
+@router.get(
+    "/vehicles/{vehicle_id}/battery-health",
+    response_model=VehicleBatteryHealthResponse,
+    summary="Get a vehicle's daily battery-health (SOH) trend",
+)
+async def get_vehicle_battery_health_endpoint(
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    db: AsyncSession = Depends(get_db),
+) -> VehicleBatteryHealthResponse:
+    """Return one SOH/cycle-count point per day over a window (F-A3).
+
+    Days are calendar days of ``settings.APP_REPORT_TIMEZONE``; days
+    without an SOH or cycle-count reading are omitted.
+
+    Args:
+        vehicle_id: Internal ID of the vehicle.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The daily battery-health trend over the normalized window.
+
+    Raises:
+        TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
+            ``end_time`` is not after ``start_time``, or the span exceeds
+            ``settings.TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS``.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
+            was soft-deleted.
+    """
+    return await telemetry_service.get_vehicle_battery_health_response(
         db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
     )
 

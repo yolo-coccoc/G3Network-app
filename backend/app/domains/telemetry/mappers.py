@@ -1,7 +1,7 @@
 """Pure mappings from telemetry ORM rows and MQTT messages to other shapes.
 
-Feature code: F-A1 (latest telemetry), F-A5 (history points), F-A4 (the
-anomaly notification's data snapshot).
+Feature code: F-A1 (latest telemetry and the live-status DTO), F-A5
+(history points), F-A4 (the anomaly notification's data snapshot).
 
 Internal to the telemetry domain: other domains never import this module
 (they go through ``telemetry/service.py``). Every function here is a pure
@@ -22,7 +22,28 @@ from app.domains.telemetry.schemas import (
     VehicleTelemetryHistoryPoint,
     VehicleTelemetryLatestResponse,
 )
+from app.domains.telemetry.types import VehicleLiveStatusReference
 from app.libs.common.geo import location_to_coordinates
+
+
+def _to_coordinates(telemetry: VehicleTelemetryModel) -> tuple[float, float]:
+    """Decode a telemetry row's NOT NULL ``location`` into latitude/longitude.
+
+    Args:
+        telemetry: Telemetry ORM row queried by the repository.
+
+    Returns:
+        ``(latitude, longitude)`` in decimal degrees.
+    """
+    latitude, longitude = location_to_coordinates(telemetry.location)
+    # location_to_coordinates()'s return type is generic (Optional, since
+    # charging_stations.location can be null) - vehicle_telemetry.location
+    # is NOT NULL, so this pair is never actually missing; the assertion
+    # documents that invariant for both mypy and a future reader.
+    assert latitude is not None and longitude is not None, (
+        "vehicle_telemetry.location is NOT NULL"
+    )
+    return latitude, longitude
 
 
 def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
@@ -36,14 +57,7 @@ def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
         and ``VehicleTelemetryLatestResponse`` have in common, with
         latitude/longitude decoded from ``location``.
     """
-    latitude, longitude = location_to_coordinates(telemetry.location)
-    # location_to_coordinates()'s return type is generic (Optional, since
-    # charging_stations.location can be null) - vehicle_telemetry.location
-    # is NOT NULL, so this pair is never actually missing; the assertion
-    # documents that invariant for both mypy and a future reader.
-    assert latitude is not None and longitude is not None, (
-        "vehicle_telemetry.location is NOT NULL"
-    )
+    latitude, longitude = _to_coordinates(telemetry)
     return {
         "recorded_at": telemetry.recorded_at,
         "latitude": latitude,
@@ -65,12 +79,13 @@ def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
 
 
 def to_vehicle_telemetry_latest_response(
-    telemetry: VehicleTelemetryModel,
+    telemetry: VehicleTelemetryModel, *, is_online: bool
 ) -> VehicleTelemetryLatestResponse:
     """Build the latest-telemetry response from the ORM row (F-A1).
 
     Args:
         telemetry: Telemetry ORM row queried by the repository.
+        is_online: Online flag already computed by the service.
 
     Returns:
         Response schema with latitude/longitude decoded from ``location``.
@@ -78,7 +93,33 @@ def to_vehicle_telemetry_latest_response(
     return VehicleTelemetryLatestResponse(
         vehicle_id=telemetry.vehicle_id,
         telematic_serial=telemetry.telematic_serial,
+        received_at=telemetry.received_at,
+        is_online=is_online,
         **_to_reading_fields(telemetry),
+    )
+
+
+def to_vehicle_live_status_reference(
+    telemetry: VehicleTelemetryModel, *, is_online: bool
+) -> VehicleLiveStatusReference:
+    """Build the cross-domain live-status DTO from the newest ORM row (F-A1).
+
+    Args:
+        telemetry: The vehicle's newest telemetry row.
+        is_online: Online flag already computed by the service.
+
+    Returns:
+        The vehicle's position, timestamps, online flag and signal strength.
+    """
+    latitude, longitude = _to_coordinates(telemetry)
+    return VehicleLiveStatusReference(
+        vehicle_id=telemetry.vehicle_id,
+        latitude=latitude,
+        longitude=longitude,
+        recorded_at=telemetry.recorded_at,
+        received_at=telemetry.received_at,
+        is_online=is_online,
+        signal_strength_dbm=telemetry.signal_strength,
     )
 
 

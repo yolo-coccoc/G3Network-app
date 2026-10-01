@@ -36,6 +36,7 @@ from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.types import ReportGranularity
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
@@ -839,5 +840,219 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
         assert live_mapping is not None
         assert live_mapping.vehicle_id == vehicle_id
         assert deleted_vehicle_mapping is None
+    finally:
+        await engine.dispose()
+
+
+async def _seed_vehicle_readings(
+    db: AsyncSession, readings: list[dict[str, object]]
+) -> VehicleModel:
+    """Insert a vehicle (200 kWh pack), its device and the given readings.
+
+    Args:
+        db: Session of the caller's transaction.
+        readings: Per-reading column values (``recorded_at`` and ``soc`` at
+            least); identity and location columns are filled in here.
+
+    Returns:
+        The inserted vehicle.
+    """
+    vehicle = VehicleModel(
+        vehicle_id=uuid4(),
+        license_plate=f"IT-{uuid4().hex[:12]}",
+        vin=f"1{uuid4().hex[:16]}",
+        make="G3Network",
+        model="Integration Test",
+        year=2026,
+        status=VehicleStatus.ACTIVE,
+        battery_capacity_kwh=200.0,
+    )
+    db.add(vehicle)
+    await db.flush()
+    telematic = TelematicModel(
+        telematic_id=uuid4(),
+        telematic_serial=f"IT-TBOX-{uuid4().hex[:12]}",
+        vehicle_id=vehicle.vehicle_id,
+        status=TelematicStatus.ACTIVE,
+    )
+    db.add(telematic)
+    await db.flush()
+    for reading in readings:
+        await telemetry_repository.insert_telemetry(
+            db,
+            {
+                "message_uuid": uuid4(),
+                "telematic_id": telematic.telematic_id,
+                "telematic_serial": telematic.telematic_serial,
+                "vehicle_id": vehicle.vehicle_id,
+                "received_at": reading["recorded_at"],
+                "location": coordinates_to_location(10.8, 106.7),
+                "raw_payload": {"source": "postgres-integration"},
+                **reading,
+            },
+        )
+    return vehicle
+
+
+def _september_2026(day: int, hour: int, minute: int = 0) -> datetime:
+    """Build a UTC timestamp in September 2026.
+
+    Args:
+        day: Day of month.
+        hour: Hour (UTC).
+        minute: Minute.
+
+    Returns:
+        The timezone-aware UTC datetime.
+    """
+    return datetime(2026, 9, day, hour, minute, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_battery_health_buckets_by_report_timezone_day(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-A3: one point per Asia/Ho_Chi_Minh day, last reported value wins.
+
+    16:30Z and 17:30Z on the same UTC date are different local days (UTC+7);
+    a later reading without SOH does not blank the day's SOH; a day whose
+    readings carry neither SOH nor cycle count is omitted.
+    """
+    monkeypatch.setattr(settings, "APP_REPORT_TIMEZONE", "Asia/Ho_Chi_Minh")
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as session:
+            vehicle = await _seed_vehicle_readings(
+                session,
+                [
+                    {
+                        "recorded_at": _september_2026(1, 16, 30),
+                        "soc": 80.0,
+                        "soh_percent": 95.0,
+                        "cycle_count": 100,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 17, 30),
+                        "soc": 79.0,
+                        "soh_percent": 94.5,
+                        "cycle_count": 100,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 20),
+                        "soc": 78.0,
+                        "cycle_count": 101,
+                    },
+                    {"recorded_at": _september_2026(3, 5), "soc": 70.0},
+                ],
+            )
+
+            trend = await telemetry_service.get_vehicle_battery_health_response(
+                session,
+                vehicle_id=vehicle.vehicle_id,
+                start_time=datetime(2026, 8, 31, tzinfo=timezone.utc),
+                end_time=datetime(2026, 9, 4, tzinfo=timezone.utc),
+            )
+            await session.rollback()
+
+        assert [
+            (
+                point.day_start,
+                point.soh_percent,
+                point.cycle_count,
+                point.estimated_capacity_kwh,
+            )
+            for point in trend.points
+        ] == [
+            (datetime(2026, 8, 31, 17, tzinfo=timezone.utc), 95.0, 100, 190.0),
+            (_september_2026(1, 17), 94.5, 101, 189.0),
+        ]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operating_report_periods_sum_to_the_whole_window(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F-A6: daily periods in UTC+7 split the lag fold without losing deltas.
+
+    The delta from the last reading of local day 1 to the first of local
+    day 2 counts in day 2, and a reading stamped exactly at the inclusive
+    end_time (a local midnight) stays in the last listed day.
+    """
+    monkeypatch.setattr(settings, "APP_REPORT_TIMEZONE", "Asia/Ho_Chi_Minh")
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    start_time = datetime(2026, 8, 31, 17, tzinfo=timezone.utc)  # Sep 1, local
+    end_time = _september_2026(2, 17)  # Sep 3 00:00, local
+    try:
+        async with session_factory() as session:
+            vehicle = await _seed_vehicle_readings(
+                session,
+                [
+                    {
+                        "recorded_at": _september_2026(1, 1),
+                        "soc": 90.0,
+                        "odometer": 1000.0,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 10),
+                        "soc": 80.0,
+                        "odometer": 1050.0,
+                    },
+                    {
+                        "recorded_at": _september_2026(1, 18),
+                        "soc": 75.0,
+                        "odometer": 1070.0,
+                    },
+                    {
+                        "recorded_at": _september_2026(2, 10),
+                        "soc": 60.0,
+                        "odometer": 1120.0,
+                    },
+                    {"recorded_at": end_time, "soc": 55.0, "odometer": 1130.0},
+                ],
+            )
+
+            daily_report = await telemetry_service.get_vehicle_operating_report(
+                session,
+                vehicle_id=vehicle.vehicle_id,
+                start_time=start_time,
+                end_time=end_time,
+                granularity=ReportGranularity.DAY,
+            )
+            monthly_report = await telemetry_service.get_vehicle_operating_report(
+                session,
+                vehicle_id=vehicle.vehicle_id,
+                start_time=start_time,
+                end_time=end_time,
+                granularity=ReportGranularity.MONTH,
+            )
+            await session.rollback()
+
+        assert daily_report.periods is not None
+        assert [
+            (
+                period.period_start,
+                period.sample_count,
+                period.distance_km,
+                period.energy_consumed_kwh,
+            )
+            for period in daily_report.periods
+        ] == [
+            (start_time, 2, 50.0, 20.0),
+            (_september_2026(1, 17), 3, 80.0, 50.0),
+        ]
+        assert daily_report.sample_count == 5
+        assert daily_report.distance_km == 130.0
+        assert daily_report.energy_consumed_kwh == pytest.approx(70.0)
+        assert monthly_report.periods is not None
+        assert len(monthly_report.periods) == 1
+        assert monthly_report.periods[0].distance_km == 130.0
     finally:
         await engine.dispose()
