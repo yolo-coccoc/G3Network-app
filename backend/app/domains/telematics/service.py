@@ -23,6 +23,7 @@ from app.domains.telematics.exceptions import (
     TelematicConflictError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
+    TelematicVehicleNotFoundError,
 )
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import (
@@ -46,20 +47,65 @@ async def resolve_mapping_by_serial(
 ) -> TelematicVehicleMapping | None:
     """Resolve a telematic serial into a device ID and vehicle ID.
 
+    Rule (D11 of the happy-path planner):
+        A device whose assigned vehicle is soft-deleted is ignored, exactly
+        like an unassigned one - the device row keeps its ``vehicle_id``
+        after the vehicle is deleted (the vehicles domain can't unassign it
+        without a ``vehicles -> telematics`` cycle), so liveness of the
+        vehicle is checked here through the vehicles public service.
+
     Args:
         db: Database session owned by the entry boundary.
         serial: Physical serial received from a telemetry message.
 
     Returns:
         A ``TelematicVehicleMapping`` if the mapping is valid; ``None`` if
-        the device does not exist, has been soft-deleted, or has not been
-        assigned a vehicle.
+        the device does not exist, has been soft-deleted, has not been
+        assigned a vehicle, or is assigned to a soft-deleted vehicle.
 
     Side Effects:
-        Performs a read-only query in the current session; does not commit or
-        rollback.
+        Read-only: the mapping query, then one vehicle lookup through the
+        vehicles service when a mapping exists. Does not commit or roll
+        back.
     """
-    return await telematics_repository.find_mapping_by_serial(db, serial)
+    telematic_vehicle_mapping = await telematics_repository.find_mapping_by_serial(
+        db, serial
+    )
+    if telematic_vehicle_mapping is None:
+        return None
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, telematic_vehicle_mapping.vehicle_id
+    )
+    return telematic_vehicle_mapping if vehicle_reference is not None else None
+
+
+async def _resolve_vehicle_id_by_vin(
+    db_session: AsyncSession, vehicle_vin: str
+) -> UUID:
+    """Resolve the VIN sent on a device create/update into a live vehicle ID.
+
+    Args:
+        db_session: Current database session.
+        vehicle_vin: VIN of the vehicle the device should be assigned to.
+
+    Returns:
+        Internal ID of the live vehicle carrying that VIN.
+
+    Raises:
+        TelematicVehicleNotFoundError: No live (non-soft-deleted) vehicle
+            has that VIN (D10, future.md item 83).
+
+    Side Effects:
+        One read-only query through the vehicles public service.
+    """
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
+        db_session, vehicle_vin
+    )
+    if vehicle_reference is None:
+        raise TelematicVehicleNotFoundError(
+            f"Vehicle with VIN '{vehicle_vin}' not found"
+        )
+    return vehicle_reference.vehicle_id
 
 
 async def build_telematic_response(
@@ -108,12 +154,13 @@ async def build_telematic_response(
 async def create_telematic(
     db_session: AsyncSession, telematic_create_request: TelematicCreateRequest
 ) -> TelematicResponse:
-    """Create a device, assigning it to the vehicle named by VIN if that exists.
+    """Create a device, optionally assigning it to the vehicle named by VIN.
 
     Rule:
-        A VIN that matches no live vehicle leaves the device unassigned
-        rather than failing the request. A vehicle may carry at most one
-        live device.
+        A VIN that matches no live vehicle fails the request (D10). A
+        vehicle may carry at most one live device; a soft-deleted device
+        that still records the vehicle doesn't count, so a replacement can
+        be mounted (future.md item 82).
 
     Args:
         db_session: Current database session.
@@ -123,9 +170,11 @@ async def create_telematic(
         The HTTP response for the new device.
 
     Raises:
-        TelematicConflictError: The serial already exists, or the vehicle
-            is already assigned to another device (including a constraint
-            violation detected only at flush time).
+        TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
+            vehicle.
+        TelematicConflictError: The serial already exists (including on a
+            soft-deleted device, detected only at flush time), or the
+            vehicle is already assigned to another live device.
 
     Side Effects:
         Inserts and flushes the device; when a vehicle is assigned, advances
@@ -138,15 +187,11 @@ async def create_telematic(
     ):
         raise TelematicConflictError("Telematic serial already exists")
     vehicle_id = None
-    if telematic_create_request.vehicle_vin:
-        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
-            db_session,
-            telematic_create_request.vehicle_vin,
+    if telematic_create_request.vehicle_vin is not None:
+        vehicle_id = await _resolve_vehicle_id_by_vin(
+            db_session, telematic_create_request.vehicle_vin
         )
-        vehicle_id = vehicle_reference.vehicle_id if vehicle_reference else None
-        if vehicle_id and await telematics_repository.find_by_vehicle_id(
-            db_session, vehicle_id
-        ):
+        if await telematics_repository.find_by_vehicle_id(db_session, vehicle_id):
             raise TelematicConflictError(
                 "Vehicle is already assigned to another telematic"
             )
@@ -245,8 +290,10 @@ async def update_telematic(
 
     Rule:
         A field that is not sent, or sent as ``null``, is left unchanged -
-        except ``vehicle_vin``: sending it re-resolves the assignment, and
-        ``null`` (or a VIN matching no live vehicle) unassigns the device.
+        except ``vehicle_vin``: sending a VIN re-resolves the assignment
+        (a VIN matching no live vehicle fails the request, D10), and an
+        explicit ``null`` unassigns the device. A vehicle may carry at most
+        one live device.
 
     Args:
         db_session: Current database session.
@@ -258,9 +305,11 @@ async def update_telematic(
 
     Raises:
         TelematicNotFoundError: The device does not exist or is soft-deleted.
-        TelematicConflictError: The new serial already exists, or the new
-            vehicle is already assigned to another device (detected at
-            flush time).
+        TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
+            vehicle.
+        TelematicConflictError: The new serial already exists (on a
+            soft-deleted device it is only detected at flush time), or the
+            new vehicle is already assigned to another live device.
 
     Side Effects:
         Flushes the update; when a vehicle is (re)assigned, advances that
@@ -280,17 +329,27 @@ async def update_telematic(
     ):
         raise TelematicConflictError("Telematic serial already exists")
     if "vehicle_vin" in requested_values:
+        # exclude_unset keeps an explicit null, so "vehicle_vin" present
+        # with None means "unassign"; absent means "leave unchanged".
         vehicle_vin = requested_values.pop("vehicle_vin")
-        vehicle_reference = (
-            await vehicle_service.resolve_vehicle_reference_by_vin(
-                db_session, vehicle_vin
-            )
-            if vehicle_vin
+        vehicle_id = (
+            await _resolve_vehicle_id_by_vin(db_session, vehicle_vin)
+            if vehicle_vin is not None
             else None
         )
-        requested_values["vehicle_id"] = (
-            vehicle_reference.vehicle_id if vehicle_reference else None
-        )
+        if vehicle_id is not None:
+            assigned_telematic_record = await telematics_repository.find_by_vehicle_id(
+                db_session, vehicle_id
+            )
+            if (
+                assigned_telematic_record is not None
+                and assigned_telematic_record.telematic_id
+                != telematic_record.telematic_id
+            ):
+                raise TelematicConflictError(
+                    "Vehicle is already assigned to another telematic"
+                )
+        requested_values["vehicle_id"] = vehicle_id
     update_values = {
         field_name: value
         for field_name, value in requested_values.items()
@@ -304,7 +363,7 @@ async def update_telematic(
         )
     except IntegrityError as error:
         raise TelematicConflictError(
-            "Vehicle is already assigned to another telematic"
+            "Telematic serial or vehicle already exists"
         ) from error
     assigned_vehicle_id = update_values.get("vehicle_id")
     if assigned_vehicle_id is not None:

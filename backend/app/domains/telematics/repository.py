@@ -76,7 +76,9 @@ async def find_by_vehicle_id(
 
     Returns:
         The device record assigned to that vehicle, or ``None`` if no
-        non-soft-deleted device is assigned to it.
+        non-soft-deleted device is assigned to it. Mirrors the partial
+        unique index ``uq_telematics_active_vehicle``, so at most one row
+        can match.
     """
     query_result = await db_session.execute(
         select(TelematicModel).where(
@@ -133,7 +135,10 @@ async def list_active_with_vehicle(
         ``vehicle_id``. A device that's soft-deleted, explicitly
         ``INACTIVE``/``MAINTENANCE``, or not yet assigned to a vehicle is
         excluded - a device deliberately taken offline being silent is
-        expected, not something to alert on. Unbounded result set - the
+        expected, not something to alert on. Whether the assigned vehicle
+        is itself soft-deleted is not checked here (that table belongs to
+        the vehicles domain); the monitor filters those out through the
+        vehicles service (D11). Unbounded result set - the
         MVP's device count doesn't need pagination here; add a cap if that
         changes.
     """
@@ -268,7 +273,10 @@ async def soft_delete(
     Side Effects:
         Sets ``deleted_at`` and flushes; ``updated_at`` is set by the
         column's ``onupdate`` hook. The row keeps its serial and vehicle
-        assignment (the unique constraints still see it).
+        assignment: the serial's unique constraint still sees it, but the
+        partial ``uq_telematics_active_vehicle`` index (``WHERE deleted_at
+        IS NULL``) doesn't, so the vehicle can take a replacement device
+        (future.md item 82).
     """
     telematic_record.deleted_at = utc_now()
     await db_session.flush()

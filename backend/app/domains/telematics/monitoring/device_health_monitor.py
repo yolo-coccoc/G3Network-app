@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
+import app.domains.vehicles.service as vehicle_service
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
 from app.libs.common.clock import utc_now
@@ -82,9 +83,23 @@ async def check_devices_for_silence(db_session: AsyncSession) -> None:
             (``run_health_check_tick`` in production; a test's fake session
             when unit tested directly).
 
+    Rule (D11 of the happy-path planner):
+        A device whose assigned vehicle is soft-deleted is skipped - the
+        vehicle is gone, so its device going quiet is expected, not an
+        incident. The device row keeps its ``vehicle_id`` after the vehicle
+        is deleted, so the vehicle's liveness is checked through the
+        vehicles public service.
+
+    Metrics (logged once per tick):
+        ``checked`` - devices returned by ``list_active_with_vehicle``;
+        ``alerted`` - notifications written this tick; ``skipped`` -
+        devices not evaluated for silence, either because their vehicle is
+        soft-deleted or because they have never reported telemetry.
+
     Side Effects:
-        Loops devices one at a time (one query per device for the
-        last-seen check, one for the dedup check) rather than a
+        Loops devices one at a time (one query per device for the vehicle
+        check, one for the last-seen check, one for the dedup check)
+        rather than a
         batched/grouped query - this repo's convention is the simple
         per-item version first, batched only once a benchmark shows a real
         need; that applies to a periodic sweep the same as it does to a
@@ -104,6 +119,13 @@ async def check_devices_for_silence(db_session: AsyncSession) -> None:
         # NULL; the assertion documents that invariant for mypy.
         vehicle_id = device.vehicle_id
         assert vehicle_id is not None, "query filters out unassigned devices"
+
+        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+            db_session, vehicle_id
+        )
+        if vehicle_reference is None:
+            skipped_count += 1
+            continue
 
         last_seen_at = await telemetry_service.resolve_last_telemetry_at(
             db_session, vehicle_id

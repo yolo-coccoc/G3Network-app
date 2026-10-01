@@ -12,10 +12,34 @@ import app.domains.notifications.service as notifications_service
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
+import app.domains.vehicles.service as vehicles_public_service
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
+from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import build_telematic_record, fake_db_session
+
+
+@pytest.fixture(autouse=True)
+def live_assigned_vehicle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every assigned vehicle resolve as live (not soft-deleted) by default.
+
+    The monitor skips devices of soft-deleted vehicles (D11) through the
+    vehicles public service; tests that exercise that path override this.
+    """
+
+    async def resolve_live_vehicle(
+        db_session: AsyncSession, vehicle_id: UUID
+    ) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        )
+
+    monkeypatch.setattr(
+        vehicles_public_service,
+        "resolve_vehicle_reference_by_id",
+        resolve_live_vehicle,
+    )
 
 
 @pytest.mark.asyncio
@@ -212,6 +236,41 @@ async def test_check_devices_for_silence_realerts_after_recovery(
     await device_health_monitor.check_devices_for_silence(fake_db_session())
 
     assert len(created_notifications) == 1
+
+
+@pytest.mark.asyncio
+async def test_check_devices_for_silence_skips_device_of_soft_deleted_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A silent device whose vehicle is soft-deleted is ignored, not alerted (D11)."""
+    vehicle_id = uuid4()
+    device = build_telematic_record(vehicle_id)
+
+    async def active_devices(db_session: AsyncSession) -> list[TelematicModel]:
+        return [device]
+
+    async def deleted_vehicle(db_session: AsyncSession, vid: UUID) -> None:
+        assert vid == vehicle_id
+        return None
+
+    async def fail_last_telemetry(db: AsyncSession, vid: UUID) -> None:
+        raise AssertionError("a deleted vehicle's device must not be evaluated")
+
+    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
+        raise AssertionError("create_notification should not be called")
+
+    monkeypatch.setattr(
+        telematics_repository, "list_active_with_vehicle", active_devices
+    )
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", deleted_vehicle
+    )
+    monkeypatch.setattr(
+        telemetry_service, "resolve_last_telemetry_at", fail_last_telemetry
+    )
+    monkeypatch.setattr(notifications_service, "create_notification", fail_if_called)
+
+    await device_health_monitor.check_devices_for_silence(fake_db_session())
 
 
 @pytest.mark.asyncio

@@ -17,17 +17,22 @@ from app.domains.telematics.exceptions import (
     TelematicConflictError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
+    TelematicVehicleNotFoundError,
 )
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicCreateRequest,
+    TelematicUpdateRequest,
 )
-from app.domains.telematics.types import TelematicStatus
+from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
 from app.domains.vehicles.types import (
     VehicleReference,
 )
+from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
+
+UNKNOWN_VIN = "1HGBH41JXMN999999"
 
 
 @pytest.mark.asyncio
@@ -353,3 +358,232 @@ async def test_push_telematic_config_does_not_record_when_publish_fails(
             record.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
         )
+
+
+@pytest.mark.asyncio
+async def test_create_telematic_rejects_unknown_vehicle_vin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A VIN matching no live vehicle fails the create with a 404-class error (D10)."""
+
+    async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
+        return None
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    async def fail_if_called(db: AsyncSession, values: dict[str, object]) -> None:
+        raise AssertionError("insert must not run for an unknown VIN")
+
+    monkeypatch.setattr(telematics_repository, "find_by_serial", no_existing_serial)
+    monkeypatch.setattr(telematics_repository, "insert", fail_if_called)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+
+    with pytest.raises(TelematicVehicleNotFoundError) as error_info:
+        await telematics_service.create_telematic(
+            fake_db_session(),
+            TelematicCreateRequest(
+                telematic_serial="TBOX-TEST-004",
+                vehicle_vin=UNKNOWN_VIN,
+                firmware_version=None,
+            ),
+        )
+
+    assert isinstance(error_info.value, NotFoundError)
+
+
+def _patch_update_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    telematic_record: TelematicModel,
+    updated_values: dict[str, object],
+) -> None:
+    """Stub the repository reads/writes an update_telematic call goes through.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        telematic_record: Device returned by ``get_by_id``.
+        updated_values: Collects the values passed to ``update_fields``.
+    """
+
+    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+        return telematic_record
+
+    async def update_fields(
+        db: AsyncSession, record: TelematicModel, values: dict[str, object]
+    ) -> TelematicModel:
+        updated_values.update(values)
+        return record
+
+    async def no_vehicle_by_id(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    async def mark_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(telematics_repository, "update_fields", update_fields)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", no_vehicle_by_id
+    )
+    monkeypatch.setattr(vehicles_public_service, "mark_device_assigned", mark_assigned)
+
+
+@pytest.mark.asyncio
+async def test_update_telematic_rejects_unknown_vehicle_vin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-assigning to a VIN matching no live vehicle fails instead of unassigning (D10)."""
+    telematic_record = build_telematic_record(uuid4())
+    updated_values: dict[str, object] = {}
+    _patch_update_dependencies(monkeypatch, telematic_record, updated_values)
+
+    async def no_vehicle(db: AsyncSession, vin: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    )
+
+    with pytest.raises(TelematicVehicleNotFoundError):
+        await telematics_service.update_telematic(
+            fake_db_session(),
+            telematic_record.telematic_id,
+            TelematicUpdateRequest.model_validate({"vehicle_vin": UNKNOWN_VIN}),
+        )
+
+    assert updated_values == {}
+
+
+@pytest.mark.asyncio
+async def test_update_telematic_explicit_null_vin_unassigns_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``vehicle_vin: null`` still unassigns the device (D10)."""
+    telematic_record = build_telematic_record(uuid4())
+    updated_values: dict[str, object] = {}
+    _patch_update_dependencies(monkeypatch, telematic_record, updated_values)
+
+    await telematics_service.update_telematic(
+        fake_db_session(),
+        telematic_record.telematic_id,
+        TelematicUpdateRequest.model_validate({"vehicle_vin": None}),
+    )
+
+    assert updated_values == {"vehicle_id": None}
+
+
+@pytest.mark.asyncio
+async def test_update_telematic_without_vin_keeps_assignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting ``vehicle_vin`` leaves the current assignment untouched."""
+    telematic_record = build_telematic_record(uuid4())
+    updated_values: dict[str, object] = {}
+    _patch_update_dependencies(monkeypatch, telematic_record, updated_values)
+
+    await telematics_service.update_telematic(
+        fake_db_session(),
+        telematic_record.telematic_id,
+        TelematicUpdateRequest.model_validate({"firmware_version": "2.0.0"}),
+    )
+
+    assert updated_values == {"firmware_version": "2.0.0"}
+
+
+@pytest.mark.asyncio
+async def test_update_telematic_rejects_vehicle_with_another_live_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-assigning to a vehicle that already carries a live device is a conflict."""
+    telematic_record = build_telematic_record(uuid4())
+    target_vehicle_id = uuid4()
+    updated_values: dict[str, object] = {}
+    _patch_update_dependencies(monkeypatch, telematic_record, updated_values)
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=target_vehicle_id, vin=vin, battery_capacity_kwh=None
+        )
+
+    async def other_device(db: AsyncSession, vehicle_id: UUID) -> TelematicModel:
+        assert vehicle_id == target_vehicle_id
+        return build_telematic_record(target_vehicle_id)
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(telematics_repository, "find_by_vehicle_id", other_device)
+
+    with pytest.raises(TelematicConflictError):
+        await telematics_service.update_telematic(
+            fake_db_session(),
+            telematic_record.telematic_id,
+            TelematicUpdateRequest.model_validate({"vehicle_vin": UNKNOWN_VIN}),
+        )
+
+    assert updated_values == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_mapping_by_serial_ignores_soft_deleted_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device mapped to a soft-deleted vehicle resolves to no mapping (D11)."""
+    telematic_vehicle_mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4()
+    )
+
+    async def find_mapping(
+        db: AsyncSession, telematic_serial: str
+    ) -> TelematicVehicleMapping:
+        return telematic_vehicle_mapping
+
+    async def deleted_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
+        assert vehicle_id == telematic_vehicle_mapping.vehicle_id
+        return None
+
+    monkeypatch.setattr(telematics_repository, "find_mapping_by_serial", find_mapping)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", deleted_vehicle
+    )
+
+    assert (
+        await telematics_service.resolve_mapping_by_serial(
+            fake_db_session(), "TBOX-TEST-001"
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_mapping_by_serial_returns_mapping_for_live_vehicle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device mapped to a live vehicle resolves to its mapping unchanged."""
+    telematic_vehicle_mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4()
+    )
+
+    async def find_mapping(
+        db: AsyncSession, telematic_serial: str
+    ) -> TelematicVehicleMapping:
+        return telematic_vehicle_mapping
+
+    async def live_vehicle(db: AsyncSession, vehicle_id: UUID) -> VehicleReference:
+        return VehicleReference(
+            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        )
+
+    monkeypatch.setattr(telematics_repository, "find_mapping_by_serial", find_mapping)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", live_vehicle
+    )
+
+    assert (
+        await telematics_service.resolve_mapping_by_serial(
+            fake_db_session(), "TBOX-TEST-001"
+        )
+        == telematic_vehicle_mapping
+    )

@@ -2,7 +2,8 @@
 
 Handlers only translate HTTP to service calls. Domain exceptions are not
 caught here: `app/api/main.py` maps each shared error base once
-(`TelematicNotFoundError` -> 404, `TelematicConflictError` and
+(`TelematicNotFoundError` and `TelematicVehicleNotFoundError` -> 404,
+`TelematicConflictError` and
 `TelematicNotConfigurableError` -> 409, `TelematicCommandPublishError` ->
 502) with the same `{"detail": message}` body for every router.
 """
@@ -43,8 +44,10 @@ async def create_telematic_endpoint(
         Created device.
 
     Raises:
+        TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
+            vehicle (404).
         TelematicConflictError: The serial already exists or the vehicle is
-            already assigned to another device (409).
+            already assigned to another live device (409).
     """
     return await telematics_service.create_telematic(
         db_session,
@@ -120,8 +123,10 @@ async def update_telematic_endpoint(
     Raises:
         TelematicNotFoundError: The device does not exist or is
             soft-deleted (404).
+        TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
+            vehicle (404).
         TelematicConflictError: The new serial already exists or the new
-            vehicle is already assigned to another device (409).
+            vehicle is already assigned to another live device (409).
     """
     return await telematics_service.update_telematic(
         db_session,

@@ -14,8 +14,8 @@ class TelematicCreateRequest(BaseModel):
 
     Attributes:
         telematic_serial: Unique serial printed on the device.
-        vehicle_vin: VIN of the vehicle to assign; a VIN matching no live
-            vehicle leaves the device unassigned.
+        vehicle_vin: VIN of the vehicle to assign, if any; a VIN matching
+            no live vehicle is rejected (404).
         status: Initial operating status.
         firmware_version: Current firmware version, if known.
     """
@@ -30,11 +30,12 @@ class TelematicUpdateRequest(BaseModel):
     """Request data for a partial update of a device.
 
     A field not sent, or sent as ``null``, is left unchanged - except
-    ``vehicle_vin``, where ``null`` unassigns the device.
+    ``vehicle_vin``, where an explicit ``null`` unassigns the device.
 
     Attributes:
         telematic_serial: New serial.
-        vehicle_vin: VIN of the vehicle to (re)assign, or ``null`` to unassign.
+        vehicle_vin: VIN of the vehicle to (re)assign (a VIN matching no
+            live vehicle is rejected with 404), or ``null`` to unassign.
         status: New operating status.
         firmware_version: New firmware version.
     """

@@ -23,12 +23,17 @@ from sqlalchemy.pool import NullPool
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
+import app.domains.telematics.repository as telematics_repository
+import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
+import app.domains.vehicles.service as vehicle_service
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.domains.telematics.exceptions import TelematicConflictError
 from app.domains.telematics.models import TelematicModel
+from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.vehicles.models import VehicleModel
@@ -729,5 +734,110 @@ async def test_notification_insert_and_mark_read_need_no_refresh(
         assert first_read.read_at is not None
         assert stored.read_at == first_read.read_at
         assert second_read.read_at == first_read.read_at
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_vehicle_takes_replacement_device_after_soft_delete(
+    temporary_database: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A soft-deleted device frees its vehicle; a second live one still conflicts.
+
+    Covers future.md item 82 (partial unique index
+    ``uq_telematics_active_vehicle``) through the service, both the
+    pre-check and the flush-time ``IntegrityError`` path, and D11 (a
+    device of a soft-deleted vehicle resolves to no ingestion mapping).
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    vin = f"1{uuid4().hex[:16].upper()}"
+    serial_prefix = f"IT-TBOX-{uuid4().hex[:8]}"
+    try:
+        async with session_factory.begin() as db:
+            vehicle_record = VehicleModel(
+                license_plate=f"IT-{uuid4().hex[:12]}",
+                vin=vin,
+                make="G3Network",
+                model="Integration Test",
+                year=2026,
+                status=VehicleStatus.ACTIVE,
+            )
+            db.add(vehicle_record)
+            await db.flush()
+            vehicle_id = vehicle_record.vehicle_id
+
+        async with session_factory.begin() as db:
+            first_device = await telematics_service.create_telematic(
+                db,
+                TelematicCreateRequest(
+                    telematic_serial=f"{serial_prefix}-A",
+                    vehicle_vin=vin,
+                    firmware_version=None,
+                ),
+            )
+        async with session_factory.begin() as db:
+            await telematics_service.soft_delete_telematic(
+                db, first_device.telematic_id
+            )
+        async with session_factory.begin() as db:
+            replacement_device = await telematics_service.create_telematic(
+                db,
+                TelematicCreateRequest(
+                    telematic_serial=f"{serial_prefix}-B",
+                    vehicle_vin=vin,
+                    firmware_version=None,
+                ),
+            )
+        assert replacement_device.vehicle_id == vehicle_id
+
+        # Pre-check path: the service sees the live replacement device.
+        with pytest.raises(TelematicConflictError):
+            async with session_factory.begin() as db:
+                await telematics_service.create_telematic(
+                    db,
+                    TelematicCreateRequest(
+                        telematic_serial=f"{serial_prefix}-C",
+                        vehicle_vin=vin,
+                        firmware_version=None,
+                    ),
+                )
+
+        # Flush-time path: with the pre-check blinded, the partial unique
+        # index itself rejects a second live device for the vehicle.
+        async def no_assigned_device(db_session: AsyncSession, vid: object) -> None:
+            return None
+
+        monkeypatch.setattr(
+            telematics_repository, "find_by_vehicle_id", no_assigned_device
+        )
+        with pytest.raises(TelematicConflictError):
+            async with session_factory.begin() as db:
+                await telematics_service.create_telematic(
+                    db,
+                    TelematicCreateRequest(
+                        telematic_serial=f"{serial_prefix}-D",
+                        vehicle_vin=vin,
+                        firmware_version=None,
+                    ),
+                )
+        monkeypatch.undo()
+
+        async with session_factory.begin() as db:
+            live_mapping = await telematics_service.resolve_mapping_by_serial(
+                db, f"{serial_prefix}-B"
+            )
+            await vehicle_service.soft_delete_vehicle(db, vehicle_id)
+            deleted_vehicle_mapping = (
+                await telematics_service.resolve_mapping_by_serial(
+                    db, f"{serial_prefix}-B"
+                )
+            )
+        assert live_mapping is not None
+        assert live_mapping.vehicle_id == vehicle_id
+        assert deleted_vehicle_mapping is None
     finally:
         await engine.dispose()
