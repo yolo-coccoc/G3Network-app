@@ -13,9 +13,13 @@
       "Bash(make lint)",
       "Bash(make backend-test)",
       "Bash(make domain-model-check)",
-    "Bash(make db-check)"
+      "Bash(make db-check)"
     ]
   },
+  "enabledMcpjsonServers": [
+    "postgres",
+    "context7"
+  ],
   "hooks": {
     "PreToolUse": [
       {
@@ -45,9 +49,5 @@
   },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true
-  },
-  "enabledMcpjsonServers": [
-    "postgres",
-    "context7"
-  ]
+  }
 }
