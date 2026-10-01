@@ -18,7 +18,7 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [future-resolved.md](./future-resolved.md) (currently
-items 9, 10 and 24), so a reference like "`future.md` item 10" can be found
+items 9, 10, 12 and 24), so a reference like "`future.md` item 10" can be found
 there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
@@ -152,17 +152,6 @@ there.
 - **Date recorded**: 2026-07-26
 - **Additional notes**: Implementation requires adding the dependency via `uv`, a config contract, and the corresponding CI job.
 - **Update 2026-10-01**: the dependency and the contracts now exist (`[tool.importlinter]` in `backend/pyproject.toml`, one `forbidden` contract per domain) and run locally in `make lint`/`make check` and the git pre-commit hook. Only the CI job remains, blocked on the CI platform decision.
-
----
-
-### 12. Alembic filter for objects managed by PostGIS/TimescaleDB
-
-- **Short description**: Add `include_object` to Alembic to skip `spatial_ref_sys` and internal indexes created by TimescaleDB.
-- **Purpose/role in the system**: Makes `alembic check` and autogenerate reflect only the schema managed by the application, avoiding migrations that would drop extension-owned objects.
-- **Reason for deferral**: The MVP hasn't settled on CI/CD yet and migrations are currently reviewed/run manually; the Alembic head is still correct.
-- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1), general database configuration.
-- **Date recorded**: 2026-07-26
-- **Additional notes**: Before enabling `alembic check` in CI or using autogenerate for a new migration, this item must be completed.
 
 ---
 

@@ -79,9 +79,56 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# Objects in ``public`` that extensions own or create on their own. They are
+# not in the application metadata, so without this filter autogenerate and
+# ``alembic check`` would propose dropping them.
+_EXTENSION_TABLES = frozenset({"spatial_ref_sys"})  # PostGIS
+
+
+def _include_object(
+    object_: object,
+    name: str | None,
+    type_: str,
+    reflected: bool,
+    compare_to: object | None,
+) -> bool:
+    """Tell autogenerate which database objects belong to the application.
+
+    Skips, only when they exist in the database but not in the models:
+    PostGIS's ``spatial_ref_sys`` table, and the single-column
+    ``<table>_<time column>_idx`` index TimescaleDB's ``create_hypertable``
+    adds to every hypertable. Everything else is compared normally.
+
+    Args:
+        object_: The SQLAlchemy schema object (table, index, column...).
+        name: The object's name.
+        type_: ``"table"``, ``"index"``, ``"column"``...
+        reflected: Whether the object was reflected from the database.
+        compare_to: The matching metadata object, or ``None`` if the models
+            don't declare it.
+
+    Returns:
+        ``False`` for the extension-managed objects above, ``True`` otherwise.
+    """
+    if not reflected or compare_to is not None:
+        return True
+    if type_ == "table":
+        return name not in _EXTENSION_TABLES
+    if type_ == "index":
+        columns = list(getattr(object_, "columns", []))
+        table = getattr(object_, "table", None)
+        if len(columns) == 1 and table is not None:
+            return name != f"{table.name}_{columns[0].name}_idx"
+    return True
+
+
 def do_run_migrations(connection: Connection) -> None:
     """Run migrations with connection."""
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=_include_object,
+    )
 
     with context.begin_transaction():
         context.run_migrations()

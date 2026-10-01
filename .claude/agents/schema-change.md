@@ -22,26 +22,19 @@ local database holds no data worth keeping; `make db-reset` wipes it.
 3. **Migration** — edit `backend/app/libs/db/migrations/versions/0001_baseline_schema.py`
    in place; never add a revision. Keep the hand-written parts its docstring
    lists (clear step, `charging_ocpp16_transaction_id_seq`, the hypertable
-   loop, the server defaults and `deleted_at` indexes the models don't
-   declare). For a large change you may regenerate the table section with
-   `alembic revision --autogenerate` against an **empty** database that has
-   only the extensions (`infra/db/init/01-extensions.sql`), then re-apply the
-   hand-written parts and delete the bogus `drop_table('spatial_ref_sys')`.
+   loop, the server defaults the models don't declare). For a large change
+   you may regenerate the table section with `alembic revision --autogenerate`
+   against an **empty** database that has only the extensions
+   (`infra/db/init/01-extensions.sql`), then re-apply the hand-written parts
+   (`env.py` keeps PostGIS/TimescaleDB-owned objects out of autogenerate).
    A new time-series table that must be a hypertable goes into `_HYPERTABLES`
    and needs its time column in the primary key.
 4. **Rebuild** — `make db-reset`.
 5. **Verify** — all must pass:
-   - `cd backend && uv run alembic check`. On the current baseline it reports
-     exactly these known, expected differences — anything **else** is drift
-     between the model and the migration that you must fix:
-     `remove_table spatial_ref_sys` (PostGIS); `remove_index` for the four
-     TimescaleDB time indexes `charging_ocpp_messages_occurred_at_idx`,
-     `charging_session_events_event_occurred_at_idx`,
-     `charging_session_measurements_sampled_at_idx`,
-     `vehicle_telemetry_recorded_at_idx`; and `remove_index` for
-     `ix_drivers_deleted_at`, `ix_fleets_deleted_at`, `ix_telematics_deleted_at`
-     (declared only in the migration). Update this list in this file if the
-     change legitimately alters it.
+   - `make db-check` (`alembic check`) must print "No new upgrade operations
+     detected". Any reported operation is drift between the models and the
+     migration: fix whichever side is wrong. (Server defaults are not
+     compared — check those by reading the migration.)
    - `make check` (includes the domain-model check against the models).
    - `make backend-test-integration` (builds, tears down and rebuilds the
      baseline on a temporary database and checks the hypertables).
@@ -51,6 +44,5 @@ local database holds no data worth keeping; `make db-reset` wipes it.
 
 ## Report
 
-Do not commit. Reply with: files changed, the `alembic check` result (and
-whether only the known differences remain), and the results of `make check`
+Do not commit. Reply with: files changed, the `make db-check` result, and the results of `make check`
 and `make backend-test-integration`.

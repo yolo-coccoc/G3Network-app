@@ -1,7 +1,7 @@
 # G3Network - Makefile
 # Common commands used for development
 
-.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test backend-test-integration format lint domain-model-check check install-hooks db-migrate db-reset
+.PHONY: help infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test backend-test-integration format lint domain-model-check check install-hooks db-check db-migrate db-reset
 
 # Default: show help
 help:
@@ -35,6 +35,7 @@ help:
 	@echo "Database:"
 	@echo "  make db-migrate     - Run Alembic migrations"
 	@echo "  make db-reset       - Clear the database and rebuild it from the baseline (wipes all data)"
+	@echo "  make db-check       - Check the database built by the migration matches the models (alembic check)"
 	@echo ""
 
 # === INFRASTRUCTURE ===
@@ -129,6 +130,12 @@ lint:
 # generated domain-model views are current.
 domain-model-check:
 	uv run --project backend --with pydbml --with openpyxl python .claude/skills/domain-model/scripts/domain_model.py check
+
+# Compares the live database (after make db-reset) with the SQLAlchemy models;
+# "No new upgrade operations detected" means the baseline migration and the
+# models agree. env.py filters out PostGIS/TimescaleDB-owned objects.
+db-check:
+	cd backend && uv run alembic check
 
 # The gate the pre-commit hook runs. The PostgreSQL integration tests are not
 # part of it (they need the database); run backend-test-integration for schema work.

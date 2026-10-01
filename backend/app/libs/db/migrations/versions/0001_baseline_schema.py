@@ -15,9 +15,9 @@ Never run this migration against a database holding data that must be kept.
 Objects the SQLAlchemy models do not describe, and which autogenerate
 therefore cannot produce, are written by hand at the end of ``upgrade()``:
 the OCPP 1.6J transaction-ID sequence and the four TimescaleDB hypertables.
-The three ``deleted_at`` indexes on drivers/fleets/telematics and the three
-server defaults (``maintenance_status``, ``activation_status``,
-``schema_version``) are also hand-added: the models do not declare them.
+The three server defaults (``maintenance_status``, ``activation_status``,
+``schema_version``) are also hand-added: the models do not declare them, and
+``alembic check`` does not compare server defaults.
 
 Revision ID: 0001_baseline_schema
 Revises:

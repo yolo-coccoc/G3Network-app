@@ -12,7 +12,8 @@
       "Bash(make check)",
       "Bash(make lint)",
       "Bash(make backend-test)",
-      "Bash(make domain-model-check)"
+      "Bash(make domain-model-check)",
+    "Bash(make db-check)"
     ]
   },
   "hooks": {

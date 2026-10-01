@@ -56,7 +56,7 @@ class DriverModel(Base):
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     def __repr__(self) -> str:

@@ -45,6 +45,18 @@
 
 ---
 
+### 12. Alembic filter for objects managed by PostGIS/TimescaleDB — Resolved
+
+- **Short description**: Add `include_object` to Alembic to skip `spatial_ref_sys` and internal indexes created by TimescaleDB.
+- **Purpose/role in the system**: Makes `alembic check` and autogenerate reflect only the schema managed by the application, avoiding migrations that would drop extension-owned objects.
+- **Reason for deferral**: The MVP hasn't settled on CI/CD yet and migrations are currently reviewed/run manually; the Alembic head is still correct.
+- **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1), general database configuration.
+- **Date recorded**: 2026-07-26
+- **Additional notes**: Before enabling `alembic check` in CI or using autogenerate for a new migration, this item must be completed.
+- **Resolution (2026-10-01)**: `backend/app/libs/db/migrations/env.py` now passes an `include_object` filter that skips, only when they exist in the database but not in the models, PostGIS's `spatial_ref_sys` table and TimescaleDB's single-column `<table>_<time column>_idx` hypertable indexes. The three `deleted_at` indexes that only the migration declared (drivers, fleets, telematics) are now declared in the models too. `alembic check` (`make db-check`) reports "No new upgrade operations detected" on a database built by `make db-reset`, and still detects real drift (verified by removing an index from a model). Server defaults are not compared (`compare_server_default` stays off). Not in CI, which is still undecided.
+
+---
+
 ### 24. Clear separation of configuration between `config.py` and `.env` — Completed
 
 - **Short description**: Standardize the boundary between the schema/default configuration in `backend/app/libs/common/config.py` and the environment-specific runtime values in `backend/.env`.

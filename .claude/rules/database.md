@@ -20,12 +20,14 @@ migration history to preserve, so a schema change never adds a revision:
    table section with `alembic revision --autogenerate` against an **empty**
    database that has only the extensions, then re-apply the hand-written parts
    listed in its module docstring (clear step, sequence, hypertables, and the
-   indexes/server defaults the models don't declare) and delete the bogus
-   `drop_table('spatial_ref_sys')` autogenerate emits.
+   server defaults the models don't declare). `env.py`'s `include_object`
+   filter keeps autogenerate away from PostGIS/TimescaleDB-owned objects.
 3. Run `make db-reset`: `alembic stamp --purge base` forgets the old revision
    without running a downgrade, then `upgrade head` clears every application
    object and recreates the schema.
-4. Run the tests, including `RUN_DB_INTEGRATION=1` for the PostgreSQL suite.
+4. Run `make db-check` (`alembic check`: must say "No new upgrade operations
+   detected" — anything else is drift between the models and the migration),
+   then `make check` and `make backend-test-integration`.
 
 Invariants of the baseline:
 - The clear step drops only tables, sequences and enum types in `public` that
