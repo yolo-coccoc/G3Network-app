@@ -34,8 +34,8 @@ infra/.env
 *.swp
 *.swo
 
-# === AI AGENT (private rulebook, subagents, memory — not shared via git) ===
-.claude/
+# === AI AGENT (.claude/ rules, skills and agents are tracked; personal overrides are not) ===
+.claude/settings.local.json
 
 # === OS ===
 .DS_Store

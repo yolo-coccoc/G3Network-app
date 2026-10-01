@@ -37,8 +37,8 @@
 This file only holds general direction and the rules that always apply.
 Details for each topic live under `.claude/rules/` — open the right file when
 a task touches that topic, no need to read them all every time. The
-`.claude/` directory is not committed to git (see `repo-conventions.md`); it
-exists locally only to guide the agent.
+`.claude/` directory (rules, skills, agents) is tracked in git; only
+`.claude/settings.local.json` (personal overrides) is ignored.
 
 | Topic | File | Read when |
 |---|---|---|
