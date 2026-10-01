@@ -26,14 +26,17 @@
   `overview.md` (domain map, data ownership, open decisions), one page per
   domain, and `domain-model.xlsx` (Vietnamese, for business readers: a
   "Tổng quan" index sheet, then one sheet per table). Edit only the `.dbml`,
-  then regenerate (the local `domain-model` skill has the commands)
+  then regenerate (the `domain-model` skill has the commands)
 - `docs/02-planners/` - One implementation planner per domain/feature (step-by-step build log,
   decisions made, evidence of what was tested); read the relevant planner before resuming work
   on a domain it covers, and add/update a planner when starting a new one.
   Once a planner's status is ✅ Done, move it to `docs/02-planners/done/`
-  (it still records the decisions for that domain — read it before extending one)
+  (it still records the decisions for that domain — read it before extending one).
+  New planners start from `docs/02-planners/_TEMPLATE.md`
 - `docs/03-specifications/` - External specs and wire contracts (OCPP charger
   docs, the telematics MQTT contract `mqtt-spec.md`)
+- `docs/04-responses/` - Point-in-time analyses answering a specific question
+  (e.g. charger spec vs current system); dated, may cite mismatch IDs
 - `docs/99-archive/` - Point-in-time or superseded documents kept for history;
   never treat them as current
 
@@ -44,8 +47,9 @@
 This file only holds general direction and the rules that always apply.
 Details for each topic live under `.claude/rules/` — open the right file when
 a task touches that topic, no need to read them all every time. The
-`.claude/` directory (rules, skills, agents) is tracked in git; only
-`.claude/settings.local.json` (personal overrides) is ignored.
+`.claude/` directory (rules, skills, agents, hooks, shared settings) is
+tracked in git; only `.claude/settings.local.json` (personal overrides) and
+`.claude/worktrees/` (agent worktrees) are ignored.
 
 | Topic | File | Read when |
 |---|---|---|
@@ -57,13 +61,36 @@ a task touches that topic, no need to read them all every time. The
 | Backend convention — transaction/time/layer/worker | [backend-runtime-conventions.md](./.claude/rules/backend-runtime-conventions.md) | Writing service/repository code, managing session/transaction, background workers, checklist before finishing a backend task |
 | Repo-wide conventions | [repo-conventions.md](./.claude/rules/repo-conventions.md) | Commit, branch, PR, secrets, deferring/removing a component |
 | Database | [database.md](./.claude/rules/database.md) | Writing/reviewing a migration, changing the schema |
-| Open questions | [open-questions.md](./.claude/rules/open-questions.md) | Touching an area that's not yet decided (CI/CD, secrets management, vehicle-app protocol) |
+| Open questions | [open-questions.md](./.claude/rules/open-questions.md) | Touching an area that's not yet decided (CI/CD, secrets management, vehicle-app protocol, charger vendor questions and non-software blockers) |
 | Agent tooling (hooks, agents, skills, MCP, plugin) | [dev-environment.md](./.claude/rules/dev-environment.md#claude-code-tooling-checked-in-under-claude-and-mcpjson) | Choosing a project agent/skill, or a hook/MCP server misbehaves |
 | Collaboration conventions | [collaboration-conventions.md](./.claude/rules/collaboration-conventions.md) | Every prompt — not backend-task-scoped like the rest of this table |
 
 `web-portal/` and `vehicle-app/` have no active source yet — they'll get
 their own conventions once the first task for that part starts; don't write
 them in advance.
+
+---
+
+## How a feature gets built
+
+Workspace setup is one command: `make setup` (see README.md). Then, for each
+piece of work, use the project's skills and agents in this order — each one
+holds the detailed steps, so follow it rather than improvising:
+
+1. **`start-feature <F-XX>`** — gather what the feature list, planners,
+   future.md, open questions and the DBML already say; write the planner from
+   `docs/02-planners/_TEMPLATE.md`; design tables in the DBML; **stop for the
+   owner to confirm the scope decisions**. No code before that.
+2. **`new-domain`** — only if the feature needs a new bounded context.
+3. **`schema-change` agent** — any table/column/index/enum change (model +
+   DBML + baseline migration + `make db-reset` + `make db-check`).
+4. Implement the planner's steps; `make check` after each; tick the step with
+   its evidence. Load **`ocpp16-reference`** for charger/OCPP work.
+5. **`e2e-sim`** — when behaviour crosses processes (MQTT ingestion, OCPP
+   gateway, API).
+6. **`finish-task`** — gate, integration tests, **`convention-reviewer`**
+   agent, **`docs-sync`** agent, then commit on `master` (the pre-commit hook
+   runs `make check` again).
 
 ---
 
