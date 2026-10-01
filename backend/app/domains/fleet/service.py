@@ -1056,7 +1056,7 @@ async def find_current_fleet_id_by_vehicle(
 
 
 async def list_geofences_containing(
-    db: AsyncSession, fleet_id: UUID, latitude: float, longitude: float
+    db: AsyncSession, fleet_id: UUID, *, latitude: float, longitude: float
 ) -> list[GeofenceReference]:
     """List a fleet's live geofences that cover a point. Public cross-domain entry point.
 

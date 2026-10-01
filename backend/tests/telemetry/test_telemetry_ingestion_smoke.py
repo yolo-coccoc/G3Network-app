@@ -245,7 +245,9 @@ def test_detect_soh_alert(
     reading carries real risk.
     """
     assert (
-        telemetry_detection.detect_soh_alert(previous_soh, current_soh, 70.0)
+        telemetry_detection.detect_soh_alert(
+            previous_soh=previous_soh, current_soh=current_soh, threshold_percent=70.0
+        )
         is expected
     )
 

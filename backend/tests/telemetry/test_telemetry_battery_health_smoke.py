@@ -26,7 +26,7 @@ _END = datetime(2026, 9, 8, tzinfo=timezone.utc)
 def test_estimated_capacity_scales_nominal_capacity_by_soh() -> None:
     """90% SOH of a 400 kWh pack is 360 kWh usable."""
     assert telemetry_reports.calculate_estimated_capacity_kwh(
-        90.0, 400.0
+        soh_percent=90.0, battery_capacity_kwh=400.0
     ) == pytest.approx(360.0)
 
 
@@ -39,7 +39,7 @@ def test_estimated_capacity_is_none_when_an_input_is_unknown(
     """No estimate without both SOH and a recorded capacity (no default capacity)."""
     assert (
         telemetry_reports.calculate_estimated_capacity_kwh(
-            soh_percent, battery_capacity_kwh
+            soh_percent=soh_percent, battery_capacity_kwh=battery_capacity_kwh
         )
         is None
     )

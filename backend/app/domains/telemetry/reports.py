@@ -168,7 +168,7 @@ def calculate_energy_kwh(soc_percent: float, battery_capacity_kwh: float) -> flo
     return soc_percent / 100.0 * battery_capacity_kwh
 
 
-def calculate_energy_cost_vnd(energy_kwh: float, cost_per_kwh_vnd: float) -> float:
+def calculate_energy_cost_vnd(*, energy_kwh: float, cost_per_kwh_vnd: float) -> float:
     """Price energy at a flat tariff (F-A6).
 
     Args:
@@ -297,7 +297,9 @@ def _build_operating_metrics(
     energy_consumed_kwh = calculate_energy_kwh(
         window_summary.soc_discharge_percent, battery_capacity_kwh
     )
-    energy_cost_vnd = calculate_energy_cost_vnd(energy_consumed_kwh, cost_per_kwh_vnd)
+    energy_cost_vnd = calculate_energy_cost_vnd(
+        energy_kwh=energy_consumed_kwh, cost_per_kwh_vnd=cost_per_kwh_vnd
+    )
 
     energy_per_100km_kwh: float | None = None
     cost_per_km_vnd: float | None = None
@@ -436,7 +438,8 @@ def build_fleet_vehicle_operating_row(
     """
     operating_summary = report_vehicle.operating_summary
     energy_cost_vnd = calculate_energy_cost_vnd(
-        operating_summary.energy_consumed_kwh, cost_per_kwh_vnd
+        energy_kwh=operating_summary.energy_consumed_kwh,
+        cost_per_kwh_vnd=cost_per_kwh_vnd,
     )
     energy_per_100km_kwh: float | None = None
     cost_per_km_vnd: float | None = None
@@ -497,7 +500,9 @@ def build_fleet_operating_report(
     ]
     total_distance_km = sum(row.distance_km for row in vehicle_rows)
     total_energy_kwh = sum(row.energy_consumed_kwh for row in vehicle_rows)
-    total_cost_vnd = calculate_energy_cost_vnd(total_energy_kwh, cost_per_kwh_vnd)
+    total_cost_vnd = calculate_energy_cost_vnd(
+        energy_kwh=total_energy_kwh, cost_per_kwh_vnd=cost_per_kwh_vnd
+    )
     totals = FleetOperatingReportTotals(
         vehicle_count=len(vehicle_rows),
         sample_count=sum(row.sample_count for row in vehicle_rows),
@@ -627,7 +632,7 @@ def serialize_fleet_operating_report_csv(report: FleetOperatingReportResponse) -
 
 
 def calculate_estimated_capacity_kwh(
-    soh_percent: float | None, battery_capacity_kwh: float | None
+    *, soh_percent: float | None, battery_capacity_kwh: float | None
 ) -> float | None:
     """Estimate usable pack capacity from SOH and the nominal capacity (F-A3).
 
@@ -672,7 +677,8 @@ def build_battery_health_response(
             soh_percent=health_day.soh_percent,
             cycle_count=health_day.cycle_count,
             estimated_capacity_kwh=calculate_estimated_capacity_kwh(
-                health_day.soh_percent, vehicle_reference.battery_capacity_kwh
+                soh_percent=health_day.soh_percent,
+                battery_capacity_kwh=vehicle_reference.battery_capacity_kwh,
             ),
         )
         for health_day in health_days

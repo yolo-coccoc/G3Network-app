@@ -194,10 +194,13 @@ async def raise_geofence_alerts_for_reading(
         previous_telemetry
     )
     previous_geofences = await fleet_service.list_geofences_containing(
-        db, fleet_id, previous_latitude, previous_longitude
+        db, fleet_id, latitude=previous_latitude, longitude=previous_longitude
     )
     current_geofences = await fleet_service.list_geofences_containing(
-        db, fleet_id, message.location.latitude, message.location.longitude
+        db,
+        fleet_id,
+        latitude=message.location.latitude,
+        longitude=message.location.longitude,
     )
     for geofence, transition in detect_geofence_transitions(
         previous_geofences, current_geofences

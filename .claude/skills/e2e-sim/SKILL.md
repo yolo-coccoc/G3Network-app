@@ -18,6 +18,10 @@ make db-reset          # clear + rebuild from 0001_baseline_schema
 
 ## 2. Start the services (background, logs in a scratch dir)
 
+Start them **after** `make db-reset`. A service that was running across a
+reset keeps asyncpg statements cached against the dropped schema and fails
+with `InvalidCachedStatementError` — restart it.
+
 ```bash
 LOG=/tmp/g3-e2e && mkdir -p $LOG && cd backend
 nohup uv run uvicorn app.api.main:app --port 8000          > $LOG/api.log 2>&1 &

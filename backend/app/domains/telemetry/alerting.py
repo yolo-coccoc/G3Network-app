@@ -255,9 +255,9 @@ async def raise_alerts_for_reading(
 
     previous_soh = previous_telemetry.soh_percent if previous_telemetry else None
     if telemetry_detection.detect_soh_alert(
-        previous_soh,
-        message.battery.soh_percent,
-        settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT,
+        previous_soh=previous_soh,
+        current_soh=message.battery.soh_percent,
+        threshold_percent=settings.TELEMETRY_SOH_ALERT_THRESHOLD_PERCENT,
     ):
         assert message.battery.soh_percent is not None, (
             "detect_soh_alert() only returns True when current_soh is not None"

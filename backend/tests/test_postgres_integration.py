@@ -1613,13 +1613,13 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
             assert geofence.boundary.coordinates == [square_ring]
 
             inside = await fleet_service.list_geofences_containing(
-                db, hanoi.fleet_id, 10.775, 106.705
+                db, hanoi.fleet_id, latitude=10.775, longitude=106.705
             )
             outside = await fleet_service.list_geofences_containing(
-                db, hanoi.fleet_id, 10.80, 106.705
+                db, hanoi.fleet_id, latitude=10.80, longitude=106.705
             )
             other_fleet = await fleet_service.list_geofences_containing(
-                db, saigon.fleet_id, 10.775, 106.705
+                db, saigon.fleet_id, latitude=10.775, longitude=106.705
             )
             assert [reference.geofence_id for reference in inside] == [
                 geofence.geofence_id
@@ -1642,7 +1642,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
             assert moved.boundary.coordinates == [moved_ring]
             assert (
                 await fleet_service.list_geofences_containing(
-                    db, hanoi.fleet_id, 10.775, 106.705
+                    db, hanoi.fleet_id, latitude=10.775, longitude=106.705
                 )
                 == []
             )
@@ -1651,7 +1651,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
             )
             assert (
                 await fleet_service.list_geofences_containing(
-                    db, hanoi.fleet_id, 10.775, 107.705
+                    db, hanoi.fleet_id, latitude=10.775, longitude=107.705
                 )
                 == []
             )

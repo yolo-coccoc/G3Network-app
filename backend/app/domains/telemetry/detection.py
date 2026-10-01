@@ -60,6 +60,7 @@ def detect_battery_alert_level(
 
 
 def detect_soh_alert(
+    *,
     previous_soh: float | None,
     current_soh: float | None,
     threshold_percent: float,
