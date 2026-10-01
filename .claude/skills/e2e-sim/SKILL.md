@@ -5,7 +5,8 @@ description: Run this backend end to end on the local stack with the simulators 
 
 # End-to-end simulator run
 
-Verified on 2026-10-01 against the baseline schema. Run from the repo root
+Verified on 2026-10-01 against the baseline schema, before and after the
+source refinement (identical results). Run from the repo root
 unless a step says otherwise. **Step 1 wipes the local database.**
 
 ## 1. Infrastructure and a clean database
@@ -79,8 +80,13 @@ pkill -f "[a]pp.domains.telemetry.ingestion.entrypoint"
 pkill -f "[a]pp.domains.charging_stations.ocpp.entrypoint"
 ss -ltn | grep -E ':(8000|9000) ' || echo stopped
 ```
-The `[x]` bracket keeps `pkill -f` from matching (and killing) the shell that
-runs it. `make infra-down` stops the containers and keeps the data.
+Run these in a **separate shell command** from the one that started the
+services: `pkill -f` matches full command lines, so a shell whose own script
+also contains the start commands (`uvicorn app.api.main:app ...`) kills
+itself, bracket or not. The `[x]` bracket only stops the pattern matching the
+`pkill` text itself. SIGTERM (the `pkill` default) is a clean stop: ingestion
+logs "Telemetry ingestion stopped" and exits 0. `make infra-down` stops the
+containers and keeps the data.
 
 ## When something fails
 
