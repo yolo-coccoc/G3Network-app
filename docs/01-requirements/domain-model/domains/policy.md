@@ -10,7 +10,7 @@ Warranty-linked charging rules and the violations detected against them.
 
 - A **policy** has many immutable **versions**; the values are G3 Mobility's decision.
 - A policy is **assigned** to a vehicle, a fleet, or a vehicle model.
-- A **violation** links one charging session to the policy version it broke. This needs the session → vehicle link (D4).
+- A **violation** links one charging session to the policy version it broke. This needs the session → vehicle link.
 
 ## Diagram
 
@@ -26,37 +26,37 @@ erDiagram
   }
   charging_policy_assignments {
     uuid assignment_id PK
-    uuid account_id FK
+    uuid organization_id FK
     uuid policy_id FK
     uuid vehicle_id FK
     uuid fleet_id FK
   }
   policy_violations {
     uuid violation_id PK
-    uuid account_id FK
+    uuid organization_id FK
     uuid session_id FK
     uuid vehicle_id FK
     uuid policy_version_id FK
   }
   charging_policy_versions }o..|| charging_policies : "policy_id"
   charging_policy_versions }o..|| users : "created_by"
-  charging_policy_assignments }o..|| customer_accounts : "account_id"
+  charging_policy_assignments }o..|| organizations : "organization_id"
   charging_policy_assignments }o..|| charging_policies : "policy_id"
   charging_policy_assignments }o..o| vehicles : "vehicle_id"
   charging_policy_assignments }o..o| fleets : "fleet_id"
-  policy_violations }o..|| customer_accounts : "account_id"
+  policy_violations }o..|| organizations : "organization_id"
   policy_violations }o..|| charging_sessions : "session_id"
   policy_violations }o..|| vehicles : "vehicle_id"
   policy_violations }o..|| charging_policy_versions : "policy_version_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [customer_accounts](identity.md#customer_accounts), [fleets](fleet.md#fleets), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [fleets](fleet.md#fleets), [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
 ### charging_policies
 
-📋 planned · owner: **g3** · features: F-B1
+**No. 35** · 📋 planned · owner: **internal** · features: F-B1
 
 A named warranty charging policy defined by G3 Mobility.
 
@@ -75,7 +75,7 @@ A named warranty charging policy defined by G3 Mobility.
 
 ### charging_policy_versions
 
-📋 planned · owner: **g3** · features: F-B1
+**No. 36** · 📋 planned · owner: **internal** · features: F-B1
 
 One immutable version of a policy's rules. Every version is kept for audit.
 
@@ -102,14 +102,14 @@ One immutable version of a policy's rules. Every version is kept for audit.
 
 ### charging_policy_assignments
 
-📋 planned · owner: **customer** · features: F-B1
+**No. 37** · 📋 planned · owner: **customer** · features: F-B1
 
 Which policy applies to a vehicle, a fleet, or a vehicle model.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `0000000e-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account the assignment belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization the assignment belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `policy_id` | uuid | no | FK | [charging_policies](#charging_policies).policy_id (on delete restrict) | Policy applied. | `b8e5a2d9-3c6f-4b1e-a9d7-5f2c0e8b1aee` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle it applies to, if scoped to one vehicle. Exactly one of vehicle_id / fleet_id / vehicle_model is set. | `NULL` |
 | `fleet_id` | uuid | yes | FK | [fleets](fleet.md#fleets).fleet_id (on delete restrict) | Fleet it applies to, if scoped to a fleet. | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
@@ -119,7 +119,7 @@ Which policy applies to a vehicle, a fleet, or a vehicle model.
 
 ### policy_violations
 
-📋 planned · owner: **customer** · features: F-B3, F-B6
+**No. 38** · 📋 planned · owner: **customer** · features: F-B3, F-B6
 
 A charging session that broke a policy, with evidence. Consequences are
 still an open business question (feature-list item 3).
@@ -127,7 +127,7 @@ still an open business question (feature-list item 3).
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `violation_id` | uuid | no | PK |  | Internal ID of the violation. | `0000000f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account of the vehicle. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization of the vehicle. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `session_id` | uuid | no | FK | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | Charging session that broke the policy. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle concerned. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `policy_version_id` | uuid | no | FK | [charging_policy_versions](#charging_policy_versions).version_id (on delete restrict) | Exact policy version that was broken. | `c7d4f1a8-2b5e-4c9d-8f6a-1e3b0d7c4aff` |

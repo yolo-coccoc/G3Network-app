@@ -60,12 +60,12 @@ every DBML edit.
   Not-yet-decided features go in the `unassigned` group.
 - **Every table note starts with a tag line**, then a one- or two-sentence
   business description:
-  `@status built|planned|proposed @owner customer|g3|two-party|undecided @features F-xx,F-yy [@hypertable <col>]`
+  `@status built|planned|proposed @owner customer|internal|two-party|undecided @features F-xx,F-yy [@hypertable <col>]`
   - `built`: exists in the models; must match them exactly.
   - `planned`: a feature in `feature-list.md` needs it.
   - `proposed`: not in the feature list, but the model needs it. Say why in the note.
   - `customer`: owned by one customer account (the tenant), so it must have
-    `account_id` (the generator warns otherwise). `g3`: G3's shared data.
+    `organization_id` (the generator warns otherwise). `internal`: our own data, shared across organizations.
     `two-party`: a G3 asset used by a customer. `undecided`: cite the decision ID.
 - **Every column has a meaning and an example**, both in its note:
   `note: 'What the column holds, in one plain sentence. @example 51D-123.45'`.
@@ -90,6 +90,34 @@ every DBML edit.
 - **A proposed column on a built table** gets a note starting with
   `@planned`, optionally with decision IDs: `@planned D1 D3: why`.
   `check` ignores it. Remove the tag once the migration adds the column.
+- **Change history (decision D8, `.claude/rules/database.md`)**: decided
+  **per table** in the review (on for tables whose changes must be audited,
+  e.g. profile details). When on, the source table's tag line says
+  `@tracked *`: a change to **any** column (the primary key aside) writes a
+  history row. Add `@untracked col1,col2` only for machine-updated columns
+  that would flood the history (heartbeat times, live device status); most
+  tables have none. The history table `<singular>_history` is **generated
+  by the tool** (never written in the DBML; a hand-written `@history-of`
+  table is an error): every source column (same type, nullable, no
+  pk/unique, examples copied) plus `history_id`, `changed_at`, `changed_by`
+  (→ `users`), an FK to the source key and an index on (key, `changed_at`).
+  The views mark tracked columns with 🔍. History tables are not reviewed
+  one by one; only special cases are discussed.
+- **Profile vs state (`.claude/rules/database.md`)**: decisions about a
+  thing (incl. a business status, even when a business rule sets it) stay in
+  its profile table; observations written often by devices or activity
+  (`last_seen_at`, `last_login_at`, device-reported status/firmware) go to a
+  1:1 `<singular>_state` table with no history. Derived values (`is_online`)
+  are never stored. Built tables get their target split designed now and
+  are refactored in bulk after the design review.
+  A state table is designed by hand and tagged `@state-of <main table>`
+  (same domain).
+- **Numbering (generated)**: main and state tables share one sequence,
+  1, 2, ..., in design order (domain order, then table order); a state
+  table takes the number right after its main table. A generated history
+  table is `<N>.h` of its source, listed right after it. Overviews count
+  main / state / history tables. Numbers follow the DBML order, so
+  inserting a table renumbers the ones after it.
 - **Every foreign key is a standalone `Ref`**, FK side first, with its
   delete action: `Ref: a.x_id > b.x_id [delete: restrict]`. Use `-` for
   one-to-one. No composite FKs.
@@ -110,7 +138,7 @@ every DBML edit.
 1. Read the feature in `docs/01-requirements/feature-list.md` and the
    relevant planner in `docs/02-planners/`.
 2. List the nouns and check whether each one already exists as a table.
-3. For each new entity, decide the owner (`customer` / `g3` / `two-party`)
+3. For each new entity, decide the owner (`customer` / `internal` / `two-party`)
    and domain. Respect `.claude/rules/domain-boundaries.md`: a `Ref` from
    domain A to domain B is a dependency A → B. Identity must reference no
    other domain; put the FK on the other side instead.
@@ -138,7 +166,7 @@ To hand the design to the BOD or anyone who reviews in Excel, send
 table sheet is the L3 detail.
 
 ## Gotchas
-- Links to the tenant table (`customer_accounts` via `account_id`) are left
+- Links to the tenant table (`organizations` via `organization_id`) are left
   out of the L1 map on purpose and summarized in one sentence; the
   generator's `TENANT_TABLE` constant controls this.
 - pydbml supports core DBML only. Keep to tables, enums, refs, indexes,

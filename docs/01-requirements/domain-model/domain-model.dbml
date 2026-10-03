@@ -8,7 +8,7 @@
 //   - Every table belongs to exactly one TableGroup; a TableGroup is a
 //     backend domain (a bounded context).
 //   - Every table note starts with a tag line:
-//       @status built|planned|proposed  @owner customer|g3|two-party|undecided
+//       @status built|planned|proposed  @owner customer|internal|two-party|undecided
 //       @features F-xx,F-yy  [@hypertable <time column>]
 //     built    = exists in backend/app/domains/*/models.py (must match exactly)
 //     planned  = required by a feature in feature-list.md, not built yet
@@ -36,8 +36,9 @@ domain owns it, who owns its data, and how it links to the rest.
 **Status:** ✅ built (in the code today) · 📋 planned (a feature needs it)
 · 🆕 proposed (not in the feature list, but the model needs it).
 
-**Data owner:** *customer* = belongs to one customer account (a tenant) and
-carries `account_id`; *g3* = G3's own data, shared across customers;
+**Data owner:** *customer* = belongs to one organization (normally a customer; a G3
+company can own such rows too, e.g. G3 Mobility's trucks) and carries
+`organization_id`; *internal* = our own data, shared across organizations;
 *two-party* = a G3 asset used by a customer (e.g. a charging session);
 *undecided* = waiting on an open decision.
 
@@ -161,107 +162,257 @@ Enum supportcasestatus {
 }
 
 // ===========================================================================
-// identity: accounts, users, roles, access audit (F-F1)
+// identity: organizations, users, roles, access audit (F-F1)
 // ===========================================================================
 
-Table customer_accounts {
-  account_id uuid [pk, note: 'Internal ID of the customer account (the tenant). @vi Mã nội bộ của tài khoản khách hàng (tenant). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  account_type varchar(20) [not null, note: 'Whether the customer is a company or an individual truck owner. Values: ORGANIZATION | INDIVIDUAL (decision D1). @vi Khách hàng là doanh nghiệp hay chủ xe cá nhân. Giá trị: ORGANIZATION | INDIVIDUAL (quyết định D1). @example ORGANIZATION']
-  display_name varchar(200) [not null, note: 'Customer name shown in the portal and on invoices. @vi Tên khách hàng hiển thị trên portal và hóa đơn. @example Công ty CP Vận tải Minh Phát']
-  tax_code varchar(20) [note: 'Vietnamese tax code, required for e-invoices. @vi Mã số thuế, bắt buộc để xuất hóa đơn điện tử. @example 0312345678']
-  status varchar(20) [not null, note: 'Account lifecycle; SUSPENDED blocks logins without losing data. Values: ACTIVE | SUSPENDED | CLOSED. @vi Vòng đời tài khoản; SUSPENDED chặn đăng nhập nhưng không mất dữ liệu. Giá trị: ACTIVE | SUSPENDED | CLOSED. @example ACTIVE']
+Table organizations {
+  organization_id uuid [pk, note: 'Internal ID of the organization. @vi Mã nội bộ của tổ chức. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  is_internal boolean [not null, note: 'TRUE for our own organization(s), the ones running this platform (outsourced staff acting for us, e.g. a hired sales company, are members of it too). Its users see data across every organization and get every feature (no plan limit), still limited to their role (decision D7); only an internal organization may hold HEAD_ADMIN and CO_ADMIN. FALSE for every other organization (customers, partners), whose users only see data related to their own organization, with features limited by its plan. A partner is recognised by having a repair_partners profile, not by this flag. The most security-sensitive column of the table: setting it grants cross-organization access. @vi TRUE với (các) tổ chức của chính chúng ta, đơn vị vận hành nền tảng (nhân sự thuê ngoài làm thay chúng ta, ví dụ một công ty bán hàng thuê ngoài, cũng là thành viên của tổ chức này). Người dùng của tổ chức này xem được dữ liệu của mọi tổ chức và dùng được mọi tính năng (không giới hạn theo gói), vẫn trong phạm vi vai trò (quyết định D7); chỉ tổ chức nội bộ mới được có HEAD_ADMIN và CO_ADMIN. FALSE với mọi tổ chức khác (khách hàng, đối tác): người dùng chỉ thấy dữ liệu liên quan tới tổ chức của mình, tính năng giới hạn theo gói dịch vụ. Đối tác được nhận biết bằng hồ sơ repair_partners, không bằng cờ này. Cột nhạy cảm nhất của bảng: bật cờ này là cấp quyền xem dữ liệu của mọi tổ chức. @example false']
+  legal_form varchar(20) [not null, note: 'What kind of legal person the organization is, because the law treats them differently. COMPANY: a registered company (tax code of 10 digits, or 13 for a branch; invoices to the company). INDIVIDUAL: a private person, e.g. an owner-driver with one truck (the 12-digit citizen ID serves as tax code and is personal data: masked, consent required, every view audit-logged). Used to validate tax_code, apply the privacy rules and fill e-invoices. Internal organizations and partners are always COMPANY. Values: COMPANY | INDIVIDUAL. @vi Tổ chức là loại chủ thể pháp lý nào, vì pháp luật đối xử khác nhau. COMPANY: doanh nghiệp có đăng ký (mã số thuế 10 số, hoặc 13 số với chi nhánh; hóa đơn xuất cho doanh nghiệp). INDIVIDUAL: cá nhân, ví dụ chủ xe tự lái một xe (số CCCD 12 số dùng làm mã số thuế, là dữ liệu cá nhân: che khi hiển thị, cần sự đồng ý, mọi lượt xem đều ghi nhật ký). Dùng để kiểm tra mã số thuế, áp dụng quy định bảo vệ dữ liệu cá nhân và điền hóa đơn điện tử. Tổ chức nội bộ và đối tác luôn là COMPANY. Giá trị: COMPANY | INDIVIDUAL. @example COMPANY']
+  display_name varchar(200) [not null, note: 'Short name shown in the app and the portal. @vi Tên ngắn hiển thị trên app và portal. @example Minh Phát Logistics']
+  legal_name varchar(255) [not null, note: 'Full registered name of the company, or the full name of the person for an INDIVIDUAL; printed on invoices. @vi Tên đầy đủ theo đăng ký kinh doanh, hoặc họ tên đầy đủ với INDIVIDUAL; in trên hóa đơn. @example Công ty Cổ phần Vận tải Minh Phát']
+  tax_code varchar(20) [note: 'Tax code required for e-invoices. COMPANY: the company tax code (10 digits, or 13 for a branch). INDIVIDUAL: for now (since 1 Jul 2025, Circular 86/2024), the 12-digit citizen ID (CCCD) number serves as the personal tax code; it is personal data under Decree 13/2023. Unique among organizations not deleted. @vi Mã số thuế để xuất hóa đơn điện tử. COMPANY: mã số thuế doanh nghiệp (10 số, hoặc 13 số với chi nhánh). INDIVIDUAL: hiện tại (từ 1/7/2025, Thông tư 86/2024), số CCCD 12 số được dùng làm mã số thuế cá nhân; đây là dữ liệu cá nhân theo Nghị định 13/2023. Không trùng giữa các tổ chức chưa bị xóa. @example 0312345678']
+  address varchar(500) [note: 'Registered address, printed on invoices. @vi Địa chỉ đăng ký, in trên hóa đơn. @example 12 Nguyễn Văn Linh, Phường Tân Thuận Tây, Quận 7, TP.HCM']
+  status varchar(20) [not null, note: 'Organization lifecycle. ACTIVE: in service. SUSPENDED: temporarily stopped (e.g. unpaid debt), logins blocked, vehicle data still collected, reversible. CLOSED: no active contract, logins blocked, no new data, data kept for the legal retention period; reopened only when a new contract is signed. Values: ACTIVE | SUSPENDED | CLOSED. @vi Vòng đời tổ chức. ACTIVE: đang sử dụng. SUSPENDED: tạm ngừng (ví dụ nợ cước), chặn đăng nhập nhưng vẫn thu dữ liệu xe, có thể mở lại. CLOSED: không còn hợp đồng, chặn đăng nhập, không nhận dữ liệu mới, dữ liệu được giữ theo thời hạn luật định; chỉ mở lại khi ký hợp đồng mới. Giá trị: ACTIVE | SUSPENDED | CLOSED. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the organization is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example NULL']
+  account_manager_id uuid [note: 'Our SALES user responsible for this customer (one at a time); NULL when none is assigned. Reassignments are kept in organization_history. @vi Người dùng SALES của chúng ta phụ trách khách hàng này (mỗi lúc một người); NULL khi chưa giao. Lịch sử thay đổi người phụ trách được lưu trong organization_history. @example 0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
-  Note: '''@status proposed @owner g3 @features F-F1,F-H3
-The tenant: one customer of G3, either a transport company or an individual
-truck owner. Every customer-owned row points here through `account_id`.
-@vi-name Tài khoản khách hàng
-@vi Khách thuê (tenant): một khách hàng của G3, là doanh nghiệp vận tải hoặc chủ xe cá nhân. Mọi dữ liệu thuộc khách hàng đều trỏ về đây qua account_id.'''
+  deleted_at timestamptz [note: 'Soft-delete time, only for an organization created by mistake; a real customer or partner is CLOSED, never deleted. NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho tổ chức tạo nhầm; khách hàng hay đối tác thật được chuyển sang CLOSED, không bao giờ bị xóa. NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    tax_code [unique, name: 'uq_organizations_active_tax_code', note: 'WHERE deleted_at IS NULL']
+  }
+  Note: '''@status proposed @owner internal @features F-F1,F-H3 @tracked *
+Every party that people act for: customers (transport companies and
+individual owner-drivers), our own internal organization(s), and
+repair/rescue partners - all stored the same way. Every organization-owned
+row points here through `organization_id`; our own trucks are owned exactly
+like a customer's. Only `is_internal` sets organizations apart, for access:
+internal users see across organizations, everyone else only their own.
+There is no separate contact list: whoever must receive something (invoices,
+reminders, alerts) is a user holding the matching role. Contracts and
+service packages live in their own tables.
+@vi-name Tổ chức
+@vi Mọi bên mà người dùng đại diện: khách hàng (doanh nghiệp vận tải và chủ xe cá nhân tự lái), (các) tổ chức nội bộ của chính chúng ta, và đối tác sửa chữa/cứu hộ - tất cả được lưu như nhau. Mọi dữ liệu thuộc một tổ chức đều trỏ về đây qua organization_id; xe của chính chúng ta được sở hữu giống hệt xe của khách hàng. Chỉ is_internal phân biệt các tổ chức về quyền truy cập: người dùng nội bộ xem được dữ liệu của mọi tổ chức, còn lại chỉ xem dữ liệu của chính mình. Không có danh sách người liên hệ riêng: ai cần nhận thông tin (hóa đơn, nhắc nhở, cảnh báo) đều là người dùng giữ vai trò tương ứng. Hợp đồng và gói dịch vụ nằm ở bảng riêng.'''
 }
 
 Table users {
   user_id uuid [pk, note: 'Internal ID of the login. @vi Mã nội bộ của tài khoản đăng nhập. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  account_id uuid [note: 'Customer account the user belongs to; NULL for G3 staff. (decision D7) @vi Tài khoản khách hàng mà người dùng thuộc về; NULL với nhân viên G3 (quyết định D7). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  email varchar(255) [unique, note: 'Login e-mail, unique; optional for drivers who log in by phone. @vi Email đăng nhập, duy nhất; tài xế đăng nhập bằng SĐT thì có thể bỏ trống. @example dieuvan@minhphat.vn']
-  phone_number varchar(20) [unique, note: 'Login phone number in E.164 format, unique; used for OTP. @vi Số điện thoại đăng nhập (định dạng E.164), duy nhất; dùng nhận OTP. @example +84901234567']
-  display_name varchar(100) [not null, note: 'Name shown in the app and in audit logs. @vi Tên hiển thị trên app và trong nhật ký kiểm toán. @example Trần Thị Bình']
-  status varchar(20) [not null, note: 'Login lifecycle: invited, active, or locked by an admin. Values: INVITED | ACTIVE | LOCKED. @vi Trạng thái đăng nhập: đã mời, đang hoạt động, hoặc bị quản trị viên khóa. Giá trị: INVITED | ACTIVE | LOCKED. @example ACTIVE']
-  last_login_at timestamptz [note: 'Time of the latest successful login; NULL if never logged in. @vi Lần đăng nhập thành công gần nhất; NULL nếu chưa từng đăng nhập. @example 2026-09-14T23:10:00Z']
+  email varchar(255) [unique, note: 'E-mail, optional and unique when present. A message the user is entitled to (its service is in one of their roles and in their organization\'s plan) goes to the app, the fleet portal and, when an address is on file, this e-mail; with no address, nothing is e-mailed. There is no per-user channel choice. @vi Email, không bắt buộc, không trùng khi có. Thông tin mà người dùng được hưởng (dịch vụ đó nằm trong một vai trò của họ và trong gói của tổ chức) được gửi tới app, fleet portal và, khi có địa chỉ, tới email này; không có email thì không gửi email. Người dùng không tự chọn kênh nhận. @example dieuvan@minhphat.vn']
+  phone_number varchar(20) [not null, unique, note: 'Phone number in E.164 format, required and unique: the login ID (login is phone + password; other methods come later). @vi Số điện thoại (định dạng E.164), bắt buộc và không trùng: là tên đăng nhập (đăng nhập bằng số điện thoại + mật khẩu; các cách khác sẽ bổ sung sau). @example +84901234567']
+  full_name varchar(100) [not null, note: 'The person\'s full name, shown in the app, the portal and audit logs. @vi Họ và tên của người dùng, hiển thị trên app, portal và nhật ký kiểm toán. @example Trần Thị Bình']
+  status varchar(20) [not null, note: 'State of the whole account, across every organization: INVITED (no password set yet), ACTIVE, or LOCKED (only our HEAD_ADMIN/CO_ADMIN lock a whole account; an organization locks a person only in its own membership). Values: INVITED | ACTIVE | LOCKED. @vi Trạng thái của cả tài khoản, trên mọi tổ chức: INVITED (chưa đặt mật khẩu), ACTIVE, hoặc LOCKED (chỉ HEAD_ADMIN/CO_ADMIN của chúng ta khóa cả tài khoản; một tổ chức chỉ khóa người đó trong thành viên của tổ chức mình). Giá trị: INVITED | ACTIVE | LOCKED. @example ACTIVE']
+  created_by uuid [note: 'User who created this account (our sales/admin, an ORG_ADMIN, a fleet manager registering a driver); NULL when the person signed up themselves. @vi Người dùng đã tạo tài khoản này (nhân viên bán hàng/quản trị của chúng ta, ORG_ADMIN, quản lý đội xe khi đăng ký tài xế); NULL khi người dùng tự đăng ký. @example 0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
-  Note: '''@status planned @owner customer @features F-F1
-A person who can log in: fleet manager, driver, or G3 staff.
+  Note: '''@status planned @owner internal @features F-F1 @tracked *
+A person - one account per human, across every organization they work for
+(a person may belong to several, through memberships): customer staff, a
+driver, our own staff or a partner technician. What they may do comes from their roles (job titles);
+facts about a job (e.g. a driver's licence) live in a profile, and a DRIVER
+role requires an active driver profile.
 @vi-name Người dùng
-@vi Một người có thể đăng nhập: quản lý đội xe, tài xế hoặc nhân viên G3.'''
+@vi Một con người - mỗi người một tài khoản, dùng cho mọi tổ chức mà họ làm việc (một người có thể thuộc nhiều tổ chức, qua bảng memberships): nhân viên khách hàng, tài xế, nhân viên nội bộ hoặc kỹ thuật viên đối tác. Quyền của họ đến từ vai trò (chức danh); thông tin riêng của một công việc (ví dụ bằng lái của tài xế) nằm ở hồ sơ, và vai trò DRIVER cần một hồ sơ tài xế còn hiệu lực.'''
 }
 
-Table roles {
-  role_id uuid [pk, note: 'Internal ID of the role. @vi Mã nội bộ của vai trò. @example 5d1a9e3c-7b2f-4c6d-8e0a-2f4b6c8d0e33']
-  role_code varchar(50) [not null, unique, note: 'Stable code used by permission checks. e.g. ADMIN, CSKH, FLEET_MANAGER, DRIVER. @vi Mã cố định dùng khi kiểm tra quyền, ví dụ ADMIN, CSKH, FLEET_MANAGER, DRIVER. @example FLEET_MANAGER']
-  is_cross_tenant boolean [not null, note: 'TRUE if holders see every customer account (G3 staff roles). (decision D7) @vi TRUE nếu người giữ vai trò được xem mọi tài khoản khách hàng (vai trò nhân viên G3) (quyết định D7). @example false']
-  description varchar(200) [note: 'What the role may do, for admins. @vi Vai trò được làm gì, dành cho quản trị viên. @example Quản lý đội xe: xem xe, tài xế, báo cáo của công ty mình']
-  Note: '''@status planned @owner g3 @features F-F1
-A named set of permissions from the RBAC matrix.
-@vi-name Vai trò
-@vi Một nhóm quyền có tên, theo ma trận phân quyền (RBAC).'''
+Table memberships {
+  membership_id uuid [pk, note: 'Internal ID of the membership: one person in one organization. @vi Mã nội bộ của thành viên: một người trong một tổ chức. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  organization_id uuid [not null, note: 'Organization the person works for or acts for. @vi Tổ chức mà người đó làm việc hoặc đại diện. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  user_id uuid [not null, note: 'The person. @vi Người đó. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  status varchar(20) [not null, note: 'Standing of the person in this organization only. INVITED: added but not yet accepted (a person already registered elsewhere accepts the invitation in the app). ACTIVE. LOCKED: blocked here by the organization, without affecting their other organizations. Values: INVITED | ACTIVE | LOCKED. @vi Tư cách của người đó chỉ trong tổ chức này. INVITED: đã được thêm nhưng chưa chấp nhận (người đã có tài khoản ở nơi khác chấp nhận lời mời trên app). ACTIVE. LOCKED: bị tổ chức này chặn, không ảnh hưởng các tổ chức khác của họ. Giá trị: INVITED | ACTIVE | LOCKED. @example ACTIVE']
+  joined_at timestamptz [not null, note: 'When the person was added to the organization. @vi Thời điểm người đó được thêm vào tổ chức. @example 2026-09-01T02:00:00Z']
+  left_at timestamptz [note: 'When the person left (or was removed); NULL while a member. Their roles end with it, but their history stays. @vi Thời điểm người đó rời (hoặc bị loại khỏi) tổ chức; NULL khi vẫn là thành viên. Vai trò kết thúc theo, nhưng lịch sử được giữ nguyên. @example NULL']
+  created_by uuid [note: 'User who added the person (an ORG_ADMIN, our sales/admin, a fleet manager registering a driver); NULL when the person created their own personal organization. @vi Người dùng đã thêm người này (ORG_ADMIN, nhân viên bán hàng/quản trị của chúng ta, quản lý đội xe khi đăng ký tài xế); NULL khi người đó tự tạo tổ chức cá nhân. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  indexes {
+    (organization_id, user_id) [unique, name: 'uq_memberships_active', note: 'WHERE left_at IS NULL']
+    user_id [name: 'ix_memberships_user_id']
+  }
+  Note: '''@status proposed @owner customer @features F-F1 @tracked *
+One person in one organization (owner decision, 2026-10-03: a person may belong to several,
+e.g. their personal organization and the company that hired them as a
+driver). Roles, fleet limits and job profiles hang off the membership. After
+login, a person with several organizations picks one (the last one is
+remembered in user_state); every query then filters by that organization.
+@vi-name Thành viên tổ chức
+@vi Một người trong một tổ chức (quyết định ngày 03/10/2026: một người có thể thuộc nhiều tổ chức, ví dụ tổ chức cá nhân và công ty tuyển họ làm tài xế). Vai trò, giới hạn đội xe và hồ sơ công việc gắn với thành viên. Sau khi đăng nhập, người thuộc nhiều tổ chức chọn một tổ chức (tổ chức dùng gần nhất được ghi nhớ trong user_state); mọi truy vấn sau đó lọc theo tổ chức đó.'''
+}
+
+Table user_state {
+  user_id uuid [pk, note: 'The user this live state belongs to (1:1 with users). @vi Người dùng sở hữu trạng thái này (1:1 với users). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  last_login_at timestamptz [note: 'Latest successful login; NULL if never logged in. @vi Lần đăng nhập thành công gần nhất; NULL nếu chưa từng đăng nhập. @example 2026-09-14T23:10:00Z']
+  last_organization_id uuid [note: 'Organization the user last acted for, opened directly at the next login (for a person who belongs to several organizations). @vi Tổ chức người dùng làm việc gần nhất, được mở thẳng ở lần đăng nhập sau (với người thuộc nhiều tổ chức). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  failed_login_count integer [not null, note: 'Consecutive failed password attempts since the last successful login; reset to 0 on success. Protects against password guessing. @vi Số lần nhập sai mật khẩu liên tiếp kể từ lần đăng nhập thành công gần nhất; trở về 0 khi đăng nhập thành công. Dùng để chống dò mật khẩu. @example 0']
+  login_locked_until timestamptz [note: 'Logins are refused until this time after too many failures (e.g. 15 minutes after 5 failed attempts); NULL when not locked. Different from a LOCKED account, which an admin decides. @vi Từ chối đăng nhập cho tới thời điểm này sau quá nhiều lần sai (ví dụ 15 phút sau 5 lần sai); NULL khi không bị khóa. Khác với tài khoản LOCKED do quản trị viên quyết định. @example NULL']
+  last_active_at timestamptz [note: 'Latest request or action in the app or portal; NULL if never active. Used e.g. for an inactive-users report. @vi Lần gần nhất người dùng gửi yêu cầu hoặc thao tác trên app/portal; NULL nếu chưa từng hoạt động. Dùng cho báo cáo người dùng không hoạt động. @example 2026-09-15T08:42:10Z']
+  Note: '''@status planned @owner internal @features F-F1 @state-of users
+Live activity of a user, recorded by the system (observations, not decisions):
+updated on every login and request, so kept apart from the users profile and
+never history-tracked. Created with default values together with the user, so
+every user always has exactly one state row.
+@vi-name Trạng thái người dùng
+@vi Hoạt động trực tiếp của người dùng do hệ thống ghi nhận (quan sát, không phải quyết định): cập nhật mỗi lần đăng nhập và mỗi yêu cầu, nên tách khỏi hồ sơ người dùng và không lưu lịch sử thay đổi. Được tạo cùng lúc với người dùng, với giá trị mặc định, nên mỗi người dùng luôn có đúng một dòng trạng thái.'''
+}
+
+Table user_credentials {
+  credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của thông tin xác thực. @example 0000001e-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_id uuid [not null, note: 'User the credential belongs to. @vi Người dùng sở hữu thông tin xác thực. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  credential_type varchar(20) [not null, note: 'How the user proves who they are. Only PASSWORD today (with phone_number as the login ID); other methods (OTP, single sign-on) are added later as new values. Values: PASSWORD. @vi Cách người dùng chứng minh danh tính. Hiện chỉ có PASSWORD (với phone_number là tên đăng nhập); các cách khác (OTP, đăng nhập một lần) sẽ bổ sung sau bằng giá trị mới. Giá trị: PASSWORD. @example PASSWORD']
+  secret_hash varchar(255) [not null, note: 'One-way hash of the secret (e.g. Argon2id of the password), never the secret itself. Never copied to any history table or log. @vi Giá trị băm một chiều của bí mật (ví dụ Argon2id của mật khẩu), không bao giờ lưu bản thân bí mật. Không bao giờ được chép sang bảng lịch sử hay nhật ký. @example $argon2id$v=19$m=65536,t=3,p=4$...']
+  created_at timestamptz [not null, note: 'When the credential was set (e.g. the password chosen). @vi Thời điểm thiết lập (ví dụ thời điểm đặt mật khẩu). @example 2026-09-01T02:00:00Z']
+  revoked_at timestamptz [note: 'When it stopped being valid (replaced by a new password, or revoked); NULL while valid. @vi Thời điểm hết hiệu lực (bị thay bằng mật khẩu mới hoặc bị thu hồi); NULL khi còn hiệu lực. @example NULL']
+  indexes {
+    (user_id, credential_type) [unique, name: 'uq_user_credentials_active_type', note: 'WHERE revoked_at IS NULL']
+  }
+  Note: '''@status planned @owner internal @features F-F1
+How each user logs in. Kept out of the users table so a password hash is
+never copied into user history, and so new login methods are new rows, not
+new columns. A password change revokes the old row and adds a new one.
+@vi-name Thông tin đăng nhập
+@vi Cách mỗi người dùng đăng nhập. Tách khỏi bảng users để giá trị băm mật khẩu không bao giờ bị chép sang lịch sử người dùng, và để cách đăng nhập mới chỉ là dòng mới, không phải cột mới. Đổi mật khẩu sẽ thu hồi dòng cũ và thêm dòng mới.'''
+}
+
+Table user_devices {
+  device_id uuid [pk, note: 'Internal ID of the registered device (one app install). @vi Mã nội bộ của thiết bị đã đăng ký (một lần cài đặt app). @example 00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_id uuid [not null, note: 'User currently logged in on the device; a person can have several devices. @vi Người dùng đang đăng nhập trên thiết bị; một người có thể có nhiều thiết bị. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  platform varchar(10) [not null, note: 'Where the app runs. Values: ANDROID | IOS | WEB (browser push, later). @vi Nơi app chạy. Giá trị: ANDROID | IOS | WEB (thông báo đẩy trên trình duyệt, sau này). @example ANDROID']
+  push_token varchar(512) [not null, unique, note: 'Push registration token issued by Firebase Cloud Messaging (APNs behind it on iOS); re-sent by the app at every login and when it changes. @vi Mã đăng ký nhận thông báo đẩy do Firebase Cloud Messaging cấp (trên iOS là APNs phía sau); app gửi lại mỗi lần đăng nhập và khi mã thay đổi. @example fcm:dX3k...Q9']
+  app_version varchar(20) [note: 'App version on the device, for support and forced upgrades. @vi Phiên bản app trên thiết bị, phục vụ hỗ trợ và bắt buộc nâng cấp. @example 1.4.0']
+  created_at timestamptz [not null, note: 'When the device was first registered. @vi Thời điểm thiết bị được đăng ký lần đầu. @example 2026-09-01T02:00:00Z']
+  last_seen_at timestamptz [not null, note: 'When the app last reported this token; tokens unused for about a month are treated as stale and deleted. @vi Lần gần nhất app báo mã này; mã không dùng khoảng một tháng được coi là cũ và bị xóa. @example 2026-09-15T08:42:10Z']
+  indexes {
+    user_id [name: 'ix_user_devices_user_id']
+  }
+  Note: '''@status proposed @owner internal @features F-F1,F-F3
+The devices a person uses the app on, with the push token needed to send
+them push notifications (Firebase Cloud Messaging). Rows are removed on
+logout, when Firebase reports the token as unregistered (app uninstalled),
+and when stale, so a shared phone never receives the previous user\'s messages.
+@vi-name Thiết bị của người dùng
+@vi Các thiết bị mà người dùng dùng app, kèm mã cần thiết để gửi thông báo đẩy (Firebase Cloud Messaging). Dòng bị xóa khi đăng xuất, khi Firebase báo mã không còn hợp lệ (app đã gỡ), và khi quá cũ, để một điện thoại dùng chung không bao giờ nhận thông báo của người dùng trước.'''
+}
+
+Table one_time_codes {
+  code_id uuid [pk, note: 'Internal ID of the code. @vi Mã nội bộ của mã dùng một lần. @example 00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  purpose varchar(20) [not null, note: 'What the code is for. INVITE: an invited user sets their password. SIGN_UP: a guest proves their phone before the account is created. PASSWORD_RESET: a forgotten password. PHONE_CHANGE: proving a new phone number. Values: INVITE | SIGN_UP | PASSWORD_RESET | PHONE_CHANGE. @vi Mã dùng cho việc gì. INVITE: người được mời đặt mật khẩu. SIGN_UP: khách vãng lai xác minh số điện thoại trước khi tạo tài khoản. PASSWORD_RESET: quên mật khẩu. PHONE_CHANGE: xác minh số điện thoại mới. Giá trị: INVITE | SIGN_UP | PASSWORD_RESET | PHONE_CHANGE. @example INVITE']
+  user_id uuid [note: 'User the code is for; NULL for SIGN_UP, when the account does not exist yet. @vi Người dùng nhận mã; NULL với SIGN_UP, khi tài khoản chưa tồn tại. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  phone_number varchar(20) [not null, note: 'Phone number the code was sent to by SMS (E.164). @vi Số điện thoại nhận mã qua SMS (định dạng E.164). @example +84901234567']
+  code_hash varchar(255) [not null, note: 'One-way hash of the code or link token, never the code itself. @vi Giá trị băm một chiều của mã hoặc token trong đường dẫn, không bao giờ lưu bản thân mã. @example $argon2id$v=19$...']
+  issued_by uuid [note: 'User who triggered the code (the admin who sent an invite); NULL when the person asked for it themselves. @vi Người dùng tạo ra mã (quản trị viên gửi lời mời); NULL khi chính người đó yêu cầu. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  created_at timestamptz [not null, note: 'When the code was sent; used for the resend cooldown and per-phone limits. @vi Thời điểm gửi mã; dùng cho thời gian chờ gửi lại và giới hạn theo số điện thoại. @example 2026-09-01T02:00:00Z']
+  expires_at timestamptz [not null, note: 'When the code stops working (e.g. 10 minutes for an OTP, 72 hours for an invite link). @vi Thời điểm mã hết hiệu lực (ví dụ 10 phút với OTP, 72 giờ với đường dẫn mời). @example 2026-09-04T02:00:00Z']
+  used_at timestamptz [note: 'When the code was used; NULL while unused. A code works only once. @vi Thời điểm mã được dùng; NULL khi chưa dùng. Mỗi mã chỉ dùng được một lần. @example NULL']
+  indexes {
+    (phone_number, created_at) [name: 'ix_one_time_codes_phone_time', note: 'Resend cooldown and per-phone rate limit']
+  }
+  Note: '''@status proposed @owner internal @features F-F1
+One-time codes sent by SMS (and e-mail when available): invites, guest
+sign-up, password reset and phone changes. Codes are stored only as hashes,
+expire quickly, work once, and their sending is rate-limited per phone (the
+cooldown and limits are application rules) to stop SMS-pumping fraud.
+@vi-name Mã dùng một lần
+@vi Mã dùng một lần gửi qua SMS (và email khi có): lời mời, khách vãng lai đăng ký, đặt lại mật khẩu và đổi số điện thoại. Mã chỉ được lưu dạng băm, hết hạn nhanh, chỉ dùng một lần, và việc gửi mã bị giới hạn theo số điện thoại (thời gian chờ và giới hạn là quy tắc của ứng dụng) để chống gian lận SMS.'''
+}
+
+Table user_consents {
+  consent_id uuid [pk, note: 'Internal ID of the consent record. @vi Mã nội bộ của bản ghi đồng ý. @example 00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_id uuid [not null, note: 'Person who gave (or withdrew) the consent. @vi Người đã đồng ý (hoặc rút lại đồng ý). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  purpose varchar(30) [not null, note: 'What the consent covers; the law requires specific consent per purpose. TERMS_OF_SERVICE and PRIVACY_POLICY are required to use the system; LOCATION_TRACKING is required for a driver; MARKETING is optional. Values: TERMS_OF_SERVICE | PRIVACY_POLICY | LOCATION_TRACKING | MARKETING. @vi Nội dung được đồng ý; pháp luật yêu cầu đồng ý riêng cho từng mục đích. TERMS_OF_SERVICE và PRIVACY_POLICY bắt buộc để dùng hệ thống; LOCATION_TRACKING bắt buộc với tài xế; MARKETING không bắt buộc. Giá trị: TERMS_OF_SERVICE | PRIVACY_POLICY | LOCATION_TRACKING | MARKETING. @example PRIVACY_POLICY']
+  document_version varchar(20) [not null, note: 'Version of the text the person accepted; a new version requires a new acceptance (a new row). @vi Phiên bản văn bản mà người dùng đã đồng ý; phiên bản mới cần đồng ý lại (một dòng mới). @example 2026.10']
+  channel varchar(20) [not null, note: 'Where it was given. Values: APP | PORTAL. @vi Nơi người dùng đồng ý. Giá trị: APP | PORTAL. @example APP']
+  accepted_at timestamptz [not null, note: 'When the person accepted. @vi Thời điểm người dùng đồng ý. @example 2026-09-01T02:00:00Z']
+  withdrawn_at timestamptz [note: 'When the person withdrew this consent; NULL while it stands. @vi Thời điểm người dùng rút lại đồng ý; NULL khi vẫn còn hiệu lực. @example NULL']
+  indexes {
+    (user_id, purpose, accepted_at) [name: 'ix_user_consents_user_purpose_time']
+  }
+  Note: '''@status proposed @owner internal @features F-F1
+Proof of consent to personal-data processing (Decree 13/2023 and the
+Personal Data Protection Law 91/2025/QH15): who agreed to which purpose and
+version, when, where, and when they withdrew. Append-only: a new version or a
+withdrawal never overwrites an earlier record.
+@vi-name Đồng ý xử lý dữ liệu cá nhân
+@vi Bằng chứng về việc đồng ý xử lý dữ liệu cá nhân (Nghị định 13/2023 và Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15): ai đã đồng ý mục đích và phiên bản nào, khi nào, ở đâu, và khi nào rút lại. Chỉ ghi thêm: phiên bản mới hay việc rút lại không bao giờ ghi đè bản ghi cũ.'''
 }
 
 Table user_role_assignments {
   assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần gán vai trò. @example 00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [note: 'Account in which the role applies; NULL for G3-wide roles. @vi Tài khoản mà vai trò có hiệu lực; NULL với vai trò toàn G3. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  user_id uuid [not null, note: 'User who holds the role. @vi Người dùng giữ vai trò. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  role_id uuid [not null, note: 'Role granted. @vi Vai trò được cấp. @example 5d1a9e3c-7b2f-4c6d-8e0a-2f4b6c8d0e33']
+  organization_id uuid [not null, note: 'Organization of the membership, copied so every query can filter by organization. @vi Tổ chức của thành viên, chép sang để mọi truy vấn có thể lọc theo tổ chức. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  membership_id uuid [not null, note: 'The membership (person in this organization) that holds the role. @vi Thành viên (người trong tổ chức này) giữ vai trò. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  role varchar(30) [not null, note: 'The job title the role grants: a bundle of features, the same list for every organization. Data reach comes from the organization (is_internal), not from the role; for a customer the features are the role bundle limited by its plan, for an internal user the whole role bundle (internal-only features such as issuing invoices are never put in any plan). Titles: HEAD_ADMIN (full permissions on everything, internal only), CO_ADMIN (daily administration, internal only, cannot manage admins or is_internal), ORG_ADMIN (manages its own organization users and roles), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (requires an active driver profile in the organization), TECHNICIAN. A fixed list in code (an enum), not a table. @vi Chức danh mà vai trò cấp: một nhóm tính năng, cùng một danh sách cho mọi tổ chức. Phạm vi dữ liệu đến từ tổ chức (is_internal), không từ vai trò; với khách hàng, tính năng là nhóm tính năng của vai trò giới hạn bởi gói dịch vụ, với người dùng nội bộ là toàn bộ nhóm tính năng của vai trò (tính năng chỉ dành cho nội bộ như xuất hóa đơn không bao giờ nằm trong gói nào). Chức danh: HEAD_ADMIN (toàn quyền, chỉ nội bộ), CO_ADMIN (quản trị hằng ngày, chỉ nội bộ, không quản lý quản trị viên hay is_internal), ORG_ADMIN (quản lý người dùng và vai trò của chính tổ chức mình), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (cần hồ sơ tài xế còn hiệu lực trong tổ chức), TECHNICIAN. Danh sách cố định trong mã nguồn (enum), không phải bảng. @example FLEET_MANAGER']
   granted_at timestamptz [not null, note: 'When the role was granted. @vi Thời điểm cấp vai trò. @example 2026-09-01T02:00:00Z']
   revoked_at timestamptz [note: 'When the role was revoked; NULL while still held. @vi Thời điểm thu hồi vai trò; NULL khi vẫn đang giữ. @example NULL']
+  indexes {
+    (membership_id, role) [unique, name: 'uq_user_role_assignments_active_role', note: 'WHERE revoked_at IS NULL']
+  }
   Note: '''@status planned @owner customer @features F-F1
-Which role a user holds, and in which account. Kept as history (granted/revoked).
+Which roles a person holds in one organization (through their membership); they can hold several at once (e.g. a director
+who is also the fleet manager). Kept as history: a revoked role keeps its
+row with revoked_at set.
 @vi-name Gán vai trò
-@vi Người dùng giữ vai trò nào, trong tài khoản nào. Có lưu lịch sử cấp/thu hồi.'''
+@vi Một người giữ những vai trò nào trong một tổ chức (qua thành viên); một người có thể giữ nhiều vai trò cùng lúc (ví dụ giám đốc kiêm quản lý đội xe). Có lưu lịch sử: vai trò bị thu hồi vẫn giữ dòng, với revoked_at được điền.'''
 }
 
 Table access_audit_logs {
   audit_id bigint [pk, increment, note: 'Auto-increasing ID of the audit entry. @vi Mã tự tăng của dòng nhật ký. @example 1048576']
   occurred_at timestamptz [pk, note: 'When the access happened; hypertable time column. @vi Thời điểm truy cập; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
   user_id uuid [not null, note: 'Who accessed the data. @vi Ai đã truy cập dữ liệu. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  account_id uuid [note: 'Whose data was accessed. @vi Dữ liệu của tài khoản nào bị truy cập. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: 'Organization whose data was accessed. @vi Dữ liệu của tổ chức nào bị truy cập. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   action varchar(30) [not null, note: 'What was done with the data. Values: VIEW | EXPORT | UPDATE ... @vi Thao tác trên dữ liệu. Giá trị: VIEW | EXPORT | UPDATE ... @example VIEW']
   resource_type varchar(50) [not null, note: 'Kind of data accessed. @vi Loại dữ liệu bị truy cập. @example VEHICLE_LOCATION_HISTORY']
   resource_id varchar(100) [note: 'ID of the record accessed, as text. @vi Mã của bản ghi bị truy cập (dạng chuỗi). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  Note: '''@status planned @owner g3 @features F-F1 @hypertable occurred_at
+  Note: '''@status planned @owner internal @features F-F1 @hypertable occurred_at
 Append-only record of every access to personal/location data (NF-08).
 @vi-name Nhật ký truy cập dữ liệu
 @vi Nhật ký chỉ-ghi-thêm cho mọi lượt truy cập dữ liệu cá nhân/vị trí (NF-08).'''
 }
 
-Ref: users.account_id > customer_accounts.account_id [delete: restrict]
-Ref: user_role_assignments.account_id > customer_accounts.account_id [delete: restrict]
-Ref: user_role_assignments.user_id > users.user_id [delete: restrict]
-Ref: user_role_assignments.role_id > roles.role_id [delete: restrict]
+Ref: user_state.user_id - users.user_id [delete: restrict]
+Ref: user_credentials.user_id > users.user_id [delete: restrict]
+Ref: user_devices.user_id > users.user_id [delete: restrict]
+Ref: organizations.account_manager_id > users.user_id [delete: restrict]
+Ref: users.created_by > users.user_id [delete: restrict]
+Ref: memberships.organization_id > organizations.organization_id [delete: restrict]
+Ref: memberships.user_id > users.user_id [delete: restrict]
+Ref: memberships.created_by > users.user_id [delete: restrict]
+Ref: user_state.last_organization_id > organizations.organization_id [delete: restrict]
+Ref: one_time_codes.user_id > users.user_id [delete: restrict]
+Ref: one_time_codes.issued_by > users.user_id [delete: restrict]
+Ref: user_consents.user_id > users.user_id [delete: restrict]
+Ref: user_role_assignments.organization_id > organizations.organization_id [delete: restrict]
+Ref: user_role_assignments.membership_id > memberships.membership_id [delete: restrict]
 Ref: access_audit_logs.user_id > users.user_id [delete: restrict]
-Ref: access_audit_logs.account_id > customer_accounts.account_id [delete: restrict]
+Ref: access_audit_logs.organization_id > organizations.organization_id [delete: restrict]
 
 TableGroup identity {
-  customer_accounts
+  organizations
   users
-  roles
+  user_state
+  memberships
+  user_credentials
+  user_devices
+  one_time_codes
+  user_consents
   user_role_assignments
   access_audit_logs
   Note: '''
-Who the customers are, who can log in, and what each person may see. This
-is the foundational domain: every other domain may depend on it, and it
+Who takes part in the platform, who can log in, and what each person may do.
+This is the foundational domain: every other domain may depend on it, and it
 depends on none of them. Not built yet.
 
-- A **customer account** is one tenant: a company or an individual truck owner (D1).
-- A **user** belongs to at most one account; G3 staff belong to none (D7). A driver profile points to its user, never the other way, so identity depends on no other domain.
-- A user holds **roles** per account, kept as history.
+- An **organization** is a customer (a transport company or an individual owner-driver), our own internal organization (`is_internal`), or a repair/rescue partner (has a `repair_partners` profile). Any of them can own vehicles and drivers; only `is_internal` changes access: internal users see across organizations, everyone else only their own.
+- A **user** is one person with one account. Through **memberships** a person can belong to several organizations at once (e.g. their personal organization and the company that hired them); after login they pick the organization to act for. Our own staff are members of an internal organization. Job profiles (e.g. the driver profile) point to a membership, never the other way, so identity depends on no other domain.
+- A user holds one or more **roles** (job titles) from a fixed list, kept as history. Roles are permissions only; facts about a job live in a **profile** (e.g. the driver profile), and a role that needs one (DRIVER) requires it to be active.
+- **Everyone who uses or receives anything from the system is a user.** A message type belongs to a service (a feature): a user receives it when the service is in one of their roles and in their organization's plan (e.g. e-invoices for ACCOUNTANT, operational alerts for FLEET_MANAGER/DISPATCHER). It then goes to every channel - the app, the fleet portal and e-mail (when an address is on file); otherwise nothing is sent. Marketing messages come later and need the MARKETING consent.
 - Every access to personal or location data writes an **audit log** entry.
 
 @vi-name Danh tính & phân quyền
-@vi Khách hàng là ai, ai được đăng nhập và mỗi người được xem những gì. Đây là miền nền tảng: mọi miền khác có thể phụ thuộc vào nó, còn nó không phụ thuộc miền nào.
-- Một **tài khoản khách hàng** là một khách thuê (tenant): một doanh nghiệp hoặc một chủ xe cá nhân (D1).
-- Một **người dùng** thuộc tối đa một tài khoản; nhân viên G3 không thuộc tài khoản nào (D7). Hồ sơ tài xế trỏ tới người dùng của mình, không có chiều ngược lại.
-- Người dùng giữ **vai trò** theo từng tài khoản, có lưu lịch sử.
+@vi Ai tham gia nền tảng, ai được đăng nhập và mỗi người được làm gì. Đây là miền nền tảng: mọi miền khác có thể phụ thuộc vào nó, còn nó không phụ thuộc miền nào.
+- Một **tổ chức** là khách hàng (doanh nghiệp vận tải hoặc chủ xe cá nhân tự lái), tổ chức nội bộ của chính chúng ta (`is_internal`), hoặc đối tác sửa chữa/cứu hộ (có hồ sơ `repair_partners`). Tổ chức nào cũng có thể sở hữu xe và tài xế; chỉ `is_internal` thay đổi quyền truy cập: người dùng nội bộ xem được mọi tổ chức, còn lại chỉ xem tổ chức của mình.
+- Một **người dùng** là một người với một tài khoản. Qua **thành viên tổ chức**, một người có thể thuộc nhiều tổ chức cùng lúc (ví dụ tổ chức cá nhân và công ty đã tuyển họ); sau khi đăng nhập họ chọn tổ chức để làm việc. Nhân viên của chúng ta là thành viên của một tổ chức nội bộ. Hồ sơ tài xế trỏ tới người dùng của mình, không có chiều ngược lại.
+- Người dùng giữ một hoặc nhiều **vai trò** (chức danh) trong danh sách cố định, có lưu lịch sử. Vai trò chỉ là quyền; thông tin về một công việc nằm ở **hồ sơ** (ví dụ hồ sơ tài xế), và vai trò cần hồ sơ (DRIVER) đòi hỏi hồ sơ đó còn hiệu lực.
+- **Mọi người sử dụng hoặc nhận bất cứ thứ gì từ hệ thống đều là người dùng.** Mỗi loại thông tin thuộc một dịch vụ (một tính năng): người dùng nhận được khi dịch vụ đó nằm trong một vai trò của họ và trong gói của tổ chức (ví dụ hóa đơn điện tử cho ACCOUNTANT, cảnh báo vận hành cho FLEET_MANAGER/DISPATCHER). Khi đó thông tin được gửi tới mọi kênh - app, fleet portal và email (khi có địa chỉ); nếu không thì không gửi gì. Thông tin tiếp thị sẽ có sau và cần sự đồng ý MARKETING.
 - Mọi lượt truy cập dữ liệu cá nhân hoặc vị trí đều ghi một dòng **nhật ký kiểm toán**.
 '''
 }
@@ -272,7 +423,7 @@ depends on none of them. Not built yet.
 
 Table vehicles {
   vehicle_id uuid [pk, note: 'Internal ID of the vehicle. @vi Mã nội bộ của xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  account_id uuid [note: '@planned D1 D3: Customer account that owns the vehicle now. @vi Tài khoản khách hàng đang sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned D3: Customer organization that owns the vehicle now. @vi Tổ chức khách hàng đang sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   license_plate varchar(20) [not null, unique, note: 'Registration plate, unique. @vi Biển số đăng ký, duy nhất. @example 51D-123.45']
   vin varchar(17) [not null, unique, note: '17-character chassis number (VIN), unique; the vehicle\'s business key. @vi Số khung (VIN) 17 ký tự, duy nhất; là khóa nghiệp vụ của xe. @example LZGJLGR4XNX000123']
   make varchar(50) [not null, note: 'Manufacturer. @vi Hãng sản xuất. @example Tri-Ring']
@@ -293,23 +444,23 @@ Static profile of one electric truck.
 Table vehicle_ownerships {
   ownership_id uuid [pk, note: 'Internal ID of the ownership period. @vi Mã nội bộ của giai đoạn sở hữu. @example 00000002-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   vehicle_id uuid [not null, note: 'Vehicle owned. @vi Xe được sở hữu. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  account_id uuid [not null, note: 'Customer account that owned it during this period. @vi Tài khoản khách hàng sở hữu xe trong giai đoạn này. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization that owned it during this period. @vi Tổ chức khách hàng sở hữu xe trong giai đoạn này. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   started_at timestamptz [not null, note: 'When this owner took the vehicle (handover). @vi Thời điểm chủ này nhận xe (bàn giao). @example 2026-06-01T00:00:00Z']
   ended_at timestamptz [note: 'When ownership ended; NULL for the current owner. @vi Thời điểm kết thúc sở hữu; NULL với chủ hiện tại. @example NULL']
   indexes {
     vehicle_id [unique, name: 'uq_vehicle_ownerships_active_vehicle', note: 'WHERE ended_at IS NULL']
   }
   Note: '''@status proposed @owner customer @features F-F2
-Which account owned a vehicle, and when. Lets a sold truck's old data stay
+Which organization owned a vehicle, and when. Lets a sold truck's old data stay
 with its previous owner (decision D3). Same open/close shape as
 fleet_vehicle_memberships.
 @vi-name Lịch sử sở hữu xe
-@vi Tài khoản nào sở hữu xe, trong khoảng thời gian nào. Giúp dữ liệu cũ của xe đã bán vẫn thuộc chủ cũ (quyết định D3).'''
+@vi Tổ chức nào sở hữu xe, trong khoảng thời gian nào. Giúp dữ liệu cũ của xe đã bán vẫn thuộc chủ cũ (quyết định D3).'''
 }
 
-Ref: vehicles.account_id > customer_accounts.account_id [delete: restrict]
+Ref: vehicles.organization_id > organizations.organization_id [delete: restrict]
 Ref: vehicle_ownerships.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: vehicle_ownerships.account_id > customer_accounts.account_id [delete: restrict]
+Ref: vehicle_ownerships.organization_id > organizations.organization_id [delete: restrict]
 
 TableGroup vehicles {
   vehicles
@@ -317,13 +468,15 @@ TableGroup vehicles {
   Note: '''
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
-- A **vehicle** belongs to one customer account at a time (D1, D3).
+- A **vehicle** belongs to one customer organization at a time (D3).
 - **Ownership history** records every change of owner, so past data keeps its original owner.
+- **One owner only (owner decision, 2026-10-03):** a truck (and a driver profile) belongs to exactly one organization in the system. When parties cooperate (e.g. an owner-driver operating under a transport company's licence), they agree between themselves and declare the owner to us; their cooperation terms are outside our responsibility and are not modelled.
 
 @vi-name Xe
 @vi Bản thân chiếc xe tải: định danh (VIN, biển số), thông số và trạng thái kích hoạt.
-- Tại mỗi thời điểm, một **xe** thuộc một tài khoản khách hàng (D1, D3).
+- Tại mỗi thời điểm, một **xe** thuộc một tổ chức khách hàng (D3).
 - **Lịch sử sở hữu** ghi lại mỗi lần đổi chủ, để dữ liệu cũ vẫn thuộc chủ cũ.
+- **Chỉ một chủ sở hữu (quyết định ngày 03/10/2026):** mỗi xe (và mỗi hồ sơ tài xế) thuộc đúng một tổ chức trong hệ thống. Khi các bên hợp tác (ví dụ chủ xe tự lái hoạt động dưới giấy phép kinh doanh vận tải của một công ty), các bên tự thỏa thuận và khai báo chủ sở hữu cho chúng ta; điều khoản hợp tác của họ nằm ngoài trách nhiệm của chúng ta và không được mô hình hóa.
 '''
 }
 
@@ -379,7 +532,7 @@ The telematic devices that send vehicle data over MQTT.
 Table vehicle_telemetry {
   message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
   recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
-  account_id uuid [note: '@planned D1 D3: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned D3: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   message_uuid uuid [not null, note: 'ID the device gives each message, used to spot duplicates. @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
   telematic_id uuid [not null, note: 'Device that sent the sample. @vi Thiết bị đã gửi bản ghi. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
   telematic_serial varchar(50) [not null, note: 'Device serial copied onto the row for audit and debugging. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
@@ -412,7 +565,7 @@ One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table
 @vi Một bản ghi dữ liệu xe gửi về, mỗi 5-10 giây một bản ghi cho mỗi xe: bảng lớn nhất hệ thống.'''
 }
 
-Ref: vehicle_telemetry.account_id > customer_accounts.account_id [delete: restrict]
+Ref: vehicle_telemetry.organization_id > organizations.organization_id [delete: restrict]
 Ref: vehicle_telemetry.telematic_id > telematics.telematic_id [delete: cascade]
 Ref: vehicle_telemetry.vehicle_id > vehicles.vehicle_id [delete: cascade]
 
@@ -423,12 +576,12 @@ Everything the vehicle reports: position, battery, motor, errors. Alerts and
 energy reports are computed from it.
 
 - Each **sample** comes from one device and is stored against one vehicle.
-- Under decision D3, each sample would also record the account that owned the vehicle *at that moment*.
+- Under decision D3, each sample would also record the organization that owned the vehicle *at that moment*.
 
 @vi-name Dữ liệu vận hành xe
 @vi Mọi thứ xe gửi về: vị trí, pin, động cơ, mã lỗi. Cảnh báo và báo cáo năng lượng được tính từ dữ liệu này.
 - Mỗi **bản ghi** đến từ một thiết bị và được lưu theo một xe.
-- Theo quyết định D3, mỗi bản ghi sẽ ghi thêm tài khoản sở hữu xe *tại đúng thời điểm đó*.
+- Theo quyết định D3, mỗi bản ghi sẽ ghi thêm tổ chức sở hữu xe *tại đúng thời điểm đó*.
 '''
 }
 
@@ -438,8 +591,8 @@ energy reports are computed from it.
 
 Table drivers {
   driver_id uuid [pk, note: 'Internal ID of the driver. @vi Mã nội bộ của tài xế. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  account_id uuid [note: '@planned D1: Customer account that employs the driver. @vi Tài khoản khách hàng tuyển dụng tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  user_id uuid [unique, note: '@planned: The driver\'s login, if they have the app; NULL otherwise. @vi Tài khoản đăng nhập của tài xế nếu có dùng app; NULL nếu không. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  organization_id uuid [note: '@planned: Customer organization that employs the driver. @vi Tổ chức khách hàng tuyển dụng tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  membership_id uuid [unique, note: '@planned: The membership (person in this organization) this driver profile belongs to; a person driving for two companies has one driver profile in each. A DRIVER role requires an active profile. @vi Thành viên (người trong tổ chức này) sở hữu hồ sơ tài xế; người lái xe cho hai công ty có một hồ sơ tài xế ở mỗi công ty. Vai trò DRIVER cần một hồ sơ còn hiệu lực. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   full_name varchar(100) [not null, note: 'Driver\'s full name. @vi Họ tên tài xế. @example Nguyễn Văn An']
   phone_number varchar(20) [not null, unique, note: 'Contact phone number, unique. @vi Số điện thoại liên hệ, duy nhất. @example +84912345678']
   license_number varchar(50) [not null, unique, note: 'Driving licence number, unique; the driver\'s business key. @vi Số giấy phép lái xe, duy nhất; là khóa nghiệp vụ của tài xế. @example 790123456789']
@@ -460,7 +613,7 @@ A driver employed by (or being) a customer.
 
 Table driver_vehicle_assignments {
   assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần phân công. @example 00000004-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [note: '@planned D1: Customer account the assignment belongs to. @vi Tài khoản khách hàng của lần phân công. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Customer organization the assignment belongs to. @vi Tổ chức khách hàng của lần phân công. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   driver_id uuid [not null, note: 'Driver assigned. @vi Tài xế được phân công. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
   vehicle_id uuid [not null, note: 'Vehicle assigned. @vi Xe được phân công. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   assigned_at timestamptz [not null, note: 'When the assignment began. @vi Thời điểm bắt đầu phân công. @example 2026-09-01T00:00:00Z']
@@ -482,26 +635,26 @@ Which driver drove which vehicle, and when (open/close history).
 
 Table charging_credentials {
   credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của phương thức xác thực. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
-  account_id uuid [not null, note: 'Customer account billed when this credential charges. @vi Tài khoản khách hàng bị tính tiền khi dùng phương thức này để sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization billed when this credential charges. @vi Tổ chức khách hàng bị tính tiền khi dùng phương thức này để sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   driver_id uuid [note: 'Driver it belongs to; NULL for a shared fleet card. @vi Tài xế sở hữu; NULL với thẻ dùng chung của đội xe. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  credential_type varchar(20) [not null, note: 'How the charger identifies the customer. Values: RFID | APP_QR | VIN_AUTOCHARGE (decision D4). @vi Cách trụ sạc nhận biết khách hàng. Giá trị: RFID | APP_QR | VIN_AUTOCHARGE (quyết định D4). @example RFID']
+  credential_type varchar(20) [not null, note: 'How the charger identifies the customer. APP_QR now: the user scans the QR on the charger and the backend starts the charge remotely. RFID and VIN_AUTOCHARGE later, for prepaid enterprise (VIP) automatic charging. Values: APP_QR | RFID | VIN_AUTOCHARGE. @vi Cách trụ sạc nhận biết khách hàng. Hiện tại APP_QR: người dùng quét mã QR trên trụ và backend khởi động phiên sạc từ xa. Sau này có RFID và VIN_AUTOCHARGE cho dịch vụ sạc tự động trả trước của doanh nghiệp (VIP). Giá trị: APP_QR | RFID | VIN_AUTOCHARGE. @example RFID']
   id_tag varchar(20) [unique, note: 'Identifier the charger reports (OCPP idTag), unique. @vi Mã định danh mà trụ sạc gửi lên (OCPP idTag), duy nhất. @example 04A1B2C3D4E5F6']
   status varchar(20) [not null, note: 'Whether the credential may start a charge. Values: ACTIVE | BLOCKED | EXPIRED. @vi Phương thức này có được dùng để bắt đầu sạc không. Giá trị: ACTIVE | BLOCKED | EXPIRED. @example ACTIVE']
   issued_at timestamptz [not null, note: 'When the credential was issued. @vi Thời điểm cấp. @example 2026-09-01T02:00:00Z']
   revoked_at timestamptz [note: 'When it was revoked; NULL while valid. @vi Thời điểm thu hồi; NULL khi còn hiệu lực. @example NULL']
   Note: '''@status proposed @owner customer @features F-B2,F-C6,F-H1
 How a charger identifies who is charging. Links a session's raw idTag to a
-driver and account. Placement in `drivers` is provisional.
+driver and organization. Placement in `drivers` is provisional.
 @vi-name Phương thức xác thực sạc
-@vi Cách trụ sạc nhận biết ai đang sạc. Nối mã idTag thô của phiên sạc với tài xế và tài khoản. Việc đặt ở miền Tài xế là tạm thời.'''
+@vi Cách trụ sạc nhận biết ai đang sạc. Nối mã idTag thô của phiên sạc với tài xế và tổ chức. Việc đặt ở miền Tài xế là tạm thời.'''
 }
 
-Ref: drivers.account_id > customer_accounts.account_id [delete: restrict]
-Ref: drivers.user_id - users.user_id [delete: restrict]
-Ref: driver_vehicle_assignments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: drivers.organization_id > organizations.organization_id [delete: restrict]
+Ref: drivers.membership_id - memberships.membership_id [delete: restrict]
+Ref: driver_vehicle_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: driver_vehicle_assignments.driver_id > drivers.driver_id [delete: restrict]
 Ref: driver_vehicle_assignments.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: charging_credentials.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_credentials.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_credentials.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup drivers {
@@ -511,15 +664,15 @@ TableGroup drivers {
   Note: '''
 The people who drive the trucks, and how they identify themselves at a charger.
 
-- A **driver** belongs to one customer account (D1).
+- A **driver** belongs to one customer organization.
 - A driver drives at most one vehicle at a time; **assignments** keep the full history.
-- A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an account and optionally to one driver (D4).
+- A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an organization and optionally to one driver: app QR now, RFID and VIN autocharge later (prepaid VIP).
 
 @vi-name Tài xế
 @vi Những người lái xe và cách họ xác thực tại trụ sạc.
-- Một **tài xế** thuộc một tài khoản khách hàng (D1).
+- Một **tài xế** thuộc một tổ chức khách hàng.
 - Tại mỗi thời điểm, một tài xế lái tối đa một xe; **phân công** lưu toàn bộ lịch sử.
-- Một **phương thức xác thực sạc** (thẻ RFID, mã QR trên app, VIN autocharge) thuộc một tài khoản và có thể gắn với một tài xế (D4).
+- Một **phương thức xác thực sạc** (thẻ RFID, mã QR trên app, VIN autocharge) thuộc một tổ chức và có thể gắn với một tài xế: QR trên app hiện tại, RFID và VIN autocharge sau này (VIP trả trước).
 '''
 }
 
@@ -529,7 +682,8 @@ The people who drive the trucks, and how they identify themselves at a charger.
 
 Table fleets {
   fleet_id uuid [pk, note: 'Internal ID of the fleet. @vi Mã nội bộ của đội xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  account_id uuid [note: '@planned D1 D2: Customer account the fleet belongs to. @vi Tài khoản khách hàng sở hữu đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Organization the fleet belongs to. @vi Tổ chức sở hữu đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  parent_fleet_id uuid [note: '@planned: The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được giao một đội xe thì quản lý cả mọi đội nằm dưới đội đó. @example NULL']
   fleet_code varchar(50) [not null, unique, note: 'Short unique code; the fleet\'s business key. @vi Mã ngắn, duy nhất; là khóa nghiệp vụ của đội xe. @example MP-HCM-01']
   name varchar(100) [not null, note: 'Fleet name shown in the portal. @vi Tên đội xe hiển thị trên portal. @example Đội xe Hồ Chí Minh']
   status fleetstatus [not null, note: 'Fleet lifecycle status. @vi Trạng thái của đội xe. @example ACTIVE']
@@ -541,15 +695,16 @@ Table fleets {
     fleet_code [unique, name: 'ix_fleets_fleet_code']
   }
   Note: '''@status built @owner customer @features F-E1
-A named group of vehicles. Whether a fleet IS a customer or a sub-group of
-one is decision D2.
+A named group of vehicles inside an organization: a node of the customer's
+own structure (region, branch, depot, team - any name, any depth, through
+parent_fleet_id). Reorganising is editing data, never the schema.
 @vi-name Đội xe
-@vi Một nhóm xe có tên. Đội xe là chính khách hàng hay là nhóm con bên trong khách hàng là quyết định D2.'''
+@vi Một nhóm xe có tên bên trong một tổ chức: một nút trong cơ cấu riêng của khách hàng (miền, chi nhánh, bãi xe, nhóm - tên tùy ý, không giới hạn số cấp, qua parent_fleet_id). Tái cơ cấu chỉ là sửa dữ liệu, không bao giờ phải đổi thiết kế.'''
 }
 
 Table fleet_vehicle_memberships {
   membership_id uuid [pk, note: 'Internal ID of the membership period. @vi Mã nội bộ của giai đoạn thành viên. @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [note: '@planned D1: Customer account the membership belongs to. @vi Tài khoản khách hàng của giai đoạn thành viên. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Customer organization the membership belongs to. @vi Tổ chức khách hàng của giai đoạn thành viên. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   fleet_id uuid [not null, note: 'Fleet the vehicle is in. @vi Đội xe chứa xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
   vehicle_id uuid [not null, note: 'Vehicle in the fleet. @vi Xe thuộc đội. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   joined_at timestamptz [not null, note: 'When the vehicle joined the fleet. @vi Thời điểm xe vào đội. @example 2026-09-01T00:00:00Z']
@@ -568,15 +723,39 @@ Which vehicle was in which fleet, and when (open/close history).
 @vi Xe nào thuộc đội nào, trong khoảng thời gian nào (lịch sử mở/đóng).'''
 }
 
-Ref: fleets.account_id > customer_accounts.account_id [delete: restrict]
-Ref: fleet_vehicle_memberships.account_id > customer_accounts.account_id [delete: restrict]
+Ref: fleets.organization_id > organizations.organization_id [delete: restrict]
+Ref: fleets.parent_fleet_id > fleets.fleet_id [delete: restrict]
+Ref: fleet_vehicle_memberships.organization_id > organizations.organization_id [delete: restrict]
 Ref: fleet_vehicle_memberships.fleet_id > fleets.fleet_id [delete: restrict]
 Ref: fleet_vehicle_memberships.vehicle_id > vehicles.vehicle_id [delete: restrict]
+
+Table fleet_user_assignments {
+  assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần phân công. @example 0000001c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  organization_id uuid [not null, note: 'Organization of the fleet and the user. @vi Tổ chức của đội xe và người dùng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  fleet_id uuid [not null, note: 'Fleet the user is limited to, together with every fleet below it. @vi Đội xe mà người dùng được giới hạn trong đó, cùng mọi đội xe nằm dưới. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  membership_id uuid [not null, note: 'Membership (person in this organization) whose fleet-level roles (FLEET_MANAGER, DISPATCHER) apply only to the fleets listed for it. @vi Thành viên (người trong tổ chức này) có các vai trò cấp đội xe (FLEET_MANAGER, DISPATCHER) chỉ áp dụng cho các đội xe được liệt kê. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  assigned_at timestamptz [not null, note: 'When the user was given this fleet. @vi Thời điểm người dùng được giao đội xe này. @example 2026-09-01T02:00:00Z']
+  unassigned_at timestamptz [note: 'When it was taken away; NULL while in force. @vi Thời điểm bị thu lại; NULL khi còn hiệu lực. @example NULL']
+  indexes {
+    (fleet_id, membership_id) [unique, name: 'uq_fleet_user_assignments_active', note: 'WHERE unassigned_at IS NULL']
+  }
+  Note: '''@status planned @owner customer @features F-F1,F-E1
+Limits a user's fleet-level roles to some fleets of a large organization
+(e.g. one fleet manager for the Hanoi fleet, another for HCMC). A user with
+no open row here covers every fleet of their organization. Lives in the
+fleet domain, not identity, so identity keeps depending on no other domain.
+@vi-name Phân công người dùng - đội xe
+@vi Giới hạn vai trò cấp đội xe của một người dùng trong một số đội xe của tổ chức lớn (ví dụ một quản lý cho đội Hà Nội, một quản lý khác cho đội TP.HCM). Người dùng không có dòng nào đang hiệu lực ở đây thì quản lý mọi đội xe của tổ chức. Nằm ở miền Đội xe, không ở miền Danh tính, để miền Danh tính không phụ thuộc miền nào.'''
+}
+
+Ref: fleet_user_assignments.organization_id > organizations.organization_id [delete: restrict]
+Ref: fleet_user_assignments.fleet_id > fleets.fleet_id [delete: restrict]
+Ref: fleet_user_assignments.membership_id > memberships.membership_id [delete: restrict]
 
 Table geofences {
   geofence_id uuid [pk, note: 'Internal ID of the geofence. @vi Mã nội bộ của vùng địa lý. @example 00000003-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   fleet_id uuid [not null, note: 'Fleet whose current member vehicles the area applies to. @vi Đội xe mà các xe thành viên hiện tại chịu áp dụng vùng này. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  account_id uuid [note: '@planned D1: Customer account that defined it, once accounts exist; until then a geofence is scoped to a fleet. @vi Tài khoản khách hàng đã tạo vùng, khi có tài khoản; trước đó vùng gắn với một đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Customer organization that defined it, once organizations exist; until then a geofence is scoped to a fleet. @vi Tổ chức khách hàng đã tạo vùng, khi có tổ chức; trước đó vùng gắn với một đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   name varchar(100) [not null, note: 'Name shown in alerts. @vi Tên hiển thị trong cảnh báo. @example Kho Tân Uyên']
   boundary "geography(POLYGON,4326)" [not null, note: 'Area as a WGS84 polygon (longitude first). No spatial index: checks always filter by fleet first. @vi Ranh giới vùng, dạng đa giác WGS84 (kinh độ trước). Không có chỉ mục không gian: luôn lọc theo đội xe trước. @example POLYGON((106.70 11.05, 106.72 11.05, 106.72 11.07, 106.70 11.07, 106.70 11.05))']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
@@ -587,30 +766,33 @@ Table geofences {
   }
   Note: '''@status built @owner customer @features F-A5
 An area whose entry or exit by a member vehicle of its fleet raises an alert.
-Scoped to a fleet until customer accounts exist (then it moves to the account).
+Scoped to a fleet until customer organizations exist (then it moves to the organization).
 @vi-name Vùng địa lý (geofence)
-@vi Một khu vực mà khi xe thuộc đội xe đi vào hoặc ra sẽ phát cảnh báo. Gắn với đội xe cho đến khi có tài khoản khách hàng (sau đó chuyển sang tài khoản).'''
+@vi Một khu vực mà khi xe thuộc đội xe đi vào hoặc ra sẽ phát cảnh báo. Gắn với đội xe cho đến khi có tổ chức khách hàng (sau đó chuyển sang tổ chức).'''
 }
 
 Ref: geofences.fleet_id > fleets.fleet_id [delete: restrict]
-Ref: geofences.account_id > customer_accounts.account_id [delete: restrict]
+Ref: geofences.organization_id > organizations.organization_id [delete: restrict]
 
 TableGroup fleet {
   fleets
   fleet_vehicle_memberships
   geofences
+  fleet_user_assignments
   Note: '''
 Groups of vehicles managed together by a fleet manager.
 
-- A **fleet** belongs to one customer account (D1, D2).
+- A **fleet** is a group inside one organization, and can sit under another fleet, so each customer models its own structure (region > branch > depot...) as data.
 - A vehicle is in at most one fleet at a time; a fleet holds many vehicles. **Memberships** keep the history.
 - A fleet's **geofences** raise an alert when a member vehicle enters or leaves them (F-A5).
+- A large organization can limit a fleet manager or dispatcher to some fleets (**user assignments**); an assignment covers that fleet and every fleet below it, and without any they cover the whole organization.
 
 @vi-name Đội xe
 @vi Nhóm xe do một quản lý đội xe điều hành.
-- Một **đội xe** thuộc một tài khoản khách hàng (D1, D2).
+- Một **đội xe** là một nhóm bên trong một tổ chức và có thể nằm dưới một đội xe khác, nên mỗi khách hàng tự mô tả cơ cấu của mình (miền > chi nhánh > bãi xe...) bằng dữ liệu.
 - Tại mỗi thời điểm, một xe thuộc tối đa một đội; một đội có nhiều xe. **Thành viên đội** lưu lại lịch sử.
 - **Vùng địa lý (geofence)** của đội xe phát cảnh báo khi xe thành viên đi vào hoặc ra (F-A5).
+- Tổ chức lớn có thể giới hạn quản lý đội xe hoặc điều vận trong một số đội (**phân công người dùng**); mỗi phân công bao gồm đội đó và mọi đội nằm dưới; nếu không có phân công, họ quản lý toàn bộ tổ chức.
 '''
 }
 
@@ -645,7 +827,7 @@ Table charging_stations {
     location [name: 'ix_charging_stations_location', note: 'GIST; radius search (F-D1)']
     deleted_at [name: 'ix_charging_stations_deleted_at']
   }
-  Note: '''@status built @owner g3 @features F-C1,F-C2,F-D1,F-G2
+  Note: '''@status built @owner internal @features F-C1,F-C2,F-D1,F-G2
 One charging station in G3's network.
 @vi-name Trạm sạc
 @vi Một trạm sạc trong mạng lưới của G3.'''
@@ -662,7 +844,7 @@ Table charging_evses {
     (station_id, deleted_at) [name: 'ix_charging_evses_station_deleted']
     (station_id, ocpp_evse_id) [unique, name: 'uq_charging_evses_station_ocpp_id']
   }
-  Note: '''@status built @owner g3 @features F-C1,F-G2
+  Note: '''@status built @owner internal @features F-C1,F-G2
 One EVSE (power outlet unit) of a station.
 @vi-name EVSE (cụm cấp điện)
 @vi Một EVSE (bộ cấp điện) của trạm.'''
@@ -684,7 +866,7 @@ Table charging_connectors {
     (evse_id, deleted_at) [name: 'ix_charging_connectors_evse_deleted']
     (evse_id, ocpp_connector_id) [unique, name: 'uq_charging_connectors_evse_ocpp_id']
   }
-  Note: '''@status built @owner g3 @features F-C1,F-C2
+  Note: '''@status built @owner internal @features F-C1,F-C2
 One physical gun/plug, with its live status.
 @vi-name Súng sạc
 @vi Một súng/đầu sạc vật lý, kèm trạng thái trực tiếp.'''
@@ -700,7 +882,7 @@ Table charging_ocpp_messages {
   indexes {
     (station_id, occurred_at) [name: 'ix_charging_ocpp_messages_station_time']
   }
-  Note: '''@status built @owner g3 @features F-G2 @hypertable occurred_at
+  Note: '''@status built @owner internal @features F-G2 @hypertable occurred_at
 Every OCPP frame in both directions, verbatim and append-only.
 @vi-name Nhật ký bản tin OCPP
 @vi Mọi bản tin OCPP theo cả hai chiều, lưu nguyên văn, chỉ ghi thêm.'''
@@ -717,7 +899,7 @@ Table charging_station_configuration_entries {
   indexes {
     (station_id, captured_at) [name: 'ix_charging_config_entries_station_captured']
   }
-  Note: '''@status built @owner g3 @features F-G2
+  Note: '''@status built @owner internal @features F-G2
 One configuration key from a charger's GetConfiguration answer (append-only snapshots).
 @vi-name Cấu hình trụ sạc
 @vi Một khóa cấu hình trong câu trả lời GetConfiguration của trụ sạc (các bản chụp chỉ ghi thêm).'''
@@ -725,7 +907,7 @@ One configuration key from a charger's GetConfiguration answer (append-only snap
 
 Table charging_reservations {
   reservation_id uuid [pk, note: 'Internal ID of the reservation. @vi Mã nội bộ của lượt đặt chỗ. @example 00000009-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account holding the reservation. @vi Tài khoản khách hàng giữ chỗ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization holding the reservation. @vi Tổ chức khách hàng giữ chỗ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   connector_id uuid [not null, note: 'Connector reserved. @vi Súng sạc được giữ chỗ. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
   driver_id uuid [note: 'Driver expected to arrive; NULL if not named. @vi Tài xế dự kiến tới; NULL nếu không chỉ định. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
   reserved_from timestamptz [not null, note: 'Start of the reserved window. @vi Bắt đầu khung giờ giữ chỗ. @example 2026-09-15T13:00:00Z']
@@ -741,7 +923,7 @@ Ref: charging_evses.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
-Ref: charging_reservations.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_reservations.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_reservations.connector_id > charging_connectors.connector_id [delete: restrict]
 Ref: charging_reservations.driver_id > drivers.driver_id [delete: restrict]
 
@@ -776,9 +958,9 @@ Table charging_sessions {
   station_id uuid [not null, note: 'Station where the session happens. @vi Trạm diễn ra phiên sạc. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
   evse_id uuid [not null, note: 'EVSE used. @vi EVSE được dùng. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
   connector_id uuid [not null, note: 'Connector (gun) used. @vi Súng sạc được dùng. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
-  account_id uuid [note: '@planned D4 D5: Customer account charged for the session. @vi Tài khoản khách hàng bị tính tiền cho phiên sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  vehicle_id uuid [note: '@planned D4: Vehicle that was charged. @vi Xe được sạc. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  credential_id uuid [note: '@planned D4: Credential that started the session, resolved from id_tag. @vi Phương thức xác thực đã bắt đầu phiên, suy ra từ id_tag. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
+  organization_id uuid [note: '@planned D5: Customer organization charged for the session. @vi Tổ chức khách hàng bị tính tiền cho phiên sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  vehicle_id uuid [note: '@planned: Vehicle that was charged. @vi Xe được sạc. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  credential_id uuid [note: '@planned: Credential that started the session, resolved from id_tag. @vi Phương thức xác thực đã bắt đầu phiên, suy ra từ id_tag. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
   ocpp_transaction_id varchar(255) [not null, note: 'Transaction ID used with the charger, unique per station. @vi Mã giao dịch dùng với trụ sạc, duy nhất trong trạm. @example 1042']
   status chargingsessionstatus [not null, note: 'Whether the session is still running. @vi Phiên sạc còn đang chạy hay đã xong. @example completed']
   started_at timestamptz [not null, note: 'When charging started. @vi Thời điểm bắt đầu sạc. @example 2026-09-15T08:30:00Z']
@@ -844,7 +1026,7 @@ Every meter value a charger reports during a session (energy, power, SoC ...).
 Ref: charging_sessions.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_sessions.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_sessions.connector_id > charging_connectors.connector_id [delete: restrict]
-Ref: charging_sessions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_sessions.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: charging_sessions.credential_id > charging_credentials.credential_id [delete: restrict]
 Ref: charging_session_events.session_id > charging_sessions.session_id [delete: restrict]
@@ -858,13 +1040,13 @@ TableGroup charging_sessions {
 What happened during each charge: events, meter readings, energy delivered.
 
 - A **session** takes place on one connector of one G3 station.
-- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. The planned `credential_id` → `account_id` link closes this (D4), and is what billing (F-H1/F-H3) and reconciliation (NF-10) need.
+- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. The planned `credential_id` → `organization_id` link closes this (QR start now: the session records who started it and which organization pays), and is what billing (F-H1/F-H3) and reconciliation (NF-10) need.
 - A session has many **events** and many **measurements**.
 
 @vi-name Phiên sạc
 @vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
 - Một **phiên sạc** diễn ra trên một súng sạc của một trạm G3.
-- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Liên kết `credential_id` → `account_id` sẽ khắc phục điều này (D4); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
+- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Liên kết `credential_id` → `organization_id` sẽ khắc phục điều này (hiện tại khởi động bằng QR: phiên sạc ghi người khởi động và tổ chức thanh toán); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
 - Một phiên sạc có nhiều **sự kiện** và nhiều **số đo**.
 '''
 }
@@ -875,7 +1057,7 @@ What happened during each charge: events, meter readings, energy delivered.
 
 Table notifications {
   notification_id bigint [pk, increment, note: 'Auto-increasing ID; also the polling cursor (after_id). @vi Mã tự tăng; cũng là con trỏ khi truy vấn thông báo mới (after_id). @example 5821']
-  account_id uuid [note: '@planned D1: Customer account that should see the notification. @vi Tài khoản khách hàng được xem thông báo. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Customer organization that should see the notification. @vi Tổ chức khách hàng được xem thông báo. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   notification_type notificationtype [not null, note: 'Kind of event that raised it. @vi Loại sự kiện đã phát sinh thông báo. @example BATTERY_ALERT']
   severity notificationseverity [not null, note: 'How urgent it is, independent of type. @vi Mức độ khẩn cấp, độc lập với loại thông báo. @example WARNING']
   vehicle_id uuid [note: 'Vehicle it is about; NULL for non-vehicle notifications. @vi Xe mà thông báo nói tới; NULL với thông báo không liên quan xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
@@ -894,7 +1076,7 @@ each alert type is an enum value plus a payload shape.
 @vi Một cảnh báo (pin, bất thường, SOH, thiết bị mất kết nối...). Một bảng chung; mỗi loại cảnh báo là một giá trị enum và một cấu trúc payload.'''
 }
 
-Ref: notifications.account_id > customer_accounts.account_id [delete: restrict]
+Ref: notifications.organization_id > organizations.organization_id [delete: restrict]
 Ref: notifications.vehicle_id > vehicles.vehicle_id [delete: cascade]
 
 TableGroup notifications {
@@ -903,12 +1085,12 @@ TableGroup notifications {
 Alerts raised by other domains, stored for operators to poll.
 
 - A **notification** is usually about one vehicle.
-- It is not yet scoped to a recipient; under D1 it would belong to the vehicle's account.
+- It is not yet scoped to a recipient; the planned `organization_id` gives it to the organization that owns the vehicle.
 
 @vi-name Thông báo & cảnh báo
 @vi Cảnh báo do các miền khác phát sinh, được lưu để người vận hành truy vấn.
 - Một **thông báo** thường nói về một xe.
-- Hiện chưa gắn với người nhận; theo D1, thông báo sẽ thuộc tài khoản sở hữu xe.
+- Hiện chưa gắn với người nhận; cột `organization_id` (dự kiến) sẽ gán thông báo cho tổ chức sở hữu xe.
 '''
 }
 
@@ -918,7 +1100,7 @@ Alerts raised by other domains, stored for operators to poll.
 
 Table support_cases {
   case_id uuid [pk, note: 'Internal ID of the case. @vi Mã nội bộ của ca hỗ trợ. @example 0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [note: '@planned D1: Customer account the case belongs to. @vi Tài khoản khách hàng của ca hỗ trợ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned: Customer organization the case belongs to. @vi Tổ chức khách hàng của ca hỗ trợ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   case_type supportcasetype [not null, note: 'Ordinary ticket or SOS. @vi Yêu cầu thường hay SOS. @example SOS']
   category supportcasecategory [not null, note: 'Business category of the problem. @vi Nhóm vấn đề theo nghiệp vụ. @example BREAKDOWN']
   channel supportcasechannel [not null, note: 'Where the case came in. @vi Kênh tiếp nhận ca. @example IN_APP']
@@ -956,12 +1138,13 @@ One support request: a ticket or an SOS, with its SLA timeline.
 
 Table repair_partners {
   partner_id uuid [pk, note: 'Internal ID of the partner. @vi Mã nội bộ của đối tác. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
+  organization_id uuid [not null, note: 'The partner\'s row in organizations (type PARTNER); its technicians are users of that organization. @vi Dòng của đối tác trong bảng organizations (loại PARTNER); kỹ thuật viên của đối tác là người dùng thuộc tổ chức đó. @example 0000001b-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   name varchar(200) [not null, note: 'Partner name. @vi Tên đối tác. @example Garage Tín Phát - Thủ Đức']
   partner_type varchar(30) [not null, note: 'Kind of partner. Values: G3_WORKSHOP | DEALER | THIRD_PARTY (feature-list item 9). @vi Loại đối tác. Giá trị: G3_WORKSHOP | DEALER | THIRD_PARTY (mục 9 của feature-list). @example THIRD_PARTY']
   location "geography(POINT,4326)" [note: 'Base location (WGS84 point, longitude first). @vi Vị trí cơ sở (điểm WGS84, kinh độ trước). @example POINT(106.7700 10.8500)']
   phone_number varchar(20) [note: 'Contact number for dispatch. @vi Số liên hệ để điều phối. @example +842838123456']
   status varchar(20) [not null, note: 'Whether the partner accepts dispatches. @vi Đối tác có nhận điều phối không. @example ACTIVE']
-  Note: '''@status planned @owner g3 @features F-I4,F-I3
+  Note: '''@status planned @owner internal @features F-I4,F-I3
 A workshop or rescue partner that support can dispatch to.
 @vi-name Đối tác sửa chữa & cứu hộ
 @vi Một xưởng hoặc đơn vị cứu hộ mà CSKH có thể điều phối tới.'''
@@ -969,7 +1152,7 @@ A workshop or rescue partner that support can dispatch to.
 
 Table maintenance_bookings {
   booking_id uuid [pk, note: 'Internal ID of the booking. @vi Mã nội bộ của lịch hẹn. @example 0000000d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account that booked. @vi Tài khoản khách hàng đặt lịch. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization that booked. @vi Tổ chức khách hàng đặt lịch. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   vehicle_id uuid [not null, note: 'Vehicle to be serviced. @vi Xe cần bảo dưỡng. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   partner_id uuid [not null, note: 'Workshop booked. @vi Xưởng được đặt. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
   scheduled_at timestamptz [not null, note: 'Appointment time. @vi Thời gian hẹn. @example 2026-09-20T01:00:00Z']
@@ -981,11 +1164,12 @@ A maintenance appointment for a vehicle at a partner workshop.
 @vi Một lịch hẹn bảo dưỡng xe tại xưởng đối tác.'''
 }
 
-Ref: support_cases.account_id > customer_accounts.account_id [delete: restrict]
+Ref: support_cases.organization_id > organizations.organization_id [delete: restrict]
 Ref: support_cases.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: support_cases.driver_id > drivers.driver_id [delete: restrict]
 Ref: support_cases.assigned_partner_id > repair_partners.partner_id [delete: restrict]
-Ref: maintenance_bookings.account_id > customer_accounts.account_id [delete: restrict]
+Ref: repair_partners.organization_id - organizations.organization_id [delete: restrict]
+Ref: maintenance_bookings.organization_id > organizations.organization_id [delete: restrict]
 Ref: maintenance_bookings.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: maintenance_bookings.partner_id > repair_partners.partner_id [delete: restrict]
 
@@ -996,13 +1180,13 @@ TableGroup support {
   Note: '''
 Customer support: tickets, SOS, rescue dispatch, and maintenance bookings.
 
-- A **support case** (ticket or SOS) is about a vehicle and/or a driver of one account.
+- A **support case** (ticket or SOS) is about a vehicle and/or a driver of one organization.
 - Support can dispatch a case to a **repair partner** (F-I4).
 - A customer books **maintenance** for a vehicle at a partner (F-I3).
 
 @vi-name CSKH & cứu hộ
 @vi Chăm sóc khách hàng: yêu cầu hỗ trợ, SOS, điều phối cứu hộ và đặt lịch bảo dưỡng.
-- Một **ca hỗ trợ** (yêu cầu thường hoặc SOS) liên quan đến một xe và/hoặc một tài xế của một tài khoản.
+- Một **ca hỗ trợ** (yêu cầu thường hoặc SOS) liên quan đến một xe và/hoặc một tài xế của một tổ chức.
 - CSKH có thể điều phối ca tới một **đối tác sửa chữa** (F-I4).
 - Khách hàng **đặt lịch bảo dưỡng** cho xe tại một đối tác (F-I3).
 '''
@@ -1018,7 +1202,7 @@ Table charging_policies {
   name varchar(100) [not null, note: 'Policy name. @vi Tên chính sách. @example Chính sách sạc bảo hành tiêu chuẩn']
   status varchar(20) [not null, note: 'Whether the policy is in use. @vi Chính sách có đang được dùng không. @example ACTIVE']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
-  Note: '''@status planned @owner g3 @features F-B1
+  Note: '''@status planned @owner internal @features F-B1
 A named warranty charging policy defined by G3 Mobility.
 @vi-name Chính sách sạc
 @vi Một chính sách sạc bảo hành có tên do G3 Mobility định nghĩa.'''
@@ -1038,7 +1222,7 @@ Table charging_policy_versions {
   indexes {
     (policy_id, version_no) [unique]
   }
-  Note: '''@status planned @owner g3 @features F-B1
+  Note: '''@status planned @owner internal @features F-B1
 One immutable version of a policy's rules. Every version is kept for audit.
 @vi-name Phiên bản chính sách sạc
 @vi Một phiên bản quy tắc không sửa được của chính sách. Mọi phiên bản đều được giữ để kiểm toán.'''
@@ -1046,7 +1230,7 @@ One immutable version of a policy's rules. Every version is kept for audit.
 
 Table charging_policy_assignments {
   assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần áp dụng. @example 0000000e-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account the assignment belongs to. @vi Tài khoản khách hàng của lần áp dụng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization the assignment belongs to. @vi Tổ chức khách hàng của lần áp dụng. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   policy_id uuid [not null, note: 'Policy applied. @vi Chính sách được áp dụng. @example b8e5a2d9-3c6f-4b1e-a9d7-5f2c0e8b1aee']
   vehicle_id uuid [note: 'Vehicle it applies to, if scoped to one vehicle. Exactly one of vehicle_id / fleet_id / vehicle_model is set. @vi Xe được áp dụng, nếu phạm vi là một xe. Chỉ đúng một trong vehicle_id / fleet_id / vehicle_model có giá trị. @example NULL']
   fleet_id uuid [note: 'Fleet it applies to, if scoped to a fleet. @vi Đội xe được áp dụng, nếu phạm vi là một đội. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
@@ -1061,7 +1245,7 @@ Which policy applies to a vehicle, a fleet, or a vehicle model.
 
 Table policy_violations {
   violation_id uuid [pk, note: 'Internal ID of the violation. @vi Mã nội bộ của vi phạm. @example 0000000f-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account of the vehicle. @vi Tài khoản khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization of the vehicle. @vi Tổ chức khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   session_id uuid [not null, note: 'Charging session that broke the policy. @vi Phiên sạc đã vi phạm chính sách. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   vehicle_id uuid [not null, note: 'Vehicle concerned. @vi Xe liên quan. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   policy_version_id uuid [not null, note: 'Exact policy version that was broken. @vi Đúng phiên bản chính sách bị vi phạm. @example c7d4f1a8-2b5e-4c9d-8f6a-1e3b0d7c4aff']
@@ -1077,11 +1261,11 @@ still an open business question (feature-list item 3).
 
 Ref: charging_policy_versions.policy_id > charging_policies.policy_id [delete: restrict]
 Ref: charging_policy_versions.created_by > users.user_id [delete: restrict]
-Ref: charging_policy_assignments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: charging_policy_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_policy_assignments.policy_id > charging_policies.policy_id [delete: restrict]
 Ref: charging_policy_assignments.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: charging_policy_assignments.fleet_id > fleets.fleet_id [delete: restrict]
-Ref: policy_violations.account_id > customer_accounts.account_id [delete: restrict]
+Ref: policy_violations.organization_id > organizations.organization_id [delete: restrict]
 Ref: policy_violations.session_id > charging_sessions.session_id [delete: restrict]
 Ref: policy_violations.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: policy_violations.policy_version_id > charging_policy_versions.version_id [delete: restrict]
@@ -1096,13 +1280,13 @@ Warranty-linked charging rules and the violations detected against them.
 
 - A **policy** has many immutable **versions**; the values are G3 Mobility's decision.
 - A policy is **assigned** to a vehicle, a fleet, or a vehicle model.
-- A **violation** links one charging session to the policy version it broke. This needs the session → vehicle link (D4).
+- A **violation** links one charging session to the policy version it broke. This needs the session → vehicle link.
 
 @vi-name Chính sách sạc (bảo hành)
 @vi Quy tắc sạc gắn với bảo hành và các vi phạm được phát hiện.
 - Một **chính sách** có nhiều **phiên bản** không sửa được; giá trị cụ thể do G3 Mobility quyết định.
 - Chính sách được **áp dụng** cho một xe, một đội xe hoặc một dòng xe.
-- Một **vi phạm** gắn một phiên sạc với đúng phiên bản chính sách bị vi phạm. Điều này cần liên kết phiên sạc → xe (D4).
+- Một **vi phạm** gắn một phiên sạc với đúng phiên bản chính sách bị vi phạm. Điều này cần liên kết phiên sạc → xe.
 '''
 }
 
@@ -1119,7 +1303,7 @@ Table tariffs {
   schedule jsonb [note: 'Time-of-day price periods as JSON. @vi Các khung giờ giá theo thời điểm trong ngày, dạng JSON. @example [{"from": "22:00", "to": "04:00", "price_per_kwh": 3200}]']
   valid_from timestamptz [not null, note: 'When the tariff takes effect. @vi Thời điểm biểu giá có hiệu lực. @example 2026-10-01T00:00:00Z']
   valid_to timestamptz [note: 'When it stops applying; NULL if open-ended. @vi Thời điểm hết hiệu lực; NULL nếu không thời hạn. @example NULL']
-  Note: '''@status planned @owner g3 @features F-C8,F-H1
+  Note: '''@status planned @owner internal @features F-C8,F-H1
 The price of energy. Who owns tariffs (G3 Energy or G3 Network) is
 feature-list item 5.
 @vi-name Biểu giá điện
@@ -1128,7 +1312,7 @@ feature-list item 5.
 
 Table payments {
   payment_id uuid [pk, note: 'Internal ID of the payment. @vi Mã nội bộ của thanh toán. @example 3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21']
-  account_id uuid [not null, note: 'Customer account that paid. @vi Tài khoản khách hàng đã thanh toán. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization that paid. @vi Tổ chức khách hàng đã thanh toán. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   session_id uuid [note: 'Charging session paid for; NULL for other payments. @vi Phiên sạc được thanh toán; NULL với các khoản khác. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   amount numeric(14,2) [not null, note: 'Amount paid. @vi Số tiền đã thanh toán. @example 866250.00']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
@@ -1145,20 +1329,20 @@ One payment through a gateway or wallet, usually for one session.
 
 Table wallets {
   wallet_id uuid [pk, note: 'Internal ID of the wallet. @vi Mã nội bộ của ví. @example 5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32']
-  account_id uuid [not null, note: 'Customer account the wallet belongs to. @vi Tài khoản khách hàng sở hữu ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  driver_id uuid [note: 'Driver it belongs to; NULL for the account-level wallet. (decision D5) @vi Tài xế sở hữu ví; NULL với ví cấp tài khoản (quyết định D5). @example NULL']
+  organization_id uuid [not null, note: 'Customer organization the wallet belongs to. @vi Tổ chức khách hàng sở hữu ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [note: 'Driver it belongs to; NULL for the organization-level wallet. (decision D5) @vi Tài xế sở hữu ví; NULL với ví cấp tổ chức (quyết định D5). @example NULL']
   balance numeric(14,2) [not null, note: 'Current balance; must equal the sum of its transactions. @vi Số dư hiện tại; phải bằng tổng các giao dịch của ví. @example 12500000.00']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
   status varchar(20) [not null, note: 'Whether the wallet can be used. @vi Ví có dùng được không. @example ACTIVE']
   Note: '''@status planned @owner customer @features F-H2
-A prepaid balance for a driver or for a whole account.
+A prepaid balance for a driver or for a whole organization.
 @vi-name Ví
-@vi Số dư trả trước của một tài xế hoặc của cả tài khoản.'''
+@vi Số dư trả trước của một tài xế hoặc của cả tổ chức.'''
 }
 
 Table wallet_transactions {
   transaction_id uuid [pk, note: 'Internal ID of the transaction. @vi Mã nội bộ của giao dịch. @example 00000010-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account of the wallet. @vi Tài khoản khách hàng của ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization of the wallet. @vi Tổ chức khách hàng của ví. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   wallet_id uuid [not null, note: 'Wallet affected. @vi Ví bị ảnh hưởng. @example 5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32']
   transaction_type varchar(20) [not null, note: 'Kind of money movement. Values: TOP_UP | CHARGE | WITHDRAW | REFUND. @vi Loại biến động tiền. Giá trị: TOP_UP | CHARGE | WITHDRAW | REFUND. @example CHARGE']
   amount numeric(14,2) [not null, note: 'Signed amount: positive adds money, negative removes it. @vi Số tiền có dấu: dương là cộng tiền, âm là trừ tiền. @example -866250.00']
@@ -1174,7 +1358,7 @@ Append-only movement of money in or out of a wallet.
 
 Table invoices {
   invoice_id uuid [pk, note: 'Internal ID of the invoice. @vi Mã nội bộ của hóa đơn. @example 7e5c2a9f-4b1d-4e3a-9c8f-0d6b1e4a7c43']
-  account_id uuid [not null, note: 'Customer account invoiced. @vi Tài khoản khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization invoiced. @vi Tổ chức khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   invoice_type varchar(20) [not null, note: 'Per-session retail invoice or monthly fleet invoice. Values: RETAIL | FLEET_MONTHLY. @vi Hóa đơn lẻ theo phiên hay hóa đơn tổng hợp tháng cho đội xe. Giá trị: RETAIL | FLEET_MONTHLY. @example FLEET_MONTHLY']
   period_start date [note: 'First day covered; NULL for a single-session invoice. @vi Ngày đầu kỳ; NULL với hóa đơn một phiên. @example 2026-09-01']
   period_end date [note: 'Last day covered; NULL for a single-session invoice. @vi Ngày cuối kỳ; NULL với hóa đơn một phiên. @example 2026-09-30']
@@ -1193,7 +1377,7 @@ by a new invoice.
 Table invoice_lines {
   line_id uuid [pk, note: 'Internal ID of the line. @vi Mã nội bộ của dòng hóa đơn. @example 00000011-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   invoice_id uuid [not null, note: 'Invoice the line belongs to. @vi Hóa đơn chứa dòng. @example 7e5c2a9f-4b1d-4e3a-9c8f-0d6b1e4a7c43']
-  account_id uuid [not null, note: 'Customer account invoiced. @vi Tài khoản khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization invoiced. @vi Tổ chức khách hàng được xuất hóa đơn. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   session_id uuid [note: 'Charging session billed on this line, if any. @vi Phiên sạc được tính tiền ở dòng này, nếu có. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   subscription_id uuid [note: 'Subscription period billed on this line, if any. @vi Kỳ thuê bao được tính tiền ở dòng này, nếu có. @example NULL']
   description varchar(200) [not null, note: 'Line text printed on the invoice. @vi Nội dung dòng in trên hóa đơn. @example Sạc điện 192.5 kWh - Trạm sạc G3 Bình Dương - 15/09/2026']
@@ -1212,16 +1396,19 @@ Table subscription_plans {
   name varchar(100) [not null, note: 'Plan name. @vi Tên gói. @example Gói Cơ bản']
   price_per_vehicle_month numeric(12,2) [not null, note: 'Monthly price per vehicle. The price itself is still open (feature-list item 7). @vi Giá theo xe theo tháng. Mức giá cụ thể vẫn còn mở (mục 7 của feature-list). @example 500000.00']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
+  is_default boolean [not null, note: 'TRUE for the one plan that applies when an organization has no active subscription (the GUEST plan: charging, wallet, receipts, history). Exactly one plan is the default. @vi TRUE với gói duy nhất được áp dụng khi tổ chức không có thuê bao nào còn hiệu lực (gói GUEST: sạc, ví, biên nhận, lịch sử). Chỉ đúng một gói là mặc định. @example false']
   status varchar(20) [not null, note: 'Whether the plan can be sold. @vi Gói có đang được bán không. @example ACTIVE']
-  Note: '''@status planned @owner g3 @features F-H4
-A SaaS plan (e.g. Standard tier) priced per vehicle per month.
+  Note: '''@status planned @owner internal @features F-H4
+A plan: one row per offer (GUEST as the free default, STANDARD, ADVANCED,
+PRO, ..., or a private plan for one customer); its features are in
+plan_features. Pricing is per feature (see the billing domain note).
 @vi-name Gói dịch vụ
-@vi Một gói SaaS (ví dụ gói Cơ bản) tính giá theo xe theo tháng.'''
+@vi Một gói dịch vụ: mỗi gói là một dòng (GUEST là gói mặc định miễn phí, STANDARD, ADVANCED, PRO, ..., hoặc gói riêng cho một khách hàng); tính năng của gói nằm ở plan_features. Giá được tính theo từng tính năng (xem ghi chú của miền thanh toán).'''
 }
 
 Table subscriptions {
   subscription_id uuid [pk, note: 'Internal ID of the subscription. @vi Mã nội bộ của thuê bao. @example 9a7e4c1b-6d3f-4a5c-b0e8-2f1d7c9b3e54']
-  account_id uuid [not null, note: 'Customer account subscribed. @vi Tài khoản khách hàng đăng ký. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization subscribed. @vi Tổ chức khách hàng đăng ký. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   plan_id uuid [not null, note: 'Plan subscribed to. @vi Gói được đăng ký. @example 0c9a6e3d-8f5b-4c7e-a2d1-4b3f9e6c0a65']
   vehicle_id uuid [not null, note: 'Vehicle covered. @vi Xe được áp dụng. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   started_at timestamptz [not null, note: 'When the subscription started. @vi Thời điểm bắt đầu thuê bao. @example 2026-09-01T00:00:00Z']
@@ -1234,21 +1421,39 @@ One vehicle subscribed to a plan; overdue locks features.
 }
 
 Ref: tariffs.station_id > charging_stations.station_id [delete: restrict]
-Ref: payments.account_id > customer_accounts.account_id [delete: restrict]
+Ref: payments.organization_id > organizations.organization_id [delete: restrict]
 Ref: payments.session_id > charging_sessions.session_id [delete: restrict]
-Ref: wallets.account_id > customer_accounts.account_id [delete: restrict]
+Ref: wallets.organization_id > organizations.organization_id [delete: restrict]
 Ref: wallets.driver_id > drivers.driver_id [delete: restrict]
-Ref: wallet_transactions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: wallet_transactions.organization_id > organizations.organization_id [delete: restrict]
 Ref: wallet_transactions.wallet_id > wallets.wallet_id [delete: restrict]
 Ref: wallet_transactions.session_id > charging_sessions.session_id [delete: restrict]
 Ref: wallet_transactions.payment_id > payments.payment_id [delete: restrict]
-Ref: invoices.account_id > customer_accounts.account_id [delete: restrict]
+Ref: invoices.organization_id > organizations.organization_id [delete: restrict]
 Ref: invoice_lines.invoice_id > invoices.invoice_id [delete: restrict]
-Ref: invoice_lines.account_id > customer_accounts.account_id [delete: restrict]
+Ref: invoice_lines.organization_id > organizations.organization_id [delete: restrict]
 Ref: invoice_lines.session_id > charging_sessions.session_id [delete: restrict]
 Ref: invoice_lines.subscription_id > subscriptions.subscription_id [delete: restrict]
-Ref: subscriptions.account_id > customer_accounts.account_id [delete: restrict]
+Ref: subscriptions.organization_id > organizations.organization_id [delete: restrict]
 Ref: subscriptions.plan_id > subscription_plans.plan_id [delete: restrict]
+
+Table plan_features {
+  plan_feature_id uuid [pk, note: 'Internal ID of the row. @vi Mã nội bộ của dòng. @example 0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  plan_id uuid [not null, note: 'Plan that includes the feature. @vi Gói dịch vụ có tính năng này. @example 0c9a6e3d-8f5b-4c7e-a2d1-4b3f9e6c0a65']
+  feature_code varchar(60) [not null, note: 'Feature included, from the feature list defined in code (the same list roles are built from). A user can use a feature only if one of their roles AND their plan include it. @vi Tính năng được bao gồm, lấy từ danh sách tính năng định nghĩa trong mã nguồn (cùng danh sách dùng để xây dựng vai trò). Người dùng chỉ dùng được một tính năng khi một vai trò của họ VÀ gói dịch vụ của họ đều có tính năng đó. @example view_adas_events']
+  created_at timestamptz [not null, note: 'When the feature was added to the plan. @vi Thời điểm tính năng được thêm vào gói. @example 2026-09-01T02:00:00Z']
+  indexes {
+    (plan_id, feature_code) [unique, name: 'uq_plan_features_plan_feature']
+  }
+  Note: '''@status proposed @owner internal @features F-H4
+Which features each plan includes. Plans are data, so G3 can create a new
+plan (Pro, Max, a private plan for one customer) in the portal without a
+developer; only a brand-new feature needs code.
+@vi-name Tính năng của gói dịch vụ
+@vi Mỗi gói dịch vụ gồm những tính năng nào. Gói dịch vụ là dữ liệu, nên G3 có thể tạo gói mới (Pro, Max, gói riêng cho một khách hàng) trên portal mà không cần lập trình viên; chỉ tính năng hoàn toàn mới mới cần viết mã.'''
+}
+
+Ref: plan_features.plan_id > subscription_plans.plan_id [delete: restrict]
 Ref: subscriptions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
 TableGroup billing {
@@ -1259,23 +1464,26 @@ TableGroup billing {
   invoices
   invoice_lines
   subscription_plans
+  plan_features
   subscriptions
   Note: '''
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
 - A **tariff** prices energy network-wide or per station, by time of day.
-- A **payment** usually settles one charging session; a **wallet** belongs to an account or one driver (D5).
-- An **invoice** belongs to one account and has **lines** for sessions or subscription periods.
+- A **payment** usually settles one charging session; a **wallet** belongs to an organization or one driver (D5).
+- An **invoice** belongs to one organization and has **lines** for sessions or subscription periods.
 - A **subscription** puts one vehicle on one **plan**.
-- Billing a session requires knowing whose session it was (D4).
+- Billing a session requires knowing whose session it was.
+- **Pricing direction (owner decision, 2026-10-03), tables designed in the billing review:** a catalog of a few dozen features, each with its own list price and pricing unit (per vehicle/month, per organization/month, per user, per message - e.g. SMS). Plans are bundles of features; public plans (GUEST as the free default, STANDARD, ADVANCED, PRO, ...) serve most customers, and a private custom plan can be built for one customer. A customer may also add single features on top of a plan (add-ons). Agreed prices are copied onto the subscription/add-on rows. What an organization can use = its plan's features + active add-ons, intersected with each person's role. Companies buy through our sales team; an individual (a guest's personal organization) buys self-service in the app. Each organization decides, per message service, whether push, SMS and e-mail are used (SMS only if its plan includes it); the fleet portal list is always on.
 
 @vi-name Thanh toán & hóa đơn
 @vi Tiền: giá điện, thanh toán, ví trả trước, hóa đơn điện tử và thuê bao SaaS.
 - **Biểu giá** định giá điện cho toàn mạng hoặc từng trạm, theo khung giờ.
-- Một **thanh toán** thường cho một phiên sạc; một **ví** thuộc một tài khoản hoặc một tài xế (D5).
-- Một **hóa đơn** thuộc một tài khoản và có các **dòng hóa đơn** cho phiên sạc hoặc kỳ thuê bao.
+- Một **thanh toán** thường cho một phiên sạc; một **ví** thuộc một tổ chức hoặc một tài xế (D5).
+- Một **hóa đơn** thuộc một tổ chức và có các **dòng hóa đơn** cho phiên sạc hoặc kỳ thuê bao.
 - Một **thuê bao** đưa một xe vào một **gói dịch vụ**.
-- Muốn tính tiền một phiên sạc phải biết phiên đó của ai (D4).
+- Muốn tính tiền một phiên sạc phải biết phiên đó của ai.
+- **Định hướng định giá (quyết định ngày 03/10/2026), bảng sẽ được thiết kế khi rà soát miền thanh toán:** danh mục khoảng vài chục tính năng, mỗi tính năng có giá niêm yết và đơn vị tính riêng (theo xe/tháng, theo tổ chức/tháng, theo người dùng, theo tin nhắn - ví dụ SMS). Gói dịch vụ là nhóm tính năng; các gói công khai (GUEST là gói mặc định miễn phí, STANDARD, ADVANCED, PRO, ...) phục vụ đa số khách hàng, và có thể tạo gói riêng cho một khách hàng. Khách hàng cũng có thể mua thêm từng tính năng ngoài gói (add-on). Giá đã thỏa thuận được chép vào dòng thuê bao/add-on. Tổ chức được dùng = tính năng của gói + add-on còn hiệu lực, giao với vai trò của từng người. Doanh nghiệp mua qua đội bán hàng của chúng ta; cá nhân (tổ chức cá nhân của khách vãng lai) tự mua trên app. Mỗi tổ chức tự chọn, cho từng loại thông tin, có gửi qua thông báo đẩy, SMS và email hay không (SMS chỉ khi gói có tính năng này); danh sách trên fleet portal luôn bật.
 '''
 }
 
@@ -1285,7 +1493,7 @@ Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscripti
 
 Table driver_scores {
   score_id uuid [pk, note: 'Internal ID of the score. @vi Mã nội bộ của điểm. @example 00000012-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  account_id uuid [not null, note: 'Customer account of the driver. @vi Tài khoản khách hàng của tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization of the driver. @vi Tổ chức khách hàng của tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   driver_id uuid [not null, note: 'Driver scored. @vi Tài xế được chấm điểm. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
   week_start date [not null, note: 'Monday of the scored week. @vi Thứ Hai của tuần được chấm. @example 2026-09-14']
   score numeric(5,2) [not null, note: 'Safety score from 0 to 100. @vi Điểm an toàn từ 0 đến 100. @example 86.50']
@@ -1300,7 +1508,7 @@ A driver's weekly safety score, computed from telemetry.
 @vi Điểm an toàn hằng tuần của tài xế, tính từ dữ liệu vận hành xe.'''
 }
 
-Ref: driver_scores.account_id > customer_accounts.account_id [delete: restrict]
+Ref: driver_scores.organization_id > organizations.organization_id [delete: restrict]
 Ref: driver_scores.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup scoring {
@@ -1325,9 +1533,9 @@ Table promotion_campaigns {
   name varchar(200) [not null, note: 'Campaign name. @vi Tên chiến dịch. @example Giảm 10% sạc đêm tháng 10']
   starts_at timestamptz [not null, note: 'When the campaign starts. @vi Thời điểm bắt đầu. @example 2026-10-01T00:00:00Z']
   ends_at timestamptz [note: 'When it ends; NULL if open-ended. @vi Thời điểm kết thúc; NULL nếu không thời hạn. @example 2026-10-31T16:59:59Z']
-  target jsonb [note: 'Who receives it, as JSON criteria. @vi Đối tượng nhận, dạng tiêu chí JSON. @example {"vehicle_models": ["EVT-400"], "accounts": "all"}']
+  target jsonb [note: 'Who receives it, as JSON criteria. @vi Đối tượng nhận, dạng tiêu chí JSON. @example {"vehicle_models": ["EVT-400"], "organizations": "all"}']
   status varchar(20) [not null, note: 'Campaign status. @vi Trạng thái chiến dịch. @example SCHEDULED']
-  Note: '''@status planned @owner g3 @features F-F4
+  Note: '''@status planned @owner internal @features F-F4
 A maintenance reminder or promotion campaign.
 @vi-name Chiến dịch khuyến mãi
 @vi Một chiến dịch nhắc bảo dưỡng hoặc khuyến mãi.'''
@@ -1335,7 +1543,7 @@ A maintenance reminder or promotion campaign.
 
 Table trips {
   trip_id uuid [pk, note: 'Internal ID of the trip. @vi Mã nội bộ của chuyến đi. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
-  account_id uuid [not null, note: 'Customer account of the vehicle. @vi Tài khoản khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Customer organization of the vehicle. @vi Tổ chức khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   vehicle_id uuid [not null, note: 'Vehicle that made the trip. @vi Xe thực hiện chuyến. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   driver_id uuid [note: 'Driver on the trip, if known. @vi Tài xế của chuyến, nếu biết. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
   started_at timestamptz [not null, note: 'When the trip started. @vi Thời điểm bắt đầu chuyến. @example 2026-09-15T00:30:00Z']
@@ -1348,7 +1556,7 @@ One trip of a vehicle. F-A9 is suspended: no trip concept exists yet.
 @vi Một chuyến đi của xe. F-A9 đang tạm dừng: chưa có khái niệm chuyến đi.'''
 }
 
-Ref: trips.account_id > customer_accounts.account_id [delete: restrict]
+Ref: trips.organization_id > organizations.organization_id [delete: restrict]
 Ref: trips.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: trips.driver_id > drivers.driver_id [delete: restrict]
 
@@ -1371,22 +1579,16 @@ Note open_decisions {
 '''
 | ID | Question | Affects |
 |---|---|---|
-| D1 | Is the tenant a **customer account** that is either an organization or an individual truck owner? | `account_id` on every customer-owned table |
-| D2 | Is a **fleet** the same thing as a customer account, or a sub-group inside one? | `fleets`, `customer_accounts` |
-| D3 | When a vehicle **changes owner**, does its old data stay with the previous owner? | `vehicle_ownerships`, `account_id` on telemetry |
-| D4 | How is a charging session tied to a customer: **RFID card, app QR scan, VIN autocharge**, or all three? | `charging_credentials`, `charging_sessions`, billing, policy violations |
+| D3 | When a vehicle **changes owner**, does its old data stay with the previous owner? | `vehicle_ownerships`, `organization_id` on telemetry |
 | D5 | Who pays for a fleet driver's charge: the **driver's wallet, the fleet's wallet**, or it depends? | `wallets`, `payments` |
 | D6 | Who owns the **telematic device**: the customer, or G3 as part of the subscription? | `telematics` owner |
-| D7 | Which **G3 staff roles** (CSKH, warranty, energy operations) see across all accounts? | `users`, `roles` |
+| D7 | For internal users (who see every organization), which features does each job title get - especially personal data such as location history and camera clips (e.g. an ACCOUNTANT should not open camera clips)? | `user_role_assignments`, feature list in code |
 
 @vi | Mã | Câu hỏi | Ảnh hưởng tới |
 |---|---|---|
-| D1 | Khách thuê (tenant) có phải là **tài khoản khách hàng**, gồm doanh nghiệp hoặc chủ xe cá nhân? | `account_id` trên mọi bảng thuộc khách hàng |
-| D2 | **Đội xe** là chính tài khoản khách hàng, hay là nhóm con bên trong một tài khoản? | `fleets`, `customer_accounts` |
-| D3 | Khi xe **đổi chủ**, dữ liệu cũ có tiếp tục thuộc chủ cũ không? | `vehicle_ownerships`, `account_id` trên dữ liệu vận hành |
-| D4 | Phiên sạc được gắn với khách hàng bằng cách nào: **thẻ RFID, quét QR trên app, VIN autocharge**, hay cả ba? | `charging_credentials`, `charging_sessions`, thanh toán, vi phạm chính sách |
+| D3 | Khi xe **đổi chủ**, dữ liệu cũ có tiếp tục thuộc chủ cũ không? | `vehicle_ownerships`, `organization_id` trên dữ liệu vận hành |
 | D5 | Ai trả tiền khi tài xế của đội xe sạc: **ví của tài xế, ví của đội xe**, hay tùy trường hợp? | `wallets`, `payments` |
 | D6 | Ai sở hữu **thiết bị telematics**: khách hàng, hay G3 (nằm trong gói thuê bao)? | chủ sở hữu `telematics` |
-| D7 | **Vai trò nhân viên G3** nào (CSKH, bảo hành, vận hành năng lượng) được xem dữ liệu của mọi tài khoản? | `users`, `roles` |
+| D7 | Với người dùng nội bộ (xem được mọi tổ chức), mỗi chức danh được những tính năng nào - nhất là dữ liệu cá nhân như lịch sử vị trí và clip camera (ví dụ ACCOUNTANT không được mở clip camera)? vai trò nào chỉ xem một phần? | `user_role_assignments`, feature list in code |
 '''
 }

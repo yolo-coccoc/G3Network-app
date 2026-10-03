@@ -38,7 +38,7 @@ erDiagram
   }
   charging_reservations {
     uuid reservation_id PK
-    uuid account_id FK
+    uuid organization_id FK
     uuid connector_id FK
     uuid driver_id FK
   }
@@ -46,7 +46,7 @@ erDiagram
   charging_connectors }o--|| charging_evses : "evse_id"
   charging_ocpp_messages }o--|| charging_stations : "station_id"
   charging_station_configuration_entries }o--|| charging_stations : "station_id"
-  charging_reservations }o..|| customer_accounts : "account_id"
+  charging_reservations }o..|| organizations : "organization_id"
   charging_reservations }o..|| charging_connectors : "connector_id"
   charging_reservations }o..o| drivers : "driver_id"
   charging_sessions }o--|| charging_stations : "station_id"
@@ -55,13 +55,13 @@ erDiagram
   tariffs }o..o| charging_stations : "station_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [customer_accounts](identity.md#customer_accounts), [drivers](drivers.md#drivers), [tariffs](billing.md#tariffs).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [tariffs](billing.md#tariffs).
 
 ## Tables
 
 ### charging_stations
 
-✅ built · owner: **g3** · features: F-C1, F-C2, F-D1, F-G2
+**No. 22** · ✅ built · owner: **internal** · features: F-C1, F-C2, F-D1, F-G2
 
 One charging station in G3's network.
 
@@ -110,7 +110,7 @@ One charging station in G3's network.
 
 ### charging_evses
 
-✅ built · owner: **g3** · features: F-C1, F-G2
+**No. 23** · ✅ built · owner: **internal** · features: F-C1, F-G2
 
 One EVSE (power outlet unit) of a station.
 
@@ -135,7 +135,7 @@ One EVSE (power outlet unit) of a station.
 
 ### charging_connectors
 
-✅ built · owner: **g3** · features: F-C1, F-C2
+**No. 24** · ✅ built · owner: **internal** · features: F-C1, F-C2
 
 One physical gun/plug, with its live status.
 
@@ -169,7 +169,7 @@ One physical gun/plug, with its live status.
 
 ### charging_ocpp_messages
 
-✅ built · owner: **g3** · features: F-G2 · hypertable on `occurred_at`
+**No. 25** · ✅ built · owner: **internal** · features: F-G2 · hypertable on `occurred_at`
 
 Every OCPP frame in both directions, verbatim and append-only.
 
@@ -192,7 +192,7 @@ Every OCPP frame in both directions, verbatim and append-only.
 
 ### charging_station_configuration_entries
 
-✅ built · owner: **g3** · features: F-G2
+**No. 26** · ✅ built · owner: **internal** · features: F-G2
 
 One configuration key from a charger's GetConfiguration answer (append-only snapshots).
 
@@ -212,14 +212,14 @@ One configuration key from a charger's GetConfiguration answer (append-only snap
 
 ### charging_reservations
 
-📋 planned · owner: **two-party** · features: F-C4
+**No. 27** · 📋 planned · owner: **two-party** · features: F-C4
 
 A customer's hold on a G3 connector for a time window.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `reservation_id` | uuid | no | PK |  | Internal ID of the reservation. | `00000009-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account holding the reservation. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization holding the reservation. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `connector_id` | uuid | no | FK | [charging_connectors](#charging_connectors).connector_id (on delete restrict) | Connector reserved. | `0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa` |
 | `driver_id` | uuid | yes | FK | [drivers](drivers.md#drivers).driver_id (on delete restrict) | Driver expected to arrive; NULL if not named. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
 | `reserved_from` | timestamptz | no |  |  | Start of the reserved window. | `2026-09-15T13:00:00Z` |

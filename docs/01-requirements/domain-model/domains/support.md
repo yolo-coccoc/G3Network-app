@@ -8,7 +8,7 @@
 
 Customer support: tickets, SOS, rescue dispatch, and maintenance bookings.
 
-- A **support case** (ticket or SOS) is about a vehicle and/or a driver of one account.
+- A **support case** (ticket or SOS) is about a vehicle and/or a driver of one organization.
 - Support can dispatch a case to a **repair partner** (F-I4).
 - A customer books **maintenance** for a vehicle at a partner (F-I3).
 
@@ -18,43 +18,45 @@ Customer support: tickets, SOS, rescue dispatch, and maintenance bookings.
 erDiagram
   support_cases {
     uuid case_id PK
-    uuid account_id FK "planned"
+    uuid organization_id FK "planned"
     uuid vehicle_id FK
     uuid driver_id FK
     uuid assigned_partner_id FK "planned"
   }
   repair_partners {
     uuid partner_id PK
+    uuid organization_id FK
   }
   maintenance_bookings {
     uuid booking_id PK
-    uuid account_id FK
+    uuid organization_id FK
     uuid vehicle_id FK
     uuid partner_id FK
   }
-  support_cases }o..o| customer_accounts : "account_id"
+  support_cases }o..o| organizations : "organization_id"
   support_cases }o--o| vehicles : "vehicle_id"
   support_cases }o--o| drivers : "driver_id"
   support_cases }o..o| repair_partners : "assigned_partner_id"
-  maintenance_bookings }o..|| customer_accounts : "account_id"
+  repair_partners |o..|| organizations : "organization_id"
+  maintenance_bookings }o..|| organizations : "organization_id"
   maintenance_bookings }o..|| vehicles : "vehicle_id"
   maintenance_bookings }o..|| repair_partners : "partner_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [customer_accounts](identity.md#customer_accounts), [drivers](drivers.md#drivers), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
 ### support_cases
 
-✅ built · owner: **customer** · features: F-I1, F-I2
+**No. 32** · ✅ built · owner: **customer** · features: F-I1, F-I2
 
 One support request: a ticket or an SOS, with its SLA timeline.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `case_id` | uuid | no | PK |  | Internal ID of the case. | `0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | yes | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | **📋 planned (D1)**: Customer account the case belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned**: Customer organization the case belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `case_type` | supportcasetype | no |  |  | Ordinary ticket or SOS. | `SOS` |
 | `category` | supportcasecategory | no |  |  | Business category of the problem. | `BREAKDOWN` |
 | `channel` | supportcasechannel | no |  |  | Where the case came in. | `IN_APP` |
@@ -95,13 +97,14 @@ One support request: a ticket or an SOS, with its SLA timeline.
 
 ### repair_partners
 
-📋 planned · owner: **g3** · features: F-I4, F-I3
+**No. 33** · 📋 planned · owner: **internal** · features: F-I4, F-I3
 
 A workshop or rescue partner that support can dispatch to.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `partner_id` | uuid | no | PK |  | Internal ID of the partner. | `a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | The partner's row in organizations (type PARTNER); its technicians are users of that organization. | `0000001b-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `name` | varchar(200) | no |  |  | Partner name. | `Garage Tín Phát - Thủ Đức` |
 | `partner_type` | varchar(30) | no |  |  | Kind of partner. Values: G3_WORKSHOP \| DEALER \| THIRD_PARTY (feature-list item 9). | `THIRD_PARTY` |
 | `location` | geography(POINT,4326) | yes |  |  | Base location (WGS84 point, longitude first). | `POINT(106.7700 10.8500)` |
@@ -115,14 +118,14 @@ A workshop or rescue partner that support can dispatch to.
 
 ### maintenance_bookings
 
-📋 planned · owner: **customer** · features: F-I3
+**No. 34** · 📋 planned · owner: **customer** · features: F-I3
 
 A maintenance appointment for a vehicle at a partner workshop.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `booking_id` | uuid | no | PK |  | Internal ID of the booking. | `0000000d-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account that booked. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization that booked. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle to be serviced. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `partner_id` | uuid | no | FK | [repair_partners](#repair_partners).partner_id (on delete restrict) | Workshop booked. | `a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd` |
 | `scheduled_at` | timestamptz | no |  |  | Appointment time. | `2026-09-20T01:00:00Z` |

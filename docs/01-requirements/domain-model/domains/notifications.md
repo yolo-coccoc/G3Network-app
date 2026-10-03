@@ -9,7 +9,7 @@
 Alerts raised by other domains, stored for operators to poll.
 
 - A **notification** is usually about one vehicle.
-- It is not yet scoped to a recipient; under D1 it would belong to the vehicle's account.
+- It is not yet scoped to a recipient; the planned `organization_id` gives it to the organization that owns the vehicle.
 
 ## Diagram
 
@@ -17,20 +17,20 @@ Alerts raised by other domains, stored for operators to poll.
 erDiagram
   notifications {
     bigint notification_id PK
-    uuid account_id FK "planned"
+    uuid organization_id FK "planned"
     uuid vehicle_id FK
   }
-  notifications }o..o| customer_accounts : "account_id"
+  notifications }o..o| organizations : "organization_id"
   notifications }o--o| vehicles : "vehicle_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [customer_accounts](identity.md#customer_accounts), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
 ### notifications
 
-✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
+**No. 31** · ✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
 
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
 each alert type is an enum value plus a payload shape.
@@ -38,7 +38,7 @@ each alert type is an enum value plus a payload shape.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `notification_id` | bigint | no | PK |  | Auto-increasing ID; also the polling cursor (after_id). | `5821` |
-| `account_id` | uuid | yes | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | **📋 planned (D1)**: Customer account that should see the notification. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned**: Customer organization that should see the notification. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `notification_type` | notificationtype | no |  |  | Kind of event that raised it. | `BATTERY_ALERT` |
 | `severity` | notificationseverity | no |  |  | How urgent it is, independent of type. | `WARNING` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete cascade) | Vehicle it is about; NULL for non-vehicle notifications. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |

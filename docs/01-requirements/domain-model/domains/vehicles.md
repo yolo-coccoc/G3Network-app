@@ -8,8 +8,9 @@
 
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
-- A **vehicle** belongs to one customer account at a time (D1, D3).
+- A **vehicle** belongs to one customer organization at a time (D3).
 - **Ownership history** records every change of owner, so past data keeps its original owner.
+- **One owner only (owner decision, 2026-10-03):** a truck (and a driver profile) belongs to exactly one organization in the system. When parties cooperate (e.g. an owner-driver operating under a transport company's licence), they agree between themselves and declare the owner to us; their cooperation terms are outside our responsibility and are not modelled.
 
 ## Diagram
 
@@ -17,16 +18,16 @@ The truck itself: identity (VIN, plate), specs, and provisioning state.
 erDiagram
   vehicles {
     uuid vehicle_id PK
-    uuid account_id FK "planned"
+    uuid organization_id FK "planned"
   }
   vehicle_ownerships {
     uuid ownership_id PK
     uuid vehicle_id FK
-    uuid account_id FK
+    uuid organization_id FK
   }
-  vehicles }o..o| customer_accounts : "account_id"
+  vehicles }o..o| organizations : "organization_id"
   vehicle_ownerships }o..|| vehicles : "vehicle_id"
-  vehicle_ownerships }o..|| customer_accounts : "account_id"
+  vehicle_ownerships }o..|| organizations : "organization_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -41,20 +42,20 @@ erDiagram
   trips }o..|| vehicles : "vehicle_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [customer_accounts](identity.md#customer_accounts), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
 
 ## Tables
 
 ### vehicles
 
-✅ built · owner: **customer** · features: F-F2, F-A6
+**No. 11** · ✅ built · owner: **customer** · features: F-F2, F-A6
 
 Static profile of one electric truck.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `vehicle_id` | uuid | no | PK |  | Internal ID of the vehicle. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `account_id` | uuid | yes | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | **📋 planned (D1 D3)**: Customer account that owns the vehicle now. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (D3)**: Customer organization that owns the vehicle now. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `license_plate` | varchar(20) | no | UQ |  | Registration plate, unique. | `51D-123.45` |
 | `vin` | varchar(17) | no | UQ |  | 17-character chassis number (VIN), unique; the vehicle's business key. | `LZGJLGR4XNX000123` |
 | `make` | varchar(50) | no |  |  | Manufacturer. | `Tri-Ring` |
@@ -90,9 +91,9 @@ Static profile of one electric truck.
 
 ### vehicle_ownerships
 
-🆕 proposed · owner: **customer** · features: F-F2
+**No. 12** · 🆕 proposed · owner: **customer** · features: F-F2
 
-Which account owned a vehicle, and when. Lets a sold truck's old data stay
+Which organization owned a vehicle, and when. Lets a sold truck's old data stay
 with its previous owner (decision D3). Same open/close shape as
 fleet_vehicle_memberships.
 
@@ -100,7 +101,7 @@ fleet_vehicle_memberships.
 |---|---|---|---|---|---|---|
 | `ownership_id` | uuid | no | PK |  | Internal ID of the ownership period. | `00000002-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `vehicle_id` | uuid | no | FK | [vehicles](#vehicles).vehicle_id (on delete restrict) | Vehicle owned. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `account_id` | uuid | no | FK | [customer_accounts](identity.md#customer_accounts).account_id (on delete restrict) | Customer account that owned it during this period. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization that owned it during this period. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `started_at` | timestamptz | no |  |  | When this owner took the vehicle (handover). | `2026-06-01T00:00:00Z` |
 | `ended_at` | timestamptz | yes |  |  | When ownership ended; NULL for the current owner. | `NULL` |
 
