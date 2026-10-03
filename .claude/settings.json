@@ -13,6 +13,7 @@
       "Bash(make lint)",
       "Bash(make backend-test)",
       "Bash(make domain-model-check)",
+      "Bash(make feature-catalog-check)",
       "Bash(make db-check)",
       "Bash(make help)",
       "Bash(make coverage)",

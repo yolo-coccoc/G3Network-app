@@ -84,7 +84,8 @@ Addresses once everything is up:
 
 ```bash
 make check                      # the gate: ruff lint + format check, import-linter,
-                                # mypy (app + tests), smoke tests, domain-model check
+                                # mypy (app + tests), smoke tests, domain-model and
+                                # feature-catalog checks
 make format                     # sort imports and format with ruff
 make backend-test-integration   # PostgreSQL integration tests (needs make infra-up)
 make coverage                   # smoke tests with a coverage report (backend/htmlcov/)

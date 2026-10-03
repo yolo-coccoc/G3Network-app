@@ -12,13 +12,20 @@
   glance)
 - `docs/00-status/architecture.md` - Technical documentation: components,
   diagram, database, infra
-- `docs/01-requirements/feature-list.md` - Whole-company product spec by
-  actor (driver app, web portal, CSKH, background system), sourced from the
-  product PRD. Each feature also carries this repo's backend implementation
-  status and backend domain directly (this repo builds only the backend) —
-  it's the **feature-level progress checklist** (source of truth for
-  progress per-feature, alongside overview.md's per-domain summary); update
-  a feature's status/domain fields in the same change that completes it
+- `docs/01-requirements/features/` - The **feature catalog**: every product
+  feature (all users, all surfaces), broken down into capabilities, with
+  users, value, priority, release, offer, dependencies, sources, open
+  questions and a status per surface (backend / app / portal), in one source
+  file (`features.yaml`) plus generated views: `README.md` (progress, index,
+  NFRs, old-code map), one checklist page per domain, and `features.xlsx`
+  (Vietnamese, for business readers). Edit only the `.yaml`, then regenerate
+  (the `feature-catalog` skill has the commands). It replaces
+  `feature-list.md`; its statuses are all "todo" until the backend sync
+- `docs/01-requirements/feature-list.md` - The old feature list (PRD
+  codes `F-A1`...), being replaced by the catalog above. Until the backend
+  sync it still holds the detailed backend status per feature; then it moves
+  to `docs/99-archive/` and the skills, agents and rules that cite it point
+  to the catalog instead
 - `docs/01-requirements/future.md` - Deferred components (skipped for now to reach MVP sooner);
   closed items move, number kept, to `future-resolved.md`
 - `docs/01-requirements/domain-model/` - The whole database design, built and
@@ -37,6 +44,10 @@
   docs, the telematics MQTT contract `mqtt-spec.md`)
 - `docs/04-responses/` - Point-in-time analyses answering a specific question
   (e.g. charger spec vs current system); dated, may cite mismatch IDs
+- `docs/05-decisions/decision-log.md` - Every project-level decision in one
+  index (ID, decision, why, status, date, source), grouped by area, with
+  superseded decisions kept; a new or changed decision adds an entry here in
+  the same change (a change of mind is a new entry superseding the old one)
 - `docs/99-archive/` - Point-in-time or superseded documents kept for history;
   never treat them as current
 

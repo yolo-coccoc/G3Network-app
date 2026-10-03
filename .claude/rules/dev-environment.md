@@ -48,7 +48,7 @@ Basic commands:
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
-- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
+- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
 - `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests (needs `make infra-up`)
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency
@@ -70,14 +70,16 @@ instructions.
 - **Hooks** (`.claude/settings.json`, scripts in `.claude/hooks/`): every
   Python file the agent writes under `backend/` or `simulator/` is
   import-sorted and formatted with ruff (unused imports are left alone); edits
-  to the generated `docs/01-requirements/domain-model/` views are refused
-  (edit the `.dbml` and regenerate).
+  to the generated `docs/01-requirements/domain-model/` and
+  `docs/01-requirements/features/` views are refused (edit the `.dbml` or
+  `features.yaml` and regenerate).
 - **Agents** (`.claude/agents/`): `docs-sync` (bring docs in line with a code
   change), `convention-reviewer` (read-only rules review of a diff),
   `schema-change` (model + DBML + baseline migration + rebuild + verify).
 - **Skills** (`.claude/skills/`): `start-feature` (gather → planner from
   `docs/02-planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
-  `domain-model`, `ocpp16-reference`, `e2e-sim` (run the stack with the
+  `domain-model`, `feature-catalog` (the feature catalog's YAML source and
+  its generated checklists/workbook), `ocpp16-reference`, `e2e-sim` (run the stack with the
   simulators and check the data), `finish-task`. The order to use them in is
   in CLAUDE.md ("How a feature gets built").
 - **MCP servers** (`.mcp.json`, approved via `enabledMcpjsonServers`):

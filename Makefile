@@ -2,7 +2,7 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test backend-test-integration coverage format lint domain-model-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
@@ -42,7 +42,8 @@ help:
 	@echo "  make format          - Sort imports and format (ruff)"
 	@echo "  make lint            - Ruff lint + format check, import-linter, mypy (app + tests)"
 	@echo "  make domain-model-check - DBML design source matches the models; generated views are current"
-	@echo "  make check           - lint + backend-test + domain-model-check (the pre-commit gate)"
+	@echo "  make feature-catalog-check - feature catalog source follows its rules; generated views are current"
+	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check (the pre-commit gate)"
 	@echo "  make audit           - Check locked dependencies for known vulnerabilities (pip-audit)"
 	@echo "  make install-hooks   - Make git run .githooks/pre-commit (make check) before every commit"
 	@echo ""
@@ -176,9 +177,14 @@ lint:
 domain-model-check:
 	uv run --project backend --with pydbml --with openpyxl python .claude/skills/domain-model/scripts/domain_model.py check
 
+# Verifies the feature catalog source follows its rules and the generated
+# checklists and workbook are current.
+feature-catalog-check:
+	uv run --project backend --with pyyaml --with openpyxl python .claude/skills/feature-catalog/scripts/feature_catalog.py check
+
 # The gate the pre-commit hook runs. The PostgreSQL integration tests are not
 # part of it (they need the database); run backend-test-integration for schema work.
-check: lint backend-test domain-model-check
+check: lint backend-test domain-model-check feature-catalog-check
 	@echo "✓ All checks passed"
 
 # Audits every locked package (runtime + dev groups) against the PyPA advisory
