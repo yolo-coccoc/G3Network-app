@@ -114,10 +114,10 @@
 - Add a batched version only when real throughput needs it, and only after a
   benchmark confirms it — never preemptively "for scale."
 - If a batched version already exists, revert it to the simple version and
-  record the deferral in `docs/01-requirements/future.md` (per
+  record the deferral in `docs/decisions/deferred.md` (per
   `repo-conventions.md`'s "when skipping a component" rule): what the
   batched version would look like, and why it's deferred for now.
-- Precedent already applying this: `future.md` items 5 (telematic mapping
+- Precedent already applying this: `deferred.md` items 5 (telematic mapping
   cache), 29 (telematics list N+1), and 34 (charging station directory
   connector count) — all deferred for the same reason.
 
@@ -127,7 +127,7 @@
 - Topic, QoS, batch size, queue size, and timeout must come from settings/constructor arguments; don't hard-code them once config exists.
 - The telemetry ingestion MVP doesn't use `queue.join()`/`task_done()` because the queue only lives in RAM and backlog data is allowed to be lost when the process exits.
 - The telemetry ingestion MVP keeps its queue/task in RAM. On shutdown, cancel and await the worker immediately, roll back any running transaction, and drop any message still in the queue; it doesn't drain the queue.
-- The telemetry MVP processes **one message per transaction** (`telemetry/ingestion/message_worker.py`), with QoS 0, no retry, and no DLQ: a DB error rolls back that message's transaction, logs the traceback, and stops the worker (the ingestion process then exits non-zero). Batched ingestion is deferred (`future.md` item 25).
+- The telemetry MVP processes **one message per transaction** (`telemetry/ingestion/message_worker.py`), with QoS 0, no retry, and no DLQ: a DB error rolls back that message's transaction, logs the traceback, and stops the worker (the ingestion process then exits non-zero). Batched ingestion is deferred (`deferred.md` item 25).
 - Use structured logging via `extra`; never use an f-string inside a logger call. Use `logger.exception()` for unexpected exceptions.
 - Never use `except Exception` outside a process/task boundary.
 - The `processed`, `skipped`, `errors`, `dropped` metrics must be clearly defined and must accurately reflect the outcome.
@@ -138,7 +138,7 @@
 2. Don't create a new engine, session factory, config, or logger if a shared implementation already exists.
 3. Run `make check` (and `make backend-test-integration` when the schema or a repository query changed). The backend has smoke tests under `backend/tests/<domain>/` (shared helpers in `tests/builders.py` and `tests/fakes.py`) plus PostgreSQL integration tests in `tests/test_postgres_integration.py`, skipped unless `RUN_DB_INTEGRATION=1`; state clearly which test scope was run, and why, if the integration tests weren't run.
 4. Check that `__init__.py` only contains a docstring.
-5. Don't leave a placeholder/TODO for a component that's definitely needed later — move it to `docs/01-requirements/future.md` instead.
+5. Don't leave a placeholder/TODO for a component that's definitely needed later — move it to `docs/decisions/deferred.md` instead.
 6. Review migrations for timezone handling, FK, index, constraint, PostGIS/TimescaleDB, upgrade, and downgrade correctness.
 7. No batched/bulk query written preemptively — see "Query batching / premature optimization" above.
 8. If new code needs a different convention, update the relevant convention document (this file, `backend-coding-conventions.md`, or `CLAUDE.md`) or get confirmation before implementing.

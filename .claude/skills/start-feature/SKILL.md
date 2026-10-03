@@ -12,33 +12,37 @@ application code until the scope decisions are confirmed.
 
 ## 1. Gather what is already known (read, don't guess)
 
-1. `docs/01-requirements/feature-list.md` — the feature's entry: actor, output,
-   priority/release, **Backend domain**, **Status**, dependencies, "items
-   needing confirmation". If the code doesn't exist, stop and ask.
-2. `docs/00-status/overview.md` — what the owning domain already does.
-3. `docs/02-planners/` and `docs/02-planners/done/` — an existing planner for
-   this feature or domain (`grep -ril "<F-XX>" docs/02-planners`). If one is in
+1. The feature catalog (`docs/product/features/features.yaml`, or its
+   generated `domains/*.md` page) — capabilities, users, priority/release,
+   status per surface, dependencies, sources, open questions; old `F-xx`
+   codes map to new ones in its README. `docs/product/feature-list.md` still
+   holds the detailed backend status until the backend sync. If the code
+   doesn't exist, stop and ask.
+2. `docs/design/architecture.md` — what the owning domain already does.
+3. `docs/planners/` and `docs/planners/done/` — an existing planner for
+   this feature or domain (`grep -ril "<F-XX>" docs/planners`). If one is in
    progress, **resume it** instead of creating a new one.
-4. `docs/01-requirements/future.md` — items mentioning the feature code or
+4. `docs/decisions/deferred.md` — items mentioning the feature code or
    domain (deferred pieces that may now be in scope, or blockers).
-5. `.claude/rules/open-questions.md` — undecided areas the feature touches.
-6. `docs/01-requirements/domain-model/` — planned tables for it (`@status
+5. `docs/decisions/decision-log.md` — decisions already made in the area, and
+   the open questions it touches.
+6. `docs/design/domain-model/` — planned tables for it (`@status
    planned`, `@features <F-XX>` in the DBML).
-7. Specs in `docs/03-specifications/` if the feature integrates a device or
+7. Specs in `docs/design/specifications/` if the feature integrates a device or
    protocol (for OCPP load the `ocpp16-reference` skill).
 8. `.claude/rules/domain-boundaries.md` — which domain owns the data and which
    edges already exist.
 
 ## 2. Write the planner
 
-- Copy `docs/02-planners/_TEMPLATE.md` to
-  `docs/02-planners/backend-<short-topic>.md`; fill sections 1–3 and the
+- Copy `docs/planners/_TEMPLATE.md` to
+  `docs/planners/backend-<short-topic>.md`; fill sections 1–3 and the
   steps in 4 from what you gathered. Status `📋 Planned`.
 - Section 2 lists every decision the owner must make, each with a
   recommendation and the rejected alternative. Typical ones: which domain
   owns it (new domain → `new-domain` skill), API shape, what is deferred,
   anything that changes existing API behaviour.
-- Anything "needed later" → a `future.md` item (full template), referenced
+- Anything "needed later" → a `deferred.md` item (full template), referenced
   from section 2.1 — never a TODO in code.
 - Respect the rules: no preemptive batching, no new dependency or component
   unless the owner asks, MVP/POC scope.

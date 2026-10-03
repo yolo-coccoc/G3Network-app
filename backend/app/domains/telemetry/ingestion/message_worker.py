@@ -5,7 +5,7 @@ Feature code: F-A1 (Real-time vehicle telemetry ingestion)
 This worker is the active flow of the telemetry ingestion MVP: each time it
 takes a ``TelemetryEnvelope`` off the queue, the worker opens a transaction,
 calls the service to process the message, and commits as soon as the
-operation succeeds. A batched variant is deferred (``future.md`` item 25).
+operation succeeds. A batched variant is deferred (``deferred.md`` item 25).
 """
 
 import asyncio

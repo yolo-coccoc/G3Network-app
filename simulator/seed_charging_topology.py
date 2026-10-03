@@ -11,7 +11,7 @@ Two layouts are supported:
   by ``--evse-id`` and ``--connector-id``.
 * ``--protocol 1.6``: OCPP 1.6J has no EVSE level, so each gun ``n`` (1..
   ``--connectors``) becomes EVSE ``n`` holding connector ``1`` (decision D3 of
-  ``docs/02-planners/backend-ocpp16-charger-integration.md``). Connector ``0``
+  ``docs/planners/backend-ocpp16-charger-integration.md``). Connector ``0``
   (the whole charger) needs no topology row.
 """
 

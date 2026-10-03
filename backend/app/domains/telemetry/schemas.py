@@ -141,7 +141,7 @@ class VehicleTelemetryHistoryResponse(BaseModel):
 
     Ordered chronologically for trip replay (the frontend draws the
     polyline); this backend does no trip-boundary/segmentation detection -
-    see ``docs/01-requirements/future.md`` for that gap. No ``total``/
+    see ``docs/decisions/deferred.md`` for that gap. No ``total``/
     ``page`` fields - a range with more points than the query's ``limit``
     is narrowed by the caller instead of paginated server-side.
 
@@ -322,7 +322,7 @@ class VehicleEnergyUsageResponse(BaseModel):
     reconciliation (<1% deviation): a station meter typically reads more
     than the pack receives (charger/conversion losses), and this also
     includes regenerative braking and any non-station charging. See
-    ``docs/01-requirements/future.md`` for the station-metered method
+    ``docs/decisions/deferred.md`` for the station-metered method
     this is a stand-in for.
 
     Attributes:

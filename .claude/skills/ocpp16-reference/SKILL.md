@@ -5,8 +5,8 @@ description: Condensed reference for the OCPP 1.6J charger integration (Willdigi
 
 # OCPP 1.6J reference (Willdigits charger)
 
-spec = `docs/03-specifications/charging-station-specification-summary.md`; planner =
-`docs/02-planners/backend-ocpp16-charger-integration.md` (D1–D14). ✅ fact · ⚠️ unverified · 🔎 inference.
+spec = `docs/design/specifications/charging-station-specification-summary.md`; planner =
+`docs/planners/backend-ocpp16-charger-integration.md` (D1–D14). ✅ fact · ⚠️ unverified · 🔎 inference.
 
 ## Charger facts (spec Part 1, §3, §4.3)
 - Unit under evaluation: **240 kW, dual gun, CCS2+CCS2** ✅; own DC meter ✅.
@@ -36,7 +36,7 @@ Cross-cutting: timestamps must carry a timezone (D11). One transaction per messa
 
 ## Gateway and boundaries
 - Layout (since 2026-10-01): `ocpp/ocpp_server.py` handshake + connection only; `ocpp/ocpp201_charge_point.py` the 2.0.1 adapter; `ocpp/ocpp16_charge_point.py` the 1.6J adapter; device state the adapters write goes through the internal `ocpp_state_service.py` / `ocpp_state_repository.py` (not `service.py`, which other domains use). The stop-reason width is `charging_sessions.types.STOP_REASON_MAX_LENGTH`.
-- `ocpp/ocpp_server.py`: `SUPPORTED_SUBPROTOCOLS = ("ocpp2.0.1", "ocpp1.6")` (2.0.1 preferred when both offered); 426 if neither; 404 bad path/unknown identity; `create_charge_point` picks `OCPP201ChargePoint` or `OCPP16ChargePoint` (D1, D2). 2.0.1 adds only `BootNotification` (device info + `last_boot_at`, same heartbeat interval) and `Heartbeat` (2026-10-01, D13 reopened by `docs/02-planners/done/backend-happy-path-completion.md`); otherwise shared plumbing only — stop reason, `idToken`, non-energy measurands still missing (#78).
+- `ocpp/ocpp_server.py`: `SUPPORTED_SUBPROTOCOLS = ("ocpp2.0.1", "ocpp1.6")` (2.0.1 preferred when both offered); 426 if neither; 404 bad path/unknown identity; `create_charge_point` picks `OCPP201ChargePoint` or `OCPP16ChargePoint` (D1, D2). 2.0.1 adds only `BootNotification` (device info + `last_boot_at`, same heartbeat interval) and `Heartbeat` (2026-10-01, D13 reopened by `docs/planners/done/backend-happy-path-completion.md`); otherwise shared plumbing only — stop reason, `idToken`, non-energy measurands still missing (#78).
 - `charging_stations → charging_sessions` via public `service.py` only (no new edge): `allocate_ocpp16_transaction_id`, `has_active_session_on_connector`, `resolve_session_by_transaction`, `ingest_measurements`.
 
 ## Status enum (D4)
@@ -53,12 +53,12 @@ APIs: `GET /api/v1/charging-stations/{id}` (device fields, `is_online`), `…/ch
 `make charging-ocpp-dev` (gateway, both protocols) · `make charging-ocpp16-seed` (station `SIM-OCPP16-001`, EVSE per gun) · `make charging-ocpp16-sim` (default scenario `boot`). Other scenarios: `cd backend && uv run python ../simulator/ocpp16_charge_point_simulator.py --scenario status|session`. 2.0.1: `make charging-ocpp-seed` / `charging-ocpp-sim`. Tests: `backend/tests/charging_stations/test_ocpp*_smoke.py`; clean-DB E2E `test_ocpp16_charging_session_end_to_end_on_a_clean_database` in `backend/tests/test_postgres_integration.py` (`RUN_DB_INTEGRATION=1`).
 
 ## Status and deferred work
-Steps 0–9, 11 done (M1–M3, simulator only). **Step 10, real-charger bring-up, waits for hardware** (runbook + 9 SQL queries in planner). Deferred (`docs/01-requirements/future.md`): #73 TLS/auth (D12, dev is plain `ws://`) · #74 remote commands + cross-process command channel (RemoteStart/Stop, ChangeConfiguration, TriggerMessage, Reset…) · #75 fault alerting + 80-code catalog · #76 stale status / online-aware availability (connector-status availability done, #49) · #77 non-transaction / clock-aligned metering · #78 rest of 2.0.1 parity · #79 raw-log API + retention · #80 per-gun power/connector standard · #81 ⚠️ unverified: field lists come from the library schema, card-tap flow (Authorize→Start?) undocumented, unhandled DataTransfer/FirmwareStatus/DiagnosticsStatus · #27 retry, dedup, orphan sessions, back-fill, out-of-order.
-Open vendor questions (`.claude/rules/open-questions.md` 4–5): OCPP implementation guide; 80 error codes → `vendorErrorCode` mapping; DC meter brand/class/seal (⚠️ whether `meterStart/Stop` come from the meter — invoice legality); `wss://` + auth; profiles in writing; HMI permission levels; VIN Autocharge over OCPP?; offline buffer size; `DataTransfer` use. Non-software: truck inlet CCS2 vs GB/T, VN meter verification, local warranty. Interim: build to the standard; meter readings stored as reported, not legally verified.
+Steps 0–9, 11 done (M1–M3, simulator only). **Step 10, real-charger bring-up, waits for hardware** (runbook + 9 SQL queries in planner). Deferred (`docs/decisions/deferred.md`): #73 TLS/auth (D12, dev is plain `ws://`) · #74 remote commands + cross-process command channel (RemoteStart/Stop, ChangeConfiguration, TriggerMessage, Reset…) · #75 fault alerting + 80-code catalog · #76 stale status / online-aware availability (connector-status availability done, #49) · #77 non-transaction / clock-aligned metering · #78 rest of 2.0.1 parity · #79 raw-log API + retention · #80 per-gun power/connector standard · #81 ⚠️ unverified: field lists come from the library schema, card-tap flow (Authorize→Start?) undocumented, unhandled DataTransfer/FirmwareStatus/DiagnosticsStatus · #27 retry, dedup, orphan sessions, back-fill, out-of-order.
+Open vendor questions (open questions 4–5 in `docs/decisions/decision-log.md`): OCPP implementation guide; 80 error codes → `vendorErrorCode` mapping; DC meter brand/class/seal (⚠️ whether `meterStart/Stop` come from the meter — invoice legality); `wss://` + auth; profiles in writing; HMI permission levels; VIN Autocharge over OCPP?; offline buffer size; `DataTransfer` use. Non-software: truck inlet CCS2 vs GB/T, VN meter verification, local warranty. Interim: build to the standard; meter readings stored as reported, not legally verified.
 
 ## Read the full source when…
 - Exact decision wording/rejected alternatives, per-step evidence, Step 10 runbook and SQL → planner §2, §4 (Step 10), §6.
 - Config key targets, reference session, error/stop codes, acceptance checklist → spec §4.2, §4.4, §4.7 + Appendix A, §5.3.
 - Hardware, installation, HMI screens, vendor requests → spec Parts 1–3, §6.
-- Full deferred-item text → `docs/01-requirements/future.md` items 27, 73–81.
-- Mismatch IDs A1…E3 → `docs/04-responses/charging-station-spec-vs-current-system.md`.
+- Full deferred-item text → `docs/decisions/deferred.md` items 27, 73–81.
+- Mismatch IDs A1…E3 → `docs/reports/charging-station-spec-vs-current-system.md`.

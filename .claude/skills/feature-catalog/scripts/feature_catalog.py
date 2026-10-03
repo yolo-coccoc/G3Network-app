@@ -1,7 +1,7 @@
 """Generate the feature-catalog views from the single YAML source, and check it.
 
 The whole product's feature list lives in one file,
-``docs/01-requirements/features/features.yaml``. This script renders it:
+``docs/product/features/features.yaml``. This script renders it:
 
 - ``generate``: writes ``README.md`` (progress per domain and surface, the
   domain index, legend, non-functional requirements, old-code mapping),
@@ -12,7 +12,7 @@ The whole product's feature list lives in one file,
 - ``check``: fails when the source breaks a rule (unknown role, surface,
   status, priority, release or offer; a duplicate code; a dependency on a
   missing feature or a cycle; a table that is not in the DBML; a decision ID
-  that is not in the decision log; a future.md item that does not exist; a
+  that is not in the decision log; a deferred.md item that does not exist; a
   missing Vietnamese text) or when any generated view is stale.
 
 Run from the repository root::
@@ -40,19 +40,17 @@ import yaml
 # The script lives at <root>/.claude/skills/feature-catalog/scripts/, so the
 # repository root is four levels up.
 REPO_ROOT = Path(__file__).resolve().parents[4]
-CATALOG_DIR = REPO_ROOT / "docs" / "01-requirements" / "features"
+CATALOG_DIR = REPO_ROOT / "docs" / "product" / "features"
 SOURCE_PATH = CATALOG_DIR / "features.yaml"
 README_PATH = CATALOG_DIR / "README.md"
 DOMAINS_DIR = CATALOG_DIR / "domains"
 XLSX_PATH = CATALOG_DIR / "features.xlsx"
 # Other documents the catalog points into; check verifies the references.
-DBML_PATH = (
-    REPO_ROOT / "docs" / "01-requirements" / "domain-model" / "domain-model.dbml"
-)
-DECISION_LOG_PATH = REPO_ROOT / "docs" / "05-decisions" / "decision-log.md"
-FUTURE_PATHS = (
-    REPO_ROOT / "docs" / "01-requirements" / "future.md",
-    REPO_ROOT / "docs" / "01-requirements" / "future-resolved.md",
+DBML_PATH = REPO_ROOT / "docs" / "design" / "domain-model" / "domain-model.dbml"
+DECISION_LOG_PATH = REPO_ROOT / "docs" / "decisions" / "decision-log.md"
+DEFERRED_PATHS = (
+    REPO_ROOT / "docs" / "decisions" / "deferred.md",
+    REPO_ROOT / "docs" / "decisions" / "deferred-resolved.md",
 )
 
 GENERATED_MARKER = "<!-- GENERATED from features.yaml"
@@ -119,7 +117,7 @@ SOURCE_PREFIXES = {
     "Phase 2 ": "Phase 2 ",
     "Prerequisite ": "Điều kiện tiên quyết ",
     "Decision ": "Quyết định ",
-    "future.md ": "future.md ",
+    "deferred.md ": "deferred.md ",
     "Design review ": "Rà soát thiết kế ",
     "NF-": "NF-",
 }
@@ -370,7 +368,7 @@ def _read_reference_sets() -> tuple[set[str], set[str], set[str], set[str]]:
 
     Returns:
         DBML table names, DBML table-group (backend domain) names, decision
-        IDs of the decision log, and future.md item numbers (open and
+        IDs of the decision log, and deferred.md item numbers (open and
         resolved). A missing document yields an empty set.
     """
     dbml = DBML_PATH.read_text(encoding="utf-8") if DBML_PATH.exists() else ""
@@ -384,12 +382,12 @@ def _read_reference_sets() -> tuple[set[str], set[str], set[str], set[str]]:
     decisions = set(
         re.findall(r"^\| ([A-Z]{2}-S?\d{2}) \|", decision_log, re.MULTILINE)
     )
-    future_items: set[str] = set()
-    for path in FUTURE_PATHS:
+    deferred_items: set[str] = set()
+    for path in DEFERRED_PATHS:
         if path.exists():
             text = path.read_text(encoding="utf-8")
-            future_items |= set(re.findall(r"^#{2,3} (\d+)\.", text, re.MULTILINE))
-    return tables, groups, decisions, future_items
+            deferred_items |= set(re.findall(r"^#{2,3} (\d+)\.", text, re.MULTILINE))
+    return tables, groups, decisions, deferred_items
 
 
 def _check_feature(
@@ -398,7 +396,7 @@ def _check_feature(
     references: tuple[set[str], set[str], set[str], set[str]],
 ) -> None:
     """Append every rule this feature breaks to ``catalog.problems``."""
-    tables, groups, decisions, future_items = references
+    tables, groups, decisions, deferred_items = references
     problems = catalog.problems
     code = feature.code
     if feature.priority not in PRIORITIES:
@@ -439,7 +437,10 @@ def _check_feature(
             problems.append(f"{code}: source {source!r} has an unknown prefix")
         elif source.startswith("Decision ") and source[9:] not in decisions:
             problems.append(f"{code}: {source} is not in the decision log")
-        elif source.startswith("future.md ") and source[10:] not in future_items:
+        elif (
+            source.startswith("deferred.md ")
+            and source.removeprefix("deferred.md ") not in deferred_items
+        ):
             problems.append(f"{code}: {source} does not exist")
         elif source.startswith("NF-") and source not in nfr_codes:
             problems.append(f"{code}: {source} is not a non-functional requirement")

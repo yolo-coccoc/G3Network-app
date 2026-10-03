@@ -10,7 +10,7 @@ configuration key table modelled on the spec's section 4.3 keys, including
 ``SupportedFeatureProfiles`` and read-only entries.
 
 Scenarios are added one message group at a time as the gateway learns them
-(see ``docs/02-planners/backend-ocpp16-charger-integration.md``); currently:
+(see ``docs/planners/backend-ocpp16-charger-integration.md``); currently:
 
 * ``boot`` - BootNotification, then ``--heartbeats`` Heartbeats spaced
   ``--heartbeat-interval`` seconds apart.

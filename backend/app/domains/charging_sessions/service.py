@@ -2,7 +2,7 @@
 
 The ideal MVP assumes a fixed message order and removes reliability
 branching (retry, DLQ, out-of-order recovery, dedup - see
-``docs/01-requirements/future.md`` item 27). On top of that, this service
+``docs/decisions/deferred.md`` item 27). On top of that, this service
 enforces two correctness invariants that hold even on the happy path
 (F-B2): a session's lifecycle state can only move forward (an event
 arriving after ``COMPLETED`` is refused, not silently applied), and a
@@ -350,7 +350,7 @@ def _apply_charging_session_meter_end(
         a value check: a register that decreases while time still moves
         forward (a meter reset) still applies and still yields a wrong
         total - reconciling that is the deferred reliability path
-        (``future.md`` item 27) and must not be opened up on its own here.
+        (``deferred.md`` item 27) and must not be opened up on its own here.
     """
     if meter_end_wh is None:
         return
@@ -482,7 +482,7 @@ async def _get_open_session_by_transaction(
         # reading would silently rewrite a finished session and corrupt
         # F-C5's energy totals. Distinguishing a harmless replay from a
         # genuinely different late event needs seq_no-keyed dedup
-        # (future.md item 27), so every post-Ended event is refused the same
+        # (deferred.md item 27), so every post-Ended event is refused the same
         # way, whether it's a duplicate Ended or a late Updated.
         raise ChargingSessionStateError(
             f"Transaction '{transaction_id}' is already completed"
@@ -1312,7 +1312,7 @@ def calculate_energy_deltas(
         their given order); each consecutive pair yields ``(later reading's
         time, later value - earlier value)``. A negative delta (a register
         that went backwards, e.g. a meter reset) yields nothing:
-        reconciling it is the deferred reliability path (``future.md`` item
+        reconciling it is the deferred reliability path (``deferred.md`` item
         27), and a negative bucket would be meaningless.
 
     Args:

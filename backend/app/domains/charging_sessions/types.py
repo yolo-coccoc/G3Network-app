@@ -2,7 +2,7 @@
 
 The MVP assumes messages arrive in order, without duplicates and without
 interruption - retry, DLQ, out-of-order recovery, and dedup remain
-deferred (``future.md`` item 27). Because of this the module only keeps
+deferred (``deferred.md`` item 27). Because of this the module only keeps
 the active/completed status, three TransactionEvent types and one
 canonical Wh meter sample. F-B2 layers two correctness invariants on top
 of that assumption without reopening it: a session's status can only move

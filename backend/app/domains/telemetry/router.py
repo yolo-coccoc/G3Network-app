@@ -78,7 +78,7 @@ async def get_vehicle_telemetry_history_endpoint(
 
     Scoped as a time-range location/telemetry history query for trip
     replay, not segmented trips - this backend has no trip concept yet (see
-    ``docs/01-requirements/future.md``). The caller narrows the time window
+    ``docs/decisions/deferred.md``). The caller narrows the time window
     if a range holds more points than ``limit``.
 
     Args:

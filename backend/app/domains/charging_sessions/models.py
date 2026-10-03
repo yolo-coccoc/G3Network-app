@@ -156,7 +156,7 @@ class ChargingSessionEventModel(Base):
             row written before this column existed has no truthful value,
             and 0 would collide with a real ``seqNo`` of 0. Captured so
             ordering/duplicate detection become possible later
-            (`future.md` item 27); no uniqueness is enforced on it yet.
+            (`deferred.md` item 27); no uniqueness is enforced on it yet.
     """
 
     __tablename__ = "charging_session_events"

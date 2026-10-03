@@ -772,7 +772,7 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
 ) -> None:
     """A soft-deleted device frees its vehicle; a second live one still conflicts.
 
-    Covers future.md item 82 (partial unique index
+    Covers deferred.md item 82 (partial unique index
     ``uq_telematics_active_vehicle``) through the service, both the
     pre-check and the flush-time ``IntegrityError`` path, and D11 (a
     device of a soft-deleted vehicle resolves to no ingestion mapping).

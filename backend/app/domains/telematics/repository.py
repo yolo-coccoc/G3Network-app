@@ -276,7 +276,7 @@ async def soft_delete(
         assignment: the serial's unique constraint still sees it, but the
         partial ``uq_telematics_active_vehicle`` index (``WHERE deleted_at
         IS NULL``) doesn't, so the vehicle can take a replacement device
-        (future.md item 82).
+        (deferred.md item 82).
     """
     telematic_record.deleted_at = utc_now()
     await db_session.flush()

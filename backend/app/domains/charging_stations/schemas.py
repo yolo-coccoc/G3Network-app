@@ -17,7 +17,7 @@ driver-facing search result (F-D1), the configuration schemas return the
 latest ``GetConfiguration`` capture, and the energy-total schemas are the
 all-stations F-C5 report.
 Capability negotiation and status history remain deferred
-(``docs/01-requirements/future.md`` items 27 and 28).
+(``docs/decisions/deferred.md`` items 27 and 28).
 """
 
 from datetime import datetime

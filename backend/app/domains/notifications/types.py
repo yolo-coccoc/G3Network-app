@@ -3,7 +3,7 @@
 A single generic notification contract serves every alert-producing feature
 (F-A2, F-A4, F-A3, F-J1/F-J3 today; F-B5 later) so each one only needs to
 add a ``NotificationType`` member and shape its own ``payload`` - not a new
-table, migration, or endpoint. See ``docs/01-requirements/future.md`` for
+table, migration, or endpoint. See ``docs/decisions/deferred.md`` for
 the recipient-scoping and multi-channel-delivery gaps this intentionally
 leaves open.
 """

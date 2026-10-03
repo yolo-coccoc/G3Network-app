@@ -42,12 +42,12 @@ designing and while developing, and they can change the product's scope. So,
 in every such task:
 
 - **Check whether the feature catalog must change**
-  (`docs/01-requirements/features/features.yaml`, `feature-catalog` skill):
+  (`docs/product/features/features.yaml`, `feature-catalog` skill):
   a new or split feature, a capability moved between features, a changed
   dependency, user, priority or release, a new open question, a status that
   is now done, or `related_tables` once the database review fills them.
   Make the change in the same piece of work and regenerate. If nothing needs
   to change, say so in one line; never leave the catalog silently stale.
 - **Record a decision** the owner makes in
-  `docs/05-decisions/decision-log.md` (a change of mind is a new entry that
+  `docs/decisions/decision-log.md` (a change of mind is a new entry that
   supersedes the old one).

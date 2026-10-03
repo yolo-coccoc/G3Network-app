@@ -2,9 +2,9 @@
 
 > Read this file before adding a new domain, calling across two domains, or
 > when unsure whether an import violates a bounded context. Directory
-> structure in [directory-structure.md](./directory-structure.md). Which
+> structure in [architecture.md](../../docs/design/architecture.md#directory-structure). Which
 > product features a domain serves is mapped in
-> [`docs/01-requirements/feature-list.md`](../../docs/01-requirements/feature-list.md)
+> [`docs/product/feature-list.md`](../../docs/product/feature-list.md)
 > (each feature carries a **Backend domain:** field); per-feature dependencies
 > are in that file's "Dependencies" column, not repeated here.
 
@@ -45,7 +45,7 @@ an explicit exception rather than being treated as a violation.
 ## Domain roles worth knowing
 
 - **`notifications`** is a leaf: it stores/reads notifications and depends on no domain.
-- **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `future.md` before reopening.
+- **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `deferred.md` before reopening.
 - **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.
 - **`fleet`** calls only `vehicles`; `telemetry` and `telematics` call `fleet`. Fleet-wide telemetry views (live positions, the operating rollup) and geofence detection therefore live in `telemetry` (`/telemetry/fleets/{fleet_id}/...`, `telemetry/geofencing.py`) — never add a `fleet → telemetry` call, it would close a cycle.
 - **`support`** is deliberately **not** wired to `telemetry`: vehicle context (VIN, location, error code) is client-supplied at case creation.

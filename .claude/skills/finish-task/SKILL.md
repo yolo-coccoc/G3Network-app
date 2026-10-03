@@ -22,7 +22,7 @@ you can't fix; never weaken a check to make it pass.
 4. **Manual checks the tools can't do**
    - `__init__.py` files contain only a docstring.
    - No placeholder/TODO for a deferred component — record it in
-     `docs/01-requirements/future.md` instead.
+     `docs/decisions/deferred.md` instead.
    - No batched/bulk query written preemptively.
    - No new dependency, middleware or infrastructure that wasn't requested.
    - Docstrings and comments updated where the logic changed (English).

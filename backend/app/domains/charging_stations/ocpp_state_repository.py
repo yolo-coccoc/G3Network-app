@@ -61,7 +61,7 @@ async def update_connector_status(
         device-reported status is not an administrator's edit
         (``.claude/rules/database.md``). No out-of-order guard — in-order
         message arrival is this MVP's existing assumption (see
-        ``docs/01-requirements/future.md`` item 27); the incoming timestamp
+        ``docs/decisions/deferred.md`` item 27); the incoming timestamp
         is not compared against the stored one.
     """
     result = await db.execute(

@@ -12,7 +12,7 @@ handler's, so a handler rolling back never erases the record of what arrived.
 A failure to persist a frame is not swallowed: it propagates out of
 ``recv()``/``send()`` and ends the connection handler, because evidence that
 may silently go missing is not evidence (operational handling of a database
-outage is ``docs/01-requirements/future.md`` item 31).
+outage is ``docs/decisions/deferred.md`` item 31).
 
 Scope: this module only records frames. It never inspects, filters, or
 rewrites them, and it exposes no read API (the table is queried with SQL).

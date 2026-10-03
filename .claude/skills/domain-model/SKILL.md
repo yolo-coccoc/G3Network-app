@@ -1,12 +1,12 @@
 ---
 name: domain-model
-description: Design, change, or present the database model of this backend using the single DBML source (docs/01-requirements/domain-model/domain-model.dbml) and its generated L1/L2/L3 views. Use when adding or changing a table, column, foreign key, or domain; when writing a migration that changes the schema; when designing the tables for a new feature; when someone asks what the data model looks like or how to present it (e.g. to the BOD); or when checking that the design still matches the SQLAlchemy models.
+description: Design, change, or present the database model of this backend using the single DBML source (docs/design/domain-model/domain-model.dbml) and its generated L1/L2/L3 views. Use when adding or changing a table, column, foreign key, or domain; when writing a migration that changes the schema; when designing the tables for a new feature; when someone asks what the data model looks like or how to present it (e.g. to the BOD); or when checking that the design still matches the SQLAlchemy models.
 ---
 
 # Domain model
 
 The whole database design, built and not yet built, lives in **one file**:
-`docs/01-requirements/domain-model/domain-model.dbml`. Everything else in
+`docs/design/domain-model/domain-model.dbml`. Everything else in
 that directory is generated from it. Never hand-edit a generated file.
 
 | File | Level | Audience |
@@ -135,8 +135,8 @@ every DBML edit.
 ## Workflows
 
 ### Designing the tables for a new feature
-1. Read the feature in `docs/01-requirements/feature-list.md` and the
-   relevant planner in `docs/02-planners/`.
+1. Read the feature in `docs/product/feature-list.md` and the
+   relevant planner in `docs/planners/`.
 2. List the nouns and check whether each one already exists as a table.
 3. For each new entity, decide the owner (`customer` / `internal` / `two-party`)
    and domain. Respect `.claude/rules/domain-boundaries.md`: a `Ref` from

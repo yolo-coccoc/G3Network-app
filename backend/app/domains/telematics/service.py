@@ -105,7 +105,7 @@ async def _resolve_vehicle_id_by_vin(
 
     Raises:
         TelematicVehicleNotFoundError: No live (non-soft-deleted) vehicle
-            has that VIN (D10, future.md item 83).
+            has that VIN (D10, deferred.md item 83).
 
     Side Effects:
         One read-only query through the vehicles public service.
@@ -253,7 +253,7 @@ async def create_telematic(
         A VIN that matches no live vehicle fails the request (D10). A
         vehicle may carry at most one live device; a soft-deleted device
         that still records the vehicle doesn't count, so a replacement can
-        be mounted (future.md item 82).
+        be mounted (deferred.md item 82).
 
     Args:
         db_session: Current database session.

@@ -12,7 +12,7 @@ local database holds no data worth keeping; `make db-reset` wipes it.
 
 ## Procedure
 
-1. **Design first** — edit `docs/01-requirements/domain-model/domain-model.dbml`
+1. **Design first** — edit `docs/design/domain-model/domain-model.dbml`
    (new tables start as `@status planned`; flip to `@status built` and make
    types exact once implemented). Regenerate the views with the skill's
    `generate` command. Never hand-edit a generated view (a hook blocks it).

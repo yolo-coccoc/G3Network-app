@@ -7,7 +7,7 @@ and reports units in a flat ``unit`` field), and mixing them in one class would
 hide which contract each handler assumes.
 
 Scope: handlers are added one message group at a time by the OCPP 1.6J
-planner (``docs/02-planners/backend-ocpp16-charger-integration.md``). Currently
+planner (``docs/planners/backend-ocpp16-charger-integration.md``). Currently
 handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
 ``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``.
 After every accepted ``BootNotification`` the adapter itself asks the charger for
@@ -255,7 +255,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
 
         There is no tag registry to check against and the vendor's Autocharge
         behaviour is unknown, so rejecting unknown tags would block all
-        charging. Real validation is deferred (``future.md`` #26, #62).
+        charging. Real validation is deferred (``deferred.md`` #26, #62).
 
         Args:
             id_tag: The tag presented at the charger; not stored here (it is
@@ -467,7 +467,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         A message **without** a ``transactionId`` (clock-aligned samples or
         readings outside a transaction) belongs to no session, so nothing is
         stored beyond the raw message log; station-level metering is deferred
-        (``future.md`` #77).
+        (``deferred.md`` #77).
 
         Args:
             connector_id: The gun the readings belong to (not used to find the

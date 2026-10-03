@@ -2,11 +2,11 @@
 
 > Read this file when writing/reviewing a migration or changing the schema.
 > Rationale for individual tables, columns and indexes lives in the DBML notes
-> (`docs/01-requirements/domain-model/`) and the planners, not here.
+> (`docs/design/domain-model/`) and the planners, not here.
 
 ## Design source
 
-- **The design source is `docs/01-requirements/domain-model/domain-model.dbml`.** A schema change updates it in the same change (flip the table to `@status built`, make types exact, drop `@planned` from columns that now exist), regenerates the views, and passes the `domain-model` skill's `check`. New tables are designed there as `@status planned` before any migration is written.
+- **The design source is `docs/design/domain-model/domain-model.dbml`.** A schema change updates it in the same change (flip the table to `@status built`, make types exact, drop `@planned` from columns that now exist), regenerates the views, and passes the `domain-model` skill's `check`. New tables are designed there as `@status planned` before any migration is written.
 - Don't create tables for a future domain (`alerts`, `policy_configs`, ...) before its contract is confirmed.
 
 ## Migrations — bootstrap phase (no real data yet)

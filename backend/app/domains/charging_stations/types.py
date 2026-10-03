@@ -9,7 +9,7 @@ key into the OCPP state service; ``NearestChargingStationReference`` is the
 DTO ``telemetry`` receives from ``find_nearest_operational_station`` (F-A2,
 now occupancy-aware: at least one ``Available`` connector is required).
 Administrative/technical status history and capability negotiation remain
-deferred (``docs/01-requirements/future.md`` items 27 and 28).
+deferred (``docs/decisions/deferred.md`` items 27 and 28).
 """
 
 import enum
@@ -108,7 +108,7 @@ class NearestChargingStationReference:
     connector whose last reported status is ``Available``. The charger's
     derived ``is_online`` is deliberately not consulted, so a charger that
     went offline with a gun last reported ``Available`` still qualifies
-    (stale-status handling: ``docs/01-requirements/future.md`` item 76).
+    (stale-status handling: ``docs/decisions/deferred.md`` item 76).
 
     Attributes:
         station_id: Internal UUID of the station.

@@ -6,7 +6,7 @@ WebSocket frame; "has this device stopped sending anything?" has no message
 to react to, so it needs a timer instead.
 
 Scope: last-seen tracking + a silent-device notification only. Not
-delivered here (see docs/01-requirements/future.md): the SIM/power-status
+delivered here (see docs/decisions/deferred.md): the SIM/power-status
 dashboard (F-J1's fuller output) and distinguishing sudden power loss from
 ordinary signal loss (F-J3's fuller output) - no such signal exists
 anywhere in this backend's data.

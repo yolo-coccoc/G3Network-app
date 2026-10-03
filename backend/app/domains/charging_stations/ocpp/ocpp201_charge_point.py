@@ -437,7 +437,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         # popped on Ended. A missing key means MeterValues outside a
         # transaction or after a reconnect dropped the mapping; the
         # resulting KeyError -> CALLERROR is the intended MVP failure, and
-        # surviving a reconnect is the reliability path (future.md item 27).
+        # surviving a reconnect is the reliability path (deferred.md item 27).
         session_id = self._session_by_evse[evse_id]
         samples = extract_meter_samples(meter_value)
         async with self.session_factory.begin() as db:
@@ -489,7 +489,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             the same de-facto contract ``on_transaction_event`` and
             ``on_meter_values`` already rely on. Standardizing this instead
             of relying on the framework default is deferred (see
-            ``docs/01-requirements/future.md`` item 31).
+            ``docs/decisions/deferred.md`` item 31).
         """
         async with self.session_factory.begin() as db:
             (

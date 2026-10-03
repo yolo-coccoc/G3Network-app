@@ -322,7 +322,7 @@ async def list_charging_stations(
     Side Effects:
         Performs two read queries plus two connector-count queries per
         station on the page (no batching yet - deliberately deferred until
-        throughput needs it, see ``docs/01-requirements/future.md``); does
+        throughput needs it, see ``docs/decisions/deferred.md``); does
         not commit or rollback.
     """
     page_window = normalize_page_window(page, page_size)
@@ -553,7 +553,7 @@ async def list_nearby_charging_stations(
     Side Effects:
         Performs two read queries plus two connector-count queries per
         station on the page - the same deliberate, deferred N+1 as
-        ``list_charging_stations`` (see ``docs/01-requirements/future.md``
+        ``list_charging_stations`` (see ``docs/decisions/deferred.md``
         item 34); does not commit or rollback.
     """
     # radius_km > 0 is enforced by the router's Query validation; clamp only

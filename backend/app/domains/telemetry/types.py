@@ -68,12 +68,12 @@ class VehicleAnomalyType(str, enum.Enum):
     # F-A4 names "cell/module fault" and "motor fault" as separate triggers,
     # but the MQTT contract (mqtt-spec.md) only carries opaque error code
     # strings with no vendor catalog to tell them apart - both collapse into
-    # this one generic type. See docs/01-requirements/future.md.
+    # this one generic type. See docs/decisions/deferred.md.
     DEVICE_FAULT = "DEVICE_FAULT"
 
 
 # Engineering defaults, not vendor-confirmed against real battery/pack specs
-# - see docs/01-requirements/future.md for the item to revisit these once
+# - see docs/decisions/deferred.md for the item to revisit these once
 # real thresholds are available.
 HIGH_BATTERY_TEMPERATURE_THRESHOLD_CELSIUS = 60.0
 VOLTAGE_DROP_THRESHOLD_VOLTS = 50.0
@@ -143,7 +143,7 @@ class VehicleTelemetryWindowSummary:
     last_recorded_at: datetime | None
 
 
-# Engineering default, not vendor-confirmed - see docs/01-requirements/future.md.
+# Engineering default, not vendor-confirmed - see docs/decisions/deferred.md.
 # Used only when a vehicle has no recorded battery_capacity_kwh (F-A6/F-C6),
 # so an existing vehicle still produces a report instead of a 4xx.
 # Deliberately NOT a DB column default: writing this into the vehicles

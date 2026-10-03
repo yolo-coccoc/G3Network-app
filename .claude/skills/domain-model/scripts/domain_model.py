@@ -1,7 +1,7 @@
 """Generate the domain-model views from the single DBML source, and check it.
 
 The whole database design lives in one file,
-``docs/01-requirements/domain-model/domain-model.dbml``. This script renders
+``docs/design/domain-model/domain-model.dbml``. This script renders
 three levels of view from it and verifies it against the backend:
 
 - ``generate``: writes ``overview.md`` (L1: domain map, ownership, open
@@ -43,7 +43,7 @@ from pydbml import PyDBML
 # The script lives at <root>/.claude/skills/domain-model/scripts/, so the
 # repository root is four levels up.
 REPO_ROOT = Path(__file__).resolve().parents[4]
-MODEL_DIR = REPO_ROOT / "docs" / "01-requirements" / "domain-model"
+MODEL_DIR = REPO_ROOT / "docs" / "design" / "domain-model"
 SOURCE_PATH = MODEL_DIR / "domain-model.dbml"
 OVERVIEW_PATH = MODEL_DIR / "overview.md"
 DOMAINS_DIR = MODEL_DIR / "domains"

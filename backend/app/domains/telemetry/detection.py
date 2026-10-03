@@ -188,7 +188,7 @@ def detect_new_error_codes(
     triggers, but the MQTT contract only carries opaque error
     code strings with no vendor catalog to map a code to one or the other -
     see ``VehicleAnomalyType.DEVICE_FAULT``'s docstring and
-    ``docs/01-requirements/future.md``. Only *newly appearing* codes fire an
+    ``docs/decisions/deferred.md``. Only *newly appearing* codes fire an
     anomaly; a code that was already active on the previous reading (still
     faulted, not a new fault) or one that cleared does not.
 

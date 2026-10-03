@@ -17,8 +17,8 @@ Five tables:
 
 Device-reported columns never bump ``updated_at``, which keeps meaning "last
 administrator edit". Still deferred: administrative/technical status history,
-capability negotiation and stale-status handling (``docs/01-requirements/
-future.md`` items 27, 28 and 76).
+capability negotiation and stale-status handling (``docs/product/
+deferred.md`` items 27, 28 and 76).
 """
 
 from datetime import datetime
@@ -243,7 +243,7 @@ class ChargingConnectorModel(Base):
         status_updated_at: Time the last ``StatusNotification`` was
             processed, nullable. No out-of-order guard — in-order message
             arrival is this MVP's existing assumption (see
-            ``docs/01-requirements/future.md`` item 27).
+            ``docs/decisions/deferred.md`` item 27).
         error_code: ``errorCode`` from the latest ``StatusNotification`` as
             sent (OCPP 1.6J; ``NoError`` included), nullable. Replaced by
             every status update, so it always describes the latest report.

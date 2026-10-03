@@ -62,7 +62,7 @@ def test_telemetry_message_stores_location_as_geography_not_lat_lon() -> None:
     """to_vehicle_telemetry_values() outputs a PostGIS point, not lat/lon columns.
 
     Regression guard for the vehicle_telemetry storage unification
-    (future.md item 9) - the dict must match VehicleTelemetryModel's
+    (deferred.md item 9) - the dict must match VehicleTelemetryModel's
     location column, not the old latitude/longitude columns.
     """
     message = TelemetryMessage.model_validate(_valid_telemetry_payload())

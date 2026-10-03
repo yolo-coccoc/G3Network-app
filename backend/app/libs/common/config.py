@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     MQTT_WILL_RETAIN: bool = True
 
     # In-RAM queue between the MQTT consumer and the per-message worker. (A
-    # batched ingestion path is deferred: future.md item 25.)
+    # batched ingestion path is deferred: deferred.md item 25.)
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
 
     # Bounds for the telemetry history query (F-A5). No offset/page - a
@@ -218,7 +218,7 @@ class Settings(BaseSettings):
     TELEMETRY_ONLINE_THRESHOLD_SECONDS: int = Field(default=300, ge=1)
 
     # F-A6/F-C6 cost figures: one flat tariff until time-of-use/per-tenant
-    # pricing exists (future.md item 60).
+    # pricing exists (deferred.md item 60).
     TELEMETRY_ENERGY_COST_PER_KWH_VND: float = Field(default=3000.0, ge=0)
 
     # F-A3: SOH below this raises an alert; vendor-validated value pending.

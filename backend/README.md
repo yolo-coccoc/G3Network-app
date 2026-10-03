@@ -13,7 +13,7 @@ ingestion, latest/history, operating and energy reports, battery/SOH/anomaly
 alerts), notifications (poll-only), charging stations (topology, directory,
 nearby search, OCPP gateway), charging sessions, drivers, fleets and support
 (tickets and SOS). Not built yet: identity/RBAC, policy, billing/payment and
-the frontends. See [docs/00-status/overview.md](../docs/00-status/overview.md).
+the frontends. See [docs/design/architecture.md](../docs/design/architecture.md).
 
 ## Development
 
@@ -101,5 +101,5 @@ backend/
 ```
 
 Where each module belongs and which cross-domain imports are allowed:
-[`.claude/rules/directory-structure.md`](../.claude/rules/directory-structure.md)
+[`docs/design/architecture.md`](../docs/design/architecture.md#directory-structure)
 and [`.claude/rules/domain-boundaries.md`](../.claude/rules/domain-boundaries.md).

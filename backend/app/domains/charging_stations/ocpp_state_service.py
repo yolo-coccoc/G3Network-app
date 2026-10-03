@@ -259,7 +259,7 @@ async def record_charger_boot(
         becomes ``NULL``). A **firmware change** relative to a previously
         stored non-null value is logged as a structured ``WARNING`` - the
         stored value is the baseline for noticing a firmware swap; alerting on
-        it is deferred (``future.md`` #75).
+        it is deferred (``deferred.md`` #75).
 
     Args:
         db: Async session owned by the OCPP gateway's action transaction.

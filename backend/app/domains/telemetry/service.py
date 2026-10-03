@@ -42,7 +42,7 @@ never stored. Report calendars (planner D4) use
 Ingestion processes each message individually (``process_message``), for
 low latency and per-message transaction isolation. A batched path (batch
 lookup + bulk insert) is deferred until a benchmark needs it - see
-``docs/01-requirements/future.md`` item 25.
+``docs/decisions/deferred.md`` item 25.
 """
 
 import logging
@@ -271,7 +271,7 @@ async def get_vehicle_telemetry_history_response(
 
     Scoped as a time-range location/telemetry history query, not segmented
     trips - this backend has no trip concept (see
-    ``docs/01-requirements/future.md``). The caller narrows the time window
+    ``docs/decisions/deferred.md``). The caller narrows the time window
     if a range holds more points than ``limit``; this function does not
     paginate server-side.
 

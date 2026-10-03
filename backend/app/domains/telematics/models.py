@@ -71,7 +71,7 @@ class TelematicModel(Base):
 
     # At most one LIVE device per vehicle. Partial (WHERE deleted_at IS NULL),
     # so a soft-deleted device that still records its last vehicle doesn't
-    # block mounting a replacement (future.md item 82).
+    # block mounting a replacement (deferred.md item 82).
     __table_args__ = (
         Index(
             "uq_telematics_active_vehicle",

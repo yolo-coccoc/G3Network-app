@@ -37,7 +37,7 @@ unstaged). Read the full changed files where context is needed.
   migration and the `.dbml` together; nullable-without-default rationale;
   enum value conventions.
 - `.claude/rules/repo-conventions.md` — `__init__.py` holds only a docstring;
-  no placeholders/TODOs for deferred components (they go in `future.md`); no
+  no placeholders/TODOs for deferred components (they go in `deferred.md`); no
   new dependency/component without it being requested.
 
 ## Method

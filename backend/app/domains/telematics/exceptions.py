@@ -18,7 +18,7 @@ class TelematicNotFoundError(TelematicError, NotFoundError):
 
 class TelematicVehicleNotFoundError(TelematicError, NotFoundError):
     """The ``vehicle_vin`` sent on a device create/update matches no live
-    vehicle (D10 of the happy-path planner, future.md item 83)."""
+    vehicle (D10 of the happy-path planner, deferred.md item 83)."""
 
 
 class TelematicConflictError(TelematicError, ConflictError):

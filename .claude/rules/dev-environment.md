@@ -70,14 +70,14 @@ instructions.
 - **Hooks** (`.claude/settings.json`, scripts in `.claude/hooks/`): every
   Python file the agent writes under `backend/` or `simulator/` is
   import-sorted and formatted with ruff (unused imports are left alone); edits
-  to the generated `docs/01-requirements/domain-model/` and
-  `docs/01-requirements/features/` views are refused (edit the `.dbml` or
+  to the generated `docs/design/domain-model/` and
+  `docs/product/features/` views are refused (edit the `.dbml` or
   `features.yaml` and regenerate).
 - **Agents** (`.claude/agents/`): `docs-sync` (bring docs in line with a code
   change), `convention-reviewer` (read-only rules review of a diff),
   `schema-change` (model + DBML + baseline migration + rebuild + verify).
 - **Skills** (`.claude/skills/`): `start-feature` (gather → planner from
-  `docs/02-planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
+  `docs/planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
   `domain-model`, `feature-catalog` (the feature catalog's YAML source and
   its generated checklists/workbook), `ocpp16-reference`, `e2e-sim` (run the stack with the
   simulators and check the data), `finish-task`. The order to use them in is

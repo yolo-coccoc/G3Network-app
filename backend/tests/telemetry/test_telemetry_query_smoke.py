@@ -28,7 +28,7 @@ def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
     """to_vehicle_telemetry_latest_response() exposes lat/lon from the stored geography.
 
     Regression guard for the vehicle_telemetry storage unification
-    (future.md item 9): the response contract (plain latitude/longitude)
+    (deferred.md item 9): the response contract (plain latitude/longitude)
     stays the same even though the ORM model now stores a single
     ``location`` point instead.
     """

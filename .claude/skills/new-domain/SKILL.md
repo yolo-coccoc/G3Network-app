@@ -7,7 +7,7 @@ argument-hint: <domain_name> <feature codes, e.g. F-H1 F-H2>
 # New domain
 
 Arguments: `$ARGUMENTS` (domain name in `snake_case`, then feature codes).
-Read `.claude/rules/domain-boundaries.md`, `.claude/rules/directory-structure.md`
+Read `.claude/rules/domain-boundaries.md`, `docs/design/architecture.md`
 and `.claude/rules/backend-coding-conventions.md` first. Only create a domain
 for a concrete task with confirmed feature codes — never a placeholder.
 
@@ -18,12 +18,12 @@ file before writing its counterpart.
 
 ## Steps
 
-1. **Design** — add the tables to `docs/01-requirements/domain-model/domain-model.dbml`
+1. **Design** — add the tables to `docs/design/domain-model/domain-model.dbml`
    as `@status planned` under the new domain, regenerate the views
    (`domain-model` skill). Agree the design before writing code.
-2. **Planner** — `docs/02-planners/backend-<domain>.md`: feature codes,
+2. **Planner** — `docs/planners/backend-<domain>.md`: feature codes,
    status line, decisions, steps, test evidence (copy the shape of
-   `docs/02-planners/done/backend-crud-fleet.md`).
+   `docs/planners/done/backend-crud-fleet.md`).
 3. **Module files** — `backend/app/domains/<domain>/` with only the files
    the task needs (no empty placeholders): `__init__.py` (**docstring only**),
    `models.py`, `types.py`, `exceptions.py`, `schemas.py`, `repository.py`,
@@ -55,7 +55,8 @@ file before writing its counterpart.
    `test_<domain>_service_smoke.py` and `test_<domain>_schema_smoke.py`.
    Put record builders shared with other domains in `tests/builders.py`
    (`build_<object>_record`); use `fake_db_session()` and `FakeSessionFactory`.
-7. **Docs** — `feature-list.md` (status + **Backend domain:**),
-   `docs/00-status/overview.md`, `.claude/rules/directory-structure.md` (tree
-   and the "no source yet" list). The `docs-sync` agent can do this pass.
+7. **Docs** — the feature catalog (statuses, regenerate), `feature-list.md`
+   until the backend sync (status + **Backend domain:**), and
+   `docs/design/architecture.md` (domain summary, directory tree, "not built
+   yet" list). The `docs-sync` agent can do this pass.
 8. **Gate** — `make check` and `make backend-test-integration`.

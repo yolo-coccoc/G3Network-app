@@ -7,8 +7,10 @@ portal and vehicle app have no source in this repo yet.
 
 - Command reference: `make help` (the Makefile is the source of truth).
 - AI coding agents: start with [CLAUDE.md](./CLAUDE.md).
-- Progress: [docs/00-status/overview.md](./docs/00-status/overview.md) and
-  the [feature list](./docs/01-requirements/feature-list.md).
+- Documents: [docs/README.md](./docs/README.md) maps them all — progress in
+  the [feature catalog](./docs/product/features/README.md), what exists today
+  in [architecture.md](./docs/design/architecture.md), decisions in the
+  [decision log](./docs/decisions/decision-log.md).
 
 ## Prerequisites
 
@@ -101,7 +103,7 @@ when you change the schema or a repository query.
 The schema is a single baseline migration (`0001_baseline_schema`) during the
 bootstrap phase: `make db-migrate` applies it to an empty database,
 `make db-reset` wipes the database and rebuilds it from the baseline. See
-[.claude/rules/database.md](./.claude/rules/database.md).
+[.claude/rules/database.md](.claude/rules/database.md).
 
 ## Current backend scope
 
@@ -152,7 +154,7 @@ Not built yet: identity/RBAC, charging policy, pricing/billing/payment, push
 or multi-channel notification delivery, KPI dashboards, OCPP remote
 commands and reliability (retry/reconnect/TLS), and the frontends. The full
 list of deferred items is in
-[docs/01-requirements/future.md](./docs/01-requirements/future.md).
+[docs/product/future.md](./docs/decisions/deferred.md).
 
 ## Running the simulators
 
@@ -239,8 +241,8 @@ Data is kept. `make infra-reset` (removes the volumes) and `make db-reset`
 backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
 infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
 simulator/    Vehicle telemetry and OCPP charging simulators
-docs/         Status, requirements, planners and specifications
-.claude/      Rules, skills and agents for AI coding agents (see CLAUDE.md)
+docs/         Product, design, decisions, planners, reports (see docs/README.md)
+.claude/      Rules, skills, agents and hooks for AI coding agents (see CLAUDE.md)
 .githooks/    Pre-commit hook (runs make check)
 .vscode/      Shared VS Code settings
 ```
