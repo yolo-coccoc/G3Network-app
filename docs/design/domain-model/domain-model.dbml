@@ -677,6 +677,61 @@ vehicles and identity; nothing in vehicles depends on it. Not built yet.
 }
 
 // ===========================================================================
+// warranties: warranties of trucks, batteries and devices (WAR-01)
+// ===========================================================================
+
+Table warranties {
+  warranty_id uuid [pk, note: 'Internal ID of the warranty. @vi Mã nội bộ của bảo hành. @example 4b9d2f6e-3a1c-4e8b-a7d5-6c0e2f4a8b33']
+  vehicle_id uuid [note: 'The truck covered; set only for a truck warranty. Exactly one of vehicle_id, battery_id and telematic_id is set (check constraint). @vi Xe được bảo hành; chỉ có giá trị với bảo hành xe. Đúng một trong ba cột vehicle_id, battery_id, telematic_id có giá trị (ràng buộc kiểm tra). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  battery_id uuid [note: 'The battery covered; set only for a battery warranty, which therefore follows the battery to another truck. @vi Pin được bảo hành; chỉ có giá trị với bảo hành pin, nên bảo hành đi theo pin sang xe khác. @example NULL']
+  telematic_id uuid [note: 'The T-Box covered; set only for a device warranty. @vi T-Box được bảo hành; chỉ có giá trị với bảo hành thiết bị. @example NULL']
+  warranty_type varchar(20) [not null, note: 'STANDARD: delivered with the object. EXTENDED: bought later. Values: STANDARD | EXTENDED. @vi STANDARD: đi kèm khi giao. EXTENDED: mua thêm sau. @example STANDARD']
+  contract_reference varchar(100) [note: 'Number of the warranty contract or certificate whose terms apply (rules that are not numbers, e.g. following the charging policy, live there); NULL if none. @vi Số hợp đồng hoặc phiếu bảo hành chứa điều khoản áp dụng (các quy định không phải con số, ví dụ tuân thủ chính sách sạc, nằm trong đó); NULL nếu không có. @example BH-2026-000451']
+  starts_on date [not null, note: 'First day of coverage. @vi Ngày bắt đầu bảo hành. @example 2026-06-01']
+  ends_on date [not null, note: 'Last day of coverage. @vi Ngày kết thúc bảo hành. @example 2031-05-31']
+  limits jsonb [note: 'Other limits, written as the counter reading at which coverage ends (a contract saying "100,000 km from handover" is entered as the handover odometer plus 100,000). Keys by object: truck distance_km; battery energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count. Coverage ends at whichever limit or ends_on comes first. NULL when there is no other limit. @vi Các giới hạn khác, ghi bằng chỉ số bộ đếm tại đó bảo hành kết thúc (hợp đồng ghi "100.000 km từ ngày bàn giao" thì nhập số odo lúc bàn giao cộng 100.000). Khóa theo đối tượng: xe distance_km; pin energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count. Bảo hành kết thúc khi chạm giới hạn nào hoặc ends_on trước. NULL khi không có giới hạn khác. @example {"distance_km": 212000}']
+  status varchar(10) [not null, note: 'ACTIVE: in force unless expired. VOIDED: revoked by our warranty team (e.g. charging-policy violations), with the reason. Expired is not stored: it is computed from ends_on and the counters. Values: ACTIVE | VOIDED. @vi ACTIVE: còn hiệu lực nếu chưa hết hạn. VOIDED: bị bộ phận bảo hành của chúng ta hủy (ví dụ vi phạm chính sách sạc), kèm lý do. Hết hạn không lưu: được tính từ ends_on và các bộ đếm. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the warranty was voided; NULL when ACTIVE. @vi Lý do bảo hành bị hủy; NULL khi ACTIVE. @example Repeated charging outside the allowed window']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-06-01T03:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time, only for a warranty entered by mistake; NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho bảo hành nhập nhầm; NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    vehicle_id [name: 'ix_warranties_vehicle_id']
+    battery_id [name: 'ix_warranties_battery_id']
+    telematic_id [name: 'ix_warranties_telematic_id']
+    ends_on [name: 'ix_warranties_ends_on', note: 'Warranties ending soon']
+  }
+  Note: '''@status proposed @owner customer @features F-F2 @tracked *
+One warranty of one truck, battery or T-Box (WAR-01, VH-18), set per truck.
+Which object is covered is the one link that is set (exactly one, check
+constraint); that also decides which limits keys apply. No organization_id
+(DM-24): a warranty follows its object, and whoever owns the object now sees
+it. A truck usually has several (vehicle, battery, an extended one). Change
+history on: voiding must show who and why.
+@vi-name Bảo hành
+@vi Một bảo hành của một xe, pin hoặc T-Box (WAR-01, VH-18), đặt riêng cho từng xe. Đối tượng được bảo hành là liên kết duy nhất có giá trị (đúng một, ràng buộc kiểm tra); liên kết đó cũng quyết định các khóa giới hạn áp dụng. Không có organization_id (DM-24): bảo hành đi theo đối tượng, ai đang sở hữu đối tượng thì xem được. Một xe thường có nhiều bảo hành (xe, pin, gia hạn). Có lưu lịch sử thay đổi: việc hủy bảo hành phải cho biết ai và vì sao.'''
+}
+
+Ref: warranties.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: warranties.battery_id > batteries.battery_id [delete: restrict]
+Ref: warranties.telematic_id > telematics.telematic_id [delete: restrict]
+
+TableGroup warranties {
+  warranties
+  Note: '''
+The warranties of trucks, batteries and T-Boxes: their periods and limits,
+and why a warranty was voided. Depends on vehicles, batteries and
+telematics; nothing depends on it. Not built yet.
+
+- A **warranty** covers exactly one truck, battery or T-Box and follows it to its next owner.
+
+@vi-name Bảo hành
+@vi Bảo hành của xe, pin và T-Box: thời hạn, giới hạn và lý do một bảo hành bị hủy. Phụ thuộc miền xe, pin và telematics; không miền nào phụ thuộc miền này. Chưa được xây dựng.
+- Một **bảo hành** áp dụng cho đúng một xe, pin hoặc T-Box và đi theo đối tượng sang chủ kế tiếp.
+'''
+}
+
+// ===========================================================================
 // telematics: telematic devices mounted on vehicles (F-G1, F-J1-J3)
 // ===========================================================================
 

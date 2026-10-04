@@ -34,4 +34,4 @@ Keep every warranty of a truck, its battery and its devices: period, limits such
 
 **Depends on:** [VEH-01](vehicles.md#veh-01), [BAT-01](batteries.md#bat-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · Decision VH-09 · Decision VH-14
+**Sources:** Data IN-32 · Decision VH-09 · Decision VH-14 · Decision VH-18

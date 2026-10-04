@@ -414,7 +414,7 @@ Every query returns only the current organization's data; internal users see eve
 **Needed by:** [NTF-06](notifications.md#ntf-06)  
 **Also touches:** `fleet`  
 **Related tables:** — (after the database review)  
-**Sources:** Decision ID-11 · Decision DM-18
+**Sources:** Decision ID-11 · Decision DM-24
 
 <a id="acc-16"></a>
 

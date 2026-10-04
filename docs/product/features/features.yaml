@@ -683,7 +683,7 @@ features:
     offer: included
     depends_on: [ACC-12, FLT-03]
     touches: [fleet]
-    sources: [Decision ID-11, Decision DM-18]
+    sources: [Decision ID-11, Decision DM-24]
 
   - code: ACC-16
     name: Push device registration
@@ -1083,7 +1083,7 @@ features:
     release: P1.0
     offer: included
     depends_on: [VEH-01, BAT-01]
-    sources: [Data IN-32, Decision VH-09, Decision VH-14]
+    sources: [Data IN-32, Decision VH-09, Decision VH-14, Decision VH-18]
 
   # ---------------------------------------------------------------------------
   # DEV — Telematics devices

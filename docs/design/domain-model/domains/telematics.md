@@ -19,17 +19,18 @@ erDiagram
     uuid telematic_id PK
     uuid vehicle_id FK
   }
+  warranties }o..o| telematics : "telematic_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| telematics : "telematic_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [warranties](warranties.md#warranties).
 
 ## Tables
 
 ### telematics
 
-**No. 17** · ✅ built · owner: **undecided** · features: F-G1, F-J1, F-J2, F-J3
+**No. 18** · ✅ built · owner: **undecided** · features: F-G1, F-J1, F-J2, F-J3
 
 One telematic device and the vehicle it is mounted on. Whether the device
 belongs to the customer or to G3 is decision D6.
@@ -60,4 +61,5 @@ belongs to the customer or to G3 is decision D6.
 
 **Referenced by**
 
+- [warranties](warranties.md#warranties).telematic_id (planned)
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).telematic_id

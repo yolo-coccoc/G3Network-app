@@ -39,13 +39,14 @@ erDiagram
   batteries }o..|| battery_models : "battery_model_id"
   batteries }o..|| organizations : "organization_id"
   batteries }o..o| vehicles : "vehicle_id"
+  warranties }o..o| batteries : "battery_id"
   battery_model_history }o..o| battery_models : "battery_model_id"
   battery_model_history }o..o| users : "changed_by"
   battery_history }o..o| batteries : "battery_id"
   battery_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [warranties](warranties.md#warranties).
 
 ## Tables
 
@@ -146,6 +147,7 @@ owned by someone else (e.g. leased from G3) stays with its owner.
 
 **Referenced by**
 
+- [warranties](warranties.md#warranties).battery_id (planned)
 - [battery_history](#battery_history).battery_id (planned)
 
 ### battery_history

@@ -37,6 +37,7 @@ erDiagram
   vehicles }o..|| organizations : "organization_id"
   vehicles }o..|| vehicle_models : "vehicle_model_id"
   batteries }o..o| vehicles : "vehicle_id"
+  warranties }o..o| vehicles : "vehicle_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -56,7 +57,7 @@ erDiagram
   vehicle_model_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [warranties](warranties.md#warranties).
 
 ## Tables
 
@@ -103,6 +104,7 @@ kept message by message in vehicle_telemetry.
 **Referenced by**
 
 - [batteries](batteries.md#batteries).vehicle_id (planned)
+- [warranties](warranties.md#warranties).vehicle_id (planned)
 - [telematics](telematics.md#telematics).vehicle_id
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
