@@ -211,6 +211,7 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 | ID-42 | Action-specific facts in `access_audit_logs` go in one `details` JSONB column (e.g. `{"reason": ...}` for EXPORT, `{"failure": ...}` for LOGIN_FAILED), with the keys per action listed in its note; it replaces the `reason` column of ID-41. May be revisited. | A column used by one action was awkward; same pattern as the notifications payload (DM-12). | ✅ | 2026-10-04 | DBML `access_audit_logs` |
 | ID-43 | Answers open question 6: for employed drivers, the company's data processing agreement (company = controller, G3 = processor) plus each driver's acknowledged privacy notice is enough legal basis; no per-driver consent. Holds while we sell SaaS; reviewed again when a PaaS offering comes. | The owner judges it sufficient for the SaaS model; a PaaS offering may change who processes the data. | ✅ | 2026-10-04 | Design review; ID-38 |
 | ID-44 | Answers D7: a role grants the **same features** to internal and customer users; what differs between them is **data reach** (ID-11), not features. The feature list of each role, including access to personal data such as location history and camera clips, is set in a permission-granting step when nearly all features are implemented. | The full feature list is needed to grant permissions sensibly; deciding now would be guesswork. | ✅ (grant step ⏳) | 2026-10-04 | Design review; DBML `open_decisions` |
+| ID-45 | Settings an organization chooses for itself live in **`organization_settings`**: one row per organization, created with defaults, one typed column per setting, change history on. The first one is the driving-session auto-end time (DR-07). No user or fleet settings table until a real setting needs one. | Settings are decisions, kept apart from the organization's profile; no placeholder tables. | ✅ | 2026-10-04 | Design review; DBML `organization_settings` |
 
 ## BL — Billing & pricing
 
@@ -234,6 +235,7 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 | NT-04 | Mark-as-read is idempotent; unread = `read_at IS NULL`. | Safe retries. | ✅ | 2026-09-17 | backend-notifications.md |
 | NT-05 | Threshold alerts fire once per **crossing** (previous above, current at/below); a skipped range raises one alert, the most severe; rising values never alert. | No trip concept yet; no repeats. | ✅ 📦 per-trip dedup | 2026-09-17 | backend-notifications.md §2 |
 | NT-06 | Battery-alert payloads freeze the nearest available station and distance at alert time. | Describes the moment of crossing. | ✅ | 2026-09-17 | backend-notifications.md §2 |
+| NT-07 | An alert meant for a truck's driver goes to the driver checked in to it (DR-07) and to the portal; with nobody checked in, only to the portal. | Shared trucks have no fixed driver; the person at the wheel is the one who must act. | ✅ | 2026-10-04 | Design review |
 
 ## TM — Telemetry
 
@@ -282,12 +284,10 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 
 | ID | Decision | Why | Status | Date | Source |
 |---|---|---|---|---|---|
-| DR-01 | Driver ↔ vehicle is an assignment history; one active vehicle per driver and one active driver per vehicle; reassigning auto-closes the previous assignment; assigning a vehicle held by someone else is a 409. | MVP 1:1 driving. | ✅ (one driver per vehicle: superseded by DR-05) | 2026-09-18 | crud-drivers planner §2 |
-| DR-02 | Soft-deleting a driver closes the active assignment and sets INACTIVE; unknown VIN on assign is 404. | No orphan holds; explicit errors. | ✅ | 2026-09-18 | crud-drivers planner §2 |
+| DR-02 | Soft-deleting a driver closes the active assignment and sets INACTIVE; unknown VIN on assign is 404. | No orphan holds; explicit errors. | ✅ (the assignment is now a driving session: DR-07) | 2026-09-18 | crud-drivers planner §2 |
 | DR-03 | A driver profile belongs to a membership (one person in one organization); a person driving for two companies has one profile in each. | ID-09, ID-13. | ✅ | 2026-10-03 | DBML `drivers` |
 | DR-04 | Empty-trip detection (F-A9) is suspended until a trip concept exists. | No trip/ignition signal. | 📦 deferred.md 67 | 2026-09-18 | crud-drivers planner §2 |
-| DR-05 | A vehicle may have **several drivers at once** (shifts, co-driver); a driver still drives at most one vehicle at a time. The one-open-row-per-vehicle index is dropped. Supersedes that part of DR-01. | Long-haul trucks often run two drivers. | ✅ | 2026-10-04 | Design review; DBML `driver_vehicle_assignments` |
-| DR-06 | Driver assignments record no `assigned_by` / `unassigned_by`: assigning drivers to trucks is the organization's own business. | Unlike role assignments (ID-40), nothing depends on who made the assignment. | ✅ | 2026-10-04 | Design review; DBML `driver_vehicle_assignments` |
+| DR-07 | **Driver check-in replaces vehicle assignments.** A `driving_sessions` row says who is at the wheel of which truck: the driver scans the QR code on the truck or picks a nearby truck in the app (both checked against the truck's last T-Box position), or a manager checks them in from the portal (no `started_by` column). Any active driver in the system may check in, from any organization (protecting a truck is its owner's job); a driver from another organization triggers a warning, and the session belongs to the truck's organization. One open session per truck and per driver. It ends at check-out, when another driver checks in to the truck, when the driver checks in to another truck, or when the truck has not moved for the organization's auto-end time (default 2 hours); stopping or shutting down only starts that countdown. A truck moving with nobody checked in raises an alert to the portal. Scores, trips and charging sessions take their driver from the sessions. `driver_vehicle_assignments` is dropped in the refactor. Supersedes DR-01, DR-05 and DR-06. | Short-haul companies swap drivers and trucks daily; pre-planned assignments would never match who actually drove. | ✅ | 2026-10-04 | Design review; DBML `driving_sessions` |
 
 ## FL — Fleet
 
@@ -373,6 +373,9 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 | VH-S1 | Vehicle columns `team_id`, `max_range_km`, duplicate plate → 400. | Current vehicles model (no team_id; 409 conflicts) | – | crud-vehicles planner |
 | VH-S2 | Activation is a one-way ladder PENDING → DEVICE_ASSIGNED → ACTIVATED (first telemetry); no reset; existing rows start PENDING (former VH-01). | VH-06 (computed at read time) | 2026-09-17 → 10-04 | activation-soh planner §2 |
 | DR-S1 | One active driver per vehicle (part of DR-01). | DR-05 (several drivers per vehicle) | 2026-09-18 → 10-04 | crud-drivers planner §2 |
+| DR-S2 | Driver ↔ vehicle is an assignment history; one active vehicle per driver and one active driver per vehicle; reassigning auto-closes the previous assignment; assigning a vehicle held by someone else is a 409. | DR-07 (driving sessions) | 2026-09-18 → 10-04 | crud-drivers planner §2 |
+| DR-S3 | A vehicle may have **several drivers at once** (shifts, co-driver); a driver still drives at most one vehicle at a time. The one-open-row-per-vehicle index is dropped. Supersedes that part of DR-01. | DR-07 (one driver at the wheel, switching by check-in) | 2026-10-04 | Design review; DBML `driver_vehicle_assignments` |
+| DR-S4 | Driver assignments record no `assigned_by` / `unassigned_by`: assigning drivers to trucks is the organization's own business. | DR-07 (no assignments left) | 2026-10-04 | Design review; DBML `driver_vehicle_assignments` |
 | FL-S1 | One fleet level only, no `parent_fleet_id`. | FL-02 (nested fleets) | 2026-10-03 | crud-fleet planner §2 |
 | FL-S2 | Convert `vehicles.fleet_id` into a UUID FK. | FL-01 (membership table) | 2026-09-18 | future-resolved §10 |
 | NT-S1 | "Nearest available station" = nearest operational station. | CS-05 (≥ 1 Available connector) | 2026-10-01 | happy-path D3 |

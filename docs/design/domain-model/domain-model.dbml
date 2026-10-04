@@ -124,6 +124,8 @@ Enum notificationtype {
   DEVICE_OFFLINE_ALERT
   SOS_ALERT
   GEOFENCE_ALERT
+  NO_DRIVER_CHECK_IN_ALERT [note: '@planned DR-07']
+  OUTSIDE_DRIVER_CHECK_IN [note: '@planned DR-07']
 }
 
 Enum notificationseverity {
@@ -440,6 +442,21 @@ are compressed.
 @vi Nhật ký chỉ-ghi-thêm cho mọi lượt truy cập dữ liệu cá nhân/vị trí (NF-08) và các sự kiện bảo mật tài khoản (đăng nhập, đăng nhập sai, bị khóa tạm, đăng xuất, đổi mật khẩu, đổi số điện thoại): ai, làm gì, khi nào, từ IP và thiết bị nào, và thông tin riêng của từng thao tác trong details (ví dụ lý do trích xuất). Việc xem dữ liệu được ghi một lần mỗi lần mở màn hình, không ghi mỗi lần làm mới. Thay đổi dữ liệu cá nhân không ghi ở đây: các bảng lịch sử đã ghi lại kèm người thay đổi. Lưu vĩnh viễn (không bao giờ xóa); các tháng cũ được nén.'''
 }
 
+Table organization_settings {
+  organization_id uuid [pk, note: 'The organization these settings belong to (1:1 with organizations). @vi Tổ chức sở hữu các thiết lập này (1:1 với organizations). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driving_session_auto_end_minutes integer [not null, note: 'A driving session ends on its own once the truck has not moved for this long (DR-07); default 120. @vi Phiên lái tự kết thúc khi xe không di chuyển trong khoảng thời gian này (DR-07); mặc định 120. @example 120']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When a setting was last changed (UTC). @vi Thời điểm thiết lập được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  Note: '''@status proposed @owner customer @features F-F1,F-E4 @tracked *
+Settings an organization chooses for itself (ID-45): one row per
+organization, created with default values together with it, one typed column
+per setting. A new setting is a new column with a default. Change history on,
+since a setting is a decision. There is no user or fleet settings table until
+a real setting needs one.
+@vi-name Thiết lập tổ chức
+@vi Các thiết lập do tổ chức tự chọn (ID-45): mỗi tổ chức một dòng, tạo kèm giá trị mặc định cùng lúc với tổ chức, mỗi thiết lập một cột có kiểu riêng. Thiết lập mới là một cột mới có giá trị mặc định. Có lưu lịch sử thay đổi vì thiết lập là một quyết định. Chưa có bảng thiết lập cho người dùng hay đội xe cho tới khi có thiết lập thật sự cần.'''
+}
+
 Ref: user_state.user_id - users.user_id [delete: restrict]
 Ref: user_credentials.user_id > users.user_id [delete: restrict]
 Ref: user_sessions.user_id > users.user_id [delete: restrict]
@@ -462,6 +479,7 @@ Ref: user_role_assignments.granted_by > users.user_id [delete: restrict]
 Ref: user_role_assignments.revoked_by > users.user_id [delete: restrict]
 Ref: access_audit_logs.user_id > users.user_id [delete: restrict]
 Ref: access_audit_logs.organization_id > organizations.organization_id [delete: restrict]
+Ref: organization_settings.organization_id - organizations.organization_id [delete: restrict]
 
 TableGroup identity {
   organizations
@@ -475,6 +493,7 @@ TableGroup identity {
   legal_documents
   user_role_assignments
   access_audit_logs
+  organization_settings
   Note: '''
 Who takes part in the platform, who can log in, and what each person may do.
 This is the foundational domain: every other domain may depend on it, and it
@@ -708,18 +727,51 @@ Table driver_vehicle_assignments {
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the assignment is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi kết thúc phân công). @example 2026-09-10T07:15:00Z']
   indexes {
-    vehicle_id [unique, name: 'uq_driver_vehicle_assignments_active_vehicle', note: 'To be removed (DR-05: a truck may have several drivers at once): WHERE unassigned_at IS NULL']
+    vehicle_id [unique, name: 'uq_driver_vehicle_assignments_active_vehicle', note: 'WHERE unassigned_at IS NULL']
     driver_id [unique, name: 'uq_driver_vehicle_assignments_active_driver', note: 'WHERE unassigned_at IS NULL']
     (driver_id, assigned_at) [name: 'ix_driver_vehicle_assignments_driver_time']
-    driver_id [name: 'ix_driver_vehicle_assignments_driver_id', note: 'To be removed: the (driver_id, assigned_at) index already serves it']
+    driver_id [name: 'ix_driver_vehicle_assignments_driver_id']
     vehicle_id [name: 'ix_driver_vehicle_assignments_vehicle_id']
   }
   Note: '''@status built @owner customer @features F-E4
-Which driver drove which vehicle, and when (open/close history). A driver
-drives at most one vehicle at a time; a vehicle may have several drivers at
-once, e.g. shifts or a co-driver (DR-05).
+Which driver drove which vehicle, and when (open/close history).
+To be removed: replaced by driving_sessions (DR-07) and dropped in the bulk
+refactor; there is no real data to carry over.
 @vi-name Phân công tài xế - xe
-@vi Tài xế nào lái xe nào, trong khoảng thời gian nào (lịch sử mở/đóng). Mỗi tài xế lái tối đa một xe tại một thời điểm; một xe có thể có nhiều tài xế cùng lúc, ví dụ chia ca hoặc lái phụ (DR-05).'''
+@vi Tài xế nào lái xe nào, trong khoảng thời gian nào (lịch sử mở/đóng). Sẽ bị bỏ: được thay bằng driving_sessions (DR-07) và xóa khi tái cấu trúc; không có dữ liệu thật cần chuyển.'''
+}
+
+Table driving_sessions {
+  driving_session_id uuid [pk, note: 'Internal ID of the driving session. @vi Mã nội bộ của phiên lái. @example 0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  organization_id uuid [not null, note: 'Organization that owns the truck; the session belongs to it. The driver may belong to another organization (DR-07). @vi Tổ chức sở hữu xe; phiên lái thuộc về tổ chức này. Tài xế có thể thuộc tổ chức khác (DR-07). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  driver_id uuid [not null, note: 'Driver at the wheel: any active driver in the system, from any organization. @vi Tài xế đang cầm lái: bất kỳ tài xế đang hoạt động nào trong hệ thống, thuộc bất kỳ tổ chức nào. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  vehicle_id uuid [not null, note: 'Truck being driven. @vi Xe đang được lái. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  check_in_method varchar(10) [not null, note: 'How the driver checked in. QR: scanned the code on the truck. APP: picked the truck from the nearby trucks listed in the app. PORTAL: a manager checked the driver in from the portal (e.g. a driver without a phone). Values: QR | APP | PORTAL. @vi Cách tài xế nhận xe. QR: quét mã trên xe. APP: chọn xe trong danh sách xe ở gần hiển thị trên ứng dụng. PORTAL: quản lý nhận xe giúp tài xế trên portal (ví dụ tài xế không có điện thoại). @example QR']
+  check_in_location "geography(POINT,4326)" [note: 'Where the phone was at check-in, compared with the truck\'s last T-Box position to refuse a check-in far from the truck; NULL for PORTAL. @vi Vị trí điện thoại lúc nhận xe, so với vị trí T-Box gần nhất của xe để từ chối nhận xe từ xa; NULL với PORTAL. @example POINT(106.66 10.76)']
+  started_at timestamptz [not null, note: 'Check-in time; the truck may be started before or after it. @vi Thời điểm nhận xe; xe có thể được khởi động trước hoặc sau. @example 2026-09-14T00:30:00Z']
+  ended_at timestamptz [note: 'When the session ended; NULL while the driver is at the wheel. @vi Thời điểm kết thúc phiên; NULL khi tài xế vẫn đang cầm lái. @example NULL']
+  end_cause varchar(20) [note: 'Why the session ended. CHECKED_OUT: the driver checked out. TAKEN_OVER: another driver checked in to the truck. OTHER_TRUCK: the driver checked in to another truck. AUTO_ENDED: the truck did not move for the organization\'s auto-end time. DRIVER_REMOVED: the driver profile was deleted. NULL while open. Values: CHECKED_OUT | TAKEN_OVER | OTHER_TRUCK | AUTO_ENDED | DRIVER_REMOVED. @vi Lý do kết thúc phiên. CHECKED_OUT: tài xế trả xe. TAKEN_OVER: tài xế khác nhận xe. OTHER_TRUCK: tài xế nhận xe khác. AUTO_ENDED: xe không di chuyển quá thời gian tự kết thúc của tổ chức. DRIVER_REMOVED: hồ sơ tài xế bị xóa. NULL khi phiên còn mở. @example TAKEN_OVER']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-14T00:30:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (moves when the session ends). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi phiên kết thúc). @example 2026-09-14T09:10:00Z']
+  indexes {
+    vehicle_id [unique, name: 'uq_driving_sessions_open_vehicle', note: 'WHERE ended_at IS NULL: one driver at the wheel per truck']
+    driver_id [unique, name: 'uq_driving_sessions_open_driver', note: 'WHERE ended_at IS NULL: one truck per driver at a time']
+    (vehicle_id, started_at) [name: 'ix_driving_sessions_vehicle_time']
+    (driver_id, started_at) [name: 'ix_driving_sessions_driver_time']
+  }
+  Note: '''@status planned @owner customer @features F-E4
+Who was at the wheel of which truck, and when (DR-07): the driver checks in by
+scanning the QR code on the truck or picking a nearby truck in the app, or a
+manager checks them in from the portal. Replaces driver_vehicle_assignments.
+A session ends when the driver checks out, another driver checks in to the
+truck, the driver checks in to another truck, or the truck has not moved for
+the organization's auto-end time (organization_settings). Events that need a
+driver (scores, trips, charging sessions) take it from here. Assigned-driver
+alerts go to the driver checked in and to the portal; a truck moving with
+nobody checked in alerts the portal. Closed rows are never edited, so no
+change history.
+@vi-name Phiên lái xe
+@vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
 }
 
 Table charging_credentials {
@@ -743,24 +795,28 @@ Ref: drivers.membership_id - memberships.membership_id [delete: restrict]
 Ref: driver_vehicle_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: driver_vehicle_assignments.driver_id > drivers.driver_id [delete: restrict]
 Ref: driver_vehicle_assignments.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: driving_sessions.organization_id > organizations.organization_id [delete: restrict]
+Ref: driving_sessions.driver_id > drivers.driver_id [delete: restrict]
+Ref: driving_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: charging_credentials.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_credentials.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup drivers {
   drivers
   driver_vehicle_assignments
+  driving_sessions
   charging_credentials
   Note: '''
 The people who drive the trucks, and how they identify themselves at a charger.
 
 - A **driver** belongs to one customer organization.
-- A driver drives at most one vehicle at a time; **assignments** keep the full history.
+- A **driving session** records who is at the wheel of which truck: the driver checks in by QR, in the app or through a manager in the portal; any active driver may drive any organization's truck. It replaces the built **assignments**, which are dropped in the refactor.
 - A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an organization and optionally to one driver: app QR now, RFID and VIN autocharge later (prepaid VIP).
 
 @vi-name Tài xế
 @vi Những người lái xe và cách họ xác thực tại trụ sạc.
 - Một **tài xế** thuộc một tổ chức khách hàng.
-- Tại mỗi thời điểm, một tài xế lái tối đa một xe; **phân công** lưu toàn bộ lịch sử.
+- Một **phiên lái** ghi nhận ai đang cầm lái xe nào: tài xế nhận xe bằng QR, trên ứng dụng hoặc qua quản lý trên portal; tài xế đang hoạt động nào cũng có thể lái xe của bất kỳ tổ chức nào. Phiên lái thay thế **phân công** đã xây dựng, sẽ bị bỏ khi tái cấu trúc.
 - Một **phương thức xác thực sạc** (thẻ RFID, mã QR trên app, VIN autocharge) thuộc một tổ chức và có thể gắn với một tài xế: QR trên app hiện tại, RFID và VIN autocharge sau này (VIP trả trước).
 '''
 }

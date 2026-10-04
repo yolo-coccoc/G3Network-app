@@ -9,7 +9,7 @@ Driver profiles, vehicle assignment, shifts, driving time and per-driver reports
 ## Checklist
 
 - [ ] **DRV-01** [Driver profiles](#drv-01) — Backend ⬜ · Portal ⬜
-- [ ] **DRV-02** [Vehicle assignment](#drv-02) — Backend ⬜ · Portal ⬜
+- [ ] **DRV-02** [Driver check-in](#drv-02) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **DRV-03** [Driver work schedule](#drv-03) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **DRV-04** [Driver identification per shift](#drv-04) — Backend ⬜ · App ⬜
 - [ ] **DRV-05** [Driving-time warning](#drv-05) — Backend ⬜ · App ⬜
@@ -47,33 +47,33 @@ Keep each driver's facts for one organization: licence number, class and expiry,
 
 <a id="drv-02"></a>
 
-### DRV-02 Vehicle assignment
+### DRV-02 Driver check-in
 
-*Phân công xe* · Must · P1.0 · To be priced
+*Nhận xe* · Must · P1.0 · To be priced
 
-Assign and reassign trucks to drivers and keep the full assignment history.
+The driver checks in to the truck they are about to drive by scanning its QR code or picking it in the app; the system always knows who is at the wheel and keeps the full history.
 
-**Value:** Every event on a truck can be traced to the driver at that time.
+**Value:** Drivers and trucks switch daily in short-haul logistics; every event on a truck can still be traced to the driver at that time.
 
-**Users:** Fleet manager, Dispatcher
+**Users:** Driver, Fleet manager, Dispatcher, System (automatic)
 
 **Capabilities:**
 
-- One active truck per driver; a truck may have several drivers at once (shifts, co-driver)
-- Reassign in one step; history per driver and per truck
+- Check in by scanning the truck's QR code or picking a nearby truck in the app, refused when the phone is far from the truck; a manager can check a driver in from the portal
+- Any active driver may drive any organization's truck; a warning when the driver is from another organization
+- One driver at the wheel per truck; the session ends at check-out, when another driver takes over, when the driver takes another truck, or after the truck has not moved for the organization's auto-end time (default 2 hours)
+- Alert the portal when a truck drives with nobody checked in
+- Driver alerts go to the driver checked in and to the portal
+- History per driver and per truck
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
 **Depends on:** [DRV-01](#drv-01), [VEH-01](vehicles.md#veh-01)  
 **Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07)  
-**Also touches:** `vehicles`  
+**Also touches:** `vehicles`, `telemetry`, `notifications`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-01 · Decision DR-05  
+**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision NT-07 · Decision ID-45  
 **Old codes:** F-E4
-
-**Open questions:**
-
-- Two drivers sharing one truck in shifts: one app login or two? (see DRV-04)
 
 <a id="drv-03"></a>
 

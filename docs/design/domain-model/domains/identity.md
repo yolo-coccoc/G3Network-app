@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 6 · 🆕 proposed: 8
+📋 planned: 6 · 🆕 proposed: 10
 
 Who takes part in the platform, who can log in, and what each person may do.
 This is the foundational domain: every other domain may depend on it, and it
@@ -90,6 +90,14 @@ erDiagram
     uuid user_id FK
     uuid organization_id FK
   }
+  organization_settings {
+    uuid organization_id PK, FK
+  }
+  organization_setting_history {
+    bigint history_id PK
+    uuid organization_id FK
+    uuid changed_by FK
+  }
   user_state |o..|| users : "user_id"
   user_credentials }o..|| users : "user_id"
   user_sessions }o..|| users : "user_id"
@@ -112,12 +120,14 @@ erDiagram
   user_role_assignments }o..o| users : "revoked_by"
   access_audit_logs }o..o| users : "user_id"
   access_audit_logs }o..o| organizations : "organization_id"
+  organization_settings |o..|| organizations : "organization_id"
   vehicles }o..|| organizations : "organization_id"
   vehicle_ownerships }o..|| organizations : "organization_id"
   vehicle_telemetry }o..o| organizations : "organization_id"
   drivers }o..o| organizations : "organization_id"
   drivers |o..o| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
+  driving_sessions }o..|| organizations : "organization_id"
   charging_credentials }o..|| organizations : "organization_id"
   fleets }o..o| organizations : "organization_id"
   fleet_vehicle_memberships }o..o| organizations : "organization_id"
@@ -147,10 +157,12 @@ erDiagram
   user_history }o..o| users : "changed_by"
   membership_history }o..o| memberships : "membership_id"
   membership_history }o..o| users : "changed_by"
+  organization_setting_history }o..o| organization_settings : "organization_id"
+  organization_setting_history }o..o| users : "changed_by"
   vehicle_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [driving_sessions](drivers.md#driving_sessions), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
 
 ## Tables
 
@@ -198,11 +210,13 @@ service packages live in their own tables.
 - [user_consents](#user_consents).organization_id (planned)
 - [user_role_assignments](#user_role_assignments).organization_id (planned)
 - [access_audit_logs](#access_audit_logs).organization_id (planned)
+- [organization_settings](#organization_settings).organization_id (planned)
 - [vehicles](vehicles.md#vehicles).organization_id (planned)
 - [vehicle_ownerships](vehicles.md#vehicle_ownerships).organization_id (planned)
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).organization_id (planned)
 - [drivers](drivers.md#drivers).organization_id (planned)
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
+- [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
 - [charging_credentials](drivers.md#charging_credentials).organization_id (planned)
 - [fleets](fleet.md#fleets).organization_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).organization_id (planned)
@@ -307,6 +321,7 @@ role requires an active driver profile.
 - [user_history](#user_history).user_id (planned)
 - [user_history](#user_history).changed_by (planned)
 - [membership_history](#membership_history).changed_by (planned)
+- [organization_setting_history](#organization_setting_history).changed_by (planned)
 - [vehicle_history](vehicles.md#vehicle_history).changed_by (planned)
 
 ### user_history
@@ -619,3 +634,47 @@ are compressed.
 | `details` | jsonb | yes |  |  | Facts specific to the action, as JSON; NULL when there are none. Keys per action: EXPORT {"reason": text, required}; LOGIN_FAILED {"failure": "WRONG_PASSWORD" \| "UNKNOWN_PHONE" \| "ACCOUNT_LOCKED"}; LOGIN_LOCKED {"locked_minutes": number}. A new key is added here when an action needs one, never as a new column. | `{"reason": "Ticket #1234 – hồ sơ bồi thường tai nạn"}` |
 | `ip_address` | inet | yes |  |  | IP address the request came from; NULL for actions run by the system. | `113.161.42.17` |
 | `user_agent` | varchar(255) | yes |  |  | Device and app as reported by the client at that moment, copied as text (not a link to user_sessions, whose rows are removed at logout, because an audit row never changes). Used for login history and new-device alerts. | `G3Driver/1.4.2 (Android 13; SM-A546E)` |
+
+### organization_settings
+
+**No. 12** · 🆕 proposed · owner: **customer** · features: F-F1, F-E4
+
+Settings an organization chooses for itself (ID-45): one row per
+organization, created with default values together with it, one typed column
+per setting. A new setting is a new column with a default. Change history on,
+since a setting is a decision. There is no user or fleet settings table until
+a real setting needs one.
+
+🔍 = tracked column: a change to it copies the whole old row into [organization_setting_history](#organization_setting_history).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `organization_id` | uuid | no | PK FK | [organizations](#organizations).organization_id (on delete restrict) | The organization these settings belong to (1:1 with organizations). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `driving_session_auto_end_minutes` | integer | no | 🔍 |  | A driving session ends on its own once the truck has not moved for this long (DR-07); default 120. | `120` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When a setting was last changed (UTC). | `2026-09-10T07:15:00Z` |
+
+**Referenced by**
+
+- [organization_setting_history](#organization_setting_history).organization_id (planned)
+
+### organization_setting_history
+
+**No. 12.h** · 🆕 proposed · owner: **customer** · features: F-F1, F-E4 · change history of [organization_settings](#organization_settings)
+
+Every earlier version of a row of `organization_settings`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `organization_id` | uuid | yes | FK | [organization_settings](#organization_settings).organization_id (on delete restrict) | Value before the change (organization_settings.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `driving_session_auto_end_minutes` | integer | yes |  |  | Value before the change (organization_settings.driving_session_auto_end_minutes). | `120` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (organization_settings.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (organization_settings.updated_at). | `2026-09-10T07:15:00Z` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_organization_setting_history_organization_id_time` (organization_id, changed_at)

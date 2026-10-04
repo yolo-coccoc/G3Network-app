@@ -30,7 +30,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### notifications
 
-**No. 32** · ✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
+**No. 34** · ✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
 
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
 each alert type is an enum value plus a payload shape.
@@ -50,7 +50,7 @@ each alert type is an enum value plus a payload shape.
 
 **Enum values**
 
-- `notificationtype`: BATTERY_ALERT, ANOMALY_ALERT, SOH_ALERT, DEVICE_OFFLINE_ALERT, SOS_ALERT, GEOFENCE_ALERT
+- `notificationtype`: BATTERY_ALERT, ANOMALY_ALERT, SOH_ALERT, DEVICE_OFFLINE_ALERT, SOS_ALERT, GEOFENCE_ALERT, NO_DRIVER_CHECK_IN_ALERT (📋 planned), OUTSIDE_DRIVER_CHECK_IN (📋 planned)
 - `notificationseverity`: INFO, WARNING, CRITICAL
 
 **Indexes**

@@ -1985,33 +1985,37 @@ features:
     old_codes: [F-E4]
 
   - code: DRV-02
-    name: Vehicle assignment
-    name_vi: Phân công xe
+    name: Driver check-in
+    name_vi: Nhận xe
     what: >-
-      Assign and reassign trucks to drivers and keep the full assignment
-      history.
+      The driver checks in to the truck they are about to drive by scanning
+      its QR code or picking it in the app; the system always knows who is at
+      the wheel and keeps the full history.
     what_vi: >-
-      Giao và đổi xe cho tài xế, lưu toàn bộ lịch sử phân công.
+      Tài xế nhận chiếc xe sắp lái bằng cách quét mã QR trên xe hoặc chọn xe
+      trên ứng dụng; hệ thống luôn biết ai đang cầm lái và lưu toàn bộ lịch sử.
     value: >-
-      Every event on a truck can be traced to the driver at that time.
+      Drivers and trucks switch daily in short-haul logistics; every event on
+      a truck can still be traced to the driver at that time.
     value_vi: >-
-      Mọi sự kiện của xe đều truy được tài xế tại thời điểm đó.
-    users: [FLEET_MANAGER, DISPATCHER]
+      Trong vận tải chặng ngắn, tài xế và xe đổi nhau hằng ngày; mọi sự kiện
+      của xe vẫn truy được tài xế tại thời điểm đó.
+    users: [DRIVER, FLEET_MANAGER, DISPATCHER, SYSTEM]
     capabilities:
-      - ["One active truck per driver; a truck may have several drivers at once (shifts, co-driver)", "Mỗi tài xế một xe đang hoạt động; một xe có thể có nhiều tài xế cùng lúc (chia ca, lái phụ)"]
-      - ["Reassign in one step; history per driver and per truck", "Đổi xe trong một bước; lịch sử theo tài xế và theo xe"]
-    surfaces: {backend: todo, portal: todo}
+      - ["Check in by scanning the truck's QR code or picking a nearby truck in the app, refused when the phone is far from the truck; a manager can check a driver in from the portal", "Nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, bị từ chối khi điện thoại ở xa xe; quản lý có thể nhận xe giúp tài xế trên portal"]
+      - ["Any active driver may drive any organization's truck; a warning when the driver is from another organization", "Tài xế đang hoạt động nào cũng có thể lái xe của bất kỳ tổ chức nào; cảnh báo khi tài xế thuộc tổ chức khác"]
+      - ["One driver at the wheel per truck; the session ends at check-out, when another driver takes over, when the driver takes another truck, or after the truck has not moved for the organization's auto-end time (default 2 hours)", "Mỗi xe một người cầm lái; phiên kết thúc khi trả xe, khi tài xế khác nhận xe, khi tài xế nhận xe khác, hoặc khi xe không di chuyển quá thời gian tự kết thúc của tổ chức (mặc định 2 giờ)"]
+      - ["Alert the portal when a truck drives with nobody checked in", "Cảnh báo lên portal khi xe chạy mà không ai nhận xe"]
+      - ["Driver alerts go to the driver checked in and to the portal", "Cảnh báo dành cho tài xế gửi tới tài xế đang nhận xe và portal"]
+      - ["History per driver and per truck", "Lịch sử theo tài xế và theo xe"]
+    surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
     depends_on: [DRV-01, VEH-01]
-    touches: [vehicles]
-    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-01, Decision DR-05]
+    touches: [vehicles, telemetry, notifications]
+    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-07, Decision NT-07, Decision ID-45]
     old_codes: [F-E4]
-    questions:
-      - ["With several drivers on one truck, how do we know who was at the wheel at a given moment (driver login in the app, RFID card...)?", "Khi một xe có nhiều tài xế, làm sao biết ai đang cầm lái tại một thời điểm (tài xế đăng nhập ứng dụng, thẻ RFID...)?"]
-    questions:
-      - ["Two drivers sharing one truck in shifts: one app login or two? (see DRV-04)", "Hai tài xế dùng chung một xe theo ca: một hay hai tài khoản app? (xem DRV-04)"]
 
   - code: DRV-03
     name: Driver work schedule
