@@ -525,8 +525,9 @@ Table vehicles {
   owned_since timestamptz [not null, note: '@planned VH-10: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner\'s owned_since. The first owner\'s value is the truck\'s handover date. @vi Thời điểm chủ hiện tại nhận xe (ngày bàn giao, ngày hiệu lực của lần chuyển quyền). Một giai đoạn kết thúc tại owned_since của chủ kế tiếp. Giá trị của chủ đầu tiên là ngày bàn giao xe. @example 2026-06-01T00:00:00Z']
   license_plate varchar(20) [not null, note: 'Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. @vi Biển số đăng ký. Xe chỉ được đăng ký vào hệ thống khi đã có biển số. Sửa được: biển số định danh theo chủ xe (Thông tư 24/2023/TT-BCA), nên xe sang tên sẽ có biển mới và biển cũ có thể xuất hiện lại trên xe khác; lịch sử thay đổi lưu các biển trước đó. Duy nhất trong các xe chưa xóa và chưa DECOMMISSIONED. @example 51D-123.45']
   vin varchar(17) [not null, note: '17-character chassis number (VIN); the vehicle\'s business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. @vi Số khung (VIN) 17 ký tự; là khóa nghiệp vụ của xe. Sửa được để sửa lỗi nhập (ứng dụng nhắc người dùng kiểm tra trước khi lưu); lịch sử thay đổi lưu các giá trị trước. Các bảng khác trỏ tới vehicle_id, không bao giờ tới VIN. Duy nhất trong các xe chưa xóa. @example LZGJLGR4XNX000123']
-  make varchar(50) [not null, note: 'Manufacturer. Replaced by a link to vehicle_models once that catalog is designed (VH-08). @vi Hãng sản xuất. Sẽ thay bằng liên kết tới vehicle_models khi danh mục này được thiết kế (VH-08). @example Tri-Ring']
-  model varchar(50) [not null, note: 'Model line. Replaced by a link to vehicle_models once that catalog is designed (VH-08). @vi Dòng xe. Sẽ thay bằng liên kết tới vehicle_models khi danh mục này được thiết kế (VH-08). @example EVT-400']
+  vehicle_model_id uuid [not null, note: '@planned VH-15: The truck\'s model, with its specifications. @vi Dòng xe của xe, kèm thông số kỹ thuật. @example 5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99']
+  make varchar(50) [not null, note: '@remove VH-15: Manufacturer; now vehicle_models.make. @vi Hãng sản xuất; nay là vehicle_models.make. @example Tri-Ring']
+  model varchar(50) [not null, note: '@remove VH-15: Model line; now vehicle_models.model_name. @vi Dòng xe; nay là vehicle_models.model_name. @example EVT-400']
   year integer [not null, note: 'Manufacturing year. @vi Năm sản xuất. @example 2025']
   status vehiclestatus [not null, note: 'Service status, always set by a person (VH-05). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. @vi Trạng thái phục vụ, luôn do con người đặt (VH-05). ACTIVE: đang phục vụ. MAINTENANCE: đang bảo dưỡng hoặc sửa chữa. DECOMMISSIONED: đã rời hệ thống (thanh lý, bán ra ngoài dịch vụ, hoặc ngừng sử dụng vĩnh viễn); giữ lại cho lịch sử và báo cáo, không nhận dữ liệu mới. Xe đang nhàn rỗi hay không gửi dữ liệu thì không lưu: được tính từ dữ liệu vận hành và T-Box. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the vehicle is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Brake system repair at the Binh Duong workshop']
@@ -548,10 +549,38 @@ kept message by message in vehicle_telemetry.
 @vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry.'''
 }
 
+Table vehicle_models {
+  vehicle_model_id uuid [pk, note: 'Internal ID of the truck model. @vi Mã nội bộ của dòng xe. @example 5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99']
+  make varchar(50) [not null, note: 'Manufacturer. @vi Hãng sản xuất. @example Tri-Ring']
+  model_name varchar(50) [not null, note: 'Model line, unique per manufacturer. @vi Tên dòng xe, duy nhất theo hãng. @example EVT-400']
+  gross_vehicle_weight_kg integer [note: 'Gross vehicle weight in kg; NULL until known. @vi Tổng trọng lượng xe (kg); NULL khi chưa biết. @example 40000']
+  max_payload_kg integer [note: 'Maximum payload in kg; the load of the consumption curve is a share of it. NULL until known. @vi Tải trọng tối đa (kg); tải trong đường cong tiêu thụ tính theo phần trăm của giá trị này. NULL khi chưa biết. @example 30000']
+  nominal_battery_capacity_kwh numeric(7,1) [note: 'Battery capacity the model is delivered with, in kWh; used when a truck\'s own battery is unknown. A plain number, not a link to battery_models, so vehicles never depends on batteries. NULL until known. @vi Dung lượng pin dòng xe được giao kèm (kWh); dùng khi chưa biết pin của từng xe. Là số, không liên kết tới battery_models, để miền xe không phụ thuộc miền pin. NULL khi chưa biết. @example 282.0']
+  consumption_curve jsonb [note: 'Reference energy consumption by load, a list of points [{"load_percent": 0-100, "kwh_per_km": number}], used by forecasts and empty-trip detection. NULL until known. @vi Mức tiêu thụ năng lượng tham chiếu theo tải, danh sách các điểm [{"load_percent": 0-100, "kwh_per_km": số}], dùng cho dự báo và phát hiện chạy rỗng. NULL khi chưa biết. @example [{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]']
+  spec_confirmed_at timestamptz [note: 'When the manufacturer confirmed these figures in writing; NULL while they are estimates, which reports flag. @vi Thời điểm nhà sản xuất xác nhận bằng văn bản các thông số này; NULL khi còn là ước tính, báo cáo sẽ đánh dấu. @example 2026-08-15T00:00:00Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time, only for a model entered by mistake; NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho dòng xe nhập nhầm; NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    (make, model_name) [unique, name: 'uq_vehicle_models_live_make_model', note: 'WHERE deleted_at IS NULL']
+  }
+  Note: '''@status planned @owner internal @features F-F2 @tracked *
+Catalog of truck models and their specifications (VEH-03, VH-15), shared by
+every organization and maintained by our operations team. Electric only: no
+diesel figures here (the diesel baseline for carbon reports is its own
+feature). All current models are tractor heads; a body type column is added
+when another type arrives. Change history on: reports depend on these
+figures.
+@vi-name Dòng xe
+@vi Danh mục dòng xe và thông số kỹ thuật (VEH-03, VH-15), dùng chung cho mọi tổ chức, do bộ phận vận hành của chúng ta quản lý. Chỉ xe điện: không có số liệu diesel (đường cơ sở diesel cho báo cáo carbon là tính năng riêng). Mọi dòng xe hiện tại đều là đầu kéo; cột loại thân xe sẽ được thêm khi có loại khác. Có lưu lịch sử thay đổi vì báo cáo dựa vào các số liệu này.'''
+}
+
 Ref: vehicles.organization_id > organizations.organization_id [delete: restrict]
+Ref: vehicles.vehicle_model_id > vehicle_models.vehicle_model_id [delete: restrict]
 
 TableGroup vehicles {
   vehicles
+  vehicle_models
   Note: '''
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 

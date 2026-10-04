@@ -61,7 +61,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### charging_stations
 
-**No. 24** · ✅ built · owner: **internal** · features: F-C1, F-C2, F-D1, F-G2
+**No. 25** · ✅ built · owner: **internal** · features: F-C1, F-C2, F-D1, F-G2
 
 One charging station in G3's network.
 
@@ -110,7 +110,7 @@ One charging station in G3's network.
 
 ### charging_evses
 
-**No. 25** · ✅ built · owner: **internal** · features: F-C1, F-G2
+**No. 26** · ✅ built · owner: **internal** · features: F-C1, F-G2
 
 One EVSE (power outlet unit) of a station.
 
@@ -135,7 +135,7 @@ One EVSE (power outlet unit) of a station.
 
 ### charging_connectors
 
-**No. 26** · ✅ built · owner: **internal** · features: F-C1, F-C2
+**No. 27** · ✅ built · owner: **internal** · features: F-C1, F-C2
 
 One physical gun/plug, with its live status.
 
@@ -169,7 +169,7 @@ One physical gun/plug, with its live status.
 
 ### charging_ocpp_messages
 
-**No. 27** · ✅ built · owner: **internal** · features: F-G2 · hypertable on `occurred_at`
+**No. 28** · ✅ built · owner: **internal** · features: F-G2 · hypertable on `occurred_at`
 
 Every OCPP frame in both directions, verbatim and append-only.
 
@@ -192,7 +192,7 @@ Every OCPP frame in both directions, verbatim and append-only.
 
 ### charging_station_configuration_entries
 
-**No. 28** · ✅ built · owner: **internal** · features: F-G2
+**No. 29** · ✅ built · owner: **internal** · features: F-G2
 
 One configuration key from a charger's GetConfiguration answer (append-only snapshots).
 
@@ -212,7 +212,7 @@ One configuration key from a charger's GetConfiguration answer (append-only snap
 
 ### charging_reservations
 
-**No. 29** · 📋 planned · owner: **two-party** · features: F-C4
+**No. 30** · 📋 planned · owner: **two-party** · features: F-C4
 
 A customer's hold on a G3 connector for a time window.
 

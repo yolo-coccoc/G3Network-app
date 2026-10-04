@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 1
+✅ built: 1 · 📋 planned: 3
 
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
@@ -19,13 +19,23 @@ erDiagram
   vehicles {
     uuid vehicle_id PK
     uuid organization_id FK "planned"
+    uuid vehicle_model_id FK "planned"
   }
   vehicle_history {
     bigint history_id PK
     uuid vehicle_id FK
     uuid changed_by FK
   }
+  vehicle_models {
+    uuid vehicle_model_id PK
+  }
+  vehicle_model_history {
+    bigint history_id PK
+    uuid vehicle_model_id FK
+    uuid changed_by FK
+  }
   vehicles }o..|| organizations : "organization_id"
+  vehicles }o..|| vehicle_models : "vehicle_model_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -41,6 +51,8 @@ erDiagram
   trips }o..|| vehicles : "vehicle_id"
   vehicle_history }o..o| vehicles : "vehicle_id"
   vehicle_history }o..o| users : "changed_by"
+  vehicle_model_history }o..o| vehicle_models : "vehicle_model_id"
+  vehicle_model_history }o..o| users : "changed_by"
 ```
 
 Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
@@ -64,8 +76,9 @@ kept message by message in vehicle_telemetry.
 | `owned_since` | timestamptz | no | 🔍 |  | **📋 planned (VH-10)**: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner's owned_since. The first owner's value is the truck's handover date. | `2026-06-01T00:00:00Z` |
 | `license_plate` | varchar(20) | no | 🔍 |  | Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. | `51D-123.45` |
 | `vin` | varchar(17) | no | 🔍 |  | 17-character chassis number (VIN); the vehicle's business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. | `LZGJLGR4XNX000123` |
-| `make` | varchar(50) | no | 🔍 |  | Manufacturer. Replaced by a link to vehicle_models once that catalog is designed (VH-08). | `Tri-Ring` |
-| `model` | varchar(50) | no | 🔍 |  | Model line. Replaced by a link to vehicle_models once that catalog is designed (VH-08). | `EVT-400` |
+| `vehicle_model_id` | uuid | no | FK 🔍 | [vehicle_models](#vehicle_models).vehicle_model_id (on delete restrict) | **📋 planned (VH-15)**: The truck's model, with its specifications. | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
+| `make` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Manufacturer; now vehicle_models.make. | `Tri-Ring` |
+| `model` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Model line; now vehicle_models.model_name. | `EVT-400` |
 | `year` | integer | no | 🔍 |  | Manufacturing year. | `2025` |
 | `status` | vehiclestatus | no | 🔍 |  | Service status, always set by a person (VH-05). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
@@ -117,8 +130,7 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 | `owned_since` | timestamptz | yes |  |  | Value before the change (vehicles.owned_since). | `2026-06-01T00:00:00Z` |
 | `license_plate` | varchar(20) | yes |  |  | Value before the change (vehicles.license_plate). | `51D-123.45` |
 | `vin` | varchar(17) | yes |  |  | Value before the change (vehicles.vin). | `LZGJLGR4XNX000123` |
-| `make` | varchar(50) | yes |  |  | Value before the change (vehicles.make). | `Tri-Ring` |
-| `model` | varchar(50) | yes |  |  | Value before the change (vehicles.model). | `EVT-400` |
+| `vehicle_model_id` | uuid | yes |  |  | Value before the change (vehicles.vehicle_model_id). | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
 | `year` | integer | yes |  |  | Value before the change (vehicles.year). | `2025` |
 | `status` | vehiclestatus | yes |  |  | Value before the change (vehicles.status). | `ACTIVE` |
 | `status_reason` | varchar(200) | yes |  |  | Value before the change (vehicles.status_reason). | `Brake system repair at the Binh Duong workshop` |
@@ -137,3 +149,67 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 **Indexes**
 
 - `ix_vehicle_history_vehicle_id_time` (vehicle_id, changed_at)
+
+### vehicle_models
+
+**No. 14** · 📋 planned · owner: **internal** · features: F-F2
+
+Catalog of truck models and their specifications (VEH-03, VH-15), shared by
+every organization and maintained by our operations team. Electric only: no
+diesel figures here (the diesel baseline for carbon reports is its own
+feature). All current models are tractor heads; a body type column is added
+when another type arrives. Change history on: reports depend on these
+figures.
+
+🔍 = tracked column: a change to it copies the whole old row into [vehicle_model_history](#vehicle_model_history).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `vehicle_model_id` | uuid | no | PK |  | Internal ID of the truck model. | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
+| `make` | varchar(50) | no | 🔍 |  | Manufacturer. | `Tri-Ring` |
+| `model_name` | varchar(50) | no | 🔍 |  | Model line, unique per manufacturer. | `EVT-400` |
+| `gross_vehicle_weight_kg` | integer | yes | 🔍 |  | Gross vehicle weight in kg; NULL until known. | `40000` |
+| `max_payload_kg` | integer | yes | 🔍 |  | Maximum payload in kg; the load of the consumption curve is a share of it. NULL until known. | `30000` |
+| `nominal_battery_capacity_kwh` | numeric(7,1) | yes | 🔍 |  | Battery capacity the model is delivered with, in kWh; used when a truck's own battery is unknown. A plain number, not a link to battery_models, so vehicles never depends on batteries. NULL until known. | `282.0` |
+| `consumption_curve` | jsonb | yes | 🔍 |  | Reference energy consumption by load, a list of points [{"load_percent": 0-100, "kwh_per_km": number}], used by forecasts and empty-trip detection. NULL until known. | `[{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]` |
+| `spec_confirmed_at` | timestamptz | yes | 🔍 |  | When the manufacturer confirmed these figures in writing; NULL while they are estimates, which reports flag. | `2026-08-15T00:00:00Z` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a model entered by mistake; NULL while the row is live. | `NULL` |
+
+**Indexes**
+
+- `uq_vehicle_models_live_make_model` (make, model_name) unique - WHERE deleted_at IS NULL
+
+**Referenced by**
+
+- [vehicles](#vehicles).vehicle_model_id (planned)
+- [vehicle_model_history](#vehicle_model_history).vehicle_model_id (planned)
+
+### vehicle_model_history
+
+**No. 14.h** · 📋 planned · owner: **internal** · features: F-F2 · change history of [vehicle_models](#vehicle_models)
+
+Every earlier version of a row of `vehicle_models`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `vehicle_model_id` | uuid | yes | FK | [vehicle_models](#vehicle_models).vehicle_model_id (on delete restrict) | Value before the change (vehicle_models.vehicle_model_id). | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
+| `make` | varchar(50) | yes |  |  | Value before the change (vehicle_models.make). | `Tri-Ring` |
+| `model_name` | varchar(50) | yes |  |  | Value before the change (vehicle_models.model_name). | `EVT-400` |
+| `gross_vehicle_weight_kg` | integer | yes |  |  | Value before the change (vehicle_models.gross_vehicle_weight_kg). | `40000` |
+| `max_payload_kg` | integer | yes |  |  | Value before the change (vehicle_models.max_payload_kg). | `30000` |
+| `nominal_battery_capacity_kwh` | numeric(7,1) | yes |  |  | Value before the change (vehicle_models.nominal_battery_capacity_kwh). | `282.0` |
+| `consumption_curve` | jsonb | yes |  |  | Value before the change (vehicle_models.consumption_curve). | `[{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]` |
+| `spec_confirmed_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.spec_confirmed_at). | `2026-08-15T00:00:00Z` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.updated_at). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.deleted_at). | `NULL` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_vehicle_model_history_vehicle_model_id_time` (vehicle_model_id, changed_at)

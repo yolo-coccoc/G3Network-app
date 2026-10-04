@@ -29,7 +29,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### driver_scores
 
-**No. 50** · 📋 planned · owner: **customer** · features: F-K1
+**No. 51** · 📋 planned · owner: **customer** · features: F-K1
 
 A driver's weekly safety score, computed from telemetry.
 

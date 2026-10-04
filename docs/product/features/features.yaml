@@ -941,10 +941,10 @@ features:
     name_vi: Danh mục dòng xe
     what: >-
       Store each truck model's specifications (EVT-262/400/825): battery
-      capacity, consumption curve by load, and the matching diesel baseline.
+      capacity and consumption curve by load (electric figures only).
     what_vi: >-
       Lưu thông số từng dòng xe (EVT-262/400/825): dung lượng pin, đường cong
-      tiêu thụ theo tải và đường cơ sở xe diesel tương đương.
+      tiêu thụ theo tải (chỉ số liệu xe điện).
     value: >-
       Reports and forecasts use manufacturer-confirmed figures instead of
       defaults.
@@ -960,7 +960,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [VEH-01]
-    sources: [Data IN-32, Data IN-34, deferred.md 61, Decision VH-08]
+    sources: [Data IN-32, Data IN-34, deferred.md 61, Decision VH-08, Decision VH-15]
 
   - code: VEH-05
     name: Vehicle activation
@@ -4322,7 +4322,7 @@ features:
     release: P1.0
     offer: tbd
     depends_on: [SAF-03]
-    sources: [Data IN-57, Data OUT-21, Prerequisite 7]
+    sources: [Data IN-57, Data OUT-21, Prerequisite 7, deferred.md 89]
 
   - code: SAF-05
     name: Driver evidence clips

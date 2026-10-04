@@ -124,7 +124,7 @@ Warn the driver instantly about drowsiness, distraction, phone use and tailgatin
 
 **Depends on:** [SAF-03](#saf-03)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-57 · Data OUT-21 · Prerequisite 7
+**Sources:** Data IN-57 · Data OUT-21 · Prerequisite 7 · deferred.md 89
 
 <a id="saf-05"></a>
 

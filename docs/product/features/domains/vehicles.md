@@ -72,7 +72,7 @@ Each truck has exactly one owning organization; ownership can be transferred and
 
 *Danh mục dòng xe* · Should · P1.0 · Internal only
 
-Store each truck model's specifications (EVT-262/400/825): battery capacity, consumption curve by load, and the matching diesel baseline.
+Store each truck model's specifications (EVT-262/400/825): battery capacity and consumption curve by load (electric figures only).
 
 **Value:** Reports and forecasts use manufacturer-confirmed figures instead of defaults.
 
@@ -88,7 +88,7 @@ Store each truck model's specifications (EVT-262/400/825): battery capacity, con
 **Depends on:** [VEH-01](#veh-01)  
 **Needed by:** [CRB-04](carbon.md#crb-04), [MON-13](telemetry.md#mon-13), [MON-14](telemetry.md#mon-14), [RTE-01](routing.md#rte-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · Data IN-34 · deferred.md 61 · Decision VH-08
+**Sources:** Data IN-32 · Data IN-34 · deferred.md 61 · Decision VH-08 · Decision VH-15
 
 <a id="veh-05"></a>
 

@@ -1766,6 +1766,20 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
   truck's owner differ (both parties, like a charging session), the lease terms and how they are
   invoiced.
 
+### 89. Per-truck ADAS equipment flag
+
+- **Short description**: Record whether a truck is fitted with ADAS (advanced driver assistance:
+  forward collision, lane departure, tailgating warnings), as an option fitted per truck rather
+  than a property of its model.
+- **Purpose/role in the system**: The data inputs (IN-32) ask for an "has ADAS" flag to choose a
+  truck's plan, and the in-cab ADAS alerts feature (SAF-04) only works on fitted trucks.
+- **Reason for deferral**: Owner decision (2026-10-04, VH-15 in `docs/decisions/decision-log.md`):
+  ADAS is optional and comes later; no truck has it today.
+- **Related planner/feature**: SAF-04 (`docs/product/features/features.yaml`), Data IN-32, VH-15.
+- **Date recorded**: 2026-10-04
+- **Additional notes**: If the ADAS unit is a registered device (like the T-Box), "fitted" can be
+  derived from that device instead of a flag on `vehicles`.
+
 ---
 
 ## Update rules
