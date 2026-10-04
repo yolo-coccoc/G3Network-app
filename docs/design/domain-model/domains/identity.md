@@ -54,38 +54,38 @@ erDiagram
     uuid changed_by FK
   }
   user_credentials {
-    uuid credential_id PK
+    uuid user_credential_id PK
     uuid user_id FK
   }
   user_sessions {
-    uuid session_id PK
+    uuid user_session_id PK
     uuid user_id FK
     uuid organization_id FK
   }
   one_time_codes {
-    uuid code_id PK
+    uuid one_time_code_id PK
     uuid user_id FK
     uuid issued_by FK
   }
   user_consents {
-    uuid consent_id PK
+    uuid user_consent_id PK
     uuid user_id FK
     uuid organization_id FK
-    uuid document_id FK
+    uuid legal_document_id FK
   }
   legal_documents {
-    uuid document_id PK
+    uuid legal_document_id PK
     uuid created_by FK
   }
   user_role_assignments {
-    uuid assignment_id PK
+    uuid user_role_assignment_id PK
     uuid organization_id FK
     uuid membership_id FK
     uuid granted_by FK
     uuid revoked_by FK
   }
   access_audit_logs {
-    bigint audit_id PK
+    bigint access_audit_log_id PK
     timestamptz occurred_at PK
     uuid user_id FK
     uuid organization_id FK
@@ -112,7 +112,7 @@ erDiagram
   one_time_codes }o..o| users : "issued_by"
   user_consents }o..|| users : "user_id"
   user_consents }o..o| organizations : "organization_id"
-  user_consents }o..|| legal_documents : "document_id"
+  user_consents }o..|| legal_documents : "legal_document_id"
   legal_documents }o..|| users : "created_by"
   user_role_assignments }o..|| organizations : "organization_id"
   user_role_assignments }o..|| memberships : "membership_id"
@@ -461,7 +461,7 @@ logged-in device is a row of user_sessions.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `credential_id` | uuid | no | PK |  | Internal ID of the credential. | `0000001e-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_credential_id` | uuid | no | PK |  | Internal ID of the credential. | `0000001e-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | User the credential belongs to. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `credential_type` | varchar(20) | no |  |  | How the user proves who they are. Only PASSWORD today (with phone_number as the login ID); other methods (OTP, single sign-on) are added later as new values. Values: PASSWORD. | `PASSWORD` |
 | `secret_hash` | varchar(255) | no |  |  | One-way hash of the secret (e.g. Argon2id of the password), never the secret itself. Never copied to any history table or log. | `$argon2id$v=19$m=65536,t=3,p=4$...` |
@@ -485,7 +485,7 @@ history-tracked.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `session_id` | uuid | no | PK |  | Internal ID of the session: one login of one person on one device or browser. | `00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_session_id` | uuid | no | PK |  | Internal ID of the session: one login of one person on one device or browser. | `00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | The person logged in. A person can have several sessions (phone, tablet, browsers); one app install holds one login at a time. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization the app is showing on this device right now (a person in several organizations switches without logging in again; every request is still checked against their membership). Not a filter for push: notifications from all the person's organizations reach every session, and opening one switches to its organization. NULL until an organization is picked. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `platform` | varchar(10) | no |  |  | Where the app runs; also decides the session lifetime. Values: ANDROID \| IOS \| WEB. | `ANDROID` |
@@ -517,7 +517,7 @@ hours); the permanent record of what happened is in access_audit_logs.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `code_id` | uuid | no | PK |  | Internal ID of the code. | `00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `one_time_code_id` | uuid | no | PK |  | Internal ID of the code. | `00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `purpose` | varchar(20) | no |  |  | What the code is for. INVITE: an invited user sets their password. SIGN_UP: a guest proves their phone before the account is created. PASSWORD_RESET: a forgotten password. PHONE_CHANGE: proving a new phone number. Values: INVITE \| SIGN_UP \| PASSWORD_RESET \| PHONE_CHANGE. | `INVITE` |
 | `user_id` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User the code is for; NULL for SIGN_UP, when the account does not exist yet. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `phone_number` | varchar(20) | no |  |  | Phone number the code was sent to by SMS (E.164). | `+84901234567` |
@@ -549,18 +549,18 @@ never changed or deleted. Marketing consent is added when marketing exists.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `consent_id` | uuid | no | PK |  | Internal ID of the acceptance record. | `00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_consent_id` | uuid | no | PK |  | Internal ID of the acceptance record. | `00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | Person who accepted (for a company agreement: the person who accepted on its behalf, normally the ORG_ADMIN). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization on whose behalf the document was accepted (a DATA_PROCESSING_AGREEMENT); NULL for a person's own acceptance or acknowledgement. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `document_id` | uuid | no | FK | [legal_documents](#legal_documents).document_id (on delete restrict) | The exact version of the legal text that was accepted; its purpose and version come from legal_documents. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `legal_document_id` | uuid | no | FK | [legal_documents](#legal_documents).legal_document_id (on delete restrict) | The exact version of the legal text that was accepted; its purpose and version come from legal_documents. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `ip_address` | inet | yes |  |  | IP address the acceptance came from, as proof. | `113.161.42.17` |
 | `device_label` | varchar(100) | yes |  |  | Device and app or browser used, copied as text, as proof (app vs portal is visible here). | `Samsung SM-A546E · Android 13 · G3Driver 1.4.2` |
 | `accepted_at` | timestamptz | no |  |  | When it was accepted. | `2026-09-01T02:00:00Z` |
 
 **Indexes**
 
-- `uq_user_consents_person_document` (user_id, document_id) unique - WHERE organization_id IS NULL: a person accepts a version once
-- `uq_user_consents_organization_document` (organization_id, document_id) unique - WHERE organization_id IS NOT NULL: an organization accepts a version once
+- `uq_user_consents_person_legal_document` (user_id, legal_document_id) unique - WHERE organization_id IS NULL: a person accepts a version once
+- `uq_user_consents_organization_legal_document` (organization_id, legal_document_id) unique - WHERE organization_id IS NOT NULL: an organization accepts a version once
 
 ### legal_documents
 
@@ -574,7 +574,7 @@ first other language).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `document_id` | uuid | no | PK |  | Internal ID of one version of a legal text. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `legal_document_id` | uuid | no | PK |  | Internal ID of one version of a legal text. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `purpose` | varchar(30) | no |  |  | Which text it is and who accepts it. TERMS_OF_SERVICE, PRIVACY_POLICY: every user. DATA_PROCESSING_AGREEMENT: a company, on its own behalf. PRIVACY_NOTICE: an employed driver acknowledges it. LOCATION_TRACKING: an individual customer consents to it. Values: TERMS_OF_SERVICE \| PRIVACY_POLICY \| DATA_PROCESSING_AGREEMENT \| PRIVACY_NOTICE \| LOCATION_TRACKING. | `PRIVACY_POLICY` |
 | `version` | varchar(20) | no |  |  | Version label, unique per purpose. | `2026.10` |
 | `title` | varchar(200) | no |  |  | Title shown to the person. | `Chính sách quyền riêng tư G3 Network` |
@@ -588,7 +588,7 @@ first other language).
 
 **Referenced by**
 
-- [user_consents](#user_consents).document_id (planned)
+- [user_consents](#user_consents).legal_document_id (planned)
 
 ### user_role_assignments
 
@@ -608,7 +608,7 @@ row with revoked_at set.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_role_assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `organization_id` | uuid | no | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization of the membership, copied here only because the one-ORG_ADMIN unique index needs it on the same row (the one exception to DM-24). The database guarantees it is the membership's own organization: a two-column foreign key (membership_id, organization_id) → memberships (membership_id, organization_id) refuses any mismatch. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `membership_id` | uuid | no | FK | [memberships](#memberships).membership_id (on delete restrict) | The membership (person in this organization) that holds the role. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `role` | varchar(30) | no |  |  | The job title the role grants: a bundle of features, the same list for every organization. Data reach comes from the organization (is_internal), not from the role; for a customer the features are the role bundle limited by its plan, for an internal user the whole role bundle (internal-only features such as issuing invoices are never put in any plan). Titles: HEAD_ADMIN (full permissions on everything, internal only), CO_ADMIN (daily administration, internal only, cannot manage admins or is_internal), ORG_ADMIN (manages its own organization users and roles), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (requires an active driver profile in the organization), TECHNICIAN. A fixed list in code (an enum), not a table. | `FLEET_MANAGER` |
@@ -636,7 +636,7 @@ are compressed.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `audit_id` | bigint | no | PK |  | Auto-increasing ID of the audit entry. | `1048576` |
+| `access_audit_log_id` | bigint | no | PK |  | Auto-increasing ID of the audit entry. | `1048576` |
 | `occurred_at` | timestamptz | no | PK |  | When the access happened; hypertable time column. | `2026-09-15T08:30:00Z` |
 | `user_id` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | Who accessed the data, or whose account the security event is about. NULL only for a failed login with a phone number that matches no account. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization whose data was accessed. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |

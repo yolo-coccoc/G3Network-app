@@ -26,7 +26,7 @@ erDiagram
     uuid changed_by FK
   }
   telematic_status_reports {
-    bigint status_report_id PK
+    bigint telematic_status_report_id PK
     uuid telematic_id FK
   }
   warranties }o..o| telematics : "telematic_id"
@@ -139,7 +139,7 @@ message (mqtt-spec.md section 2.2).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `status_report_id` | bigint | no | PK |  | Auto-increasing ID of the report. | `51234` |
+| `telematic_status_report_id` | bigint | no | PK |  | Auto-increasing ID of the report. | `51234` |
 | `telematic_id` | uuid | no | FK | [telematics](#telematics).telematic_id (on delete restrict) | Device that sent the report. | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
 | `firmware_version` | varchar(50) | yes |  |  | Firmware version reported. | `1.4.2` |
 | `telemetry_interval_seconds` | integer | yes |  |  | Publish interval the device said it used. | `10` |

@@ -268,7 +268,7 @@ access_audit_logs.
 }
 
 Table user_credentials {
-  credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của thông tin xác thực. @example 0000001e-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của thông tin xác thực. @example 0000001e-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   user_id uuid [not null, note: 'User the credential belongs to. @vi Người dùng sở hữu thông tin xác thực. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   credential_type varchar(20) [not null, note: 'How the user proves who they are. Only PASSWORD today (with phone_number as the login ID); other methods (OTP, single sign-on) are added later as new values. Values: PASSWORD. @vi Cách người dùng chứng minh danh tính. Hiện chỉ có PASSWORD (với phone_number là tên đăng nhập); các cách khác (OTP, đăng nhập một lần) sẽ bổ sung sau bằng giá trị mới. Giá trị: PASSWORD. @example PASSWORD']
   secret_hash varchar(255) [not null, note: 'One-way hash of the secret (e.g. Argon2id of the password), never the secret itself. Never copied to any history table or log. @vi Giá trị băm một chiều của bí mật (ví dụ Argon2id của mật khẩu), không bao giờ lưu bản thân bí mật. Không bao giờ được chép sang bảng lịch sử hay nhật ký. @example $argon2id$v=19$m=65536,t=3,p=4$...']
@@ -289,7 +289,7 @@ logged-in device is a row of user_sessions.
 }
 
 Table user_sessions {
-  session_id uuid [pk, note: 'Internal ID of the session: one login of one person on one device or browser. @vi Mã nội bộ của phiên: một lần đăng nhập của một người trên một thiết bị hoặc trình duyệt. @example 00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_session_id uuid [pk, note: 'Internal ID of the session: one login of one person on one device or browser. @vi Mã nội bộ của phiên: một lần đăng nhập của một người trên một thiết bị hoặc trình duyệt. @example 00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   user_id uuid [not null, note: 'The person logged in. A person can have several sessions (phone, tablet, browsers); one app install holds one login at a time. @vi Người đang đăng nhập. Một người có thể có nhiều phiên (điện thoại, máy tính bảng, trình duyệt); mỗi bản cài app chỉ giữ một lần đăng nhập tại một thời điểm. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   organization_id uuid [note: 'Organization the app is showing on this device right now (a person in several organizations switches without logging in again; every request is still checked against their membership). Not a filter for push: notifications from all the person\'s organizations reach every session, and opening one switches to its organization. NULL until an organization is picked. @vi Tổ chức mà app đang hiển thị trên thiết bị này (người thuộc nhiều tổ chức chuyển đổi mà không cần đăng nhập lại; mọi yêu cầu vẫn được kiểm tra theo tư cách thành viên). Không dùng để lọc thông báo đẩy: thông báo của mọi tổ chức của người đó tới mọi phiên, và mở thông báo sẽ chuyển sang tổ chức của nó. NULL cho tới khi chọn tổ chức. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   platform varchar(10) [not null, note: 'Where the app runs; also decides the session lifetime. Values: ANDROID | IOS | WEB. @vi Nơi app chạy; cũng quyết định thời hạn phiên. Giá trị: ANDROID | IOS | WEB. @example ANDROID']
@@ -316,7 +316,7 @@ history-tracked.
 }
 
 Table one_time_codes {
-  code_id uuid [pk, note: 'Internal ID of the code. @vi Mã nội bộ của mã dùng một lần. @example 00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  one_time_code_id uuid [pk, note: 'Internal ID of the code. @vi Mã nội bộ của mã dùng một lần. @example 00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   purpose varchar(20) [not null, note: 'What the code is for. INVITE: an invited user sets their password. SIGN_UP: a guest proves their phone before the account is created. PASSWORD_RESET: a forgotten password. PHONE_CHANGE: proving a new phone number. Values: INVITE | SIGN_UP | PASSWORD_RESET | PHONE_CHANGE. @vi Mã dùng cho việc gì. INVITE: người được mời đặt mật khẩu. SIGN_UP: khách vãng lai xác minh số điện thoại trước khi tạo tài khoản. PASSWORD_RESET: quên mật khẩu. PHONE_CHANGE: xác minh số điện thoại mới. Giá trị: INVITE | SIGN_UP | PASSWORD_RESET | PHONE_CHANGE. @example INVITE']
   user_id uuid [note: 'User the code is for; NULL for SIGN_UP, when the account does not exist yet. @vi Người dùng nhận mã; NULL với SIGN_UP, khi tài khoản chưa tồn tại. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   phone_number varchar(20) [not null, note: 'Phone number the code was sent to by SMS (E.164). @vi Số điện thoại nhận mã qua SMS (định dạng E.164). @example +84901234567']
@@ -343,16 +343,16 @@ hours); the permanent record of what happened is in access_audit_logs.
 }
 
 Table user_consents {
-  consent_id uuid [pk, note: 'Internal ID of the acceptance record. @vi Mã nội bộ của bản ghi chấp thuận. @example 00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_consent_id uuid [pk, note: 'Internal ID of the acceptance record. @vi Mã nội bộ của bản ghi chấp thuận. @example 00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   user_id uuid [not null, note: 'Person who accepted (for a company agreement: the person who accepted on its behalf, normally the ORG_ADMIN). @vi Người đã chấp thuận (với thỏa thuận của doanh nghiệp: người chấp thuận thay mặt doanh nghiệp, thường là ORG_ADMIN). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   organization_id uuid [note: 'Organization on whose behalf the document was accepted (a DATA_PROCESSING_AGREEMENT); NULL for a person\'s own acceptance or acknowledgement. @vi Tổ chức mà văn bản được chấp thuận thay mặt (DATA_PROCESSING_AGREEMENT); NULL khi là chấp thuận hoặc xác nhận của chính cá nhân. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  document_id uuid [not null, note: 'The exact version of the legal text that was accepted; its purpose and version come from legal_documents. @vi Đúng phiên bản văn bản pháp lý đã được chấp thuận; mục đích và phiên bản lấy từ legal_documents. @example 00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  legal_document_id uuid [not null, note: 'The exact version of the legal text that was accepted; its purpose and version come from legal_documents. @vi Đúng phiên bản văn bản pháp lý đã được chấp thuận; mục đích và phiên bản lấy từ legal_documents. @example 00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   ip_address inet [note: 'IP address the acceptance came from, as proof. @vi Địa chỉ IP gửi chấp thuận, làm bằng chứng. @example 113.161.42.17']
   device_label varchar(100) [note: 'Device and app or browser used, copied as text, as proof (app vs portal is visible here). @vi Thiết bị và app hoặc trình duyệt đã dùng, chép lại dạng chuỗi, làm bằng chứng (nhìn vào đây biết là app hay portal). @example Samsung SM-A546E · Android 13 · G3Driver 1.4.2']
   accepted_at timestamptz [not null, note: 'When it was accepted. @vi Thời điểm chấp thuận. @example 2026-09-01T02:00:00Z']
   indexes {
-    (user_id, document_id) [unique, name: 'uq_user_consents_person_document', note: 'WHERE organization_id IS NULL: a person accepts a version once']
-    (organization_id, document_id) [unique, name: 'uq_user_consents_organization_document', note: 'WHERE organization_id IS NOT NULL: an organization accepts a version once']
+    (user_id, legal_document_id) [unique, name: 'uq_user_consents_person_legal_document', note: 'WHERE organization_id IS NULL: a person accepts a version once']
+    (organization_id, legal_document_id) [unique, name: 'uq_user_consents_organization_legal_document', note: 'WHERE organization_id IS NOT NULL: an organization accepts a version once']
   }
   Note: '''@status proposed @owner internal @features F-F1
 Proof of who accepted which version of which legal text, when and from where
@@ -370,7 +370,7 @@ never changed or deleted. Marketing consent is added when marketing exists.
 }
 
 Table legal_documents {
-  document_id uuid [pk, note: 'Internal ID of one version of a legal text. @vi Mã nội bộ của một phiên bản văn bản pháp lý. @example 00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  legal_document_id uuid [pk, note: 'Internal ID of one version of a legal text. @vi Mã nội bộ của một phiên bản văn bản pháp lý. @example 00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   purpose varchar(30) [not null, note: 'Which text it is and who accepts it. TERMS_OF_SERVICE, PRIVACY_POLICY: every user. DATA_PROCESSING_AGREEMENT: a company, on its own behalf. PRIVACY_NOTICE: an employed driver acknowledges it. LOCATION_TRACKING: an individual customer consents to it. Values: TERMS_OF_SERVICE | PRIVACY_POLICY | DATA_PROCESSING_AGREEMENT | PRIVACY_NOTICE | LOCATION_TRACKING. @vi Văn bản nào và ai chấp thuận. TERMS_OF_SERVICE, PRIVACY_POLICY: mọi người dùng. DATA_PROCESSING_AGREEMENT: doanh nghiệp, thay mặt chính mình. PRIVACY_NOTICE: tài xế là nhân viên xác nhận đã đọc. LOCATION_TRACKING: khách hàng cá nhân đồng ý. Giá trị: TERMS_OF_SERVICE | PRIVACY_POLICY | DATA_PROCESSING_AGREEMENT | PRIVACY_NOTICE | LOCATION_TRACKING. @example PRIVACY_POLICY']
   version varchar(20) [not null, note: 'Version label, unique per purpose. @vi Nhãn phiên bản, không trùng trong cùng mục đích. @example 2026.10']
   title varchar(200) [not null, note: 'Title shown to the person. @vi Tiêu đề hiển thị cho người dùng. @example Chính sách quyền riêng tư G3 Network']
@@ -391,7 +391,7 @@ first other language).
 }
 
 Table user_role_assignments {
-  assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần gán vai trò. @example 00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  user_role_assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần gán vai trò. @example 00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   organization_id uuid [not null, note: 'Organization of the membership, copied here only because the one-ORG_ADMIN unique index needs it on the same row (the one exception to DM-24). The database guarantees it is the membership\'s own organization: a two-column foreign key (membership_id, organization_id) → memberships (membership_id, organization_id) refuses any mismatch. @vi Tổ chức của thành viên, được ghi thêm ở đây để mọi truy vấn lọc theo tổ chức theo cùng một cách (quy tắc cột tổ chức) và để kiểm tra chỉ mục một ORG_ADMIN. Cơ sở dữ liệu đảm bảo đây đúng là tổ chức của thành viên: khóa ngoại hai cột (membership_id, organization_id) → memberships (membership_id, organization_id) từ chối mọi trường hợp không khớp. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   membership_id uuid [not null, note: 'The membership (person in this organization) that holds the role. @vi Thành viên (người trong tổ chức này) giữ vai trò. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   role varchar(30) [not null, note: 'The job title the role grants: a bundle of features, the same list for every organization. Data reach comes from the organization (is_internal), not from the role; for a customer the features are the role bundle limited by its plan, for an internal user the whole role bundle (internal-only features such as issuing invoices are never put in any plan). Titles: HEAD_ADMIN (full permissions on everything, internal only), CO_ADMIN (daily administration, internal only, cannot manage admins or is_internal), ORG_ADMIN (manages its own organization users and roles), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (requires an active driver profile in the organization), TECHNICIAN. A fixed list in code (an enum), not a table. @vi Chức danh mà vai trò cấp: một nhóm tính năng, cùng một danh sách cho mọi tổ chức. Phạm vi dữ liệu đến từ tổ chức (is_internal), không từ vai trò; với khách hàng, tính năng là nhóm tính năng của vai trò giới hạn bởi gói dịch vụ, với người dùng nội bộ là toàn bộ nhóm tính năng của vai trò (tính năng chỉ dành cho nội bộ như xuất hóa đơn không bao giờ nằm trong gói nào). Chức danh: HEAD_ADMIN (toàn quyền, chỉ nội bộ), CO_ADMIN (quản trị hằng ngày, chỉ nội bộ, không quản lý quản trị viên hay is_internal), ORG_ADMIN (quản lý người dùng và vai trò của chính tổ chức mình), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (cần hồ sơ tài xế còn hiệu lực trong tổ chức), TECHNICIAN. Danh sách cố định trong mã nguồn (enum), không phải bảng. @example FLEET_MANAGER']
@@ -420,7 +420,7 @@ row with revoked_at set.
 }
 
 Table access_audit_logs {
-  audit_id bigint [pk, increment, note: 'Auto-increasing ID of the audit entry. @vi Mã tự tăng của dòng nhật ký. @example 1048576']
+  access_audit_log_id bigint [pk, increment, note: 'Auto-increasing ID of the audit entry. @vi Mã tự tăng của dòng nhật ký. @example 1048576']
   occurred_at timestamptz [pk, note: 'When the access happened; hypertable time column. @vi Thời điểm truy cập; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
   user_id uuid [note: 'Who accessed the data, or whose account the security event is about. NULL only for a failed login with a phone number that matches no account. @vi Ai đã truy cập dữ liệu, hoặc tài khoản mà sự kiện bảo mật liên quan. Chỉ NULL khi đăng nhập thất bại với số điện thoại không thuộc tài khoản nào. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   organization_id uuid [note: 'Organization whose data was accessed. @vi Dữ liệu của tổ chức nào bị truy cập. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
@@ -472,7 +472,7 @@ Ref: one_time_codes.user_id > users.user_id [delete: restrict]
 Ref: one_time_codes.issued_by > users.user_id [delete: restrict]
 Ref: user_consents.user_id > users.user_id [delete: restrict]
 Ref: user_consents.organization_id > organizations.organization_id [delete: restrict]
-Ref: user_consents.document_id > legal_documents.document_id [delete: restrict]
+Ref: user_consents.legal_document_id > legal_documents.legal_document_id [delete: restrict]
 Ref: legal_documents.created_by > users.user_id [delete: restrict]
 Ref: user_role_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: user_role_assignments.membership_id > memberships.membership_id [delete: restrict]
@@ -771,7 +771,7 @@ its current health is the newest report (TX-11).
 }
 
 Table telematic_status_reports {
-  status_report_id bigint [pk, increment, note: 'Auto-increasing ID of the report. @vi Mã tự tăng của báo cáo. @example 51234']
+  telematic_status_report_id bigint [pk, increment, note: 'Auto-increasing ID of the report. @vi Mã tự tăng của báo cáo. @example 51234']
   telematic_id uuid [not null, note: 'Device that sent the report. @vi Thiết bị gửi báo cáo. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
   firmware_version varchar(50) [note: 'Firmware version reported. @vi Phiên bản firmware được báo. @example 1.4.2']
   telemetry_interval_seconds integer [note: 'Publish interval the device said it used. @vi Chu kỳ gửi thiết bị báo đang dùng. @example 10']
