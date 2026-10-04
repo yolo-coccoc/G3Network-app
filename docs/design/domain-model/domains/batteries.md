@@ -129,9 +129,9 @@ owned by someone else (e.g. leased from G3) stays with its owner.
 | `serial_number` | varchar(50) | no | 🔍 |  | The pack's serial number from the manufacturer; unique among batteries not deleted. | `CATL-LFP282-2025-004512` |
 | `battery_model_id` | uuid | no | FK 🔍 | [battery_models](#battery_models).battery_model_id (on delete restrict) | The battery's model, with its specifications. | `2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55` |
 | `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the battery now; may differ from the truck's owner (e.g. G3 leasing it, deferred.md 88). Earlier owners come from the view battery_ownership_periods. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `owned_since` | timestamptz | no | 🔍 |  | When the current owner took the battery. | `2026-06-01T00:00:00Z` |
+| `acquired_at` | timestamptz | no | 🔍 |  | When the current owner took the battery. | `2026-06-01T00:00:00Z` |
 | `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Truck the battery is installed in now; NULL when in stock or removed. A truck holds at most one battery. Earlier installations come from the view battery_installation_periods. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `installed_since` | timestamptz | yes | 🔍 |  | When the battery was installed in its current truck; NULL when not installed. | `2026-06-01T00:00:00Z` |
+| `installed_at` | timestamptz | yes | 🔍 |  | When the battery was installed in its current truck; NULL when not installed. | `2026-06-01T00:00:00Z` |
 | `manufactured_on` | date | yes | 🔍 |  | Manufacturing date, for age and warranty; NULL until known. | `2025-11-20` |
 | `status` | varchar(20) | no | 🔍 |  | Status set by a person (VH-16). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (recycled, sold for second-life use). Installed or in stock is not a status: it is read from vehicle_id. Values: ACTIVE \| MAINTENANCE \| DECOMMISSIONED. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | Why the battery is in its current status; NULL when ACTIVE. | `Cell imbalance check at the Binh Duong workshop` |
@@ -161,9 +161,9 @@ Every earlier version of a row of `batteries`: a copy of the whole row, taken ju
 | `serial_number` | varchar(50) | yes |  |  | Value before the change (batteries.serial_number). | `CATL-LFP282-2025-004512` |
 | `battery_model_id` | uuid | yes |  |  | Value before the change (batteries.battery_model_id). | `2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55` |
 | `organization_id` | uuid | yes |  |  | Value before the change (batteries.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `owned_since` | timestamptz | yes |  |  | Value before the change (batteries.owned_since). | `2026-06-01T00:00:00Z` |
+| `acquired_at` | timestamptz | yes |  |  | Value before the change (batteries.acquired_at). | `2026-06-01T00:00:00Z` |
 | `vehicle_id` | uuid | yes |  |  | Value before the change (batteries.vehicle_id). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `installed_since` | timestamptz | yes |  |  | Value before the change (batteries.installed_since). | `2026-06-01T00:00:00Z` |
+| `installed_at` | timestamptz | yes |  |  | Value before the change (batteries.installed_at). | `2026-06-01T00:00:00Z` |
 | `manufactured_on` | date | yes |  |  | Value before the change (batteries.manufactured_on). | `2025-11-20` |
 | `status` | varchar(20) | yes |  |  | Value before the change (batteries.status). | `ACTIVE` |
 | `status_reason` | varchar(200) | yes |  |  | Value before the change (batteries.status_reason). | `Cell imbalance check at the Binh Duong workshop` |
