@@ -2014,7 +2014,7 @@ features:
     offer: tbd
     depends_on: [DRV-01, VEH-01]
     touches: [vehicles, telemetry, notifications]
-    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-07, Decision NT-07, Decision ID-45]
+    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-07, Decision DR-08, Decision NT-07, Decision ID-45]
     old_codes: [F-E4]
 
   - code: DRV-03

@@ -768,10 +768,12 @@ truck, the driver checks in to another truck, or the truck has not moved for
 the organization's auto-end time (organization_settings). Events that need a
 driver (scores, trips, charging sessions) take it from here. Assigned-driver
 alerts go to the driver checked in and to the portal; a truck moving with
-nobody checked in alerts the portal. Closed rows are never edited, so no
+nobody checked in alerts the portal. Seen by the truck's organization and by
+the driver in the app; a driver's own employer does not see sessions on
+another organization's truck (DR-08). Closed rows are never edited, so no
 change history.
 @vi-name Phiên lái xe
-@vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
+@vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Tổ chức sở hữu xe và chính tài xế (trên ứng dụng) xem được phiên lái; tổ chức tuyển dụng tài xế không xem được phiên lái trên xe của tổ chức khác (DR-08). Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
 }
 
 Table charging_credentials {

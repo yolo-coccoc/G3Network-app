@@ -139,7 +139,9 @@ truck, the driver checks in to another truck, or the truck has not moved for
 the organization's auto-end time (organization_settings). Events that need a
 driver (scores, trips, charging sessions) take it from here. Assigned-driver
 alerts go to the driver checked in and to the portal; a truck moving with
-nobody checked in alerts the portal. Closed rows are never edited, so no
+nobody checked in alerts the portal. Seen by the truck's organization and by
+the driver in the app; a driver's own employer does not see sessions on
+another organization's truck (DR-08). Closed rows are never edited, so no
 change history.
 
 | Column | Type | Null | Key | References | Meaning | Example |

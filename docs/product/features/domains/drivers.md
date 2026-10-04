@@ -72,7 +72,7 @@ The driver checks in to the truck they are about to drive by scanning its QR cod
 **Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07)  
 **Also touches:** `vehicles`, `telemetry`, `notifications`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision NT-07 · Decision ID-45  
+**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision DR-08 · Decision NT-07 · Decision ID-45  
 **Old codes:** F-E4
 
 <a id="drv-03"></a>
