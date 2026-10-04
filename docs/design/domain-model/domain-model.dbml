@@ -930,7 +930,7 @@ Table driver_vehicle_assignments {
     driver_id [name: 'ix_driver_vehicle_assignments_driver_id']
     vehicle_id [name: 'ix_driver_vehicle_assignments_vehicle_id']
   }
-  Note: '''@status built @owner customer @features F-E4
+  Note: '''@status built @owner customer @features F-E4 @remove DR-07
 Which driver drove which vehicle, and when (open/close history).
 To be removed: replaced by driving_sessions (DR-07) and dropped in the bulk
 refactor; there is no real data to carry over.

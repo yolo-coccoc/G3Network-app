@@ -95,7 +95,7 @@ Not drawn, to keep the map readable: 14 domains also point to **identity** throu
 | [Warranties](domains/warranties.md) | planned | 0 | 0 | 2 | 17 warranties, 17.h warranty_history |
 | [Telematics](domains/telematics.md) | partial | 1 | 2 | 0 | 18 telematics, 18.h telematic_history, 19 telematic_status_reports |
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
-| [Drivers](domains/drivers.md) | partial | 2 | 1 | 1 | 21 drivers, 22 driver_vehicle_assignments, 23 driving_sessions, 24 charging_credentials |
+| [Drivers](domains/drivers.md) | partial | 2 | 1 | 1 | 21 drivers, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions, 24 charging_credentials |
 | [Fleet](domains/fleet.md) | partial | 3 | 1 | 0 | 25 fleets, 26 fleet_vehicle_memberships, 27 geofences, 28 fleet_user_assignments |
 | [Charging stations](domains/charging_stations.md) | partial | 5 | 1 | 0 | 29 charging_stations, 30 charging_evses, 31 charging_connectors, 32 charging_ocpp_messages, 33 charging_station_configuration_entries, 34 charging_reservations |
 | [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 35 charging_sessions, 36 charging_session_events, 37 charging_session_measurements |

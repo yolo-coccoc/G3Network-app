@@ -34,7 +34,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### telemetry
 
-**No. 20** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at` · 🗑️ built today as `vehicle_telemetry`, to be renamed
+**No. 20** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at` · ✏️ built today as `vehicle_telemetry`, to be renamed
 
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
 A signal becomes a typed column only when a feature queries it; until then it

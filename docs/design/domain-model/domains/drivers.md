@@ -102,7 +102,7 @@ A driver employed by (or being) a customer.
 
 ### driver_vehicle_assignments
 
-**No. 22** · ✅ built · owner: **customer** · features: F-E4
+**No. 22** · ✅ built · owner: **customer** · features: F-E4 · **🗑️ to be removed (DR-07)**
 
 Which driver drove which vehicle, and when (open/close history).
 To be removed: replaced by driving_sessions (DR-07) and dropped in the bulk
