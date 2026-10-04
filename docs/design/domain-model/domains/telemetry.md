@@ -34,7 +34,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### vehicle_telemetry
 
-**No. 21** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at`
+**No. 20** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at`
 
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
 

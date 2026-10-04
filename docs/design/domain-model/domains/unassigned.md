@@ -32,7 +32,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### promotion_campaigns
 
-**No. 57** · 📋 planned · owner: **internal** · features: F-F4
+**No. 56** · 📋 planned · owner: **internal** · features: F-F4
 
 A maintenance reminder or promotion campaign.
 
@@ -47,7 +47,7 @@ A maintenance reminder or promotion campaign.
 
 ### trips
 
-**No. 58** · 📋 planned · owner: **customer** · features: F-A9
+**No. 57** · 📋 planned · owner: **customer** · features: F-A9
 
 One trip of a vehicle. F-A9 is suspended: no trip concept exists yet.
 

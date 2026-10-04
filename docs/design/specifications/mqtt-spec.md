@@ -64,8 +64,8 @@ g3network/telematics/{telematic_serial}/status
 - Used to track the device's connection status
 - MQTT Last Will can be used to automatically publish `offline` when the connection is lost
 
-**Device health fields — PROVISIONAL (v1.2.0).** The design (`telematic_state`,
-decision TX-09 in `docs/decisions/decision-log.md`) expects the device to add
+**Device health fields — PROVISIONAL (v1.2.0).** The design (`telematic_status_reports`,
+decisions TX-09 and TX-10 in `docs/decisions/decision-log.md`) expects the device to add
 the fields below to its status message, about once a day. The names, units and
 values are our proposal; **the device vendor has not confirmed them**, and
 nothing ingests this topic yet. Update this section once the vendor's real

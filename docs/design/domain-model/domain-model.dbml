@@ -747,8 +747,8 @@ Table telematics {
   installed_at timestamptz [note: '@planned TX-08: When the device was mounted on its current truck; NULL when not mounted (DM-22). @vi Thời điểm thiết bị được gắn lên xe hiện tại; NULL khi chưa gắn (DM-22). @example 2026-06-01T00:00:00Z']
   status telematicstatus [not null, note: 'Status set by a person (TX-08). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (scrapped, returned). Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. @vi Trạng thái do con người đặt (TX-08). ACTIVE: dùng được. MAINTENANCE: đang sửa chữa hoặc kiểm tra. DECOMMISSIONED: đã rời hệ thống (thanh lý, trả lại). Đang gắn hay trong kho đọc từ vehicle_id; có gửi dữ liệu hay im lặng được tính từ dữ liệu vận hành (TX-06). Chỉ thiết bị đang gắn và ACTIVE mới nhận cấu hình. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the device is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Antenna replaced at the Hanoi workshop']
-  firmware_version varchar(50) [note: '@remove TX-08: Firmware typed in through the API; the device reports it, so it moves to telematic_state. @vi Firmware nhập qua API; thiết bị tự báo nên chuyển sang telematic_state. @example 1.4.2']
-  telemetry_interval_seconds integer [note: '@remove TX-09: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is reported in telematic_state. @vi Chu kỳ gửi đã đẩy xuống thiết bị này; chu kỳ nay là thiết lập của tổ chức (organization_settings), còn chu kỳ thiết bị thực sự dùng được báo trong telematic_state. @example 10']
+  firmware_version varchar(50) [note: '@remove TX-08: Firmware typed in through the API; the device reports it in its status reports (telematic_status_reports). @vi Firmware nhập qua API; thiết bị tự báo trong báo cáo trạng thái (telematic_status_reports). @example 1.4.2']
+  telemetry_interval_seconds integer [note: '@remove TX-09: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is in its status reports (telematic_status_reports). @vi Chu kỳ gửi đã đẩy xuống thiết bị này; chu kỳ nay là thiết lập của tổ chức (organization_settings), còn chu kỳ thiết bị thực sự dùng nằm trong báo cáo trạng thái (telematic_status_reports). @example 10']
   config_pushed_at timestamptz [note: '@remove TX-08: When the interval was last pushed; the push happens when the change is saved, so the history\'s changed_at gives it (DM-23). @vi Thời điểm đẩy chu kỳ lần gần nhất; việc đẩy xảy ra khi lưu thay đổi nên lấy từ changed_at của lịch sử (DM-23). @example 2026-09-12T03:00:00Z']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
@@ -765,32 +765,10 @@ Profile of one telematic device (T-Box): what it is and the decisions about it
 (TX-07); a device the seller owns moves with the truck at a sale. Its owner
 and truck are columns with a start time (DM-22), their periods read through
 the views telematic_ownership_periods and telematic_installation_periods.
-What the device reports about itself lives in telematic_state.
+What the device reports about itself is kept in telematic_status_reports;
+its current health is the newest report (TX-11).
 @vi-name Thiết bị telematics
-@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn đọc qua view telematic_ownership_periods và telematic_installation_periods. Những gì thiết bị tự báo về mình nằm trong telematic_state.'''
-}
-
-Table telematic_state {
-  telematic_id uuid [pk, note: 'The device this state belongs to (1:1 with telematics). @vi Thiết bị sở hữu trạng thái này (1:1 với telematics). @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
-  firmware_version varchar(50) [note: 'Firmware version the device last reported. @vi Phiên bản firmware thiết bị báo gần nhất. @example 1.4.2']
-  reported_telemetry_interval_seconds integer [note: 'Publish interval the device says it uses; differing from its truck owner\'s setting means the last push was not applied (TX-09). @vi Chu kỳ gửi mà thiết bị báo đang dùng; khác với thiết lập của chủ xe nghĩa là lần đẩy gần nhất chưa được áp dụng (TX-09). @example 10']
-  sim_iccid varchar(22) [note: 'ICCID of the SIM in the device; changes when the SIM is swapped. @vi Số ICCID của SIM trong thiết bị; đổi khi thay SIM. @example 8984049000001234567']
-  is_esim boolean [note: 'TRUE when the SIM is an eSIM. @vi TRUE khi SIM là eSIM. @example false']
-  sim_data_status varchar(20) [note: 'Mobile data status of the SIM as reported (provisional values: ACTIVE | NO_DATA | SUSPENDED | NO_SIM). @vi Trạng thái dữ liệu di động của SIM theo báo cáo (giá trị tạm: ACTIVE | NO_DATA | SUSPENDED | NO_SIM). @example ACTIVE']
-  supply_voltage_v numeric(5,2) [note: 'Power supply voltage at the device, in volts. @vi Điện áp nguồn cấp tại thiết bị (V). @example 24.30']
-  signal_dbm smallint [note: 'Mobile signal strength in dBm (closer to 0 is stronger). @vi Cường độ sóng di động (dBm, càng gần 0 càng mạnh). @example -78']
-  storage_used_percent numeric(5,2) [note: 'Share of the device\'s storage in use, 0-100. @vi Tỷ lệ bộ nhớ thiết bị đã dùng, 0-100. @example 41.50']
-  gnss_status varchar(20) [note: 'Satellite positioning status as reported (provisional values: FIX | NO_FIX | ANTENNA_FAULT). @vi Trạng thái định vị vệ tinh theo báo cáo (giá trị tạm: FIX | NO_FIX | ANTENNA_FAULT). @example FIX']
-  reported_at timestamptz [note: 'When the latest status report was received; every column above comes from that report. NULL until the first report. @vi Thời điểm nhận báo cáo trạng thái gần nhất; mọi cột phía trên lấy từ báo cáo đó. NULL trước lần báo đầu tiên. @example 2026-09-14T00:30:00Z']
-  Note: '''@status planned @owner customer @features F-G1,F-J1 @state-of telematics
-What the device reports about itself on its MQTT status topic, about once a
-day (observations, not decisions): firmware, interval in use, SIM, power,
-signal, storage, GNSS (TX-08, TX-09; message fields provisional until the
-vendor confirms them). Only the latest values, no change history. Created
-together with the device, so every device has exactly one state row. Whether
-it is online is computed from telemetry (TX-06), not stored.
-@vi-name Trạng thái thiết bị telematics
-@vi Những gì thiết bị tự báo về mình trên topic trạng thái MQTT, khoảng mỗi ngày một lần (quan sát, không phải quyết định): firmware, chu kỳ đang dùng, SIM, nguồn điện, sóng, bộ nhớ, GNSS (TX-08, TX-09; các trường của bản tin là tạm thời cho tới khi nhà cung cấp xác nhận). Chỉ giá trị mới nhất, không lưu lịch sử thay đổi. Được tạo cùng lúc với thiết bị nên mỗi thiết bị luôn có đúng một dòng trạng thái. Thiết bị có trực tuyến hay không được tính từ dữ liệu vận hành (TX-06), không lưu.'''
+@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn đọc qua view telematic_ownership_periods và telematic_installation_periods. Những gì thiết bị tự báo về mình được lưu trong telematic_status_reports; sức khỏe hiện tại là báo cáo mới nhất (TX-11).'''
 }
 
 Table telematic_status_reports {
@@ -824,23 +802,21 @@ message (mqtt-spec.md section 2.2).
 
 Ref: telematics.vehicle_id - vehicles.vehicle_id [delete: set null]
 Ref: telematics.organization_id > organizations.organization_id [delete: restrict]
-Ref: telematic_state.telematic_id - telematics.telematic_id [delete: restrict]
 Ref: telematic_status_reports.telematic_id > telematics.telematic_id [delete: restrict]
 
 TableGroup telematics {
   telematics
-  telematic_state
   telematic_status_reports
   Note: '''
 The telematic devices that send vehicle data over MQTT.
 
 - A **device** is an asset with its own owner; it is mounted on at most one vehicle, and a vehicle has at most one device.
-- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its **state** shows the latest one. The send interval is an organization setting (TX-09).
+- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its current health is the newest report (TX-11). The send interval is an organization setting (TX-09).
 
 @vi-name Thiết bị telematics
 @vi Các thiết bị telematics (T-box) gửi dữ liệu xe qua MQTT.
 - Một **thiết bị** là tài sản có chủ riêng; gắn trên tối đa một xe, và một xe có tối đa một thiết bị.
-- Những gì thiết bị tự báo về mình (firmware, SIM, nguồn điện, sóng) được lưu thành **báo cáo trạng thái**, mỗi báo cáo một dòng; **trạng thái** hiển thị báo cáo mới nhất. Chu kỳ gửi là thiết lập của tổ chức (TX-09).
+- Những gì thiết bị tự báo về mình (firmware, SIM, nguồn điện, sóng) được lưu thành **báo cáo trạng thái**, mỗi báo cáo một dòng; sức khỏe hiện tại là báo cáo mới nhất (TX-11). Chu kỳ gửi là thiết lập của tổ chức (TX-09).
 '''
 }
 

@@ -62,7 +62,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### drivers
 
-**No. 22** · ✅ built · owner: **customer** · features: F-E4
+**No. 21** · ✅ built · owner: **customer** · features: F-E4
 
 A driver employed by (or being) a customer.
 
@@ -102,7 +102,7 @@ A driver employed by (or being) a customer.
 
 ### driver_vehicle_assignments
 
-**No. 23** · ✅ built · owner: **customer** · features: F-E4
+**No. 22** · ✅ built · owner: **customer** · features: F-E4
 
 Which driver drove which vehicle, and when (open/close history).
 To be removed: replaced by driving_sessions (DR-07) and dropped in the bulk
@@ -129,7 +129,7 @@ refactor; there is no real data to carry over.
 
 ### driving_sessions
 
-**No. 24** · 📋 planned · owner: **customer** · features: F-E4
+**No. 23** · 📋 planned · owner: **customer** · features: F-E4
 
 Who was at the wheel of which truck, and when (DR-07): the driver checks in by
 scanning the QR code on the truck or picking a nearby truck in the app, or a
@@ -167,7 +167,7 @@ change history.
 
 ### charging_credentials
 
-**No. 25** · 🆕 proposed · owner: **customer** · features: F-B2, F-C6, F-H1
+**No. 24** · 🆕 proposed · owner: **customer** · features: F-B2, F-C6, F-H1
 
 How a charger identifies who is charging. Links a session's raw idTag to a
 driver and organization. Placement in `drivers` is provisional.

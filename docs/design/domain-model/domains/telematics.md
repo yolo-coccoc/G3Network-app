@@ -4,12 +4,12 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 3
+✅ built: 1 · 📋 planned: 2
 
 The telematic devices that send vehicle data over MQTT.
 
 - A **device** is an asset with its own owner; it is mounted on at most one vehicle, and a vehicle has at most one device.
-- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its **state** shows the latest one. The send interval is an organization setting (TX-09).
+- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its current health is the newest report (TX-11). The send interval is an organization setting (TX-09).
 
 ## Diagram
 
@@ -25,9 +25,6 @@ erDiagram
     uuid telematic_id FK
     uuid changed_by FK
   }
-  telematic_state {
-    uuid telematic_id PK, FK
-  }
   telematic_status_reports {
     bigint status_report_id PK
     uuid telematic_id FK
@@ -35,7 +32,6 @@ erDiagram
   warranties }o..o| telematics : "telematic_id"
   telematics |o--o| vehicles : "vehicle_id"
   telematics }o..|| organizations : "organization_id"
-  telematic_state |o..|| telematics : "telematic_id"
   telematic_status_reports }o..|| telematics : "telematic_id"
   vehicle_telemetry }o--|| telematics : "telematic_id"
   telematic_history }o..o| telematics : "telematic_id"
@@ -48,14 +44,15 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### telematics
 
-**No. 18** · ✅ built · owner: **customer** · features: F-G1, F-J1, F-J2, F-J3 · live state in [telematic_state](#telematic_state)
+**No. 18** · ✅ built · owner: **customer** · features: F-G1, F-J1, F-J2, F-J3
 
 Profile of one telematic device (T-Box): what it is and the decisions about it
 (TX-08). The device is an asset with its own owner, the truck's owner or G3
 (TX-07); a device the seller owns moves with the truck at a sale. Its owner
 and truck are columns with a start time (DM-22), their periods read through
 the views telematic_ownership_periods and telematic_installation_periods.
-What the device reports about itself lives in telematic_state.
+What the device reports about itself is kept in telematic_status_reports;
+its current health is the newest report (TX-11).
 
 🔍 = tracked column: a change to it copies the whole old row into [telematic_history](#telematic_history).
 
@@ -70,8 +67,8 @@ What the device reports about itself lives in telematic_state.
 | `installed_at` | timestamptz | yes | 🔍 |  | **📋 planned (TX-08)**: When the device was mounted on its current truck; NULL when not mounted (DM-22). | `2026-06-01T00:00:00Z` |
 | `status` | telematicstatus | no | 🔍 |  | Status set by a person (TX-08). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (scrapped, returned). Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the device is in its current status; NULL when ACTIVE. | `Antenna replaced at the Hanoi workshop` |
-| `firmware_version` | varchar(50) | yes |  |  | **🗑️ to be removed (TX-08)**: Firmware typed in through the API; the device reports it, so it moves to telematic_state. | `1.4.2` |
-| `telemetry_interval_seconds` | integer | yes |  |  | **🗑️ to be removed (TX-09)**: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is reported in telematic_state. | `10` |
+| `firmware_version` | varchar(50) | yes |  |  | **🗑️ to be removed (TX-08)**: Firmware typed in through the API; the device reports it in its status reports (telematic_status_reports). | `1.4.2` |
+| `telemetry_interval_seconds` | integer | yes |  |  | **🗑️ to be removed (TX-09)**: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is in its status reports (telematic_status_reports). | `10` |
 | `config_pushed_at` | timestamptz | yes |  |  | **🗑️ to be removed (TX-08)**: When the interval was last pushed; the push happens when the change is saved, so the history's changed_at gives it (DM-23). | `2026-09-12T03:00:00Z` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
@@ -91,7 +88,6 @@ What the device reports about itself lives in telematic_state.
 **Referenced by**
 
 - [warranties](warranties.md#warranties).telematic_id (planned)
-- [telematic_state](#telematic_state).telematic_id (planned)
 - [telematic_status_reports](#telematic_status_reports).telematic_id (planned)
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).telematic_id
 - [telematic_history](#telematic_history).telematic_id (planned)
@@ -129,34 +125,9 @@ Every earlier version of a row of `telematics`: a copy of the whole row, taken j
 
 - `ix_telematic_history_telematic_id_time` (telematic_id, changed_at)
 
-### telematic_state
-
-**No. 19** · 📋 planned · owner: **customer** · features: F-G1, F-J1 · live state of [telematics](#telematics)
-
-What the device reports about itself on its MQTT status topic, about once a
-day (observations, not decisions): firmware, interval in use, SIM, power,
-signal, storage, GNSS (TX-08, TX-09; message fields provisional until the
-vendor confirms them). Only the latest values, no change history. Created
-together with the device, so every device has exactly one state row. Whether
-it is online is computed from telemetry (TX-06), not stored.
-
-| Column | Type | Null | Key | References | Meaning | Example |
-|---|---|---|---|---|---|---|
-| `telematic_id` | uuid | no | PK FK | [telematics](#telematics).telematic_id (on delete restrict) | The device this state belongs to (1:1 with telematics). | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
-| `firmware_version` | varchar(50) | yes |  |  | Firmware version the device last reported. | `1.4.2` |
-| `reported_telemetry_interval_seconds` | integer | yes |  |  | Publish interval the device says it uses; differing from its truck owner's setting means the last push was not applied (TX-09). | `10` |
-| `sim_iccid` | varchar(22) | yes |  |  | ICCID of the SIM in the device; changes when the SIM is swapped. | `8984049000001234567` |
-| `is_esim` | boolean | yes |  |  | TRUE when the SIM is an eSIM. | `false` |
-| `sim_data_status` | varchar(20) | yes |  |  | Mobile data status of the SIM as reported (provisional values: ACTIVE \| NO_DATA \| SUSPENDED \| NO_SIM). | `ACTIVE` |
-| `supply_voltage_v` | numeric(5,2) | yes |  |  | Power supply voltage at the device, in volts. | `24.30` |
-| `signal_dbm` | smallint | yes |  |  | Mobile signal strength in dBm (closer to 0 is stronger). | `-78` |
-| `storage_used_percent` | numeric(5,2) | yes |  |  | Share of the device's storage in use, 0-100. | `41.50` |
-| `gnss_status` | varchar(20) | yes |  |  | Satellite positioning status as reported (provisional values: FIX \| NO_FIX \| ANTENNA_FAULT). | `FIX` |
-| `reported_at` | timestamptz | yes |  |  | When the latest status report was received; every column above comes from that report. NULL until the first report. | `2026-09-14T00:30:00Z` |
-
 ### telematic_status_reports
 
-**No. 20** · 📋 planned · owner: **customer** · features: F-J1, F-J3
+**No. 19** · 📋 planned · owner: **customer** · features: F-J1, F-J3
 
 Every health report a T-Box sends about itself, about once a day (TX-10), so
 trends can be seen (signal getting weaker, voltage dropping before it went
