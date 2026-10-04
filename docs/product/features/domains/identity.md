@@ -24,7 +24,7 @@ Organizations, people, logins, roles and what each person may see and do; consen
 - [ ] **ACC-14** [Feature access control](#acc-14) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **ACC-15** [Data scope enforcement](#acc-15) — Backend ⬜
 - [ ] **ACC-16** [Push device registration](#acc-16) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **ACC-17** [Consent management](#acc-17) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **ACC-17** [Legal acceptance and consent](#acc-17) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **ACC-18** [Personal-data access audit log](#acc-18) — Backend ⬜ · Portal ⬜
 - [ ] **ACC-19** [Data-subject requests](#acc-19) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **ACC-20** [Emergency administrator access](#acc-20) — Backend ⬜
@@ -98,7 +98,7 @@ One account per person, identified by phone number, used across every organizati
 **Capabilities:**
 
 - Profile: full name, phone number (login ID), optional e-mail
-- Account status Invited / Active / Locked; only our administrators lock a whole account
+- Account status Invited / Active / Locked, with the reason; only our administrators lock a whole account
 - Record who created each account and keep its change history
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
@@ -123,10 +123,12 @@ Log in with phone number and password on the app and the portal; a person in sev
 **Capabilities:**
 
 - Phone + password login, logout, session expiry
+- See my logged-in devices and log out one or all of them; every session ends when the password changes or the account is locked
 - Organization picker after login, remembering the last one
-- Temporary lockout after repeated failed logins
+- Temporary lockout after repeated failed logins, plus a per-device/IP rate limit; password reset by OTP still works while locked
 - Passwords stored only as one-way hashes; old ones cannot be reused
 - Record last login and last activity
+- Login history (time, IP, device) visible to the user and our admins; alert the user on a login from a new device
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -149,7 +151,7 @@ Send a one-time code by SMS to confirm a phone number when signing up, accepting
 
 **Capabilities:**
 
-- Codes are hashed, expire, and work once
+- Codes are hashed, expire, and work once; 5 wrong attempts kill a code; only the newest code counts
 - Rate limit per phone number against abuse and SMS cost
 - One mechanism for sign-up, invitation, password reset and phone change
 
@@ -177,6 +179,7 @@ A user resets a forgotten password or moves the account to a new phone number, c
 - Forgotten password: OTP to the registered phone, then a new password
 - Change phone number: OTP to the new number; the change is kept in history
 - Change password while logged in
+- Extra check by customer care or the organization admin before resetting the password of a long-inactive account (phone numbers get recycled)
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -226,6 +229,7 @@ Our sales team creates a company's organization, its subscription and its first 
 - Create the organization and its subscription in one flow
 - Invite the first organization administrator by phone
 - Assign the account manager
+- The first administrator accepts the data processing agreement for the company at first login
 
 **Status:** Backend ⬜ · Portal ⬜
 
@@ -321,7 +325,7 @@ Record which organizations each person belongs to, when they joined and left, an
 **Capabilities:**
 
 - List members of an organization with their roles
-- Lock, unlock or remove a member (removal keeps history)
+- Lock, unlock or remove a member with a reason (removal keeps history); see when each member was invited and when they joined
 - A person sees and switches between their organizations
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
@@ -345,8 +349,8 @@ Give each member one or more job-title roles (driver, fleet manager, accountant.
 
 **Capabilities:**
 
-- Grant and revoke roles per membership, with history
-- Keep at least one active organization administrator
+- Grant and revoke roles per membership, with history: who granted or revoked each role, and when
+- Exactly one organization administrator: hand the role over in one step; our co-administrator appoints a new one if the admin is gone
 - Head and co-administrator roles exist only in internal organizations; co-administrators cannot manage administrators
 
 **Status:** Backend ⬜ · Portal ⬜
@@ -425,8 +429,9 @@ Register each phone or browser that should receive push notifications, and clean
 
 **Capabilities:**
 
-- Store the Firebase token per device, refreshed at login
-- Remove tokens on logout, on 'unregistered' and when stale
+- Store the Firebase token on the device's login session, refreshed at login; optional when the user refuses notifications
+- The token disappears with the session: logout, expiry, password change, account lock, or the app reported uninstalled
+- Notifications from all of the person's organizations reach every device; opening one switches to its organization
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -437,32 +442,33 @@ Register each phone or browser that should receive push notifications, and clean
 
 <a id="acc-17"></a>
 
-### ACC-17 Consent management
+### ACC-17 Legal acceptance and consent
 
-*Quản lý đồng ý xử lý dữ liệu* · Must · P1.0 · Included in every plan
+*Chấp thuận văn bản pháp lý & đồng ý xử lý dữ liệu* · Must · P1.0 · Included in every plan
 
-Record each person's consent to the terms, the privacy policy and location tracking, per document version, and let them withdraw it.
+Record who accepted which version of which legal text: a company accepts the data processing agreement on its own behalf, an employed driver acknowledges the privacy notice, an individual customer accepts the terms, privacy policy and location tracking.
 
-**Value:** Proves lawful processing of personal data (Decree 13/2023, Law 91/2025/QH15).
+**Value:** Proves lawful processing of personal data (Decree 13/2023, Law 91/2025/QH15) with the exact text accepted.
 
-**Users:** Driver, Organization administrator, System (automatic)
+**Users:** Driver, Organization administrator, Co-administrator (internal), System (automatic)
 
 **Capabilities:**
 
-- Ask for consent at activation, per purpose, with the document version
-- Withdraw consent; record when and through which channel
-- Ask again when a document changes
-- Marketing messages only with marketing consent
+- Publish versions of each legal text; a new version asks everyone concerned to accept again before continuing
+- The organization administrator accepts the data processing agreement for the company at first login; members cannot use the system before
+- Employed drivers acknowledge the privacy notice once per version; individual customers consent per purpose
+- Proof kept with each acceptance: exact text version, time, IP and device; never changed
+- Withdrawing a required acceptance means leaving the service (account closure)
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
 **Needed by:** [ACC-07](#acc-07), [ACC-19](#acc-19), [PAY-12](billing.md#pay-12)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-37 · NF-08 · Decision ID-20
+**Sources:** Data IN-37 · NF-08 · Decision ID-20 · Decision ID-38
 
 **Open questions:**
 
-- What happens to location tracking of a company truck when its driver withdraws location consent?
+- Legal adviser to confirm the company-agreement model for Vietnam (open question 6).
 
 <a id="acc-18"></a>
 
@@ -480,7 +486,9 @@ Log who viewed, downloaded or exported which personal, location or camera data, 
 
 - Append-only log of every access to personal, location and camera data
 - Ask for a reason or ticket before exporting sensitive data
-- Search the log by person, data subject, time and data type
+- Search the log by person, organization, time and data type
+- One entry per screen opened (not per refresh); kept forever, older months compressed
+- Account security events in the same log: logins, failed logins, lockouts, logouts, password and phone changes, with IP and device
 
 **Status:** Backend ⬜ · Portal ⬜
 

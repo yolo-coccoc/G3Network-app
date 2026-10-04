@@ -48,7 +48,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### vehicles
 
-**No. 11** · ✅ built · owner: **customer** · features: F-F2, F-A6
+**No. 12** · ✅ built · owner: **customer** · features: F-F2, F-A6
 
 Static profile of one electric truck.
 
@@ -91,7 +91,7 @@ Static profile of one electric truck.
 
 ### vehicle_ownerships
 
-**No. 12** · 🆕 proposed · owner: **customer** · features: F-F2
+**No. 13** · 🆕 proposed · owner: **customer** · features: F-F2
 
 Which organization owned a vehicle, and when. Lets a sold truck's old data stay
 with its previous owner (decision D3). Same open/close shape as

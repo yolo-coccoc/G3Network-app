@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 6 · 🆕 proposed: 7
+📋 planned: 6 · 🆕 proposed: 8
 
 Who takes part in the platform, who can log in, and what each person may do.
 This is the foundational domain: every other domain may depend on it, and it
@@ -13,7 +13,7 @@ depends on none of them. Not built yet.
 - An **organization** is a customer (a transport company or an individual owner-driver), our own internal organization (`is_internal`), or a repair/rescue partner (has a `repair_partners` profile). Any of them can own vehicles and drivers; only `is_internal` changes access: internal users see across organizations, everyone else only their own.
 - A **user** is one person with one account. Through **memberships** a person can belong to several organizations at once (e.g. their personal organization and the company that hired them); after login they pick the organization to act for. Our own staff are members of an internal organization. Job profiles (e.g. the driver profile) point to a membership, never the other way, so identity depends on no other domain.
 - A user holds one or more **roles** (job titles) from a fixed list, kept as history. Roles are permissions only; facts about a job live in a **profile** (e.g. the driver profile), and a role that needs one (DRIVER) requires it to be active.
-- **Everyone who uses or receives anything from the system is a user.** A message type belongs to a service (a feature): a user receives it when the service is in one of their roles and in their organization's plan (e.g. e-invoices for ACCOUNTANT, operational alerts for FLEET_MANAGER/DISPATCHER). It then goes to every channel - the app, the fleet portal and e-mail (when an address is on file); otherwise nothing is sent. Marketing messages come later and need the MARKETING consent.
+- **Everyone who uses or receives anything from the system is a user.** A message type belongs to a service (a feature): a user receives it when the service is in one of their roles and in their organization's plan (e.g. e-invoices for ACCOUNTANT, operational alerts for FLEET_MANAGER/DISPATCHER). It then goes to every channel - the app, the fleet portal and e-mail (when an address is on file); otherwise nothing is sent. Marketing messages come later; their consent is designed with them.
 - Every access to personal or location data writes an **audit log** entry.
 
 ## Diagram
@@ -57,9 +57,10 @@ erDiagram
     uuid credential_id PK
     uuid user_id FK
   }
-  user_devices {
-    uuid device_id PK
+  user_sessions {
+    uuid session_id PK
     uuid user_id FK
+    uuid organization_id FK
   }
   one_time_codes {
     uuid code_id PK
@@ -69,11 +70,19 @@ erDiagram
   user_consents {
     uuid consent_id PK
     uuid user_id FK
+    uuid organization_id FK
+    uuid document_id FK
+  }
+  legal_documents {
+    uuid document_id PK
+    uuid created_by FK
   }
   user_role_assignments {
     uuid assignment_id PK
     uuid organization_id FK
     uuid membership_id FK
+    uuid granted_by FK
+    uuid revoked_by FK
   }
   access_audit_logs {
     bigint audit_id PK
@@ -83,7 +92,8 @@ erDiagram
   }
   user_state |o..|| users : "user_id"
   user_credentials }o..|| users : "user_id"
-  user_devices }o..|| users : "user_id"
+  user_sessions }o..|| users : "user_id"
+  user_sessions }o..o| organizations : "organization_id"
   organizations }o..o| users : "account_manager_id"
   users }o..o| users : "created_by"
   memberships }o..|| organizations : "organization_id"
@@ -93,9 +103,14 @@ erDiagram
   one_time_codes }o..o| users : "user_id"
   one_time_codes }o..o| users : "issued_by"
   user_consents }o..|| users : "user_id"
+  user_consents }o..o| organizations : "organization_id"
+  user_consents }o..|| legal_documents : "document_id"
+  legal_documents }o..|| users : "created_by"
   user_role_assignments }o..|| organizations : "organization_id"
   user_role_assignments }o..|| memberships : "membership_id"
-  access_audit_logs }o..|| users : "user_id"
+  user_role_assignments }o..o| users : "granted_by"
+  user_role_assignments }o..o| users : "revoked_by"
+  access_audit_logs }o..o| users : "user_id"
   access_audit_logs }o..o| organizations : "organization_id"
   vehicles }o..o| organizations : "organization_id"
   vehicle_ownerships }o..|| organizations : "organization_id"
@@ -158,7 +173,7 @@ service packages live in their own tables.
 |---|---|---|---|---|---|---|
 | `organization_id` | uuid | no | PK |  | Internal ID of the organization. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `is_internal` | boolean | no | 🔍 |  | TRUE for our own organization(s), the ones running this platform (outsourced staff acting for us, e.g. a hired sales company, are members of it too). Its users see data across every organization and get every feature (no plan limit), still limited to their role (decision D7); only an internal organization may hold HEAD_ADMIN and CO_ADMIN. FALSE for every other organization (customers, partners), whose users only see data related to their own organization, with features limited by its plan. A partner is recognised by having a repair_partners profile, not by this flag. The most security-sensitive column of the table: setting it grants cross-organization access. | `false` |
-| `legal_form` | varchar(20) | no | 🔍 |  | What kind of legal person the organization is, because the law treats them differently. COMPANY: a registered company (tax code of 10 digits, or 13 for a branch; invoices to the company). INDIVIDUAL: a private person, e.g. an owner-driver with one truck (the 12-digit citizen ID serves as tax code and is personal data: masked, consent required, every view audit-logged). Used to validate tax_code, apply the privacy rules and fill e-invoices. Internal organizations and partners are always COMPANY. Values: COMPANY \| INDIVIDUAL. | `COMPANY` |
+| `legal_form` | varchar(20) | no | 🔍 |  | What kind of legal person the organization is, because the law treats them differently. COMPANY: a registered company (tax code of 10 digits, or 13 for a branch; invoices to the company). INDIVIDUAL: a private person, e.g. an owner-driver with one truck (the 12-digit citizen ID serves as tax code and is personal data: masked, consent required, every view audit-logged). Used to validate tax_code, apply the privacy rules and fill e-invoices. Internal organizations are always COMPANY; a partner may be either (a small workshop is often a household business, whose tax code is the owner's citizen ID). Values: COMPANY \| INDIVIDUAL. | `COMPANY` |
 | `display_name` | varchar(200) | no | 🔍 |  | Short name shown in the app and the portal. | `Minh Phát Logistics` |
 | `legal_name` | varchar(255) | no | 🔍 |  | Full registered name of the company, or the full name of the person for an INDIVIDUAL; printed on invoices. | `Công ty Cổ phần Vận tải Minh Phát` |
 | `tax_code` | varchar(20) | yes | 🔍 |  | Tax code required for e-invoices. COMPANY: the company tax code (10 digits, or 13 for a branch). INDIVIDUAL: for now (since 1 Jul 2025, Circular 86/2024), the 12-digit citizen ID (CCCD) number serves as the personal tax code; it is personal data under Decree 13/2023. Unique among organizations not deleted. | `0312345678` |
@@ -176,8 +191,10 @@ service packages live in their own tables.
 
 **Referenced by**
 
+- [user_sessions](#user_sessions).organization_id (planned)
 - [memberships](#memberships).organization_id (planned)
 - [user_state](#user_state).last_organization_id (planned)
+- [user_consents](#user_consents).organization_id (planned)
 - [user_role_assignments](#user_role_assignments).organization_id (planned)
 - [access_audit_logs](#access_audit_logs).organization_id (planned)
 - [vehicles](vehicles.md#vehicles).organization_id (planned)
@@ -252,20 +269,26 @@ role requires an active driver profile.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `user_id` | uuid | no | PK |  | Internal ID of the login. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `email` | varchar(255) | yes | UQ 🔍 |  | E-mail, optional and unique when present. A message the user is entitled to (its service is in one of their roles and in their organization's plan) goes to the app, the fleet portal and, when an address is on file, this e-mail; with no address, nothing is e-mailed. There is no per-user channel choice. | `dieuvan@minhphat.vn` |
-| `phone_number` | varchar(20) | no | UQ 🔍 |  | Phone number in E.164 format, required and unique: the login ID (login is phone + password; other methods come later). | `+84901234567` |
+| `email` | varchar(255) | yes | 🔍 |  | E-mail, optional; unique when present among accounts not deleted, ignoring upper/lower case. A message the user is entitled to (its service is in one of their roles and in their organization's plan) goes to the app, the fleet portal and, when an address is on file, this e-mail; with no address, nothing is e-mailed. There is no per-user channel choice. | `dieuvan@minhphat.vn` |
+| `phone_number` | varchar(20) | no | 🔍 |  | Phone number in E.164 format, required and unique among accounts not deleted: the login ID (login is phone + password; other methods come later). Carriers recycle numbers, so a password reset by OTP on an account inactive for a long time (e.g. 90 days without activity) needs an extra check by customer care or the organization admin before it succeeds. | `+84901234567` |
 | `full_name` | varchar(100) | no | 🔍 |  | The person's full name, shown in the app, the portal and audit logs. | `Trần Thị Bình` |
 | `status` | varchar(20) | no | 🔍 |  | State of the whole account, across every organization: INVITED (no password set yet), ACTIVE, or LOCKED (only our HEAD_ADMIN/CO_ADMIN lock a whole account; an organization locks a person only in its own membership). Values: INVITED \| ACTIVE \| LOCKED. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the account has its current status (e.g. why it was locked or unlocked); NULL when there is nothing to explain. Earlier reasons are kept in user_history. | `Báo mất điện thoại, khóa tạm chờ xác minh` |
 | `created_by` | uuid | yes | FK 🔍 | [users](#users).user_id (on delete restrict) | User who created this account (our sales/admin, an ORG_ADMIN, a fleet manager registering a driver); NULL when the person signed up themselves. | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time; NULL while the row is live. Rows are never hard-deleted. | `NULL` |
 
+**Indexes**
+
+- `uq_users_active_phone_number` (phone_number) unique - WHERE deleted_at IS NULL
+- `uq_users_active_email` (lower(email)) unique - WHERE deleted_at IS NULL AND email IS NOT NULL: case-insensitive
+
 **Referenced by**
 
 - [user_state](#user_state).user_id (planned)
 - [user_credentials](#user_credentials).user_id (planned)
-- [user_devices](#user_devices).user_id (planned)
+- [user_sessions](#user_sessions).user_id (planned)
 - [organizations](#organizations).account_manager_id (planned)
 - [users](#users).created_by (planned)
 - [memberships](#memberships).user_id (planned)
@@ -273,6 +296,9 @@ role requires an active driver profile.
 - [one_time_codes](#one_time_codes).user_id (planned)
 - [one_time_codes](#one_time_codes).issued_by (planned)
 - [user_consents](#user_consents).user_id (planned)
+- [legal_documents](#legal_documents).created_by (planned)
+- [user_role_assignments](#user_role_assignments).granted_by (planned)
+- [user_role_assignments](#user_role_assignments).revoked_by (planned)
 - [access_audit_logs](#access_audit_logs).user_id (planned)
 - [charging_policy_versions](policy.md#charging_policy_versions).created_by (planned)
 - [organization_history](#organization_history).changed_by (planned)
@@ -294,6 +320,7 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 | `phone_number` | varchar(20) | yes |  |  | Value before the change (users.phone_number). | `+84901234567` |
 | `full_name` | varchar(100) | yes |  |  | Value before the change (users.full_name). | `Trần Thị Bình` |
 | `status` | varchar(20) | yes |  |  | Value before the change (users.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (users.status_reason). | `Báo mất điện thoại, khóa tạm chờ xác minh` |
 | `created_by` | uuid | yes |  |  | Value before the change (users.created_by). | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `created_at` | timestamptz | yes |  |  | Value before the change (users.created_at). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (users.updated_at). | `2026-09-10T07:15:00Z` |
@@ -312,16 +339,18 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 Live activity of a user, recorded by the system (observations, not decisions):
 updated on every login and request, so kept apart from the users profile and
 never history-tracked. Created with default values together with the user, so
-every user always has exactly one state row.
+every user always has exactly one state row. Only the latest values live here;
+the history of logins and other account security events is in
+access_audit_logs.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `user_id` | uuid | no | PK FK | [users](#users).user_id (on delete restrict) | The user this live state belongs to (1:1 with users). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `last_login_at` | timestamptz | yes |  |  | Latest successful login; NULL if never logged in. | `2026-09-14T23:10:00Z` |
-| `last_organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization the user last acted for, opened directly at the next login (for a person who belongs to several organizations). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `failed_login_count` | integer | no |  |  | Consecutive failed password attempts since the last successful login; reset to 0 on success. Protects against password guessing. | `0` |
-| `login_locked_until` | timestamptz | yes |  |  | Logins are refused until this time after too many failures (e.g. 15 minutes after 5 failed attempts); NULL when not locked. Different from a LOCKED account, which an admin decides. | `NULL` |
-| `last_active_at` | timestamptz | yes |  |  | Latest request or action in the app or portal; NULL if never active. Used e.g. for an inactive-users report. | `2026-09-15T08:42:10Z` |
+| `last_organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization the user last acted for, opened directly at the next login (for a person who belongs to several organizations). If the person no longer has an active membership there, the login shows the organization picker instead. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `failed_login_count` | integer | no |  |  | Consecutive failed password attempts since the last successful login; reset to 0 on a successful login and on a successful password reset. Protects against password guessing. | `0` |
+| `login_locked_until` | timestamptz | yes |  |  | Logins are refused until this time after too many failures (e.g. 15 minutes after 5 failed attempts); NULL when not locked. Different from a LOCKED account, which an admin decides. Because anyone who knows the phone number could trigger it, the lock is short, a password reset by OTP still works during it and clears it (set back to NULL), and the API also rate-limits attempts per device/IP. | `NULL` |
+| `last_active_at` | timestamptz | yes |  |  | Latest request or action in the app or portal; NULL if never active. Written at most once every 5 minutes per user (not on every request), which is precise enough for an inactive-users report. | `2026-09-15T08:42:10Z` |
 
 ### memberships
 
@@ -340,17 +369,19 @@ remembered in user_state); every query then filters by that organization.
 | `membership_id` | uuid | no | PK |  | Internal ID of the membership: one person in one organization. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `organization_id` | uuid | no | FK 🔍 | [organizations](#organizations).organization_id (on delete restrict) | Organization the person works for or acts for. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `user_id` | uuid | no | FK 🔍 | [users](#users).user_id (on delete restrict) | The person. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `status` | varchar(20) | no | 🔍 |  | Standing of the person in this organization only. INVITED: added but not yet accepted (a person already registered elsewhere accepts the invitation in the app). ACTIVE. LOCKED: blocked here by the organization, without affecting their other organizations. Values: INVITED \| ACTIVE \| LOCKED. | `ACTIVE` |
-| `joined_at` | timestamptz | no | 🔍 |  | When the person was added to the organization. | `2026-09-01T02:00:00Z` |
-| `left_at` | timestamptz | yes | 🔍 |  | When the person left (or was removed); NULL while a member. Their roles end with it, but their history stays. | `NULL` |
+| `status` | varchar(20) | no | 🔍 |  | Standing of the person in this organization only. INVITED: added but not yet accepted (a person already registered elsewhere accepts the invitation in the app). ACTIVE. LOCKED: blocked here by the organization, without affecting their other organizations. Values: INVITED \| ACTIVE \| LOCKED. The organization's ORG_ADMIN cannot be locked or removed: the role is handed over first. If the organization itself is SUSPENDED or CLOSED, its members cannot log in to it, but their memberships are left as they are, so everyone continues if a new contract is signed. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the membership has its current status, or why it ended: e.g. why the organization locked the person, or whether they left, were removed or never accepted the invitation. NULL when there is nothing to explain. Earlier reasons are kept in membership_history. | `NULL` |
+| `joined_at` | timestamptz | yes | 🔍 |  | When the person accepted and became an active member; NULL while INVITED. When they were added or invited is created_at. | `2026-09-01T02:00:00Z` |
+| `left_at` | timestamptz | yes | 🔍 |  | When the person left (or was removed, or the invitation was cancelled); NULL while a member. Why is in status_reason. Their roles end with it, but their history stays. | `NULL` |
 | `created_by` | uuid | yes | FK 🔍 | [users](#users).user_id (on delete restrict) | User who added the person (an ORG_ADMIN, our sales/admin, a fleet manager registering a driver); NULL when the person created their own personal organization. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `created_at` | timestamptz | no | 🔍 |  | When the person was added or invited (UTC). | `2026-08-31T09:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 
 **Indexes**
 
 - `uq_memberships_active` (organization_id, user_id) unique - WHERE left_at IS NULL
 - `ix_memberships_user_id` (user_id)
+- `uq_memberships_id_organization` (membership_id, organization_id) unique - Target of the two-column foreign key from user_role_assignments, so a role can only name its membership's own organization
 
 **Referenced by**
 
@@ -372,10 +403,11 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 | `organization_id` | uuid | yes |  |  | Value before the change (memberships.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `user_id` | uuid | yes |  |  | Value before the change (memberships.user_id). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `status` | varchar(20) | yes |  |  | Value before the change (memberships.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (memberships.status_reason). | `NULL` |
 | `joined_at` | timestamptz | yes |  |  | Value before the change (memberships.joined_at). | `2026-09-01T02:00:00Z` |
 | `left_at` | timestamptz | yes |  |  | Value before the change (memberships.left_at). | `NULL` |
 | `created_by` | uuid | yes |  |  | Value before the change (memberships.created_by). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `created_at` | timestamptz | yes |  |  | Value before the change (memberships.created_at). | `2026-09-01T02:00:00Z` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (memberships.created_at). | `2026-08-31T09:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (memberships.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
@@ -390,7 +422,10 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 
 How each user logs in. Kept out of the users table so a password hash is
 never copied into user history, and so new login methods are new rows, not
-new columns. A password change revokes the old row and adds a new one.
+new columns. A password change revokes the old row and adds a new one; only
+the last 5 revoked passwords per user are kept (for the "don't reuse a recent
+password" check), older ones are deleted. Login sessions are not here: each
+logged-in device is a row of user_sessions.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
@@ -405,37 +440,48 @@ new columns. A password change revokes the old row and adds a new one.
 
 - `uq_user_credentials_active_type` (user_id, credential_type) unique - WHERE revoked_at IS NULL
 
-### user_devices
+### user_sessions
 
 **No. 6** · 🆕 proposed · owner: **internal** · features: F-F1, F-F3
 
-The devices a person uses the app on, with the push token needed to send
-them push notifications (Firebase Cloud Messaging). Rows are removed on
-logout, when Firebase reports the token as unregistered (app uninstalled),
-and when stale, so a shared phone never receives the previous user's messages.
+One login of one person on one device or browser, holding both the session
+(refresh token) and that device's push token. Ending a session deletes its
+row: logout, "log out this device / all devices", a password change, an
+account lock, expiry, or Firebase reporting the app uninstalled. The login
+and logout history is in access_audit_logs, so nothing is lost. Not
+history-tracked.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `device_id` | uuid | no | PK |  | Internal ID of the registered device (one app install). | `00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | User currently logged in on the device; a person can have several devices. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `platform` | varchar(10) | no |  |  | Where the app runs. Values: ANDROID \| IOS \| WEB (browser push, later). | `ANDROID` |
-| `push_token` | varchar(512) | no | UQ |  | Push registration token issued by Firebase Cloud Messaging (APNs behind it on iOS); re-sent by the app at every login and when it changes. | `fcm:dX3k...Q9` |
-| `app_version` | varchar(20) | yes |  |  | App version on the device, for support and forced upgrades. | `1.4.0` |
-| `created_at` | timestamptz | no |  |  | When the device was first registered. | `2026-09-01T02:00:00Z` |
-| `last_seen_at` | timestamptz | no |  |  | When the app last reported this token; tokens unused for about a month are treated as stale and deleted. | `2026-09-15T08:42:10Z` |
+| `session_id` | uuid | no | PK |  | Internal ID of the session: one login of one person on one device or browser. | `00000023-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | The person logged in. A person can have several sessions (phone, tablet, browsers); one app install holds one login at a time. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization the app is showing on this device right now (a person in several organizations switches without logging in again; every request is still checked against their membership). Not a filter for push: notifications from all the person's organizations reach every session, and opening one switches to its organization. NULL until an organization is picked. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `platform` | varchar(10) | no |  |  | Where the app runs; also decides the session lifetime. Values: ANDROID \| IOS \| WEB. | `ANDROID` |
+| `app_version` | varchar(20) | yes |  |  | App version on the device, for support and forced upgrades; NULL for a browser. | `1.4.2` |
+| `device_label` | varchar(100) | yes |  |  | Readable name of the device or browser, shown in the user's "my devices" list. | `Samsung SM-A546E · Android 13` |
+| `refresh_token_hash` | varchar(255) | no | UQ |  | One-way hash of the refresh token that keeps the session alive; replaced by a new token each time it is used. Never the token itself. | `9f2c4e…(sha-256)` |
+| `push_token` | varchar(512) | yes | UQ |  | Firebase Cloud Messaging token of this device (APNs behind it on iOS), re-sent by the app at login and when it changes; NULL when the user refused notifications or the browser has none. Removed with the session, so a shared phone never gets the previous user's messages. | `fGx1…:APA91b…` |
+| `created_at` | timestamptz | no |  |  | When the person logged in. | `2026-09-01T02:00:00Z` |
+| `last_used_at` | timestamptz | no |  |  | Last time the session was used (token refresh or request); written at most once every 5 minutes. | `2026-09-15T08:40:00Z` |
+| `expires_at` | timestamptz | no |  |  | Future time when the session ends if not used: set at login to now + the lifetime, and pushed forward to last use + the lifetime each time it is used. Lifetimes are settings: 90 days for the driver app, 7 days for the customer portal, 1 day for our internal staff. A request after this time is refused; a cleanup job deletes expired rows. | `2026-12-14T08:40:00Z` |
 
 **Indexes**
 
-- `ix_user_devices_user_id` (user_id)
+- `ix_user_sessions_user_id` (user_id)
+- `ix_user_sessions_expires_at` (expires_at) - Cleanup of expired sessions
 
 ### one_time_codes
 
 **No. 7** · 🆕 proposed · owner: **internal** · features: F-F1
 
-One-time codes sent by SMS (and e-mail when available): invites, guest
-sign-up, password reset and phone changes. Codes are stored only as hashes,
-expire quickly, work once, and their sending is rate-limited per phone (the
-cooldown and limits are application rules) to stop SMS-pumping fraud.
+One-time codes sent by SMS to prove a person holds a phone number: invites,
+guest sign-up, password reset and phone changes. Codes are stored only as
+hashes, expire quickly, work once, and die after 5 wrong attempts; when
+several were sent, only the newest unexpired code for that phone and purpose
+is checked. Sending is rate-limited per phone (cooldown and limits are
+application rules) to stop SMS-pumping fraud. A short-lived working table: a
+row is deleted 1 day after it expires (the send limit looks back at most 24
+hours); the permanent record of what happened is in access_audit_logs.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
@@ -447,6 +493,7 @@ cooldown and limits are application rules) to stop SMS-pumping fraud.
 | `issued_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who triggered the code (the admin who sent an invite); NULL when the person asked for it themselves. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `created_at` | timestamptz | no |  |  | When the code was sent; used for the resend cooldown and per-phone limits. | `2026-09-01T02:00:00Z` |
 | `expires_at` | timestamptz | no |  |  | When the code stops working (e.g. 10 minutes for an OTP, 72 hours for an invite link). | `2026-09-04T02:00:00Z` |
+| `failed_attempt_count` | integer | no |  |  | Wrong codes typed against this code; starts at 0. At 5 the code is dead and the person must ask for a new one (which counts against the send limit again), so a 6-digit code cannot be guessed. | `0` |
 | `used_at` | timestamptz | yes |  |  | When the code was used; NULL while unused. A code works only once. | `NULL` |
 
 **Indexes**
@@ -457,58 +504,113 @@ cooldown and limits are application rules) to stop SMS-pumping fraud.
 
 **No. 8** · 🆕 proposed · owner: **internal** · features: F-F1
 
-Proof of consent to personal-data processing (Decree 13/2023 and the
-Personal Data Protection Law 91/2025/QH15): who agreed to which purpose and
-version, when, where, and when they withdrew. Append-only: a new version or a
-withdrawal never overwrites an earlier record.
+Proof of who accepted which version of which legal text, when and from where
+(Decree 13/2023, Law 91/2025/QH15). Three levels: a company accepts the data
+processing agreement on its own behalf (it is responsible for its drivers'
+data, we process it for them); an employed driver acknowledges the privacy
+notice (no consent, so nothing to withdraw: an objection goes to the
+employer); an individual customer accepts the terms, the privacy policy and
+location tracking themselves. Accepting the required texts is a condition of
+use: withdrawing them means leaving the service, recorded on the account
+(status, status_reason), not here. Append-only: a row is written once and
+never changed or deleted. Marketing consent is added when marketing exists.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `consent_id` | uuid | no | PK |  | Internal ID of the consent record. | `00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | Person who gave (or withdrew) the consent. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `purpose` | varchar(30) | no |  |  | What the consent covers; the law requires specific consent per purpose. TERMS_OF_SERVICE and PRIVACY_POLICY are required to use the system; LOCATION_TRACKING is required for a driver; MARKETING is optional. Values: TERMS_OF_SERVICE \| PRIVACY_POLICY \| LOCATION_TRACKING \| MARKETING. | `PRIVACY_POLICY` |
-| `document_version` | varchar(20) | no |  |  | Version of the text the person accepted; a new version requires a new acceptance (a new row). | `2026.10` |
-| `channel` | varchar(20) | no |  |  | Where it was given. Values: APP \| PORTAL. | `APP` |
-| `accepted_at` | timestamptz | no |  |  | When the person accepted. | `2026-09-01T02:00:00Z` |
-| `withdrawn_at` | timestamptz | yes |  |  | When the person withdrew this consent; NULL while it stands. | `NULL` |
+| `consent_id` | uuid | no | PK |  | Internal ID of the acceptance record. | `00000021-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | Person who accepted (for a company agreement: the person who accepted on its behalf, normally the ORG_ADMIN). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization on whose behalf the document was accepted (a DATA_PROCESSING_AGREEMENT); NULL for a person's own acceptance or acknowledgement. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `document_id` | uuid | no | FK | [legal_documents](#legal_documents).document_id (on delete restrict) | The exact version of the legal text that was accepted; its purpose and version come from legal_documents. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `ip_address` | inet | yes |  |  | IP address the acceptance came from, as proof. | `113.161.42.17` |
+| `device_label` | varchar(100) | yes |  |  | Device and app or browser used, copied as text, as proof (app vs portal is visible here). | `Samsung SM-A546E · Android 13 · G3Driver 1.4.2` |
+| `accepted_at` | timestamptz | no |  |  | When it was accepted. | `2026-09-01T02:00:00Z` |
 
 **Indexes**
 
-- `ix_user_consents_user_purpose_time` (user_id, purpose, accepted_at)
+- `uq_user_consents_person_document` (user_id, document_id) unique - WHERE organization_id IS NULL: a person accepts a version once
+- `uq_user_consents_organization_document` (organization_id, document_id) unique - WHERE organization_id IS NOT NULL: an organization accepts a version once
+
+### legal_documents
+
+**No. 9** · 🆕 proposed · owner: **internal** · features: F-F1
+
+Every version of every legal text a person or a company accepts, so we can
+always show exactly what was accepted, and know which version is current.
+Only final texts are stored: adding a row publishes it, and a row is never
+edited or deleted. Vietnamese only for now (a language column comes with the
+first other language).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `document_id` | uuid | no | PK |  | Internal ID of one version of a legal text. | `00000025-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `purpose` | varchar(30) | no |  |  | Which text it is and who accepts it. TERMS_OF_SERVICE, PRIVACY_POLICY: every user. DATA_PROCESSING_AGREEMENT: a company, on its own behalf. PRIVACY_NOTICE: an employed driver acknowledges it. LOCATION_TRACKING: an individual customer consents to it. Values: TERMS_OF_SERVICE \| PRIVACY_POLICY \| DATA_PROCESSING_AGREEMENT \| PRIVACY_NOTICE \| LOCATION_TRACKING. | `PRIVACY_POLICY` |
+| `version` | varchar(20) | no |  |  | Version label, unique per purpose. | `2026.10` |
+| `title` | varchar(200) | no |  |  | Title shown to the person. | `Chính sách quyền riêng tư G3 Network` |
+| `content` | text | no |  |  | The full text exactly as shown, in Vietnamese, final as approved by the legal adviser (drafting happens outside the system). Never changed: a change is a new version. | `(toàn văn)` |
+| `created_by` | uuid | no | FK | [users](#users).user_id (on delete restrict) | Our HEAD_ADMIN or CO_ADMIN who published this version (only they may). | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `created_at` | timestamptz | no |  |  | When this version was published and took effect: adding the row is publishing it. The newest version of a purpose is the current one; publishing asks everyone concerned to accept again before they continue. | `2026-10-01T00:00:00Z` |
+
+**Indexes**
+
+- `uq_legal_documents_purpose_version` (purpose, version) unique
+
+**Referenced by**
+
+- [user_consents](#user_consents).document_id (planned)
 
 ### user_role_assignments
 
-**No. 9** · 📋 planned · owner: **customer** · features: F-F1
+**No. 10** · 📋 planned · owner: **customer** · features: F-F1
 
 Which roles a person holds in one organization (through their membership); they can hold several at once (e.g. a director
-who is also the fleet manager). Kept as history: a revoked role keeps its
+who is also the fleet manager). Each organization has exactly one active ORG_ADMIN
+(owner decision, 2026-10-04): it is handed over, never shared; when the admin
+is gone, our CO_ADMIN appoints the next one. Enforced by the database (unique
+index); a handover grants the new one and revokes the old one in one
+transaction. Other rules: ending a membership
+revokes all its roles in the same transaction; HEAD_ADMIN and CO_ADMIN only
+in an internal organization; DRIVER requires an active driver profile with a
+valid licence; TECHNICIAN is for partner organizations. A role is a bundle of
+feature permissions only. Kept as history: a revoked role keeps its
 row with revoked_at set.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `00000001-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `organization_id` | uuid | no | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization of the membership, copied so every query can filter by organization. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization of the membership, written here as well so every query filters by organization the same way (tenant-column rule) and the one-ORG_ADMIN index can be checked. The database guarantees it is the membership's own organization: a two-column foreign key (membership_id, organization_id) → memberships (membership_id, organization_id) refuses any mismatch. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `membership_id` | uuid | no | FK | [memberships](#memberships).membership_id (on delete restrict) | The membership (person in this organization) that holds the role. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `role` | varchar(30) | no |  |  | The job title the role grants: a bundle of features, the same list for every organization. Data reach comes from the organization (is_internal), not from the role; for a customer the features are the role bundle limited by its plan, for an internal user the whole role bundle (internal-only features such as issuing invoices are never put in any plan). Titles: HEAD_ADMIN (full permissions on everything, internal only), CO_ADMIN (daily administration, internal only, cannot manage admins or is_internal), ORG_ADMIN (manages its own organization users and roles), SALES, ACCOUNTANT, CUSTOMER_CARE, OPERATIONS, MAINTENANCE, WARRANTY, FLEET_MANAGER, DISPATCHER, DRIVER (requires an active driver profile in the organization), TECHNICIAN. A fixed list in code (an enum), not a table. | `FLEET_MANAGER` |
 | `granted_at` | timestamptz | no |  |  | When the role was granted. | `2026-09-01T02:00:00Z` |
+| `granted_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | Who granted the role (an ORG_ADMIN, our sales/admin); NULL when granted by the system (e.g. ORG_ADMIN and DRIVER of a guest's own personal organization at sign-up). | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `revoked_at` | timestamptz | yes |  |  | When the role was revoked; NULL while still held. | `NULL` |
+| `revoked_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | Who revoked the role; NULL while held, or when the system revoked it (e.g. because the membership ended). | `NULL` |
 
 **Indexes**
 
 - `uq_user_role_assignments_active_role` (membership_id, role) unique - WHERE revoked_at IS NULL
+- `uq_user_role_assignments_one_org_admin` (organization_id) unique - WHERE role = ORG_ADMIN AND revoked_at IS NULL: exactly one organization administrator; a handover grants the new one and revokes the old one in one transaction
 
 ### access_audit_logs
 
-**No. 10** · 📋 planned · owner: **internal** · features: F-F1 · hypertable on `occurred_at`
+**No. 11** · 📋 planned · owner: **internal** · features: F-F1 · hypertable on `occurred_at`
 
-Append-only record of every access to personal/location data (NF-08).
+Append-only record of every access to personal/location data (NF-08) and of
+account security events (logins, failed logins, lockouts, logouts, password
+and phone changes): who, what, when, from which IP and device, and action-specific
+facts in details (e.g. why for an export). A data view is logged once per screen opened, not per refresh.
+Changes to personal data are not logged here: the history tables already
+record them with who changed them. Kept forever (never deleted); older months
+are compressed.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `audit_id` | bigint | no | PK |  | Auto-increasing ID of the audit entry. | `1048576` |
 | `occurred_at` | timestamptz | no | PK |  | When the access happened; hypertable time column. | `2026-09-15T08:30:00Z` |
-| `user_id` | uuid | no | FK | [users](#users).user_id (on delete restrict) | Who accessed the data. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `user_id` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | Who accessed the data, or whose account the security event is about. NULL only for a failed login with a phone number that matches no account. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | Organization whose data was accessed. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `action` | varchar(30) | no |  |  | What was done with the data. Values: VIEW \| EXPORT \| UPDATE ... | `VIEW` |
-| `resource_type` | varchar(50) | no |  |  | Kind of data accessed. | `VEHICLE_LOCATION_HISTORY` |
+| `action` | varchar(30) | no |  |  | What happened. Two families. Actions on data: VIEW (one entry when a screen showing personal or location data is opened, not one per refresh) \| EXPORT. Events on a user account (resource_type USER_ACCOUNT): LOGIN_SUCCESS \| LOGIN_FAILED \| LOGIN_LOCKED \| LOGOUT \| PASSWORD_CHANGED \| PHONE_CHANGED. | `VIEW` |
+| `resource_type` | varchar(50) | no |  |  | Kind of data accessed; USER_ACCOUNT for account security events. | `VEHICLE_LOCATION_HISTORY` |
 | `resource_id` | varchar(100) | yes |  |  | ID of the record accessed, as text. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
+| `details` | jsonb | yes |  |  | Facts specific to the action, as JSON; NULL when there are none. Keys per action: EXPORT {"reason": text, required}; LOGIN_FAILED {"failure": "WRONG_PASSWORD" \| "UNKNOWN_PHONE" \| "ACCOUNT_LOCKED"}; LOGIN_LOCKED {"locked_minutes": number}. A new key is added here when an action needs one, never as a new column. | `{"reason": "Ticket #1234 – hồ sơ bồi thường tai nạn"}` |
+| `ip_address` | inet | yes |  |  | IP address the request came from; NULL for actions run by the system. | `113.161.42.17` |
+| `user_agent` | varchar(255) | yes |  |  | Device and app as reported by the client at that moment, copied as text (not a link to user_sessions, whose rows are removed at logout, because an audit row never changes). Used for login history and new-device alerts. | `G3Driver/1.4.2 (Android 13; SM-A546E)` |

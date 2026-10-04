@@ -335,7 +335,7 @@ features:
     users: [HEAD_ADMIN, CO_ADMIN]
     capabilities:
       - ["Profile: full name, phone number (login ID), optional e-mail", "Hồ sơ: họ tên, số điện thoại (tên đăng nhập), e-mail không bắt buộc"]
-      - ["Account status Invited / Active / Locked; only our administrators lock a whole account", "Trạng thái Đã mời / Hoạt động / Bị khóa; chỉ quản trị nội bộ được khóa cả tài khoản"]
+      - ["Account status Invited / Active / Locked, with the reason; only our administrators lock a whole account", "Trạng thái Đã mời / Hoạt động / Bị khóa, kèm lý do; chỉ quản trị nội bộ được khóa cả tài khoản"]
       - ["Record who created each account and keep its change history", "Ghi nhận ai tạo tài khoản và lưu lịch sử thay đổi"]
     surfaces: {backend: todo, portal: todo, app: todo}
     priority: Must
@@ -362,10 +362,12 @@ features:
     users: [DRIVER, FLEET_MANAGER, ORG_ADMIN, CUSTOMER_CARE, OPERATIONS]
     capabilities:
       - ["Phone + password login, logout, session expiry", "Đăng nhập bằng SĐT + mật khẩu, đăng xuất, hết hạn phiên"]
+      - ["See my logged-in devices and log out one or all of them; every session ends when the password changes or the account is locked", "Xem các thiết bị đang đăng nhập và đăng xuất từng thiết bị hoặc tất cả; mọi phiên kết thúc khi đổi mật khẩu hoặc tài khoản bị khóa"]
       - ["Organization picker after login, remembering the last one", "Chọn tổ chức sau khi đăng nhập, nhớ tổ chức dùng gần nhất"]
-      - ["Temporary lockout after repeated failed logins", "Tạm khóa sau nhiều lần đăng nhập sai"]
+      - ["Temporary lockout after repeated failed logins, plus a per-device/IP rate limit; password reset by OTP still works while locked", "Tạm khóa sau nhiều lần đăng nhập sai, kèm giới hạn số lần thử theo thiết bị/IP; vẫn đặt lại mật khẩu bằng OTP được trong lúc bị khóa"]
       - ["Passwords stored only as one-way hashes; old ones cannot be reused", "Mật khẩu chỉ lưu dạng băm một chiều; không dùng lại mật khẩu cũ"]
       - ["Record last login and last activity", "Ghi nhận lần đăng nhập và hoạt động gần nhất"]
+      - ["Login history (time, IP, device) visible to the user and our admins; alert the user on a login from a new device", "Lịch sử đăng nhập (thời gian, IP, thiết bị) cho người dùng và quản trị nội bộ xem; báo người dùng khi đăng nhập từ thiết bị mới"]
     surfaces: {backend: todo, portal: todo, app: todo}
     priority: Must
     release: P1.0
@@ -389,7 +391,7 @@ features:
       qua SMS.
     users: [SYSTEM, DRIVER, ORG_ADMIN]
     capabilities:
-      - ["Codes are hashed, expire, and work once", "Mã được băm, có hạn dùng và chỉ dùng một lần"]
+      - ["Codes are hashed, expire, and work once; 5 wrong attempts kill a code; only the newest code counts", "Mã được băm, có hạn dùng và chỉ dùng một lần; nhập sai 5 lần thì mã hết hiệu lực; chỉ mã mới nhất được tính"]
       - ["Rate limit per phone number against abuse and SMS cost", "Giới hạn số lần gửi theo SĐT để chống lạm dụng và tiết kiệm chi phí SMS"]
       - ["One mechanism for sign-up, invitation, password reset and phone change", "Một cơ chế dùng chung cho đăng ký, lời mời, đặt lại mật khẩu và đổi SĐT"]
     surfaces: {backend: todo, app: todo, portal: todo}
@@ -417,6 +419,7 @@ features:
       - ["Forgotten password: OTP to the registered phone, then a new password", "Quên mật khẩu: OTP gửi tới SĐT đã đăng ký, rồi đặt mật khẩu mới"]
       - ["Change phone number: OTP to the new number; the change is kept in history", "Đổi SĐT: OTP gửi tới số mới; thay đổi được lưu lịch sử"]
       - ["Change password while logged in", "Đổi mật khẩu khi đang đăng nhập"]
+      - ["Extra check by customer care or the organization admin before resetting the password of a long-inactive account (phone numbers get recycled)", "CSKH hoặc quản trị tổ chức xác minh thêm trước khi đặt lại mật khẩu cho tài khoản lâu không hoạt động (số điện thoại có thể bị nhà mạng cấp lại)"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
@@ -469,6 +472,7 @@ features:
       - ["Create the organization and its subscription in one flow", "Tạo tổ chức và gói thuê bao trong một luồng"]
       - ["Invite the first organization administrator by phone", "Mời quản trị viên đầu tiên của tổ chức qua SĐT"]
       - ["Assign the account manager", "Gán nhân viên phụ trách"]
+      - ["The first administrator accepts the data processing agreement for the company at first login", "Quản trị viên đầu tiên chấp thuận thỏa thuận xử lý dữ liệu thay mặt doanh nghiệp ở lần đăng nhập đầu"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
@@ -568,7 +572,7 @@ features:
     users: [ORG_ADMIN, CO_ADMIN]
     capabilities:
       - ["List members of an organization with their roles", "Danh sách thành viên của tổ chức kèm vai trò"]
-      - ["Lock, unlock or remove a member (removal keeps history)", "Khóa, mở khóa hoặc cho thành viên rời tổ chức (vẫn giữ lịch sử)"]
+      - ["Lock, unlock or remove a member with a reason (removal keeps history); see when each member was invited and when they joined", "Khóa, mở khóa hoặc cho thành viên rời tổ chức kèm lý do (vẫn giữ lịch sử); xem thời điểm mời và thời điểm tham gia của từng thành viên"]
       - ["A person sees and switches between their organizations", "Người dùng xem và chuyển giữa các tổ chức của mình"]
     surfaces: {backend: todo, portal: todo, app: todo}
     priority: Must
@@ -594,8 +598,8 @@ features:
       lý bằng cách kết hợp vai trò.
     users: [ORG_ADMIN, CO_ADMIN, HEAD_ADMIN]
     capabilities:
-      - ["Grant and revoke roles per membership, with history", "Gán và thu hồi vai trò theo từng thành viên, có lịch sử"]
-      - ["Keep at least one active organization administrator", "Luôn còn ít nhất một quản trị tổ chức đang hoạt động"]
+      - ["Grant and revoke roles per membership, with history: who granted or revoked each role, and when", "Gán và thu hồi vai trò theo từng thành viên, có lịch sử: ai đã cấp hoặc thu hồi từng vai trò, và khi nào"]
+      - ["Exactly one organization administrator: hand the role over in one step; our co-administrator appoints a new one if the admin is gone", "Đúng một quản trị tổ chức: chuyển giao vai trò trong một bước; đồng quản trị của chúng ta chỉ định người mới khi quản trị viên không còn"]
       - ["Head and co-administrator roles exist only in internal organizations; co-administrators cannot manage administrators", "Vai trò quản trị trưởng và đồng quản trị chỉ có ở tổ chức nội bộ; đồng quản trị không quản lý được quản trị viên"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
@@ -675,8 +679,9 @@ features:
       Cảnh báo đẩy tới đúng thiết bị đang dùng và dừng sau khi đăng xuất.
     users: [SYSTEM, DRIVER, FLEET_MANAGER]
     capabilities:
-      - ["Store the Firebase token per device, refreshed at login", "Lưu token Firebase theo thiết bị, làm mới khi đăng nhập"]
-      - ["Remove tokens on logout, on 'unregistered' and when stale", "Xóa token khi đăng xuất, khi bị báo hủy đăng ký và khi quá cũ"]
+      - ["Store the Firebase token on the device's login session, refreshed at login; optional when the user refuses notifications", "Lưu token Firebase trên phiên đăng nhập của thiết bị, làm mới khi đăng nhập; không bắt buộc khi người dùng từ chối thông báo"]
+      - ["The token disappears with the session: logout, expiry, password change, account lock, or the app reported uninstalled", "Token mất cùng với phiên: đăng xuất, hết hạn, đổi mật khẩu, khóa tài khoản, hoặc app bị báo đã gỡ"]
+      - ["Notifications from all of the person's organizations reach every device; opening one switches to its organization", "Thông báo của mọi tổ chức của người dùng tới mọi thiết bị; mở thông báo sẽ chuyển sang tổ chức của nó"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
@@ -685,33 +690,39 @@ features:
     sources: [Decision ID-19]
 
   - code: ACC-17
-    name: Consent management
-    name_vi: Quản lý đồng ý xử lý dữ liệu
+    name: Legal acceptance and consent
+    name_vi: Chấp thuận văn bản pháp lý & đồng ý xử lý dữ liệu
     what: >-
-      Record each person's consent to the terms, the privacy policy and
-      location tracking, per document version, and let them withdraw it.
+      Record who accepted which version of which legal text: a company
+      accepts the data processing agreement on its own behalf, an employed
+      driver acknowledges the privacy notice, an individual customer accepts
+      the terms, privacy policy and location tracking.
     what_vi: >-
-      Ghi nhận việc mỗi người đồng ý điều khoản, chính sách quyền riêng tư và
-      theo dõi vị trí, theo từng phiên bản văn bản, và cho phép rút lại.
+      Ghi nhận ai đã chấp thuận phiên bản nào của văn bản pháp lý nào: doanh
+      nghiệp chấp thuận thỏa thuận xử lý dữ liệu thay mặt chính mình, tài xế
+      là nhân viên xác nhận đã đọc thông báo quyền riêng tư, khách hàng cá
+      nhân chấp thuận điều khoản, chính sách quyền riêng tư và theo dõi vị
+      trí.
     value: >-
       Proves lawful processing of personal data (Decree 13/2023, Law
-      91/2025/QH15).
+      91/2025/QH15) with the exact text accepted.
     value_vi: >-
       Chứng minh việc xử lý dữ liệu cá nhân đúng luật (Nghị định 13/2023, Luật
-      91/2025/QH15).
-    users: [DRIVER, ORG_ADMIN, SYSTEM]
+      91/2025/QH15) bằng đúng văn bản đã được chấp thuận.
+    users: [DRIVER, ORG_ADMIN, CO_ADMIN, SYSTEM]
     capabilities:
-      - ["Ask for consent at activation, per purpose, with the document version", "Xin đồng ý khi kích hoạt, theo từng mục đích, kèm phiên bản văn bản"]
-      - ["Withdraw consent; record when and through which channel", "Rút lại đồng ý; ghi nhận thời điểm và kênh"]
-      - ["Ask again when a document changes", "Xin đồng ý lại khi văn bản thay đổi"]
-      - ["Marketing messages only with marketing consent", "Chỉ gửi tin tiếp thị khi có đồng ý nhận tin tiếp thị"]
+      - ["Publish versions of each legal text; a new version asks everyone concerned to accept again before continuing", "Công bố các phiên bản của từng văn bản pháp lý; phiên bản mới yêu cầu mọi người liên quan chấp thuận lại trước khi tiếp tục"]
+      - ["The organization administrator accepts the data processing agreement for the company at first login; members cannot use the system before", "Quản trị tổ chức chấp thuận thỏa thuận xử lý dữ liệu thay mặt doanh nghiệp ở lần đăng nhập đầu; thành viên chưa dùng được hệ thống trước đó"]
+      - ["Employed drivers acknowledge the privacy notice once per version; individual customers consent per purpose", "Tài xế là nhân viên xác nhận đã đọc thông báo quyền riêng tư mỗi phiên bản một lần; khách hàng cá nhân đồng ý theo từng mục đích"]
+      - ["Proof kept with each acceptance: exact text version, time, IP and device; never changed", "Bằng chứng lưu kèm mỗi lần chấp thuận: đúng phiên bản văn bản, thời điểm, IP và thiết bị; không bao giờ sửa"]
+      - ["Withdrawing a required acceptance means leaving the service (account closure)", "Rút lại chấp thuận bắt buộc nghĩa là ngừng sử dụng dịch vụ (đóng tài khoản)"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
-    sources: [Data IN-37, NF-08, Decision ID-20]
+    sources: [Data IN-37, NF-08, Decision ID-20, Decision ID-38]
     questions:
-      - ["What happens to location tracking of a company truck when its driver withdraws location consent?", "Khi tài xế rút đồng ý theo dõi vị trí, xe của doanh nghiệp có còn được theo dõi vị trí không?"]
+      - ["Legal adviser to confirm the company-agreement model for Vietnam (open question 6).", "Luật sư cần xác nhận mô hình thỏa thuận với doanh nghiệp tại Việt Nam (câu hỏi mở 6)."]
 
   - code: ACC-18
     name: Personal-data access audit log
@@ -732,7 +743,9 @@ features:
     capabilities:
       - ["Append-only log of every access to personal, location and camera data", "Nhật ký chỉ ghi thêm cho mọi lần truy cập dữ liệu cá nhân, vị trí và camera"]
       - ["Ask for a reason or ticket before exporting sensitive data", "Yêu cầu lý do hoặc mã ticket trước khi trích xuất dữ liệu nhạy cảm"]
-      - ["Search the log by person, data subject, time and data type", "Tra cứu nhật ký theo người truy cập, người được truy cập, thời gian và loại dữ liệu"]
+      - ["Search the log by person, organization, time and data type", "Tra cứu nhật ký theo người truy cập, tổ chức, thời gian và loại dữ liệu"]
+      - ["One entry per screen opened (not per refresh); kept forever, older months compressed", "Ghi một dòng mỗi lần mở màn hình (không ghi mỗi lần làm mới); lưu vĩnh viễn, các tháng cũ được nén"]
+      - ["Account security events in the same log: logins, failed logins, lockouts, logouts, password and phone changes, with IP and device", "Sự kiện bảo mật tài khoản trong cùng nhật ký: đăng nhập, đăng nhập sai, bị khóa tạm, đăng xuất, đổi mật khẩu và số điện thoại, kèm IP và thiết bị"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
@@ -3452,7 +3465,7 @@ features:
     users: [SALES, DRIVER]
     capabilities:
       - ["Campaign with audience, period and offer", "Chiến dịch với đối tượng, thời gian và ưu đãi"]
-      - ["Sent only with marketing consent", "Chỉ gửi khi có đồng ý nhận tin tiếp thị"]
+      - ["Sent only with marketing consent (opt-in/opt-out designed with this feature)", "Chỉ gửi khi có đồng ý nhận tin tiếp thị (cơ chế đồng ý/từ chối được thiết kế cùng tính năng này)"]
       - ["Apply discounts to charging or services", "Áp dụng giảm giá cho sạc hoặc dịch vụ"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Should

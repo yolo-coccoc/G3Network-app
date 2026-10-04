@@ -335,7 +335,7 @@ Create promotions (discounts, offers, maintenance deals) and send them to custom
 **Capabilities:**
 
 - Campaign with audience, period and offer
-- Sent only with marketing consent
+- Sent only with marketing consent (opt-in/opt-out designed with this feature)
 - Apply discounts to charging or services
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
