@@ -104,6 +104,8 @@ every DBML edit.
   DBML and `@built-as <name in the code>` on its tag line; `check` matches it
   to the code under the old name, and the views show "to be renamed". Drop
   the tag when the refactor renames the table.
+  A renamed built **column** works the same way: its note starts with
+  `@built-as <name in the code>: meaning`.
 - **Change history (decision D8, `.claude/rules/database.md`)**: decided
   **per table** in the review (on for tables whose changes must be audited,
   e.g. profile details). When on, the source table's tag line says

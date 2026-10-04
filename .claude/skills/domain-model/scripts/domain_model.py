@@ -78,6 +78,9 @@ PLANNED_COLUMN_TAG = "@planned"
 # It still exists in the code, so `check` compares it as usual; the views mark
 # it and generated history tables leave it out.
 REMOVED_TAG = "@remove"
+# A built column the target design renames: "@built-as <name in the code>:
+# meaning". check compares it under its code name; the views mark it.
+BUILT_AS_TAG = "@built-as"
 # Every column note ends with "@example <sample value>"; the text before it
 # is the column's meaning. Both are required (check fails without them).
 EXAMPLE_TAG = "@example"
@@ -136,6 +139,8 @@ class ColumnInfo:
         removed_enum_values: Enum values whose note starts with ``@remove``.
         planned_enum_values: Enum values whose note starts with ``@planned``:
             proposed for a built enum, not in the code yet.
+        built_as: For a built column the target design renames, its name in
+            the code today (note starts with ``@built-as <name>``).
     """
 
     name: str
@@ -153,6 +158,7 @@ class ColumnInfo:
     removed_detail: str = ""
     removed_enum_values: tuple[str, ...] = ()
     planned_enum_values: tuple[str, ...] = ()
+    built_as: str = ""
 
 
 @dataclass(frozen=True)
@@ -395,6 +401,7 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
     note, vi_meaning, example = note.strip(), vi_meaning.strip(), example.strip()
     is_planned, planned_detail, note = _split_leading_tag(note, PLANNED_COLUMN_TAG)
     is_removed, removed_detail, note = _split_leading_tag(note, REMOVED_TAG)
+    _, built_as, note = _split_leading_tag(note, BUILT_AS_TAG)
     return ColumnInfo(
         name=pydbml_column.name,
         type_label=type_label,
@@ -411,6 +418,7 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
         removed_detail=removed_detail,
         removed_enum_values=removed_enum_values,
         planned_enum_values=planned_enum_values,
+        built_as=built_as,
     )
 
 
@@ -1290,6 +1298,10 @@ def _render_table_section(
             meaning = f"**🗑️ to be removed{detail}**" + (
                 f": {meaning}" if meaning else ""
             )
+        if column.built_as:
+            meaning = f"**✏️ built today as `{column.built_as}`, to be renamed**" + (
+                f": {meaning}" if meaning else ""
+            )
         example = f"`{_md_cell(column.example)}`" if column.example else ""
         lines.append(
             f"| `{column.name}` | {_md_cell(column.type_label)} "
@@ -1792,6 +1804,8 @@ def _write_table_sheet(
         if column.is_removed:
             detail = f": {column.removed_detail}" if column.removed_detail else ""
             meaning = f"[Sẽ bỏ{detail}] {meaning}"
+        if column.built_as:
+            meaning = f"[Hiện tên là {column.built_as}, sẽ đổi tên] {meaning}"
         writer.write(
             [
                 position,
@@ -1979,8 +1993,11 @@ def check_against_backend(model: DomainModel) -> list[str]:
         if sql_table is None:
             problems.append(f"{table.name}: @status built but not found in the models")
             continue
+        # Keyed by the name the column has in the code today.
         dbml_columns = {
-            column.name: column for column in table.columns if not column.is_planned
+            column.built_as or column.name: column
+            for column in table.columns
+            if not column.is_planned
         }
         for missing in sorted(set(sql_table.columns.keys()) - set(dbml_columns)):
             problems.append(
@@ -2027,7 +2044,7 @@ def check_against_backend(model: DomainModel) -> list[str]:
                     f"{where}: nullability differs (models nullable={sql_column.nullable})"
                 )
             sql_foreign_keys = list(sql_column.foreign_keys)
-            ref = refs_by_column.get((table.name, sql_column.name))
+            ref = refs_by_column.get((table.name, column.name))
             if sql_foreign_keys and ref is None:
                 problems.append(
                     f"{where}: foreign key to {sql_foreign_keys[0].target_fullname} "
