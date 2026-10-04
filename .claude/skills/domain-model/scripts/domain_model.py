@@ -372,9 +372,10 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
 
 def _parse_index(pydbml_index: object) -> IndexInfo:
     """Convert a pydbml index into an ``IndexInfo``."""
+    # A column subject has a name; an expression subject (`lower(email)`)
+    # carries its SQL in `text`. Never trim parentheses from it.
     subject_labels = [
-        getattr(subject, "name", None)
-        or str(subject).removeprefix("Expression(").removesuffix(")").strip("'\"")
+        getattr(subject, "name", None) or getattr(subject, "text", str(subject))
         for subject in pydbml_index.subjects
     ]
     return IndexInfo(
