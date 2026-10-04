@@ -36,6 +36,7 @@ erDiagram
   }
   vehicles }o..|| organizations : "organization_id"
   vehicles }o..|| vehicle_models : "vehicle_model_id"
+  batteries }o..o| vehicles : "vehicle_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -55,7 +56,7 @@ erDiagram
   vehicle_model_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry).
 
 ## Tables
 
@@ -83,7 +84,7 @@ kept message by message in vehicle_telemetry.
 | `status` | vehiclestatus | no | 🔍 |  | Service status, always set by a person (VH-05). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
 | `activation_status` | vehicleactivationstatus | no |  |  | **🗑️ to be removed (VH-06)**: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. | `ACTIVATED` |
-| `battery_capacity_kwh` | float8 | yes | 🔍 |  | Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Moves to the battery tables once they are designed (VH-08). | `282.0` |
+| `battery_capacity_kwh` | float8 | yes |  |  | **🗑️ to be removed (VH-16)**: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery's design capacity, or the model's nominal capacity when no battery is recorded. | `282.0` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a vehicle registered by mistake; a real truck that leaves is DECOMMISSIONED, never deleted. NULL while the row is live. | `NULL` |
@@ -101,6 +102,7 @@ kept message by message in vehicle_telemetry.
 
 **Referenced by**
 
+- [batteries](batteries.md#batteries).vehicle_id (planned)
 - [telematics](telematics.md#telematics).vehicle_id
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
@@ -134,7 +136,6 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 | `year` | integer | yes |  |  | Value before the change (vehicles.year). | `2025` |
 | `status` | vehiclestatus | yes |  |  | Value before the change (vehicles.status). | `ACTIVE` |
 | `status_reason` | varchar(200) | yes |  |  | Value before the change (vehicles.status_reason). | `Brake system repair at the Binh Duong workshop` |
-| `battery_capacity_kwh` | float8 | yes |  |  | Value before the change (vehicles.battery_capacity_kwh). | `282.0` |
 | `created_at` | timestamptz | yes |  |  | Value before the change (vehicles.created_at). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (vehicles.updated_at). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (vehicles.deleted_at). | `NULL` |

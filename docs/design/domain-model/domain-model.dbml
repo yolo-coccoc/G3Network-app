@@ -532,7 +532,7 @@ Table vehicles {
   status vehiclestatus [not null, note: 'Service status, always set by a person (VH-05). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. @vi Trạng thái phục vụ, luôn do con người đặt (VH-05). ACTIVE: đang phục vụ. MAINTENANCE: đang bảo dưỡng hoặc sửa chữa. DECOMMISSIONED: đã rời hệ thống (thanh lý, bán ra ngoài dịch vụ, hoặc ngừng sử dụng vĩnh viễn); giữ lại cho lịch sử và báo cáo, không nhận dữ liệu mới. Xe đang nhàn rỗi hay không gửi dữ liệu thì không lưu: được tính từ dữ liệu vận hành và T-Box. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the vehicle is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Brake system repair at the Binh Duong workshop']
   activation_status vehicleactivationstatus [not null, note: '@remove VH-06: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. @vi Tiến độ kích hoạt thiết bị, thang một chiều không phản ánh việc T-Box bị tháo. Thay bằng tính toán: có thiết bị hiện tại từ telematics, đã nhận dữ liệu từ vehicle_telemetry. @example ACTIVATED']
-  battery_capacity_kwh float8 [note: 'Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Moves to the battery tables once they are designed (VH-08). @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). Sẽ chuyển sang các bảng pin khi được thiết kế (VH-08). @example 282.0']
+  battery_capacity_kwh float8 [note: '@remove VH-16: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery\'s design capacity, or the model\'s nominal capacity when no battery is recorded. @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). Thay bằng dung lượng thiết kế của pin đang lắp, hoặc dung lượng danh định của dòng xe khi chưa ghi nhận pin. @example 282.0']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time, only for a vehicle registered by mistake; a real truck that leaves is DECOMMISSIONED, never deleted. NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho xe đăng ký nhầm; xe thật rời hệ thống được chuyển sang DECOMMISSIONED, không bao giờ bị xóa. NULL khi bản ghi còn hiệu lực. @example NULL']
@@ -623,18 +623,56 @@ warranties.
 @vi Danh mục các loại pin (BAT-01, VH-13), tương ứng với vehicle_models cho pin: dùng chung cho mọi tổ chức, do bộ phận vận hành của chúng ta quản lý, số liệu chỉ được nhập khi đã xác nhận và cập nhật sau khi cần. Sơ đồ cell/module được hoãn lại (deferred.md 87); điều khoản bảo hành nằm trong warranties.'''
 }
 
+Table batteries {
+  battery_id uuid [pk, note: 'Internal ID of the battery. @vi Mã nội bộ của pin. @example 8e2a6c4f-1d3b-4f7a-9c5e-2b4d6f8a0c11']
+  serial_number varchar(50) [not null, note: 'The pack\'s serial number from the manufacturer; unique among batteries not deleted. @vi Số serial của pin do nhà sản xuất cấp; duy nhất trong các pin chưa xóa. @example CATL-LFP282-2025-004512']
+  battery_model_id uuid [not null, note: 'The battery\'s model, with its specifications. @vi Dòng pin, kèm thông số kỹ thuật. @example 2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55']
+  organization_id uuid [not null, note: 'Organization that owns the battery now; may differ from the truck\'s owner (e.g. G3 leasing it, deferred.md 88). Earlier owners come from the view battery_ownership_periods. @vi Tổ chức đang sở hữu pin; có thể khác chủ xe (ví dụ G3 cho thuê pin, deferred.md 88). Các chủ trước lấy từ view battery_ownership_periods. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  owned_since timestamptz [not null, note: 'When the current owner took the battery. @vi Thời điểm chủ hiện tại nhận pin. @example 2026-06-01T00:00:00Z']
+  vehicle_id uuid [note: 'Truck the battery is installed in now; NULL when in stock or removed. A truck holds at most one battery. Earlier installations come from the view battery_installation_periods. @vi Xe đang lắp pin; NULL khi pin trong kho hoặc đã tháo. Mỗi xe lắp tối đa một pin. Các lần lắp trước lấy từ view battery_installation_periods. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  installed_since timestamptz [note: 'When the battery was installed in its current truck; NULL when not installed. @vi Thời điểm pin được lắp vào xe hiện tại; NULL khi chưa lắp. @example 2026-06-01T00:00:00Z']
+  manufactured_on date [note: 'Manufacturing date, for age and warranty; NULL until known. @vi Ngày sản xuất, dùng cho tuổi pin và bảo hành; NULL khi chưa biết. @example 2025-11-20']
+  status varchar(20) [not null, note: 'Status set by a person (VH-16). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (recycled, sold for second-life use). Installed or in stock is not a status: it is read from vehicle_id. Values: ACTIVE | MAINTENANCE | DECOMMISSIONED. @vi Trạng thái do con người đặt (VH-16). ACTIVE: dùng được. MAINTENANCE: đang sửa chữa hoặc kiểm tra. DECOMMISSIONED: đã rời hệ thống (tái chế, bán cho mục đích tái sử dụng). Đang lắp hay trong kho không phải trạng thái: đọc từ vehicle_id. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the battery is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Cell imbalance check at the Binh Duong workshop']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time, only for a battery entered by mistake; a real battery that leaves is DECOMMISSIONED. NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho pin nhập nhầm; pin thật rời hệ thống được chuyển sang DECOMMISSIONED. NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    serial_number [unique, name: 'uq_batteries_live_serial_number', note: 'WHERE deleted_at IS NULL']
+    vehicle_id [unique, name: 'uq_batteries_installed_vehicle', note: 'WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL: one battery per truck']
+  }
+  Note: '''@status proposed @owner customer @features F-F2 @tracked *
+One physical battery, managed as an asset (BAT-01, VH-16). The truck it is
+installed in and its owner are columns with a since time (DM-22); their
+periods come from the views battery_installation_periods and
+battery_ownership_periods over battery_history, which code never reads
+directly. A battery's health history across trucks joins telemetry with the
+installation periods. When a truck is sold and the seller owns its battery,
+the battery moves to the buyer in the same transfer action (VH-12); a battery
+owned by someone else (e.g. leased from G3) stays with its owner.
+@vi-name Pin
+@vi Một viên pin vật lý, được quản lý như một tài sản (BAT-01, VH-16). Xe đang lắp pin và chủ sở hữu pin là các cột kèm thời điểm bắt đầu (DM-22); các giai đoạn lấy từ view battery_installation_periods và battery_ownership_periods trên battery_history, mã nguồn không bao giờ đọc trực tiếp bảng lịch sử. Lịch sử sức khỏe của pin qua các xe được ghép từ dữ liệu vận hành với các giai đoạn lắp. Khi bán xe mà bên bán sở hữu pin, pin chuyển sang bên mua trong cùng thao tác chuyển quyền (VH-12); pin thuộc bên khác (ví dụ thuê của G3) vẫn thuộc chủ của nó.'''
+}
+
+Ref: batteries.battery_model_id > battery_models.battery_model_id [delete: restrict]
+Ref: batteries.organization_id > organizations.organization_id [delete: restrict]
+Ref: batteries.vehicle_id > vehicles.vehicle_id [delete: restrict]
+
 TableGroup batteries {
   battery_models
+  batteries
   Note: '''
 Each truck battery managed as an asset of its own: it can move between
 trucks and may belong to another organization than the truck. Depends on
 vehicles and identity; nothing in vehicles depends on it. Not built yet.
 
 - A **battery model** is a battery type with its specifications.
+- A **battery** is one physical pack: its owner and the truck it is installed in are columns with their history (one battery per truck).
 
 @vi-name Pin
 @vi Quản lý từng pin xe như một tài sản riêng: pin có thể chuyển giữa các xe và có thể thuộc một tổ chức khác với chủ xe. Phụ thuộc miền xe và miền định danh; miền xe không phụ thuộc miền này. Chưa được xây dựng.
 - Một **dòng pin** là một loại pin kèm thông số kỹ thuật.
+- Một **pin** là một khối pin vật lý: chủ sở hữu và xe đang lắp là các cột kèm lịch sử (mỗi xe một pin).
 '''
 }
 

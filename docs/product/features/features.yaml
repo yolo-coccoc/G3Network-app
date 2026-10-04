@@ -1040,13 +1040,16 @@ features:
     capabilities:
       - ["Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout", "Danh mục dòng pin: hóa học (LFP/CATL), dung lượng thiết kế, điện áp, cấu trúc"]
       - ["Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason", "Từng pin: số serial, dòng pin, chủ sở hữu (có thể khác chủ xe), trạng thái kèm lý do"]
-      - ["One battery per truck; history of which truck each battery was fitted to", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
+      - ["One battery per truck; history of which truck each battery was installed in", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
+      - ["A battery owned by the seller moves to the buyer when its truck is sold", "Pin thuộc bên bán chuyển sang bên mua khi xe được bán"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: internal
     depends_on: [VEH-01]
-    sources: [Data IN-33, Decision VH-08, Decision VH-13, deferred.md 87, deferred.md 88]
+    sources: [Data IN-33, Decision VH-08, Decision VH-13, Decision VH-16, deferred.md 87, deferred.md 88]
+    questions:
+      - ["Does the truck's BMS report the pack serial number through the T-Box? If so, an unrecorded battery swap can raise an alert.", "BMS của xe có gửi số serial của pin qua T-Box không? Nếu có, việc thay pin không được ghi nhận có thể phát cảnh báo."]
 
 
   # ---------------------------------------------------------------------------
