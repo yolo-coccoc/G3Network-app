@@ -1731,6 +1731,41 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
   `.claude/rules/database.md`; `fleet.service.list_geofences_containing` is the only query to
   change on the read side.
 
+### 87. Battery pack, module and cell management
+
+- **Short description**: Track the parts inside a battery: its packs, modules and cells, each
+  with its own ID and position, so a battery can be taken apart, broken or worn parts removed,
+  and a new battery assembled from the good ones (with a record of where each part came from).
+- **Purpose/role in the system**: The battery is up to two thirds of a truck's price; managing it
+  part by part supports cell-level diagnostics, single-part replacement, rebuilt batteries and
+  their resale value.
+- **Reason for deferral**: Owner decision (2026-10-04, VH-08 in `docs/decisions/decision-log.md`):
+  the battery is managed as one asset first (`battery_models`, `batteries`); the part level needs
+  part IDs from the manufacturer and the BMS, which we do not have yet.
+- **Related planner/feature**: VEH-04 (`docs/product/features/features.yaml`), MON-07, VH-08.
+- **Date recorded**: 2026-10-04
+- **Additional notes**: Expected shape: a `battery_components` table (component type, serial,
+  position, the battery it currently sits in, with fitting history); a rebuilt battery is a new
+  `batteries` row whose components came from older ones. The `batteries` design must not block
+  this.
+
+### 88. Battery leasing
+
+- **Short description**: G3 owns batteries and leases them to the customers whose trucks carry
+  them (battery as a service), separately from the truck.
+- **Purpose/role in the system**: Lowers the truck's purchase price for customers; G3 keeps the
+  battery as its own asset and charges for its use.
+- **Reason for deferral**: Owner decision (2026-10-04, VH-08 in `docs/decisions/decision-log.md`):
+  the data model already allows it (`batteries.organization_id` is the battery's own owner, which
+  may differ from the truck's owner), but the leasing contract, its pricing and billing are not
+  designed.
+- **Related planner/feature**: VEH-04 (`docs/product/features/features.yaml`), the billing domain
+  (subscriptions, invoices), VH-08.
+- **Date recorded**: 2026-10-04
+- **Additional notes**: When designed: who sees the battery's data when its owner and the
+  truck's owner differ (both parties, like a charging session), the lease terms and how they are
+  invoiced.
+
 ---
 
 ## Update rules

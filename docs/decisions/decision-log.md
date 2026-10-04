@@ -269,19 +269,24 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 
 | ID | Decision | Why | Status | Date | Source |
 |---|---|---|---|---|---|
-| VH-01 | Activation is a one-way ladder PENDING → DEVICE_ASSIGNED → ACTIVATED (first telemetry); no reset; existing rows start PENDING. | Honest provisioning state. | ✅ | 2026-09-17 | activation-soh planner §2 |
 | VH-02 | `battery_capacity_kwh` is nullable; reports fall back to a flagged default. | Don't fabricate specs. | ✅ 📦 vendor catalog: deferred.md 61 | 2026-09-17 | operating-energy-reports planner |
 | VH-03 | Each truck (and each driver profile) has exactly one owning organization; cooperating parties declare the owner themselves and their terms aren't modelled. | Our responsibility ends at ownership. | ✅ | 2026-10-03 | DBML vehicles notes |
 | VH-04 | The local protocol between the telematics device and the vehicle screen is out of scope until the vehicle app starts. | No vehicle-app source. | ⏳ open question 3 | – | Open questions (this log) |
+| VH-05 | A vehicle's `status` is its **service status**, always set by a person: ACTIVE (in service), MAINTENANCE (being maintained or repaired), DECOMMISSIONED (has left the system), each with a `status_reason` (DM-19). INACTIVE is dropped: whether a truck is idle or silent is computed from telemetry and the T-Box, never stored. `deleted_at` is only for a vehicle registered by mistake; deleting no longer decommissions. | A stored status must be a decision; idleness is an observation. | ✅ | 2026-10-04 | Design review; DBML `vehicles` |
+| VH-06 | `activation_status` is dropped and `vehicles` gets **no state table**: the truck reports only through its T-Box, and every report is kept in `vehicle_telemetry`. Activation is computed at read time: a device fitted now (`telematics`), data received (`vehicle_telemetry`), and for the success rate the handover date plus the first telemetry after it. Supersedes VH-01. | The one-way ladder still said ACTIVATED after the T-Box was removed. | ✅ | 2026-10-04 | Design review; DBML `vehicles` |
+| VH-07 | `vehicles` keeps change history (`@tracked *`). `organization_id` is the current owner, NOT NULL. The VIN is editable (typing mistakes; the app warns before saving) and unique among vehicles not deleted. The plate is required (a truck is registered only once it has one), editable (plates follow the owner, Circular 24/2023/TT-BCA) and unique among vehicles neither deleted nor DECOMMISSIONED. | Corrections and transfers must not need a new vehicle; history keeps old values. | ✅ | 2026-10-04 | Design review; DBML `vehicles` |
+| VH-08 | Batteries are managed as assets: a `battery_models` catalog (same idea as `vehicle_models`) and a `batteries` table (one physical battery, one per truck, which may move between trucks and may be owned by G3 rather than the truck's owner). `vehicles.make`/`model` move to `vehicle_models`, `battery_capacity_kwh` to the battery tables. Designed after table 13; whether fittings get their own open/close table is decided then. Packs/modules/cells and battery leasing are deferred. | The battery is up to two thirds of the truck's price. | ⏳ tables to design | 2026-10-04 | Design review; deferred.md 87, 88 |
+| VH-09 | Warranties go in a `warranties` table, not on `vehicles`: one row per warranty of one object (vehicle, battery, possibly T-Box), set per truck, with its period, limits and a `status` + `status_reason` for a voided warranty; "expired" is computed. How the per-object limits are stored is decided when the table is designed. | Each object has its own warranty and can lose it separately. | ⏳ table to design | 2026-10-04 | Design review |
 
 ## DR — Drivers
 
 | ID | Decision | Why | Status | Date | Source |
 |---|---|---|---|---|---|
-| DR-01 | Driver ↔ vehicle is an assignment history; one active vehicle per driver and one active driver per vehicle; reassigning auto-closes the previous assignment; assigning a vehicle held by someone else is a 409. | MVP 1:1 driving. | ✅ | 2026-09-18 | crud-drivers planner §2 |
+| DR-01 | Driver ↔ vehicle is an assignment history; one active vehicle per driver and one active driver per vehicle; reassigning auto-closes the previous assignment; assigning a vehicle held by someone else is a 409. | MVP 1:1 driving. | ✅ (one driver per vehicle: superseded by DR-05) | 2026-09-18 | crud-drivers planner §2 |
 | DR-02 | Soft-deleting a driver closes the active assignment and sets INACTIVE; unknown VIN on assign is 404. | No orphan holds; explicit errors. | ✅ | 2026-09-18 | crud-drivers planner §2 |
 | DR-03 | A driver profile belongs to a membership (one person in one organization); a person driving for two companies has one profile in each. | ID-09, ID-13. | ✅ | 2026-10-03 | DBML `drivers` |
 | DR-04 | Empty-trip detection (F-A9) is suspended until a trip concept exists. | No trip/ignition signal. | 📦 deferred.md 67 | 2026-09-18 | crud-drivers planner §2 |
+| DR-05 | A vehicle may have **several drivers at once** (shifts, co-driver); a driver still drives at most one vehicle at a time. The one-open-row-per-vehicle index is dropped. Supersedes that part of DR-01. | Long-haul trucks often run two drivers. | ✅ | 2026-10-04 | Design review; DBML `driver_vehicle_assignments` |
 
 ## FL — Fleet
 
@@ -365,6 +370,8 @@ Answered and removed: 6 (ID-43). The next new question is number 7.
 | TX-S1 | Unknown/soft-deleted VIN on telematics leaves the device unassigned (201). | TX-02 (404) | 2026-10-01 | future-resolved §83 |
 | TX-S2 | `last_seen_at` on telematics, updated forward-only. | TX-06 (derived from telemetry) | 2026-10-01 | future-resolved §14 |
 | VH-S1 | Vehicle columns `team_id`, `max_range_km`, duplicate plate → 400. | Current vehicles model (no team_id; 409 conflicts) | – | crud-vehicles planner |
+| VH-S2 | Activation is a one-way ladder PENDING → DEVICE_ASSIGNED → ACTIVATED (first telemetry); no reset; existing rows start PENDING (former VH-01). | VH-06 (computed at read time) | 2026-09-17 → 10-04 | activation-soh planner §2 |
+| DR-S1 | One active driver per vehicle (part of DR-01). | DR-05 (several drivers per vehicle) | 2026-09-18 → 10-04 | crud-drivers planner §2 |
 | FL-S1 | One fleet level only, no `parent_fleet_id`. | FL-02 (nested fleets) | 2026-10-03 | crud-fleet planner §2 |
 | FL-S2 | Convert `vehicles.fleet_id` into a UUID FK. | FL-01 (membership table) | 2026-09-18 | future-resolved §10 |
 | NT-S1 | "Nearest available station" = nearest operational station. | CS-05 (≥ 1 Available connector) | 2026-10-01 | happy-path D3 |

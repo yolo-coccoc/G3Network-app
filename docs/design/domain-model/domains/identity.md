@@ -112,7 +112,7 @@ erDiagram
   user_role_assignments }o..o| users : "revoked_by"
   access_audit_logs }o..o| users : "user_id"
   access_audit_logs }o..o| organizations : "organization_id"
-  vehicles }o..o| organizations : "organization_id"
+  vehicles }o..|| organizations : "organization_id"
   vehicle_ownerships }o..|| organizations : "organization_id"
   vehicle_telemetry }o..o| organizations : "organization_id"
   drivers }o..o| organizations : "organization_id"
@@ -147,9 +147,10 @@ erDiagram
   user_history }o..o| users : "changed_by"
   membership_history }o..o| memberships : "membership_id"
   membership_history }o..o| users : "changed_by"
+  vehicle_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_ownerships](vehicles.md#vehicle_ownerships), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets).
 
 ## Tables
 
@@ -306,6 +307,7 @@ role requires an active driver profile.
 - [user_history](#user_history).user_id (planned)
 - [user_history](#user_history).changed_by (planned)
 - [membership_history](#membership_history).changed_by (planned)
+- [vehicle_history](vehicles.md#vehicle_history).changed_by (planned)
 
 ### user_history
 

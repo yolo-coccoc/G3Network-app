@@ -11,7 +11,7 @@ The truck's profile, owner, model and battery data, and its activation at handov
 - [ ] **VEH-01** [Vehicle registry](#veh-01) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-02** [Vehicle ownership](#veh-02) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-03** [Vehicle model catalog](#veh-03) — Backend ⬜ · Portal ⬜
-- [ ] **VEH-04** [Battery pack profile](#veh-04) — Backend ⬜ · Portal ⬜
+- [ ] **VEH-04** [Battery registry](#veh-04) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-05** [Vehicle activation](#veh-05) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-06** [Fault code catalog](#veh-06) — Backend ⬜ · Portal ⬜
 
@@ -23,7 +23,7 @@ The truck's profile, owner, model and battery data, and its activation at handov
 
 *Danh mục xe* · Must · P1.0 · Included in every plan
 
-Keep every truck's profile: VIN, plate, model, handover date, warranty status and operating status.
+Keep every truck's profile: VIN, plate, model, handover date, warranty status and service status.
 
 **Value:** Every alert, session and report points to one well-identified truck.
 
@@ -32,19 +32,17 @@ Keep every truck's profile: VIN, plate, model, handover date, warranty status an
 **Capabilities:**
 
 - Create, edit, search and retire vehicles
-- Unique VIN and plate; history of changes
+- VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason
+- Service status set by a person: active, under maintenance, decommissioned, with a reason; idle or silent trucks are shown from their data, not stored
+- Warranties per truck, battery and device with their own limits; a voided warranty keeps its reason
 - Filter by status, model, owner and fleet
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Needed by:** [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-04](#veh-04), [VEH-05](#veh-05)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · PRD F-F2  
+**Sources:** Data IN-32 · PRD F-F2 · Decision VH-05 · Decision VH-07 · Decision VH-09  
 **Old codes:** F-F2
-
-**Open questions:**
-
-- May a licence plate change after registration (re-registration, transfer)?
 
 <a id="veh-02"></a>
 
@@ -95,32 +93,32 @@ Store each truck model's specifications (EVT-262/400/825): battery capacity, con
 **Depends on:** [VEH-01](#veh-01)  
 **Needed by:** [CRB-04](carbon.md#crb-04), [MON-13](telemetry.md#mon-13), [MON-14](telemetry.md#mon-14), [RTE-01](routing.md#rte-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · Data IN-34 · deferred.md 61
+**Sources:** Data IN-32 · Data IN-34 · deferred.md 61 · Decision VH-08
 
 <a id="veh-04"></a>
 
-### VEH-04 Battery pack profile
+### VEH-04 Battery registry
 
 *Hồ sơ pin* · Must · P1.0 · Internal only
 
-Store each battery pack: chemistry, design capacity and its cell/module map (cell IDs and positions).
+Manage each truck battery as an asset: its model, owner and the trucks it has been fitted to.
 
-**Value:** Makes cell-level diagnostics and single-cell replacement possible.
+**Value:** The battery is up to two thirds of a truck's price; its health, warranty and value follow it from truck to truck.
 
 **Users:** Operations, Maintenance, Warranty
 
 **Capabilities:**
 
-- Pack ID, chemistry (LFP/CATL), design capacity, link to the vehicle
-- Cell/module map: count, IDs and positions
-- Pack replacement history
+- Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout
+- Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason
+- One battery per truck; history of which truck each battery was fitted to
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Depends on:** [VEH-01](#veh-01)  
 **Needed by:** [MNT-06](maintenance.md#mnt-06), [MON-08](telemetry.md#mon-08)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-33
+**Sources:** Data IN-33 · Decision VH-08 · deferred.md 87 · deferred.md 88
 
 <a id="veh-05"></a>
 
@@ -136,7 +134,7 @@ Follow each truck from registration to device assignment to its first data recei
 
 **Capabilities:**
 
-- Activation steps: pending, device assigned, activated on first data
+- Activation computed from the device fitted now and the data received, so a truck whose T-Box was removed shows it
 - Activation success rate and the list of trucks still waiting
 
 **Status:** Backend ⬜ · Portal ⬜
@@ -145,7 +143,7 @@ Follow each truck from registration to device assignment to its first data recei
 **Needed by:** [PLT-06](platform.md#plt-06)  
 **Also touches:** `telematics`, `telemetry`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-F2 · Decision VH-01  
+**Sources:** PRD F-F2 · Decision VH-06  
 **Old codes:** F-F2
 
 <a id="veh-06"></a>

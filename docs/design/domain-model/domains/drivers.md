@@ -94,7 +94,9 @@ A driver employed by (or being) a customer.
 
 **No. 17** · ✅ built · owner: **customer** · features: F-E4
 
-Which driver drove which vehicle, and when (open/close history).
+Which driver drove which vehicle, and when (open/close history). A driver
+drives at most one vehicle at a time; a vehicle may have several drivers at
+once, e.g. shifts or a co-driver (DR-05).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
@@ -109,10 +111,10 @@ Which driver drove which vehicle, and when (open/close history).
 
 **Indexes**
 
-- `uq_driver_vehicle_assignments_active_vehicle` (vehicle_id) unique - WHERE unassigned_at IS NULL
+- `uq_driver_vehicle_assignments_active_vehicle` (vehicle_id) unique - To be removed (DR-05: a truck may have several drivers at once): WHERE unassigned_at IS NULL
 - `uq_driver_vehicle_assignments_active_driver` (driver_id) unique - WHERE unassigned_at IS NULL
 - `ix_driver_vehicle_assignments_driver_time` (driver_id, assigned_at)
-- `ix_driver_vehicle_assignments_driver_id` (driver_id)
+- `ix_driver_vehicle_assignments_driver_id` (driver_id) - To be removed: the (driver_id, assigned_at) index already serves it
 - `ix_driver_vehicle_assignments_vehicle_id` (vehicle_id)
 
 ### charging_credentials

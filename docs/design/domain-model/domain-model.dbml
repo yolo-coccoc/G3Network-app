@@ -55,7 +55,7 @@ the backend models and that these views are up to date.
 
 Enum vehiclestatus {
   ACTIVE
-  INACTIVE
+  INACTIVE [note: '@remove VH-05']
   MAINTENANCE
   DECOMMISSIONED
 }
@@ -502,22 +502,30 @@ depends on none of them. Not built yet.
 
 Table vehicles {
   vehicle_id uuid [pk, note: 'Internal ID of the vehicle. @vi Mã nội bộ của xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  organization_id uuid [note: '@planned D3: Customer organization that owns the vehicle now. @vi Tổ chức khách hàng đang sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  license_plate varchar(20) [not null, unique, note: 'Registration plate, unique. @vi Biển số đăng ký, duy nhất. @example 51D-123.45']
-  vin varchar(17) [not null, unique, note: '17-character chassis number (VIN), unique; the vehicle\'s business key. @vi Số khung (VIN) 17 ký tự, duy nhất; là khóa nghiệp vụ của xe. @example LZGJLGR4XNX000123']
-  make varchar(50) [not null, note: 'Manufacturer. @vi Hãng sản xuất. @example Tri-Ring']
-  model varchar(50) [not null, note: 'Model line. @vi Dòng xe. @example EVT-400']
+  organization_id uuid [not null, note: '@planned VH-07: Organization that owns the vehicle now; changes when ownership is transferred (vehicle_ownerships keeps the periods). @vi Tổ chức đang sở hữu xe; đổi khi chuyển quyền sở hữu (vehicle_ownerships lưu các giai đoạn). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  license_plate varchar(20) [not null, note: 'Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. @vi Biển số đăng ký. Xe chỉ được đăng ký vào hệ thống khi đã có biển số. Sửa được: biển số định danh theo chủ xe (Thông tư 24/2023/TT-BCA), nên xe sang tên sẽ có biển mới và biển cũ có thể xuất hiện lại trên xe khác; lịch sử thay đổi lưu các biển trước đó. Duy nhất trong các xe chưa xóa và chưa DECOMMISSIONED. @example 51D-123.45']
+  vin varchar(17) [not null, note: '17-character chassis number (VIN); the vehicle\'s business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. @vi Số khung (VIN) 17 ký tự; là khóa nghiệp vụ của xe. Sửa được để sửa lỗi nhập (ứng dụng nhắc người dùng kiểm tra trước khi lưu); lịch sử thay đổi lưu các giá trị trước. Các bảng khác trỏ tới vehicle_id, không bao giờ tới VIN. Duy nhất trong các xe chưa xóa. @example LZGJLGR4XNX000123']
+  make varchar(50) [not null, note: 'Manufacturer. Replaced by a link to vehicle_models once that catalog is designed (VH-08). @vi Hãng sản xuất. Sẽ thay bằng liên kết tới vehicle_models khi danh mục này được thiết kế (VH-08). @example Tri-Ring']
+  model varchar(50) [not null, note: 'Model line. Replaced by a link to vehicle_models once that catalog is designed (VH-08). @vi Dòng xe. Sẽ thay bằng liên kết tới vehicle_models khi danh mục này được thiết kế (VH-08). @example EVT-400']
   year integer [not null, note: 'Manufacturing year. @vi Năm sản xuất. @example 2025']
-  status vehiclestatus [not null, note: 'Operating status of the vehicle. @vi Trạng thái vận hành của xe. @example ACTIVE']
-  activation_status vehicleactivationstatus [not null, note: 'Progress through device provisioning (F-F2), independent of status. @vi Tiến độ kích hoạt thiết bị cho xe (F-F2), độc lập với trạng thái vận hành. @example ACTIVATED']
-  battery_capacity_kwh float8 [note: 'Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). @example 282.0']
+  status vehiclestatus [not null, note: 'Service status, always set by a person (VH-05). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. @vi Trạng thái phục vụ, luôn do con người đặt (VH-05). ACTIVE: đang phục vụ. MAINTENANCE: đang bảo dưỡng hoặc sửa chữa. DECOMMISSIONED: đã rời hệ thống (thanh lý, bán ra ngoài dịch vụ, hoặc ngừng sử dụng vĩnh viễn); giữ lại cho lịch sử và báo cáo, không nhận dữ liệu mới. Xe đang nhàn rỗi hay không gửi dữ liệu thì không lưu: được tính từ dữ liệu vận hành và T-Box. @example ACTIVE']
+  status_reason varchar(200) [note: '@planned DM-19: Why the vehicle is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Brake system repair at the Binh Duong workshop']
+  activation_status vehicleactivationstatus [not null, note: '@remove VH-06: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. @vi Tiến độ kích hoạt thiết bị, thang một chiều không phản ánh việc T-Box bị tháo. Thay bằng tính toán: có thiết bị hiện tại từ telematics, đã nhận dữ liệu từ vehicle_telemetry. @example ACTIVATED']
+  battery_capacity_kwh float8 [note: 'Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Moves to the battery tables once they are designed (VH-08). @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). Sẽ chuyển sang các bảng pin khi được thiết kế (VH-08). @example 282.0']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
-  Note: '''@status built @owner customer @features F-F2,F-A6
-Static profile of one electric truck.
+  deleted_at timestamptz [note: 'Soft-delete time, only for a vehicle registered by mistake; a real truck that leaves is DECOMMISSIONED, never deleted. NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho xe đăng ký nhầm; xe thật rời hệ thống được chuyển sang DECOMMISSIONED, không bao giờ bị xóa. NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    vin [unique, name: 'uq_vehicles_live_vin', note: 'Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL']
+    license_plate [unique, name: 'uq_vehicles_live_license_plate', note: 'Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL AND status <> \'DECOMMISSIONED\'']
+    status [name: 'ix_vehicles_status']
+  }
+  Note: '''@status built @owner customer @features F-F2,F-A6 @tracked *
+Profile of one electric truck: what it is and the decisions about it. It has
+no state table: everything the truck reports comes through its T-Box and is
+kept message by message in vehicle_telemetry.
 @vi-name Xe
-@vi Hồ sơ tĩnh của một xe tải điện.'''
+@vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry.'''
 }
 
 Table vehicle_ownerships {
@@ -700,16 +708,18 @@ Table driver_vehicle_assignments {
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the assignment is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi kết thúc phân công). @example 2026-09-10T07:15:00Z']
   indexes {
-    vehicle_id [unique, name: 'uq_driver_vehicle_assignments_active_vehicle', note: 'WHERE unassigned_at IS NULL']
+    vehicle_id [unique, name: 'uq_driver_vehicle_assignments_active_vehicle', note: 'To be removed (DR-05: a truck may have several drivers at once): WHERE unassigned_at IS NULL']
     driver_id [unique, name: 'uq_driver_vehicle_assignments_active_driver', note: 'WHERE unassigned_at IS NULL']
     (driver_id, assigned_at) [name: 'ix_driver_vehicle_assignments_driver_time']
-    driver_id [name: 'ix_driver_vehicle_assignments_driver_id']
+    driver_id [name: 'ix_driver_vehicle_assignments_driver_id', note: 'To be removed: the (driver_id, assigned_at) index already serves it']
     vehicle_id [name: 'ix_driver_vehicle_assignments_vehicle_id']
   }
   Note: '''@status built @owner customer @features F-E4
-Which driver drove which vehicle, and when (open/close history).
+Which driver drove which vehicle, and when (open/close history). A driver
+drives at most one vehicle at a time; a vehicle may have several drivers at
+once, e.g. shifts or a co-driver (DR-05).
 @vi-name Phân công tài xế - xe
-@vi Tài xế nào lái xe nào, trong khoảng thời gian nào (lịch sử mở/đóng).'''
+@vi Tài xế nào lái xe nào, trong khoảng thời gian nào (lịch sử mở/đóng). Mỗi tài xế lái tối đa một xe tại một thời điểm; một xe có thể có nhiều tài xế cùng lúc, ví dụ chia ca hoặc lái phụ (DR-05).'''
 }
 
 Table charging_credentials {

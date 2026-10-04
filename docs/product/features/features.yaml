@@ -867,10 +867,10 @@ features:
     name_vi: Danh mục xe
     what: >-
       Keep every truck's profile: VIN, plate, model, handover date, warranty
-      status and operating status.
+      status and service status.
     what_vi: >-
       Lưu hồ sơ từng xe: số VIN, biển số, dòng xe, ngày bàn giao, trạng thái
-      bảo hành và trạng thái hoạt động.
+      bảo hành và trạng thái phục vụ.
     value: >-
       Every alert, session and report points to one well-identified truck.
     value_vi: >-
@@ -879,16 +879,16 @@ features:
     users: [OPERATIONS, FLEET_MANAGER, ORG_ADMIN]
     capabilities:
       - ["Create, edit, search and retire vehicles", "Tạo, sửa, tìm kiếm và ngừng sử dụng xe"]
-      - ["Unique VIN and plate; history of changes", "VIN và biển số không trùng; lưu lịch sử thay đổi"]
+      - ["VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason", "VIN và biển số không trùng trong các xe đang dùng và đều sửa được (nhập nhầm, biển số theo chủ xe); lưu lịch sử thay đổi kèm lý do"]
+      - ["Service status set by a person: active, under maintenance, decommissioned, with a reason; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ do con người đặt: đang phục vụ, đang bảo dưỡng, đã rời hệ thống, kèm lý do; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
+      - ["Warranties per truck, battery and device with their own limits; a voided warranty keeps its reason", "Bảo hành theo từng xe, pin và thiết bị với giới hạn riêng; bảo hành bị hủy lưu kèm lý do"]
       - ["Filter by status, model, owner and fleet", "Lọc theo trạng thái, dòng xe, chủ sở hữu và đội xe"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
-    sources: [Data IN-32, PRD F-F2]
+    sources: [Data IN-32, PRD F-F2, Decision VH-05, Decision VH-07, Decision VH-09]
     old_codes: [F-F2]
-    questions:
-      - ["May a licence plate change after registration (re-registration, transfer)?", "Biển số có được thay đổi sau khi đăng ký không (đăng ký lại, sang tên)?"]
 
   - code: VEH-02
     name: Vehicle ownership
@@ -942,32 +942,34 @@ features:
     release: P1.0
     offer: internal
     depends_on: [VEH-01]
-    sources: [Data IN-32, Data IN-34, deferred.md 61]
+    sources: [Data IN-32, Data IN-34, deferred.md 61, Decision VH-08]
 
   - code: VEH-04
-    name: Battery pack profile
+    name: Battery registry
     name_vi: Hồ sơ pin
     what: >-
-      Store each battery pack: chemistry, design capacity and its cell/module
-      map (cell IDs and positions).
+      Manage each truck battery as an asset: its model, owner and the trucks
+      it has been fitted to.
     what_vi: >-
-      Lưu hồ sơ từng pack pin: hóa học pin, dung lượng thiết kế và sơ đồ
-      cell/module (mã cell và vị trí).
+      Quản lý từng pin xe như một tài sản: dòng pin, chủ sở hữu và các xe pin
+      đã được lắp.
     value: >-
-      Makes cell-level diagnostics and single-cell replacement possible.
+      The battery is up to two thirds of a truck's price; its health,
+      warranty and value follow it from truck to truck.
     value_vi: >-
-      Cho phép chẩn đoán cấp cell và thay cell đơn lẻ.
+      Pin chiếm tới hai phần ba giá xe; sức khỏe, bảo hành và giá trị của pin
+      đi theo pin từ xe này sang xe khác.
     users: [OPERATIONS, MAINTENANCE, WARRANTY]
     capabilities:
-      - ["Pack ID, chemistry (LFP/CATL), design capacity, link to the vehicle", "Mã pack, hóa học (LFP/CATL), dung lượng thiết kế, gắn với xe"]
-      - ["Cell/module map: count, IDs and positions", "Sơ đồ cell/module: số lượng, mã và vị trí"]
-      - ["Pack replacement history", "Lịch sử thay pack"]
+      - ["Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout", "Danh mục dòng pin: hóa học (LFP/CATL), dung lượng thiết kế, điện áp, cấu trúc"]
+      - ["Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason", "Từng pin: số serial, dòng pin, chủ sở hữu (có thể khác chủ xe), trạng thái kèm lý do"]
+      - ["One battery per truck; history of which truck each battery was fitted to", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: internal
     depends_on: [VEH-01]
-    sources: [Data IN-33]
+    sources: [Data IN-33, Decision VH-08, deferred.md 87, deferred.md 88]
 
   - code: VEH-05
     name: Vehicle activation
@@ -986,7 +988,7 @@ features:
       công ≥98%.
     users: [OPERATIONS, SYSTEM]
     capabilities:
-      - ["Activation steps: pending, device assigned, activated on first data", "Các bước kích hoạt: chờ, đã gắn thiết bị, đã kích hoạt khi có dữ liệu đầu tiên"]
+      - ["Activation computed from the device fitted now and the data received, so a truck whose T-Box was removed shows it", "Kích hoạt được tính từ thiết bị đang lắp và dữ liệu đã nhận, nên xe bị tháo T-Box sẽ hiện đúng như vậy"]
       - ["Activation success rate and the list of trucks still waiting", "Tỷ lệ kích hoạt thành công và danh sách xe còn đang chờ"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
@@ -994,7 +996,7 @@ features:
     offer: internal
     depends_on: [VEH-01, DEV-02]
     touches: [telematics, telemetry]
-    sources: [PRD F-F2, Decision VH-01]
+    sources: [PRD F-F2, Decision VH-06]
     old_codes: [F-F2]
 
   - code: VEH-06
@@ -1996,7 +1998,7 @@ features:
       Mọi sự kiện của xe đều truy được tài xế tại thời điểm đó.
     users: [FLEET_MANAGER, DISPATCHER]
     capabilities:
-      - ["One active truck per driver and one active driver per truck", "Mỗi tài xế một xe và mỗi xe một tài xế đang hoạt động"]
+      - ["One active truck per driver; a truck may have several drivers at once (shifts, co-driver)", "Mỗi tài xế một xe đang hoạt động; một xe có thể có nhiều tài xế cùng lúc (chia ca, lái phụ)"]
       - ["Reassign in one step; history per driver and per truck", "Đổi xe trong một bước; lịch sử theo tài xế và theo xe"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
@@ -2004,8 +2006,10 @@ features:
     offer: tbd
     depends_on: [DRV-01, VEH-01]
     touches: [vehicles]
-    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-01]
+    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-01, Decision DR-05]
     old_codes: [F-E4]
+    questions:
+      - ["With several drivers on one truck, how do we know who was at the wheel at a given moment (driver login in the app, RFID card...)?", "Khi một xe có nhiều tài xế, làm sao biết ai đang cầm lái tại một thời điểm (tài xế đăng nhập ứng dụng, thẻ RFID...)?"]
     questions:
       - ["Two drivers sharing one truck in shifts: one app login or two? (see DRV-04)", "Hai tài xế dùng chung một xe theo ca: một hay hai tài khoản app? (xem DRV-04)"]
 

@@ -59,7 +59,7 @@ Assign and reassign trucks to drivers and keep the full assignment history.
 
 **Capabilities:**
 
-- One active truck per driver and one active driver per truck
+- One active truck per driver; a truck may have several drivers at once (shifts, co-driver)
 - Reassign in one step; history per driver and per truck
 
 **Status:** Backend ⬜ · Portal ⬜
@@ -68,7 +68,7 @@ Assign and reassign trucks to drivers and keep the full assignment history.
 **Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07)  
 **Also touches:** `vehicles`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-01  
+**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-01 · Decision DR-05  
 **Old codes:** F-E4
 
 **Open questions:**
