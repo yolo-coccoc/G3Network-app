@@ -261,6 +261,7 @@ Answered and removed: 6 (ID-43). The next new question is number 8.
 | TM-12 | Fleet-wide telemetry views and geofence detection live in `telemetry` (`telemetry → fleet` edge), never `fleet → telemetry`. | Avoid a cycle. | ✅ | 2026-10-01 | happy-path D7 |
 | TM-13 | History API: required timezone-aware window, max 7 days, `limit` (default 500, max 2000) without offset; trip replay is a bounded history query, not trip segmentation. | Hypertable-friendly; no trip concept. | ✅ 📦 deferred.md 46 | 2026-09-17 | telemetry-query-api planner §2.2 |
 | TM-14 | MQTT client: `aiomqtt`; ingestion settings namespaced `TELEMETRY_*`, MQTT settings `MQTT_*`; no metrics, structured JSON logs only. | One client; minimal MVP. | ✅ | 2026-07-28 | telemetry-ingestion planner §Step 7, 13 |
+| TM-15 | The table `vehicle_telemetry` is renamed **`telemetry`**, like the domain (index names follow); the DBML carries the new name with `@built-as vehicle_telemetry` until the refactor renames it in the code (model class `TelemetryModel`). | Owner's choice: the domain's main table carries its name. | ✅ | 2026-10-05 | Design review; DBML `telemetry` |
 
 ## TX — Telematics devices
 

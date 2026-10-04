@@ -16,25 +16,25 @@ energy reports are computed from it.
 
 ```mermaid
 erDiagram
-  vehicle_telemetry {
+  telemetry {
     bigint message_id PK
     timestamptz recorded_at PK
     uuid organization_id FK "planned"
     uuid telematic_id FK
     uuid vehicle_id FK
   }
-  vehicle_telemetry }o..o| organizations : "organization_id"
-  vehicle_telemetry }o--|| telematics : "telematic_id"
-  vehicle_telemetry }o--|| vehicles : "vehicle_id"
+  telemetry }o..o| organizations : "organization_id"
+  telemetry }o--|| telematics : "telematic_id"
+  telemetry }o--|| vehicles : "vehicle_id"
 ```
 
 Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [telematics](telematics.md#telematics), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
-### vehicle_telemetry
+### telemetry
 
-**No. 20** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at`
+**No. 20** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at` · 🗑️ built today as `vehicle_telemetry`, to be renamed
 
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
 
@@ -66,7 +66,7 @@ One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table
 
 **Indexes**
 
-- `ix_vehicle_telemetry_vehicle_time` (vehicle_id, recorded_at DESC)
-- `ix_vehicle_telemetry_vehicle_received` (vehicle_id, received_at DESC) - Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.
-- `ix_vehicle_telemetry_message_uuid` (message_uuid)
+- `ix_telemetry_vehicle_time` (vehicle_id, recorded_at DESC)
+- `ix_telemetry_vehicle_received` (vehicle_id, received_at DESC) - Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.
+- `ix_telemetry_message_uuid` (message_uuid)
 - `uq_telematic_recorded_at` (telematic_id, recorded_at) unique

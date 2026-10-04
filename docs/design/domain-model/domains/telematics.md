@@ -33,12 +33,12 @@ erDiagram
   telematics |o--o| vehicles : "vehicle_id"
   telematics }o..|| organizations : "organization_id"
   telematic_status_reports }o..|| telematics : "telematic_id"
-  vehicle_telemetry }o--|| telematics : "telematic_id"
+  telemetry }o--|| telematics : "telematic_id"
   telematic_history }o..o| telematics : "telematic_id"
   telematic_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [vehicles](vehicles.md#vehicles), [warranties](warranties.md#warranties).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [telemetry](telemetry.md#telemetry), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [warranties](warranties.md#warranties).
 
 ## Tables
 
@@ -90,7 +90,7 @@ Check constraint: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS N
 
 - [warranties](warranties.md#warranties).telematic_id (planned)
 - [telematic_status_reports](#telematic_status_reports).telematic_id (planned)
-- [vehicle_telemetry](telemetry.md#vehicle_telemetry).telematic_id
+- [telemetry](telemetry.md#telemetry).telematic_id
 - [telematic_history](#telematic_history).telematic_id (planned)
 
 ### telematic_history

@@ -534,7 +534,7 @@ Table vehicles {
   year integer [not null, note: 'Manufacturing year. @vi Năm sản xuất. @example 2025']
   status vehiclestatus [not null, note: 'Service status, set by a person or by a business rule acting for the company (DM-25). ACTIVE: in service. INACTIVE: not in service, e.g. in the workshop or not used by its owner; the reason says which (once repair records exist, being in maintenance is read from an open repair record). A truck that leaves the system is INACTIVE and soft-deleted. Whether it is moving or sending data is computed from telemetry, not stored. @vi Trạng thái phục vụ, do con người hoặc quy tắc nghiệp vụ thay mặt công ty đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: không phục vụ, ví dụ đang ở xưởng hoặc chủ xe không dùng; lý do cho biết trường hợp nào (khi có hồ sơ sửa chữa, việc đang bảo dưỡng được đọc từ hồ sơ sửa chữa đang mở). Xe rời hệ thống được chuyển sang INACTIVE và xóa mềm. Xe đang chạy hay gửi dữ liệu được tính từ dữ liệu vận hành, không lưu. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the vehicle is in its current status, or why it left the system; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại, hoặc lý do xe rời hệ thống; NULL khi ACTIVE. @example Brake system repair at the Binh Duong workshop']
-  activation_status vehicleactivationstatus [not null, note: '@remove VH-06: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. @vi Tiến độ kích hoạt thiết bị, thang một chiều không phản ánh việc T-Box bị tháo. Thay bằng tính toán: có thiết bị hiện tại từ telematics, đã nhận dữ liệu từ vehicle_telemetry. @example ACTIVATED']
+  activation_status vehicleactivationstatus [not null, note: '@remove VH-06: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from telemetry. @vi Tiến độ kích hoạt thiết bị, thang một chiều không phản ánh việc T-Box bị tháo. Thay bằng tính toán: có thiết bị hiện tại từ telematics, đã nhận dữ liệu từ telemetry. @example ACTIVATED']
   battery_capacity_kwh float8 [note: '@remove VH-16: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery\'s design capacity, or the model\'s nominal capacity when no battery is recorded. @vi Dung lượng pin danh định có thể dùng (kWh), chưa trừ suy giảm SOH; NULL nếu chưa biết (báo cáo sẽ dùng giá trị mặc định). Thay bằng dung lượng thiết kế của pin đang lắp, hoặc dung lượng danh định của dòng xe khi chưa ghi nhận pin. @example 282.0']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
@@ -547,10 +547,10 @@ Table vehicles {
   Note: '''@status built @owner customer @features F-F2,F-A6 @tracked *
 Profile of one electric truck: what it is and the decisions about it. It has
 no state table: everything the truck reports comes through its T-Box and is
-kept message by message in vehicle_telemetry.
+kept message by message in telemetry.
 Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Xe
-@vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
+@vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong telemetry. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Table vehicle_models {
@@ -829,7 +829,7 @@ The telematic devices that send vehicle data over MQTT.
 // telemetry: real-time and historical vehicle data (F-A1 ...)
 // ===========================================================================
 
-Table vehicle_telemetry {
+Table telemetry {
   message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
   recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
   organization_id uuid [note: '@planned VH-11: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
@@ -854,23 +854,23 @@ Table vehicle_telemetry {
   raw_payload jsonb [not null, note: 'Original message exactly as received, for debugging and reprocessing. @vi Bản tin gốc đúng như khi nhận, để gỡ lỗi và xử lý lại. @example {"serial": "TBX-2409-000123", "soc": 64.2, ...}']
   schema_version integer [not null, note: 'Version of the MQTT message contract the device used (F-A1). @vi Phiên bản cấu trúc bản tin MQTT mà thiết bị dùng (F-A1). @example 1']
   indexes {
-    (vehicle_id, `recorded_at DESC`) [name: 'ix_vehicle_telemetry_vehicle_time']
-    (vehicle_id, `received_at DESC`) [name: 'ix_vehicle_telemetry_vehicle_received', note: 'Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.']
-    message_uuid [name: 'ix_vehicle_telemetry_message_uuid']
+    (vehicle_id, `recorded_at DESC`) [name: 'ix_telemetry_vehicle_time']
+    (vehicle_id, `received_at DESC`) [name: 'ix_telemetry_vehicle_received', note: 'Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.']
+    message_uuid [name: 'ix_telemetry_message_uuid']
     (telematic_id, recorded_at) [unique, name: 'uq_telematic_recorded_at']
   }
-  Note: '''@status built @owner customer @features F-A1,F-A2,F-A3,F-A4,F-A6,F-C6 @hypertable recorded_at
+  Note: '''@status built @owner customer @features F-A1,F-A2,F-A3,F-A4,F-A6,F-C6 @hypertable recorded_at @built-as vehicle_telemetry
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
 @vi-name Dữ liệu vận hành xe
 @vi Một bản ghi dữ liệu xe gửi về, mỗi 5-10 giây một bản ghi cho mỗi xe: bảng lớn nhất hệ thống.'''
 }
 
-Ref: vehicle_telemetry.organization_id > organizations.organization_id [delete: restrict]
-Ref: vehicle_telemetry.telematic_id > telematics.telematic_id [delete: cascade]
-Ref: vehicle_telemetry.vehicle_id > vehicles.vehicle_id [delete: cascade]
+Ref: telemetry.organization_id > organizations.organization_id [delete: restrict]
+Ref: telemetry.telematic_id > telematics.telematic_id [delete: cascade]
+Ref: telemetry.vehicle_id > vehicles.vehicle_id [delete: cascade]
 
 TableGroup telemetry {
-  vehicle_telemetry
+  telemetry
   Note: '''
 Everything the vehicle reports: position, battery, motor, errors. Alerts and
 energy reports are computed from it.

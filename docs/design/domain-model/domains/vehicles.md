@@ -39,7 +39,7 @@ erDiagram
   batteries }o..o| vehicles : "vehicle_id"
   warranties }o..o| vehicles : "vehicle_id"
   telematics |o--o| vehicles : "vehicle_id"
-  vehicle_telemetry }o--|| vehicles : "vehicle_id"
+  telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
   driving_sessions }o..|| vehicles : "vehicle_id"
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
@@ -57,7 +57,7 @@ erDiagram
   vehicle_model_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [trips](unassigned.md#trips), [users](identity.md#users), [vehicle_telemetry](telemetry.md#vehicle_telemetry), [warranties](warranties.md#warranties).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trips](unassigned.md#trips), [users](identity.md#users), [warranties](warranties.md#warranties).
 
 ## Tables
 
@@ -67,7 +67,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 Profile of one electric truck: what it is and the decisions about it. It has
 no state table: everything the truck reports comes through its T-Box and is
-kept message by message in vehicle_telemetry.
+kept message by message in telemetry.
 Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [vehicle_history](#vehicle_history).
@@ -85,7 +85,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 | `year` | integer | no | 🔍 |  | Manufacturing year. | `2025` |
 | `status` | vehiclestatus | no | 🔍 |  | Service status, set by a person or by a business rule acting for the company (DM-25). ACTIVE: in service. INACTIVE: not in service, e.g. in the workshop or not used by its owner; the reason says which (once repair records exist, being in maintenance is read from an open repair record). A truck that leaves the system is INACTIVE and soft-deleted. Whether it is moving or sending data is computed from telemetry, not stored. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status, or why it left the system; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
-| `activation_status` | vehicleactivationstatus | no |  |  | **🗑️ to be removed (VH-06)**: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. | `ACTIVATED` |
+| `activation_status` | vehicleactivationstatus | no |  |  | **🗑️ to be removed (VH-06)**: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from telemetry. | `ACTIVATED` |
 | `battery_capacity_kwh` | float8 | yes |  |  | **🗑️ to be removed (VH-16)**: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery's design capacity, or the model's nominal capacity when no battery is recorded. | `282.0` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
@@ -107,7 +107,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [batteries](batteries.md#batteries).vehicle_id (planned)
 - [warranties](warranties.md#warranties).vehicle_id (planned)
 - [telematics](telematics.md#telematics).vehicle_id
-- [vehicle_telemetry](telemetry.md#vehicle_telemetry).vehicle_id
+- [telemetry](telemetry.md#telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
 - [driving_sessions](drivers.md#driving_sessions).vehicle_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).vehicle_id
