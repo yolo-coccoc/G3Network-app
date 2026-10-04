@@ -557,7 +557,6 @@ Table vehicle_models {
   max_payload_kg integer [note: 'Maximum payload in kg; the load of the consumption curve is a share of it. NULL until known. @vi Tải trọng tối đa (kg); tải trong đường cong tiêu thụ tính theo phần trăm của giá trị này. NULL khi chưa biết. @example 30000']
   nominal_battery_capacity_kwh numeric(7,1) [note: 'Battery capacity the model is delivered with, in kWh; used when a truck\'s own battery is unknown. A plain number, not a link to battery_models, so vehicles never depends on batteries. NULL until known. @vi Dung lượng pin dòng xe được giao kèm (kWh); dùng khi chưa biết pin của từng xe. Là số, không liên kết tới battery_models, để miền xe không phụ thuộc miền pin. NULL khi chưa biết. @example 282.0']
   consumption_curve jsonb [note: 'Reference energy consumption by load, a list of points [{"load_percent": 0-100, "kwh_per_km": number}], used by forecasts and empty-trip detection. NULL until known. @vi Mức tiêu thụ năng lượng tham chiếu theo tải, danh sách các điểm [{"load_percent": 0-100, "kwh_per_km": số}], dùng cho dự báo và phát hiện chạy rỗng. NULL khi chưa biết. @example [{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]']
-  spec_confirmed_at timestamptz [note: 'When the manufacturer confirmed these figures in writing; NULL while they are estimates, which reports flag. @vi Thời điểm nhà sản xuất xác nhận bằng văn bản các thông số này; NULL khi còn là ước tính, báo cáo sẽ đánh dấu. @example 2026-08-15T00:00:00Z']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time, only for a model entered by mistake; NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho dòng xe nhập nhầm; NULL khi bản ghi còn hiệu lực. @example NULL']
@@ -566,13 +565,14 @@ Table vehicle_models {
   }
   Note: '''@status planned @owner internal @features F-F2 @tracked *
 Catalog of truck models and their specifications (VEH-03, VH-15), shared by
-every organization and maintained by our operations team. Electric only: no
+every organization and maintained by our operations team. Figures are entered only once confirmed and
+may be updated later (the history keeps earlier values). Electric only: no
 diesel figures here (the diesel baseline for carbon reports is its own
 feature). All current models are tractor heads; a body type column is added
 when another type arrives. Change history on: reports depend on these
 figures.
 @vi-name Dòng xe
-@vi Danh mục dòng xe và thông số kỹ thuật (VEH-03, VH-15), dùng chung cho mọi tổ chức, do bộ phận vận hành của chúng ta quản lý. Chỉ xe điện: không có số liệu diesel (đường cơ sở diesel cho báo cáo carbon là tính năng riêng). Mọi dòng xe hiện tại đều là đầu kéo; cột loại thân xe sẽ được thêm khi có loại khác. Có lưu lịch sử thay đổi vì báo cáo dựa vào các số liệu này.'''
+@vi Danh mục dòng xe và thông số kỹ thuật (VEH-03, VH-15), dùng chung cho mọi tổ chức, do bộ phận vận hành của chúng ta quản lý. Số liệu chỉ được nhập khi đã xác nhận và có thể cập nhật sau (lịch sử lưu các giá trị trước). Chỉ xe điện: không có số liệu diesel (đường cơ sở diesel cho báo cáo carbon là tính năng riêng). Mọi dòng xe hiện tại đều là đầu kéo; cột loại thân xe sẽ được thêm khi có loại khác. Có lưu lịch sử thay đổi vì báo cáo dựa vào các số liệu này.'''
 }
 
 Ref: vehicles.organization_id > organizations.organization_id [delete: restrict]

@@ -155,7 +155,8 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 **No. 14** · 📋 planned · owner: **internal** · features: F-F2
 
 Catalog of truck models and their specifications (VEH-03, VH-15), shared by
-every organization and maintained by our operations team. Electric only: no
+every organization and maintained by our operations team. Figures are entered only once confirmed and
+may be updated later (the history keeps earlier values). Electric only: no
 diesel figures here (the diesel baseline for carbon reports is its own
 feature). All current models are tractor heads; a body type column is added
 when another type arrives. Change history on: reports depend on these
@@ -172,7 +173,6 @@ figures.
 | `max_payload_kg` | integer | yes | 🔍 |  | Maximum payload in kg; the load of the consumption curve is a share of it. NULL until known. | `30000` |
 | `nominal_battery_capacity_kwh` | numeric(7,1) | yes | 🔍 |  | Battery capacity the model is delivered with, in kWh; used when a truck's own battery is unknown. A plain number, not a link to battery_models, so vehicles never depends on batteries. NULL until known. | `282.0` |
 | `consumption_curve` | jsonb | yes | 🔍 |  | Reference energy consumption by load, a list of points [{"load_percent": 0-100, "kwh_per_km": number}], used by forecasts and empty-trip detection. NULL until known. | `[{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]` |
-| `spec_confirmed_at` | timestamptz | yes | 🔍 |  | When the manufacturer confirmed these figures in writing; NULL while they are estimates, which reports flag. | `2026-08-15T00:00:00Z` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a model entered by mistake; NULL while the row is live. | `NULL` |
@@ -202,7 +202,6 @@ Every earlier version of a row of `vehicle_models`: a copy of the whole row, tak
 | `max_payload_kg` | integer | yes |  |  | Value before the change (vehicle_models.max_payload_kg). | `30000` |
 | `nominal_battery_capacity_kwh` | numeric(7,1) | yes |  |  | Value before the change (vehicle_models.nominal_battery_capacity_kwh). | `282.0` |
 | `consumption_curve` | jsonb | yes |  |  | Value before the change (vehicle_models.consumption_curve). | `[{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]` |
-| `spec_confirmed_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.spec_confirmed_at). | `2026-08-15T00:00:00Z` |
 | `created_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.created_at). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.updated_at). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (vehicle_models.deleted_at). | `NULL` |
