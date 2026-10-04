@@ -46,7 +46,7 @@ row is kept; no retention or compression for now (TM-17).
 | `message_id` | bigint | no | PK |  | Auto-increasing ID assigned by the backend. | `90213377` |
 | `recorded_at` | timestamptz | no | PK |  | When the device recorded the sample; hypertable time column. | `2026-09-15T08:30:00Z` |
 | `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-11)**: Customer that owned the vehicle at recorded_at (not today's owner). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `message_uuid` | uuid | no |  |  | ID the device gives each message, used to spot duplicates. | `5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8` |
+| `device_message_id` | uuid | no |  |  | **✏️ built today as `message_uuid`, to be renamed**: ID the device gives each message (an external identifier, hence the device prefix), used to trace it in the device's logs and to spot duplicates; not unique, since a device can repeat it (TM-06). | `5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8` |
 | `telematic_id` | uuid | no | FK | [telematics](telematics.md#telematics).telematic_id (on delete cascade) | Device that sent the sample. Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today CASCADE would delete the samples with their parent). | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
 | `telematic_serial` | varchar(50) | no |  |  | **🗑️ to be removed (TM-16)**: Device serial copied onto every row; it is already in raw_payload and reachable through telematic_id. | `TBX-2409-000123` |
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete cascade) | Vehicle the sample describes. Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today CASCADE would delete the samples with their parent). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
@@ -71,5 +71,5 @@ row is kept; no retention or compression for now (TM-17).
 
 - `ix_telemetry_vehicle_time` (vehicle_id, recorded_at DESC)
 - `ix_telemetry_vehicle_received` (vehicle_id, received_at DESC) - Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move.
-- `ix_telemetry_message_uuid` (message_uuid)
+- `ix_telemetry_device_message_id` (device_message_id)
 - `uq_telemetry_telematic_recorded_at` (telematic_id, recorded_at) unique

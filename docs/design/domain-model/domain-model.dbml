@@ -833,7 +833,7 @@ Table telemetry {
   message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
   recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
   organization_id uuid [not null, note: '@planned VH-11: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  message_uuid uuid [not null, note: 'ID the device gives each message, used to spot duplicates. @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
+  device_message_id uuid [not null, note: '@built-as message_uuid: ID the device gives each message (an external identifier, hence the device prefix), used to trace it in the device\'s logs and to spot duplicates; not unique, since a device can repeat it (TM-06). @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
   telematic_id uuid [not null, note: 'Device that sent the sample. Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today CASCADE would delete the samples with their parent). @vi Thiết bị đã gửi bản ghi. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
   telematic_serial varchar(50) [not null, note: '@remove TM-16: Device serial copied onto every row; it is already in raw_payload and reachable through telematic_id. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
   vehicle_id uuid [not null, note: 'Vehicle the sample describes. Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today CASCADE would delete the samples with their parent). @vi Xe mà bản ghi mô tả. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
@@ -856,7 +856,7 @@ Table telemetry {
   indexes {
     (vehicle_id, `recorded_at DESC`) [name: 'ix_telemetry_vehicle_time']
     (vehicle_id, `received_at DESC`) [name: 'ix_telemetry_vehicle_received', note: 'Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.']
-    message_uuid [name: 'ix_telemetry_message_uuid']
+    device_message_id [name: 'ix_telemetry_device_message_id']
     (telematic_id, recorded_at) [unique, name: 'uq_telemetry_telematic_recorded_at']
   }
   Note: '''@status built @owner customer @features F-A1,F-A2,F-A3,F-A4,F-A6,F-C6 @hypertable recorded_at @built-as vehicle_telemetry
