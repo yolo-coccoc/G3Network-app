@@ -597,6 +597,48 @@ The truck itself: identity (VIN, plate), specs, and provisioning state.
 }
 
 // ===========================================================================
+// batteries: each truck battery as an asset (BAT-01)
+// ===========================================================================
+
+Table battery_models {
+  battery_model_id uuid [pk, note: 'Internal ID of the battery model. @vi Mã nội bộ của dòng pin. @example 2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55']
+  manufacturer varchar(50) [not null, note: 'Battery maker. @vi Hãng sản xuất pin. @example CATL']
+  model_name varchar(50) [not null, note: 'Model name, unique per manufacturer. @vi Tên dòng pin, duy nhất theo hãng. @example LFP-282']
+  chemistry varchar(10) [not null, note: 'Cell chemistry. Values: LFP | NMC. @vi Hóa học của cell pin. @example LFP']
+  design_capacity_kwh numeric(7,1) [note: 'Energy the pack holds when new, in kWh; NULL until known. @vi Năng lượng pin chứa được khi mới (kWh); NULL khi chưa biết. @example 282.0']
+  nominal_voltage_v numeric(6,1) [note: 'Nominal pack voltage in volts; NULL until known. @vi Điện áp danh định của pin (V); NULL khi chưa biết. @example 576.0']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time, only for a model entered by mistake; NULL while the row is live. @vi Thời điểm xóa mềm, chỉ dùng cho dòng pin nhập nhầm; NULL khi bản ghi còn hiệu lực. @example NULL']
+  indexes {
+    (manufacturer, model_name) [unique, name: 'uq_battery_models_live_manufacturer_model', note: 'WHERE deleted_at IS NULL']
+  }
+  Note: '''@status proposed @owner internal @features F-F2 @tracked *
+Catalog of battery types (BAT-01, VH-13), the battery counterpart of
+vehicle_models: shared by every organization, maintained by our operations
+team, figures entered only once confirmed and updated later when needed. The
+cell/module layout is deferred (deferred.md 87); warranty terms live in
+warranties.
+@vi-name Dòng pin
+@vi Danh mục các loại pin (BAT-01, VH-13), tương ứng với vehicle_models cho pin: dùng chung cho mọi tổ chức, do bộ phận vận hành của chúng ta quản lý, số liệu chỉ được nhập khi đã xác nhận và cập nhật sau khi cần. Sơ đồ cell/module được hoãn lại (deferred.md 87); điều khoản bảo hành nằm trong warranties.'''
+}
+
+TableGroup batteries {
+  battery_models
+  Note: '''
+Each truck battery managed as an asset of its own: it can move between
+trucks and may belong to another organization than the truck. Depends on
+vehicles and identity; nothing in vehicles depends on it. Not built yet.
+
+- A **battery model** is a battery type with its specifications.
+
+@vi-name Pin
+@vi Quản lý từng pin xe như một tài sản riêng: pin có thể chuyển giữa các xe và có thể thuộc một tổ chức khác với chủ xe. Phụ thuộc miền xe và miền định danh; miền xe không phụ thuộc miền này. Chưa được xây dựng.
+- Một **dòng pin** là một loại pin kèm thông số kỹ thuật.
+'''
+}
+
+// ===========================================================================
 // telematics: telematic devices mounted on vehicles (F-G1, F-J1-J3)
 // ===========================================================================
 

@@ -55,7 +55,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### charging_sessions
 
-**No. 31** · ✅ built · owner: **two-party** · features: F-B2, F-C5
+**No. 32** · ✅ built · owner: **two-party** · features: F-B2, F-C5
 
 One charge on one connector, from start to stop.
 
@@ -107,7 +107,7 @@ One charge on one connector, from start to stop.
 
 ### charging_session_events
 
-**No. 32** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
+**No. 33** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
 
 Each Started / Updated / Ended event of a session.
 
@@ -129,7 +129,7 @@ Each Started / Updated / Ended event of a session.
 
 ### charging_session_measurements
 
-**No. 33** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
+**No. 34** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
 Every meter value a charger reports during a session (energy, power, SoC ...).
 
