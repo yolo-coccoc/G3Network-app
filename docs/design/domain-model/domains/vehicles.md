@@ -4,12 +4,12 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 1 · 🆕 proposed: 1
+✅ built: 1 · 📋 planned: 1
 
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
-- A **vehicle** belongs to one customer organization at a time (D3).
-- **Ownership history** records every change of owner, so past data keeps its original owner.
+- A **vehicle** belongs to one organization at a time (`organization_id`, `owned_since`); earlier owners are in its change history, and the view `vehicle_ownership_periods` lists every period (VH-10).
+- **After a sale (VH-11):** rows recorded under the previous owner (telemetry and what is built from it) stay theirs; the truck's condition (health, faults, maintenance, warranties) and lifetime totals (distance, energy, charge cycles) follow the truck.
 - **One owner only (owner decision, 2026-10-03):** a truck (and a driver profile) belongs to exactly one organization in the system. When parties cooperate (e.g. an owner-driver operating under a transport company's licence), they agree between themselves and declare the owner to us; their cooperation terms are outside our responsibility and are not modelled.
 
 ## Diagram
@@ -25,14 +25,7 @@ erDiagram
     uuid vehicle_id FK
     uuid changed_by FK
   }
-  vehicle_ownerships {
-    uuid ownership_id PK
-    uuid vehicle_id FK
-    uuid organization_id FK
-  }
   vehicles }o..|| organizations : "organization_id"
-  vehicle_ownerships }o..|| vehicles : "vehicle_id"
-  vehicle_ownerships }o..|| organizations : "organization_id"
   telematics |o--o| vehicles : "vehicle_id"
   vehicle_telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -67,7 +60,8 @@ kept message by message in vehicle_telemetry.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `vehicle_id` | uuid | no | PK |  | Internal ID of the vehicle. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-07)**: Organization that owns the vehicle now; changes when ownership is transferred (vehicle_ownerships keeps the periods). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-07)**: Organization that owns the vehicle now; changes when ownership is transferred. Earlier owners are in vehicle_history; the ownership periods come from the view vehicle_ownership_periods (VH-10). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `owned_since` | timestamptz | no | 🔍 |  | **📋 planned (VH-10)**: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner's owned_since. The first owner's value is the truck's handover date. | `2026-06-01T00:00:00Z` |
 | `license_plate` | varchar(20) | no | 🔍 |  | Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. | `51D-123.45` |
 | `vin` | varchar(17) | no | 🔍 |  | 17-character chassis number (VIN); the vehicle's business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. | `LZGJLGR4XNX000123` |
 | `make` | varchar(50) | no | 🔍 |  | Manufacturer. Replaced by a link to vehicle_models once that catalog is designed (VH-08). | `Tri-Ring` |
@@ -94,7 +88,6 @@ kept message by message in vehicle_telemetry.
 
 **Referenced by**
 
-- [vehicle_ownerships](#vehicle_ownerships).vehicle_id (planned)
 - [telematics](telematics.md#telematics).vehicle_id
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
@@ -121,6 +114,7 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 | `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](#vehicles).vehicle_id (on delete restrict) | Value before the change (vehicles.vehicle_id). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `organization_id` | uuid | yes |  |  | Value before the change (vehicles.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `owned_since` | timestamptz | yes |  |  | Value before the change (vehicles.owned_since). | `2026-06-01T00:00:00Z` |
 | `license_plate` | varchar(20) | yes |  |  | Value before the change (vehicles.license_plate). | `51D-123.45` |
 | `vin` | varchar(17) | yes |  |  | Value before the change (vehicles.vin). | `LZGJLGR4XNX000123` |
 | `make` | varchar(50) | yes |  |  | Value before the change (vehicles.make). | `Tri-Ring` |
@@ -143,23 +137,3 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 **Indexes**
 
 - `ix_vehicle_history_vehicle_id_time` (vehicle_id, changed_at)
-
-### vehicle_ownerships
-
-**No. 14** · 🆕 proposed · owner: **customer** · features: F-F2
-
-Which organization owned a vehicle, and when. Lets a sold truck's old data stay
-with its previous owner (decision D3). Same open/close shape as
-fleet_vehicle_memberships.
-
-| Column | Type | Null | Key | References | Meaning | Example |
-|---|---|---|---|---|---|---|
-| `ownership_id` | uuid | no | PK |  | Internal ID of the ownership period. | `00000002-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `vehicle_id` | uuid | no | FK | [vehicles](#vehicles).vehicle_id (on delete restrict) | Vehicle owned. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization that owned it during this period. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `started_at` | timestamptz | no |  |  | When this owner took the vehicle (handover). | `2026-06-01T00:00:00Z` |
-| `ended_at` | timestamptz | yes |  |  | When ownership ended; NULL for the current owner. | `NULL` |
-
-**Indexes**
-
-- `uq_vehicle_ownerships_active_vehicle` (vehicle_id) unique - WHERE ended_at IS NULL

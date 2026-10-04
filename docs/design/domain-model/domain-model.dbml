@@ -521,7 +521,8 @@ depends on none of them. Not built yet.
 
 Table vehicles {
   vehicle_id uuid [pk, note: 'Internal ID of the vehicle. @vi Mã nội bộ của xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  organization_id uuid [not null, note: '@planned VH-07: Organization that owns the vehicle now; changes when ownership is transferred (vehicle_ownerships keeps the periods). @vi Tổ chức đang sở hữu xe; đổi khi chuyển quyền sở hữu (vehicle_ownerships lưu các giai đoạn). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: '@planned VH-07: Organization that owns the vehicle now; changes when ownership is transferred. Earlier owners are in vehicle_history; the ownership periods come from the view vehicle_ownership_periods (VH-10). @vi Tổ chức đang sở hữu xe; đổi khi chuyển quyền sở hữu. Các chủ trước nằm trong vehicle_history; các giai đoạn sở hữu lấy từ view vehicle_ownership_periods (VH-10). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  owned_since timestamptz [not null, note: '@planned VH-10: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner\'s owned_since. The first owner\'s value is the truck\'s handover date. @vi Thời điểm chủ hiện tại nhận xe (ngày bàn giao, ngày hiệu lực của lần chuyển quyền). Một giai đoạn kết thúc tại owned_since của chủ kế tiếp. Giá trị của chủ đầu tiên là ngày bàn giao xe. @example 2026-06-01T00:00:00Z']
   license_plate varchar(20) [not null, note: 'Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. @vi Biển số đăng ký. Xe chỉ được đăng ký vào hệ thống khi đã có biển số. Sửa được: biển số định danh theo chủ xe (Thông tư 24/2023/TT-BCA), nên xe sang tên sẽ có biển mới và biển cũ có thể xuất hiện lại trên xe khác; lịch sử thay đổi lưu các biển trước đó. Duy nhất trong các xe chưa xóa và chưa DECOMMISSIONED. @example 51D-123.45']
   vin varchar(17) [not null, note: '17-character chassis number (VIN); the vehicle\'s business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. @vi Số khung (VIN) 17 ký tự; là khóa nghiệp vụ của xe. Sửa được để sửa lỗi nhập (ứng dụng nhắc người dùng kiểm tra trước khi lưu); lịch sử thay đổi lưu các giá trị trước. Các bảng khác trỏ tới vehicle_id, không bao giờ tới VIN. Duy nhất trong các xe chưa xóa. @example LZGJLGR4XNX000123']
   make varchar(50) [not null, note: 'Manufacturer. Replaced by a link to vehicle_models once that catalog is designed (VH-08). @vi Hãng sản xuất. Sẽ thay bằng liên kết tới vehicle_models khi danh mục này được thiết kế (VH-08). @example Tri-Ring']
@@ -547,41 +548,21 @@ kept message by message in vehicle_telemetry.
 @vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry.'''
 }
 
-Table vehicle_ownerships {
-  ownership_id uuid [pk, note: 'Internal ID of the ownership period. @vi Mã nội bộ của giai đoạn sở hữu. @example 00000002-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  vehicle_id uuid [not null, note: 'Vehicle owned. @vi Xe được sở hữu. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  organization_id uuid [not null, note: 'Customer organization that owned it during this period. @vi Tổ chức khách hàng sở hữu xe trong giai đoạn này. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  started_at timestamptz [not null, note: 'When this owner took the vehicle (handover). @vi Thời điểm chủ này nhận xe (bàn giao). @example 2026-06-01T00:00:00Z']
-  ended_at timestamptz [note: 'When ownership ended; NULL for the current owner. @vi Thời điểm kết thúc sở hữu; NULL với chủ hiện tại. @example NULL']
-  indexes {
-    vehicle_id [unique, name: 'uq_vehicle_ownerships_active_vehicle', note: 'WHERE ended_at IS NULL']
-  }
-  Note: '''@status proposed @owner customer @features F-F2
-Which organization owned a vehicle, and when. Lets a sold truck's old data stay
-with its previous owner (decision D3). Same open/close shape as
-fleet_vehicle_memberships.
-@vi-name Lịch sử sở hữu xe
-@vi Tổ chức nào sở hữu xe, trong khoảng thời gian nào. Giúp dữ liệu cũ của xe đã bán vẫn thuộc chủ cũ (quyết định D3).'''
-}
-
 Ref: vehicles.organization_id > organizations.organization_id [delete: restrict]
-Ref: vehicle_ownerships.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: vehicle_ownerships.organization_id > organizations.organization_id [delete: restrict]
 
 TableGroup vehicles {
   vehicles
-  vehicle_ownerships
   Note: '''
 The truck itself: identity (VIN, plate), specs, and provisioning state.
 
-- A **vehicle** belongs to one customer organization at a time (D3).
-- **Ownership history** records every change of owner, so past data keeps its original owner.
+- A **vehicle** belongs to one organization at a time (`organization_id`, `owned_since`); earlier owners are in its change history, and the view `vehicle_ownership_periods` lists every period (VH-10).
+- **After a sale (VH-11):** rows recorded under the previous owner (telemetry and what is built from it) stay theirs; the truck's condition (health, faults, maintenance, warranties) and lifetime totals (distance, energy, charge cycles) follow the truck.
 - **One owner only (owner decision, 2026-10-03):** a truck (and a driver profile) belongs to exactly one organization in the system. When parties cooperate (e.g. an owner-driver operating under a transport company's licence), they agree between themselves and declare the owner to us; their cooperation terms are outside our responsibility and are not modelled.
 
 @vi-name Xe
 @vi Bản thân chiếc xe tải: định danh (VIN, biển số), thông số và trạng thái kích hoạt.
-- Tại mỗi thời điểm, một **xe** thuộc một tổ chức khách hàng (D3).
-- **Lịch sử sở hữu** ghi lại mỗi lần đổi chủ, để dữ liệu cũ vẫn thuộc chủ cũ.
+- Tại mỗi thời điểm, một **xe** thuộc một tổ chức (`organization_id`, `owned_since`); các chủ trước nằm trong lịch sử thay đổi của xe, và view `vehicle_ownership_periods` liệt kê mọi giai đoạn sở hữu (VH-10).
+- **Sau khi bán xe (VH-11):** dữ liệu ghi nhận dưới chủ cũ (dữ liệu vận hành và những gì tính từ đó) vẫn thuộc chủ cũ; tình trạng xe (sức khỏe, lỗi, bảo dưỡng, bảo hành) và các tổng tích lũy (quãng đường, năng lượng, chu kỳ sạc) đi theo xe.
 - **Chỉ một chủ sở hữu (quyết định ngày 03/10/2026):** mỗi xe (và mỗi hồ sơ tài xế) thuộc đúng một tổ chức trong hệ thống. Khi các bên hợp tác (ví dụ chủ xe tự lái hoạt động dưới giấy phép kinh doanh vận tải của một công ty), các bên tự thỏa thuận và khai báo chủ sở hữu cho chúng ta; điều khoản hợp tác của họ nằm ngoài trách nhiệm của chúng ta và không được mô hình hóa.
 '''
 }
@@ -638,7 +619,7 @@ The telematic devices that send vehicle data over MQTT.
 Table vehicle_telemetry {
   message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
   recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
-  organization_id uuid [note: '@planned D3: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: '@planned VH-11: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   message_uuid uuid [not null, note: 'ID the device gives each message, used to spot duplicates. @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
   telematic_id uuid [not null, note: 'Device that sent the sample. @vi Thiết bị đã gửi bản ghi. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
   telematic_serial varchar(50) [not null, note: 'Device serial copied onto the row for audit and debugging. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
@@ -682,12 +663,12 @@ Everything the vehicle reports: position, battery, motor, errors. Alerts and
 energy reports are computed from it.
 
 - Each **sample** comes from one device and is stored against one vehicle.
-- Under decision D3, each sample would also record the organization that owned the vehicle *at that moment*.
+- Each sample also records the organization that owned the vehicle *at that moment*, so it stays with that owner after a sale (VH-11).
 
 @vi-name Dữ liệu vận hành xe
 @vi Mọi thứ xe gửi về: vị trí, pin, động cơ, mã lỗi. Cảnh báo và báo cáo năng lượng được tính từ dữ liệu này.
 - Mỗi **bản ghi** đến từ một thiết bị và được lưu theo một xe.
-- Theo quyết định D3, mỗi bản ghi sẽ ghi thêm tổ chức sở hữu xe *tại đúng thời điểm đó*.
+- Mỗi bản ghi ghi thêm tổ chức sở hữu xe *tại đúng thời điểm đó*, nên vẫn thuộc chủ đó sau khi bán xe (VH-11).
 '''
 }
 
@@ -750,7 +731,7 @@ Table driving_sessions {
   check_in_location "geography(POINT,4326)" [note: 'Where the phone was at check-in, compared with the truck\'s last T-Box position to refuse a check-in far from the truck; NULL for PORTAL. @vi Vị trí điện thoại lúc nhận xe, so với vị trí T-Box gần nhất của xe để từ chối nhận xe từ xa; NULL với PORTAL. @example POINT(106.66 10.76)']
   started_at timestamptz [not null, note: 'Check-in time; the truck may be started before or after it. @vi Thời điểm nhận xe; xe có thể được khởi động trước hoặc sau. @example 2026-09-14T00:30:00Z']
   ended_at timestamptz [note: 'When the session ended; NULL while the driver is at the wheel. @vi Thời điểm kết thúc phiên; NULL khi tài xế vẫn đang cầm lái. @example NULL']
-  end_cause varchar(20) [note: 'Why the session ended. CHECKED_OUT: the driver checked out. TAKEN_OVER: another driver checked in to the truck. OTHER_TRUCK: the driver checked in to another truck. AUTO_ENDED: the truck did not move for the organization\'s auto-end time. DRIVER_REMOVED: the driver profile was deleted. NULL while open. Values: CHECKED_OUT | TAKEN_OVER | OTHER_TRUCK | AUTO_ENDED | DRIVER_REMOVED. @vi Lý do kết thúc phiên. CHECKED_OUT: tài xế trả xe. TAKEN_OVER: tài xế khác nhận xe. OTHER_TRUCK: tài xế nhận xe khác. AUTO_ENDED: xe không di chuyển quá thời gian tự kết thúc của tổ chức. DRIVER_REMOVED: hồ sơ tài xế bị xóa. NULL khi phiên còn mở. @example TAKEN_OVER']
+  end_cause varchar(20) [note: 'Why the session ended. CHECKED_OUT: the driver checked out. TAKEN_OVER: another driver checked in to the truck. OTHER_TRUCK: the driver checked in to another truck. AUTO_ENDED: the truck did not move for the organization\'s auto-end time. DRIVER_REMOVED: the driver profile was deleted. OWNER_CHANGED: the truck was transferred to another organization (VH-12). NULL while open. Values: CHECKED_OUT | TAKEN_OVER | OTHER_TRUCK | AUTO_ENDED | DRIVER_REMOVED | OWNER_CHANGED. @vi Lý do kết thúc phiên. CHECKED_OUT: tài xế trả xe. TAKEN_OVER: tài xế khác nhận xe. OTHER_TRUCK: tài xế nhận xe khác. AUTO_ENDED: xe không di chuyển quá thời gian tự kết thúc của tổ chức. DRIVER_REMOVED: hồ sơ tài xế bị xóa. OWNER_CHANGED: xe được chuyển cho tổ chức khác (VH-12). NULL khi phiên còn mở. @example TAKEN_OVER']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-14T00:30:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the session ends). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi phiên kết thúc). @example 2026-09-14T09:10:00Z']
   indexes {
@@ -1726,13 +1707,11 @@ Note open_decisions {
 '''
 | ID | Question | Affects |
 |---|---|---|
-| D3 | When a vehicle **changes owner**, does its old data stay with the previous owner? | `vehicle_ownerships`, `organization_id` on telemetry |
 | D5 | Who pays for a fleet driver's charge: the **driver's wallet, the fleet's wallet**, or it depends? | `wallets`, `payments` |
 | D6 | Who owns the **telematic device**: the customer, or G3 as part of the subscription? | `telematics` owner |
 
 @vi | Mã | Câu hỏi | Ảnh hưởng tới |
 |---|---|---|
-| D3 | Khi xe **đổi chủ**, dữ liệu cũ có tiếp tục thuộc chủ cũ không? | `vehicle_ownerships`, `organization_id` trên dữ liệu vận hành |
 | D5 | Ai trả tiền khi tài xế của đội xe sạc: **ví của tài xế, ví của đội xe**, hay tùy trường hợp? | `wallets`, `payments` |
 | D6 | Ai sở hữu **thiết bị telematics**: khách hàng, hay G3 (nằm trong gói thuê bao)? | chủ sở hữu `telematics` |
 '''

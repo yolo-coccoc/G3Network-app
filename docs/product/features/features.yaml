@@ -908,15 +908,14 @@ features:
     users: [OPERATIONS, SALES]
     capabilities:
       - ["Record the owner at handover", "Ghi nhận chủ sở hữu khi bàn giao"]
-      - ["Transfer ownership with an effective date; keep the history", "Chuyển quyền sở hữu kèm ngày hiệu lực; lưu lịch sử"]
+      - ["Transfer ownership with an effective date in one step: the seller's fleet memberships, driving session, charging rules, subscription and VIN charging credential for the truck end at once", "Chuyển quyền sở hữu kèm ngày hiệu lực trong một bước: tư cách thành viên đội xe, phiên lái, quy tắc sạc, thuê bao và thẻ sạc theo VIN của bên bán đối với xe kết thúc cùng lúc"]
+      - ["The previous owner keeps its own data from before the sale; the truck's condition and lifetime totals follow it to the new owner; every ownership period with who recorded it and why", "Chủ cũ giữ dữ liệu của mình trước ngày bán; tình trạng xe và các tổng tích lũy đi theo xe sang chủ mới; mọi giai đoạn sở hữu kèm người ghi nhận và lý do"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: internal
     depends_on: [VEH-01, ACC-01]
-    sources: [Data IN-32, Decision VH-03]
-    questions:
-      - ["After an ownership change, may the new owner see the truck's data from before the transfer? (open decision D3)", "Sau khi đổi chủ, chủ mới có xem được dữ liệu của xe trước ngày chuyển không? (quyết định mở D3)"]
+    sources: [Data IN-32, Decision VH-03, Decision VH-10, Decision VH-11, Decision VH-12]
 
   - code: VEH-03
     name: Vehicle model catalog

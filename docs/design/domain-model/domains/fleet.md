@@ -58,7 +58,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### fleets
 
-**No. 21** · ✅ built · owner: **customer** · features: F-E1
+**No. 20** · ✅ built · owner: **customer** · features: F-E1
 
 A named group of vehicles inside an organization: a node of the customer's
 own structure (region, branch, depot, team - any name, any depth, through
@@ -95,7 +95,7 @@ parent_fleet_id). Reorganising is editing data, never the schema.
 
 ### fleet_vehicle_memberships
 
-**No. 22** · ✅ built · owner: **customer** · features: F-E1
+**No. 21** · ✅ built · owner: **customer** · features: F-E1
 
 Which vehicle was in which fleet, and when (open/close history).
 
@@ -119,7 +119,7 @@ Which vehicle was in which fleet, and when (open/close history).
 
 ### geofences
 
-**No. 23** · ✅ built · owner: **customer** · features: F-A5
+**No. 22** · ✅ built · owner: **customer** · features: F-A5
 
 An area whose entry or exit by a member vehicle of its fleet raises an alert.
 Scoped to a fleet until customer organizations exist (then it moves to the organization).
@@ -141,7 +141,7 @@ Scoped to a fleet until customer organizations exist (then it moves to the organ
 
 ### fleet_user_assignments
 
-**No. 24** · 📋 planned · owner: **customer** · features: F-F1, F-E1
+**No. 23** · 📋 planned · owner: **customer** · features: F-F1, F-E1
 
 Limits a user's fleet-level roles to some fleets of a large organization
 (e.g. one fleet manager for the Hanoi fleet, another for HCMC). A user with

@@ -29,7 +29,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### telematics
 
-**No. 15** · ✅ built · owner: **undecided** · features: F-G1, F-J1, F-J2, F-J3
+**No. 14** · ✅ built · owner: **undecided** · features: F-G1, F-J1, F-J2, F-J3
 
 One telematic device and the vehicle it is mounted on. Whether the device
 belongs to the customer or to G3 is decision D6.

@@ -59,17 +59,14 @@ Each truck has exactly one owning organization; ownership can be transferred and
 **Capabilities:**
 
 - Record the owner at handover
-- Transfer ownership with an effective date; keep the history
+- Transfer ownership with an effective date in one step: the seller's fleet memberships, driving session, charging rules, subscription and VIN charging credential for the truck end at once
+- The previous owner keeps its own data from before the sale; the truck's condition and lifetime totals follow it to the new owner; every ownership period with who recorded it and why
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Depends on:** [VEH-01](#veh-01), [ACC-01](identity.md#acc-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · Decision VH-03
-
-**Open questions:**
-
-- After an ownership change, may the new owner see the truck's data from before the transfer? (open decision D3)
+**Sources:** Data IN-32 · Decision VH-03 · Decision VH-10 · Decision VH-11 · Decision VH-12
 
 <a id="veh-03"></a>
 

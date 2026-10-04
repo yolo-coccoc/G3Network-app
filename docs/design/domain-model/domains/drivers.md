@@ -62,7 +62,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### drivers
 
-**No. 17** · ✅ built · owner: **customer** · features: F-E4
+**No. 16** · ✅ built · owner: **customer** · features: F-E4
 
 A driver employed by (or being) a customer.
 
@@ -102,7 +102,7 @@ A driver employed by (or being) a customer.
 
 ### driver_vehicle_assignments
 
-**No. 18** · ✅ built · owner: **customer** · features: F-E4
+**No. 17** · ✅ built · owner: **customer** · features: F-E4
 
 Which driver drove which vehicle, and when (open/close history).
 To be removed: replaced by driving_sessions (DR-07) and dropped in the bulk
@@ -129,7 +129,7 @@ refactor; there is no real data to carry over.
 
 ### driving_sessions
 
-**No. 19** · 📋 planned · owner: **customer** · features: F-E4
+**No. 18** · 📋 planned · owner: **customer** · features: F-E4
 
 Who was at the wheel of which truck, and when (DR-07): the driver checks in by
 scanning the QR code on the truck or picking a nearby truck in the app, or a
@@ -154,7 +154,7 @@ change history.
 | `check_in_location` | geography(POINT,4326) | yes |  |  | Where the phone was at check-in, compared with the truck's last T-Box position to refuse a check-in far from the truck; NULL for PORTAL. | `POINT(106.66 10.76)` |
 | `started_at` | timestamptz | no |  |  | Check-in time; the truck may be started before or after it. | `2026-09-14T00:30:00Z` |
 | `ended_at` | timestamptz | yes |  |  | When the session ended; NULL while the driver is at the wheel. | `NULL` |
-| `end_cause` | varchar(20) | yes |  |  | Why the session ended. CHECKED_OUT: the driver checked out. TAKEN_OVER: another driver checked in to the truck. OTHER_TRUCK: the driver checked in to another truck. AUTO_ENDED: the truck did not move for the organization's auto-end time. DRIVER_REMOVED: the driver profile was deleted. NULL while open. Values: CHECKED_OUT \| TAKEN_OVER \| OTHER_TRUCK \| AUTO_ENDED \| DRIVER_REMOVED. | `TAKEN_OVER` |
+| `end_cause` | varchar(20) | yes |  |  | Why the session ended. CHECKED_OUT: the driver checked out. TAKEN_OVER: another driver checked in to the truck. OTHER_TRUCK: the driver checked in to another truck. AUTO_ENDED: the truck did not move for the organization's auto-end time. DRIVER_REMOVED: the driver profile was deleted. OWNER_CHANGED: the truck was transferred to another organization (VH-12). NULL while open. Values: CHECKED_OUT \| TAKEN_OVER \| OTHER_TRUCK \| AUTO_ENDED \| DRIVER_REMOVED \| OWNER_CHANGED. | `TAKEN_OVER` |
 | `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-14T00:30:00Z` |
 | `updated_at` | timestamptz | no |  |  | When the row was last changed (moves when the session ends). | `2026-09-14T09:10:00Z` |
 
@@ -167,7 +167,7 @@ change history.
 
 ### charging_credentials
 
-**No. 20** · 🆕 proposed · owner: **customer** · features: F-B2, F-C6, F-H1
+**No. 19** · 🆕 proposed · owner: **customer** · features: F-B2, F-C6, F-H1
 
 How a charger identifies who is charging. Links a session's raw idTag to a
 driver and organization. Placement in `drivers` is provisional.

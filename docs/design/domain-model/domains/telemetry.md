@@ -10,7 +10,7 @@ Everything the vehicle reports: position, battery, motor, errors. Alerts and
 energy reports are computed from it.
 
 - Each **sample** comes from one device and is stored against one vehicle.
-- Under decision D3, each sample would also record the organization that owned the vehicle *at that moment*.
+- Each sample also records the organization that owned the vehicle *at that moment*, so it stays with that owner after a sale (VH-11).
 
 ## Diagram
 
@@ -34,7 +34,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### vehicle_telemetry
 
-**No. 16** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at`
+**No. 15** · ✅ built · owner: **customer** · features: F-A1, F-A2, F-A3, F-A4, F-A6, F-C6 · hypertable on `recorded_at`
 
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
 
@@ -42,7 +42,7 @@ One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table
 |---|---|---|---|---|---|---|
 | `message_id` | bigint | no | PK |  | Auto-increasing ID assigned by the backend. | `90213377` |
 | `recorded_at` | timestamptz | no | PK |  | When the device recorded the sample; hypertable time column. | `2026-09-15T08:30:00Z` |
-| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (D3)**: Customer that owned the vehicle at recorded_at (not today's owner). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-11)**: Customer that owned the vehicle at recorded_at (not today's owner). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `message_uuid` | uuid | no |  |  | ID the device gives each message, used to spot duplicates. | `5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8` |
 | `telematic_id` | uuid | no | FK | [telematics](telematics.md#telematics).telematic_id (on delete cascade) | Device that sent the sample. | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
 | `telematic_serial` | varchar(50) | no |  |  | Device serial copied onto the row for audit and debugging. | `TBX-2409-000123` |
