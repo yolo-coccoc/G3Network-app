@@ -1,6 +1,6 @@
 # MQTT Specification - Telematic Device Protocol
 
-> Version: 1.1.0  
+> Version: 1.2.0  
 > Created: 2026-07-25  
 > Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-J2 (Remote
 > device configuration - OTA, partial)
@@ -63,6 +63,38 @@ g3network/telematics/{telematic_serial}/status
 **Explanation:**
 - Used to track the device's connection status
 - MQTT Last Will can be used to automatically publish `offline` when the connection is lost
+
+**Device health fields — PROVISIONAL (v1.2.0).** The design (`telematic_state`,
+decision TX-09 in `docs/decisions/decision-log.md`) expects the device to add
+the fields below to its status message, about once a day. The names, units and
+values are our proposal; **the device vendor has not confirmed them**, and
+nothing ingests this topic yet. Update this section once the vendor's real
+format is known.
+
+```json
+{
+  "status": "online",
+  "firmware_version": "1.2.3",
+  "telemetry_interval_seconds": 10,
+  "sim": {"iccid": "8984049000001234567", "is_esim": false, "data_status": "ACTIVE"},
+  "supply_voltage_v": 24.3,
+  "signal_dbm": -78,
+  "storage_used_percent": 41.5,
+  "gnss_status": "FIX",
+  "timestamp": "2026-07-25T10:30:00Z"
+}
+```
+
+| Field | Type | Unit / values | Meaning |
+|---|---|---|---|
+| `telemetry_interval_seconds` | integer | s | Publish interval the device actually uses (confirms a pushed interval) |
+| `sim.iccid` | string | up to 22 digits | ICCID of the SIM in the device |
+| `sim.is_esim` | boolean | | The SIM is an eSIM |
+| `sim.data_status` | string | `ACTIVE` \| `NO_DATA` \| `SUSPENDED` \| `NO_SIM` | Mobile data status |
+| `supply_voltage_v` | number | V | Power supply voltage at the device |
+| `signal_dbm` | integer | dBm | Mobile signal strength |
+| `storage_used_percent` | number | 0-100 | Device storage in use |
+| `gnss_status` | string | `FIX` \| `NO_FIX` \| `ANTENNA_FAULT` | Satellite positioning status |
 
 ---
 
@@ -345,3 +377,4 @@ in section 2.3.
 |-----------|------|----------|
 | 1.0.0 | 2026-07-25 | Initial version |
 | 1.1.0 | 2026-09-17 | F-J2 (partial): implemented `set_telemetry_interval` on the backend command topic; documented its exact payload, QoS, and the missing-ack limitation. |
+| 1.2.0 | 2026-10-04 | Provisional device health fields on the status topic (§2.2), from the database design (TX-09); not confirmed by the vendor, not ingested. |

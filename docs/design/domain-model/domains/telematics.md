@@ -57,6 +57,7 @@ What the device reports about itself lives in telematic_state.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `telematic_id` | uuid | no | PK |  | Internal ID of the telematic device. | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
+| `imei` | varchar(15) | yes | 🔍 |  | **📋 planned (TX-09)**: The device modem's IMEI, entered at provisioning; fixed hardware identity, unique among devices not deleted. NULL until entered. | `356938035643809` |
 | `telematic_serial` | varchar(50) | no | 🔍 |  | Serial printed on the device; also its MQTT identity. Unique among devices not deleted. | `TBX-2409-000123` |
 | `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (TX-07)**: Organization that owns the device now: the truck's owner, or G3 when it supplies the device (e.g. with the subscription). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `acquired_at` | timestamptz | no | 🔍 |  | **📋 planned (TX-07)**: When the current owner took the device (DM-22). | `2026-06-01T00:00:00Z` |
@@ -65,7 +66,7 @@ What the device reports about itself lives in telematic_state.
 | `status` | telematicstatus | no | 🔍 |  | Status set by a person (TX-08). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (scrapped, returned). Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the device is in its current status; NULL when ACTIVE. | `Antenna replaced at the Hanoi workshop` |
 | `firmware_version` | varchar(50) | yes |  |  | **🗑️ to be removed (TX-08)**: Firmware typed in through the API; the device reports it, so it moves to telematic_state. | `1.4.2` |
-| `telemetry_interval_seconds` | integer | yes | 🔍 |  | Publish interval last pushed to the device over MQTT (F-J2), chosen by a person; NULL until the first push. A decision, so the change history records who changed it, when and why. | `10` |
+| `telemetry_interval_seconds` | integer | yes |  |  | **🗑️ to be removed (TX-09)**: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is reported in telematic_state. | `10` |
 | `config_pushed_at` | timestamptz | yes |  |  | **🗑️ to be removed (TX-08)**: When the interval was last pushed; the push happens when the change is saved, so the history's changed_at gives it (DM-23). | `2026-09-12T03:00:00Z` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
@@ -99,6 +100,7 @@ Every earlier version of a row of `telematics`: a copy of the whole row, taken j
 |---|---|---|---|---|---|---|
 | `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
 | `telematic_id` | uuid | yes | FK | [telematics](#telematics).telematic_id (on delete restrict) | Value before the change (telematics.telematic_id). | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
+| `imei` | varchar(15) | yes |  |  | Value before the change (telematics.imei). | `356938035643809` |
 | `telematic_serial` | varchar(50) | yes |  |  | Value before the change (telematics.telematic_serial). | `TBX-2409-000123` |
 | `organization_id` | uuid | yes |  |  | Value before the change (telematics.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `acquired_at` | timestamptz | yes |  |  | Value before the change (telematics.acquired_at). | `2026-06-01T00:00:00Z` |
@@ -106,7 +108,6 @@ Every earlier version of a row of `telematics`: a copy of the whole row, taken j
 | `installed_at` | timestamptz | yes |  |  | Value before the change (telematics.installed_at). | `2026-06-01T00:00:00Z` |
 | `status` | telematicstatus | yes |  |  | Value before the change (telematics.status). | `ACTIVE` |
 | `status_reason` | varchar(200) | yes |  |  | Value before the change (telematics.status_reason). | `Antenna replaced at the Hanoi workshop` |
-| `telemetry_interval_seconds` | integer | yes |  |  | Value before the change (telematics.telemetry_interval_seconds). | `10` |
 | `created_at` | timestamptz | yes |  |  | Value before the change (telematics.created_at). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (telematics.updated_at). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (telematics.deleted_at). | `NULL` |
@@ -126,13 +127,23 @@ Every earlier version of a row of `telematics`: a copy of the whole row, taken j
 
 **No. 19** · 📋 planned · owner: **customer** · features: F-G1, F-J1 · live state of [telematics](#telematics)
 
-What the device reports about itself on its MQTT status topic (observations,
-not decisions): only the latest values, no change history (TX-08). Created
+What the device reports about itself on its MQTT status topic, about once a
+day (observations, not decisions): firmware, interval in use, SIM, power,
+signal, storage, GNSS (TX-08, TX-09; message fields provisional until the
+vendor confirms them). Only the latest values, no change history. Created
 together with the device, so every device has exactly one state row. Whether
 it is online is computed from telemetry (TX-06), not stored.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `telematic_id` | uuid | no | PK FK | [telematics](#telematics).telematic_id (on delete restrict) | The device this state belongs to (1:1 with telematics). | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
-| `firmware_version` | varchar(50) | yes |  |  | Firmware version the device last reported on its status topic; NULL until the first report. | `1.4.2` |
-| `firmware_reported_at` | timestamptz | yes |  |  | When the device reported it; NULL until the first report. | `2026-09-14T00:30:00Z` |
+| `firmware_version` | varchar(50) | yes |  |  | Firmware version the device last reported. | `1.4.2` |
+| `reported_telemetry_interval_seconds` | integer | yes |  |  | Publish interval the device says it uses; differing from its truck owner's setting means the last push was not applied (TX-09). | `10` |
+| `sim_iccid` | varchar(22) | yes |  |  | ICCID of the SIM in the device; changes when the SIM is swapped. | `8984049000001234567` |
+| `is_esim` | boolean | yes |  |  | TRUE when the SIM is an eSIM. | `false` |
+| `sim_data_status` | varchar(20) | yes |  |  | Mobile data status of the SIM as reported (provisional values: ACTIVE \| NO_DATA \| SUSPENDED \| NO_SIM). | `ACTIVE` |
+| `supply_voltage_v` | numeric(5,2) | yes |  |  | Power supply voltage at the device, in volts. | `24.30` |
+| `signal_dbm` | smallint | yes |  |  | Mobile signal strength in dBm (closer to 0 is stronger). | `-78` |
+| `storage_used_percent` | numeric(5,2) | yes |  |  | Share of the device's storage in use, 0-100. | `41.50` |
+| `gnss_status` | varchar(20) | yes |  |  | Satellite positioning status as reported (provisional values: FIX \| NO_FIX \| ANTENNA_FAULT). | `FIX` |
+| `reported_at` | timestamptz | yes |  |  | When the latest status report was received; every column above comes from that report. NULL until the first report. | `2026-09-14T00:30:00Z` |

@@ -662,6 +662,7 @@ a real setting needs one.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `organization_id` | uuid | no | PK FK | [organizations](#organizations).organization_id (on delete restrict) | The organization these settings belong to (1:1 with organizations). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `telemetry_interval_seconds` | integer | no | 🔍 |  | How often the T-Boxes on this organization's trucks send telemetry, in seconds (TX-09); default 10, within the backend's allowed bounds. Pushed to every device on its trucks when changed, and to a device when it is mounted. | `10` |
 | `driving_session_auto_end_minutes` | integer | no | 🔍 |  | A driving session ends on its own once the truck has not moved for this long (DR-07); default 120. | `120` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When a setting was last changed (UTC). | `2026-09-10T07:15:00Z` |
@@ -680,6 +681,7 @@ Every earlier version of a row of `organization_settings`: a copy of the whole r
 |---|---|---|---|---|---|---|
 | `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
 | `organization_id` | uuid | yes | FK | [organization_settings](#organization_settings).organization_id (on delete restrict) | Value before the change (organization_settings.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `telemetry_interval_seconds` | integer | yes |  |  | Value before the change (organization_settings.telemetry_interval_seconds). | `10` |
 | `driving_session_auto_end_minutes` | integer | yes |  |  | Value before the change (organization_settings.driving_session_auto_end_minutes). | `120` |
 | `created_at` | timestamptz | yes |  |  | Value before the change (organization_settings.created_at). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | yes |  |  | Value before the change (organization_settings.updated_at). | `2026-09-10T07:15:00Z` |

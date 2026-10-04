@@ -186,7 +186,7 @@ Tell apart a sudden power cut (possible removal), a lost signal and a truck that
 
 *Cấu hình thiết bị từ xa* · Should · P1.1 · Internal only
 
-Push configuration changes (send interval, local alert thresholds) to one device or a whole fleet, confirm they were applied, and roll back.
+Set the send interval for an organization's trucks and push it to their devices, see which devices applied it, and roll back.
 
 **Value:** Tune devices without sending a technician to the truck.
 
@@ -194,16 +194,16 @@ Push configuration changes (send interval, local alert thresholds) to one device
 
 **Capabilities:**
 
-- Push to one device or every device of a fleet, with a result per device
-- Confirmation that the device applied the change
+- One send interval per organization, pushed to every device on its trucks and to a device when it is mounted, with a result per device
+- Confirmation: the device reports the interval it uses; a mismatch shows the push was not applied
 - Rollback and history of every command
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Depends on:** [DEV-02](#dev-02)  
-**Also touches:** `fleet`  
+**Also touches:** `identity`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-J2 · deferred.md 52 · deferred.md 53 · deferred.md 56 · deferred.md 59  
+**Sources:** PRD F-J2 · deferred.md 52 · deferred.md 53 · deferred.md 56 · deferred.md 59 · Decision TX-09  
 **Old codes:** F-J2
 
 <a id="dev-08"></a>

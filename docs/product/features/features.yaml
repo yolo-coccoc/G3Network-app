@@ -1255,27 +1255,27 @@ features:
     name: Remote device configuration
     name_vi: Cấu hình thiết bị từ xa
     what: >-
-      Push configuration changes (send interval, local alert thresholds) to
-      one device or a whole fleet, confirm they were applied, and roll back.
+      Set the send interval for an organization's trucks and push it to their
+      devices, see which devices applied it, and roll back.
     what_vi: >-
-      Đẩy thay đổi cấu hình (chu kỳ gửi, ngưỡng cảnh báo tại xe) tới một thiết
-      bị hoặc cả đội xe, xác nhận đã áp dụng và cho phép khôi phục.
+      Đặt chu kỳ gửi cho các xe của một tổ chức và đẩy xuống thiết bị, xem
+      thiết bị nào đã áp dụng và cho phép khôi phục.
     value: >-
       Tune devices without sending a technician to the truck.
     value_vi: >-
       Điều chỉnh thiết bị mà không phải cử kỹ thuật viên ra xe.
     users: [OPERATIONS]
     capabilities:
-      - ["Push to one device or every device of a fleet, with a result per device", "Đẩy tới một thiết bị hoặc mọi thiết bị của đội xe, có kết quả từng thiết bị"]
-      - ["Confirmation that the device applied the change", "Xác nhận thiết bị đã áp dụng thay đổi"]
+      - ["One send interval per organization, pushed to every device on its trucks and to a device when it is mounted, with a result per device", "Một chu kỳ gửi cho mỗi tổ chức, đẩy xuống mọi thiết bị trên xe của tổ chức và xuống thiết bị khi được gắn lên xe, có kết quả từng thiết bị"]
+      - ["Confirmation: the device reports the interval it uses; a mismatch shows the push was not applied", "Xác nhận: thiết bị báo chu kỳ đang dùng; nếu khác nghĩa là lần đẩy chưa được áp dụng"]
       - ["Rollback and history of every command", "Khôi phục và lịch sử mọi lệnh"]
     surfaces: {backend: todo, portal: todo}
     priority: Should
     release: P1.1
     offer: internal
     depends_on: [DEV-02]
-    touches: [fleet]
-    sources: [PRD F-J2, deferred.md 52, deferred.md 53, deferred.md 56, deferred.md 59]
+    touches: [identity]
+    sources: [PRD F-J2, deferred.md 52, deferred.md 53, deferred.md 56, deferred.md 59, Decision TX-09]
     old_codes: [F-J2]
 
   - code: DEV-08
