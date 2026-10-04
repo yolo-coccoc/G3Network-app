@@ -51,3 +51,12 @@ in every such task:
 - **Record a decision** the owner makes in
   `docs/decisions/decision-log.md` (a change of mind is a new entry that
   supersedes the old one).
+
+## Cite the file with every code
+
+Owner instruction (2026-10-04). Whenever a reply mentions a document's code
+or ID — a decision (`ID-44`, `VH-05`), a feature (`VEH-05`), an open question
+("open question 3", `D3`), a deferred item ("deferred 61"), a planner decision
+(`D12`) — also name the file it lives in, as a link (with the line when it
+helps), e.g. `VH-05` ([decision-log.md:275](docs/decisions/decision-log.md#L275)).
+The reader should never have to search for where a code is defined.
