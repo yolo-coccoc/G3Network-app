@@ -169,13 +169,16 @@ class IndexInfo:
         label: Human-readable column/expression list.
         name: Index name, may be empty.
         is_unique: Declared unique.
-        note: Index note (partial predicate, index type ...), may be empty.
+        note: Index note in English (partial predicate, index type ...), may
+            be empty.
+        vi_note: The Vietnamese part of the note (after ``@vi``), may be empty.
     """
 
     label: str
     name: str
     is_unique: bool
     note: str
+    vi_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -438,7 +441,9 @@ def _parse_index(pydbml_index: object) -> IndexInfo:
         label=", ".join(subject_labels),
         name=pydbml_index.name or "",
         is_unique=bool(pydbml_index.unique),
-        note=_note_text(pydbml_index.note),
+        # The English views show the English part; the workbook prefers @vi.
+        note=_note_text(pydbml_index.note).partition(f" {VI_TAG} ")[0].strip(),
+        vi_note=_note_text(pydbml_index.note).partition(f" {VI_TAG} ")[2].strip(),
     )
 
 
@@ -1866,7 +1871,7 @@ def _write_table_sheet(
                     index.label,
                     "có" if index.is_unique else "không",
                     None,
-                    index.note,
+                    index.vi_note or index.note,
                 ]
             )
 
