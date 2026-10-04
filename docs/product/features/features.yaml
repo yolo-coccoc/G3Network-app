@@ -1184,6 +1184,7 @@ features:
       Sự cố được xử lý trước khi khách hàng phát hiện mất dữ liệu.
     users: [OPERATIONS]
     capabilities:
+      - ["Health history per device (signal, power, storage, SIM) to see trends", "Lịch sử sức khỏe theo từng thiết bị (sóng, nguồn điện, bộ nhớ, SIM) để xem xu hướng"]
       - ["Online and silent flags derived from the latest data", "Cờ online và im lặng tính từ dữ liệu mới nhất"]
       - ["SIM/ICCID, data, power, storage and GNSS status", "Trạng thái SIM/ICCID, data, nguồn, bộ nhớ và GNSS"]
       - ["Share of healthy devices across the network", "Tỷ lệ thiết bị khỏe trên toàn mạng"]
@@ -1193,7 +1194,7 @@ features:
     offer: internal
     depends_on: [DEV-01, MON-01]
     touches: [telemetry]
-    sources: [PRD F-J1, Data IN-21, Data IN-22, Data OUT-55, deferred.md 50]
+    sources: [PRD F-J1, Data IN-21, Data IN-22, Data OUT-55, deferred.md 50, Decision TX-10]
     old_codes: [F-J1]
 
   - code: DEV-05

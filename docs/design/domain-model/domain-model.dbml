@@ -793,23 +793,54 @@ it is online is computed from telemetry (TX-06), not stored.
 @vi Những gì thiết bị tự báo về mình trên topic trạng thái MQTT, khoảng mỗi ngày một lần (quan sát, không phải quyết định): firmware, chu kỳ đang dùng, SIM, nguồn điện, sóng, bộ nhớ, GNSS (TX-08, TX-09; các trường của bản tin là tạm thời cho tới khi nhà cung cấp xác nhận). Chỉ giá trị mới nhất, không lưu lịch sử thay đổi. Được tạo cùng lúc với thiết bị nên mỗi thiết bị luôn có đúng một dòng trạng thái. Thiết bị có trực tuyến hay không được tính từ dữ liệu vận hành (TX-06), không lưu.'''
 }
 
+Table telematic_status_reports {
+  status_report_id bigint [pk, increment, note: 'Auto-increasing ID of the report. @vi Mã tự tăng của báo cáo. @example 51234']
+  telematic_id uuid [not null, note: 'Device that sent the report. @vi Thiết bị gửi báo cáo. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
+  firmware_version varchar(50) [note: 'Firmware version reported. @vi Phiên bản firmware được báo. @example 1.4.2']
+  telemetry_interval_seconds integer [note: 'Publish interval the device said it used. @vi Chu kỳ gửi thiết bị báo đang dùng. @example 10']
+  sim_iccid varchar(22) [note: 'ICCID of the SIM in the device. @vi Số ICCID của SIM trong thiết bị. @example 8984049000001234567']
+  is_esim boolean [note: 'TRUE when the SIM is an eSIM. @vi TRUE khi SIM là eSIM. @example false']
+  sim_data_status varchar(20) [note: 'Mobile data status (provisional values: ACTIVE | NO_DATA | SUSPENDED | NO_SIM). @vi Trạng thái dữ liệu di động (giá trị tạm: ACTIVE | NO_DATA | SUSPENDED | NO_SIM). @example ACTIVE']
+  supply_voltage_v numeric(5,2) [note: 'Power supply voltage at the device, in volts. @vi Điện áp nguồn cấp tại thiết bị (V). @example 24.30']
+  signal_dbm smallint [note: 'Mobile signal strength in dBm. @vi Cường độ sóng di động (dBm). @example -78']
+  storage_used_percent numeric(5,2) [note: 'Share of the device\'s storage in use, 0-100. @vi Tỷ lệ bộ nhớ thiết bị đã dùng, 0-100. @example 41.50']
+  gnss_status varchar(20) [note: 'Satellite positioning status (provisional values: FIX | NO_FIX | ANTENNA_FAULT). @vi Trạng thái định vị vệ tinh (giá trị tạm: FIX | NO_FIX | ANTENNA_FAULT). @example FIX']
+  reported_at timestamptz [not null, note: 'When the device produced the report (its own timestamp, normalized to UTC). @vi Thời điểm thiết bị tạo báo cáo (theo đồng hồ thiết bị, chuẩn hóa về UTC). @example 2026-09-14T00:30:00Z']
+  received_at timestamptz [not null, note: 'When the backend received it. @vi Thời điểm backend nhận được. @example 2026-09-14T00:30:02Z']
+  indexes {
+    (telematic_id, reported_at) [name: 'ix_telematic_status_reports_device_time', note: 'A device\'s reports over time, newest first']
+  }
+  Note: '''@status planned @owner customer @features F-J1,F-J3
+Every health report a T-Box sends about itself, about once a day (TX-10), so
+trends can be seen (signal getting weaker, voltage dropping before it went
+silent). Append-only: rows are never edited, so no change history. An
+ordinary table, not a hypertable: about 365 rows per device per year. No
+organization_id (DM-24): like other condition data it follows the device to
+its next owner (VH-11). Fields are provisional until the vendor confirms the
+message (mqtt-spec.md section 2.2).
+@vi-name Báo cáo trạng thái thiết bị telematics
+@vi Mọi báo cáo sức khỏe mà T-Box gửi về chính nó, khoảng mỗi ngày một lần (TX-10), để xem được xu hướng (sóng yếu dần, điện áp tụt trước khi mất tín hiệu). Chỉ ghi thêm: không bao giờ sửa dòng nên không cần lịch sử thay đổi. Là bảng thường, không phải hypertable: khoảng 365 dòng mỗi thiết bị mỗi năm. Không có organization_id (DM-24): như các dữ liệu tình trạng khác, đi theo thiết bị sang chủ kế tiếp (VH-11). Các trường là tạm thời cho tới khi nhà cung cấp xác nhận bản tin (mqtt-spec.md mục 2.2).'''
+}
+
 Ref: telematics.vehicle_id - vehicles.vehicle_id [delete: set null]
 Ref: telematics.organization_id > organizations.organization_id [delete: restrict]
 Ref: telematic_state.telematic_id - telematics.telematic_id [delete: restrict]
+Ref: telematic_status_reports.telematic_id > telematics.telematic_id [delete: restrict]
 
 TableGroup telematics {
   telematics
   telematic_state
+  telematic_status_reports
   Note: '''
 The telematic devices that send vehicle data over MQTT.
 
 - A **device** is an asset with its own owner; it is mounted on at most one vehicle, and a vehicle has at most one device.
-- Its **state** holds what it reports about itself (firmware); config pushes (F-J2) are decisions on the device profile.
+- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its **state** shows the latest one. The send interval is an organization setting (TX-09).
 
 @vi-name Thiết bị telematics
 @vi Các thiết bị telematics (T-box) gửi dữ liệu xe qua MQTT.
 - Một **thiết bị** là tài sản có chủ riêng; gắn trên tối đa một xe, và một xe có tối đa một thiết bị.
-- **Trạng thái** của thiết bị lưu những gì thiết bị tự báo (firmware); cấu hình đẩy xuống (F-J2) là quyết định nằm trên hồ sơ thiết bị.
+- Những gì thiết bị tự báo về mình (firmware, SIM, nguồn điện, sóng) được lưu thành **báo cáo trạng thái**, mỗi báo cáo một dòng; **trạng thái** hiển thị báo cáo mới nhất. Chu kỳ gửi là thiết lập của tổ chức (TX-09).
 '''
 }
 

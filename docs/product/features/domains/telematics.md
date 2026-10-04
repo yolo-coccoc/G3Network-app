@@ -113,6 +113,7 @@ Per-device view of last seen, online/silent, firmware, SIM and data status, powe
 
 **Capabilities:**
 
+- Health history per device (signal, power, storage, SIM) to see trends
 - Online and silent flags derived from the latest data
 - SIM/ICCID, data, power, storage and GNSS status
 - Share of healthy devices across the network
@@ -122,7 +123,7 @@ Per-device view of last seen, online/silent, firmware, SIM and data status, powe
 **Depends on:** [DEV-01](#dev-01), [MON-01](telemetry.md#mon-01)  
 **Also touches:** `telemetry`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-J1 · Data IN-21 · Data IN-22 · Data OUT-55 · deferred.md 50  
+**Sources:** PRD F-J1 · Data IN-21 · Data IN-22 · Data OUT-55 · deferred.md 50 · Decision TX-10  
 **Old codes:** F-J1
 
 <a id="dev-05"></a>

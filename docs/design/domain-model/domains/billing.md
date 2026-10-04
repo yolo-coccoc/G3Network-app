@@ -90,7 +90,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### tariffs
 
-**No. 46** · 📋 planned · owner: **internal** · features: F-C8, F-H1
+**No. 47** · 📋 planned · owner: **internal** · features: F-C8, F-H1
 
 The price of energy. Who owns tariffs (G3 Energy or G3 Network) is
 feature-list item 5.
@@ -108,7 +108,7 @@ feature-list item 5.
 
 ### payments
 
-**No. 47** · 📋 planned · owner: **customer** · features: F-H1
+**No. 48** · 📋 planned · owner: **customer** · features: F-H1
 
 One payment through a gateway or wallet, usually for one session.
 
@@ -131,7 +131,7 @@ One payment through a gateway or wallet, usually for one session.
 
 ### wallets
 
-**No. 48** · 📋 planned · owner: **customer** · features: F-H2
+**No. 49** · 📋 planned · owner: **customer** · features: F-H2
 
 A prepaid balance for a driver or for a whole organization.
 
@@ -150,7 +150,7 @@ A prepaid balance for a driver or for a whole organization.
 
 ### wallet_transactions
 
-**No. 49** · 📋 planned · owner: **customer** · features: F-H2
+**No. 50** · 📋 planned · owner: **customer** · features: F-H2
 
 Append-only movement of money in or out of a wallet.
 
@@ -168,7 +168,7 @@ Append-only movement of money in or out of a wallet.
 
 ### invoices
 
-**No. 50** · 📋 planned · owner: **customer** · features: F-H3, F-H4
+**No. 51** · 📋 planned · owner: **customer** · features: F-H3, F-H4
 
 A legal e-invoice. Once ISSUED it is never edited, only adjusted or cancelled
 by a new invoice.
@@ -192,7 +192,7 @@ by a new invoice.
 
 ### invoice_lines
 
-**No. 51** · 📋 planned · owner: **customer** · features: F-H3, F-H4
+**No. 52** · 📋 planned · owner: **customer** · features: F-H3, F-H4
 
 One line of an invoice: a charging session or a subscription period.
 
@@ -210,7 +210,7 @@ One line of an invoice: a charging session or a subscription period.
 
 ### subscription_plans
 
-**No. 52** · 📋 planned · owner: **internal** · features: F-H4
+**No. 53** · 📋 planned · owner: **internal** · features: F-H4
 
 A plan: one row per offer (GUEST as the free default, STANDARD, ADVANCED,
 PRO, ..., or a private plan for one customer); its features are in
@@ -233,7 +233,7 @@ plan_features. Pricing is per feature (see the billing domain note).
 
 ### plan_features
 
-**No. 53** · 🆕 proposed · owner: **internal** · features: F-H4
+**No. 54** · 🆕 proposed · owner: **internal** · features: F-H4
 
 Which features each plan includes. Plans are data, so G3 can create a new
 plan (Pro, Max, a private plan for one customer) in the portal without a
@@ -252,7 +252,7 @@ developer; only a brand-new feature needs code.
 
 ### subscriptions
 
-**No. 54** · 📋 planned · owner: **customer** · features: F-H4
+**No. 55** · 📋 planned · owner: **customer** · features: F-H4
 
 One vehicle subscribed to a plan; overdue locks features.
 

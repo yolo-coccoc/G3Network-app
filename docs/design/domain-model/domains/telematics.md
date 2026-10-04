@@ -4,12 +4,12 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 2
+✅ built: 1 · 📋 planned: 3
 
 The telematic devices that send vehicle data over MQTT.
 
 - A **device** is an asset with its own owner; it is mounted on at most one vehicle, and a vehicle has at most one device.
-- Its **state** holds what it reports about itself (firmware); config pushes (F-J2) are decisions on the device profile.
+- What it reports about itself (firmware, SIM, power, signal) is kept as **status reports**, one row per report; its **state** shows the latest one. The send interval is an organization setting (TX-09).
 
 ## Diagram
 
@@ -28,10 +28,15 @@ erDiagram
   telematic_state {
     uuid telematic_id PK, FK
   }
+  telematic_status_reports {
+    bigint status_report_id PK
+    uuid telematic_id FK
+  }
   warranties }o..o| telematics : "telematic_id"
   telematics |o--o| vehicles : "vehicle_id"
   telematics }o..|| organizations : "organization_id"
   telematic_state |o..|| telematics : "telematic_id"
+  telematic_status_reports }o..|| telematics : "telematic_id"
   vehicle_telemetry }o--|| telematics : "telematic_id"
   telematic_history }o..o| telematics : "telematic_id"
   telematic_history }o..o| users : "changed_by"
@@ -87,6 +92,7 @@ What the device reports about itself lives in telematic_state.
 
 - [warranties](warranties.md#warranties).telematic_id (planned)
 - [telematic_state](#telematic_state).telematic_id (planned)
+- [telematic_status_reports](#telematic_status_reports).telematic_id (planned)
 - [vehicle_telemetry](telemetry.md#vehicle_telemetry).telematic_id
 - [telematic_history](#telematic_history).telematic_id (planned)
 
@@ -147,3 +153,35 @@ it is online is computed from telemetry (TX-06), not stored.
 | `storage_used_percent` | numeric(5,2) | yes |  |  | Share of the device's storage in use, 0-100. | `41.50` |
 | `gnss_status` | varchar(20) | yes |  |  | Satellite positioning status as reported (provisional values: FIX \| NO_FIX \| ANTENNA_FAULT). | `FIX` |
 | `reported_at` | timestamptz | yes |  |  | When the latest status report was received; every column above comes from that report. NULL until the first report. | `2026-09-14T00:30:00Z` |
+
+### telematic_status_reports
+
+**No. 20** · 📋 planned · owner: **customer** · features: F-J1, F-J3
+
+Every health report a T-Box sends about itself, about once a day (TX-10), so
+trends can be seen (signal getting weaker, voltage dropping before it went
+silent). Append-only: rows are never edited, so no change history. An
+ordinary table, not a hypertable: about 365 rows per device per year. No
+organization_id (DM-24): like other condition data it follows the device to
+its next owner (VH-11). Fields are provisional until the vendor confirms the
+message (mqtt-spec.md section 2.2).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `status_report_id` | bigint | no | PK |  | Auto-increasing ID of the report. | `51234` |
+| `telematic_id` | uuid | no | FK | [telematics](#telematics).telematic_id (on delete restrict) | Device that sent the report. | `2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55` |
+| `firmware_version` | varchar(50) | yes |  |  | Firmware version reported. | `1.4.2` |
+| `telemetry_interval_seconds` | integer | yes |  |  | Publish interval the device said it used. | `10` |
+| `sim_iccid` | varchar(22) | yes |  |  | ICCID of the SIM in the device. | `8984049000001234567` |
+| `is_esim` | boolean | yes |  |  | TRUE when the SIM is an eSIM. | `false` |
+| `sim_data_status` | varchar(20) | yes |  |  | Mobile data status (provisional values: ACTIVE \| NO_DATA \| SUSPENDED \| NO_SIM). | `ACTIVE` |
+| `supply_voltage_v` | numeric(5,2) | yes |  |  | Power supply voltage at the device, in volts. | `24.30` |
+| `signal_dbm` | smallint | yes |  |  | Mobile signal strength in dBm. | `-78` |
+| `storage_used_percent` | numeric(5,2) | yes |  |  | Share of the device's storage in use, 0-100. | `41.50` |
+| `gnss_status` | varchar(20) | yes |  |  | Satellite positioning status (provisional values: FIX \| NO_FIX \| ANTENNA_FAULT). | `FIX` |
+| `reported_at` | timestamptz | no |  |  | When the device produced the report (its own timestamp, normalized to UTC). | `2026-09-14T00:30:00Z` |
+| `received_at` | timestamptz | no |  |  | When the backend received it. | `2026-09-14T00:30:02Z` |
+
+**Indexes**
+
+- `ix_telematic_status_reports_device_time` (telematic_id, reported_at) - A device's reports over time, newest first
