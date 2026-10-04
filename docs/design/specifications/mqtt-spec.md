@@ -303,6 +303,10 @@ The following fields are added by the Backend and are **not** sent by the Telema
 | `vehicle_id` | Backend | UUID, looked up from `telematic_id` |
 | `received_at` | Backend | The time the backend received the message |
 
+The payload's `message_uuid` is stored in the target database design as
+`telemetry.device_message_id` (decision TM-18 in `docs/decisions/decision-log.md`);
+the wire field keeps its name.
+
 **Reason:**
 - The telematic does not know `telematic_id` or `vehicle_id` (internal UUIDs)
 - `message_id` is a technical ID with no business meaning for the telematic
