@@ -1374,6 +1374,11 @@ XLSX_DOMAIN_FILL = "D9E1F2"
 XLSX_LINK_COLOR = "0563C1"
 XLSX_MUTED_COLOR = "595959"
 XLSX_OPEN_LINK_LABEL = "→ Mở"
+# Vietnamese titles of the free-standing DBML notes in the workbook.
+VI_STICKY_NOTE_TITLES = {
+    "open_decisions": "Các quyết định còn mở",
+    "views": "Các view (giai đoạn đọc từ lịch sử)",
+}
 VI_OWNER_LABELS = {
     "customer": (
         "Khách hàng",
@@ -1682,7 +1687,7 @@ def _write_overview_sheet(
 
     for note_name, _, vi_text in model.sticky_notes:
         writer.blank()
-        title = "Các quyết định còn mở" if note_name == "open_decisions" else note_name
+        title = VI_STICKY_NOTE_TITLES.get(note_name, note_name)
         writer.write([title], bold=True, size=12, wrap=False)
         note_rows = _markdown_table_rows(vi_text)
         if note_rows:
