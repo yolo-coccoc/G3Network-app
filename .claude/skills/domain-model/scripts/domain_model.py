@@ -73,6 +73,11 @@ TENANT_COLUMN = "organization_id"
 # summarized in one sentence instead.
 TENANT_TABLE = "organizations"
 PLANNED_COLUMN_TAG = "@planned"
+# Target design of a built table (decision PR-11: design first, refactor in
+# bulk): a built column, or a value of a built enum, that the refactor drops.
+# It still exists in the code, so `check` compares it as usual; the views mark
+# it and generated history tables leave it out.
+REMOVED_TAG = "@remove"
 # Every column note ends with "@example <sample value>"; the text before it
 # is the column's meaning. Both are required (check fails without them).
 EXAMPLE_TAG = "@example"
@@ -125,6 +130,10 @@ class ColumnInfo:
         example: Sample value from the ``@example`` tag, may be empty.
         is_planned: Proposed column on a built table (note starts with ``@planned``).
         planned_detail: Text after ``@planned`` (e.g. decision IDs), may be empty.
+        is_removed: Built column the target design drops (note starts with
+            ``@remove``).
+        removed_detail: Text after ``@remove`` (e.g. decision IDs), may be empty.
+        removed_enum_values: Enum values whose note starts with ``@remove``.
     """
 
     name: str
@@ -138,6 +147,9 @@ class ColumnInfo:
     example: str
     is_planned: bool
     planned_detail: str
+    is_removed: bool = False
+    removed_detail: str = ""
+    removed_enum_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -332,29 +344,45 @@ def _split_vietnamese(text: str) -> tuple[str, str, str]:
     return "\n".join(english_lines).strip(), vi_name, "\n".join(vi_lines).strip()
 
 
+def _split_leading_tag(note: str, tag: str) -> tuple[bool, str, str]:
+    """Split a leading ``@planned``/``@remove`` tag off a note.
+
+    Accepted forms: "@tag", "@tag D1 D3", "@tag D1: text", "@tag: text".
+    Only text before a colon counts as the detail.
+
+    Returns:
+        ``(has the tag, detail, remaining note)``.
+    """
+    if not note.startswith(tag):
+        return False, "", note
+    remainder = note[len(tag) :].strip()
+    if ":" in remainder:
+        detail, _, rest = remainder.partition(":")
+    else:
+        detail, rest = remainder, ""
+    return True, detail.strip(), rest.strip()
+
+
 def _parse_column(pydbml_column: object) -> ColumnInfo:
     """Convert a pydbml column into a ``ColumnInfo``."""
     column_type = pydbml_column.type
     enum_values: tuple[str, ...] | None = None
+    removed_enum_values: tuple[str, ...] = ()
     if hasattr(column_type, "items"):
         type_label = column_type.name
         enum_values = tuple(item.name for item in column_type.items)
+        removed_enum_values = tuple(
+            item.name
+            for item in column_type.items
+            if _note_text(item.note).startswith(REMOVED_TAG)
+        )
     else:
         type_label = str(column_type)
     note, _, example = _note_text(pydbml_column.note).partition(EXAMPLE_TAG)
     note, _, vi_meaning = note.partition(f" {VI_TAG} ")
     note, vi_meaning, example = note.strip(), vi_meaning.strip(), example.strip()
-    is_planned = note.startswith(PLANNED_COLUMN_TAG)
-    planned_detail = ""
-    if is_planned:
-        # Accepted forms: "@planned", "@planned D1 D3", "@planned D1: text",
-        # "@planned: text". Only text before a colon counts as the detail.
-        remainder = note[len(PLANNED_COLUMN_TAG) :].strip()
-        if ":" in remainder:
-            planned_detail, _, note = remainder.partition(":")
-        else:
-            planned_detail, note = remainder, ""
-        planned_detail, note = planned_detail.strip(), note.strip()
+    is_planned, planned_detail, note = _split_leading_tag(note, PLANNED_COLUMN_TAG)
+    is_removed, removed_detail, note = _split_leading_tag(note, REMOVED_TAG)
     return ColumnInfo(
         name=pydbml_column.name,
         type_label=type_label,
@@ -367,6 +395,9 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
         example=example,
         is_planned=is_planned,
         planned_detail=planned_detail,
+        is_removed=is_removed,
+        removed_detail=removed_detail,
+        removed_enum_values=removed_enum_values,
     )
 
 
@@ -418,7 +449,9 @@ def _resolve_tracked_columns(
         tracked = [
             column.name
             for column in columns
-            if not column.is_pk and column.name not in untracked
+            if not column.is_pk
+            and not column.is_removed
+            and column.name not in untracked
         ]
         return tracked, errors
     return tracked_spec, errors
@@ -485,11 +518,22 @@ def _build_history_table(
         )
     ]
     for column in source.columns:
+        # The history table is designed for the target: what the refactor
+        # drops is never copied.
+        if column.is_removed:
+            continue
+        enum_values = column.enum_values
+        if enum_values is not None:
+            enum_values = tuple(
+                value
+                for value in enum_values
+                if value not in column.removed_enum_values
+            )
         columns.append(
             ColumnInfo(
                 name=column.name,
                 type_label=column.type_label,
-                enum_values=column.enum_values,
+                enum_values=enum_values,
                 is_pk=False,
                 is_not_null=False,
                 is_unique=False,
@@ -748,6 +792,13 @@ def load_domain_model(source_path: Path) -> DomainModel:
         ]
         description, vi_name, vi_description = _split_vietnamese(description)
         columns = [_parse_column(column) for column in pydbml_table.columns]
+        if status != "built":
+            errors += [
+                f"{table_name}.{column.name}: {REMOVED_TAG} is only for built "
+                "tables; delete the column from the design instead"
+                for column in columns
+                if column.is_removed or column.removed_enum_values
+            ]
         tracked_columns, tracking_errors = _resolve_tracked_columns(
             table_name, tags, columns
         )
@@ -1201,6 +1252,11 @@ def _render_table_section(
         if column.is_planned:
             detail = f" ({column.planned_detail})" if column.planned_detail else ""
             meaning = f"**📋 planned{detail}**" + (f": {meaning}" if meaning else "")
+        if column.is_removed:
+            detail = f" ({column.removed_detail})" if column.removed_detail else ""
+            meaning = f"**🗑️ to be removed{detail}**" + (
+                f": {meaning}" if meaning else ""
+            )
         example = f"`{_md_cell(column.example)}`" if column.example else ""
         lines.append(
             f"| `{column.name}` | {_md_cell(column.type_label)} "
@@ -1217,9 +1273,13 @@ def _render_table_section(
             if column.type_label in seen_enums:
                 continue
             seen_enums.add(column.type_label)
-            lines.append(
-                f"- `{column.type_label}`: {', '.join(column.enum_values or ())}"
-            )
+            values = [
+                f"~~{value}~~ (to be removed)"
+                if value in column.removed_enum_values
+                else value
+                for value in column.enum_values or ()
+            ]
+            lines.append(f"- `{column.type_label}`: {', '.join(values)}")
         lines.append("")
 
     if table.indexes:
@@ -1689,6 +1749,9 @@ def _write_table_sheet(
         decision_ids = re.findall(r"D\d+", column.planned_detail)
         if decision_ids and not all(code in meaning for code in decision_ids):
             meaning += f" (xem quyết định {', '.join(decision_ids)})"
+        if column.is_removed:
+            detail = f": {column.removed_detail}" if column.removed_detail else ""
+            meaning = f"[Sẽ bỏ{detail}] {meaning}"
         writer.write(
             [
                 position,
@@ -1713,9 +1776,13 @@ def _write_table_sheet(
         for column in enum_columns:
             if column.type_label not in seen_enums:
                 seen_enums.add(column.type_label)
-                writer.write(
-                    [None, column.type_label, ", ".join(column.enum_values or ())]
-                )
+                values = [
+                    f"{value} (sẽ bỏ)"
+                    if value in column.removed_enum_values
+                    else value
+                    for value in column.enum_values or ()
+                ]
+                writer.write([None, column.type_label, ", ".join(values)])
 
     if table.indexes:
         writer.blank()

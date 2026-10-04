@@ -90,6 +90,12 @@ every DBML edit.
 - **A proposed column on a built table** gets a note starting with
   `@planned`, optionally with decision IDs: `@planned D1 D3: why`.
   `check` ignores it. Remove the tag once the migration adds the column.
+- **A built column the target design drops** gets a note starting with
+  `@remove` (same forms: `@remove VH-06: why`); so does a value of a built
+  enum (`INACTIVE [note: '@remove VH-05']`). It still exists in the code, so
+  `check` compares it as usual; the views mark it "to be removed" and the
+  generated history table leaves it out. Delete it from the DBML when the
+  refactor drops it from the code. Only allowed on built tables.
 - **Change history (decision D8, `.claude/rules/database.md`)**: decided
   **per table** in the review (on for tables whose changes must be audited,
   e.g. profile details). When on, the source table's tag line says
