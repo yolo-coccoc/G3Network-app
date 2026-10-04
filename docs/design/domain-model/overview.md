@@ -114,6 +114,25 @@ Not drawn, to keep the map readable: 14 domains also point to **identity** throu
 | **internal** | Our own data (the organization running the platform), shared across all organizations. | [organizations](domains/identity.md#organizations), [organization_history](domains/identity.md#organization_history), [users](domains/identity.md#users), [user_history](domains/identity.md#user_history), [user_state](domains/identity.md#user_state), [user_credentials](domains/identity.md#user_credentials), [user_sessions](domains/identity.md#user_sessions), [one_time_codes](domains/identity.md#one_time_codes), [user_consents](domains/identity.md#user_consents), [legal_documents](domains/identity.md#legal_documents), [access_audit_logs](domains/identity.md#access_audit_logs), [vehicle_models](domains/vehicles.md#vehicle_models), [vehicle_model_history](domains/vehicles.md#vehicle_model_history), [battery_models](domains/batteries.md#battery_models), [battery_model_history](domains/batteries.md#battery_model_history), [charging_stations](domains/charging_stations.md#charging_stations), [charging_evses](domains/charging_stations.md#charging_evses), [charging_connectors](domains/charging_stations.md#charging_connectors), [charging_ocpp_messages](domains/charging_stations.md#charging_ocpp_messages), [charging_station_configuration_entries](domains/charging_stations.md#charging_station_configuration_entries), [repair_partners](domains/support.md#repair_partners), [charging_policies](domains/policy.md#charging_policies), [charging_policy_versions](domains/policy.md#charging_policy_versions), [tariffs](domains/billing.md#tariffs), [subscription_plans](domains/billing.md#subscription_plans), [plan_features](domains/billing.md#plan_features), [promotion_campaigns](domains/unassigned.md#promotion_campaigns) |
 | **two-party** | A G3 asset used by a customer (both have a stake). | [charging_reservations](domains/charging_stations.md#charging_reservations), [charging_sessions](domains/charging_sessions.md#charging_sessions), [charging_session_events](domains/charging_sessions.md#charging_session_events), [charging_session_measurements](domains/charging_sessions.md#charging_session_measurements) |
 
+## Views
+
+Periods of a relationship stored as a column plus a start time (DM-22). Code
+reads them only through these views, never from a history table. A view is
+defined here only once a feature reads it (DM-27); `battery_ownership_periods`,
+`telematic_installation_periods` and `telematic_ownership_periods` will follow
+the same pattern when needed.
+
+| View | One row per | Columns | Read by |
+|---|---|---|---|
+| `vehicle_ownership_periods` | period a truck had one owner | `vehicle_id`, `organization_id`, `owned_from`, `owned_until` (NULL for the current owner) | ownership history and first handover date (VEH-02), "who owned it on that day" |
+| `battery_installation_periods` | stay of a battery in one truck | `battery_id`, `vehicle_id`, `installed_from`, `installed_until` (NULL while still installed) | battery health history across trucks (MON-07), battery warranty counters (WAR-01) |
+
+How each is built:
+- **Versions**: the rows of the history table (each an earlier version of the source row, replaced at `changed_at`) followed by the current source row, ordered by time.
+- `vehicle_ownership_periods`: a new period starts at each version whose `organization_id` differs from the previous version's; `owned_from` is that version's `acquired_at`, `owned_until` the next period's `owned_from`.
+- `battery_installation_periods`: a new period starts at each version whose `vehicle_id` is set and differs from the previous version's; `installed_from` is that version's `installed_at`; `installed_until` is the next period's `installed_from` when the battery moved straight to another truck, otherwise the `changed_at` of the change that removed it (the time it was saved; removals must be recorded promptly).
+- A wrong value later corrected shows as a short period; its `change_reason` in the history explains it.
+
 ## Open decisions
 
 | ID | Question | Affects |

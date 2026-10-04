@@ -114,10 +114,10 @@ Every earlier version of a row of `battery_models`: a copy of the whole row, tak
 **No. 16** · 🆕 proposed · owner: **customer** · features: F-F2
 
 One physical battery, managed as an asset (BAT-01, VH-16). The truck it is
-installed in and its owner are columns with a since time (DM-22); their
-periods come from the views battery_installation_periods and
-battery_ownership_periods over battery_history, which code never reads
-directly. A battery's health history across trucks joins telemetry with the
+installed in and its owner are columns with a start time (DM-22). Its
+installation periods come from the view battery_installation_periods (see the
+views note); owner periods get a view when first needed (DM-27). Code never
+reads battery_history directly. A battery's health history across trucks joins telemetry with the
 installation periods. When a truck is sold and the seller owns its battery,
 the battery moves to the buyer in the same transfer action (VH-12); a battery
 owned by someone else (e.g. leased from G3) stays with its owner.
@@ -130,7 +130,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 | `battery_id` | uuid | no | PK |  | Internal ID of the battery. | `8e2a6c4f-1d3b-4f7a-9c5e-2b4d6f8a0c11` |
 | `serial_number` | varchar(50) | no | 🔍 |  | The pack's serial number from the manufacturer; unique among batteries not deleted. | `CATL-LFP282-2025-004512` |
 | `battery_model_id` | uuid | no | FK 🔍 | [battery_models](#battery_models).battery_model_id (on delete restrict) | The battery's model, with its specifications. | `2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55` |
-| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the battery now; may differ from the truck's owner (e.g. G3 leasing it, deferred.md 88). Earlier owners come from the view battery_ownership_periods. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the battery now; may differ from the truck's owner (e.g. G3 leasing it, deferred.md 88). Earlier owners are in battery_history; a view is added when a feature first needs them (DM-27). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `acquired_at` | timestamptz | no | 🔍 |  | When the current owner took the battery. | `2026-06-01T00:00:00Z` |
 | `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Truck the battery is installed in now; NULL when in stock or removed. A truck holds at most one battery. Earlier installations come from the view battery_installation_periods. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `installed_at` | timestamptz | yes | 🔍 |  | When the battery was installed in its current truck; NULL when not installed. | `2026-06-01T00:00:00Z` |

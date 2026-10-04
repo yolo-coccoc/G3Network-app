@@ -631,7 +631,7 @@ Table batteries {
   battery_id uuid [pk, note: 'Internal ID of the battery. @vi Mã nội bộ của pin. @example 8e2a6c4f-1d3b-4f7a-9c5e-2b4d6f8a0c11']
   serial_number varchar(50) [not null, note: 'The pack\'s serial number from the manufacturer; unique among batteries not deleted. @vi Số serial của pin do nhà sản xuất cấp; duy nhất trong các pin chưa xóa. @example CATL-LFP282-2025-004512']
   battery_model_id uuid [not null, note: 'The battery\'s model, with its specifications. @vi Dòng pin, kèm thông số kỹ thuật. @example 2c7f4e1a-9b3d-4a5e-8c6f-0d1e2f3a4b55']
-  organization_id uuid [not null, note: 'Organization that owns the battery now; may differ from the truck\'s owner (e.g. G3 leasing it, deferred.md 88). Earlier owners come from the view battery_ownership_periods. @vi Tổ chức đang sở hữu pin; có thể khác chủ xe (ví dụ G3 cho thuê pin, deferred.md 88). Các chủ trước lấy từ view battery_ownership_periods. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Organization that owns the battery now; may differ from the truck\'s owner (e.g. G3 leasing it, deferred.md 88). Earlier owners are in battery_history; a view is added when a feature first needs them (DM-27). @vi Tổ chức đang sở hữu pin; có thể khác chủ xe (ví dụ G3 cho thuê pin, deferred.md 88). Các chủ trước nằm trong battery_history; view được thêm khi có tính năng đầu tiên cần (DM-27). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   acquired_at timestamptz [not null, note: 'When the current owner took the battery. @vi Thời điểm chủ hiện tại nhận pin. @example 2026-06-01T00:00:00Z']
   vehicle_id uuid [note: 'Truck the battery is installed in now; NULL when in stock or removed. A truck holds at most one battery. Earlier installations come from the view battery_installation_periods. @vi Xe đang lắp pin; NULL khi pin trong kho hoặc đã tháo. Mỗi xe lắp tối đa một pin. Các lần lắp trước lấy từ view battery_installation_periods. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   installed_at timestamptz [note: 'When the battery was installed in its current truck; NULL when not installed. @vi Thời điểm pin được lắp vào xe hiện tại; NULL khi chưa lắp. @example 2026-06-01T00:00:00Z']
@@ -647,16 +647,16 @@ Table batteries {
   }
   Note: '''@status proposed @owner customer @features F-F2 @tracked *
 One physical battery, managed as an asset (BAT-01, VH-16). The truck it is
-installed in and its owner are columns with a since time (DM-22); their
-periods come from the views battery_installation_periods and
-battery_ownership_periods over battery_history, which code never reads
-directly. A battery's health history across trucks joins telemetry with the
+installed in and its owner are columns with a start time (DM-22). Its
+installation periods come from the view battery_installation_periods (see the
+views note); owner periods get a view when first needed (DM-27). Code never
+reads battery_history directly. A battery's health history across trucks joins telemetry with the
 installation periods. When a truck is sold and the seller owns its battery,
 the battery moves to the buyer in the same transfer action (VH-12); a battery
 owned by someone else (e.g. leased from G3) stays with its owner.
 Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Pin
-@vi Một viên pin vật lý, được quản lý như một tài sản (BAT-01, VH-16). Xe đang lắp pin và chủ sở hữu pin là các cột kèm thời điểm bắt đầu (DM-22); các giai đoạn lấy từ view battery_installation_periods và battery_ownership_periods trên battery_history, mã nguồn không bao giờ đọc trực tiếp bảng lịch sử. Lịch sử sức khỏe của pin qua các xe được ghép từ dữ liệu vận hành với các giai đoạn lắp. Khi bán xe mà bên bán sở hữu pin, pin chuyển sang bên mua trong cùng thao tác chuyển quyền (VH-12); pin thuộc bên khác (ví dụ thuê của G3) vẫn thuộc chủ của nó. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
+@vi Một viên pin vật lý, được quản lý như một tài sản (BAT-01, VH-16). Xe đang lắp pin và chủ sở hữu pin là các cột kèm thời điểm bắt đầu (DM-22); các giai đoạn lắp lấy từ view battery_installation_periods (xem ghi chú views); giai đoạn sở hữu có view khi cần lần đầu (DM-27); mã nguồn không bao giờ đọc trực tiếp bảng lịch sử. Lịch sử sức khỏe của pin qua các xe được ghép từ dữ liệu vận hành với các giai đoạn lắp. Khi bán xe mà bên bán sở hữu pin, pin chuyển sang bên mua trong cùng thao tác chuyển quyền (VH-12); pin thuộc bên khác (ví dụ thuê của G3) vẫn thuộc chủ của nó. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Ref: batteries.battery_model_id > battery_models.battery_model_id [delete: restrict]
@@ -747,7 +747,7 @@ Table telematics {
   telematic_serial varchar(50) [not null, note: 'Serial printed on the device; also its MQTT identity. Unique among devices not deleted. @vi Số serial in trên thiết bị; cũng là định danh MQTT. Duy nhất trong các thiết bị chưa xóa. @example TBX-2409-000123']
   organization_id uuid [not null, note: '@planned TX-07: Organization that owns the device now: the truck\'s owner, or G3 when it supplies the device (e.g. with the subscription). @vi Tổ chức đang sở hữu thiết bị: chủ xe, hoặc G3 khi G3 cung cấp thiết bị (ví dụ kèm gói thuê bao). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   acquired_at timestamptz [not null, note: '@planned TX-07: When the current owner took the device (DM-22). @vi Thời điểm chủ hiện tại nhận thiết bị (DM-22). @example 2026-06-01T00:00:00Z']
-  vehicle_id uuid [note: 'Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today SET NULL). @vi Xe mà thiết bị đang gắn; NULL khi trong kho hoặc đã tháo. Mỗi xe gắn tối đa một thiết bị. Các xe trước lấy từ view telematic_installation_periods (DM-22). Dự kiến: khóa ngoại chuyển sang ON DELETE RESTRICT như mọi liên kết khác (hiện là SET NULL). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  vehicle_id uuid [note: 'Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks are in telematic_history; a view is added when a feature first needs them (DM-27). Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today SET NULL). @vi Xe mà thiết bị đang gắn; NULL khi trong kho hoặc đã tháo. Mỗi xe gắn tối đa một thiết bị. Các xe trước nằm trong telematic_history; view được thêm khi có tính năng đầu tiên cần (DM-27). Dự kiến: khóa ngoại chuyển sang ON DELETE RESTRICT như mọi liên kết khác (hiện là SET NULL). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   installed_at timestamptz [note: '@planned TX-08: When the device was mounted on its current truck; NULL when not mounted (DM-22). @vi Thời điểm thiết bị được gắn lên xe hiện tại; NULL khi chưa gắn (DM-22). @example 2026-06-01T00:00:00Z']
   status telematicstatus [not null, note: 'Status set by a person (DM-25). ACTIVE: usable. INACTIVE: not usable now, e.g. being repaired; the reason says why. A device that leaves the system (scrapped, returned) is INACTIVE, unmounted and soft-deleted. Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. @vi Trạng thái do con người đặt (DM-25). ACTIVE: dùng được. INACTIVE: hiện không dùng được, ví dụ đang sửa chữa; lý do cho biết vì sao. Thiết bị rời hệ thống (thanh lý, trả lại) được chuyển sang INACTIVE, tháo khỏi xe và xóa mềm. Đang gắn hay trong kho đọc từ vehicle_id; có gửi dữ liệu hay im lặng được tính từ dữ liệu vận hành (TX-06). Chỉ thiết bị đang gắn và ACTIVE mới nhận cấu hình. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the device is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Antenna replaced at the Hanoi workshop']
@@ -767,13 +767,13 @@ Table telematics {
 Profile of one telematic device (T-Box): what it is and the decisions about it
 (TX-08). The device is an asset with its own owner, the truck's owner or G3
 (TX-07); a device the seller owns moves with the truck at a sale. Its owner
-and truck are columns with a start time (DM-22), their periods read through
-the views telematic_ownership_periods and telematic_installation_periods.
+and truck are columns with a start time (DM-22); their periods get views when
+a feature first needs them (DM-27).
 What the device reports about itself is kept in telematic_status_reports;
 its current health is the newest report (TX-11).
 Check constraint: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).
 @vi-name Thiết bị telematics
-@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn đọc qua view telematic_ownership_periods và telematic_installation_periods. Những gì thiết bị tự báo về mình được lưu trong telematic_status_reports; sức khỏe hiện tại là báo cáo mới nhất (TX-11). Ràng buộc kiểm tra: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).'''
+@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn có view khi có tính năng đầu tiên cần (DM-27). Những gì thiết bị tự báo về mình được lưu trong telematic_status_reports; sức khỏe hiện tại là báo cáo mới nhất (TX-11). Ràng buộc kiểm tra: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).'''
 }
 
 Table telematic_status_reports {
@@ -1909,6 +1909,39 @@ Features whose backend domain is not decided yet (see feature-list.md).
 
 @vi-name Chưa phân miền
 @vi Các tính năng chưa được quyết định thuộc miền nghiệp vụ nào (xem feature-list.md).
+'''
+}
+
+// ===========================================================================
+// Views: periods read from change history (DM-22, DM-27)
+// ===========================================================================
+
+Note views {
+'''
+Periods of a relationship stored as a column plus a start time (DM-22). Code
+reads them only through these views, never from a history table. A view is
+defined here only once a feature reads it (DM-27); `battery_ownership_periods`,
+`telematic_installation_periods` and `telematic_ownership_periods` will follow
+the same pattern when needed.
+
+| View | One row per | Columns | Read by |
+|---|---|---|---|
+| `vehicle_ownership_periods` | period a truck had one owner | `vehicle_id`, `organization_id`, `owned_from`, `owned_until` (NULL for the current owner) | ownership history and first handover date (VEH-02), "who owned it on that day" |
+| `battery_installation_periods` | stay of a battery in one truck | `battery_id`, `vehicle_id`, `installed_from`, `installed_until` (NULL while still installed) | battery health history across trucks (MON-07), battery warranty counters (WAR-01) |
+
+How each is built:
+- **Versions**: the rows of the history table (each an earlier version of the source row, replaced at `changed_at`) followed by the current source row, ordered by time.
+- `vehicle_ownership_periods`: a new period starts at each version whose `organization_id` differs from the previous version's; `owned_from` is that version's `acquired_at`, `owned_until` the next period's `owned_from`.
+- `battery_installation_periods`: a new period starts at each version whose `vehicle_id` is set and differs from the previous version's; `installed_from` is that version's `installed_at`; `installed_until` is the next period's `installed_from` when the battery moved straight to another truck, otherwise the `changed_at` of the change that removed it (the time it was saved; removals must be recorded promptly).
+- A wrong value later corrected shows as a short period; its `change_reason` in the history explains it.
+
+@vi
+Các giai đoạn của một quan hệ được lưu bằng một cột cùng thời điểm bắt đầu (DM-22). Mã nguồn chỉ đọc các giai đoạn qua những view này, không bao giờ đọc trực tiếp bảng lịch sử. Một view chỉ được định nghĩa ở đây khi có tính năng đọc nó (DM-27); battery_ownership_periods, telematic_installation_periods và telematic_ownership_periods sẽ theo cùng cách khi cần.
+
+| View | Mỗi dòng là | Các cột | Được dùng bởi |
+|---|---|---|---|
+| vehicle_ownership_periods | một giai đoạn xe thuộc một chủ | vehicle_id, organization_id, owned_from, owned_until (NULL với chủ hiện tại) | lịch sử sở hữu và ngày bàn giao đầu tiên (VEH-02), "ngày đó xe của ai" |
+| battery_installation_periods | một lần pin nằm trên một xe | battery_id, vehicle_id, installed_from, installed_until (NULL khi đang lắp) | lịch sử sức khỏe pin qua các xe (MON-07), bộ đếm bảo hành pin (WAR-01) |
 '''
 }
 
