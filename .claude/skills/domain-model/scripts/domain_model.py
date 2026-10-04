@@ -134,6 +134,8 @@ class ColumnInfo:
             ``@remove``).
         removed_detail: Text after ``@remove`` (e.g. decision IDs), may be empty.
         removed_enum_values: Enum values whose note starts with ``@remove``.
+        planned_enum_values: Enum values whose note starts with ``@planned``:
+            proposed for a built enum, not in the code yet.
     """
 
     name: str
@@ -150,6 +152,7 @@ class ColumnInfo:
     is_removed: bool = False
     removed_detail: str = ""
     removed_enum_values: tuple[str, ...] = ()
+    planned_enum_values: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -368,6 +371,7 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
     column_type = pydbml_column.type
     enum_values: tuple[str, ...] | None = None
     removed_enum_values: tuple[str, ...] = ()
+    planned_enum_values: tuple[str, ...] = ()
     if hasattr(column_type, "items"):
         type_label = column_type.name
         enum_values = tuple(item.name for item in column_type.items)
@@ -375,6 +379,11 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
             item.name
             for item in column_type.items
             if _note_text(item.note).startswith(REMOVED_TAG)
+        )
+        planned_enum_values = tuple(
+            item.name
+            for item in column_type.items
+            if _note_text(item.note).startswith(PLANNED_COLUMN_TAG)
         )
     else:
         type_label = str(column_type)
@@ -398,6 +407,7 @@ def _parse_column(pydbml_column: object) -> ColumnInfo:
         is_removed=is_removed,
         removed_detail=removed_detail,
         removed_enum_values=removed_enum_values,
+        planned_enum_values=planned_enum_values,
     )
 
 
@@ -1276,6 +1286,8 @@ def _render_table_section(
             values = [
                 f"~~{value}~~ (to be removed)"
                 if value in column.removed_enum_values
+                else f"{value} (📋 planned)"
+                if value in column.planned_enum_values
                 else value
                 for value in column.enum_values or ()
             ]
@@ -1779,6 +1791,8 @@ def _write_table_sheet(
                 values = [
                     f"{value} (sẽ bỏ)"
                     if value in column.removed_enum_values
+                    else f"{value} (dự kiến)"
+                    if value in column.planned_enum_values
                     else value
                     for value in column.enum_values or ()
                 ]
@@ -1955,10 +1969,16 @@ def check_against_backend(model: DomainModel) -> list[str]:
                         f"{where}: enum {sql_column.type.name} in the models, "
                         f"{column.type_label} in the DBML"
                     )
-                elif tuple(sql_column.type.enums) != column.enum_values:
+                elif tuple(sql_column.type.enums) != (
+                    built_values := tuple(
+                        value
+                        for value in column.enum_values or ()
+                        if value not in column.planned_enum_values
+                    )
+                ):
                     problems.append(
                         f"{where}: enum values differ: models {sql_column.type.enums}, "
-                        f"DBML {list(column.enum_values or ())}"
+                        f"DBML {list(built_values)} (without @planned values)"
                     )
             else:
                 sql_type = _normalize_type(sql_column.type.compile(dialect=dialect))

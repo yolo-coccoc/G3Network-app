@@ -90,6 +90,8 @@ every DBML edit.
 - **A proposed column on a built table** gets a note starting with
   `@planned`, optionally with decision IDs: `@planned D1 D3: why`.
   `check` ignores it. Remove the tag once the migration adds the column.
+  A new value of a built enum works the same way:
+  `NEW_VALUE [note: '@planned DR-07']`.
 - **A built column the target design drops** gets a note starting with
   `@remove` (same forms: `@remove VH-06: why`); so does a value of a built
   enum (`INACTIVE [note: '@remove VH-05']`). It still exists in the code, so
