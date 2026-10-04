@@ -84,6 +84,17 @@ domains:
     summary_vi: >-
       Quản lý từng pin xe như một tài sản riêng: dòng pin, chủ sở hữu và các
       xe pin đã được lắp.
+  - prefix: WAR
+    key: warranties
+    name: Warranties
+    name_vi: Bảo hành
+    backend_domain: warranties
+    summary: >-
+      The warranties of each truck, battery and device: their periods and
+      limits, and why a warranty was voided.
+    summary_vi: >-
+      Bảo hành của từng xe, pin và thiết bị: thời hạn, giới hạn và lý do một
+      bảo hành bị hủy.
   - prefix: DEV
     key: telematics
     name: Telematics devices
@@ -890,13 +901,12 @@ features:
       - ["Create, edit, search and retire vehicles", "Tạo, sửa, tìm kiếm và ngừng sử dụng xe"]
       - ["VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason", "VIN và biển số không trùng trong các xe đang dùng và đều sửa được (nhập nhầm, biển số theo chủ xe); lưu lịch sử thay đổi kèm lý do"]
       - ["Service status set by a person: active, under maintenance, decommissioned, with a reason; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ do con người đặt: đang phục vụ, đang bảo dưỡng, đã rời hệ thống, kèm lý do; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
-      - ["Warranties per truck, battery and device with their own limits; a voided warranty keeps its reason", "Bảo hành theo từng xe, pin và thiết bị với giới hạn riêng; bảo hành bị hủy lưu kèm lý do"]
       - ["Filter by status, model, owner and fleet", "Lọc theo trạng thái, dòng xe, chủ sở hữu và đội xe"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
-    sources: [Data IN-32, PRD F-F2, Decision VH-05, Decision VH-07, Decision VH-09]
+    sources: [Data IN-32, PRD F-F2, Decision VH-05, Decision VH-07]
     old_codes: [F-F2]
 
   - code: VEH-02
@@ -1038,6 +1048,39 @@ features:
     depends_on: [VEH-01]
     sources: [Data IN-33, Decision VH-08, Decision VH-13, deferred.md 87, deferred.md 88]
 
+
+  # ---------------------------------------------------------------------------
+  # WAR — Warranties
+  # ---------------------------------------------------------------------------
+
+  - code: WAR-01
+    name: Warranty register
+    name_vi: Sổ bảo hành
+    what: >-
+      Keep every warranty of a truck, its battery and its devices: period,
+      limits such as distance or charge cycles, and its status, with the
+      reason when a warranty is voided.
+    what_vi: >-
+      Lưu mọi bảo hành của xe, pin và thiết bị trên xe: thời hạn, các giới hạn
+      như quãng đường hay số chu kỳ sạc, và trạng thái, kèm lý do khi bảo hành
+      bị hủy.
+    value: >-
+      Everyone knows what is still covered; a voided warranty is explained
+      and provable.
+    value_vi: >-
+      Mọi bên đều biết những gì còn được bảo hành; bảo hành bị hủy có lý do rõ
+      ràng và chứng minh được.
+    users: [WARRANTY, OPERATIONS, FLEET_MANAGER]
+    capabilities:
+      - ["Warranties per truck, battery and device, set per truck, each with its own period and limits", "Bảo hành theo từng xe, pin và thiết bị, đặt riêng cho từng xe, mỗi bảo hành có thời hạn và giới hạn riêng"]
+      - ["Expiry computed from the date and the truck's or battery's counters; voiding with a reason and history", "Hết hạn được tính từ ngày và bộ đếm của xe hoặc pin; hủy bảo hành kèm lý do và lịch sử"]
+      - ["A battery's warranty follows the battery to another truck", "Bảo hành của pin đi theo pin sang xe khác"]
+    surfaces: {backend: todo, portal: todo}
+    priority: Must
+    release: P1.0
+    offer: included
+    depends_on: [VEH-01, BAT-01]
+    sources: [Data IN-32, Decision VH-09, Decision VH-14]
 
   # ---------------------------------------------------------------------------
   # DEV — Telematics devices

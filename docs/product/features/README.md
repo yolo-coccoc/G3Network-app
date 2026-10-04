@@ -19,6 +19,7 @@ A feature is done when every surface it needs is done. A cell shows
 | [ACC — Accounts & access](domains/identity.md) | 22 | 0 | 0/22 | 0/12 | 0/19 |
 | [VEH — Vehicles](domains/vehicles.md) | 5 | 0 | 0/5 | — | 0/5 |
 | [BAT — Batteries](domains/batteries.md) | 1 | 0 | 0/1 | — | 0/1 |
+| [WAR — Warranties](domains/warranties.md) | 1 | 0 | 0/1 | — | 0/1 |
 | [DEV — Telematics devices](domains/telematics.md) | 8 | 0 | 0/8 | — | 0/7 |
 | [MON — Vehicle & battery monitoring](domains/telemetry.md) | 19 | 0 | 0/18 | 0/10 | 0/16 |
 | [RTE — Range & route planning](domains/routing.md) | 7 | 0 | 0/6 | 0/5 | 0/1 |
@@ -35,7 +36,7 @@ A feature is done when every surface it needs is done. A cell shows
 | [CRB — Carbon & green transition](domains/carbon.md) | 11 | 0 | 0/11 | 0/2 | 0/7 |
 | [PLT — Platform, data & compliance](domains/platform.md) | 7 | 0 | 0/7 | — | 0/4 |
 | [TMS — Transport management integration (Phase 2)](domains/tms.md) | 6 | 0 | 0/6 | 0/1 | 0/4 |
-| **Total** | **177** | **0** | **0/175** | **0/64** | **0/137** |
+| **Total** | **178** | **0** | **0/176** | **0/64** | **0/138** |
 
 ## Domains and releases
 
@@ -44,6 +45,7 @@ A feature is done when every surface it needs is done. A cell shows
 | ACC | [Accounts & access](domains/identity.md) | `identity` | Organizations, people, logins, roles and what each person may see and do; consent and audit of personal data. | 18 | 4 |  |  |
 | VEH | [Vehicles](domains/vehicles.md) | `vehicles` | The truck's profile, owner and model, and its activation at handover. | 5 |  |  |  |
 | BAT | [Batteries](domains/batteries.md) | `batteries` | Each truck battery managed as an asset of its own: its model, owner and the trucks it has been fitted to. | 1 |  |  |  |
+| WAR | [Warranties](domains/warranties.md) | `warranties` | The warranties of each truck, battery and device: their periods and limits, and why a warranty was voided. | 1 |  |  |  |
 | DEV | [Telematics devices](domains/telematics.md) | `telematics` | The on-board devices that send vehicle data: registry, mapping to vehicles, health, security and remote configuration. | 7 | 1 |  |  |
 | MON | [Vehicle & battery monitoring](domains/telemetry.md) | `telemetry` | Live and historical vehicle data, battery and safety alerts, battery health, trips and operating reports. | 16 | 2 |  | 1 |
 | RTE | [Range & route planning](domains/routing.md) | `telemetry` | How far and how long a truck can still go, whether it reaches its destination, where and when to charge, and roads it may not use. | 6 | 1 |  |  |

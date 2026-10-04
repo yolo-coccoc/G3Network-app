@@ -33,14 +33,13 @@ Keep every truck's profile: VIN, plate, model, handover date, warranty status an
 - Create, edit, search and retire vehicles
 - VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason
 - Service status set by a person: active, under maintenance, decommissioned, with a reason; idle or silent trucks are shown from their data, not stored
-- Warranties per truck, battery and device with their own limits; a voided warranty keeps its reason
 - Filter by status, model, owner and fleet
 
 **Status:** Backend ⬜ · Portal ⬜
 
-**Needed by:** [BAT-01](batteries.md#bat-01), [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-05](#veh-05)  
+**Needed by:** [BAT-01](batteries.md#bat-01), [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-05](#veh-05), [WAR-01](warranties.md#war-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · PRD F-F2 · Decision VH-05 · Decision VH-07 · Decision VH-09  
+**Sources:** Data IN-32 · PRD F-F2 · Decision VH-05 · Decision VH-07  
 **Old codes:** F-F2
 
 <a id="veh-02"></a>

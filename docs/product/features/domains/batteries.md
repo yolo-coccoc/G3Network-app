@@ -33,6 +33,6 @@ Manage each truck battery as an asset: its model, owner and the trucks it has be
 **Status:** Backend ⬜ · Portal ⬜
 
 **Depends on:** [VEH-01](vehicles.md#veh-01)  
-**Needed by:** [MNT-06](maintenance.md#mnt-06), [MON-08](telemetry.md#mon-08)  
+**Needed by:** [MNT-06](maintenance.md#mnt-06), [MON-08](telemetry.md#mon-08), [WAR-01](warranties.md#war-01)  
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-33 · Decision VH-08 · Decision VH-13 · deferred.md 87 · deferred.md 88
