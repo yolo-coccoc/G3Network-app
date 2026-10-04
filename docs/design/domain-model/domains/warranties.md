@@ -48,6 +48,7 @@ constraint); that also decides which limits keys apply. No organization_id
 (DM-24): a warranty follows its object, and whoever owns the object now sees
 it. A truck usually has several (vehicle, battery, an extended one). Change
 history on: voiding must show who and why.
+Check constraints: num_nonnulls(vehicle_id, battery_id, telematic_id) = 1 (VH-18); deleted_at IS NULL OR status = 'VOIDED' (DM-25). The limits keys allowed for the set link are checked by the application. Possible later: one warranty table per covered object, each in its own domain (vehicle, battery, T-Box warranties), if their rules drift apart.
 
 🔍 = tracked column: a change to it copies the whole old row into [warranty_history](#warranty_history).
 

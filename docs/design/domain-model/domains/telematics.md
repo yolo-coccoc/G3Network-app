@@ -53,6 +53,7 @@ and truck are columns with a start time (DM-22), their periods read through
 the views telematic_ownership_periods and telematic_installation_periods.
 What the device reports about itself is kept in telematic_status_reports;
 its current health is the newest report (TX-11).
+Check constraint: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [telematic_history](#telematic_history).
 
@@ -63,7 +64,7 @@ its current health is the newest report (TX-11).
 | `telematic_serial` | varchar(50) | no | 🔍 |  | Serial printed on the device; also its MQTT identity. Unique among devices not deleted. | `TBX-2409-000123` |
 | `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (TX-07)**: Organization that owns the device now: the truck's owner, or G3 when it supplies the device (e.g. with the subscription). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `acquired_at` | timestamptz | no | 🔍 |  | **📋 planned (TX-07)**: When the current owner took the device (DM-22). | `2026-06-01T00:00:00Z` |
-| `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete set null) | Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
+| `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete set null) | Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today SET NULL). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `installed_at` | timestamptz | yes | 🔍 |  | **📋 planned (TX-08)**: When the device was mounted on its current truck; NULL when not mounted (DM-22). | `2026-06-01T00:00:00Z` |
 | `status` | telematicstatus | no | 🔍 |  | Status set by a person (DM-25). ACTIVE: usable. INACTIVE: not usable now, e.g. being repaired; the reason says why. A device that leaves the system (scrapped, returned) is INACTIVE, unmounted and soft-deleted. Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the device is in its current status; NULL when ACTIVE. | `Antenna replaced at the Hanoi workshop` |

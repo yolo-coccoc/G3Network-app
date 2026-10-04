@@ -68,6 +68,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 Profile of one electric truck: what it is and the decisions about it. It has
 no state table: everything the truck reports comes through its T-Box and is
 kept message by message in vehicle_telemetry.
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [vehicle_history](#vehicle_history).
 

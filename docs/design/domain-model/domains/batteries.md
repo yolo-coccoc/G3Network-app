@@ -121,6 +121,7 @@ directly. A battery's health history across trucks joins telemetry with the
 installation periods. When a truck is sold and the seller owns its battery,
 the battery moves to the buyer in the same transfer action (VH-12); a battery
 owned by someone else (e.g. leased from G3) stays with its owner.
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [battery_history](#battery_history).
 

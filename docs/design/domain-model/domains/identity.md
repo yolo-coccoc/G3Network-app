@@ -185,6 +185,7 @@ internal users see across organizations, everyone else only their own.
 There is no separate contact list: whoever must receive something (invoices,
 reminders, alerts) is a user holding the matching role. Contracts and
 service packages live in their own tables.
+Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [organization_history](#organization_history).
 
@@ -286,6 +287,7 @@ A person - one account per human, across every organization they work for
 driver, our own staff or a partner technician. What they may do comes from their roles (job titles);
 facts about a job (e.g. a driver's licence) live in a profile, and a DRIVER
 role requires an active driver profile.
+Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 
 🔍 = tracked column: a change to it copies the whole old row into [user_history](#user_history).
 

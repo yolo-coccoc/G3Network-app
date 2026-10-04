@@ -194,8 +194,9 @@ internal users see across organizations, everyone else only their own.
 There is no separate contact list: whoever must receive something (invoices,
 reminders, alerts) is a user holding the matching role. Contracts and
 service packages live in their own tables.
+Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 @vi-name Tổ chức
-@vi Mọi bên mà người dùng đại diện: khách hàng (doanh nghiệp vận tải và chủ xe cá nhân tự lái), (các) tổ chức nội bộ của chính chúng ta, và đối tác sửa chữa/cứu hộ - tất cả được lưu như nhau. Mọi dữ liệu thuộc một tổ chức đều trỏ về đây qua organization_id; xe của chính chúng ta được sở hữu giống hệt xe của khách hàng. Chỉ is_internal phân biệt các tổ chức về quyền truy cập: người dùng nội bộ xem được dữ liệu của mọi tổ chức, còn lại chỉ xem dữ liệu của chính mình. Không có danh sách người liên hệ riêng: ai cần nhận thông tin (hóa đơn, nhắc nhở, cảnh báo) đều là người dùng giữ vai trò tương ứng. Hợp đồng và gói dịch vụ nằm ở bảng riêng.'''
+@vi Mọi bên mà người dùng đại diện: khách hàng (doanh nghiệp vận tải và chủ xe cá nhân tự lái), (các) tổ chức nội bộ của chính chúng ta, và đối tác sửa chữa/cứu hộ - tất cả được lưu như nhau. Mọi dữ liệu thuộc một tổ chức đều trỏ về đây qua organization_id; xe của chính chúng ta được sở hữu giống hệt xe của khách hàng. Chỉ is_internal phân biệt các tổ chức về quyền truy cập: người dùng nội bộ xem được dữ liệu của mọi tổ chức, còn lại chỉ xem dữ liệu của chính mình. Không có danh sách người liên hệ riêng: ai cần nhận thông tin (hóa đơn, nhắc nhở, cảnh báo) đều là người dùng giữ vai trò tương ứng. Hợp đồng và gói dịch vụ nằm ở bảng riêng. Ràng buộc kiểm tra: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).'''
 }
 
 Table users {
@@ -219,8 +220,9 @@ A person - one account per human, across every organization they work for
 driver, our own staff or a partner technician. What they may do comes from their roles (job titles);
 facts about a job (e.g. a driver's licence) live in a profile, and a DRIVER
 role requires an active driver profile.
+Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 @vi-name Người dùng
-@vi Một con người - mỗi người một tài khoản, dùng cho mọi tổ chức mà họ làm việc (một người có thể thuộc nhiều tổ chức, qua bảng memberships): nhân viên khách hàng, tài xế, nhân viên nội bộ hoặc kỹ thuật viên đối tác. Quyền của họ đến từ vai trò (chức danh); thông tin riêng của một công việc (ví dụ bằng lái của tài xế) nằm ở hồ sơ, và vai trò DRIVER cần một hồ sơ tài xế còn hiệu lực.'''
+@vi Một con người - mỗi người một tài khoản, dùng cho mọi tổ chức mà họ làm việc (một người có thể thuộc nhiều tổ chức, qua bảng memberships): nhân viên khách hàng, tài xế, nhân viên nội bộ hoặc kỹ thuật viên đối tác. Quyền của họ đến từ vai trò (chức danh); thông tin riêng của một công việc (ví dụ bằng lái của tài xế) nằm ở hồ sơ, và vai trò DRIVER cần một hồ sơ tài xế còn hiệu lực. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'LOCKED' (DM-25).'''
 }
 
 Table memberships {
@@ -546,8 +548,9 @@ Table vehicles {
 Profile of one electric truck: what it is and the decisions about it. It has
 no state table: everything the truck reports comes through its T-Box and is
 kept message by message in vehicle_telemetry.
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Xe
-@vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry.'''
+@vi Hồ sơ của một xe tải điện: xe là gì và các quyết định về xe. Không có bảng trạng thái: mọi thứ xe báo về đi qua T-Box và được lưu từng bản tin trong vehicle_telemetry. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Table vehicle_models {
@@ -651,8 +654,9 @@ directly. A battery's health history across trucks joins telemetry with the
 installation periods. When a truck is sold and the seller owns its battery,
 the battery moves to the buyer in the same transfer action (VH-12); a battery
 owned by someone else (e.g. leased from G3) stays with its owner.
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Pin
-@vi Một viên pin vật lý, được quản lý như một tài sản (BAT-01, VH-16). Xe đang lắp pin và chủ sở hữu pin là các cột kèm thời điểm bắt đầu (DM-22); các giai đoạn lấy từ view battery_installation_periods và battery_ownership_periods trên battery_history, mã nguồn không bao giờ đọc trực tiếp bảng lịch sử. Lịch sử sức khỏe của pin qua các xe được ghép từ dữ liệu vận hành với các giai đoạn lắp. Khi bán xe mà bên bán sở hữu pin, pin chuyển sang bên mua trong cùng thao tác chuyển quyền (VH-12); pin thuộc bên khác (ví dụ thuê của G3) vẫn thuộc chủ của nó.'''
+@vi Một viên pin vật lý, được quản lý như một tài sản (BAT-01, VH-16). Xe đang lắp pin và chủ sở hữu pin là các cột kèm thời điểm bắt đầu (DM-22); các giai đoạn lấy từ view battery_installation_periods và battery_ownership_periods trên battery_history, mã nguồn không bao giờ đọc trực tiếp bảng lịch sử. Lịch sử sức khỏe của pin qua các xe được ghép từ dữ liệu vận hành với các giai đoạn lắp. Khi bán xe mà bên bán sở hữu pin, pin chuyển sang bên mua trong cùng thao tác chuyển quyền (VH-12); pin thuộc bên khác (ví dụ thuê của G3) vẫn thuộc chủ của nó. Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Ref: batteries.battery_model_id > battery_models.battery_model_id [delete: restrict]
@@ -709,8 +713,9 @@ constraint); that also decides which limits keys apply. No organization_id
 (DM-24): a warranty follows its object, and whoever owns the object now sees
 it. A truck usually has several (vehicle, battery, an extended one). Change
 history on: voiding must show who and why.
+Check constraints: num_nonnulls(vehicle_id, battery_id, telematic_id) = 1 (VH-18); deleted_at IS NULL OR status = 'VOIDED' (DM-25). The limits keys allowed for the set link are checked by the application. Possible later: one warranty table per covered object, each in its own domain (vehicle, battery, T-Box warranties), if their rules drift apart.
 @vi-name Bảo hành
-@vi Một bảo hành của một xe, pin hoặc T-Box (WAR-01, VH-18), đặt riêng cho từng xe. Đối tượng được bảo hành là liên kết duy nhất có giá trị (đúng một, ràng buộc kiểm tra); liên kết đó cũng quyết định các khóa giới hạn áp dụng. Không có organization_id (DM-24): bảo hành đi theo đối tượng, ai đang sở hữu đối tượng thì xem được. Một xe thường có nhiều bảo hành (xe, pin, gia hạn). Có lưu lịch sử thay đổi: việc hủy bảo hành phải cho biết ai và vì sao.'''
+@vi Một bảo hành của một xe, pin hoặc T-Box (WAR-01, VH-18), đặt riêng cho từng xe. Đối tượng được bảo hành là liên kết duy nhất có giá trị (đúng một, ràng buộc kiểm tra); liên kết đó cũng quyết định các khóa giới hạn áp dụng. Không có organization_id (DM-24): bảo hành đi theo đối tượng, ai đang sở hữu đối tượng thì xem được. Một xe thường có nhiều bảo hành (xe, pin, gia hạn). Có lưu lịch sử thay đổi: việc hủy bảo hành phải cho biết ai và vì sao. Ràng buộc kiểm tra: num_nonnulls(vehicle_id, battery_id, telematic_id) = 1 (VH-18); deleted_at IS NULL OR status = 'VOIDED' (DM-25). Các khóa limits hợp lệ theo liên kết được đặt do ứng dụng kiểm tra. Có thể sau này: mỗi loại đối tượng một bảng bảo hành, nằm trong miền của đối tượng đó (bảo hành xe, pin, T-Box), nếu quy định của chúng khác nhau nhiều.'''
 }
 
 Ref: warranties.vehicle_id > vehicles.vehicle_id [delete: restrict]
@@ -742,7 +747,7 @@ Table telematics {
   telematic_serial varchar(50) [not null, note: 'Serial printed on the device; also its MQTT identity. Unique among devices not deleted. @vi Số serial in trên thiết bị; cũng là định danh MQTT. Duy nhất trong các thiết bị chưa xóa. @example TBX-2409-000123']
   organization_id uuid [not null, note: '@planned TX-07: Organization that owns the device now: the truck\'s owner, or G3 when it supplies the device (e.g. with the subscription). @vi Tổ chức đang sở hữu thiết bị: chủ xe, hoặc G3 khi G3 cung cấp thiết bị (ví dụ kèm gói thuê bao). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   acquired_at timestamptz [not null, note: '@planned TX-07: When the current owner took the device (DM-22). @vi Thời điểm chủ hiện tại nhận thiết bị (DM-22). @example 2026-06-01T00:00:00Z']
-  vehicle_id uuid [note: 'Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). @vi Xe mà thiết bị đang gắn; NULL khi trong kho hoặc đã tháo. Mỗi xe gắn tối đa một thiết bị. Các xe trước lấy từ view telematic_installation_periods (DM-22). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  vehicle_id uuid [note: 'Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). Planned: its foreign key becomes ON DELETE RESTRICT, like every other link (today SET NULL). @vi Xe mà thiết bị đang gắn; NULL khi trong kho hoặc đã tháo. Mỗi xe gắn tối đa một thiết bị. Các xe trước lấy từ view telematic_installation_periods (DM-22). Dự kiến: khóa ngoại chuyển sang ON DELETE RESTRICT như mọi liên kết khác (hiện là SET NULL). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   installed_at timestamptz [note: '@planned TX-08: When the device was mounted on its current truck; NULL when not mounted (DM-22). @vi Thời điểm thiết bị được gắn lên xe hiện tại; NULL khi chưa gắn (DM-22). @example 2026-06-01T00:00:00Z']
   status telematicstatus [not null, note: 'Status set by a person (DM-25). ACTIVE: usable. INACTIVE: not usable now, e.g. being repaired; the reason says why. A device that leaves the system (scrapped, returned) is INACTIVE, unmounted and soft-deleted. Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. @vi Trạng thái do con người đặt (DM-25). ACTIVE: dùng được. INACTIVE: hiện không dùng được, ví dụ đang sửa chữa; lý do cho biết vì sao. Thiết bị rời hệ thống (thanh lý, trả lại) được chuyển sang INACTIVE, tháo khỏi xe và xóa mềm. Đang gắn hay trong kho đọc từ vehicle_id; có gửi dữ liệu hay im lặng được tính từ dữ liệu vận hành (TX-06). Chỉ thiết bị đang gắn và ACTIVE mới nhận cấu hình. @example ACTIVE']
   status_reason varchar(200) [note: '@planned DM-19: Why the device is in its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Antenna replaced at the Hanoi workshop']
@@ -766,8 +771,9 @@ and truck are columns with a start time (DM-22), their periods read through
 the views telematic_ownership_periods and telematic_installation_periods.
 What the device reports about itself is kept in telematic_status_reports;
 its current health is the newest report (TX-11).
+Check constraint: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).
 @vi-name Thiết bị telematics
-@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn đọc qua view telematic_ownership_periods và telematic_installation_periods. Những gì thiết bị tự báo về mình được lưu trong telematic_status_reports; sức khỏe hiện tại là báo cáo mới nhất (TX-11).'''
+@vi Hồ sơ của một thiết bị telematics (T-Box): thiết bị là gì và các quyết định về nó (TX-08). Thiết bị là một tài sản có chủ riêng, là chủ xe hoặc G3 (TX-07); thiết bị thuộc bên bán đi theo xe khi bán xe. Chủ sở hữu và xe đang gắn là các cột kèm thời điểm bắt đầu (DM-22), các giai đoạn đọc qua view telematic_ownership_periods và telematic_installation_periods. Những gì thiết bị tự báo về mình được lưu trong telematic_status_reports; sức khỏe hiện tại là báo cáo mới nhất (TX-11). Ràng buộc kiểm tra: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL) (DM-25).'''
 }
 
 Table telematic_status_reports {
