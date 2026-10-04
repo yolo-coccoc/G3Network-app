@@ -65,18 +65,18 @@ its current health is the newest report (TX-11).
 | `acquired_at` | timestamptz | no | 🔍 |  | **📋 planned (TX-07)**: When the current owner took the device (DM-22). | `2026-06-01T00:00:00Z` |
 | `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete set null) | Truck the device is mounted on now; NULL when in stock or removed. A truck holds at most one device. Earlier trucks come from the view telematic_installation_periods (DM-22). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `installed_at` | timestamptz | yes | 🔍 |  | **📋 planned (TX-08)**: When the device was mounted on its current truck; NULL when not mounted (DM-22). | `2026-06-01T00:00:00Z` |
-| `status` | telematicstatus | no | 🔍 |  | Status set by a person (TX-08). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (scrapped, returned). Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. | `ACTIVE` |
+| `status` | telematicstatus | no | 🔍 |  | Status set by a person (DM-25). ACTIVE: usable. INACTIVE: not usable now, e.g. being repaired; the reason says why. A device that leaves the system (scrapped, returned) is INACTIVE, unmounted and soft-deleted. Mounted or in stock is read from vehicle_id; sending data or silent is computed from telemetry (TX-06). Only a mounted, ACTIVE device receives configuration. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the device is in its current status; NULL when ACTIVE. | `Antenna replaced at the Hanoi workshop` |
 | `firmware_version` | varchar(50) | yes |  |  | **🗑️ to be removed (TX-08)**: Firmware typed in through the API; the device reports it in its status reports (telematic_status_reports). | `1.4.2` |
 | `telemetry_interval_seconds` | integer | yes |  |  | **🗑️ to be removed (TX-09)**: Publish interval last pushed to this device; the interval is now an organization setting (organization_settings), and what the device actually uses is in its status reports (telematic_status_reports). | `10` |
 | `config_pushed_at` | timestamptz | yes |  |  | **🗑️ to be removed (TX-08)**: When the interval was last pushed; the push happens when the change is saved, so the history's changed_at gives it (DM-23). | `2026-09-12T03:00:00Z` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a device entered by mistake; a real device that leaves is DECOMMISSIONED and unmounted, its past trucks kept in the history (TX-08). NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. Its past trucks stay in the history. | `NULL` |
 
 **Enum values**
 
-- `telematicstatus`: ACTIVE, ~~INACTIVE~~ (to be removed), MAINTENANCE, DECOMMISSIONED (📋 planned)
+- `telematicstatus`: ACTIVE, INACTIVE, ~~MAINTENANCE~~ (to be removed)
 
 **Indexes**
 
@@ -119,7 +119,7 @@ Every earlier version of a row of `telematics`: a copy of the whole row, taken j
 
 **Enum values**
 
-- `telematicstatus`: ACTIVE, MAINTENANCE, DECOMMISSIONED
+- `telematicstatus`: ACTIVE, INACTIVE
 
 **Indexes**
 

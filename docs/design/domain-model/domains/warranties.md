@@ -66,7 +66,7 @@ history on: voiding must show who and why.
 | `status_reason` | varchar(200) | yes | 🔍 |  | Why the warranty was voided; NULL when ACTIVE. | `Repeated charging outside the allowed window` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-06-01T03:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a warranty entered by mistake; NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the warranty was entered by mistake and is no longer part of the system (DM-25); it is also VOIDED, with the reason. NULL while it is part of the system. | `NULL` |
 
 **Indexes**
 

@@ -72,7 +72,7 @@ warranties.
 | `nominal_voltage_v` | numeric(6,1) | yes | 🔍 |  | Nominal pack voltage in volts; NULL until known. | `576.0` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a model entered by mistake; NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the model is no longer offered, or was entered by mistake (DM-25); rows already pointing to it keep it. NULL while offered. | `NULL` |
 
 **Indexes**
 
@@ -134,11 +134,11 @@ owned by someone else (e.g. leased from G3) stays with its owner.
 | `vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Truck the battery is installed in now; NULL when in stock or removed. A truck holds at most one battery. Earlier installations come from the view battery_installation_periods. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `installed_at` | timestamptz | yes | 🔍 |  | When the battery was installed in its current truck; NULL when not installed. | `2026-06-01T00:00:00Z` |
 | `manufactured_on` | date | yes | 🔍 |  | Manufacturing date, for age and warranty; NULL until known. | `2025-11-20` |
-| `status` | varchar(20) | no | 🔍 |  | Status set by a person (VH-16). ACTIVE: usable. MAINTENANCE: being repaired or checked. DECOMMISSIONED: has left the system (recycled, sold for second-life use). Installed or in stock is not a status: it is read from vehicle_id. Values: ACTIVE \| MAINTENANCE \| DECOMMISSIONED. | `ACTIVE` |
+| `status` | varchar(20) | no | 🔍 |  | Status set by a person (DM-25). ACTIVE: usable. INACTIVE: not usable now, e.g. being repaired or checked; the reason says why. A battery that leaves the system (recycled, sold for second-life use) is INACTIVE and soft-deleted. Installed or in stock is not a status: it is read from vehicle_id. Values: ACTIVE \| INACTIVE. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | Why the battery is in its current status; NULL when ACTIVE. | `Cell imbalance check at the Binh Duong workshop` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a battery entered by mistake; a real battery that leaves is DECOMMISSIONED. NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. | `NULL` |
 
 **Indexes**
 

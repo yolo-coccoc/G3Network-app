@@ -900,13 +900,13 @@ features:
     capabilities:
       - ["Create, edit, search and retire vehicles", "Tạo, sửa, tìm kiếm và ngừng sử dụng xe"]
       - ["VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason", "VIN và biển số không trùng trong các xe đang dùng và đều sửa được (nhập nhầm, biển số theo chủ xe); lưu lịch sử thay đổi kèm lý do"]
-      - ["Service status set by a person: active, under maintenance, decommissioned, with a reason; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ do con người đặt: đang phục vụ, đang bảo dưỡng, đã rời hệ thống, kèm lý do; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
+      - ["Service status: active or inactive (in the workshop, not used), with a reason; a truck that leaves the system is removed with its reason and its data kept; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ: đang phục vụ hoặc không phục vụ (ở xưởng, không dùng), kèm lý do; xe rời hệ thống được gỡ khỏi hệ thống kèm lý do và vẫn giữ dữ liệu; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
       - ["Filter by status, model, owner and fleet", "Lọc theo trạng thái, dòng xe, chủ sở hữu và đội xe"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
-    sources: [Data IN-32, PRD F-F2, Decision VH-05, Decision VH-07]
+    sources: [Data IN-32, PRD F-F2, Decision VH-05, Decision VH-07, Decision DM-25]
     old_codes: [F-F2]
 
   - code: VEH-02

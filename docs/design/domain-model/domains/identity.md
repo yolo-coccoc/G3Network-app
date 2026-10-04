@@ -197,12 +197,12 @@ service packages live in their own tables.
 | `legal_name` | varchar(255) | no | 🔍 |  | Full registered name of the company, or the full name of the person for an INDIVIDUAL; printed on invoices. | `Công ty Cổ phần Vận tải Minh Phát` |
 | `tax_code` | varchar(20) | yes | 🔍 |  | Tax code required for e-invoices. COMPANY: the company tax code (10 digits, or 13 for a branch). INDIVIDUAL: for now (since 1 Jul 2025, Circular 86/2024), the 12-digit citizen ID (CCCD) number serves as the personal tax code; it is personal data under Decree 13/2023. Unique among organizations not deleted. | `0312345678` |
 | `address` | varchar(500) | yes | 🔍 |  | Registered address, printed on invoices. | `12 Nguyễn Văn Linh, Phường Tân Thuận Tây, Quận 7, TP.HCM` |
-| `status` | varchar(20) | no | 🔍 |  | Organization lifecycle. ACTIVE: in service. SUSPENDED: temporarily stopped (e.g. unpaid debt), logins blocked, vehicle data still collected, reversible. CLOSED: no active contract, logins blocked, no new data, data kept for the legal retention period; reopened only when a new contract is signed. Values: ACTIVE \| SUSPENDED \| CLOSED. | `ACTIVE` |
+| `status` | varchar(20) | no | 🔍 |  | Organization lifecycle. ACTIVE: in service. SUSPENDED: temporarily stopped (e.g. unpaid debt), logins blocked, vehicle data still collected, reversible. CLOSED: has left (no active contract), logins blocked, no new data, data kept for the legal retention period; always together with deleted_at (DM-25); reopened only when a new contract is signed. Values: ACTIVE \| SUSPENDED \| CLOSED. | `ACTIVE` |
 | `status_reason` | varchar(200) | yes | 🔍 |  | Why the organization is in its current status; NULL when ACTIVE. | `NULL` |
 | `account_manager_id` | uuid | yes | FK 🔍 | [users](#users).user_id (on delete restrict) | Our SALES user responsible for this customer (one at a time); NULL when none is assigned. Reassignments are kept in organization_history. | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for an organization created by mistake; a real customer or partner is CLOSED, never deleted. NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. An organization that leaves is CLOSED and soft-deleted; signing a new contract makes it ACTIVE again and clears this. | `NULL` |
 
 **Indexes**
 
@@ -300,7 +300,7 @@ role requires an active driver profile.
 | `created_by` | uuid | yes | FK 🔍 | [users](#users).user_id (on delete restrict) | User who created this account (our sales/admin, an ORG_ADMIN, a fleet manager registering a driver); NULL when the person signed up themselves. | `0000001f-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time; NULL while the row is live. Rows are never hard-deleted. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. A deleted account is also LOCKED, and its phone number and e-mail are free for a new account (ID-28). | `NULL` |
 
 **Indexes**
 

@@ -76,29 +76,29 @@ kept message by message in vehicle_telemetry.
 | `vehicle_id` | uuid | no | PK |  | Internal ID of the vehicle. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-07)**: Organization that owns the vehicle now; changes when ownership is transferred. Earlier owners are in vehicle_history; the ownership periods come from the view vehicle_ownership_periods (VH-10). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `acquired_at` | timestamptz | no | 🔍 |  | **📋 planned (VH-10)**: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner's acquired_at. The first owner's value is the truck's handover date. | `2026-06-01T00:00:00Z` |
-| `license_plate` | varchar(20) | no | 🔍 |  | Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles neither deleted nor DECOMMISSIONED. | `51D-123.45` |
+| `license_plate` | varchar(20) | no | 🔍 |  | Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles not deleted, so the plate of a truck that left can move to another truck. | `51D-123.45` |
 | `vin` | varchar(17) | no | 🔍 |  | 17-character chassis number (VIN); the vehicle's business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. | `LZGJLGR4XNX000123` |
 | `vehicle_model_id` | uuid | no | FK 🔍 | [vehicle_models](#vehicle_models).vehicle_model_id (on delete restrict) | **📋 planned (VH-15)**: The truck's model, with its specifications. | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
 | `make` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Manufacturer; now vehicle_models.make. | `Tri-Ring` |
 | `model` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Model line; now vehicle_models.model_name. | `EVT-400` |
 | `year` | integer | no | 🔍 |  | Manufacturing year. | `2025` |
-| `status` | vehiclestatus | no | 🔍 |  | Service status, set by a person or by a business rule acting for the company, e.g. back to ACTIVE when the repair record is closed (VH-05, VH-17). ACTIVE: in service. MAINTENANCE: being maintained or repaired. DECOMMISSIONED: has left the system (scrapped, sold outside our service, or permanently retired); kept for history and reports, receives no new data. Whether a truck is idle or sending no data is not stored: it is computed from telemetry and the T-Box. | `ACTIVE` |
-| `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
+| `status` | vehiclestatus | no | 🔍 |  | Service status, set by a person or by a business rule acting for the company (DM-25). ACTIVE: in service. INACTIVE: not in service, e.g. in the workshop or not used by its owner; the reason says which (once repair records exist, being in maintenance is read from an open repair record). A truck that leaves the system is INACTIVE and soft-deleted. Whether it is moving or sending data is computed from telemetry, not stored. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status, or why it left the system; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
 | `activation_status` | vehicleactivationstatus | no |  |  | **🗑️ to be removed (VH-06)**: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from vehicle_telemetry. | `ACTIVATED` |
 | `battery_capacity_kwh` | float8 | yes |  |  | **🗑️ to be removed (VH-16)**: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery's design capacity, or the model's nominal capacity when no battery is recorded. | `282.0` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a vehicle registered by mistake; a real truck that leaves is DECOMMISSIONED, never deleted. NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. | `NULL` |
 
 **Enum values**
 
-- `vehiclestatus`: ACTIVE, ~~INACTIVE~~ (to be removed), MAINTENANCE, DECOMMISSIONED
+- `vehiclestatus`: ACTIVE, INACTIVE, ~~MAINTENANCE~~ (to be removed), ~~DECOMMISSIONED~~ (to be removed)
 - `vehicleactivationstatus`: PENDING, DEVICE_ASSIGNED, ACTIVATED
 
 **Indexes**
 
 - `uq_vehicles_live_vin` (vin) unique - Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL
-- `uq_vehicles_live_license_plate` (license_plate) unique - Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL AND status <> 'DECOMMISSIONED'
+- `uq_vehicles_live_license_plate` (license_plate) unique - Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL
 - `ix_vehicles_status` (status)
 
 **Referenced by**
@@ -147,7 +147,7 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 
 **Enum values**
 
-- `vehiclestatus`: ACTIVE, MAINTENANCE, DECOMMISSIONED
+- `vehiclestatus`: ACTIVE, INACTIVE
 
 **Indexes**
 
@@ -178,7 +178,7 @@ figures.
 | `consumption_curve` | jsonb | yes | 🔍 |  | Reference energy consumption by load, a list of points [{"load_percent": 0-100, "kwh_per_km": number}], used by forecasts and empty-trip detection. NULL until known. | `[{"load_percent": 0, "kwh_per_km": 0.9}, {"load_percent": 100, "kwh_per_km": 1.6}]` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time, only for a model entered by mistake; NULL while the row is live. | `NULL` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the model is no longer offered, or was entered by mistake (DM-25); rows already pointing to it keep it. NULL while offered. | `NULL` |
 
 **Indexes**
 
