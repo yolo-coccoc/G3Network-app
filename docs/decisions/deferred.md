@@ -1742,7 +1742,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
 - **Reason for deferral**: Owner decision (2026-10-04, VH-08 in `docs/decisions/decision-log.md`):
   the battery is managed as one asset first (`battery_models`, `batteries`); the part level needs
   part IDs from the manufacturer and the BMS, which we do not have yet.
-- **Related planner/feature**: VEH-04 (`docs/product/features/features.yaml`), MON-07, VH-08.
+- **Related planner/feature**: BAT-01 (`docs/product/features/features.yaml`), MON-07, VH-08.
 - **Date recorded**: 2026-10-04
 - **Additional notes**: Expected shape: a `battery_components` table (component type, serial,
   position, the battery it currently sits in, with fitting history); a rebuilt battery is a new
@@ -1759,7 +1759,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
   the data model already allows it (`batteries.organization_id` is the battery's own owner, which
   may differ from the truck's owner), but the leasing contract, its pricing and billing are not
   designed.
-- **Related planner/feature**: VEH-04 (`docs/product/features/features.yaml`), the billing domain
+- **Related planner/feature**: BAT-01 (`docs/product/features/features.yaml`), the billing domain
   (subscriptions, invoices), VH-08.
 - **Date recorded**: 2026-10-04
 - **Additional notes**: When designed: who sees the battery's data when its owner and the

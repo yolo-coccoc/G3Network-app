@@ -244,7 +244,7 @@ Show SOH and voltage per cell, weak cells and imbalance, and recommend replacing
 
 **Status:** Backend ⬜ · Portal ⬜
 
-**Depends on:** [MON-07](#mon-07), [VEH-04](vehicles.md#veh-04)  
+**Depends on:** [MON-07](#mon-07), [BAT-01](batteries.md#bat-01)  
 **Also touches:** `vehicles`  
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-4 · Data OUT-26 · Prerequisite 1

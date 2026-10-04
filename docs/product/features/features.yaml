@@ -70,11 +70,20 @@ domains:
     name_vi: Hồ sơ xe
     backend_domain: vehicles
     summary: >-
-      The truck's profile, owner, model and battery data, and its activation
-      at handover.
+      The truck's profile, owner and model, and its activation at handover.
     summary_vi: >-
-      Hồ sơ xe, chủ sở hữu, dòng xe, thông tin pin và kích hoạt xe khi bàn
-      giao.
+      Hồ sơ xe, chủ sở hữu, dòng xe và kích hoạt xe khi bàn giao.
+  - prefix: BAT
+    key: batteries
+    name: Batteries
+    name_vi: Pin
+    backend_domain: batteries
+    summary: >-
+      Each truck battery managed as an asset of its own: its model, owner and
+      the trucks it has been fitted to.
+    summary_vi: >-
+      Quản lý từng pin xe như một tài sản riêng: dòng pin, chủ sở hữu và các
+      xe pin đã được lắp.
   - prefix: DEV
     key: telematics
     name: Telematics devices
@@ -943,33 +952,6 @@ features:
     depends_on: [VEH-01]
     sources: [Data IN-32, Data IN-34, deferred.md 61, Decision VH-08]
 
-  - code: VEH-04
-    name: Battery registry
-    name_vi: Hồ sơ pin
-    what: >-
-      Manage each truck battery as an asset: its model, owner and the trucks
-      it has been fitted to.
-    what_vi: >-
-      Quản lý từng pin xe như một tài sản: dòng pin, chủ sở hữu và các xe pin
-      đã được lắp.
-    value: >-
-      The battery is up to two thirds of a truck's price; its health,
-      warranty and value follow it from truck to truck.
-    value_vi: >-
-      Pin chiếm tới hai phần ba giá xe; sức khỏe, bảo hành và giá trị của pin
-      đi theo pin từ xe này sang xe khác.
-    users: [OPERATIONS, MAINTENANCE, WARRANTY]
-    capabilities:
-      - ["Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout", "Danh mục dòng pin: hóa học (LFP/CATL), dung lượng thiết kế, điện áp, cấu trúc"]
-      - ["Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason", "Từng pin: số serial, dòng pin, chủ sở hữu (có thể khác chủ xe), trạng thái kèm lý do"]
-      - ["One battery per truck; history of which truck each battery was fitted to", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
-    surfaces: {backend: todo, portal: todo}
-    priority: Must
-    release: P1.0
-    offer: internal
-    depends_on: [VEH-01]
-    sources: [Data IN-33, Decision VH-08, deferred.md 87, deferred.md 88]
-
   - code: VEH-05
     name: Vehicle activation
     name_vi: Kích hoạt xe
@@ -1024,6 +1006,38 @@ features:
     sources: [Data IN-16, Data IN-34, Prerequisite 1, deferred.md 42]
     questions:
       - ["The manufacturer must deliver the DTC table with severities in writing (prerequisite 1).", "Nhà sản xuất phải cung cấp bằng văn bản bảng DTC kèm mức nghiêm trọng (điều kiện tiên quyết 1)."]
+
+  # ---------------------------------------------------------------------------
+  # BAT — Batteries
+  # ---------------------------------------------------------------------------
+
+  - code: BAT-01
+    name: Battery registry
+    name_vi: Hồ sơ pin
+    what: >-
+      Manage each truck battery as an asset: its model, owner and the trucks
+      it has been fitted to.
+    what_vi: >-
+      Quản lý từng pin xe như một tài sản: dòng pin, chủ sở hữu và các xe pin
+      đã được lắp.
+    value: >-
+      The battery is up to two thirds of a truck's price; its health,
+      warranty and value follow it from truck to truck.
+    value_vi: >-
+      Pin chiếm tới hai phần ba giá xe; sức khỏe, bảo hành và giá trị của pin
+      đi theo pin từ xe này sang xe khác.
+    users: [OPERATIONS, MAINTENANCE, WARRANTY]
+    capabilities:
+      - ["Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout", "Danh mục dòng pin: hóa học (LFP/CATL), dung lượng thiết kế, điện áp, cấu trúc"]
+      - ["Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason", "Từng pin: số serial, dòng pin, chủ sở hữu (có thể khác chủ xe), trạng thái kèm lý do"]
+      - ["One battery per truck; history of which truck each battery was fitted to", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
+    surfaces: {backend: todo, portal: todo}
+    priority: Must
+    release: P1.0
+    offer: internal
+    depends_on: [VEH-01]
+    sources: [Data IN-33, Decision VH-08, Decision VH-13, deferred.md 87, deferred.md 88]
+
 
   # ---------------------------------------------------------------------------
   # DEV — Telematics devices
@@ -1471,7 +1485,7 @@ features:
     priority: Must
     release: P1.0
     offer: tbd
-    depends_on: [MON-07, VEH-04]
+    depends_on: [MON-07, BAT-01]
     touches: [vehicles]
     sources: [Data IN-4, Data OUT-26, Prerequisite 1]
     questions:
@@ -4056,7 +4070,7 @@ features:
     priority: Could
     release: P1.5
     offer: tbd
-    depends_on: [VEH-01, VEH-04]
+    depends_on: [VEH-01, BAT-01]
     sources: [Data IN-41]
 
   - code: MNT-07

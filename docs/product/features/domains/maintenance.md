@@ -164,7 +164,7 @@ Record the purchase cost of trucks, batteries and major components, the deprecia
 
 **Status:** Backend ⬜ · Portal ⬜
 
-**Depends on:** [VEH-01](vehicles.md#veh-01), [VEH-04](vehicles.md#veh-04)  
+**Depends on:** [VEH-01](vehicles.md#veh-01), [BAT-01](batteries.md#bat-01)  
 **Needed by:** [MNT-07](#mnt-07)  
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-41

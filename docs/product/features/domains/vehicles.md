@@ -4,14 +4,13 @@
 
 *Hồ sơ xe* · [← Feature catalog](../README.md)
 
-The truck's profile, owner, model and battery data, and its activation at handover. Backend domain: `vehicles`.
+The truck's profile, owner and model, and its activation at handover. Backend domain: `vehicles`.
 
 ## Checklist
 
 - [ ] **VEH-01** [Vehicle registry](#veh-01) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-02** [Vehicle ownership](#veh-02) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-03** [Vehicle model catalog](#veh-03) — Backend ⬜ · Portal ⬜
-- [ ] **VEH-04** [Battery registry](#veh-04) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-05** [Vehicle activation](#veh-05) — Backend ⬜ · Portal ⬜
 - [ ] **VEH-06** [Fault code catalog](#veh-06) — Backend ⬜ · Portal ⬜
 
@@ -39,7 +38,7 @@ Keep every truck's profile: VIN, plate, model, handover date, warranty status an
 
 **Status:** Backend ⬜ · Portal ⬜
 
-**Needed by:** [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-04](#veh-04), [VEH-05](#veh-05)  
+**Needed by:** [BAT-01](batteries.md#bat-01), [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-05](#veh-05)  
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-32 · PRD F-F2 · Decision VH-05 · Decision VH-07 · Decision VH-09  
 **Old codes:** F-F2
@@ -91,31 +90,6 @@ Store each truck model's specifications (EVT-262/400/825): battery capacity, con
 **Needed by:** [CRB-04](carbon.md#crb-04), [MON-13](telemetry.md#mon-13), [MON-14](telemetry.md#mon-14), [RTE-01](routing.md#rte-01)  
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-32 · Data IN-34 · deferred.md 61 · Decision VH-08
-
-<a id="veh-04"></a>
-
-### VEH-04 Battery registry
-
-*Hồ sơ pin* · Must · P1.0 · Internal only
-
-Manage each truck battery as an asset: its model, owner and the trucks it has been fitted to.
-
-**Value:** The battery is up to two thirds of a truck's price; its health, warranty and value follow it from truck to truck.
-
-**Users:** Operations, Maintenance, Warranty
-
-**Capabilities:**
-
-- Battery model catalog: chemistry (LFP/CATL), design capacity, voltage, layout
-- Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason
-- One battery per truck; history of which truck each battery was fitted to
-
-**Status:** Backend ⬜ · Portal ⬜
-
-**Depends on:** [VEH-01](#veh-01)  
-**Needed by:** [MNT-06](maintenance.md#mnt-06), [MON-08](telemetry.md#mon-08)  
-**Related tables:** — (after the database review)  
-**Sources:** Data IN-33 · Decision VH-08 · deferred.md 87 · deferred.md 88
 
 <a id="veh-05"></a>
 

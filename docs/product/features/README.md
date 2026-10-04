@@ -17,7 +17,8 @@ A feature is done when every surface it needs is done. A cell shows
 | Domain | Features | Done | Backend | App | Portal |
 |---|---|---|---|---|---|
 | [ACC — Accounts & access](domains/identity.md) | 22 | 0 | 0/22 | 0/12 | 0/19 |
-| [VEH — Vehicles](domains/vehicles.md) | 6 | 0 | 0/6 | — | 0/6 |
+| [VEH — Vehicles](domains/vehicles.md) | 5 | 0 | 0/5 | — | 0/5 |
+| [BAT — Batteries](domains/batteries.md) | 1 | 0 | 0/1 | — | 0/1 |
 | [DEV — Telematics devices](domains/telematics.md) | 8 | 0 | 0/8 | — | 0/7 |
 | [MON — Vehicle & battery monitoring](domains/telemetry.md) | 19 | 0 | 0/18 | 0/10 | 0/16 |
 | [RTE — Range & route planning](domains/routing.md) | 7 | 0 | 0/6 | 0/5 | 0/1 |
@@ -41,7 +42,8 @@ A feature is done when every surface it needs is done. A cell shows
 | Code | Domain | Backend domain | Scope | P1.0 | P1.1 | P1.5 | P2 |
 |---|---|---|---|---|---|---|---|
 | ACC | [Accounts & access](domains/identity.md) | `identity` | Organizations, people, logins, roles and what each person may see and do; consent and audit of personal data. | 18 | 4 |  |  |
-| VEH | [Vehicles](domains/vehicles.md) | `vehicles` | The truck's profile, owner, model and battery data, and its activation at handover. | 6 |  |  |  |
+| VEH | [Vehicles](domains/vehicles.md) | `vehicles` | The truck's profile, owner and model, and its activation at handover. | 5 |  |  |  |
+| BAT | [Batteries](domains/batteries.md) | `batteries` | Each truck battery managed as an asset of its own: its model, owner and the trucks it has been fitted to. | 1 |  |  |  |
 | DEV | [Telematics devices](domains/telematics.md) | `telematics` | The on-board devices that send vehicle data: registry, mapping to vehicles, health, security and remote configuration. | 7 | 1 |  |  |
 | MON | [Vehicle & battery monitoring](domains/telemetry.md) | `telemetry` | Live and historical vehicle data, battery and safety alerts, battery health, trips and operating reports. | 16 | 2 |  | 1 |
 | RTE | [Range & route planning](domains/routing.md) | `telemetry` | How far and how long a truck can still go, whether it reaches its destination, where and when to charge, and roads it may not use. | 6 | 1 |  |  |
