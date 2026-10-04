@@ -223,6 +223,8 @@ class TableInfo:
         state_table: For a main table with a state companion, its name.
         number: Display number: ``1``, ``2``... shared by main and state
             tables in design order; ``<N>.h`` for a generated history table.
+        built_as: For a built table the target design renames, its name in
+            the code today (``@built-as``); empty otherwise.
     """
 
     name: str
@@ -242,6 +244,7 @@ class TableInfo:
     history_table: str = ""
     state_table: str = ""
     number: str = ""
+    built_as: str = ""
 
     def column(self, column_name: str) -> ColumnInfo | None:
         """Return the column with this name, or None."""
@@ -833,7 +836,12 @@ def load_domain_model(source_path: Path) -> DomainModel:
             columns=columns,
             indexes=[_parse_index(index) for index in pydbml_table.indexes],
             tracked_columns=tracked_columns,
+            built_as=tags.get("built-as", ""),
         )
+        # A rename is a target design of a built table (PR-11): the DBML
+        # carries the new name and @built-as the name check finds in the code.
+        if tags.get("built-as") and status != "built":
+            errors.append(f"table {table_name}: @built-as is only for built tables")
 
     refs: list[RefInfo] = []
     for pydbml_ref in database.refs:
@@ -1232,6 +1240,8 @@ def _render_table_section(
         badges.append("features: " + ", ".join(table.features))
     if table.hypertable_column:
         badges.append(f"hypertable on `{table.hypertable_column}`")
+    if table.built_as:
+        badges.append(f"🗑️ built today as `{table.built_as}`, to be renamed")
     if table.kind in COMPANION_LABELS:
         badges.append(
             f"{COMPANION_LABELS[table.kind]} of "
@@ -1946,8 +1956,13 @@ def check_against_backend(model: DomainModel) -> list[str]:
         if not ref.is_planned
     }
 
+    # A built table renamed by the target design is found in the code under
+    # its @built-as name.
+    tables_by_code_name = {
+        table.built_as or table.name: table for table in model.tables.values()
+    }
     for sql_table in metadata.sorted_tables:
-        table = model.tables.get(sql_table.name)
+        table = tables_by_code_name.get(sql_table.name)
         if table is None:
             problems.append(
                 f"{sql_table.name}: exists in the models but not in the DBML"
@@ -1960,7 +1975,7 @@ def check_against_backend(model: DomainModel) -> list[str]:
     for table in model.tables.values():
         if table.status != "built":
             continue
-        sql_table = metadata.tables.get(table.name)
+        sql_table = metadata.tables.get(table.built_as or table.name)
         if sql_table is None:
             problems.append(f"{table.name}: @status built but not found in the models")
             continue
