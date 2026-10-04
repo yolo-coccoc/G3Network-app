@@ -30,7 +30,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### notifications
 
-**No. 37** · ✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
+**No. 38** · ✅ built · owner: **customer** · features: F-A2, F-A3, F-A4, F-J1, F-J3
 
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
 each alert type is an enum value plus a payload shape.

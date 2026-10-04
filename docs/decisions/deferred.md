@@ -572,39 +572,6 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
     When implementing this, keep the simulator deterministic when replay is
     needed and avoid logging sensitive information.
 
-### 30. Assess whether the `telematics` domain can be merged into `vehicles`
-
-- **Short description**: Consider moving the telematic device profile and the
-  device ↔ vehicle mapping into the same `vehicles` bounded context, similar
-  to how `charging_stations` owns the entire Station → EVSE → Connector
-  topology. This is only a possible future restructuring; the two domains
-  currently remain independent.
-- **Purpose/role in the system**:
-  - `vehicles` could own the vehicle profile, the device mounted on the
-    vehicle, and the mapping lifecycle within a single public service.
-  - The telemetry ingestion flow could resolve serial and vehicle within the
-    same bounded context, reducing one cross-domain dependency direction.
-  - The architecture would be simpler if a telematic is just a device
-    dependent on a vehicle with no independent management business logic.
-- **Reason for deferral**: `telematics` and `vehicles` are currently kept
-  separate because a telematic can be provisioned ahead of time, swapped
-  during a vehicle's lifecycle, or managed as an independent device; ingestion
-  is also currently using the public `telematics` service to resolve
-  `(telematic_id, vehicle_id)`. There's no decision yet that the MVP only
-  supports a single fixed telematic per vehicle.
-- **Conditions for merging**: Confirm a new contract for the number of devices
-  per vehicle, provisioning, device replace/unassign, mapping history, device
-  status, and data ownership. If an independent device lifecycle or multiple
-  device types are still needed, keep the domains separate.
-- **Work needed before implementation**: Review `CLAUDE.md`, the backend
-  planners, `feature-list.md`, dependency rules, the `telematics` public
-  service, the MQTT ingestion flow, schema/repository/model, and migrations.
-  Do not merge by simply renaming a directory or creating a temporary
-  forwarding layer.
-- **Related planner/feature**: backend domain structure, F-A1, F-F2, and
-  the telemetry/vehicles/telematics planners.
-- **Date recorded**: 2026-08-03
-
 ### 31. Operational error handling and observability for the OCPP gateway
 
 - **Short description**: Add an operational error-handling policy for the

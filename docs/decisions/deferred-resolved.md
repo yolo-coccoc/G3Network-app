@@ -115,6 +115,43 @@
 
 ---
 
+### 30. Assess whether the `telematics` domain can be merged into `vehicles` — Closed
+
+- **Short description**: Consider moving the telematic device profile and the
+  device ↔ vehicle mapping into the same `vehicles` bounded context, similar
+  to how `charging_stations` owns the entire Station → EVSE → Connector
+  topology. This is only a possible future restructuring; the two domains
+  currently remain independent.
+- **Purpose/role in the system**:
+  - `vehicles` could own the vehicle profile, the device mounted on the
+    vehicle, and the mapping lifecycle within a single public service.
+  - The telemetry ingestion flow could resolve serial and vehicle within the
+    same bounded context, reducing one cross-domain dependency direction.
+  - The architecture would be simpler if a telematic is just a device
+    dependent on a vehicle with no independent management business logic.
+- **Reason for deferral**: `telematics` and `vehicles` are currently kept
+  separate because a telematic can be provisioned ahead of time, swapped
+  during a vehicle's lifecycle, or managed as an independent device; ingestion
+  is also currently using the public `telematics` service to resolve
+  `(telematic_id, vehicle_id)`. There's no decision yet that the MVP only
+  supports a single fixed telematic per vehicle.
+- **Conditions for merging**: Confirm a new contract for the number of devices
+  per vehicle, provisioning, device replace/unassign, mapping history, device
+  status, and data ownership. If an independent device lifecycle or multiple
+  device types are still needed, keep the domains separate.
+- **Work needed before implementation**: Review `CLAUDE.md`, the backend
+  planners, `feature-list.md`, dependency rules, the `telematics` public
+  service, the MQTT ingestion flow, schema/repository/model, and migrations.
+  Do not merge by simply renaming a directory or creating a temporary
+  forwarding layer.
+- **Related planner/feature**: backend domain structure, F-A1, F-F2, and
+  the telemetry/vehicles/telematics planners.
+- **Date recorded**: 2026-08-03
+- **Resolution (2026-10-04)**: Not merged. The design review made the T-Box an asset with its own owner, like a battery (TX-07), with its own profile, state and installation history (TX-08 in `docs/decisions/decision-log.md`); batteries got their own domain for the same reason (VH-13). `telematics` stays a separate domain.
+
+
+---
+
 ### 35. Online/offline status flag for F-A1 — Completed
 
 - **Short description**: A per-vehicle/telematic online/offline status flag, derived from

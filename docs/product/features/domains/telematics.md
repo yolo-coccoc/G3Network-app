@@ -41,7 +41,7 @@ Keep every telematics device: serial, IMEI, SIM/ICCID, firmware and status.
 
 **Needed by:** [DEV-02](#dev-02), [DEV-04](#dev-04), [DEV-08](#dev-08)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-19 · Data IN-20 · Data IN-21 · PRD F-G1 · Decision TX-07  
+**Sources:** Data IN-19 · Data IN-20 · Data IN-21 · PRD F-G1 · Decision TX-07 · Decision TX-08  
 **Old codes:** F-G1
 
 <a id="dev-02"></a>
@@ -67,7 +67,7 @@ Link a device to a truck at handover, replace it when needed, and keep the histo
 **Needed by:** [DEV-05](#dev-05), [DEV-07](#dev-07), [VEH-05](vehicles.md#veh-05)  
 **Also touches:** `vehicles`  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-19 · PRD F-G1 · Decision TX-02 · Decision TX-03  
+**Sources:** Data IN-19 · PRD F-G1 · Decision TX-02 · Decision TX-08  
 **Old codes:** F-G1
 
 <a id="dev-03"></a>
