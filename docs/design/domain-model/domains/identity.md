@@ -124,7 +124,7 @@ erDiagram
   vehicles }o..|| organizations : "organization_id"
   batteries }o..|| organizations : "organization_id"
   telematics }o..|| organizations : "organization_id"
-  telemetry }o..o| organizations : "organization_id"
+  telemetry }o..|| organizations : "organization_id"
   drivers }o..o| organizations : "organization_id"
   drivers |o..o| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"

@@ -275,7 +275,11 @@ Know whether each truck is off, driving, parked or charging, plus gear, brake an
 **Depends on:** [MON-01](#mon-01)  
 **Needed by:** [DEV-06](telematics.md#dev-06), [FLT-04](fleet.md#flt-04), [FLT-06](fleet.md#flt-06), [MON-11](#mon-11), [MON-12](#mon-12)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-15 · Data OUT-24
+**Sources:** Data IN-15 · Data OUT-24 · Decision TM-16
+
+**Open questions:**
+
+- The device contract has no ignition, gear, brake or accelerator signal yet; the manufacturer must open them (prerequisite 1).
 
 <a id="mon-10"></a>
 

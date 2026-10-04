@@ -832,24 +832,24 @@ The telematic devices that send vehicle data over MQTT.
 Table telemetry {
   message_id bigint [pk, increment, note: 'Auto-increasing ID assigned by the backend. @vi Mã tự tăng do backend cấp. @example 90213377']
   recorded_at timestamptz [pk, note: 'When the device recorded the sample; hypertable time column. @vi Thời điểm thiết bị ghi nhận dữ liệu; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
-  organization_id uuid [note: '@planned VH-11: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: '@planned VH-11: Customer that owned the vehicle at recorded_at (not today\'s owner). @vi Khách hàng sở hữu xe tại thời điểm recorded_at (không phải chủ hiện tại). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   message_uuid uuid [not null, note: 'ID the device gives each message, used to spot duplicates. @vi Mã thiết bị gán cho mỗi bản tin, dùng để phát hiện trùng. @example 5b0e3c7a-9d21-4f6e-8a4b-c3d2e1f0a9b8']
   telematic_id uuid [not null, note: 'Device that sent the sample. @vi Thiết bị đã gửi bản ghi. @example 2c8e5a1d-9f3b-4d7c-b2e6-8a1f0c5d9e55']
-  telematic_serial varchar(50) [not null, note: 'Device serial copied onto the row for audit and debugging. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
+  telematic_serial varchar(50) [not null, note: '@remove TM-16: Device serial copied onto every row; it is already in raw_payload and reachable through telematic_id. @vi Serial thiết bị, chép vào dòng để phục vụ kiểm tra và gỡ lỗi. @example TBX-2409-000123']
   vehicle_id uuid [not null, note: 'Vehicle the sample describes. @vi Xe mà bản ghi mô tả. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   received_at timestamptz [not null, note: 'When the backend received the message. @vi Thời điểm backend nhận bản tin. @example 2026-09-15T08:30:02Z']
   location "geography(POINT,4326)" [not null, note: 'GPS position (WGS84 point, longitude first). No spatial index (write-heavy path). @vi Vị trí GPS (điểm WGS84, kinh độ trước). Không có chỉ mục không gian (luồng ghi dày đặc). @example POINT(106.6297 10.8231)']
-  speed float8 [note: 'Speed in km/h. @vi Tốc độ (km/h). @example 62.5']
-  heading float8 [note: 'Direction of travel in degrees (0-360, 0 = north); NULL if unknown. @vi Hướng di chuyển (độ, 0-360, 0 = hướng bắc); NULL nếu không rõ. @example 135.0']
-  soc float8 [not null, note: 'State of charge: battery left, in % (0-100). @vi Mức pin còn lại (SOC), % (0-100). @example 64.2']
-  battery_voltage float8 [note: 'Pack voltage in volts. @vi Điện áp pack pin (V). @example 612.4']
-  battery_current float8 [note: 'Pack current in amperes. @vi Dòng điện pack pin (A). @example -85.3']
-  battery_temperature float8 [note: 'Battery temperature in °C. @vi Nhiệt độ pin (°C). @example 34.5']
+  speed_kmh float8 [note: '@built-as speed: Speed in km/h. @vi Tốc độ (km/h). @example 62.5']
+  heading_degrees float8 [note: '@built-as heading: Direction of travel in degrees (0-360, 0 = north); NULL if unknown. @vi Hướng di chuyển (độ, 0-360, 0 = hướng bắc); NULL nếu không rõ. @example 135.0']
+  soc_percent float8 [not null, note: '@built-as soc: State of charge: battery left, in % (0-100). @vi Mức pin còn lại (SOC), % (0-100). @example 64.2']
+  battery_voltage_v float8 [note: '@built-as battery_voltage: Pack voltage in volts. @vi Điện áp pack pin (V). @example 612.4']
+  battery_current_a float8 [note: '@built-as battery_current: Pack current in amperes. @vi Dòng điện pack pin (A). @example -85.3']
+  battery_temperature_celsius float8 [note: '@built-as battery_temperature: Battery temperature in °C. @vi Nhiệt độ pin (°C). @example 34.5']
   soh_percent float8 [note: 'State of health: capacity left compared with new, in % (F-A3). @vi Sức khỏe pin (SOH): dung lượng còn lại so với khi mới, % (F-A3). @example 97.8']
   cycle_count integer [note: 'Cumulative charge/discharge cycles of the pack (F-A3). @vi Số chu kỳ sạc-xả tích lũy của pack pin (F-A3). @example 213']
-  motor_temperature float8 [note: 'Motor temperature in °C. @vi Nhiệt độ động cơ (°C). @example 58.0']
-  odometer float8 [note: 'Total distance driven, in km. @vi Tổng quãng đường đã chạy (km). @example 48213.7']
-  signal_strength bigint [note: 'Cellular signal strength in dBm. @vi Cường độ sóng di động (dBm). @example -71']
+  motor_temperature_celsius float8 [note: '@built-as motor_temperature: Motor temperature in °C. @vi Nhiệt độ động cơ (°C). @example 58.0']
+  odometer_km float8 [note: '@built-as odometer: Total distance driven, in km. @vi Tổng quãng đường đã chạy (km). @example 48213.7']
+  signal_dbm bigint [note: '@built-as signal_strength: Cellular signal strength in dBm. @vi Cường độ sóng di động (dBm). @example -71']
   error_codes jsonb [note: 'Fault codes active at the time, as a JSON array; NULL if none. @vi Các mã lỗi đang hoạt động, dạng mảng JSON; NULL nếu không có. @example ["P0A80", "U0100"]']
   raw_payload jsonb [not null, note: 'Original message exactly as received, for debugging and reprocessing. @vi Bản tin gốc đúng như khi nhận, để gỡ lỗi và xử lý lại. @example {"serial": "TBX-2409-000123", "soc": 64.2, ...}']
   schema_version integer [not null, note: 'Version of the MQTT message contract the device used (F-A1). @vi Phiên bản cấu trúc bản tin MQTT mà thiết bị dùng (F-A1). @example 1']
@@ -857,12 +857,15 @@ Table telemetry {
     (vehicle_id, `recorded_at DESC`) [name: 'ix_telemetry_vehicle_time']
     (vehicle_id, `received_at DESC`) [name: 'ix_telemetry_vehicle_received', note: 'Last time the backend heard from a vehicle (F-J1/F-J3 device-health monitor); uses the receive clock, which a skewed device clock cannot move. @vi Lần cuối backend nhận dữ liệu từ xe (giám sát thiết bị F-J1/F-J3); dùng đồng hồ nhận của backend, không bị lệch giờ thiết bị làm sai.']
     message_uuid [name: 'ix_telemetry_message_uuid']
-    (telematic_id, recorded_at) [unique, name: 'uq_telematic_recorded_at']
+    (telematic_id, recorded_at) [unique, name: 'uq_telemetry_telematic_recorded_at']
   }
   Note: '''@status built @owner customer @features F-A1,F-A2,F-A3,F-A4,F-A6,F-C6 @hypertable recorded_at @built-as vehicle_telemetry
 One telemetry sample from a vehicle, every 5-10 s per vehicle: the largest table.
+A signal becomes a typed column only when a feature queries it; until then it
+stays in raw_payload, which keeps every message as received (TM-16). Every
+row is kept; no retention or compression for now (TM-17).
 @vi-name Dữ liệu vận hành xe
-@vi Một bản ghi dữ liệu xe gửi về, mỗi 5-10 giây một bản ghi cho mỗi xe: bảng lớn nhất hệ thống.'''
+@vi Một bản ghi dữ liệu xe gửi về, mỗi 5-10 giây một bản ghi cho mỗi xe: bảng lớn nhất hệ thống. Một tín hiệu chỉ trở thành cột riêng khi có tính năng truy vấn nó; trước đó vẫn nằm trong raw_payload, nơi lưu nguyên vẹn mọi bản tin (TM-16). Mọi dòng đều được giữ; hiện chưa xóa hay nén dữ liệu cũ (TM-17).'''
 }
 
 Ref: telemetry.organization_id > organizations.organization_id [delete: restrict]

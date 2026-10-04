@@ -1562,7 +1562,9 @@ features:
     release: P1.0
     offer: tbd
     depends_on: [MON-01]
-    sources: [Data IN-15, Data OUT-24]
+    sources: [Data IN-15, Data OUT-24, Decision TM-16]
+    questions:
+      - ["The device contract has no ignition, gear, brake or accelerator signal yet; the manufacturer must open them (prerequisite 1).", "Hợp đồng dữ liệu thiết bị chưa có tín hiệu khóa điện, cấp số, phanh hay chân ga; nhà sản xuất phải mở các tín hiệu này (điều kiện tiên quyết 1)."]
 
   - code: MON-10
     name: Location history and route replay
