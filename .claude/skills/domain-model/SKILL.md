@@ -64,8 +64,10 @@ every DBML edit.
   - `built`: exists in the models; must match them exactly.
   - `planned`: a feature in `feature-list.md` needs it.
   - `proposed`: not in the feature list, but the model needs it. Say why in the note.
-  - `customer`: owned by one customer account (the tenant), so it must have
-    `organization_id` (the generator warns otherwise). `internal`: our own data, shared across organizations.
+  - `customer`: owned by one organization (the tenant). It carries
+    `organization_id` only as its own owner or as the owner at the time it
+    was recorded; otherwise it reads it through a customer-owned parent
+    (DM-24; the generator warns when it has neither). `internal`: our own data, shared across organizations.
     `two-party`: a G3 asset used by a customer. `undecided`: cite the decision ID.
 - **Every column has a meaning and an example**, both in its note:
   `note: 'What the column holds, in one plain sentence. @example 51D-123.45'`.

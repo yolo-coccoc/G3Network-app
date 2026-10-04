@@ -62,7 +62,7 @@ STATUS_BADGES = {
     "proposed": "🆕 proposed",
 }
 OWNER_MEANINGS = {
-    "customer": "Belongs to one organization (normally a customer; a G3 company can own such rows too); carries `organization_id`.",
+    "customer": "Belongs to one organization (normally a customer; a G3 company can own such rows too); carries `organization_id` or reads it through its parent (DM-24).",
     "internal": "Our own data (the organization running the platform), shared across all organizations.",
     "two-party": "A G3 asset used by a customer (both have a stake).",
     "undecided": "Waiting on an open decision.",
@@ -883,10 +883,23 @@ def load_domain_model(source_path: Path) -> DomainModel:
     if errors:
         raise DomainModelError("\n".join(errors))
 
+    # DM-24: a customer-owned row carries organization_id only as its own
+    # owner or as the owner at the time it was recorded; otherwise it reads
+    # the organization through a parent, so it needs a link to a
+    # customer-owned table.
+    customer_parents = {
+        ref.from_table
+        for ref in refs
+        if tables[ref.to_table].owner == "customer" and ref.to_table != ref.from_table
+    }
     warnings = [
-        f"customer-owned table {table.name} has no {TENANT_COLUMN} column"
+        f"customer-owned table {table.name} has neither {TENANT_COLUMN} nor a "
+        "link to a customer-owned parent"
         for table in tables.values()
-        if table.owner == "customer" and table.column(TENANT_COLUMN) is None
+        if table.owner == "customer"
+        and table.column(TENANT_COLUMN) is None
+        and table.name not in customer_parents
+        and table.kind != "history"
     ]
     documentation_gaps = [
         f"{table.name}.{column.name}: missing {what}"
@@ -1364,7 +1377,7 @@ XLSX_OPEN_LINK_LABEL = "→ Mở"
 VI_OWNER_LABELS = {
     "customer": (
         "Khách hàng",
-        "Thuộc về một tổ chức (thường là khách hàng; công ty G3 cũng có thể sở hữu); có cột organization_id.",
+        "Thuộc về một tổ chức (thường là khách hàng; công ty G3 cũng có thể sở hữu); có cột organization_id hoặc lấy qua bảng cha (DM-24).",
     ),
     "internal": (
         "Nội bộ",
