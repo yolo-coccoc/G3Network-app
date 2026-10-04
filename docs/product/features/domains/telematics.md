@@ -35,12 +35,13 @@ Keep every telematics device: serial, IMEI, SIM/ICCID, firmware and status.
 
 - Create, edit, search and retire devices
 - Unique serial; retired devices keep their history
+- Each device has its own owner, the truck's owner or G3; a device the seller owns moves with the truck when it is sold
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Needed by:** [DEV-02](#dev-02), [DEV-04](#dev-04), [DEV-08](#dev-08)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-19 · Data IN-20 · Data IN-21 · PRD F-G1  
+**Sources:** Data IN-19 · Data IN-20 · Data IN-21 · PRD F-G1 · Decision TX-07  
 **Old codes:** F-G1
 
 <a id="dev-02"></a>
