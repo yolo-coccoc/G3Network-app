@@ -110,4 +110,3 @@ Not drawn, to keep the map readable: 12 domains also point to **identity** throu
 | D3 | When a vehicle **changes owner**, does its old data stay with the previous owner? | `vehicle_ownerships`, `organization_id` on telemetry |
 | D5 | Who pays for a fleet driver's charge: the **driver's wallet, the fleet's wallet**, or it depends? | `wallets`, `payments` |
 | D6 | Who owns the **telematic device**: the customer, or G3 as part of the subscription? | `telematics` owner |
-| D7 | For internal users (who see every organization), which features does each job title get - especially personal data such as location history and camera clips (e.g. an ACCOUNTANT should not open camera clips)? | `user_role_assignments`, feature list in code |

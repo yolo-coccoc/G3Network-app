@@ -626,6 +626,7 @@ features:
     capabilities:
       - ["Features = role ∩ plan for customers; the whole role for internal users", "Tính năng = vai trò ∩ gói với khách hàng; toàn bộ vai trò với người dùng nội bộ"]
       - ["Internal-only features are never in any plan", "Tính năng chỉ dành cho nội bộ không bao giờ nằm trong gói"]
+      - ["A role gives internal and customer users the same features; they differ only in which data they reach. Each role's feature list is granted in one step when nearly all features are built", "Một vai trò cho người dùng nội bộ và khách hàng cùng các tính năng; khác nhau chỉ ở phạm vi dữ liệu được xem. Danh sách tính năng của từng vai trò được cấp trong một bước khi gần hoàn tất các tính năng"]
       - ["The app and portal hide what the user cannot use", "App và portal ẩn những gì người dùng không được dùng"]
       - ["Lock features of an overdue subscription", "Khóa tính năng khi thuê bao quá hạn"]
     surfaces: {backend: todo, portal: todo, app: todo}
@@ -634,7 +635,7 @@ features:
     offer: included
     depends_on: [ACC-13, PAY-02]
     touches: [billing]
-    sources: [PRD F-F1, Decision ID-11]
+    sources: [PRD F-F1, Decision ID-11, Decision ID-44]
     old_codes: [F-F1]
 
   - code: ACC-15
@@ -720,9 +721,7 @@ features:
     priority: Must
     release: P1.0
     offer: included
-    sources: [Data IN-37, NF-08, Decision ID-20, Decision ID-38]
-    questions:
-      - ["Legal adviser to confirm the company-agreement model for Vietnam (open question 6).", "Luật sư cần xác nhận mô hình thỏa thuận với doanh nghiệp tại Việt Nam (câu hỏi mở 6)."]
+    sources: [Data IN-37, NF-08, Decision ID-20, Decision ID-38, Decision ID-43]
 
   - code: ACC-18
     name: Personal-data access audit log

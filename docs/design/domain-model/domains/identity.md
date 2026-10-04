@@ -172,7 +172,7 @@ service packages live in their own tables.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `organization_id` | uuid | no | PK |  | Internal ID of the organization. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `is_internal` | boolean | no | 🔍 |  | TRUE for our own organization(s), the ones running this platform (outsourced staff acting for us, e.g. a hired sales company, are members of it too). Its users see data across every organization and get every feature (no plan limit), still limited to their role (decision D7); only an internal organization may hold HEAD_ADMIN and CO_ADMIN. FALSE for every other organization (customers, partners), whose users only see data related to their own organization, with features limited by its plan. A partner is recognised by having a repair_partners profile, not by this flag. The most security-sensitive column of the table: setting it grants cross-organization access. | `false` |
+| `is_internal` | boolean | no | 🔍 |  | TRUE for our own organization(s), the ones running this platform (outsourced staff acting for us, e.g. a hired sales company, are members of it too). Its users see data across every organization and get every feature (no plan limit), still limited to their role (decision ID-44); only an internal organization may hold HEAD_ADMIN and CO_ADMIN. FALSE for every other organization (customers, partners), whose users only see data related to their own organization, with features limited by its plan. A partner is recognised by having a repair_partners profile, not by this flag. The most security-sensitive column of the table: setting it grants cross-organization access. | `false` |
 | `legal_form` | varchar(20) | no | 🔍 |  | What kind of legal person the organization is, because the law treats them differently. COMPANY: a registered company (tax code of 10 digits, or 13 for a branch; invoices to the company). INDIVIDUAL: a private person, e.g. an owner-driver with one truck (the 12-digit citizen ID serves as tax code and is personal data: masked, consent required, every view audit-logged). Used to validate tax_code, apply the privacy rules and fill e-invoices. Internal organizations are always COMPANY; a partner may be either (a small workshop is often a household business, whose tax code is the owner's citizen ID). Values: COMPANY \| INDIVIDUAL. | `COMPANY` |
 | `display_name` | varchar(200) | no | 🔍 |  | Short name shown in the app and the portal. | `Minh Phát Logistics` |
 | `legal_name` | varchar(255) | no | 🔍 |  | Full registered name of the company, or the full name of the person for an INDIVIDUAL; printed on invoices. | `Công ty Cổ phần Vận tải Minh Phát` |
@@ -249,6 +249,7 @@ Every earlier version of a row of `organizations`: a copy of the whole row, take
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (organizations.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -327,6 +328,7 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (users.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -411,6 +413,7 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 | `updated_at` | timestamptz | yes |  |  | Value before the change (memberships.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
 
 **Indexes**
 

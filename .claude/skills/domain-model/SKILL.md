@@ -100,7 +100,7 @@ every DBML edit.
   by the tool** (never written in the DBML; a hand-written `@history-of`
   table is an error): every source column (same type, nullable, no
   pk/unique, examples copied) plus `history_id`, `changed_at`, `changed_by`
-  (→ `users`), an FK to the source key and an index on (key, `changed_at`).
+  (→ `users`), `change_reason` (NOT NULL), an FK to the source key and an index on (key, `changed_at`).
   The views mark tracked columns with 🔍. History tables are not reviewed
   one by one; only special cases are discussed.
 - **Profile vs state (`.claude/rules/database.md`)**: decisions about a

@@ -85,7 +85,7 @@ VI_NAME_TAG = "@vi-name"
 # Change history (owner decision D8, .claude/rules/database.md): a table tags
 # the columns whose change is audited ("@tracked a,b,c"); its history table
 # ("@history-of <table>") mirrors every source column and adds only these.
-HISTORY_METADATA_COLUMNS = ("history_id", "changed_at", "changed_by")
+HISTORY_METADATA_COLUMNS = ("history_id", "changed_at", "changed_by", "change_reason")
 # "@tracked *" = history covers the whole table (minus "@untracked" columns).
 TRACK_ALL = "*"
 # Companion tables of a main table: generated history (numbered <N>.h) and
@@ -528,6 +528,28 @@ def _build_history_table(
                 "Người dùng đã thực hiện thay đổi; NULL nếu do hệ thống thực hiện."
             ),
             example=user_example,
+            is_planned=False,
+            planned_detail="",
+        ),
+        ColumnInfo(
+            name="change_reason",
+            type_label="varchar(200)",
+            enum_values=None,
+            is_pk=False,
+            is_not_null=True,
+            is_unique=False,
+            meaning=(
+                "Why the row was changed, set by the application for the "
+                "transaction: typed by the person for an administrative "
+                "decision, a fixed text for a routine action. A change "
+                "without a reason fails."
+            ),
+            vi_meaning=(
+                "Lý do thay đổi dòng, do ứng dụng đặt cho giao dịch: người "
+                "dùng nhập với quyết định quản trị, văn bản cố định với thao "
+                "tác thường lệ. Thay đổi không có lý do sẽ bị từ chối."
+            ),
+            example="Customer moved to a new office",
             is_planned=False,
             planned_detail="",
         ),

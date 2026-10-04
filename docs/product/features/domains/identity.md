@@ -377,6 +377,7 @@ Allow a feature only when it is in the person's roles and, for customers, also i
 
 - Features = role ∩ plan for customers; the whole role for internal users
 - Internal-only features are never in any plan
+- A role gives internal and customer users the same features; they differ only in which data they reach. Each role's feature list is granted in one step when nearly all features are built
 - The app and portal hide what the user cannot use
 - Lock features of an overdue subscription
 
@@ -386,7 +387,7 @@ Allow a feature only when it is in the person's roles and, for customers, also i
 **Needed by:** [ACC-21](#acc-21), [NTF-06](notifications.md#ntf-06)  
 **Also touches:** `billing`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-F1 · Decision ID-11  
+**Sources:** PRD F-F1 · Decision ID-11 · Decision ID-44  
 **Old codes:** F-F1
 
 <a id="acc-15"></a>
@@ -464,11 +465,7 @@ Record who accepted which version of which legal text: a company accepts the dat
 
 **Needed by:** [ACC-07](#acc-07), [ACC-19](#acc-19), [PAY-12](billing.md#pay-12)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-37 · NF-08 · Decision ID-20 · Decision ID-38
-
-**Open questions:**
-
-- Legal adviser to confirm the company-agreement model for Vietnam (open question 6).
+**Sources:** Data IN-37 · NF-08 · Decision ID-20 · Decision ID-38 · Decision ID-43
 
 <a id="acc-18"></a>
 
