@@ -231,6 +231,9 @@ class TableInfo:
             tables in design order; ``<N>.h`` for a generated history table.
         built_as: For a built table the target design renames, its name in
             the code today (``@built-as``); empty otherwise.
+        removed_detail: For a built table the target design drops
+            (``@remove`` on its tag line), the decision IDs after the tag;
+            ``None`` when the table stays.
     """
 
     name: str
@@ -251,6 +254,7 @@ class TableInfo:
     state_table: str = ""
     number: str = ""
     built_as: str = ""
+    removed_detail: str | None = None
 
     def column(self, column_name: str) -> ColumnInfo | None:
         """Return the column with this name, or None."""
@@ -845,7 +849,13 @@ def load_domain_model(source_path: Path) -> DomainModel:
             indexes=[_parse_index(index) for index in pydbml_table.indexes],
             tracked_columns=tracked_columns,
             built_as=tags.get("built-as", ""),
+            removed_detail=tags.get("remove"),
         )
+        if "remove" in tags and status != "built":
+            errors.append(
+                f"table {table_name}: @remove is only for built tables; delete a "
+                "planned table from the design instead"
+            )
         # A rename is a target design of a built table (PR-11): the DBML
         # carries the new name and @built-as the name check finds in the code.
         if tags.get("built-as") and status != "built":
@@ -1115,7 +1125,8 @@ def render_overview(model: DomainModel) -> str:
     for domain in model.domains:
         counts = _status_counts(domain.table_names, tables)
         table_list = ", ".join(
-            f"{tables[name].number} {name}" for name in domain.table_names
+            f"{tables[name].number} {'~~' + name + '~~' if tables[name].removed_detail is not None else name}"
+            for name in domain.table_names
         )
         lines.append(
             f"| [{domain.title}](domains/{domain.name}.md) "
@@ -1249,7 +1260,10 @@ def _render_table_section(
     if table.hypertable_column:
         badges.append(f"hypertable on `{table.hypertable_column}`")
     if table.built_as:
-        badges.append(f"🗑️ built today as `{table.built_as}`, to be renamed")
+        badges.append(f"✏️ built today as `{table.built_as}`, to be renamed")
+    if table.removed_detail is not None:
+        detail = f" ({table.removed_detail})" if table.removed_detail else ""
+        badges.append(f"**🗑️ to be removed{detail}**")
     if table.kind in COMPANION_LABELS:
         badges.append(
             f"{COMPANION_LABELS[table.kind]} of "
@@ -1692,7 +1706,8 @@ def _write_overview_sheet(
                     table.vi_name,
                     VI_OWNER_LABELS[table.owner][0],
                     ", ".join(table.features),
-                    _plain(table.vi_description),
+                    ("[Sẽ bỏ] " if table.removed_detail is not None else "")
+                    + _plain(table.vi_description),
                     len(table.columns),
                     XLSX_OPEN_LINK_LABEL,
                 ],

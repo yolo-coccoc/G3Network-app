@@ -106,6 +106,10 @@ every DBML edit.
   the tag when the refactor renames the table.
   A renamed built **column** works the same way: its note starts with
   `@built-as <name in the code>: meaning`.
+- **A built table the target design drops** gets `@remove <decision IDs>` on
+  its tag line: it stays in the DBML (check still matches it to the code),
+  is struck through in the overview and badged "to be removed". Delete it
+  from the DBML when the refactor drops it from the code.
 - **Change history (decision D8, `.claude/rules/database.md`)**: decided
   **per table** in the review (on for tables whose changes must be audited,
   e.g. profile details). When on, the source table's tag line says
