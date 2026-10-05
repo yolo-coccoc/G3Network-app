@@ -36,6 +36,7 @@ Customers raise a request in the app with the truck's VIN, position and error co
 - Lifecycle open → acknowledged → resolved → closed
 - SLA deadline fixed at creation
 - Customer claims and bug reports as categories
+- Data request as a category: a request for a truck owner's driving data is released only with the owner's written approval or an authority's order, and logged
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -43,7 +44,7 @@ Customers raise a request in the app with the truck's VIN, position and error co
 **Needed by:** [SUP-02](#sup-02), [SUP-03](#sup-03)  
 **Also touches:** `vehicles`, `drivers`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-I1 · Data IN-51 · Data OUT-61  
+**Sources:** PRD F-I1 · Data IN-51 · Data OUT-61 · Decision DR-11  
 **Old codes:** F-I1
 
 **Open questions:**

@@ -2044,7 +2044,7 @@ features:
     offer: tbd
     depends_on: [ACC-12]
     touches: [identity]
-    sources: [PRD F-E4, Data IN-37, Data OUT-34, Decision ID-13, Decision DR-03]
+    sources: [PRD F-E4, Data IN-37, Data OUT-34, Decision ID-13, Decision DR-03, Decision DR-09, Decision DR-10]
     old_codes: [F-E4]
 
   - code: DRV-02
@@ -2070,14 +2070,14 @@ features:
       - ["One driver at the wheel per truck; the session ends at check-out, when another driver takes over, when the driver takes another truck, or after the truck has not moved for the organization's auto-end time (default 2 hours)", "Mỗi xe một người cầm lái; phiên kết thúc khi trả xe, khi tài xế khác nhận xe, khi tài xế nhận xe khác, hoặc khi xe không di chuyển quá thời gian tự kết thúc của tổ chức (mặc định 2 giờ)"]
       - ["Alert the portal when a truck drives with nobody checked in", "Cảnh báo lên portal khi xe chạy mà không ai nhận xe"]
       - ["Driver alerts go to the driver checked in and to the portal", "Cảnh báo dành cho tài xế gửi tới tài xế đang nhận xe và portal"]
-      - ["History per driver and per truck", "Lịch sử theo tài xế và theo xe"]
+      - ["Full history per driver and per truck in the portal; the driver sees only a summary of their own sessions in the app (no route or places, no export)", "Lịch sử đầy đủ theo tài xế và theo xe trên portal; tài xế chỉ xem bản tóm tắt các phiên của mình trên ứng dụng (không có lộ trình hay địa điểm, không xuất dữ liệu)"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
     depends_on: [DRV-01, VEH-01]
     touches: [vehicles, telemetry, notifications]
-    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-07, Decision DR-08, Decision NT-07, Decision ID-45]
+    sources: [PRD F-E4, Data IN-55, Data OUT-34, Decision DR-07, Decision DR-08, Decision DR-10, Decision DR-11, Decision NT-07, Decision ID-45]
     old_codes: [F-E4]
 
   - code: DRV-03
@@ -2158,6 +2158,8 @@ features:
     offer: tbd
     depends_on: [DRV-04, MON-12, STN-06]
     sources: [Data IN-59, Data OUT-19]
+    questions:
+      - ["Driving time across organizations: who may see a driver's total when they drive trucks of several organizations (open question 8, legal adviser).", "Thời gian lái qua nhiều tổ chức: ai được xem tổng thời gian lái khi tài xế lái xe của nhiều tổ chức (câu hỏi mở 8, cố vấn pháp lý)."]
 
   - code: DRV-06
     name: Driving and rest compliance report
@@ -2181,6 +2183,8 @@ features:
     offer: tbd
     depends_on: [DRV-05]
     sources: [Data OUT-39]
+    questions:
+      - ["Driving time across organizations: who may see a driver's total when they drive trucks of several organizations (open question 8, legal adviser).", "Thời gian lái qua nhiều tổ chức: ai được xem tổng thời gian lái khi tài xế lái xe của nhiều tổ chức (câu hỏi mở 8, cố vấn pháp lý)."]
 
   - code: DRV-07
     name: Driver charging-efficiency report
@@ -3796,13 +3800,14 @@ features:
       - ["Lifecycle open → acknowledged → resolved → closed", "Vòng đời mở → đã tiếp nhận → đã xử lý → đóng"]
       - ["SLA deadline fixed at creation", "Hạn SLA chốt khi tạo"]
       - ["Customer claims and bug reports as categories", "Khiếu nại và báo lỗi phần mềm là các loại yêu cầu"]
+      - ["Data request as a category: a request for a truck owner's driving data is released only with the owner's written approval or an authority's order, and logged", "Yêu cầu dữ liệu là một loại yêu cầu: dữ liệu lái xe của chủ xe chỉ được cung cấp khi chủ xe đồng ý bằng văn bản hoặc có yêu cầu của cơ quan có thẩm quyền, và được ghi nhật ký"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
     depends_on: [VEH-01, DRV-01]
     touches: [vehicles, drivers]
-    sources: [PRD F-I1, Data IN-51, Data OUT-61]
+    sources: [PRD F-I1, Data IN-51, Data OUT-61, Decision DR-11]
     old_codes: [F-I1]
     questions:
       - ["Who staffs 24/7 customer care (in-house or outsourced), and which SLA can we commit to?", "Ai trực CSKH 24/7 (nội bộ hay thuê ngoài), và cam kết được SLA nào?"]

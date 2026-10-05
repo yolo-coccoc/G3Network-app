@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-✅ built: 2 · 📋 planned: 1 · 🆕 proposed: 1
+✅ built: 2 · 📋 planned: 2 · 🆕 proposed: 1
 
 The people who drive the trucks, and how they identify themselves at a charger.
 
@@ -18,8 +18,12 @@ The people who drive the trucks, and how they identify themselves at a charger.
 erDiagram
   drivers {
     uuid driver_id PK
-    uuid organization_id FK "planned"
     uuid membership_id FK "planned"
+  }
+  driver_history {
+    bigint history_id PK
+    uuid driver_id FK
+    uuid changed_by FK
   }
   driver_vehicle_assignments {
     uuid assignment_id PK
@@ -38,8 +42,7 @@ erDiagram
     uuid organization_id FK
     uuid driver_id FK
   }
-  drivers }o..o| organizations : "organization_id"
-  drivers |o..o| memberships : "membership_id"
+  drivers |o..|| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
   driver_vehicle_assignments }o--|| drivers : "driver_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -54,9 +57,11 @@ erDiagram
   wallets }o..o| drivers : "driver_id"
   driver_scores }o..|| drivers : "driver_id"
   trips }o..o| drivers : "driver_id"
+  driver_history }o..o| drivers : "driver_id"
+  driver_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [vehicles](vehicles.md#vehicles), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallets](billing.md#wallets).
 
 ## Tables
 
@@ -64,20 +69,31 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 **No. 21** · ✅ built · owner: **customer** · features: F-E4
 
-A driver employed by (or being) a customer.
+Driver profile: the facts the system acts on about one person's job as a
+driver in one organization (ID-13). Who the person is (name, phone) lives on
+users; the organization is read through the membership. A person driving
+for two organizations has two profiles, and each organization is responsible
+for its own (DR-09). A driver may check in to a truck when the profile is
+ACTIVE and not deleted, its licence has not expired, and the membership and
+the user are ACTIVE (DR-10).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
+
+🔍 = tracked column: a change to it copies the whole old row into [driver_history](#driver_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `driver_id` | uuid | no | PK |  | Internal ID of the driver. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
-| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned**: Customer organization that employs the driver. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `membership_id` | uuid | yes | FK UQ | [memberships](identity.md#memberships).membership_id (on delete restrict) | **📋 planned**: The membership (person in this organization) this driver profile belongs to; a person driving for two companies has one driver profile in each. A DRIVER role requires an active profile. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `full_name` | varchar(100) | no |  |  | Driver's full name. | `Nguyễn Văn An` |
-| `phone_number` | varchar(20) | no | UQ |  | Contact phone number, unique. | `+84912345678` |
-| `license_number` | varchar(50) | no | UQ |  | Driving licence number, unique; the driver's business key. | `790123456789` |
-| `status` | driverstatus | no |  |  | Driver lifecycle status. | `ACTIVE` |
-| `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
-| `updated_at` | timestamptz | no |  |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes |  |  | Soft-delete time; NULL while the row is live. Rows are never hard-deleted. | `NULL` |
+| `driver_id` | uuid | no | PK |  | Internal ID of the driver profile. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
+| `membership_id` | uuid | no | FK UQ 🔍 | [memberships](identity.md#memberships).membership_id (on delete restrict) | **📋 planned (DR-09)**: The membership (one person in one organization) this profile belongs to; the organization is read through it (DM-24). A person who drives for two organizations has one profile in each, and each organization keeps its own copy of the facts. A new membership after leaving gets a new profile. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `full_name` | varchar(100) | no |  |  | **🗑️ to be removed (DR-09)**: Driver's full name; a fact about the person, already users.full_name. | `Nguyễn Văn An` |
+| `phone_number` | varchar(20) | no | UQ |  | **🗑️ to be removed (DR-09)**: Contact phone number; a fact about the person, already users.phone_number. | `+84912345678` |
+| `license_number` | varchar(50) | no | 🔍 |  | Driving licence number as recorded by this organization. Not unique: a person who drives for two organizations has it on both profiles. When the number is already on another person's live profile, the app warns instead of refusing, so one organization learns nothing about another's driver (DR-09). | `790123456789` |
+| `license_class` | varchar(5) | no | 🔍 |  | **📋 planned (DR-09)**: Licence class under Law 36/2024/QH15 (the highest one held for trucks). A tractor head needs CE; any other class only gives a warning at check-in until vehicle models have a body type (DR-10). Values: B \| C1 \| C \| D1 \| D2 \| D \| BE \| C1E \| CE \| D1E \| D2E \| DE. | `CE` |
+| `license_expires_on` | date | no | 🔍 |  | **📋 planned (DR-09)**: Expiry date printed on the licence (DM-26); every truck class expires. "Expired" is computed from it, never stored as a status; an expired licence blocks check-in and drives the expiry reminder (DRV-01). | `2029-03-01` |
+| `status` | driverstatus | no | 🔍 |  | Decided by the organization. ACTIVE: may check in to a truck (with the other conditions of DR-10). INACTIVE: may not, e.g. suspended, or the person left (then also soft-deleted). Values: ACTIVE \| INACTIVE. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the profile has its current status, or why it left the system; NULL when there is nothing to explain. Earlier reasons are in driver_history. | `Tạm đình chỉ sau va chạm ngày 12/09` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the profile is no longer part of the system, because the person left the organization (the membership ended) or it was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. Ending a membership sets the profile INACTIVE and fills this in the same transaction (DR-10). NULL while it is part of the system. | `NULL` |
 
 **Enum values**
 
@@ -85,9 +101,7 @@ A driver employed by (or being) a customer.
 
 **Indexes**
 
-- `ix_drivers_status` (status)
-- `ix_drivers_license_number` (license_number) unique
-- `ix_drivers_phone_number` (phone_number) unique
+- `ix_drivers_license_number` (license_number) - Planned (DR-09): no longer unique; for search and the duplicate-number warning
 
 **Referenced by**
 
@@ -99,6 +113,38 @@ A driver employed by (or being) a customer.
 - [wallets](billing.md#wallets).driver_id (planned)
 - [driver_scores](scoring.md#driver_scores).driver_id (planned)
 - [trips](unassigned.md#trips).driver_id (planned)
+- [driver_history](#driver_history).driver_id (planned)
+
+### driver_history
+
+**No. 21.h** · 📋 planned · owner: **customer** · features: F-E4 · change history of [drivers](#drivers)
+
+Every earlier version of a row of `drivers`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `driver_id` | uuid | yes | FK | [drivers](#drivers).driver_id (on delete restrict) | Value before the change (drivers.driver_id). | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
+| `membership_id` | uuid | yes |  |  | Value before the change (drivers.membership_id). | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `license_number` | varchar(50) | yes |  |  | Value before the change (drivers.license_number). | `790123456789` |
+| `license_class` | varchar(5) | yes |  |  | Value before the change (drivers.license_class). | `CE` |
+| `license_expires_on` | date | yes |  |  | Value before the change (drivers.license_expires_on). | `2029-03-01` |
+| `status` | driverstatus | yes |  |  | Value before the change (drivers.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (drivers.status_reason). | `Tạm đình chỉ sau va chạm ngày 12/09` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (drivers.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (drivers.updated_at). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes |  |  | Value before the change (drivers.deleted_at). | `NULL` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Enum values**
+
+- `driverstatus`: ACTIVE, INACTIVE
+
+**Indexes**
+
+- `ix_driver_history_driver_id_time` (driver_id, changed_at)
 
 ### driver_vehicle_assignments
 
@@ -139,16 +185,17 @@ truck, the driver checks in to another truck, or the truck has not moved for
 the organization's auto-end time (organization_settings). Events that need a
 driver (scores, trips, charging sessions) take it from here. Assigned-driver
 alerts go to the driver checked in and to the portal; a truck moving with
-nobody checked in alerts the portal. Seen by the truck's organization and by
-the driver in the app; a driver's own employer does not see sessions on
-another organization's truck (DR-08). Closed rows are never edited, so no
-change history.
+nobody checked in alerts the portal. Seen in full by the truck's
+organization; the driver sees only a summary of their own sessions in the app
+(times, truck, duration, distance; no route or places, no export), and a
+driver's own employer does not see sessions on another organization's truck
+(DR-08, DR-11). Closed rows are never edited, so no change history.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `driving_session_id` | uuid | no | PK |  | Internal ID of the driving session. | `0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the truck; the session belongs to it. The driver may belong to another organization (DR-07). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `driver_id` | uuid | no | FK | [drivers](#drivers).driver_id (on delete restrict) | Driver at the wheel: any active driver in the system, from any organization. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
+| `driver_id` | uuid | no | FK | [drivers](#drivers).driver_id (on delete restrict) | Driver profile at the wheel: any active driver in the system, from any organization; a driver from another organization is a normal case (e.g. a truck owner hiring drivers from another company) and only gives a warning. The profile is the person's profile in the truck's organization when they have one, otherwise their profile in the organization they act for in the app; a manager checking someone in from the portal picks one of their own organization's profiles (DR-10). | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Truck being driven. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `check_in_method` | varchar(10) | no |  |  | How the driver checked in. QR: scanned the code on the truck. APP: picked the truck from the nearby trucks listed in the app. PORTAL: a manager checked the driver in from the portal (e.g. a driver without a phone). Values: QR \| APP \| PORTAL. | `QR` |
 | `check_in_location` | geography(POINT,4326) | yes |  |  | Where the phone was at check-in, compared with the truck's last T-Box position to refuse a check-in far from the truck; NULL for PORTAL. | `POINT(106.66 10.76)` |

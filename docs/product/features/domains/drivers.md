@@ -42,7 +42,7 @@ Keep each driver's facts for one organization: licence number, class and expiry,
 **Needed by:** [ACC-10](identity.md#acc-10), [DRV-02](#drv-02), [SUP-01](support.md#sup-01)  
 **Also touches:** `identity`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-E4 · Data IN-37 · Data OUT-34 · Decision ID-13 · Decision DR-03  
+**Sources:** PRD F-E4 · Data IN-37 · Data OUT-34 · Decision ID-13 · Decision DR-03 · Decision DR-09 · Decision DR-10  
 **Old codes:** F-E4
 
 <a id="drv-02"></a>
@@ -64,7 +64,7 @@ The driver checks in to the truck they are about to drive by scanning its QR cod
 - One driver at the wheel per truck; the session ends at check-out, when another driver takes over, when the driver takes another truck, or after the truck has not moved for the organization's auto-end time (default 2 hours)
 - Alert the portal when a truck drives with nobody checked in
 - Driver alerts go to the driver checked in and to the portal
-- History per driver and per truck
+- Full history per driver and per truck in the portal; the driver sees only a summary of their own sessions in the app (no route or places, no export)
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -72,7 +72,7 @@ The driver checks in to the truck they are about to drive by scanning its QR cod
 **Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07)  
 **Also touches:** `vehicles`, `telemetry`, `notifications`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision DR-08 · Decision NT-07 · Decision ID-45  
+**Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision DR-08 · Decision DR-10 · Decision DR-11 · Decision NT-07 · Decision ID-45  
 **Old codes:** F-E4
 
 <a id="drv-03"></a>
@@ -156,6 +156,10 @@ Remind the driver before reaching 4 hours of continuous driving or 10 hours a da
 **Related tables:** — (after the database review)  
 **Sources:** Data IN-59 · Data OUT-19
 
+**Open questions:**
+
+- Driving time across organizations: who may see a driver's total when they drive trucks of several organizations (open question 8, legal adviser).
+
 <a id="drv-06"></a>
 
 ### DRV-06 Driving and rest compliance report
@@ -178,6 +182,10 @@ Per driver: shifts over 4 hours continuous, 10 hours a day and 48 hours a week.
 **Depends on:** [DRV-05](#drv-05)  
 **Related tables:** — (after the database review)  
 **Sources:** Data OUT-39
+
+**Open questions:**
+
+- Driving time across organizations: who may see a driver's total when they drive trucks of several organizations (open question 8, legal adviser).
 
 <a id="drv-07"></a>
 

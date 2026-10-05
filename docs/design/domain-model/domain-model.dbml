@@ -893,25 +893,32 @@ energy reports are computed from it.
 // ===========================================================================
 
 Table drivers {
-  driver_id uuid [pk, note: 'Internal ID of the driver. @vi Mã nội bộ của tài xế. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  organization_id uuid [note: '@planned: Customer organization that employs the driver. @vi Tổ chức khách hàng tuyển dụng tài xế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  membership_id uuid [unique, note: '@planned: The membership (person in this organization) this driver profile belongs to; a person driving for two companies has one driver profile in each. A DRIVER role requires an active profile. @vi Thành viên (người trong tổ chức này) sở hữu hồ sơ tài xế; người lái xe cho hai công ty có một hồ sơ tài xế ở mỗi công ty. Vai trò DRIVER cần một hồ sơ còn hiệu lực. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  full_name varchar(100) [not null, note: 'Driver\'s full name. @vi Họ tên tài xế. @example Nguyễn Văn An']
-  phone_number varchar(20) [not null, unique, note: 'Contact phone number, unique. @vi Số điện thoại liên hệ, duy nhất. @example +84912345678']
-  license_number varchar(50) [not null, unique, note: 'Driving licence number, unique; the driver\'s business key. @vi Số giấy phép lái xe, duy nhất; là khóa nghiệp vụ của tài xế. @example 790123456789']
-  status driverstatus [not null, note: 'Driver lifecycle status. @vi Trạng thái của tài xế. @example ACTIVE']
+  driver_id uuid [pk, note: 'Internal ID of the driver profile. @vi Mã nội bộ của hồ sơ tài xế. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  membership_id uuid [not null, unique, note: '@planned DR-09: The membership (one person in one organization) this profile belongs to; the organization is read through it (DM-24). A person who drives for two organizations has one profile in each, and each organization keeps its own copy of the facts. A new membership after leaving gets a new profile. @vi Thành viên (một người trong một tổ chức) sở hữu hồ sơ này; tổ chức được đọc qua thành viên (DM-24). Người lái xe cho hai tổ chức có một hồ sơ ở mỗi tổ chức, và mỗi tổ chức tự giữ bản thông tin của mình. Thành viên mới sau khi đã rời đi có hồ sơ mới. @example 00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  full_name varchar(100) [not null, note: '@remove DR-09: Driver\'s full name; a fact about the person, already users.full_name. @vi Họ tên tài xế; là thông tin của con người, đã có ở users.full_name. @example Nguyễn Văn An']
+  phone_number varchar(20) [not null, unique, note: '@remove DR-09: Contact phone number; a fact about the person, already users.phone_number. @vi Số điện thoại liên hệ; là thông tin của con người, đã có ở users.phone_number. @example +84912345678']
+  license_number varchar(50) [not null, note: 'Driving licence number as recorded by this organization. Not unique: a person who drives for two organizations has it on both profiles. When the number is already on another person\'s live profile, the app warns instead of refusing, so one organization learns nothing about another\'s driver (DR-09). @vi Số giấy phép lái xe do tổ chức này ghi nhận. Không duy nhất: người lái xe cho hai tổ chức có số này ở cả hai hồ sơ. Khi số đã có trên hồ sơ còn hiệu lực của người khác, ứng dụng chỉ cảnh báo chứ không từ chối, để một tổ chức không biết gì về tài xế của tổ chức khác (DR-09). @example 790123456789']
+  license_class varchar(5) [not null, note: '@planned DR-09: Licence class under Law 36/2024/QH15 (the highest one held for trucks). A tractor head needs CE; any other class only gives a warning at check-in until vehicle models have a body type (DR-10). Values: B | C1 | C | D1 | D2 | D | BE | C1E | CE | D1E | D2E | DE. @vi Hạng giấy phép lái xe theo Luật 36/2024/QH15 (hạng cao nhất dùng cho xe tải). Đầu kéo cần hạng CE; hạng khác chỉ bị cảnh báo khi nhận xe cho tới khi dòng xe có loại thân xe (DR-10). @example CE']
+  license_expires_on date [not null, note: '@planned DR-09: Expiry date printed on the licence (DM-26); every truck class expires. "Expired" is computed from it, never stored as a status; an expired licence blocks check-in and drives the expiry reminder (DRV-01). @vi Ngày hết hạn ghi trên giấy phép (DM-26); mọi hạng xe tải đều có thời hạn. "Hết hạn" được tính từ cột này, không lưu thành trạng thái; giấy phép hết hạn chặn việc nhận xe và dùng để nhắc gia hạn (DRV-01). @example 2029-03-01']
+  status driverstatus [not null, note: 'Decided by the organization. ACTIVE: may check in to a truck (with the other conditions of DR-10). INACTIVE: may not, e.g. suspended, or the person left (then also soft-deleted). Values: ACTIVE | INACTIVE. @vi Do tổ chức quyết định. ACTIVE: được nhận xe (cùng các điều kiện khác của DR-10). INACTIVE: không được, ví dụ bị tạm đình chỉ, hoặc người đó đã rời đi (khi đó cũng bị xóa mềm). @example ACTIVE']
+  status_reason varchar(200) [note: '@planned DM-19: Why the profile has its current status, or why it left the system; NULL when there is nothing to explain. Earlier reasons are in driver_history. @vi Lý do của trạng thái hiện tại, hoặc lý do hồ sơ rời hệ thống; NULL khi không có gì cần giải thích. Các lý do trước đó nằm trong driver_history. @example Tạm đình chỉ sau va chạm ngày 12/09']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  deleted_at timestamptz [note: 'Soft-delete time: the profile is no longer part of the system, because the person left the organization (the membership ended) or it was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. Ending a membership sets the profile INACTIVE and fills this in the same transaction (DR-10). NULL while it is part of the system. @vi Thời điểm xóa mềm: hồ sơ không còn thuộc hệ thống, do người đó rời tổ chức (thành viên kết thúc) hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. Khi thành viên kết thúc, hồ sơ được chuyển sang INACTIVE và điền cột này trong cùng giao dịch (DR-10). NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    status [name: 'ix_drivers_status']
-    license_number [unique, name: 'ix_drivers_license_number']
-    phone_number [unique, name: 'ix_drivers_phone_number']
+    license_number [name: 'ix_drivers_license_number', note: 'Planned (DR-09): no longer unique; for search and the duplicate-number warning']
   }
-  Note: '''@status built @owner customer @features F-E4
-A driver employed by (or being) a customer.
+  Note: '''@status built @owner customer @features F-E4 @tracked *
+Driver profile: the facts the system acts on about one person's job as a
+driver in one organization (ID-13). Who the person is (name, phone) lives on
+users; the organization is read through the membership. A person driving
+for two organizations has two profiles, and each organization is responsible
+for its own (DR-09). A driver may check in to a truck when the profile is
+ACTIVE and not deleted, its licence has not expired, and the membership and
+the user are ACTIVE (DR-10).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Tài xế
-@vi Một tài xế do khách hàng tuyển dụng (hoặc chính là khách hàng).'''
+@vi Hồ sơ tài xế: các thông tin mà hệ thống dùng về công việc lái xe của một người trong một tổ chức (ID-13). Người đó là ai (họ tên, số điện thoại) nằm ở users; tổ chức được đọc qua thành viên. Người lái xe cho hai tổ chức có hai hồ sơ, và mỗi tổ chức chịu trách nhiệm về hồ sơ của mình (DR-09). Tài xế được nhận xe khi hồ sơ ACTIVE và chưa bị xóa, giấy phép chưa hết hạn, thành viên và người dùng đều ACTIVE (DR-10). Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Table driver_vehicle_assignments {
@@ -941,7 +948,7 @@ refactor; there is no real data to carry over.
 Table driving_sessions {
   driving_session_id uuid [pk, note: 'Internal ID of the driving session. @vi Mã nội bộ của phiên lái. @example 0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   organization_id uuid [not null, note: 'Organization that owns the truck; the session belongs to it. The driver may belong to another organization (DR-07). @vi Tổ chức sở hữu xe; phiên lái thuộc về tổ chức này. Tài xế có thể thuộc tổ chức khác (DR-07). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  driver_id uuid [not null, note: 'Driver at the wheel: any active driver in the system, from any organization. @vi Tài xế đang cầm lái: bất kỳ tài xế đang hoạt động nào trong hệ thống, thuộc bất kỳ tổ chức nào. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  driver_id uuid [not null, note: 'Driver profile at the wheel: any active driver in the system, from any organization; a driver from another organization is a normal case (e.g. a truck owner hiring drivers from another company) and only gives a warning. The profile is the person\'s profile in the truck\'s organization when they have one, otherwise their profile in the organization they act for in the app; a manager checking someone in from the portal picks one of their own organization\'s profiles (DR-10). @vi Hồ sơ tài xế đang cầm lái: bất kỳ tài xế đang hoạt động nào trong hệ thống, thuộc bất kỳ tổ chức nào; tài xế của tổ chức khác là trường hợp bình thường (ví dụ chủ xe thuê tài xế của công ty khác) và chỉ có cảnh báo. Hồ sơ được dùng là hồ sơ của người đó trong tổ chức sở hữu xe nếu có, nếu không thì hồ sơ trong tổ chức họ đang làm việc trên ứng dụng; quản lý nhận xe giúp trên portal chọn một hồ sơ của chính tổ chức mình (DR-10). @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
   vehicle_id uuid [not null, note: 'Truck being driven. @vi Xe đang được lái. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   check_in_method varchar(10) [not null, note: 'How the driver checked in. QR: scanned the code on the truck. APP: picked the truck from the nearby trucks listed in the app. PORTAL: a manager checked the driver in from the portal (e.g. a driver without a phone). Values: QR | APP | PORTAL. @vi Cách tài xế nhận xe. QR: quét mã trên xe. APP: chọn xe trong danh sách xe ở gần hiển thị trên ứng dụng. PORTAL: quản lý nhận xe giúp tài xế trên portal (ví dụ tài xế không có điện thoại). @example QR']
   check_in_location "geography(POINT,4326)" [note: 'Where the phone was at check-in, compared with the truck\'s last T-Box position to refuse a check-in far from the truck; NULL for PORTAL. @vi Vị trí điện thoại lúc nhận xe, so với vị trí T-Box gần nhất của xe để từ chối nhận xe từ xa; NULL với PORTAL. @example POINT(106.66 10.76)']
@@ -965,12 +972,13 @@ truck, the driver checks in to another truck, or the truck has not moved for
 the organization's auto-end time (organization_settings). Events that need a
 driver (scores, trips, charging sessions) take it from here. Assigned-driver
 alerts go to the driver checked in and to the portal; a truck moving with
-nobody checked in alerts the portal. Seen by the truck's organization and by
-the driver in the app; a driver's own employer does not see sessions on
-another organization's truck (DR-08). Closed rows are never edited, so no
-change history.
+nobody checked in alerts the portal. Seen in full by the truck's
+organization; the driver sees only a summary of their own sessions in the app
+(times, truck, duration, distance; no route or places, no export), and a
+driver's own employer does not see sessions on another organization's truck
+(DR-08, DR-11). Closed rows are never edited, so no change history.
 @vi-name Phiên lái xe
-@vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Tổ chức sở hữu xe và chính tài xế (trên ứng dụng) xem được phiên lái; tổ chức tuyển dụng tài xế không xem được phiên lái trên xe của tổ chức khác (DR-08). Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
+@vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Tổ chức sở hữu xe xem đầy đủ phiên lái; tài xế chỉ xem bản tóm tắt các phiên của mình trên ứng dụng (thời gian, xe, thời lượng, quãng đường; không có lộ trình hay địa điểm, không xuất dữ liệu), và tổ chức tuyển dụng tài xế không xem được phiên lái trên xe của tổ chức khác (DR-08, DR-11). Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
 }
 
 Table charging_credentials {
@@ -989,7 +997,6 @@ driver and organization. Placement in `drivers` is provisional.
 @vi Cách trụ sạc nhận biết ai đang sạc. Nối mã idTag thô của phiên sạc với tài xế và tổ chức. Việc đặt ở miền Tài xế là tạm thời.'''
 }
 
-Ref: drivers.organization_id > organizations.organization_id [delete: restrict]
 Ref: drivers.membership_id - memberships.membership_id [delete: restrict]
 Ref: driver_vehicle_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: driver_vehicle_assignments.driver_id > drivers.driver_id [delete: restrict]
