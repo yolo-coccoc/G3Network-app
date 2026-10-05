@@ -1,9 +1,7 @@
----
-name: ocpp16-reference
-description: Condensed reference for the OCPP 1.6J charger integration (Willdigits DC 240–480 kW charger). Use when touching backend/app/domains/charging_stations/ocpp/ (gateway, OCPP16ChargePoint, ocpp16_measurements, raw_log), the 1.6J simulator or seed script, the OCPP tables (charging_ocpp_messages, charging_session_measurements, charging_station_configuration_entries, the charger/connector status columns, the transactionId sequence), CHARGING_OCPP_* settings, or when answering questions about how the charger or the gateway behaves, what is implemented, deferred, or still unknown from the vendor. Load it instead of reading the 60 KB spec summary and the 103 KB planner.
----
+# OCPP 1.6J: our gateway and the Willdigits charger
 
-# OCPP 1.6J reference (Willdigits charger)
+> Part of the `ocpp-reference` skill. What is built, how the gateway behaves, the
+> charger's facts and what is still unknown from the vendor.
 
 spec = `docs/design/specifications/charging-station-specification-summary.md`; planner =
 `docs/planners/backend-ocpp16-charger-integration.md` (D1–D14). ✅ fact · ⚠️ unverified · 🔎 inference.

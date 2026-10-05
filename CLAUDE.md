@@ -67,7 +67,7 @@ holds the detailed steps, so follow it rather than improvising:
 3. **`schema-change` agent** — any table/column/index/enum change (model +
    DBML + baseline migration + `make db-reset` + `make db-check`).
 4. Implement the planner's steps; `make check` after each; tick the step with
-   its evidence. Load **`ocpp16-reference`** for charger/OCPP work.
+   its evidence. Load **`ocpp-reference`** for charger/OCPP/CSMS work.
 5. **`e2e-sim`** — when behaviour crosses processes (MQTT ingestion, OCPP
    gateway, API).
 6. **`finish-task`** — gate, integration tests, **`convention-reviewer`**

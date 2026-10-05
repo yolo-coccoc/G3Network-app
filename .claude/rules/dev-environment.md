@@ -79,7 +79,7 @@ instructions.
 - **Skills** (`.claude/skills/`): `start-feature` (gather → planner from
   `docs/planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
   `domain-model`, `feature-catalog` (the feature catalog's YAML source and
-  its generated checklists/workbook), `ocpp16-reference`, `e2e-sim` (run the stack with the
+  its generated checklists/workbook), `ocpp-reference` (OCPP 1.6J and 2.0.1, OCPI, how other CSMSs model things), `e2e-sim` (run the stack with the
   simulators and check the data), `finish-task`. The order to use them in is
   in CLAUDE.md ("How a feature gets built").
 - **MCP servers** (`.mcp.json`, approved via `enabledMcpjsonServers`):

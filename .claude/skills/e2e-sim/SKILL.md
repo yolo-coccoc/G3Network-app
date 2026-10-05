@@ -100,4 +100,4 @@ Read `$LOG/*.log` first (structured JSON logs). Common causes: the API isn't
 up yet (seed scripts get `Connection refused`), the station wasn't seeded
 (gateway answers HTTP 404 to the WebSocket handshake), or the database is
 still on an old schema (`make db-reset`). For OCPP behaviour, load the
-`ocpp16-reference` skill.
+`ocpp-reference` skill.

@@ -29,7 +29,7 @@ application code until the scope decisions are confirmed.
 6. `docs/design/domain-model/` — planned tables for it (`@status
    planned`, `@features <F-XX>` in the DBML).
 7. Specs in `docs/design/specifications/` if the feature integrates a device or
-   protocol (for OCPP load the `ocpp16-reference` skill).
+   protocol (for OCPP or charging load the `ocpp-reference` skill).
 8. `.claude/rules/domain-boundaries.md` — which domain owns the data and which
    edges already exist.
 
