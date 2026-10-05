@@ -1775,6 +1775,32 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
   OCPP gateway already calls, rather than `drivers`. Knock-on rules: a truck sale unassigns the
   seller's cards held by that truck (VH-12); a retired driver profile hands its cards back to the
   organization (DR-10).
+
+---
+
+### 91. Charging sites and the power-group tree
+
+- **Short description**: A `charging_sites` table for a large area of one organization holding
+  several charging locations (e.g. a mine or an industrial park), and a separate tree of power
+  groups (grid connection or transformer → feeder → chargers, each with a maximum kW) that
+  chargers point to.
+- **Purpose/role in the system**: The site groups locations for ownership, contract and access
+  (STN-12 private stations); the power groups let the CSMS keep the total power of the chargers
+  wired to one transformer or feeder under its limit (STN-08 load balancing, OCPP smart
+  charging). The electrical wiring does not follow the place hierarchy (one transformer may feed
+  chargers of two locations; one site may have two transformers), so the limits are their own
+  tree, as in AMPECO (circuits) and Kempower (power groups).
+- **Reason for deferral**: Owner decision (2026-10-05, CS-09 in
+  `docs/decisions/decision-log.md`): the term "site" is fixed now, but no feature at launch
+  reads a site fact; "all locations of one organization" comes from the location's owner. The
+  power-group design is a real discussion of its own, held when STN-08 starts.
+- **Related planner/feature**: STN-08, STN-12, CS-09; `ocpp-reference` skill
+  (`references/csms-landscape.md`, `references/ocpp201.md` §6).
+- **Date recorded**: 2026-10-05
+- **Additional notes**: Add the site table when a site gets a fact of its own (a shared access
+  list or tariff for a private site, a site contract). OCPP has no site object: the CSMS pushes
+  `ChargingStationMaxProfile` per charger or `TxProfile` per session to keep a group under its
+  limit, or a local controller does it at the site.
 ---
 
 ## Update rules

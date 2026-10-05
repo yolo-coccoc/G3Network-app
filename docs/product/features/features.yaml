@@ -157,10 +157,14 @@ domains:
     backend_domain: charging_stations
     summary: >-
       Stations and chargers, their live status over OCPP, faults, the station
-      map, queues, reservations and load.
+      map, queues, reservations and load. In this catalog a "station" is the
+      place drivers go (trạm; the database's charging_locations) and a
+      "charger" is one OCPP charger (trụ; charging_stations), per CS-09.
     summary_vi: >-
       Trạm và trụ sạc, trạng thái realtime qua OCPP, sự cố, bản đồ trạm, hàng
-      đợi, đặt chỗ và phân tải.
+      đợi, đặt chỗ và phân tải. Trong danh mục này "trạm" là nơi tài xế tới
+      (bảng charging_locations) và "trụ" là một trụ sạc OCPP (bảng
+      charging_stations), theo CS-09.
   - prefix: CHG
     key: charging_sessions
     name: Charging sessions
@@ -2457,13 +2461,13 @@ features:
     users: [OPERATIONS]
     capabilities:
       - ["Create, edit, search and retire stations", "Tạo, sửa, tìm kiếm và ngừng hoạt động trạm"]
-      - ["Managing unit and incident contact per station", "Đơn vị quản lý và đầu mối sự cố của từng trạm"]
+      - ["Owning organization per station; charger alerts go to its operations staff; stations are open 24/7 and a closed one is marked inactive with a reason", "Tổ chức sở hữu của từng trạm; cảnh báo trụ sạc gửi tới nhân viên vận hành của tổ chức đó; trạm mở 24/7, trạm tạm đóng được đánh dấu ngừng hoạt động kèm lý do"]
       - ["Map view of all stations", "Xem mọi trạm trên bản đồ"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: internal
-    sources: [PRD F-C1, Data IN-25]
+    sources: [PRD F-C1, Data IN-25, Decision CS-09, Decision CS-10, Decision CS-11]
     old_codes: [F-C1]
 
   - code: STN-02
@@ -2652,7 +2656,7 @@ features:
     offer: tbd
     depends_on: [STN-07, RTE-01]
     touches: [telemetry]
-    sources: [PRD F-C7, Data IN-28, Data OUT-53, NF-20]
+    sources: [PRD F-C7, Data IN-28, Data OUT-53, NF-20, deferred.md 91]
     old_codes: [F-C7]
 
   - code: STN-09
@@ -2758,7 +2762,7 @@ features:
     offer: tbd
     depends_on: [STN-01, PAY-09]
     touches: [billing]
-    sources: [Data OUT-10]
+    sources: [Data OUT-10, Decision CS-10]
     questions:
       - ["How are private (mine, non-public) chargers billed? The data sheet says 'separate scheme'.", "Trụ riêng (của mỏ, không công cộng) tính tiền thế nào? Bảng dữ liệu ghi 'phương án riêng'."]
 
@@ -2845,11 +2849,12 @@ features:
     name: Start charging by QR code
     name_vi: Bắt đầu sạc bằng mã QR
     what: >-
-      The driver scans the QR code on the charger, the system starts the
-      charge remotely, and the app shows its progress until it stops.
+      The driver scans the QR code on the charger's screen; the app
+      authorizes them and checks the wallet, the driver starts and stops on
+      the charger, and the app shows the progress.
     what_vi: >-
-      Tài xế quét mã QR trên trụ, hệ thống bắt đầu sạc từ xa, và app hiển thị
-      tiến trình sạc tới khi dừng.
+      Tài xế quét mã QR trên màn hình trụ; ứng dụng xác thực và kiểm tra ví,
+      tài xế bắt đầu và dừng sạc trên trụ, và ứng dụng hiển thị tiến trình.
     value: >-
       Scan, charge, pay in three steps for companies and individual drivers
       alike.
@@ -2858,10 +2863,11 @@ features:
       nhân.
     users: [DRIVER]
     capabilities:
-      - ["Scan the gun's QR code and confirm", "Quét mã QR của súng sạc và xác nhận"]
+      - ["Scan the QR code on the charger's screen; the app authorizes the driver and checks the wallet", "Quét mã QR trên màn hình trụ sạc; ứng dụng xác thực tài xế và kiểm tra ví"]
+      - ["The driver chooses the gun and starts on the charger's screen", "Tài xế chọn súng và bắt đầu sạc trên màn hình trụ"]
       - ["Record who started the charge and which organization pays", "Ghi nhận ai bắt đầu sạc và tổ chức nào trả tiền"]
       - ["Live progress: kWh, battery %, power, cost so far", "Tiến trình realtime: kWh, % pin, công suất, chi phí tạm tính"]
-      - ["Stop from the app or at the charger", "Dừng từ app hoặc tại trụ"]
+      - ["Stop on the charger's screen (or by the truck); the app sends no command", "Dừng trên màn hình trụ (hoặc do xe tự dừng); ứng dụng không gửi lệnh"]
       - ["Keep the session and bill later if the signal is weak", "Giữ phiên và tính tiền sau nếu sóng yếu"]
     surfaces: {backend: todo, app: todo}
     priority: Must
@@ -2869,7 +2875,9 @@ features:
     offer: included
     depends_on: [STN-10, CHG-02, ACC-04]
     touches: [charging_stations, identity]
-    sources: [PRD F-H1, Decision CO-12]
+    sources: [PRD F-H1, Decision CO-12, Decision CO-13, Decision CO-14]
+    questions:
+      - ["Vendor to confirm: QR content, choosing the gun on the screen after a remote authorization, AuthorizeRemoteTxRequests (open question 4).", "Nhà cung cấp cần xác nhận: nội dung mã QR, chọn súng trên màn hình sau khi xác thực từ xa, AuthorizeRemoteTxRequests (câu hỏi mở 4)."]
     old_codes: [F-H1]
 
   - code: CHG-02

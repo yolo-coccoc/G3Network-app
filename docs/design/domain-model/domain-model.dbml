@@ -1129,40 +1129,129 @@ Groups of vehicles managed together by a fleet manager.
 }
 
 // ===========================================================================
-// charging_stations: station/EVSE/connector topology and OCPP (F-C1, F-G2)
+// charging_stations: locations, chargers, EVSE/connector topology and OCPP (F-C1, F-G2)
 // ===========================================================================
 
-Table charging_stations {
-  station_id uuid [pk, note: 'Internal ID of the station. @vi Mã nội bộ của trạm. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  ocpp_identity varchar(255) [not null, unique, note: 'Name the charger uses in its OCPP WebSocket URL, unique and never reused. @vi Tên trụ sạc dùng trong URL WebSocket OCPP, duy nhất và không bao giờ dùng lại. @example WD-HCM-001']
-  display_name varchar(200) [not null, note: 'Station name shown to drivers. @vi Tên trạm hiển thị cho tài xế. @example Trạm sạc G3 Bình Dương']
-  location "geography(POINT,4326)" [note: 'GPS position (WGS84 point, longitude first); NULL if not yet surveyed. @vi Vị trí GPS (điểm WGS84, kinh độ trước); NULL nếu chưa khảo sát. @example POINT(106.6519 10.9804)']
-  power_rating_kw numeric(6,2) [note: 'Nominal station power in kW. @vi Công suất danh định của trạm (kW). @example 480.00']
-  connector_standard varchar(20) [note: 'Plug standard served. @vi Chuẩn đầu sạc hỗ trợ. @example CCS2']
-  operating_hours varchar(100) [note: 'Opening hours as free text. @vi Giờ hoạt động, dạng văn bản tự do. @example 24/7']
-  maintenance_status chargingstationmaintenancestatus [not null, note: 'Maintenance state set by an admin. @vi Trạng thái bảo trì do quản trị viên đặt. @example OPERATIONAL']
-  ocpp_protocol_version varchar(20) [note: 'OCPP version of the latest connection; NULL until the charger first connects. @vi Phiên bản OCPP của kết nối gần nhất; NULL trước khi trụ kết nối lần đầu. @example ocpp1.6']
-  vendor varchar(100) [note: 'Charger vendor from its BootNotification. @vi Hãng trụ sạc, lấy từ BootNotification. @example Willdigits']
-  model varchar(100) [note: 'Charger model from its BootNotification. @vi Model trụ sạc, lấy từ BootNotification. @example WD-DC480']
-  serial_number varchar(100) [note: 'Charger serial number from its BootNotification. @vi Số serial trụ sạc, lấy từ BootNotification. @example WD2409001234']
-  firmware_version varchar(100) [note: 'Firmware from the latest BootNotification. @vi Firmware theo BootNotification gần nhất. @example V2.3.7']
-  last_boot_at timestamptz [note: 'Time of the latest accepted BootNotification. @vi Thời điểm BootNotification được chấp nhận gần nhất. @example 2026-09-14T22:00:05Z']
-  last_seen_at timestamptz [note: 'Time of the latest message of any kind; online/offline is derived from it. @vi Thời điểm nhận bản tin bất kỳ gần nhất; trạng thái online/offline được suy ra từ cột này. @example 2026-09-15T08:29:58Z']
-  charger_status chargingconnectorstatus [note: 'Status of the whole charger (OCPP 1.6J connector 0); NULL for OCPP 2.0.1. @vi Trạng thái của cả trụ sạc (OCPP 1.6J connector 0); NULL với OCPP 2.0.1. @example Available']
-  charger_status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:10:00Z']
-  charger_error_code varchar(50) [note: 'Error code reported for the whole charger, as sent. @vi Mã lỗi của cả trụ sạc, đúng như trụ gửi. @example NoError']
-  charger_vendor_error_code varchar(100) [note: 'Vendor-specific error code for the whole charger. @vi Mã lỗi riêng của hãng cho cả trụ sạc. @example E0000']
+Table charging_locations {
+  location_id uuid [pk, note: 'Internal ID of the location. @vi Mã nội bộ của trạm sạc. @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
+  organization_id uuid [not null, note: 'Organization that owns the location (CS-10): G3\'s internal organization for its own network, a customer for its own chargers. Its chargers run on our gateway either way, so everything there goes through our system. Charger fault and offline alerts go to the users holding the OPERATIONS role in this organization (CS-11). @vi Tổ chức sở hữu trạm (CS-10): tổ chức nội bộ của G3 với mạng lưới của mình, khách hàng với trụ sạc của họ. Trụ sạc luôn kết nối qua cổng của chúng ta, nên mọi hoạt động ở đó đều đi qua hệ thống. Cảnh báo lỗi và mất kết nối của trụ gửi tới người dùng giữ vai trò OPERATIONS của tổ chức này (CS-11). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  display_name varchar(200) [not null, note: 'Name shown to drivers and in the portal. @vi Tên hiển thị cho tài xế và trên portal. @example Trạm sạc G3 Bình Dương']
+  address varchar(500) [not null, note: 'Address as one free-text line (number, road or km marker, ward, province), shown in the app. The province, when a filter or report needs it, is derived by a tool from the coordinates or this text, not stored (CS-11). @vi Địa chỉ dạng một dòng văn bản tự do (số nhà, đường hoặc km, phường/xã, tỉnh), hiển thị trên ứng dụng. Tỉnh/thành, khi cần lọc hoặc báo cáo, được suy ra bằng công cụ từ tọa độ hoặc dòng này, không lưu riêng (CS-11). @example Km 1872+500 QL1A, xã Tân Lập, tỉnh Đồng Nai']
+  location "geography(POINT,4326)" [note: 'GPS position (WGS84 point, longitude first) of the map pin; NULL until surveyed. @vi Vị trí GPS (điểm WGS84, kinh độ trước) của điểm trên bản đồ; NULL khi chưa khảo sát. @example POINT(106.6519 10.9804)']
+  is_public boolean [not null, note: 'TRUE: anyone may charge here and it is on the public map. FALSE (private): only members of the owner and of the organizations allowed in charging_location_access may charge, and it is shown only to them (CS-10, STN-12; OCPI publish). @vi TRUE: ai cũng sạc được và trạm hiện trên bản đồ công cộng. FALSE (riêng): chỉ thành viên của tổ chức sở hữu và của các tổ chức được cho phép trong charging_location_access mới sạc được và mới thấy trạm (CS-10, STN-12). @example true']
+  status varchar(20) [not null, note: 'Set by a person (DM-25). ACTIVE: open; locations are always open 24/7, so there are no opening hours (CS-11). INACTIVE: closed, e.g. repairs, flooding or a holiday; the reason says which. A location that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang mở; trạm luôn mở 24/7 nên không có giờ hoạt động (CS-11). INACTIVE: tạm đóng, ví dụ sửa chữa, ngập nước hoặc nghỉ lễ; lý do cho biết trường hợp nào. Trạm rời hệ thống được chuyển sang INACTIVE và xóa mềm. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the location has its current status, or why it left the system; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại, hoặc lý do trạm rời hệ thống; NULL khi ACTIVE. @example Ngập nước sau bão, tạm đóng']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
-  updated_at timestamptz [not null, note: 'When an admin last edited the row (device reports do not change it). @vi Thời điểm quản trị viên sửa gần nhất (báo cáo từ thiết bị không làm thay đổi cột này). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time: the location is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: trạm không còn thuộc hệ thống, do đã rời đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    location [name: 'ix_charging_stations_location', note: 'GIST; radius search (F-D1)']
-    deleted_at [name: 'ix_charging_stations_deleted_at']
+    location [name: 'ix_charging_locations_location', note: 'GIST; radius search (STN-06). Moves here from charging_stations']
+    organization_id [name: 'ix_charging_locations_organization_id']
   }
-  Note: '''@status built @owner internal @features F-C1,F-C2,F-D1,F-G2
-One charging station in G3's network.
+  Note: '''@status planned @owner customer @features F-C1,F-D1 @tracked *
+One place drivers go to charge: several chargers in a row (CS-09; OCPI
+Location; "trạm sạc" in the app). Owned by one organization (CS-10). Always
+open 24/7: no opening hours are stored, and a closed location is INACTIVE
+with a reason (CS-11). A larger area of one organization holding several
+locations (a site) has no table yet (deferred.md 91).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name Trạm sạc
-@vi Một trạm sạc trong mạng lưới của G3.'''
+@vi Một nơi tài xế tới sạc: nhiều trụ sạc đặt thành hàng (CS-09; Location của OCPI; "trạm sạc" trên ứng dụng). Thuộc một tổ chức (CS-10). Luôn mở 24/7: không lưu giờ hoạt động, trạm tạm đóng được chuyển sang INACTIVE kèm lý do (CS-11). Khu vực lớn hơn của một tổ chức gồm nhiều trạm (khu sạc) chưa có bảng (deferred.md 91). Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
+}
+
+Table charging_location_access {
+  access_id uuid [pk, note: 'Internal ID of the grant. @vi Mã nội bộ của lần cấp quyền. @example 0000002a-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  location_id uuid [not null, note: 'The private location. @vi Trạm riêng. @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
+  allowed_organization_id uuid [not null, note: 'Organization whose members may charge at the location (organization level, not per driver, for now). Named apart from organization_id: it is the grantee, not the owner. @vi Tổ chức có thành viên được sạc tại trạm (theo tổ chức, chưa theo từng tài xế). Đặt tên khác organization_id vì đây là bên được cấp quyền, không phải chủ sở hữu. @example 7c1d9e4b-2a6f-4b8c-9d3e-5f0a1b2c3d44']
+  granted_at timestamptz [not null, note: 'When the access was granted. @vi Thời điểm cấp quyền. @example 2026-10-06T02:00:00Z']
+  granted_by uuid [not null, note: 'User of the owning organization (or G3 staff) who granted it. @vi Người dùng của tổ chức sở hữu (hoặc nhân viên G3) đã cấp quyền. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  revoked_at timestamptz [note: 'When the access ended; NULL while in force. @vi Thời điểm hết quyền; NULL khi còn hiệu lực. @example NULL']
+  revoked_by uuid [note: 'Who revoked it; NULL while in force, or when the system ended it (e.g. the location left the system). @vi Ai đã thu hồi; NULL khi còn hiệu lực, hoặc khi hệ thống tự kết thúc (ví dụ trạm rời hệ thống). @example NULL']
+  status_reason varchar(200) [note: 'Why the access ended (DM-19); NULL while in force. @vi Lý do kết thúc quyền (DM-19); NULL khi còn hiệu lực. @example Hết hợp đồng hợp tác']
+  indexes {
+    (location_id, allowed_organization_id) [unique, name: 'uq_charging_location_access_live', note: 'WHERE revoked_at IS NULL: one live grant per location and organization']
+    allowed_organization_id [name: 'ix_charging_location_access_allowed_organization_id', note: 'Where may this organization charge?']
+  }
+  Note: '''@status planned @owner customer @features F-C1
+Which other organizations may charge at a private location (CS-10, STN-12):
+every member of an allowed organization may charge there; per-driver lists
+are not modelled for now. Granted and revoked by the location's owner. Rows
+are only ever closed, so there is no change history (DM-20). Who may charge
+at a private location: members of its owner plus members of every
+organization with a live row here.
+@vi-name Quyền sạc tại trạm riêng
+@vi Những tổ chức khác được sạc tại một trạm riêng (CS-10, STN-12): mọi thành viên của tổ chức được cho phép đều sạc được; chưa có danh sách theo từng tài xế. Do tổ chức sở hữu trạm cấp và thu hồi. Dòng chỉ bị đóng, không bị sửa, nên không cần lịch sử thay đổi (DM-20). Ai được sạc tại trạm riêng: thành viên của tổ chức sở hữu và thành viên của mọi tổ chức có dòng còn hiệu lực ở đây.'''
+}
+
+Ref: charging_locations.organization_id > organizations.organization_id [delete: restrict]
+Ref: charging_location_access.location_id > charging_locations.location_id [delete: restrict]
+Ref: charging_location_access.allowed_organization_id > organizations.organization_id [delete: restrict]
+Ref: charging_location_access.granted_by > users.user_id [delete: restrict]
+Ref: charging_location_access.revoked_by > users.user_id [delete: restrict]
+
+Table charging_stations {
+  station_id uuid [pk, note: 'Internal ID of the charging station: one charger (trụ sạc), one OCPP connection (CS-09). @vi Mã nội bộ của trụ sạc: một trụ, một kết nối OCPP (CS-09). @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  location_id uuid [not null, note: '@planned CS-09: The location (trạm) the charger stands at; the charger reads its owner through it (DM-24). @vi Trạm sạc nơi đặt trụ; trụ đọc tổ chức sở hữu qua trạm (DM-24). @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
+  ocpp_identity varchar(255) [not null, unique, note: 'Name the charger uses in its OCPP WebSocket URL ("Charger ID" on the Willdigits screen), unique and never reused. @vi Tên trụ sạc dùng trong URL WebSocket OCPP ("Charger ID" trên màn hình Willdigits), duy nhất và không bao giờ dùng lại. @example WD-HCM-001']
+  physical_reference varchar(16) [note: '@planned CS-11: Short label printed on the unit and shown to drivers, e.g. "Trụ 1"; NULL until labelled (OCPI physical_reference). @vi Nhãn ngắn in trên trụ và hiển thị cho tài xế, ví dụ "Trụ 1"; NULL khi chưa dán nhãn. @example Trụ 1']
+  display_name varchar(200) [not null, note: '@remove CS-09: Station name shown to drivers; now the location\'s display_name, and a charger has its physical_reference. @vi Tên trạm hiển thị cho tài xế; nay là display_name của trạm, còn trụ có physical_reference. @example Trạm sạc G3 Bình Dương']
+  location "geography(POINT,4326)" [note: '@remove CS-09: GPS position; now on the location. @vi Vị trí GPS; nay nằm ở trạm. @example POINT(106.6519 10.9804)']
+  max_power_kw numeric(6,2) [note: '@built-as power_rating_kw: Total output of the charger in kW, shared by its guns (a 240 kW dual-gun unit gives about 120 kW per gun when both are in use); NULL if unknown. Per-gun power and the connector standard go on the connectors (deferred.md 80). @vi Tổng công suất của trụ (kW), chia cho các súng (trụ 240 kW hai súng cấp khoảng 120 kW mỗi súng khi cả hai cùng sạc); NULL nếu chưa biết. Công suất và chuẩn đầu sạc theo từng súng nằm ở súng sạc (deferred.md 80). @example 240.00']
+  connector_standard varchar(20) [note: '@remove CS-11: Plug standard; moves to each connector (deferred.md 80). @vi Chuẩn đầu sạc; chuyển sang từng súng sạc. @example CCS2']
+  operating_hours varchar(100) [note: '@remove CS-11: Opening hours as free text; locations are always open 24/7. @vi Giờ hoạt động dạng văn bản; trạm luôn mở 24/7. @example 24/7']
+  status varchar(20) [not null, note: '@planned CS-11: Set by a person (DM-25). ACTIVE: in service. INACTIVE: out of service, e.g. under repair; the reason says which. A charger that leaves the system is INACTIVE and soft-deleted. Whether it is online is computed from charging_station_state.last_seen_at. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng phục vụ, ví dụ đang sửa chữa; lý do cho biết trường hợp nào. Trụ rời hệ thống được chuyển sang INACTIVE và xóa mềm. Trụ online hay không được tính từ charging_station_state.last_seen_at. @example ACTIVE']
+  status_reason varchar(200) [note: '@planned DM-19: Why the charger has its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Hỏng mô-đun công suất, chờ linh kiện']
+  maintenance_status chargingstationmaintenancestatus [not null, note: '@remove CS-11: Maintenance state set by an admin; replaced by status ACTIVE / INACTIVE with a reason. @vi Trạng thái bảo trì; thay bằng status ACTIVE / INACTIVE kèm lý do. @example OPERATIONAL']
+  ocpp_protocol_version varchar(20) [note: '@remove CS-11: OCPP version of the latest connection; moves to charging_station_state. @vi Phiên bản OCPP của kết nối gần nhất; chuyển sang charging_station_state. @example ocpp1.6']
+  vendor varchar(100) [note: '@remove CS-11: Vendor from BootNotification; moves to charging_station_state. @vi Hãng trụ sạc; chuyển sang charging_station_state. @example Willdigits']
+  model varchar(100) [note: '@remove CS-11: Model from BootNotification; moves to charging_station_state. @vi Model trụ sạc; chuyển sang charging_station_state. @example WD-DC480']
+  serial_number varchar(100) [note: '@remove CS-11: Serial number from BootNotification; moves to charging_station_state. @vi Số serial; chuyển sang charging_station_state. @example WD2409001234']
+  firmware_version varchar(100) [note: '@remove CS-11: Firmware from BootNotification; moves to charging_station_state. @vi Firmware; chuyển sang charging_station_state. @example V2.3.7']
+  last_boot_at timestamptz [note: '@remove CS-11: Latest accepted BootNotification; moves to charging_station_state. @vi BootNotification gần nhất; chuyển sang charging_station_state. @example 2026-09-14T22:00:05Z']
+  last_seen_at timestamptz [note: '@remove CS-11: Latest message of any kind; moves to charging_station_state. @vi Bản tin gần nhất; chuyển sang charging_station_state. @example 2026-09-15T08:29:58Z']
+  charger_status chargingconnectorstatus [note: '@remove CS-11: Whole-charger status (1.6J connector 0); moves to charging_station_state. @vi Trạng thái cả trụ (connector 0); chuyển sang charging_station_state. @example Available']
+  charger_status_updated_at timestamptz [note: '@remove CS-11: When that status was reported; moves to charging_station_state. @vi Thời điểm báo trạng thái đó; chuyển sang charging_station_state. @example 2026-09-15T08:10:00Z']
+  charger_error_code varchar(50) [note: '@remove CS-11: Whole-charger error code; moves to charging_station_state. @vi Mã lỗi của cả trụ; chuyển sang charging_station_state. @example NoError']
+  charger_vendor_error_code varchar(100) [note: '@remove CS-11: Vendor error code for the whole charger; moves to charging_station_state. @vi Mã lỗi riêng của hãng cho cả trụ; chuyển sang charging_station_state. @example E0000']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When a person last edited the row (UTC); device reports go to charging_station_state and never change it. @vi Thời điểm con người sửa bản ghi gần nhất (UTC); báo cáo của thiết bị ghi vào charging_station_state và không làm thay đổi cột này. @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time: the charger is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: trụ không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
+  indexes {
+    location [name: 'ix_charging_stations_location', note: 'GIST; moves to charging_locations (CS-09)']
+    deleted_at [name: 'ix_charging_stations_deleted_at']
+    location_id [name: 'ix_charging_stations_location_id', note: 'Planned (CS-09)']
+  }
+  Note: '''@status built @owner customer @features F-C1,F-C2,F-D1,F-G2 @tracked *
+One charger (trụ sạc): one OCPP connection, OCPP 2.0.1's "Charging Station"
+and 1.6J's "Charge Point" (CS-09). It stands at one location and reads its
+owner through it (CS-10). Profile only: what the charger reports (boot
+information, liveness, whole-charger status) moves to charging_station_state
+(DM-16, DM-17), which also ends the interim "SET updated_at = updated_at"
+writes (CS-06).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
+@vi-name Trụ sạc
+@vi Một trụ sạc: một kết nối OCPP, tức "Charging Station" của OCPP 2.0.1 và "Charge Point" của 1.6J (CS-09). Trụ đặt tại một trạm và đọc tổ chức sở hữu qua trạm (CS-10). Chỉ là hồ sơ: những gì trụ tự báo (thông tin khởi động, tín hiệu sống, trạng thái cả trụ) chuyển sang charging_station_state (DM-16, DM-17), nhờ đó bỏ cách ghi tạm "SET updated_at = updated_at" (CS-06). Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
+}
+
+Table charging_station_state {
+  station_id uuid [pk, note: 'The charger this state belongs to (1:1 with charging_stations), created with it. @vi Trụ sạc sở hữu trạng thái này (1:1 với charging_stations), tạo cùng trụ. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  last_seen_at timestamptz [note: 'Latest message of any kind; whether the charger is online is computed from it at read time (CS-06). NULL before the first connection. @vi Bản tin bất kỳ gần nhất; trụ online hay không được tính từ cột này lúc đọc. NULL trước lần kết nối đầu tiên. @example 2026-09-15T08:29:58Z']
+  last_boot_at timestamptz [note: 'Latest accepted BootNotification. @vi BootNotification được chấp nhận gần nhất. @example 2026-09-14T22:00:05Z']
+  ocpp_protocol_version varchar(20) [note: 'OCPP version of the latest connection. @vi Phiên bản OCPP của kết nối gần nhất. @example ocpp1.6']
+  vendor varchar(100) [note: 'Vendor as reported at boot. @vi Hãng trụ sạc theo báo cáo khi khởi động. @example Willdigits']
+  model varchar(100) [note: 'Model as reported at boot. @vi Model theo báo cáo khi khởi động. @example WD-DC480']
+  serial_number varchar(100) [note: 'Serial number as reported at boot. @vi Số serial theo báo cáo khi khởi động. @example WD2409001234']
+  firmware_version varchar(100) [note: 'Firmware as reported at the latest boot; a change is logged. @vi Firmware theo lần khởi động gần nhất; thay đổi được ghi log. @example V2.3.7']
+  charger_status varchar(20) [note: 'Status of the whole charger as reported (1.6J connector 0, CS-03), same values as the connector status; NULL for OCPP 2.0.1 or before the first report. @vi Trạng thái của cả trụ theo báo cáo (1.6J connector 0), cùng tập giá trị với trạng thái súng; NULL với OCPP 2.0.1 hoặc trước lần báo đầu tiên. @example Available']
+  charger_status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:10:00Z']
+  charger_error_code varchar(50) [note: 'Error code reported for the whole charger, as sent. @vi Mã lỗi của cả trụ, đúng như trụ gửi. @example NoError']
+  charger_vendor_error_code varchar(100) [note: 'Vendor-specific error code for the whole charger. @vi Mã lỗi riêng của hãng cho cả trụ. @example E0000']
+  Note: '''@status planned @owner customer @features F-C2,F-G2 @state-of charging_stations
+What the charger reports about itself, written by the OCPP gateway, often and
+with no explanation needed: boot information, liveness and the whole-charger
+status (DM-16). No change history; every frame stays in charging_ocpp_messages.
+@vi-name Trạng thái trụ sạc
+@vi Những gì trụ sạc tự báo, do cổng OCPP ghi, thường xuyên và không cần giải thích: thông tin khởi động, tín hiệu sống và trạng thái cả trụ (DM-16). Không có lịch sử thay đổi; mọi bản tin vẫn nằm trong charging_ocpp_messages.'''
 }
 
 Table charging_evses {
@@ -1251,6 +1340,8 @@ A customer's hold on a G3 connector for a time window.
 @vi Khách hàng giữ chỗ một súng sạc của G3 trong một khung giờ.'''
 }
 
+Ref: charging_stations.location_id > charging_locations.location_id [delete: restrict]
+Ref: charging_station_state.station_id - charging_stations.station_id [delete: restrict]
 Ref: charging_evses.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
@@ -1260,23 +1351,28 @@ Ref: charging_reservations.connector_id > charging_connectors.connector_id [dele
 Ref: charging_reservations.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup charging_stations {
+  charging_locations
+  charging_location_access
   charging_stations
+  charging_station_state
   charging_evses
   charging_connectors
   charging_ocpp_messages
   charging_station_configuration_entries
   charging_reservations
   Note: '''
-G3's charging network and the OCPP link to each charger.
+The charging network and the OCPP link to each charger (terms: CS-09).
 
-- A **station** has one or more **EVSEs**; each EVSE has one or more **connectors**.
-- Every OCPP frame and every configuration snapshot is kept against its station.
+- A **location** (trạm) is one place drivers go, owned by one organization; it is public or private, and a private one lists the other organizations allowed to charge there (CS-10).
+- A location has one or more **charging stations** (trụ: one charger, one OCPP connection); each has one or more **EVSEs**, and each EVSE one or more **connectors** (súng).
+- Every OCPP frame and every configuration snapshot is kept against its charger.
 - A customer can **reserve** a connector for a time window (F-C4).
 
 @vi-name Trạm sạc
-@vi Mạng lưới trạm sạc của G3 và kết nối OCPP tới từng trụ sạc.
-- Một **trạm** có một hoặc nhiều **EVSE**; mỗi EVSE có một hoặc nhiều **súng sạc (connector)**.
-- Mọi bản tin OCPP và mọi bản chụp cấu hình đều được lưu theo trạm.
+@vi Mạng lưới trạm sạc và kết nối OCPP tới từng trụ sạc (thuật ngữ: CS-09).
+- Một **trạm** là một nơi tài xế tới sạc, thuộc một tổ chức; trạm công cộng hoặc riêng, trạm riêng liệt kê các tổ chức khác được sạc tại đó (CS-10).
+- Một trạm có một hoặc nhiều **trụ sạc** (một kết nối OCPP); mỗi trụ có một hoặc nhiều **EVSE**, mỗi EVSE có một hoặc nhiều **súng sạc**.
+- Mọi bản tin OCPP và mọi bản chụp cấu hình đều được lưu theo trụ.
 - Khách hàng có thể **đặt chỗ** một súng sạc trong một khung giờ (F-C4).
 '''
 }

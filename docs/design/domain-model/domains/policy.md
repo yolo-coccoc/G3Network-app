@@ -56,7 +56,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### charging_policies
 
-**No. 41** · 📋 planned · owner: **internal** · features: F-B1
+**No. 44** · 📋 planned · owner: **internal** · features: F-B1
 
 A named warranty charging policy defined by G3 Mobility.
 
@@ -75,7 +75,7 @@ A named warranty charging policy defined by G3 Mobility.
 
 ### charging_policy_versions
 
-**No. 42** · 📋 planned · owner: **internal** · features: F-B1
+**No. 45** · 📋 planned · owner: **internal** · features: F-B1
 
 One immutable version of a policy's rules. Every version is kept for audit.
 
@@ -102,7 +102,7 @@ One immutable version of a policy's rules. Every version is kept for audit.
 
 ### charging_policy_assignments
 
-**No. 43** · 📋 planned · owner: **customer** · features: F-B1
+**No. 46** · 📋 planned · owner: **customer** · features: F-B1
 
 Which policy applies to a vehicle, a fleet, or a vehicle model.
 
@@ -119,7 +119,7 @@ Which policy applies to a vehicle, a fleet, or a vehicle model.
 
 ### policy_violations
 
-**No. 44** · 📋 planned · owner: **customer** · features: F-B3, F-B6
+**No. 47** · 📋 planned · owner: **customer** · features: F-B3, F-B6
 
 A charging session that broke a policy, with evidence. Consequences are
 still an open business question (feature-list item 3).

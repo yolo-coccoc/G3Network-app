@@ -4,20 +4,46 @@
 
 [← Overview](../overview.md)
 
-✅ built: 5 · 📋 planned: 1
+✅ built: 5 · 📋 planned: 6
 
-G3's charging network and the OCPP link to each charger.
+The charging network and the OCPP link to each charger (terms: CS-09).
 
-- A **station** has one or more **EVSEs**; each EVSE has one or more **connectors**.
-- Every OCPP frame and every configuration snapshot is kept against its station.
+- A **location** (trạm) is one place drivers go, owned by one organization; it is public or private, and a private one lists the other organizations allowed to charge there (CS-10).
+- A location has one or more **charging stations** (trụ: one charger, one OCPP connection); each has one or more **EVSEs**, and each EVSE one or more **connectors** (súng).
+- Every OCPP frame and every configuration snapshot is kept against its charger.
 - A customer can **reserve** a connector for a time window (F-C4).
 
 ## Diagram
 
 ```mermaid
 erDiagram
+  charging_locations {
+    uuid location_id PK
+    uuid organization_id FK
+  }
+  charging_location_history {
+    bigint history_id PK
+    uuid location_id FK
+    uuid changed_by FK
+  }
+  charging_location_access {
+    uuid access_id PK
+    uuid location_id FK
+    uuid allowed_organization_id FK
+    uuid granted_by FK
+    uuid revoked_by FK
+  }
   charging_stations {
     uuid station_id PK
+    uuid location_id FK "planned"
+  }
+  charging_station_history {
+    bigint history_id PK
+    uuid station_id FK
+    uuid changed_by FK
+  }
+  charging_station_state {
+    uuid station_id PK, FK
   }
   charging_evses {
     uuid evse_id PK
@@ -42,6 +68,13 @@ erDiagram
     uuid connector_id FK
     uuid driver_id FK
   }
+  charging_locations }o..|| organizations : "organization_id"
+  charging_location_access }o..|| charging_locations : "location_id"
+  charging_location_access }o..|| organizations : "allowed_organization_id"
+  charging_location_access }o..|| users : "granted_by"
+  charging_location_access }o..o| users : "revoked_by"
+  charging_stations }o..|| charging_locations : "location_id"
+  charging_station_state |o..|| charging_stations : "station_id"
   charging_evses }o--|| charging_stations : "station_id"
   charging_connectors }o--|| charging_evses : "evse_id"
   charging_ocpp_messages }o--|| charging_stations : "station_id"
@@ -53,42 +86,151 @@ erDiagram
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
   tariffs }o..o| charging_stations : "station_id"
+  charging_location_history }o..o| charging_locations : "location_id"
+  charging_location_history }o..o| users : "changed_by"
+  charging_station_history }o..o| charging_stations : "station_id"
+  charging_station_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [tariffs](billing.md#tariffs).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [tariffs](billing.md#tariffs), [users](identity.md#users).
 
 ## Tables
 
-### charging_stations
+### charging_locations
 
-**No. 28** · ✅ built · owner: **internal** · features: F-C1, F-C2, F-D1, F-G2
+**No. 28** · 📋 planned · owner: **customer** · features: F-C1, F-D1
 
-One charging station in G3's network.
+One place drivers go to charge: several chargers in a row (CS-09; OCPI
+Location; "trạm sạc" in the app). Owned by one organization (CS-10). Always
+open 24/7: no opening hours are stored, and a closed location is INACTIVE
+with a reason (CS-11). A larger area of one organization holding several
+locations (a site) has no table yet (deferred.md 91).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
+
+🔍 = tracked column: a change to it copies the whole old row into [charging_location_history](#charging_location_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `station_id` | uuid | no | PK |  | Internal ID of the station. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
-| `ocpp_identity` | varchar(255) | no | UQ |  | Name the charger uses in its OCPP WebSocket URL, unique and never reused. | `WD-HCM-001` |
-| `display_name` | varchar(200) | no |  |  | Station name shown to drivers. | `Trạm sạc G3 Bình Dương` |
-| `location` | geography(POINT,4326) | yes |  |  | GPS position (WGS84 point, longitude first); NULL if not yet surveyed. | `POINT(106.6519 10.9804)` |
-| `power_rating_kw` | numeric(6,2) | yes |  |  | Nominal station power in kW. | `480.00` |
-| `connector_standard` | varchar(20) | yes |  |  | Plug standard served. | `CCS2` |
-| `operating_hours` | varchar(100) | yes |  |  | Opening hours as free text. | `24/7` |
-| `maintenance_status` | chargingstationmaintenancestatus | no |  |  | Maintenance state set by an admin. | `OPERATIONAL` |
-| `ocpp_protocol_version` | varchar(20) | yes |  |  | OCPP version of the latest connection; NULL until the charger first connects. | `ocpp1.6` |
-| `vendor` | varchar(100) | yes |  |  | Charger vendor from its BootNotification. | `Willdigits` |
-| `model` | varchar(100) | yes |  |  | Charger model from its BootNotification. | `WD-DC480` |
-| `serial_number` | varchar(100) | yes |  |  | Charger serial number from its BootNotification. | `WD2409001234` |
-| `firmware_version` | varchar(100) | yes |  |  | Firmware from the latest BootNotification. | `V2.3.7` |
-| `last_boot_at` | timestamptz | yes |  |  | Time of the latest accepted BootNotification. | `2026-09-14T22:00:05Z` |
-| `last_seen_at` | timestamptz | yes |  |  | Time of the latest message of any kind; online/offline is derived from it. | `2026-09-15T08:29:58Z` |
-| `charger_status` | chargingconnectorstatus | yes |  |  | Status of the whole charger (OCPP 1.6J connector 0); NULL for OCPP 2.0.1. | `Available` |
-| `charger_status_updated_at` | timestamptz | yes |  |  | When that status was last reported. | `2026-09-15T08:10:00Z` |
-| `charger_error_code` | varchar(50) | yes |  |  | Error code reported for the whole charger, as sent. | `NoError` |
-| `charger_vendor_error_code` | varchar(100) | yes |  |  | Vendor-specific error code for the whole charger. | `E0000` |
-| `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
-| `updated_at` | timestamptz | no |  |  | When an admin last edited the row (device reports do not change it). | `2026-09-10T07:15:00Z` |
-| `deleted_at` | timestamptz | yes |  |  | Soft-delete time; NULL while the row is live. Rows are never hard-deleted. | `NULL` |
+| `location_id` | uuid | no | PK |  | Internal ID of the location. | `2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the location (CS-10): G3's internal organization for its own network, a customer for its own chargers. Its chargers run on our gateway either way, so everything there goes through our system. Charger fault and offline alerts go to the users holding the OPERATIONS role in this organization (CS-11). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `display_name` | varchar(200) | no | 🔍 |  | Name shown to drivers and in the portal. | `Trạm sạc G3 Bình Dương` |
+| `address` | varchar(500) | no | 🔍 |  | Address as one free-text line (number, road or km marker, ward, province), shown in the app. The province, when a filter or report needs it, is derived by a tool from the coordinates or this text, not stored (CS-11). | `Km 1872+500 QL1A, xã Tân Lập, tỉnh Đồng Nai` |
+| `location` | geography(POINT,4326) | yes | 🔍 |  | GPS position (WGS84 point, longitude first) of the map pin; NULL until surveyed. | `POINT(106.6519 10.9804)` |
+| `is_public` | boolean | no | 🔍 |  | TRUE: anyone may charge here and it is on the public map. FALSE (private): only members of the owner and of the organizations allowed in charging_location_access may charge, and it is shown only to them (CS-10, STN-12; OCPI publish). | `true` |
+| `status` | varchar(20) | no | 🔍 |  | Set by a person (DM-25). ACTIVE: open; locations are always open 24/7, so there are no opening hours (CS-11). INACTIVE: closed, e.g. repairs, flooding or a holiday; the reason says which. A location that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE \| INACTIVE. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the location has its current status, or why it left the system; NULL when ACTIVE. | `Ngập nước sau bão, tạm đóng` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the location is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. | `NULL` |
+
+**Indexes**
+
+- `ix_charging_locations_location` (location) - GIST; radius search (STN-06). Moves here from charging_stations
+- `ix_charging_locations_organization_id` (organization_id)
+
+**Referenced by**
+
+- [charging_location_access](#charging_location_access).location_id (planned)
+- [charging_stations](#charging_stations).location_id (planned)
+- [charging_location_history](#charging_location_history).location_id (planned)
+
+### charging_location_history
+
+**No. 28.h** · 📋 planned · owner: **customer** · features: F-C1, F-D1 · change history of [charging_locations](#charging_locations)
+
+Every earlier version of a row of `charging_locations`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `location_id` | uuid | yes | FK | [charging_locations](#charging_locations).location_id (on delete restrict) | Value before the change (charging_locations.location_id). | `2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55` |
+| `organization_id` | uuid | yes |  |  | Value before the change (charging_locations.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `display_name` | varchar(200) | yes |  |  | Value before the change (charging_locations.display_name). | `Trạm sạc G3 Bình Dương` |
+| `address` | varchar(500) | yes |  |  | Value before the change (charging_locations.address). | `Km 1872+500 QL1A, xã Tân Lập, tỉnh Đồng Nai` |
+| `location` | geography(POINT,4326) | yes |  |  | Value before the change (charging_locations.location). | `POINT(106.6519 10.9804)` |
+| `is_public` | boolean | yes |  |  | Value before the change (charging_locations.is_public). | `true` |
+| `status` | varchar(20) | yes |  |  | Value before the change (charging_locations.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (charging_locations.status_reason). | `Ngập nước sau bão, tạm đóng` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (charging_locations.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (charging_locations.updated_at). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes |  |  | Value before the change (charging_locations.deleted_at). | `NULL` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_charging_location_history_location_id_time` (location_id, changed_at)
+
+### charging_location_access
+
+**No. 29** · 📋 planned · owner: **customer** · features: F-C1
+
+Which other organizations may charge at a private location (CS-10, STN-12):
+every member of an allowed organization may charge there; per-driver lists
+are not modelled for now. Granted and revoked by the location's owner. Rows
+are only ever closed, so there is no change history (DM-20). Who may charge
+at a private location: members of its owner plus members of every
+organization with a live row here.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `access_id` | uuid | no | PK |  | Internal ID of the grant. | `0000002a-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `location_id` | uuid | no | FK | [charging_locations](#charging_locations).location_id (on delete restrict) | The private location. | `2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55` |
+| `allowed_organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization whose members may charge at the location (organization level, not per driver, for now). Named apart from organization_id: it is the grantee, not the owner. | `7c1d9e4b-2a6f-4b8c-9d3e-5f0a1b2c3d44` |
+| `granted_at` | timestamptz | no |  |  | When the access was granted. | `2026-10-06T02:00:00Z` |
+| `granted_by` | uuid | no | FK | [users](identity.md#users).user_id (on delete restrict) | User of the owning organization (or G3 staff) who granted it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `revoked_at` | timestamptz | yes |  |  | When the access ended; NULL while in force. | `NULL` |
+| `revoked_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | Who revoked it; NULL while in force, or when the system ended it (e.g. the location left the system). | `NULL` |
+| `status_reason` | varchar(200) | yes |  |  | Why the access ended (DM-19); NULL while in force. | `Hết hợp đồng hợp tác` |
+
+**Indexes**
+
+- `uq_charging_location_access_live` (location_id, allowed_organization_id) unique - WHERE revoked_at IS NULL: one live grant per location and organization
+- `ix_charging_location_access_allowed_organization_id` (allowed_organization_id) - Where may this organization charge?
+
+### charging_stations
+
+**No. 30** · ✅ built · owner: **customer** · features: F-C1, F-C2, F-D1, F-G2 · live state in [charging_station_state](#charging_station_state)
+
+One charger (trụ sạc): one OCPP connection, OCPP 2.0.1's "Charging Station"
+and 1.6J's "Charge Point" (CS-09). It stands at one location and reads its
+owner through it (CS-10). Profile only: what the charger reports (boot
+information, liveness, whole-charger status) moves to charging_station_state
+(DM-16, DM-17), which also ends the interim "SET updated_at = updated_at"
+writes (CS-06).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
+
+🔍 = tracked column: a change to it copies the whole old row into [charging_station_history](#charging_station_history).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `station_id` | uuid | no | PK |  | Internal ID of the charging station: one charger (trụ sạc), one OCPP connection (CS-09). | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `location_id` | uuid | no | FK 🔍 | [charging_locations](#charging_locations).location_id (on delete restrict) | **📋 planned (CS-09)**: The location (trạm) the charger stands at; the charger reads its owner through it (DM-24). | `2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55` |
+| `ocpp_identity` | varchar(255) | no | UQ 🔍 |  | Name the charger uses in its OCPP WebSocket URL ("Charger ID" on the Willdigits screen), unique and never reused. | `WD-HCM-001` |
+| `physical_reference` | varchar(16) | yes | 🔍 |  | **📋 planned (CS-11)**: Short label printed on the unit and shown to drivers, e.g. "Trụ 1"; NULL until labelled (OCPI physical_reference). | `Trụ 1` |
+| `display_name` | varchar(200) | no |  |  | **🗑️ to be removed (CS-09)**: Station name shown to drivers; now the location's display_name, and a charger has its physical_reference. | `Trạm sạc G3 Bình Dương` |
+| `location` | geography(POINT,4326) | yes |  |  | **🗑️ to be removed (CS-09)**: GPS position; now on the location. | `POINT(106.6519 10.9804)` |
+| `max_power_kw` | numeric(6,2) | yes | 🔍 |  | **✏️ built today as `power_rating_kw`, to be renamed**: Total output of the charger in kW, shared by its guns (a 240 kW dual-gun unit gives about 120 kW per gun when both are in use); NULL if unknown. Per-gun power and the connector standard go on the connectors (deferred.md 80). | `240.00` |
+| `connector_standard` | varchar(20) | yes |  |  | **🗑️ to be removed (CS-11)**: Plug standard; moves to each connector (deferred.md 80). | `CCS2` |
+| `operating_hours` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Opening hours as free text; locations are always open 24/7. | `24/7` |
+| `status` | varchar(20) | no | 🔍 |  | **📋 planned (CS-11)**: Set by a person (DM-25). ACTIVE: in service. INACTIVE: out of service, e.g. under repair; the reason says which. A charger that leaves the system is INACTIVE and soft-deleted. Whether it is online is computed from charging_station_state.last_seen_at. Values: ACTIVE \| INACTIVE. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the charger has its current status; NULL when ACTIVE. | `Hỏng mô-đun công suất, chờ linh kiện` |
+| `maintenance_status` | chargingstationmaintenancestatus | no |  |  | **🗑️ to be removed (CS-11)**: Maintenance state set by an admin; replaced by status ACTIVE / INACTIVE with a reason. | `OPERATIONAL` |
+| `ocpp_protocol_version` | varchar(20) | yes |  |  | **🗑️ to be removed (CS-11)**: OCPP version of the latest connection; moves to charging_station_state. | `ocpp1.6` |
+| `vendor` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Vendor from BootNotification; moves to charging_station_state. | `Willdigits` |
+| `model` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Model from BootNotification; moves to charging_station_state. | `WD-DC480` |
+| `serial_number` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Serial number from BootNotification; moves to charging_station_state. | `WD2409001234` |
+| `firmware_version` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Firmware from BootNotification; moves to charging_station_state. | `V2.3.7` |
+| `last_boot_at` | timestamptz | yes |  |  | **🗑️ to be removed (CS-11)**: Latest accepted BootNotification; moves to charging_station_state. | `2026-09-14T22:00:05Z` |
+| `last_seen_at` | timestamptz | yes |  |  | **🗑️ to be removed (CS-11)**: Latest message of any kind; moves to charging_station_state. | `2026-09-15T08:29:58Z` |
+| `charger_status` | chargingconnectorstatus | yes |  |  | **🗑️ to be removed (CS-11)**: Whole-charger status (1.6J connector 0); moves to charging_station_state. | `Available` |
+| `charger_status_updated_at` | timestamptz | yes |  |  | **🗑️ to be removed (CS-11)**: When that status was reported; moves to charging_station_state. | `2026-09-15T08:10:00Z` |
+| `charger_error_code` | varchar(50) | yes |  |  | **🗑️ to be removed (CS-11)**: Whole-charger error code; moves to charging_station_state. | `NoError` |
+| `charger_vendor_error_code` | varchar(100) | yes |  |  | **🗑️ to be removed (CS-11)**: Vendor error code for the whole charger; moves to charging_station_state. | `E0000` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When a person last edited the row (UTC); device reports go to charging_station_state and never change it. | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the charger is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. | `NULL` |
 
 **Enum values**
 
@@ -97,20 +239,73 @@ One charging station in G3's network.
 
 **Indexes**
 
-- `ix_charging_stations_location` (location) - GIST; radius search (F-D1)
+- `ix_charging_stations_location` (location) - GIST; moves to charging_locations (CS-09)
 - `ix_charging_stations_deleted_at` (deleted_at)
+- `ix_charging_stations_location_id` (location_id) - Planned (CS-09)
 
 **Referenced by**
 
+- [charging_station_state](#charging_station_state).station_id (planned)
 - [charging_evses](#charging_evses).station_id
 - [charging_ocpp_messages](#charging_ocpp_messages).station_id
 - [charging_station_configuration_entries](#charging_station_configuration_entries).station_id
 - [charging_sessions](charging_sessions.md#charging_sessions).station_id
 - [tariffs](billing.md#tariffs).station_id (planned)
+- [charging_station_history](#charging_station_history).station_id (planned)
+
+### charging_station_history
+
+**No. 30.h** · 📋 planned · owner: **customer** · features: F-C1, F-C2, F-D1, F-G2 · change history of [charging_stations](#charging_stations)
+
+Every earlier version of a row of `charging_stations`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `station_id` | uuid | yes | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | Value before the change (charging_stations.station_id). | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `location_id` | uuid | yes |  |  | Value before the change (charging_stations.location_id). | `2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55` |
+| `ocpp_identity` | varchar(255) | yes |  |  | Value before the change (charging_stations.ocpp_identity). | `WD-HCM-001` |
+| `physical_reference` | varchar(16) | yes |  |  | Value before the change (charging_stations.physical_reference). | `Trụ 1` |
+| `max_power_kw` | numeric(6,2) | yes |  |  | Value before the change (charging_stations.max_power_kw). | `240.00` |
+| `status` | varchar(20) | yes |  |  | Value before the change (charging_stations.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (charging_stations.status_reason). | `Hỏng mô-đun công suất, chờ linh kiện` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (charging_stations.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (charging_stations.updated_at). | `2026-09-10T07:15:00Z` |
+| `deleted_at` | timestamptz | yes |  |  | Value before the change (charging_stations.deleted_at). | `NULL` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_charging_station_history_station_id_time` (station_id, changed_at)
+
+### charging_station_state
+
+**No. 31** · 📋 planned · owner: **customer** · features: F-C2, F-G2 · live state of [charging_stations](#charging_stations)
+
+What the charger reports about itself, written by the OCPP gateway, often and
+with no explanation needed: boot information, liveness and the whole-charger
+status (DM-16). No change history; every frame stays in charging_ocpp_messages.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `station_id` | uuid | no | PK FK | [charging_stations](#charging_stations).station_id (on delete restrict) | The charger this state belongs to (1:1 with charging_stations), created with it. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `last_seen_at` | timestamptz | yes |  |  | Latest message of any kind; whether the charger is online is computed from it at read time (CS-06). NULL before the first connection. | `2026-09-15T08:29:58Z` |
+| `last_boot_at` | timestamptz | yes |  |  | Latest accepted BootNotification. | `2026-09-14T22:00:05Z` |
+| `ocpp_protocol_version` | varchar(20) | yes |  |  | OCPP version of the latest connection. | `ocpp1.6` |
+| `vendor` | varchar(100) | yes |  |  | Vendor as reported at boot. | `Willdigits` |
+| `model` | varchar(100) | yes |  |  | Model as reported at boot. | `WD-DC480` |
+| `serial_number` | varchar(100) | yes |  |  | Serial number as reported at boot. | `WD2409001234` |
+| `firmware_version` | varchar(100) | yes |  |  | Firmware as reported at the latest boot; a change is logged. | `V2.3.7` |
+| `charger_status` | varchar(20) | yes |  |  | Status of the whole charger as reported (1.6J connector 0, CS-03), same values as the connector status; NULL for OCPP 2.0.1 or before the first report. | `Available` |
+| `charger_status_updated_at` | timestamptz | yes |  |  | When that status was last reported. | `2026-09-15T08:10:00Z` |
+| `charger_error_code` | varchar(50) | yes |  |  | Error code reported for the whole charger, as sent. | `NoError` |
+| `charger_vendor_error_code` | varchar(100) | yes |  |  | Vendor-specific error code for the whole charger. | `E0000` |
 
 ### charging_evses
 
-**No. 29** · ✅ built · owner: **internal** · features: F-C1, F-G2
+**No. 32** · ✅ built · owner: **internal** · features: F-C1, F-G2
 
 One EVSE (power outlet unit) of a station.
 
@@ -135,7 +330,7 @@ One EVSE (power outlet unit) of a station.
 
 ### charging_connectors
 
-**No. 30** · ✅ built · owner: **internal** · features: F-C1, F-C2
+**No. 33** · ✅ built · owner: **internal** · features: F-C1, F-C2
 
 One physical gun/plug, with its live status.
 
@@ -169,7 +364,7 @@ One physical gun/plug, with its live status.
 
 ### charging_ocpp_messages
 
-**No. 31** · ✅ built · owner: **internal** · features: F-G2 · hypertable on `occurred_at`
+**No. 34** · ✅ built · owner: **internal** · features: F-G2 · hypertable on `occurred_at`
 
 Every OCPP frame in both directions, verbatim and append-only.
 
@@ -192,7 +387,7 @@ Every OCPP frame in both directions, verbatim and append-only.
 
 ### charging_station_configuration_entries
 
-**No. 32** · ✅ built · owner: **internal** · features: F-G2
+**No. 35** · ✅ built · owner: **internal** · features: F-G2
 
 One configuration key from a charger's GetConfiguration answer (append-only snapshots).
 
@@ -212,7 +407,7 @@ One configuration key from a charger's GetConfiguration answer (append-only snap
 
 ### charging_reservations
 
-**No. 33** · 📋 planned · owner: **two-party** · features: F-C4
+**No. 36** · 📋 planned · owner: **two-party** · features: F-C4
 
 A customer's hold on a G3 connector for a time window.
 

@@ -25,7 +25,7 @@ Starting a charge, the session record, receipts, history, energy per customer an
 
 *Bắt đầu sạc bằng mã QR* · Must · P1.0 · Included in every plan
 
-The driver scans the QR code on the charger, the system starts the charge remotely, and the app shows its progress until it stops.
+The driver scans the QR code on the charger's screen; the app authorizes them and checks the wallet, the driver starts and stops on the charger, and the app shows the progress.
 
 **Value:** Scan, charge, pay in three steps for companies and individual drivers alike.
 
@@ -33,10 +33,11 @@ The driver scans the QR code on the charger, the system starts the charge remote
 
 **Capabilities:**
 
-- Scan the gun's QR code and confirm
+- Scan the QR code on the charger's screen; the app authorizes the driver and checks the wallet
+- The driver chooses the gun and starts on the charger's screen
 - Record who started the charge and which organization pays
 - Live progress: kWh, battery %, power, cost so far
-- Stop from the app or at the charger
+- Stop on the charger's screen (or by the truck); the app sends no command
 - Keep the session and bill later if the signal is weak
 
 **Status:** Backend ⬜ · App ⬜
@@ -45,8 +46,12 @@ The driver scans the QR code on the charger, the system starts the charge remote
 **Needed by:** [CHG-07](#chg-07), [PAY-06](billing.md#pay-06)  
 **Also touches:** `charging_stations`, `identity`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-H1 · Decision CO-12  
+**Sources:** PRD F-H1 · Decision CO-12 · Decision CO-13 · Decision CO-14  
 **Old codes:** F-H1
+
+**Open questions:**
+
+- Vendor to confirm: QR content, choosing the gun on the screen after a remote authorization, AuthorizeRemoteTxRequests (open question 4).
 
 <a id="chg-02"></a>
 

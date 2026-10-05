@@ -15,19 +15,22 @@ This is an index. Read only the reference file the task needs.
 | [references/csms-landscape.md](references/csms-landscape.md) | Choosing **how to model** something other CSMSs already solved: hierarchy and naming, private stations and access groups, tariff attachment and selection, credentials, site power limits, depot/truck features, the QR target |
 
 ## Levels at a glance
-| G3 word | OCPP 1.6J | OCPP 2.0.1 | OCPI | Our table today |
+Decided in CS-09 (`docs/decisions/decision-log.md`): **the database and code use the industry names; the app, portal and docs show the Vietnamese words.**
+
+| Level (table) | Vietnamese (UI) | OCPP 1.6J | OCPP 2.0.1 | OCPI |
 |---|---|---|---|---|
-| site (khu sạc): a large area of one organization, several stations | – | – | – (operator/owner details) | none |
-| station (trạm): one place drivers go, chargers in a row | – | – | **Location** | none |
-| charger (trụ): one OCPP connection | Charge Point | **Charging Station** | – | `charging_stations` |
-| EVSE: one outlet, one session at a time | (a 1.6 connector) | EVSE | EVSE | `charging_evses` |
-| connector (súng): one plug | Connector | Connector | Connector | `charging_connectors` |
+| site: a large area of one organization (no table yet, deferred.md 91) | khu sạc | – | – | – (operator/owner details) |
+| location (`charging_locations`): one place drivers go, chargers in a row | trạm sạc | – | – | **Location** |
+| charging station (`charging_stations`): one charger = one OCPP connection | trụ sạc | Charge Point | **Charging Station** | – |
+| EVSE (`charging_evses`): one outlet, one session at a time | (súng, for 1.6J) | (a 1.6 connector) | EVSE | EVSE |
+| connector (`charging_connectors`): one plug | súng sạc | Connector | Connector | Connector |
 
 - **1.6J has no EVSE.** Gun *n* is stored as EVSE *n* with connector 1, and connector 0 (the whole charger) lives on the charger row (CS-03). This is also how OCPI and 2.0.1 map a 1.6 charger, so 2.0.1 chargers fit the same tables.
-- The target names, and whether the site gets a table, are being settled in the design review (2026-10-05). Check the decision log's **CS** area before relying on the table column above.
+- `charging_locations` is designed in the 2026-10-05 review; until the refactor, today's `charging_stations` rows still carry the place columns too.
+- **Launch start flow (CO-14):** the QR code is shown on the charger's screen; the app authorizes the driver and checks the wallet, the backend sends one `RemoteStartTransaction`, and the driver picks the gun and starts and stops on the charger's screen.
 
 ## Facts that catch people out
-- **"Charging station" is the charger** in OCPP 2.0.1, AFIR, CitrineOS and Kempower. In Vietnamese usage and the G3 feature catalog it is the place.
+- **"Charging station" is the charger** in OCPP 2.0.1, AFIR, CitrineOS, Kempower and our database (CS-09). In Vietnamese usage ("trạm") and the feature catalog's English, "station" is the place: our `charging_locations`.
 - **OCPI has no charger level.** A Location groups EVSEs, and the charger stays internal.
 - **2.0.1 `transactionId` is a station-chosen string ≤36 chars** (1.6: an integer from our sequence).
   - Station-chosen means unique per charger only.

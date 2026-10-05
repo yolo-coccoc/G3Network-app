@@ -4,7 +4,7 @@
 
 *Mạng lưới trạm sạc* · [← Feature catalog](../README.md)
 
-Stations and chargers, their live status over OCPP, faults, the station map, queues, reservations and load. Backend domain: `charging_stations`.
+Stations and chargers, their live status over OCPP, faults, the station map, queues, reservations and load. In this catalog a "station" is the place drivers go (trạm; the database's charging_locations) and a "charger" is one OCPP charger (trụ; charging_stations), per CS-09. Backend domain: `charging_stations`.
 
 ## Checklist
 
@@ -41,14 +41,14 @@ Keep every station: location, region, power, number of chargers, connector stand
 **Capabilities:**
 
 - Create, edit, search and retire stations
-- Managing unit and incident contact per station
+- Owning organization per station; charger alerts go to its operations staff; stations are open 24/7 and a closed one is marked inactive with a reason
 - Map view of all stations
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Needed by:** [PAY-09](billing.md#pay-09), [STN-02](#stn-02), [STN-12](#stn-12), [STN-13](#stn-13)  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-C1 · Data IN-25  
+**Sources:** PRD F-C1 · Data IN-25 · Decision CS-09 · Decision CS-10 · Decision CS-11  
 **Old codes:** F-C1
 
 <a id="stn-02"></a>
@@ -235,7 +235,7 @@ Forecast how many trucks will arrive at each station against its free guns, warn
 **Needed by:** [RTE-05](routing.md#rte-05), [RTE-06](routing.md#rte-06)  
 **Also touches:** `telemetry`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-C7 · Data IN-28 · Data OUT-53 · NF-20  
+**Sources:** PRD F-C7 · Data IN-28 · Data OUT-53 · NF-20 · deferred.md 91  
 **Old codes:** F-C7
 
 <a id="stn-09"></a>
@@ -338,7 +338,7 @@ Stations that are not public (for example at a mine or a customer's depot) are v
 **Depends on:** [STN-01](#stn-01), [PAY-09](billing.md#pay-09)  
 **Also touches:** `billing`  
 **Related tables:** — (after the database review)  
-**Sources:** Data OUT-10
+**Sources:** Data OUT-10 · Decision CS-10
 
 **Open questions:**
 
