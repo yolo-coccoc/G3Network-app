@@ -889,7 +889,7 @@ energy reports are computed from it.
 }
 
 // ===========================================================================
-// drivers: driver profiles, assignments, charging credentials (F-E4)
+// drivers: driver profiles and driving sessions (F-E4)
 // ===========================================================================
 
 Table drivers {
@@ -981,22 +981,6 @@ driver's own employer does not see sessions on another organization's truck
 @vi Ai cầm lái xe nào, trong khoảng thời gian nào (DR-07): tài xế nhận xe bằng cách quét mã QR trên xe hoặc chọn xe ở gần trên ứng dụng, hoặc quản lý nhận xe giúp trên portal. Thay thế driver_vehicle_assignments. Phiên kết thúc khi tài xế trả xe, tài xế khác nhận xe, tài xế nhận xe khác, hoặc xe không di chuyển quá thời gian tự kết thúc của tổ chức (organization_settings). Các sự kiện cần biết tài xế (điểm, chuyến, phiên sạc) lấy tài xế từ đây. Cảnh báo cho tài xế gửi tới tài xế đang nhận xe và portal; xe chạy mà không ai nhận xe sẽ cảnh báo lên portal. Tổ chức sở hữu xe xem đầy đủ phiên lái; tài xế chỉ xem bản tóm tắt các phiên của mình trên ứng dụng (thời gian, xe, thời lượng, quãng đường; không có lộ trình hay địa điểm, không xuất dữ liệu), và tổ chức tuyển dụng tài xế không xem được phiên lái trên xe của tổ chức khác (DR-08, DR-11). Dòng đã đóng không bao giờ bị sửa nên không cần lịch sử thay đổi.'''
 }
 
-Table charging_credentials {
-  credential_id uuid [pk, note: 'Internal ID of the credential. @vi Mã nội bộ của phương thức xác thực. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
-  organization_id uuid [not null, note: 'Customer organization billed when this credential charges. @vi Tổ chức khách hàng bị tính tiền khi dùng phương thức này để sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  driver_id uuid [note: 'Driver it belongs to; NULL for a shared fleet card. @vi Tài xế sở hữu; NULL với thẻ dùng chung của đội xe. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  credential_type varchar(20) [not null, note: 'How the charger identifies the customer. APP_QR now: the user scans the QR on the charger and the backend starts the charge remotely. RFID and VIN_AUTOCHARGE later, for prepaid enterprise (VIP) automatic charging. Values: APP_QR | RFID | VIN_AUTOCHARGE. @vi Cách trụ sạc nhận biết khách hàng. Hiện tại APP_QR: người dùng quét mã QR trên trụ và backend khởi động phiên sạc từ xa. Sau này có RFID và VIN_AUTOCHARGE cho dịch vụ sạc tự động trả trước của doanh nghiệp (VIP). Giá trị: APP_QR | RFID | VIN_AUTOCHARGE. @example RFID']
-  id_tag varchar(20) [unique, note: 'Identifier the charger reports (OCPP idTag), unique. @vi Mã định danh mà trụ sạc gửi lên (OCPP idTag), duy nhất. @example 04A1B2C3D4E5F6']
-  status varchar(20) [not null, note: 'Whether the credential may start a charge. Values: ACTIVE | BLOCKED | EXPIRED. @vi Phương thức này có được dùng để bắt đầu sạc không. Giá trị: ACTIVE | BLOCKED | EXPIRED. @example ACTIVE']
-  issued_at timestamptz [not null, note: 'When the credential was issued. @vi Thời điểm cấp. @example 2026-09-01T02:00:00Z']
-  revoked_at timestamptz [note: 'When it was revoked; NULL while valid. @vi Thời điểm thu hồi; NULL khi còn hiệu lực. @example NULL']
-  Note: '''@status proposed @owner customer @features F-B2,F-C6,F-H1
-How a charger identifies who is charging. Links a session's raw idTag to a
-driver and organization. Placement in `drivers` is provisional.
-@vi-name Phương thức xác thực sạc
-@vi Cách trụ sạc nhận biết ai đang sạc. Nối mã idTag thô của phiên sạc với tài xế và tổ chức. Việc đặt ở miền Tài xế là tạm thời.'''
-}
-
 Ref: drivers.membership_id - memberships.membership_id [delete: restrict]
 Ref: driver_vehicle_assignments.organization_id > organizations.organization_id [delete: restrict]
 Ref: driver_vehicle_assignments.driver_id > drivers.driver_id [delete: restrict]
@@ -1004,26 +988,23 @@ Ref: driver_vehicle_assignments.vehicle_id > vehicles.vehicle_id [delete: restri
 Ref: driving_sessions.organization_id > organizations.organization_id [delete: restrict]
 Ref: driving_sessions.driver_id > drivers.driver_id [delete: restrict]
 Ref: driving_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: charging_credentials.organization_id > organizations.organization_id [delete: restrict]
-Ref: charging_credentials.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup drivers {
   drivers
   driver_vehicle_assignments
   driving_sessions
-  charging_credentials
   Note: '''
-The people who drive the trucks, and how they identify themselves at a charger.
+The people who drive the trucks, and who is at the wheel of which truck.
 
-- A **driver** belongs to one customer organization.
+- A **driver profile** belongs to one membership: one person in one organization.
 - A **driving session** records who is at the wheel of which truck: the driver checks in by QR, in the app or through a manager in the portal; any active driver may drive any organization's truck. It replaces the built **assignments**, which are dropped in the refactor.
-- A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an organization and optionally to one driver: app QR now, RFID and VIN autocharge later (prepaid VIP).
+- No charging credential is stored: every charge at launch starts with a QR scan (CO-13). RFID cards and VIN Autocharge may be implemented later (deferred.md 90).
 
 @vi-name Tài xế
-@vi Những người lái xe và cách họ xác thực tại trụ sạc.
-- Một **tài xế** thuộc một tổ chức khách hàng.
+@vi Những người lái xe, và ai đang cầm lái xe nào.
+- Một **hồ sơ tài xế** thuộc một thành viên: một người trong một tổ chức.
 - Một **phiên lái** ghi nhận ai đang cầm lái xe nào: tài xế nhận xe bằng QR, trên ứng dụng hoặc qua quản lý trên portal; tài xế đang hoạt động nào cũng có thể lái xe của bất kỳ tổ chức nào. Phiên lái thay thế **phân công** đã xây dựng, sẽ bị bỏ khi tái cấu trúc.
-- Một **phương thức xác thực sạc** (thẻ RFID, mã QR trên app, VIN autocharge) thuộc một tổ chức và có thể gắn với một tài xế: QR trên app hiện tại, RFID và VIN autocharge sau này (VIP trả trước).
+- Không lưu phương thức xác thực sạc: lúc ra mắt mọi lần sạc đều bắt đầu bằng quét mã QR (CO-13). Thẻ RFID và VIN Autocharge có thể được triển khai sau (deferred.md 90).
 '''
 }
 
@@ -1311,7 +1292,6 @@ Table charging_sessions {
   connector_id uuid [not null, note: 'Connector (gun) used. @vi Súng sạc được dùng. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
   organization_id uuid [note: '@planned D5: Customer organization charged for the session. @vi Tổ chức khách hàng bị tính tiền cho phiên sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   vehicle_id uuid [note: '@planned: Vehicle that was charged. @vi Xe được sạc. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  credential_id uuid [note: '@planned: Credential that started the session, resolved from id_tag. @vi Phương thức xác thực đã bắt đầu phiên, suy ra từ id_tag. @example d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc']
   ocpp_transaction_id varchar(255) [not null, note: 'Transaction ID used with the charger, unique per station. @vi Mã giao dịch dùng với trụ sạc, duy nhất trong trạm. @example 1042']
   status chargingsessionstatus [not null, note: 'Whether the session is still running. @vi Phiên sạc còn đang chạy hay đã xong. @example completed']
   started_at timestamptz [not null, note: 'When charging started. @vi Thời điểm bắt đầu sạc. @example 2026-09-15T08:30:00Z']
@@ -1379,7 +1359,6 @@ Ref: charging_sessions.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_sessions.connector_id > charging_connectors.connector_id [delete: restrict]
 Ref: charging_sessions.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: charging_sessions.credential_id > charging_credentials.credential_id [delete: restrict]
 Ref: charging_session_events.session_id > charging_sessions.session_id [delete: restrict]
 Ref: charging_session_measurements.session_id > charging_sessions.session_id [delete: restrict]
 
@@ -1391,13 +1370,13 @@ TableGroup charging_sessions {
 What happened during each charge: events, meter readings, energy delivered.
 
 - A **session** takes place on one connector of one G3 station.
-- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. The planned `credential_id` → `organization_id` link closes this (QR start now: the session records who started it and which organization pays), and is what billing (F-H1/F-H3) and reconciliation (NF-10) need.
+- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. Every charge at launch starts with a QR scan (CO-13), so the session will record who started it and which organization pays (designed in the charging_sessions review); billing (F-H1/F-H3) and reconciliation (NF-10) need that link.
 - A session has many **events** and many **measurements**.
 
 @vi-name Phiên sạc
 @vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
 - Một **phiên sạc** diễn ra trên một súng sạc của một trạm G3.
-- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Liên kết `credential_id` → `organization_id` sẽ khắc phục điều này (hiện tại khởi động bằng QR: phiên sạc ghi người khởi động và tổ chức thanh toán); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
+- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Lúc ra mắt mọi lần sạc đều bắt đầu bằng quét mã QR (CO-13), nên phiên sạc sẽ ghi người khởi động và tổ chức thanh toán (thiết kế khi rà soát charging_sessions); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
 - Một phiên sạc có nhiều **sự kiện** và nhiều **số đo**.
 '''
 }

@@ -200,6 +200,10 @@ Link each session to the truck, the driver and the paying organization, and cros
 **Related tables:** — (after the database review)  
 **Sources:** deferred.md 62 · Decision CO-12 · Data IN-27
 
+**Open questions:**
+
+- A guest truck (not registered with us) has no vehicle record: does the app ask for its plate when the QR charge starts?
+
 <a id="chg-08"></a>
 
 ### CHG-08 Charging cards and VIN Autocharge
@@ -222,7 +226,7 @@ Start charging with an RFID card or automatically by the truck's VIN, for prepai
 **Depends on:** [CHG-07](#chg-07), [PAY-07](billing.md#pay-07)  
 **Also touches:** `drivers`  
 **Related tables:** — (after the database review)  
-**Sources:** Decision CO-12 · Decision CO-06
+**Sources:** Decision CO-12 · Decision CO-06 · Decision CO-13 · deferred.md 90
 
 **Open questions:**
 

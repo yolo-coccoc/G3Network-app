@@ -9,7 +9,7 @@
 What happened during each charge: events, meter readings, energy delivered.
 
 - A **session** takes place on one connector of one G3 station.
-- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. The planned `credential_id` → `organization_id` link closes this (QR start now: the session records who started it and which organization pays), and is what billing (F-H1/F-H3) and reconciliation (NF-10) need.
+- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. Every charge at launch starts with a QR scan (CO-13), so the session will record who started it and which organization pays (designed in the charging_sessions review); billing (F-H1/F-H3) and reconciliation (NF-10) need that link.
 - A session has many **events** and many **measurements**.
 
 ## Diagram
@@ -23,7 +23,6 @@ erDiagram
     uuid connector_id FK
     uuid organization_id FK "planned"
     uuid vehicle_id FK "planned"
-    uuid credential_id FK "planned"
   }
   charging_session_events {
     uuid event_id PK
@@ -40,7 +39,6 @@ erDiagram
   charging_sessions }o--|| charging_connectors : "connector_id"
   charging_sessions }o..o| organizations : "organization_id"
   charging_sessions }o..o| vehicles : "vehicle_id"
-  charging_sessions }o..o| charging_credentials : "credential_id"
   charging_session_events }o--|| charging_sessions : "session_id"
   charging_session_measurements }o--|| charging_sessions : "session_id"
   policy_violations }o..|| charging_sessions : "session_id"
@@ -49,13 +47,13 @@ erDiagram
   invoice_lines }o..o| charging_sessions : "session_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_credentials](drivers.md#charging_credentials), [charging_evses](charging_stations.md#charging_evses), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
 
 ## Tables
 
 ### charging_sessions
 
-**No. 35** · ✅ built · owner: **two-party** · features: F-B2, F-C5
+**No. 34** · ✅ built · owner: **two-party** · features: F-B2, F-C5
 
 One charge on one connector, from start to stop.
 
@@ -67,7 +65,6 @@ One charge on one connector, from start to stop.
 | `connector_id` | uuid | no | FK | [charging_connectors](charging_stations.md#charging_connectors).connector_id (on delete restrict) | Connector (gun) used. | `0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa` |
 | `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (D5)**: Customer organization charged for the session. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | **📋 planned**: Vehicle that was charged. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `credential_id` | uuid | yes | FK | [charging_credentials](drivers.md#charging_credentials).credential_id (on delete restrict) | **📋 planned**: Credential that started the session, resolved from id_tag. | `d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc` |
 | `ocpp_transaction_id` | varchar(255) | no |  |  | Transaction ID used with the charger, unique per station. | `1042` |
 | `status` | chargingsessionstatus | no |  |  | Whether the session is still running. | `completed` |
 | `started_at` | timestamptz | no |  |  | When charging started. | `2026-09-15T08:30:00Z` |
@@ -107,7 +104,7 @@ One charge on one connector, from start to stop.
 
 ### charging_session_events
 
-**No. 36** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
+**No. 35** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
 
 Each Started / Updated / Ended event of a session.
 
@@ -129,7 +126,7 @@ Each Started / Updated / Ended event of a session.
 
 ### charging_session_measurements
 
-**No. 37** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
+**No. 36** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
 Every meter value a charger reports during a session (energy, power, SoC ...).
 

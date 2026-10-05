@@ -369,6 +369,7 @@ Answered and removed: 6 (ID-43). The next new question is number 9.
 | CO-10 | Strict timestamps (timezone required) until real-charger logs show otherwise; unknown transactions/connectors stay loud (CALLERROR). | Don't guess vendor behaviour. | ⏳ | 2026-09-24 | ocpp16 planner D11, §7 |
 | CO-11 | Build against the OCPP 1.6J standard and real logs, assuming no vendor-specific behaviour, until the vendor answers the open requests. | Vendor documents missing. | ⏳ open question 4 | – | Open questions (this log) |
 | CO-12 | Charging start now: the user scans the QR on the charger, the backend starts the charge remotely, and the session records who started it and which organization pays; RFID cards and VIN Autocharge come later for prepaid enterprise (VIP) charging. Closes former D4. | Guests and companies use the same flow first. | ✅ | 2026-10-03 | DBML `charging_credentials`, sessions notes |
+| CO-13 | Refines CO-12: **every charge at launch starts with a QR scan** on the charger, including a guest truck that is not registered with us; the backend starts it remotely with a token of its own, so no charging credential is stored. The session records who started it and which organization pays (designed in the `charging_sessions` review). `charging_credentials` is removed from the design; RFID cards and VIN Autocharge may be implemented in the future (CHG-08). | Nothing at launch reads a credential; designing it now would be guesswork while VIN Autocharge support is unknown. | ✅ 📦 deferred.md 90 | 2026-10-05 | Design review |
 
 ## CE — Charging sessions
 

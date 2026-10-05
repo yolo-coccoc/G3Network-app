@@ -128,7 +128,6 @@ erDiagram
   drivers |o..|| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
   driving_sessions }o..|| organizations : "organization_id"
-  charging_credentials }o..|| organizations : "organization_id"
   fleets }o..o| organizations : "organization_id"
   fleet_vehicle_memberships }o..o| organizations : "organization_id"
   fleet_user_assignments }o..|| organizations : "organization_id"
@@ -168,7 +167,7 @@ erDiagram
   driver_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [battery_history](batteries.md#battery_history), [battery_model_history](batteries.md#battery_model_history), [charging_credentials](drivers.md#charging_credentials), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_history](drivers.md#driver_history), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [driving_sessions](drivers.md#driving_sessions), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematic_history](telematics.md#telematic_history), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trips](unassigned.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_model_history](vehicles.md#vehicle_model_history), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets), [warranty_history](warranties.md#warranty_history).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [battery_history](batteries.md#battery_history), [battery_model_history](batteries.md#battery_model_history), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_history](drivers.md#driver_history), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [driving_sessions](drivers.md#driving_sessions), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematic_history](telematics.md#telematic_history), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trips](unassigned.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_model_history](vehicles.md#vehicle_model_history), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets), [warranty_history](warranties.md#warranty_history).
 
 ## Tables
 
@@ -224,7 +223,6 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [telemetry](telemetry.md#telemetry).organization_id (planned)
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
 - [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
-- [charging_credentials](drivers.md#charging_credentials).organization_id (planned)
 - [fleets](fleet.md#fleets).organization_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).organization_id (planned)
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).organization_id (planned)

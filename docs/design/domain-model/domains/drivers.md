@@ -4,13 +4,13 @@
 
 [← Overview](../overview.md)
 
-✅ built: 2 · 📋 planned: 2 · 🆕 proposed: 1
+✅ built: 2 · 📋 planned: 2
 
-The people who drive the trucks, and how they identify themselves at a charger.
+The people who drive the trucks, and who is at the wheel of which truck.
 
-- A **driver** belongs to one customer organization.
+- A **driver profile** belongs to one membership: one person in one organization.
 - A **driving session** records who is at the wheel of which truck: the driver checks in by QR, in the app or through a manager in the portal; any active driver may drive any organization's truck. It replaces the built **assignments**, which are dropped in the refactor.
-- A **charging credential** (RFID card, app QR, VIN autocharge) belongs to an organization and optionally to one driver: app QR now, RFID and VIN autocharge later (prepaid VIP).
+- No charging credential is stored: every charge at launch starts with a QR scan (CO-13). RFID cards and VIN Autocharge may be implemented later (deferred.md 90).
 
 ## Diagram
 
@@ -37,11 +37,6 @@ erDiagram
     uuid driver_id FK
     uuid vehicle_id FK
   }
-  charging_credentials {
-    uuid credential_id PK
-    uuid organization_id FK
-    uuid driver_id FK
-  }
   drivers |o..|| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
   driver_vehicle_assignments }o--|| drivers : "driver_id"
@@ -49,10 +44,7 @@ erDiagram
   driving_sessions }o..|| organizations : "organization_id"
   driving_sessions }o..|| drivers : "driver_id"
   driving_sessions }o..|| vehicles : "vehicle_id"
-  charging_credentials }o..|| organizations : "organization_id"
-  charging_credentials }o..o| drivers : "driver_id"
   charging_reservations }o..o| drivers : "driver_id"
-  charging_sessions }o..o| charging_credentials : "credential_id"
   support_cases }o--o| drivers : "driver_id"
   wallets }o..o| drivers : "driver_id"
   driver_scores }o..|| drivers : "driver_id"
@@ -61,7 +53,7 @@ erDiagram
   driver_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_reservations](charging_stations.md#charging_reservations), [charging_sessions](charging_sessions.md#charging_sessions), [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_reservations](charging_stations.md#charging_reservations), [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallets](billing.md#wallets).
 
 ## Tables
 
@@ -107,7 +99,6 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 - [driver_vehicle_assignments](#driver_vehicle_assignments).driver_id
 - [driving_sessions](#driving_sessions).driver_id (planned)
-- [charging_credentials](#charging_credentials).driver_id (planned)
 - [charging_reservations](charging_stations.md#charging_reservations).driver_id (planned)
 - [support_cases](support.md#support_cases).driver_id
 - [wallets](billing.md#wallets).driver_id (planned)
@@ -211,25 +202,3 @@ driver's own employer does not see sessions on another organization's truck
 - `uq_driving_sessions_open_driver` (driver_id) unique - WHERE ended_at IS NULL: one truck per driver at a time
 - `ix_driving_sessions_vehicle_time` (vehicle_id, started_at)
 - `ix_driving_sessions_driver_time` (driver_id, started_at)
-
-### charging_credentials
-
-**No. 24** · 🆕 proposed · owner: **customer** · features: F-B2, F-C6, F-H1
-
-How a charger identifies who is charging. Links a session's raw idTag to a
-driver and organization. Placement in `drivers` is provisional.
-
-| Column | Type | Null | Key | References | Meaning | Example |
-|---|---|---|---|---|---|---|
-| `credential_id` | uuid | no | PK |  | Internal ID of the credential. | `d4f1b7e2-8c5a-4d3f-9e1b-6a0c7d2f5ecc` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization billed when this credential charges. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `driver_id` | uuid | yes | FK | [drivers](#drivers).driver_id (on delete restrict) | Driver it belongs to; NULL for a shared fleet card. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
-| `credential_type` | varchar(20) | no |  |  | How the charger identifies the customer. APP_QR now: the user scans the QR on the charger and the backend starts the charge remotely. RFID and VIN_AUTOCHARGE later, for prepaid enterprise (VIP) automatic charging. Values: APP_QR \| RFID \| VIN_AUTOCHARGE. | `RFID` |
-| `id_tag` | varchar(20) | yes | UQ |  | Identifier the charger reports (OCPP idTag), unique. | `04A1B2C3D4E5F6` |
-| `status` | varchar(20) | no |  |  | Whether the credential may start a charge. Values: ACTIVE \| BLOCKED \| EXPIRED. | `ACTIVE` |
-| `issued_at` | timestamptz | no |  |  | When the credential was issued. | `2026-09-01T02:00:00Z` |
-| `revoked_at` | timestamptz | yes |  |  | When it was revoked; NULL while valid. | `NULL` |
-
-**Referenced by**
-
-- [charging_sessions](charging_sessions.md#charging_sessions).credential_id (planned)

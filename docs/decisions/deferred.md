@@ -1747,6 +1747,34 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
 - **Additional notes**: If the ADAS unit is a registered device (like the T-Box), "fitted" can be
   derived from that device instead of a flag on `vehicles`.
 
+
+---
+
+### 90. Charging credentials: RFID cards and VIN Autocharge
+
+- **Short description**: A `charging_credentials` table mapping the identifier a charger reports
+  (an RFID card number, or the truck's identifier for VIN Autocharge) to the organization that
+  pays, and to the driver or truck holding it, so a charge can start without the app.
+- **Purpose/role in the system**: Lets prepaid enterprise customers start charging by card or
+  automatically when the truck plugs in (CHG-08), with the charger asking the backend whether the
+  tag may charge (OCPP `Authorize`).
+- **Reason for deferral**: Owner decision (2026-10-05, CO-13 in `docs/decisions/decision-log.md`):
+  every charge at launch starts with a QR scan, including guest trucks, so nothing reads a
+  credential; RFID or VIN Autocharge may be implemented in the future. Whether the Willdigits
+  charger supports VIN Autocharge over OCPP is still unknown (open question 4).
+- **Related planner/feature**: CHG-08 (`docs/product/features/features.yaml`), CO-06, CO-12,
+  CO-13, VH-12, deferred.md 26 and 62.
+- **Date recorded**: 2026-10-05
+- **Additional notes**: Shape worked out in the design review, to start from when CHG-08 begins:
+  `credential_type` RFID | VIN_AUTOCHARGE only (a QR start needs no credential); held by a
+  driver, a truck (required for VIN_AUTOCHARGE) or nobody (a shared card), never both;
+  `organization_id` is its own owner and payer; status ACTIVE | BLOCKED with `status_reason`, a
+  card returned for good BLOCKED and soft-deleted (DM-25), no `issued_at` / `revoked_at` /
+  EXPIRED; change history on; `id_tag` varchar(36) (OCPP 2.0.1 length), unique among rows not
+  deleted, masked in the API (IS-07), not hashed. Likely domain: `charging_sessions`, which the
+  OCPP gateway already calls, rather than `drivers`. Knock-on rules: a truck sale unassigns the
+  seller's cards held by that truck (VH-12); a retired driver profile hands its cards back to the
+  organization (DR-10).
 ---
 
 ## Update rules

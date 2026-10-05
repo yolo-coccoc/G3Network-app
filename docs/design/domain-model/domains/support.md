@@ -49,7 +49,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### support_cases
 
-**No. 39** · ✅ built · owner: **customer** · features: F-I1, F-I2
+**No. 38** · ✅ built · owner: **customer** · features: F-I1, F-I2
 
 One support request: a ticket or an SOS, with its SLA timeline.
 
@@ -97,7 +97,7 @@ One support request: a ticket or an SOS, with its SLA timeline.
 
 ### repair_partners
 
-**No. 40** · 📋 planned · owner: **internal** · features: F-I4, F-I3
+**No. 39** · 📋 planned · owner: **internal** · features: F-I4, F-I3
 
 A workshop or rescue partner that support can dispatch to.
 
@@ -118,7 +118,7 @@ A workshop or rescue partner that support can dispatch to.
 
 ### maintenance_bookings
 
-**No. 41** · 📋 planned · owner: **customer** · features: F-I3
+**No. 40** · 📋 planned · owner: **customer** · features: F-I3
 
 A maintenance appointment for a vehicle at a partner workshop.
 
