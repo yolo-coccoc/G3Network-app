@@ -18,7 +18,7 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [deferred-resolved.md](./deferred-resolved.md) (currently
-items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
+items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference like
 "`deferred.md` item 10" can be found there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
@@ -1617,22 +1617,6 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
 - **Date recorded**: 2026-09-24
 - **Additional notes**: Do not log raw frames to application logs.
 
-### 80. Per-gun power and connector standard in the station directory
-
-- **Short description**: Model power rating and connector standard per
-  connector/EVSE instead of one value per station, including power sharing
-  between guns.
-- **Purpose/role in the system**: A 240 kW dual-gun charger delivers about
-  120 kW per gun when both are in use; the vendor's other units show `GBT`
-  connectors, so a mixed-standard station is possible.
-- **Reason for deferral**: `power_rating_kw` and `connector_standard` are
-  deliberately station-level aggregates (F-C1, item 28); F-D1's filters read
-  them. Fine for the MVP; only visible with real data.
-- **Related planner/feature**: `docs/planners/backend-ocpp16-charger-integration.md`, F-C1, F-D1, item 28.
-- **Date recorded**: 2026-09-24
-- **Additional notes**: Needs the real power-allocation behaviour verified
-  first (`Power.Offered` per gun, Step 7b).
-
 ### 81. Unverified assumptions about the charger's OCPP message set and start flow
 
 - **Short description**: Three things about what the Willdigits charger sends that the
@@ -1801,6 +1785,28 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63 and 82-85), so a reference like
   list or tariff for a private site, a site contract). OCPP has no site object: the CSMS pushes
   `ChargingStationMaxProfile` per charger or `TxProfile` per session to keep a group under its
   limit, or a local controller does it at the site.
+
+---
+
+### 92. Charger reservations
+
+- **Short description**: A `charging_reservations` table: a customer holds one EVSE or connector
+  of a location for a time window, with an outcome (used, expired, cancelled, no-show) and a
+  possible no-show fee.
+- **Purpose/role in the system**: Lets a truck book a gun ahead of a long drive so it does not
+  queue at arrival (STN-09), using the expected wait (STN-07). OCPP: 1.6J `ReserveNow` /
+  `CancelReservation`; 2.0.1 adds `ReservationStatusUpdate` and allows reserving a connector
+  type instead of an EVSE (`ocpp-reference` skill, `references/ocpp201.md` §8). OCPI has
+  `RESERVE_NOW` and a reservation tariff restriction.
+- **Reason for deferral**: Owner decision (2026-10-06): STN-09 is a Could for P1.5, so the planned
+  table is removed from the design and left for the future.
+- **Related planner/feature**: STN-09, STN-07, PAY-06 (`docs/product/features/features.yaml`).
+- **Date recorded**: 2026-10-06
+- **Additional notes**: The removed sketch held: `organization_id` (holder), `connector_id`,
+  optional `driver_id`, `reserved_from`, `expires_at`, status ACTIVE | USED | EXPIRED |
+  CANCELLED | NO_SHOW. Revisit when designing: whether a reservation targets an EVSE (OCPP's
+  unit) rather than a connector, whether the charger supports `ReserveNow` (open question 4),
+  and the no-show penalty question on STN-09.
 ---
 
 ## Update rules

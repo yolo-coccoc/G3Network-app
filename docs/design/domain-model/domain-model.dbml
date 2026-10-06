@@ -687,14 +687,15 @@ vehicles and identity; nothing in vehicles depends on it. Not built yet.
 
 Table warranties {
   warranty_id uuid [pk, note: 'Internal ID of the warranty. @vi Mã nội bộ của bảo hành. @example 4b9d2f6e-3a1c-4e8b-a7d5-6c0e2f4a8b33']
-  vehicle_id uuid [note: 'The truck covered; set only for a truck warranty. Exactly one of vehicle_id, battery_id and telematic_id is set (check constraint). @vi Xe được bảo hành; chỉ có giá trị với bảo hành xe. Đúng một trong ba cột vehicle_id, battery_id, telematic_id có giá trị (ràng buộc kiểm tra). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  vehicle_id uuid [note: 'The truck covered; set only for a truck warranty. Exactly one of vehicle_id, battery_id, telematic_id and station_id is set (check constraint). @vi Xe được bảo hành; chỉ có giá trị với bảo hành xe. Đúng một trong bốn cột vehicle_id, battery_id, telematic_id, station_id có giá trị (ràng buộc kiểm tra). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   battery_id uuid [note: 'The battery covered; set only for a battery warranty, which therefore follows the battery to another truck. @vi Pin được bảo hành; chỉ có giá trị với bảo hành pin, nên bảo hành đi theo pin sang xe khác. @example NULL']
   telematic_id uuid [note: 'The T-Box covered; set only for a device warranty. @vi T-Box được bảo hành; chỉ có giá trị với bảo hành thiết bị. @example NULL']
+  station_id uuid [note: 'The charger (charging station) covered; set only for a charger warranty, which follows the charger to its next owner (VH-19). @vi Trụ sạc được bảo hành; chỉ có giá trị với bảo hành trụ sạc, và đi theo trụ sang chủ kế tiếp (VH-19). @example NULL']
   warranty_type varchar(20) [not null, note: 'STANDARD: delivered with the object. EXTENDED: bought later. Values: STANDARD | EXTENDED. @vi STANDARD: đi kèm khi giao. EXTENDED: mua thêm sau. @example STANDARD']
   contract_reference varchar(100) [note: 'Number of the warranty contract or certificate whose terms apply (rules that are not numbers, e.g. following the charging policy, live there); NULL if none. @vi Số hợp đồng hoặc phiếu bảo hành chứa điều khoản áp dụng (các quy định không phải con số, ví dụ tuân thủ chính sách sạc, nằm trong đó); NULL nếu không có. @example BH-2026-000451']
   starts_on date [not null, note: 'First day of coverage. @vi Ngày bắt đầu bảo hành. @example 2026-06-01']
   ends_on date [not null, note: 'Last day of coverage. @vi Ngày kết thúc bảo hành. @example 2031-05-31']
-  limits jsonb [note: 'Other limits, written as the counter reading at which coverage ends (a contract saying "100,000 km from handover" is entered as the handover odometer plus 100,000). Keys by object: truck distance_km; battery energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count. Coverage ends at whichever limit or ends_on comes first. NULL when there is no other limit. @vi Các giới hạn khác, ghi bằng chỉ số bộ đếm tại đó bảo hành kết thúc (hợp đồng ghi "100.000 km từ ngày bàn giao" thì nhập số odo lúc bàn giao cộng 100.000). Khóa theo đối tượng: xe distance_km; pin energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count. Bảo hành kết thúc khi chạm giới hạn nào hoặc ends_on trước. NULL khi không có giới hạn khác. @example {"distance_km": 212000}']
+  limits jsonb [note: 'Other limits, written as the counter reading at which coverage ends (a contract saying "100,000 km from handover" is entered as the handover odometer plus 100,000). Keys by object: truck distance_km; battery energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count; charger energy_delivered_kwh, session_count (counted from the charger\'s sessions across every owner, VH-19). Coverage ends at whichever limit or ends_on comes first. NULL when there is no other limit. @vi Các giới hạn khác, ghi bằng chỉ số bộ đếm tại đó bảo hành kết thúc (hợp đồng ghi "100.000 km từ ngày bàn giao" thì nhập số odo lúc bàn giao cộng 100.000). Khóa theo đối tượng: xe distance_km; pin energy_throughput_kwh, charge_cycles; T-Box operating_hours, message_count. Bảo hành kết thúc khi chạm giới hạn nào hoặc ends_on trước. NULL khi không có giới hạn khác. @example {"distance_km": 212000}']
   status varchar(10) [not null, note: 'ACTIVE: in force unless expired. VOIDED: revoked by our warranty team (e.g. charging-policy violations), with the reason. Expired is not stored: it is computed from ends_on and the counters. Values: ACTIVE | VOIDED. @vi ACTIVE: còn hiệu lực nếu chưa hết hạn. VOIDED: bị bộ phận bảo hành của chúng ta hủy (ví dụ vi phạm chính sách sạc), kèm lý do. Hết hạn không lưu: được tính từ ends_on và các bộ đếm. @example ACTIVE']
   status_reason varchar(200) [note: 'Why the warranty was voided; NULL when ACTIVE. @vi Lý do bảo hành bị hủy; NULL khi ACTIVE. @example Repeated charging outside the allowed window']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-06-01T03:00:00Z']
@@ -704,36 +705,38 @@ Table warranties {
     vehicle_id [name: 'ix_warranties_vehicle_id']
     battery_id [name: 'ix_warranties_battery_id']
     telematic_id [name: 'ix_warranties_telematic_id']
+    station_id [name: 'ix_warranties_station_id']
     ends_on [name: 'ix_warranties_ends_on', note: 'Warranties ending soon']
   }
   Note: '''@status proposed @owner customer @features F-F2 @tracked *
-One warranty of one truck, battery or T-Box (WAR-01, VH-18), set per truck.
+One warranty of one truck, battery, T-Box (WAR-01, VH-18) or charger (VH-19), set per object.
 Which object is covered is the one link that is set (exactly one, check
 constraint); that also decides which limits keys apply. No organization_id
 (DM-24): a warranty follows its object, and whoever owns the object now sees
 it. A truck usually has several (vehicle, battery, an extended one). Change
 history on: voiding must show who and why.
-Check constraints: num_nonnulls(vehicle_id, battery_id, telematic_id) = 1 (VH-18); deleted_at IS NULL OR status = 'VOIDED' (DM-25). The limits keys allowed for the set link are checked by the application. Possible later: one warranty table per covered object, each in its own domain (vehicle, battery, T-Box warranties), if their rules drift apart.
+Check constraints: num_nonnulls(vehicle_id, battery_id, telematic_id, station_id) = 1 (VH-18, VH-19); deleted_at IS NULL OR status = 'VOIDED' (DM-25). The limits keys allowed for the set link are checked by the application. Possible later: one warranty table per covered object, each in its own domain (vehicle, battery, T-Box warranties), if their rules drift apart.
 @vi-name Bảo hành
-@vi Một bảo hành của một xe, pin hoặc T-Box (WAR-01, VH-18), đặt riêng cho từng xe. Đối tượng được bảo hành là liên kết duy nhất có giá trị (đúng một, ràng buộc kiểm tra); liên kết đó cũng quyết định các khóa giới hạn áp dụng. Không có organization_id (DM-24): bảo hành đi theo đối tượng, ai đang sở hữu đối tượng thì xem được. Một xe thường có nhiều bảo hành (xe, pin, gia hạn). Có lưu lịch sử thay đổi: việc hủy bảo hành phải cho biết ai và vì sao. Ràng buộc kiểm tra: num_nonnulls(vehicle_id, battery_id, telematic_id) = 1 (VH-18); deleted_at IS NULL OR status = 'VOIDED' (DM-25). Các khóa limits hợp lệ theo liên kết được đặt do ứng dụng kiểm tra. Có thể sau này: mỗi loại đối tượng một bảng bảo hành, nằm trong miền của đối tượng đó (bảo hành xe, pin, T-Box), nếu quy định của chúng khác nhau nhiều.'''
+@vi Một bảo hành của một xe, pin, T-Box (WAR-01, VH-18) hoặc trụ sạc (VH-19), đặt riêng cho từng đối tượng. Đối tượng được bảo hành là liên kết duy nhất có giá trị (đúng một, ràng buộc kiểm tra); liên kết đó cũng quyết định các khóa giới hạn áp dụng. Không có organization_id (DM-24): bảo hành đi theo đối tượng, ai đang sở hữu đối tượng thì xem được. Một xe thường có nhiều bảo hành (xe, pin, gia hạn). Có lưu lịch sử thay đổi: việc hủy bảo hành phải cho biết ai và vì sao. Ràng buộc kiểm tra: num_nonnulls(vehicle_id, battery_id, telematic_id, station_id) = 1 (VH-18, VH-19); deleted_at IS NULL OR status = 'VOIDED' (DM-25). Các khóa limits hợp lệ theo liên kết được đặt do ứng dụng kiểm tra. Có thể sau này: mỗi loại đối tượng một bảng bảo hành, nằm trong miền của đối tượng đó (bảo hành xe, pin, T-Box), nếu quy định của chúng khác nhau nhiều.'''
 }
 
 Ref: warranties.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: warranties.battery_id > batteries.battery_id [delete: restrict]
 Ref: warranties.telematic_id > telematics.telematic_id [delete: restrict]
+Ref: warranties.station_id > charging_stations.station_id [delete: restrict]
 
 TableGroup warranties {
   warranties
   Note: '''
-The warranties of trucks, batteries and T-Boxes: their periods and limits,
-and why a warranty was voided. Depends on vehicles, batteries and
-telematics; nothing depends on it. Not built yet.
+The warranties of trucks, batteries, T-Boxes and chargers: their periods and
+limits, and why a warranty was voided. Depends on vehicles, batteries,
+telematics and charging_stations; nothing depends on it. Not built yet.
 
-- A **warranty** covers exactly one truck, battery or T-Box and follows it to its next owner.
+- A **warranty** covers exactly one truck, battery, T-Box or charger and follows it to its next owner.
 
 @vi-name Bảo hành
-@vi Bảo hành của xe, pin và T-Box: thời hạn, giới hạn và lý do một bảo hành bị hủy. Phụ thuộc miền xe, pin và telematics; không miền nào phụ thuộc miền này. Chưa được xây dựng.
-- Một **bảo hành** áp dụng cho đúng một xe, pin hoặc T-Box và đi theo đối tượng sang chủ kế tiếp.
+@vi Bảo hành của xe, pin, T-Box và trụ sạc: thời hạn, giới hạn và lý do một bảo hành bị hủy. Phụ thuộc miền xe, pin, telematics và trạm sạc; không miền nào phụ thuộc miền này. Chưa được xây dựng.
+- Một **bảo hành** áp dụng cho đúng một xe, pin, T-Box hoặc trụ sạc và đi theo đối tượng sang chủ kế tiếp.
 '''
 }
 
@@ -1135,9 +1138,9 @@ Groups of vehicles managed together by a fleet manager.
 Table charging_locations {
   location_id uuid [pk, note: 'Internal ID of the location. @vi Mã nội bộ của trạm sạc. @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
   organization_id uuid [not null, note: 'Organization that owns the location (CS-10): G3\'s internal organization for its own network, a customer for its own chargers. Its chargers run on our gateway either way, so everything there goes through our system. Charger fault and offline alerts go to the users holding the OPERATIONS role in this organization (CS-11). @vi Tổ chức sở hữu trạm (CS-10): tổ chức nội bộ của G3 với mạng lưới của mình, khách hàng với trụ sạc của họ. Trụ sạc luôn kết nối qua cổng của chúng ta, nên mọi hoạt động ở đó đều đi qua hệ thống. Cảnh báo lỗi và mất kết nối của trụ gửi tới người dùng giữ vai trò OPERATIONS của tổ chức này (CS-11). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  display_name varchar(200) [not null, note: 'Name shown to drivers and in the portal. @vi Tên hiển thị cho tài xế và trên portal. @example Trạm sạc G3 Bình Dương']
+  display_name varchar(200) [not null, note: 'Name shown to drivers and in the portal. Not unique: the portal warns when the same owner already has a location with this name (CS-12). @vi Tên hiển thị cho tài xế và trên portal. Không bắt buộc duy nhất: portal cảnh báo khi cùng tổ chức sở hữu đã có trạm trùng tên (CS-12). @example Trạm sạc G3 Bình Dương']
   address varchar(500) [not null, note: 'Address as one free-text line (number, road or km marker, ward, province), shown in the app. The province, when a filter or report needs it, is derived by a tool from the coordinates or this text, not stored (CS-11). @vi Địa chỉ dạng một dòng văn bản tự do (số nhà, đường hoặc km, phường/xã, tỉnh), hiển thị trên ứng dụng. Tỉnh/thành, khi cần lọc hoặc báo cáo, được suy ra bằng công cụ từ tọa độ hoặc dòng này, không lưu riêng (CS-11). @example Km 1872+500 QL1A, xã Tân Lập, tỉnh Đồng Nai']
-  location "geography(POINT,4326)" [note: 'GPS position (WGS84 point, longitude first) of the map pin; NULL until surveyed. @vi Vị trí GPS (điểm WGS84, kinh độ trước) của điểm trên bản đồ; NULL khi chưa khảo sát. @example POINT(106.6519 10.9804)']
+  coordinates "geography(POINT,4326)" [not null, note: 'GPS position of the map pin (WGS84 point, longitude first); required, so a location is entered only once its position is known (CS-12). Named after OCPI\'s Location.coordinates. @vi Vị trí GPS của điểm trên bản đồ (điểm WGS84, kinh độ trước); bắt buộc, nên trạm chỉ được nhập khi đã biết vị trí (CS-12). @example POINT(106.6519 10.9804)']
   is_public boolean [not null, note: 'TRUE: anyone may charge here and it is on the public map. FALSE (private): only members of the owner and of the organizations allowed in charging_location_access may charge, and it is shown only to them (CS-10, STN-12; OCPI publish). @vi TRUE: ai cũng sạc được và trạm hiện trên bản đồ công cộng. FALSE (riêng): chỉ thành viên của tổ chức sở hữu và của các tổ chức được cho phép trong charging_location_access mới sạc được và mới thấy trạm (CS-10, STN-12). @example true']
   status varchar(20) [not null, note: 'Set by a person (DM-25). ACTIVE: open; locations are always open 24/7, so there are no opening hours (CS-11). INACTIVE: closed, e.g. repairs, flooding or a holiday; the reason says which. A location that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang mở; trạm luôn mở 24/7 nên không có giờ hoạt động (CS-11). INACTIVE: tạm đóng, ví dụ sửa chữa, ngập nước hoặc nghỉ lễ; lý do cho biết trường hợp nào. Trạm rời hệ thống được chuyển sang INACTIVE và xóa mềm. @example ACTIVE']
   status_reason varchar(200) [note: 'Why the location has its current status, or why it left the system; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại, hoặc lý do trạm rời hệ thống; NULL khi ACTIVE. @example Ngập nước sau bão, tạm đóng']
@@ -1145,7 +1148,7 @@ Table charging_locations {
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the location is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: trạm không còn thuộc hệ thống, do đã rời đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    location [name: 'ix_charging_locations_location', note: 'GIST; radius search (STN-06). Moves here from charging_stations']
+    coordinates [name: 'ix_charging_locations_coordinates', note: 'GIST; radius search (STN-06). Replaces ix_charging_stations_location']
     organization_id [name: 'ix_charging_locations_organization_id']
   }
   Note: '''@status planned @owner customer @features F-C1,F-D1 @tracked *
@@ -1165,9 +1168,10 @@ Table charging_location_access {
   allowed_organization_id uuid [not null, note: 'Organization whose members may charge at the location (organization level, not per driver, for now). Named apart from organization_id: it is the grantee, not the owner. @vi Tổ chức có thành viên được sạc tại trạm (theo tổ chức, chưa theo từng tài xế). Đặt tên khác organization_id vì đây là bên được cấp quyền, không phải chủ sở hữu. @example 7c1d9e4b-2a6f-4b8c-9d3e-5f0a1b2c3d44']
   granted_at timestamptz [not null, note: 'When the access was granted. @vi Thời điểm cấp quyền. @example 2026-10-06T02:00:00Z']
   granted_by uuid [not null, note: 'User of the owning organization (or G3 staff) who granted it. @vi Người dùng của tổ chức sở hữu (hoặc nhân viên G3) đã cấp quyền. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  revoked_at timestamptz [note: 'When the access ended; NULL while in force. @vi Thời điểm hết quyền; NULL khi còn hiệu lực. @example NULL']
-  revoked_by uuid [note: 'Who revoked it; NULL while in force, or when the system ended it (e.g. the location left the system). @vi Ai đã thu hồi; NULL khi còn hiệu lực, hoặc khi hệ thống tự kết thúc (ví dụ trạm rời hệ thống). @example NULL']
-  status_reason varchar(200) [note: 'Why the access ended (DM-19); NULL while in force. @vi Lý do kết thúc quyền (DM-19); NULL khi còn hiệu lực. @example Hết hợp đồng hợp tác']
+  valid_until date [note: 'Last day the access is valid, inclusive, in Vietnam time, when a partner contract fixes it in advance (DM-23); NULL for no end date. After that day the system closes the row (revoked_at set, revoked_by NULL, revoke_reason "expired"), so a new grant to the same organization is possible (CS-13). @vi Ngày cuối cùng còn quyền (tính cả ngày đó, giờ Việt Nam), khi hợp đồng hợp tác định trước (DM-23); NULL nếu không có ngày kết thúc. Sau ngày đó hệ thống tự đóng dòng (điền revoked_at, revoked_by để NULL, revoke_reason "expired"), để có thể cấp quyền mới cho cùng tổ chức (CS-13). @example 2026-12-31']
+  revoked_at timestamptz [note: 'When the access ended (revoked by a person, or closed by the system after valid_until or when the location left the system); NULL while in force. @vi Thời điểm hết quyền (bị thu hồi, hoặc hệ thống tự đóng sau valid_until hay khi trạm rời hệ thống); NULL khi còn hiệu lực. @example NULL']
+  revoked_by uuid [note: 'Who revoked it; NULL while in force, or when the system ended it. @vi Ai đã thu hồi; NULL khi còn hiệu lực, hoặc khi hệ thống tự kết thúc. @example NULL']
+  revoke_reason varchar(200) [note: 'Why the access ended; NULL while in force. Named after how the row ends, because the table has no status column (DM-28). @vi Lý do kết thúc quyền; NULL khi còn hiệu lực. Đặt tên theo cách dòng kết thúc vì bảng không có cột trạng thái (DM-28). @example Hết hợp đồng hợp tác']
   indexes {
     (location_id, allowed_organization_id) [unique, name: 'uq_charging_location_access_live', note: 'WHERE revoked_at IS NULL: one live grant per location and organization']
     allowed_organization_id [name: 'ix_charging_location_access_allowed_organization_id', note: 'Where may this organization charge?']
@@ -1178,9 +1182,12 @@ every member of an allowed organization may charge there; per-driver lists
 are not modelled for now. Granted and revoked by the location's owner. Rows
 are only ever closed, so there is no change history (DM-20). Who may charge
 at a private location: members of its owner plus members of every
-organization with a live row here.
+organization with a live row here whose valid_until has not passed. A grant
+to the owner itself is refused by the service. Grants stay when the location
+turns public (they have no effect then) and apply again if it turns private
+(CS-13).
 @vi-name Quyền sạc tại trạm riêng
-@vi Những tổ chức khác được sạc tại một trạm riêng (CS-10, STN-12): mọi thành viên của tổ chức được cho phép đều sạc được; chưa có danh sách theo từng tài xế. Do tổ chức sở hữu trạm cấp và thu hồi. Dòng chỉ bị đóng, không bị sửa, nên không cần lịch sử thay đổi (DM-20). Ai được sạc tại trạm riêng: thành viên của tổ chức sở hữu và thành viên của mọi tổ chức có dòng còn hiệu lực ở đây.'''
+@vi Những tổ chức khác được sạc tại một trạm riêng (CS-10, STN-12): mọi thành viên của tổ chức được cho phép đều sạc được; chưa có danh sách theo từng tài xế. Do tổ chức sở hữu trạm cấp và thu hồi. Dòng chỉ bị đóng, không bị sửa, nên không cần lịch sử thay đổi (DM-20). Ai được sạc tại trạm riêng: thành viên của tổ chức sở hữu và thành viên của mọi tổ chức có dòng còn hiệu lực ở đây và chưa quá valid_until. Không cấp quyền cho chính tổ chức sở hữu. Quyền được giữ khi trạm chuyển sang công cộng (khi đó không có tác dụng) và áp dụng lại nếu trạm trở về riêng (CS-13).'''
 }
 
 Ref: charging_locations.organization_id > organizations.organization_id [delete: restrict]
@@ -1193,9 +1200,10 @@ Table charging_stations {
   station_id uuid [pk, note: 'Internal ID of the charging station: one charger (trụ sạc), one OCPP connection (CS-09). @vi Mã nội bộ của trụ sạc: một trụ, một kết nối OCPP (CS-09). @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
   location_id uuid [not null, note: '@planned CS-09: The location (trạm) the charger stands at; the charger reads its owner through it (DM-24). @vi Trạm sạc nơi đặt trụ; trụ đọc tổ chức sở hữu qua trạm (DM-24). @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
   ocpp_identity varchar(255) [not null, unique, note: 'Name the charger uses in its OCPP WebSocket URL ("Charger ID" on the Willdigits screen), unique and never reused. @vi Tên trụ sạc dùng trong URL WebSocket OCPP ("Charger ID" trên màn hình Willdigits), duy nhất và không bao giờ dùng lại. @example WD-HCM-001']
+  registered_serial_number varchar(100) [not null, note: '@planned CS-14: Serial number read from the charger\'s nameplate and entered at installation: the asset\'s identity for warranty (WAR-01), insurance and vendor support. Unique among chargers not deleted. The serial the charger reports at boot is kept apart in charging_station_state.serial_number; a mismatch is logged as a warning (a swapped controller board or a misconfigured charger). @vi Số serial đọc từ nhãn máy và nhập khi lắp đặt: định danh tài sản cho bảo hành (WAR-01), bảo hiểm và hỗ trợ của hãng. Duy nhất trong các trụ chưa xóa. Serial trụ tự báo khi khởi động được lưu riêng ở charging_station_state.serial_number; nếu khác nhau thì ghi cảnh báo (thay bo mạch điều khiển hoặc cấu hình sai). @example WD2409001234']
   physical_reference varchar(16) [note: '@planned CS-11: Short label printed on the unit and shown to drivers, e.g. "Trụ 1"; NULL until labelled (OCPI physical_reference). @vi Nhãn ngắn in trên trụ và hiển thị cho tài xế, ví dụ "Trụ 1"; NULL khi chưa dán nhãn. @example Trụ 1']
   display_name varchar(200) [not null, note: '@remove CS-09: Station name shown to drivers; now the location\'s display_name, and a charger has its physical_reference. @vi Tên trạm hiển thị cho tài xế; nay là display_name của trạm, còn trụ có physical_reference. @example Trạm sạc G3 Bình Dương']
-  location "geography(POINT,4326)" [note: '@remove CS-09: GPS position; now on the location. @vi Vị trí GPS; nay nằm ở trạm. @example POINT(106.6519 10.9804)']
+  location "geography(POINT,4326)" [note: '@remove CS-09: GPS position; now charging_locations.coordinates. @vi Vị trí GPS; nay là charging_locations.coordinates. @example POINT(106.6519 10.9804)']
   max_power_kw numeric(6,2) [note: '@built-as power_rating_kw: Total output of the charger in kW, shared by its guns (a 240 kW dual-gun unit gives about 120 kW per gun when both are in use); NULL if unknown. Per-gun power and the connector standard go on the connectors (deferred.md 80). @vi Tổng công suất của trụ (kW), chia cho các súng (trụ 240 kW hai súng cấp khoảng 120 kW mỗi súng khi cả hai cùng sạc); NULL nếu chưa biết. Công suất và chuẩn đầu sạc theo từng súng nằm ở súng sạc (deferred.md 80). @example 240.00']
   connector_standard varchar(20) [note: '@remove CS-11: Plug standard; moves to each connector (deferred.md 80). @vi Chuẩn đầu sạc; chuyển sang từng súng sạc. @example CCS2']
   operating_hours varchar(100) [note: '@remove CS-11: Opening hours as free text; locations are always open 24/7. @vi Giờ hoạt động dạng văn bản; trạm luôn mở 24/7. @example 24/7']
@@ -1217,9 +1225,10 @@ Table charging_stations {
   updated_at timestamptz [not null, note: 'When a person last edited the row (UTC); device reports go to charging_station_state and never change it. @vi Thời điểm con người sửa bản ghi gần nhất (UTC); báo cáo của thiết bị ghi vào charging_station_state và không làm thay đổi cột này. @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the charger is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: trụ không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    location [name: 'ix_charging_stations_location', note: 'GIST; moves to charging_locations (CS-09)']
+    location [name: 'ix_charging_stations_location', note: 'GIST; replaced by ix_charging_locations_coordinates (CS-09)']
     deleted_at [name: 'ix_charging_stations_deleted_at']
     location_id [name: 'ix_charging_stations_location_id', note: 'Planned (CS-09)']
+    registered_serial_number [unique, name: 'uq_charging_stations_live_registered_serial_number', note: 'Planned (CS-14): WHERE deleted_at IS NULL']
   }
   Note: '''@status built @owner customer @features F-C1,F-C2,F-D1,F-G2 @tracked *
 One charger (trụ sạc): one OCPP connection, OCPP 2.0.1's "Charging Station"
@@ -1240,57 +1249,92 @@ Table charging_station_state {
   ocpp_protocol_version varchar(20) [note: 'OCPP version of the latest connection. @vi Phiên bản OCPP của kết nối gần nhất. @example ocpp1.6']
   vendor varchar(100) [note: 'Vendor as reported at boot. @vi Hãng trụ sạc theo báo cáo khi khởi động. @example Willdigits']
   model varchar(100) [note: 'Model as reported at boot. @vi Model theo báo cáo khi khởi động. @example WD-DC480']
-  serial_number varchar(100) [note: 'Serial number as reported at boot. @vi Số serial theo báo cáo khi khởi động. @example WD2409001234']
+  serial_number varchar(100) [note: 'Serial number as reported at boot; compared with charging_stations.registered_serial_number (CS-14). @vi Số serial theo báo cáo khi khởi động; được so với charging_stations.registered_serial_number (CS-14). @example WD2409001234']
   firmware_version varchar(100) [note: 'Firmware as reported at the latest boot; a change is logged. @vi Firmware theo lần khởi động gần nhất; thay đổi được ghi log. @example V2.3.7']
-  charger_status varchar(20) [note: 'Status of the whole charger as reported (1.6J connector 0, CS-03), same values as the connector status; NULL for OCPP 2.0.1 or before the first report. @vi Trạng thái của cả trụ theo báo cáo (1.6J connector 0), cùng tập giá trị với trạng thái súng; NULL với OCPP 2.0.1 hoặc trước lần báo đầu tiên. @example Available']
+  charger_status varchar(20) [note: 'Status of the whole charger as reported, same values as the connector status; NULL before the first report. 1.6J: StatusNotification for connector 0 (CS-03). 2.0.1 has no connector 0: its adapter in the gateway fills this from its own messages (the charging station\'s availability in NotifyEvent, StatusNotification for EVSE 0) (CS-15). @vi Trạng thái của cả trụ theo báo cáo, cùng tập giá trị với trạng thái súng; NULL trước lần báo đầu tiên. 1.6J: StatusNotification cho connector 0 (CS-03). 2.0.1 không có connector 0: bộ chuyển đổi 2.0.1 trong cổng OCPP điền cột này từ các bản tin của nó (CS-15). @example Available']
   charger_status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:10:00Z']
   charger_error_code varchar(50) [note: 'Error code reported for the whole charger, as sent. @vi Mã lỗi của cả trụ, đúng như trụ gửi. @example NoError']
   charger_vendor_error_code varchar(100) [note: 'Vendor-specific error code for the whole charger. @vi Mã lỗi riêng của hãng cho cả trụ. @example E0000']
   Note: '''@status planned @owner customer @features F-C2,F-G2 @state-of charging_stations
 What the charger reports about itself, written by the OCPP gateway, often and
 with no explanation needed: boot information, liveness and the whole-charger
-status (DM-16). No change history; every frame stays in charging_ocpp_messages.
+status (DM-16). Latest values only: the history of boots, firmware and status
+is the raw log in charging_ocpp_messages, and an interpreted history table is
+added only when a feature reads it often (CS-15).
 @vi-name Trạng thái trụ sạc
-@vi Những gì trụ sạc tự báo, do cổng OCPP ghi, thường xuyên và không cần giải thích: thông tin khởi động, tín hiệu sống và trạng thái cả trụ (DM-16). Không có lịch sử thay đổi; mọi bản tin vẫn nằm trong charging_ocpp_messages.'''
+@vi Những gì trụ sạc tự báo, do cổng OCPP ghi, thường xuyên và không cần giải thích: thông tin khởi động, tín hiệu sống và trạng thái cả trụ (DM-16). Chỉ giữ giá trị mới nhất: lịch sử khởi động, firmware và trạng thái là nhật ký bản tin gốc trong charging_ocpp_messages; bảng lịch sử đã diễn giải chỉ được thêm khi có tính năng đọc thường xuyên (CS-15).'''
 }
 
 Table charging_evses {
   evse_id uuid [pk, note: 'Internal ID of the EVSE. @vi Mã nội bộ của EVSE. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
-  station_id uuid [not null, note: 'Station the EVSE belongs to. @vi Trạm chứa EVSE. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  ocpp_evse_id integer [not null, note: 'EVSE number used in OCPP, unique within the station, positive. @vi Số EVSE dùng trong OCPP, duy nhất trong trạm, là số dương. @example 1']
+  station_id uuid [not null, note: 'The charger (charging station) the EVSE belongs to. @vi Trụ sạc chứa EVSE. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  ocpp_evse_id integer [not null, note: 'EVSE number used in OCPP, unique within the charger, positive. For OCPP 1.6J gun n is EVSE n (CS-03). @vi Số EVSE dùng trong OCPP, duy nhất trong trụ, là số dương. Với OCPP 1.6J súng n là EVSE n (CS-03). @example 1']
+  emi3_evse_id varchar(48) [not null, note: '@planned CS-16: Public industry ID of the outlet in eMI3 format VN*<operator ID>*E<code> (OCPI EVSE.evse_id, up to 48 characters), assigned when the EVSE is set up. Unique among EVSEs not deleted: when the hardware is replaced, the new EVSE row takes over the same ID, so the public ID outlives the hardware. Named with its source as a prefix because evse_id is our primary key. The operator ID G3N is provisional until roaming. @vi Mã công khai theo chuẩn ngành của EVSE, định dạng eMI3 VN*<mã nhà vận hành>*E<mã> (OCPI EVSE.evse_id, tối đa 48 ký tự), gán khi khai báo EVSE. Duy nhất trong các EVSE chưa xóa: khi thay phần cứng, EVSE mới nhận lại đúng mã này, nên mã công khai tồn tại lâu hơn phần cứng. Mã nhà vận hành G3N là tạm thời cho tới khi kết nối liên mạng (roaming). @example VN*G3N*E0001A']
+  status varchar(20) [not null, note: '@planned CS-16: Set by a person (DM-25). ACTIVE: in service. INACTIVE: taken out of service on its own, e.g. a damaged cable, while the rest of the charger keeps working; the reason says why. Sent to the charger as OCPP ChangeAvailability for this EVSE. An EVSE that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng riêng EVSE này, ví dụ cáp hỏng, trong khi phần còn lại của trụ vẫn hoạt động; lý do cho biết vì sao. Gửi xuống trụ bằng lệnh OCPP ChangeAvailability cho EVSE này. EVSE rời hệ thống được chuyển sang INACTIVE và xóa mềm. @example ACTIVE']
+  status_reason varchar(200) [note: '@planned DM-19: Why the EVSE is out of service; NULL when ACTIVE. @vi Lý do EVSE ngừng phục vụ; NULL khi ACTIVE. @example Cáp súng 2 bị dập, chờ thay']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  deleted_at timestamptz [note: 'Soft-delete time: the EVSE is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: EVSE không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
     (station_id, deleted_at) [name: 'ix_charging_evses_station_deleted']
     (station_id, ocpp_evse_id) [unique, name: 'uq_charging_evses_station_ocpp_id']
+    emi3_evse_id [unique, name: 'uq_charging_evses_live_emi3_evse_id', note: 'Planned (CS-16): WHERE deleted_at IS NULL']
   }
-  Note: '''@status built @owner internal @features F-C1,F-G2
-One EVSE (power outlet unit) of a station.
+  Note: '''@status built @owner customer @features F-C1,F-G2 @tracked *
+One EVSE: an outlet that charges one truck at a time, with one or more
+connectors of which only one is used at a time (CS-09). For our OCPP 1.6J
+charger each gun is one EVSE with one connector (CS-03). Owned through its
+charger and location (CS-10). Plug standard and power are per connector;
+a label for the driver, if ever needed, goes on the connector (CS-16).
+Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 @vi-name EVSE (cụm cấp điện)
-@vi Một EVSE (bộ cấp điện) của trạm.'''
+@vi Một EVSE: một đầu ra sạc cho một xe tại một thời điểm, có một hoặc nhiều súng nhưng mỗi lúc chỉ dùng một súng (CS-09). Với trụ OCPP 1.6J của chúng ta, mỗi súng là một EVSE có một đầu cắm (CS-03). Thuộc chủ sở hữu qua trụ và trạm (CS-10). Chuẩn đầu cắm và công suất theo từng súng; nhãn cho tài xế, nếu cần, đặt ở súng (CS-16). Ràng buộc kiểm tra: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).'''
 }
 
 Table charging_connectors {
   connector_id uuid [pk, note: 'Internal ID of the connector (one physical gun). @vi Mã nội bộ của súng sạc (một súng vật lý). @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
   evse_id uuid [not null, note: 'EVSE the connector belongs to. @vi EVSE chứa súng sạc. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
-  ocpp_connector_id integer [not null, note: 'Connector number used in OCPP, unique within the EVSE, positive. @vi Số súng dùng trong OCPP, duy nhất trong EVSE, là số dương. @example 1']
-  status chargingconnectorstatus [note: 'Live status from the latest StatusNotification; NULL before the first report. @vi Trạng thái trực tiếp theo StatusNotification gần nhất; NULL trước lần báo đầu tiên. @example Charging']
-  status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:31:00Z']
-  error_code varchar(50) [note: 'Error code from the latest report, as sent; replaced by every report. @vi Mã lỗi theo báo cáo gần nhất, đúng như trụ gửi; bị thay mỗi lần báo. @example NoError']
-  vendor_error_code varchar(100) [note: 'Vendor-specific error code from the latest report. @vi Mã lỗi riêng của hãng theo báo cáo gần nhất. @example E0000']
-  status_info varchar(50) [note: 'Free-text info from the latest report. @vi Thông tin văn bản tự do theo báo cáo gần nhất. @example Cable locked']
+  ocpp_connector_id integer [not null, note: 'Connector number used in OCPP, unique within the EVSE, positive (1 for each gun of our 1.6J charger). @vi Số súng dùng trong OCPP, duy nhất trong EVSE, là số dương (1 với mỗi súng của trụ 1.6J). @example 1']
+  standard varchar(30) [not null, note: '@planned CS-17: Plug standard, with OCPI ConnectorType names; entered by a person at setup from the gun\'s nameplate or the purchase order, because OCPP 1.6J never reports it and OCPP 2.0.1\'s ConnectorType has no GB/T value (a 2.0.1 report is only a cross-check). The app shows the short name (CCS2, GB/T). Values: IEC_62196_T2_COMBO (CCS2) | GBT_DC | CHADEMO | CHAOJI | IEC_62196_T1_COMBO (CCS1); MCS added when megawatt chargers come. @vi Chuẩn đầu cắm, theo tên ConnectorType của OCPI; do con người nhập khi khai báo, từ nhãn trên súng hoặc đơn mua hàng, vì OCPP 1.6J không bao giờ báo và ConnectorType của OCPP 2.0.1 không có GB/T. Ứng dụng hiển thị tên ngắn (CCS2, GB/T). @example IEC_62196_T2_COMBO']
+  max_power_kw numeric(6,2) [not null, note: '@planned CS-17: Highest power this gun can deliver, in kW, from its nameplate; the charger\'s max_power_kw is shared between its guns, so the real power is the lower of the two and of what the truck asks for (deferred.md 80). @vi Công suất cao nhất súng này cấp được (kW), theo nhãn; max_power_kw của trụ được chia cho các súng, nên công suất thực là giá trị nhỏ hơn giữa hai giá trị đó và mức xe yêu cầu. @example 240.00']
+  max_voltage_v integer [not null, note: '@planned CS-17: Highest output voltage in volts, from the nameplate; tells whether the gun suits an 800 V truck (OCPI max_voltage). @vi Điện áp ra cao nhất (V), theo nhãn; cho biết súng có hợp với xe 800 V không. @example 1000']
+  max_current_a integer [not null, note: '@planned CS-17: Highest output current in amperes, from the nameplate (OCPI max_amperage). @vi Dòng ra cao nhất (A), theo nhãn. @example 250']
+  status chargingconnectorstatus [note: '@remove CS-17: Live status from the latest StatusNotification; moves to charging_connector_state. @vi Trạng thái trực tiếp; chuyển sang charging_connector_state. @example Charging']
+  status_updated_at timestamptz [note: '@remove CS-17: When that status was reported; moves to charging_connector_state. @vi Thời điểm báo trạng thái; chuyển sang charging_connector_state. @example 2026-09-15T08:31:00Z']
+  error_code varchar(50) [note: '@remove CS-17: Error code from the latest report; moves to charging_connector_state. @vi Mã lỗi theo báo cáo gần nhất; chuyển sang charging_connector_state. @example NoError']
+  vendor_error_code varchar(100) [note: '@remove CS-17: Vendor-specific error code; moves to charging_connector_state. @vi Mã lỗi riêng của hãng; chuyển sang charging_connector_state. @example E0000']
+  status_info varchar(50) [note: '@remove CS-17: Free-text info from the latest report; moves to charging_connector_state. @vi Thông tin văn bản tự do; chuyển sang charging_connector_state. @example Cable locked']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
-  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  updated_at timestamptz [not null, note: 'When a person last edited the row (UTC); status reports go to charging_connector_state. @vi Thời điểm con người sửa bản ghi gần nhất (UTC); báo cáo trạng thái ghi vào charging_connector_state. @example 2026-09-10T07:15:00Z']
+  deleted_at timestamptz [note: 'Soft-delete time: the gun is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept. NULL while it is part of the system. A gun is taken out of service through its EVSE\'s status. @vi Thời điểm xóa mềm: súng không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ. NULL khi còn thuộc hệ thống. Súng ngừng phục vụ qua trạng thái của EVSE. @example NULL']
   indexes {
     (evse_id, deleted_at) [name: 'ix_charging_connectors_evse_deleted']
     (evse_id, ocpp_connector_id) [unique, name: 'uq_charging_connectors_evse_ocpp_id']
   }
-  Note: '''@status built @owner internal @features F-C1,F-C2
-One physical gun/plug, with its live status.
+  Note: '''@status built @owner customer @features F-C1,F-C2 @tracked *
+One physical gun (plug): its standard and its power (CS-17), owned through its
+EVSE, charger and location. Profile only: the live status the charger reports
+moves to charging_connector_state (DM-16, DM-17). No status of its own: a gun
+is taken out of service through its EVSE (CS-16). A driver-facing label, if
+ever needed, goes here (physical_reference); AC/DC and cable/socket are not
+stored while every G3 charger is DC with a fixed cable.
 @vi-name Súng sạc
-@vi Một súng/đầu sạc vật lý, kèm trạng thái trực tiếp.'''
+@vi Một súng (đầu cắm) vật lý: chuẩn đầu cắm và công suất (CS-17), thuộc chủ sở hữu qua EVSE, trụ và trạm. Chỉ là hồ sơ: trạng thái trực tiếp do trụ báo chuyển sang charging_connector_state (DM-16, DM-17). Không có trạng thái riêng: súng ngừng phục vụ qua EVSE (CS-16). Nhãn cho tài xế, nếu cần, đặt ở đây (physical_reference); không lưu AC/DC và cáp/ổ cắm khi mọi trụ của G3 đều là DC có cáp liền.'''
+}
+
+Table charging_connector_state {
+  connector_id uuid [pk, note: 'The gun this state belongs to (1:1 with charging_connectors), created with it. @vi Súng sạc sở hữu trạng thái này (1:1 với charging_connectors), tạo cùng súng. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  status varchar(20) [note: 'Live status from the latest StatusNotification, as reported; NULL before the first report. Same values as today (CS-04): OCPP 2.0.1\'s Available, Occupied, Reserved, Unavailable, Faulted plus 1.6J\'s Preparing, Charging, SuspendedEV, SuspendedEVSE, Finishing. A gun is free only when Available. @vi Trạng thái trực tiếp theo StatusNotification gần nhất, đúng như trụ báo; NULL trước lần báo đầu tiên. Cùng tập giá trị như hiện nay (CS-04). Súng chỉ trống khi Available. @example Charging']
+  status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:31:00Z']
+  error_code varchar(50) [note: 'Error code from the latest report, as sent; replaced by every report. @vi Mã lỗi theo báo cáo gần nhất, đúng như trụ gửi; bị thay mỗi lần báo. @example NoError']
+  vendor_error_code varchar(100) [note: 'Vendor-specific error code from the latest report. @vi Mã lỗi riêng của hãng theo báo cáo gần nhất. @example E0000']
+  status_info varchar(50) [note: 'Free-text info from the latest report. @vi Thông tin văn bản tự do theo báo cáo gần nhất. @example Cable locked']
+  Note: '''@status planned @owner customer @features F-C2 @state-of charging_connectors
+The live status of one gun as the charger reports it, written by the OCPP
+gateway (DM-16). Latest values only: the history is the raw log in
+charging_ocpp_messages (CS-15).
+@vi-name Trạng thái súng sạc
+@vi Trạng thái trực tiếp của một súng do trụ báo, do cổng OCPP ghi (DM-16). Chỉ giữ giá trị mới nhất: lịch sử là nhật ký bản tin gốc trong charging_ocpp_messages (CS-15).'''
 }
 
 Table charging_ocpp_messages {
@@ -1326,29 +1370,13 @@ One configuration key from a charger's GetConfiguration answer (append-only snap
 @vi Một khóa cấu hình trong câu trả lời GetConfiguration của trụ sạc (các bản chụp chỉ ghi thêm).'''
 }
 
-Table charging_reservations {
-  reservation_id uuid [pk, note: 'Internal ID of the reservation. @vi Mã nội bộ của lượt đặt chỗ. @example 00000009-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  organization_id uuid [not null, note: 'Customer organization holding the reservation. @vi Tổ chức khách hàng giữ chỗ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  connector_id uuid [not null, note: 'Connector reserved. @vi Súng sạc được giữ chỗ. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
-  driver_id uuid [note: 'Driver expected to arrive; NULL if not named. @vi Tài xế dự kiến tới; NULL nếu không chỉ định. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  reserved_from timestamptz [not null, note: 'Start of the reserved window. @vi Bắt đầu khung giờ giữ chỗ. @example 2026-09-15T13:00:00Z']
-  expires_at timestamptz [not null, note: 'When the hold lapses if nobody plugs in. @vi Thời điểm hết giữ chỗ nếu không ai cắm sạc. @example 2026-09-15T13:15:00Z']
-  status varchar(20) [not null, note: 'Reservation outcome. Values: ACTIVE | USED | EXPIRED | CANCELLED | NO_SHOW. @vi Kết quả đặt chỗ. Giá trị: ACTIVE | USED | EXPIRED | CANCELLED | NO_SHOW. @example ACTIVE']
-  Note: '''@status planned @owner two-party @features F-C4
-A customer's hold on a G3 connector for a time window.
-@vi-name Đặt chỗ súng sạc
-@vi Khách hàng giữ chỗ một súng sạc của G3 trong một khung giờ.'''
-}
-
 Ref: charging_stations.location_id > charging_locations.location_id [delete: restrict]
 Ref: charging_station_state.station_id - charging_stations.station_id [delete: restrict]
 Ref: charging_evses.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
+Ref: charging_connector_state.connector_id - charging_connectors.connector_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
-Ref: charging_reservations.organization_id > organizations.organization_id [delete: restrict]
-Ref: charging_reservations.connector_id > charging_connectors.connector_id [delete: restrict]
-Ref: charging_reservations.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup charging_stations {
   charging_locations
@@ -1357,23 +1385,21 @@ TableGroup charging_stations {
   charging_station_state
   charging_evses
   charging_connectors
+  charging_connector_state
   charging_ocpp_messages
   charging_station_configuration_entries
-  charging_reservations
   Note: '''
 The charging network and the OCPP link to each charger (terms: CS-09).
 
 - A **location** (trạm) is one place drivers go, owned by one organization; it is public or private, and a private one lists the other organizations allowed to charge there (CS-10).
 - A location has one or more **charging stations** (trụ: one charger, one OCPP connection); each has one or more **EVSEs**, and each EVSE one or more **connectors** (súng).
 - Every OCPP frame and every configuration snapshot is kept against its charger.
-- A customer can **reserve** a connector for a time window (F-C4).
 
 @vi-name Trạm sạc
 @vi Mạng lưới trạm sạc và kết nối OCPP tới từng trụ sạc (thuật ngữ: CS-09).
 - Một **trạm** là một nơi tài xế tới sạc, thuộc một tổ chức; trạm công cộng hoặc riêng, trạm riêng liệt kê các tổ chức khác được sạc tại đó (CS-10).
 - Một trạm có một hoặc nhiều **trụ sạc** (một kết nối OCPP); mỗi trụ có một hoặc nhiều **EVSE**, mỗi EVSE có một hoặc nhiều **súng sạc**.
 - Mọi bản tin OCPP và mọi bản chụp cấu hình đều được lưu theo trụ.
-- Khách hàng có thể **đặt chỗ** một súng sạc trong một khung giờ (F-C4).
 '''
 }
 

@@ -1064,13 +1064,14 @@ features:
     name: Warranty register
     name_vi: Sổ bảo hành
     what: >-
-      Keep every warranty of a truck, its battery and its devices: period,
-      limits such as distance or charge cycles, and its status, with the
-      reason when a warranty is voided.
+      Keep every warranty of a truck, its battery, its devices and of a
+      charger: period, limits such as distance, charge cycles, energy
+      delivered or sessions, and its status, with the reason when a warranty
+      is voided.
     what_vi: >-
-      Lưu mọi bảo hành của xe, pin và thiết bị trên xe: thời hạn, các giới hạn
-      như quãng đường hay số chu kỳ sạc, và trạng thái, kèm lý do khi bảo hành
-      bị hủy.
+      Lưu mọi bảo hành của xe, pin, thiết bị trên xe và của trụ sạc: thời hạn,
+      các giới hạn như quãng đường, số chu kỳ sạc, điện năng đã cấp hay số
+      phiên sạc, và trạng thái, kèm lý do khi bảo hành bị hủy.
     value: >-
       Everyone knows what is still covered; a voided warranty is explained
       and provable.
@@ -1082,12 +1083,13 @@ features:
       - ["Warranties per truck, battery and device, set per truck, each with its own period and limits", "Bảo hành theo từng xe, pin và thiết bị, đặt riêng cho từng xe, mỗi bảo hành có thời hạn và giới hạn riêng"]
       - ["Expiry computed from the date and the truck's or battery's counters; voiding with a reason and history", "Hết hạn được tính từ ngày và bộ đếm của xe hoặc pin; hủy bảo hành kèm lý do và lịch sử"]
       - ["A battery's warranty follows the battery to another truck", "Bảo hành của pin đi theo pin sang xe khác"]
+      - ["Charger warranties limited by energy delivered (kWh) and number of sessions, identified by the registered serial number", "Bảo hành trụ sạc giới hạn theo điện năng đã cấp (kWh) và số phiên sạc, nhận diện theo số serial đã đăng ký"]
     surfaces: {backend: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
     depends_on: [VEH-01, BAT-01]
-    sources: [Data IN-32, Decision VH-09, Decision VH-14, Decision VH-18]
+    sources: [Data IN-32, Decision VH-09, Decision VH-14, Decision VH-18, Decision VH-19, Decision CS-14]
 
   # ---------------------------------------------------------------------------
   # DEV — Telematics devices
@@ -2492,7 +2494,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-01]
-    sources: [Decision CS-02, Decision CS-03, deferred.md 80]
+    sources: [Decision CS-02, Decision CS-03, deferred.md 80, Decision CS-16, Decision CS-17]
 
   - code: STN-03
     name: Charger connection (OCPP)
@@ -2682,7 +2684,7 @@ features:
     offer: tbd
     depends_on: [STN-07, STN-10, PAY-06]
     touches: [billing]
-    sources: [PRD F-C4, Data IN-54]
+    sources: [PRD F-C4, Data IN-54, deferred.md 92]
     old_codes: [F-C4]
     questions:
       - ["What is the no-show penalty?", "Mức phạt khi không đến là bao nhiêu?"]

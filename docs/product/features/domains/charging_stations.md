@@ -73,7 +73,7 @@ Describe each station's chargers and guns: identities used by the charger, power
 **Depends on:** [STN-01](#stn-01)  
 **Needed by:** [STN-03](#stn-03)  
 **Related tables:** — (after the database review)  
-**Sources:** Decision CS-02 · Decision CS-03 · deferred.md 80
+**Sources:** Decision CS-02 · Decision CS-03 · deferred.md 80 · Decision CS-16 · Decision CS-17
 
 <a id="stn-03"></a>
 
@@ -261,7 +261,7 @@ Reserve a gun for a time slot and cancel it; a no-show penalty applies.
 **Depends on:** [STN-07](#stn-07), [STN-10](#stn-10), [PAY-06](billing.md#pay-06)  
 **Also touches:** `billing`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-C4 · Data IN-54  
+**Sources:** PRD F-C4 · Data IN-54 · deferred.md 92  
 **Old codes:** F-C4
 
 **Open questions:**

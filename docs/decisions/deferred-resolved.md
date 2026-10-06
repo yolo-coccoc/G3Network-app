@@ -397,3 +397,22 @@
   `test_postgres_integration.py` (temporary database, skipped unless
   `RUN_DB_INTEGRATION=1`).
 - **Resolution (2026-10-01)**: Added in commit `f9e1908` (with `docs/planners/done/backend-happy-path-completion.md`): `test_postgres_integration.py` now covers drivers (one open assignment per vehicle and per driver through the partial unique indexes, reopen after close, `q`/`vehicle_vin` filters), fleet (one active fleet per vehicle, list filters, the public lookups, geofence CRUD and `ST_Covers` containment on a real polygon, membership close by ID) and support (the `awaiting_response`/`sla_breached`/`channel`/`driver_id`/`category` filters agree with `is_sla_breached`; an SOS raises an `SOS_ALERT` that the filtered, newest-first notification list, the unread count and mark-all-read see). The suite has 18 tests, all passing with `RUN_DB_INTEGRATION=1`.
+
+---
+
+### 80. Per-gun power and connector standard in the station directory — Resolved
+
+- **Short description**: Model power rating and connector standard per
+  connector/EVSE instead of one value per station, including power sharing
+  between guns.
+- **Purpose/role in the system**: A 240 kW dual-gun charger delivers about
+  120 kW per gun when both are in use; the vendor's other units show `GBT`
+  connectors, so a mixed-standard station is possible.
+- **Reason for deferral**: `power_rating_kw` and `connector_standard` are
+  deliberately station-level aggregates (F-C1, item 28); F-D1's filters read
+  them. Fine for the MVP; only visible with real data.
+- **Related planner/feature**: `docs/planners/backend-ocpp16-charger-integration.md`, F-C1, F-D1, item 28.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: Needs the real power-allocation behaviour verified
+  first (`Power.Offered` per gun, Step 7b).
+- **Resolution (2026-10-06)**: Designed in the database review (CS-17 in `docs/decisions/decision-log.md`): each connector gets `standard` (OCPI ConnectorType names), `max_power_kw`, `max_voltage_v` and `max_current_a`, entered from the nameplate; the charger keeps `max_power_kw` as the total shared by its guns (CS-14). Built in the bulk refactor (PR-11); the station-level `power_rating_kw`/`connector_standard` filters of F-D1 then read the connectors.

@@ -18,7 +18,7 @@ The warranties of each truck, battery and device: their periods and limits, and 
 
 *Sổ bảo hành* · Must · P1.0 · Included in every plan
 
-Keep every warranty of a truck, its battery and its devices: period, limits such as distance or charge cycles, and its status, with the reason when a warranty is voided.
+Keep every warranty of a truck, its battery, its devices and of a charger: period, limits such as distance, charge cycles, energy delivered or sessions, and its status, with the reason when a warranty is voided.
 
 **Value:** Everyone knows what is still covered; a voided warranty is explained and provable.
 
@@ -29,9 +29,10 @@ Keep every warranty of a truck, its battery and its devices: period, limits such
 - Warranties per truck, battery and device, set per truck, each with its own period and limits
 - Expiry computed from the date and the truck's or battery's counters; voiding with a reason and history
 - A battery's warranty follows the battery to another truck
+- Charger warranties limited by energy delivered (kWh) and number of sessions, identified by the registered serial number
 
 **Status:** Backend ⬜ · Portal ⬜
 
 **Depends on:** [VEH-01](vehicles.md#veh-01), [BAT-01](batteries.md#bat-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-32 · Decision VH-09 · Decision VH-14 · Decision VH-18
+**Sources:** Data IN-32 · Decision VH-09 · Decision VH-14 · Decision VH-18 · Decision VH-19 · Decision CS-14
