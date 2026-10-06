@@ -60,3 +60,11 @@ or ID — a decision (`ID-44`, `VH-05`), a feature (`VEH-05`), an open question
 (`D12`) — also name the file it lives in, as a link (with the line when it
 helps), e.g. `VH-05` ([decision-log.md:275](docs/decisions/decision-log.md#L275)).
 The reader should never have to search for where a code is defined.
+
+## Show the result after a design change
+
+Owner instruction (2026-10-06). After changing a table's design (the DBML),
+show the resulting table before moving on: every column with its type,
+whether it is required and its meaning, as a Markdown table (never a code
+block), plus the table-level rules (keys, indexes, check constraints, change
+history). Show every table the change touched, including new ones.
