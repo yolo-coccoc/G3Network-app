@@ -29,6 +29,17 @@ Decided in CS-09 (`docs/decisions/decision-log.md`): **the database and code use
 - `charging_locations` is designed in the 2026-10-05 review; until the refactor, today's `charging_stations` rows still carry the place columns too.
 - **Launch start flow (CO-14):** the QR code is shown on the charger's screen; the app authorizes the driver and checks the wallet, the backend sends one `RemoteStartTransaction`, and the driver picks the gun and starts and stops on the charger's screen.
 
+## Version-only columns (CO-15)
+The charging tables are protocol-neutral; each OCPP version's adapter in `charging_stations/ocpp/` turns its messages into the same rows. A column only one version can fill is allowed only when that data exists in that version alone. **Keep this list current and short**, and review it whenever a column is added:
+
+| Table | Column | Only in | Why |
+|---|---|---|---|
+| `charging_station_configuration_captures` | `ocpp_request_id` | 2.0.1 | joins the NotifyReport parts of one GetBaseReport |
+| `charging_station_configuration_entries` | `component_name`, `component_instance`, `ocpp_evse_id`, `ocpp_connector_id`, `variable_instance` | 2.0.1 | the device model names a setting by component + variable; 1.6J has a key only |
+| `charging_session_events` | `seq_no` | 2.0.1 | TransactionEvent's sequence number; 1.6J has none (reviewed with the sessions tables) |
+
+Columns filled by both versions in different ways stay off this list (e.g. `charging_station_state.charger_status`: 1.6J connector 0, 2.0.1 from its own messages, CS-15).
+
 ## Facts that catch people out
 - **"Charging station" is the charger** in OCPP 2.0.1, AFIR, CitrineOS, Kempower and our database (CS-09). In Vietnamese usage ("trạm") and the feature catalog's English, "station" is the place: our `charging_locations`.
 - **OCPI has no charger level.** A Location groups EVSEs, and the charger stays internal.

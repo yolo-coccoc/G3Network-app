@@ -53,9 +53,14 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### charging_sessions
 
-**No. 37** · ✅ built · owner: **two-party** · features: F-B2, F-C5
+**No. 38** · ✅ built · owner: **two-party** · features: F-B2, F-C5
 
 One charge on one connector, from start to stop.
+To settle in its review (CS-18): a QR start (CO-14) needs its business
+context stored when the driver scans (who scanned, which organization pays,
+the start token sent in RemoteStartTransaction, the charger's answer) so the
+StartTransaction carrying that token can be matched to it: a PENDING session
+row at the scan, a table of the commands we send, or both.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
@@ -104,7 +109,7 @@ One charge on one connector, from start to stop.
 
 ### charging_session_events
 
-**No. 38** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
+**No. 39** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
 
 Each Started / Updated / Ended event of a session.
 
@@ -114,7 +119,7 @@ Each Started / Updated / Ended event of a session.
 | `event_occurred_at` | timestamptz | no | PK |  | When the event happened; hypertable time column. | `2026-09-15T08:30:00Z` |
 | `session_id` | uuid | no | FK | [charging_sessions](#charging_sessions).session_id (on delete restrict) | Session the event belongs to. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
 | `event_type` | chargingsessioneventtype | no |  |  | Lifecycle step the event represents. | `Started` |
-| `seq_no` | integer | yes |  |  | OCPP's per-transaction sequence number; NULL if not sent. | `0` |
+| `seq_no` | integer | yes |  |  | OCPP 2.0.1 only (CO-15): the per-transaction sequence number of TransactionEvent; NULL for 1.6J, which has none. | `0` |
 
 **Enum values**
 
@@ -126,7 +131,7 @@ Each Started / Updated / Ended event of a session.
 
 ### charging_session_measurements
 
-**No. 39** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
+**No. 40** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
 Every meter value a charger reports during a session (energy, power, SoC ...).
 

@@ -1339,13 +1339,17 @@ charging_ocpp_messages (CS-15).
 
 Table charging_ocpp_messages {
   message_id uuid [pk, note: 'Internal ID of the log row. @vi Mã nội bộ của dòng nhật ký. @example 00000006-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  occurred_at timestamptz [pk, note: 'When the frame was received or sent; hypertable time column. @vi Thời điểm nhận hoặc gửi bản tin; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
+  occurred_at timestamptz [pk, note: 'Our server\'s clock: when the gateway received the frame (CP_TO_CSMS) or sent it (CSMS_TO_CP); hypertable time column. The charger\'s own times are inside some payloads and go to the interpreted tables (status time, meter sample time, session start and end), so a frame replayed after an offline period shows its arrival here and its real time there (CS-18). @vi Đồng hồ của máy chủ: thời điểm cổng OCPP nhận bản tin (CP_TO_CSMS) hoặc gửi đi (CSMS_TO_CP); cột thời gian của bảng chuỗi thời gian. Thời gian riêng của trụ nằm trong nội dung một số bản tin và được ghi vào các bảng đã diễn giải, nên bản tin gửi lại sau khi mất kết nối có thời điểm đến ở đây và thời điểm thực ở đó (CS-18). @example 2026-09-15T08:30:00Z']
   station_id uuid [not null, note: 'Station the frame was exchanged with. @vi Trạm trao đổi bản tin. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
   ocpp_subprotocol varchar(20) [not null, note: 'OCPP version negotiated for the connection. @vi Phiên bản OCPP đã thỏa thuận cho kết nối. @example ocpp1.6']
   direction chargingocppmessagedirection [not null, note: 'From the charger (CP_TO_CSMS) or to it (CSMS_TO_CP). @vi Chiều bản tin: từ trụ sạc lên (CP_TO_CSMS) hay gửi xuống trụ (CSMS_TO_CP). @example CP_TO_CSMS']
   raw_frame text [not null, note: 'The exact frame text, never re-serialised. Contains RFID idTags: never copy into application logs. @vi Nội dung bản tin nguyên văn, không chuẩn hóa lại. Có chứa mã RFID idTag: không bao giờ chép vào log ứng dụng. @example [2,"19223201","Heartbeat",{}]']
+  action varchar(50) [note: '@planned CS-18: Message type copied from the envelope of a request ([2, message ID, action, payload]), e.g. StatusNotification, RemoteStartTransaction; NULL for answers and errors (they carry no action) and for a frame that cannot be read. raw_frame stays the record. @vi Loại bản tin chép từ phần bao của một yêu cầu, ví dụ StatusNotification, RemoteStartTransaction; NULL với bản tin trả lời và báo lỗi (không có action) và với bản tin không đọc được. raw_frame vẫn là bản gốc. @example StatusNotification']
+  ocpp_message_id varchar(36) [note: '@planned CS-18: The frame\'s own message ID from the envelope, on every frame; a request and its answer share it, so (station_id, ocpp_message_id) pairs them, e.g. our RemoteStartTransaction with the charger\'s Accepted. NULL for a frame that cannot be read. Not unique: the charger and the gateway number their requests separately. @vi Mã bản tin riêng trong phần bao, có ở mọi bản tin; yêu cầu và câu trả lời dùng chung mã này, nên (station_id, ocpp_message_id) ghép được chúng, ví dụ lệnh RemoteStartTransaction của chúng ta với câu trả lời Accepted của trụ. NULL với bản tin không đọc được. Không duy nhất: trụ và cổng OCPP đánh số yêu cầu riêng. @example 19223201']
   indexes {
     (station_id, occurred_at) [name: 'ix_charging_ocpp_messages_station_time']
+    (station_id, action, occurred_at) [name: 'ix_charging_ocpp_messages_station_action_time', note: 'Planned (CS-18): the message viewer filtering by type (STN-15)']
+    (station_id, ocpp_message_id) [name: 'ix_charging_ocpp_messages_station_message_id', note: 'Planned (CS-18): pairing a request with its answer']
   }
   Note: '''@status built @owner internal @features F-G2 @hypertable occurred_at
 Every OCPP frame in both directions, verbatim and append-only.
@@ -1353,21 +1357,57 @@ Every OCPP frame in both directions, verbatim and append-only.
 @vi Mọi bản tin OCPP theo cả hai chiều, lưu nguyên văn, chỉ ghi thêm.'''
 }
 
-Table charging_station_configuration_entries {
-  entry_id uuid [pk, note: 'Internal ID of the row. @vi Mã nội bộ của dòng. @example 00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  station_id uuid [not null, note: 'Station the configuration belongs to. @vi Trạm sở hữu cấu hình. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  capture_id uuid [not null, note: 'Groups all keys from one GetConfiguration answer. @vi Nhóm tất cả các khóa của cùng một lần trả lời GetConfiguration. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  captured_at timestamptz [not null, note: 'When the charger\'s answer was received. @vi Thời điểm nhận câu trả lời từ trụ sạc. @example 2026-09-14T22:00:10Z']
-  config_key varchar(100) [not null, note: 'Configuration key name. @vi Tên khóa cấu hình. @example HeartbeatInterval']
-  value text [note: 'Key value as text; NULL if the charger sent none. @vi Giá trị khóa dạng chuỗi; NULL nếu trụ không gửi. @example 60']
-  is_readonly boolean [not null, note: 'Whether the charger reports the key as read-only. @vi Trụ sạc có báo khóa này là chỉ-đọc không. @example false']
+Table charging_station_configuration_captures {
+  capture_id uuid [pk, note: 'Internal ID of one snapshot (photo) of a charger\'s settings. @vi Mã nội bộ của một lần chụp cấu hình trụ sạc. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  station_id uuid [not null, note: 'The charger. @vi Trụ sạc. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  reason varchar(20) [not null, note: 'Why the snapshot was taken. BOOT: automatically after each boot (CO-05). ON_DEMAND: a person asked for it. AFTER_CHANGE: right after we changed a setting, to confirm the charger applied it (a push itself returns only a verdict, no values). Values: BOOT | ON_DEMAND | AFTER_CHANGE. @vi Lý do chụp. BOOT: tự động sau mỗi lần khởi động. ON_DEMAND: có người yêu cầu. AFTER_CHANGE: ngay sau khi đổi một cấu hình, để xác nhận trụ đã áp dụng (lệnh đổi chỉ trả về kết quả chấp nhận hay từ chối, không có giá trị). @example BOOT']
+  ocpp_protocol_version varchar(20) [not null, note: 'Protocol of the connection the snapshot came over; tells how its entries are named (1.6J: a key only; 2.0.1: component and variable). @vi Giao thức của kết nối mà lần chụp đến qua; cho biết các dòng cấu hình được đặt tên thế nào (1.6J: chỉ có khóa; 2.0.1: thành phần và biến). @example ocpp1.6']
+  ocpp_request_id integer [note: 'OCPP 2.0.1 only (CO-15): the requestId of GetBaseReport, which joins the several NotifyReport parts into this one snapshot; NULL for 1.6J (one answer). @vi requestId của GetBaseReport trong OCPP 2.0.1, dùng để ghép nhiều phần NotifyReport thành một lần chụp; NULL với 1.6J (một câu trả lời). @example NULL']
+  requested_at timestamptz [not null, note: 'When the gateway asked the charger. @vi Thời điểm cổng OCPP hỏi trụ. @example 2026-09-14T22:00:06Z']
+  captured_at timestamptz [note: 'When the answer (2.0.1: its last part) arrived; NULL while waiting or when it failed. @vi Thời điểm nhận câu trả lời (2.0.1: phần cuối cùng); NULL khi đang chờ hoặc thất bại. @example 2026-09-14T22:00:10Z']
+  outcome varchar(20) [not null, note: 'Observed result, as the charger behaved (no reason column: observed, not decided). PENDING: asked, not complete yet. COMPLETE: every part received. FAILED: no answer in time, an error answer, or parts missing. Values: PENDING | COMPLETE | FAILED. @vi Kết quả quan sát được. PENDING: đã hỏi, chưa đủ. COMPLETE: đã nhận đủ. FAILED: không trả lời kịp, trả lời lỗi, hoặc thiếu phần. @example COMPLETE']
   indexes {
-    (station_id, captured_at) [name: 'ix_charging_config_entries_station_captured']
+    (station_id, captured_at) [name: 'ix_charging_config_captures_station_captured', note: 'The latest complete snapshot of a charger']
+  }
+  Note: '''@status planned @owner internal @features F-G2
+One snapshot of a charger\'s settings: one GetConfiguration answer (1.6J) or
+one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
+themselves are rows of charging_station_configuration_entries. Append-only:
+the current settings are the newest COMPLETE snapshot, and comparing two
+snapshots shows what changed between them (CS-19). Changing a setting is a
+command we send, not a snapshot (designed with the commands of the
+charging_sessions review).
+@vi-name Lần chụp cấu hình trụ
+@vi Một lần chụp cấu hình của trụ sạc: một câu trả lời GetConfiguration (1.6J) hoặc một GetBaseReport được trả lời bằng nhiều phần NotifyReport (2.0.1). Các cấu hình nằm ở charging_station_configuration_entries. Chỉ ghi thêm: cấu hình hiện tại là lần chụp COMPLETE mới nhất, so hai lần chụp cho biết những gì đã đổi (CS-19). Đổi một cấu hình là lệnh gửi xuống trụ, không phải một lần chụp.'''
+}
+
+Table charging_station_configuration_entries {
+  entry_id uuid [pk, note: 'Internal ID of the row: one value of one setting in one snapshot. @vi Mã nội bộ của dòng: một giá trị của một cấu hình trong một lần chụp. @example 00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  station_id uuid [not null, note: '@remove CS-19: The charger; now on the capture. @vi Trụ sạc; nay nằm ở lần chụp. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  capture_id uuid [not null, note: 'The snapshot this value belongs to. Built today as a plain grouping ID; it becomes a foreign key to charging_station_configuration_captures.capture_id in the refactor (CS-19; not drawn as a reference while that table is planned). @vi Lần chụp chứa giá trị này. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  captured_at timestamptz [not null, note: '@remove CS-19: When the answer arrived; now on the capture. @vi Thời điểm nhận câu trả lời; nay nằm ở lần chụp. @example 2026-09-14T22:00:10Z']
+  component_name varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. @vi Thành phần OCPP 2.0.1, ví dụ OCPPCommCtrlr, EVSE, Connector; NULL với 1.6J (chỉ có khóa). @example NULL']
+  component_instance varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): instance of the component when it has several (2.0.1); NULL otherwise. @vi Bản thể của thành phần khi có nhiều (2.0.1); NULL nếu không. @example NULL']
+  ocpp_evse_id integer [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): EVSE the component sits on (2.0.1); NULL for the whole charger and for 1.6J. @vi EVSE chứa thành phần (2.0.1); NULL với cả trụ và với 1.6J. @example NULL']
+  ocpp_connector_id integer [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): connector the component sits on (2.0.1); NULL otherwise. @vi Súng chứa thành phần (2.0.1); NULL nếu không. @example NULL']
+  variable_name varchar(100) [not null, note: '@built-as config_key: The setting: the 1.6J configuration key (e.g. HeartbeatInterval, AuthorizeRemoteTxRequests) or the 2.0.1 variable within its component. @vi Cấu hình: khóa cấu hình của 1.6J (ví dụ HeartbeatInterval) hoặc biến của 2.0.1 trong thành phần của nó. @example HeartbeatInterval']
+  variable_instance varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): instance of the variable (2.0.1); NULL otherwise. @vi Bản thể của biến (2.0.1); NULL nếu không. @example NULL']
+  attribute_type varchar(10) [not null, note: '@planned CS-19: Which value of the setting: Actual (the current value; always for 1.6J), Target, MinSet or MaxSet (2.0.1). @vi Giá trị nào của cấu hình: Actual (giá trị hiện tại; luôn là Actual với 1.6J), Target, MinSet hoặc MaxSet (2.0.1). @example Actual']
+  value text [note: 'The value as text, as the charger sent it; NULL if it sent none (e.g. a write-only setting). @vi Giá trị dạng chuỗi, đúng như trụ gửi; NULL nếu trụ không gửi (ví dụ cấu hình chỉ-ghi). @example 60']
+  mutability varchar(10) [not null, note: '@planned CS-19: Whether the setting can be changed: READ_ONLY (a change is refused, e.g. NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, e.g. a password: no value is shown). 1.6J readonly=true maps to READ_ONLY, false to READ_WRITE. @vi Cấu hình có đổi được không: READ_ONLY (lệnh đổi bị từ chối, ví dụ NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, ví dụ mật khẩu: không hiện giá trị). Với 1.6J readonly=true là READ_ONLY, false là READ_WRITE. @example READ_WRITE']
+  is_readonly boolean [not null, note: '@remove CS-19: Whether the charger reports the key as read-only; replaced by mutability, which also covers 2.0.1. @vi Trụ có báo khóa này là chỉ-đọc không; thay bằng mutability, bao cả 2.0.1. @example false']
+  indexes {
+    (station_id, captured_at) [name: 'ix_charging_config_entries_station_captured', note: 'Replaced by ix_charging_config_captures_station_captured (CS-19)']
+    (capture_id, component_name, component_instance, ocpp_evse_id, ocpp_connector_id, variable_name, variable_instance, attribute_type) [unique, name: 'uq_charging_config_entries_capture_setting', note: 'Planned (CS-19): NULLS NOT DISTINCT; one value per setting and attribute in a snapshot']
   }
   Note: '''@status built @owner internal @features F-G2
-One configuration key from a charger's GetConfiguration answer (append-only snapshots).
+One value of one setting in one snapshot (CS-19). Named the OCPP 2.0.1 way
+(component + variable + attribute type), which also holds 1.6J: a 1.6J key
+is a variable with no component, attribute Actual, and readonly mapped to
+mutability. Settings are stored as the charger sent them; 1.6J keys are not
+translated to 2.0.1 names. Append-only, through its capture.
 @vi-name Cấu hình trụ sạc
-@vi Một khóa cấu hình trong câu trả lời GetConfiguration của trụ sạc (các bản chụp chỉ ghi thêm).'''
+@vi Một giá trị của một cấu hình trong một lần chụp (CS-19). Đặt tên theo cách của OCPP 2.0.1 (thành phần + biến + loại thuộc tính), cách này cũng chứa được 1.6J: khóa 1.6J là một biến không có thành phần, thuộc tính Actual, và readonly được quy đổi sang mutability. Cấu hình được lưu đúng như trụ gửi; khóa 1.6J không bị dịch sang tên 2.0.1. Chỉ ghi thêm, theo lần chụp của nó.'''
 }
 
 Ref: charging_stations.location_id > charging_locations.location_id [delete: restrict]
@@ -1377,6 +1417,7 @@ Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_connector_state.connector_id - charging_connectors.connector_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_station_configuration_captures.station_id > charging_stations.station_id [delete: restrict]
 
 TableGroup charging_stations {
   charging_locations
@@ -1387,6 +1428,7 @@ TableGroup charging_stations {
   charging_connectors
   charging_connector_state
   charging_ocpp_messages
+  charging_station_configuration_captures
   charging_station_configuration_entries
   Note: '''
 The charging network and the OCPP link to each charger (terms: CS-09).
@@ -1438,8 +1480,13 @@ Table charging_sessions {
   }
   Note: '''@status built @owner two-party @features F-B2,F-C5
 One charge on one connector, from start to stop.
+To settle in its review (CS-18): a QR start (CO-14) needs its business
+context stored when the driver scans (who scanned, which organization pays,
+the start token sent in RemoteStartTransaction, the charger's answer) so the
+StartTransaction carrying that token can be matched to it: a PENDING session
+row at the scan, a table of the commands we send, or both.
 @vi-name Phiên sạc
-@vi Một lần sạc trên một súng sạc, từ lúc bắt đầu đến lúc kết thúc.'''
+@vi Một lần sạc trên một súng sạc, từ lúc bắt đầu đến lúc kết thúc. Cần quyết định khi rà soát bảng (CS-18): lần sạc bằng QR (CO-14) cần lưu ngữ cảnh nghiệp vụ ngay khi tài xế quét (ai quét, tổ chức nào trả tiền, mã gửi trong RemoteStartTransaction, câu trả lời của trụ) để ghép với StartTransaction mang mã đó: tạo dòng phiên PENDING khi quét, một bảng các lệnh gửi xuống trụ, hoặc cả hai.'''
 }
 
 Table charging_session_events {
@@ -1447,7 +1494,7 @@ Table charging_session_events {
   event_occurred_at timestamptz [pk, note: 'When the event happened; hypertable time column. @vi Thời điểm xảy ra sự kiện; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
   session_id uuid [not null, note: 'Session the event belongs to. @vi Phiên sạc chứa sự kiện. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   event_type chargingsessioneventtype [not null, note: 'Lifecycle step the event represents. @vi Bước trong vòng đời phiên sạc mà sự kiện thể hiện. @example Started']
-  seq_no integer [note: 'OCPP\'s per-transaction sequence number; NULL if not sent. @vi Số thứ tự theo giao dịch của OCPP; NULL nếu trụ không gửi. @example 0']
+  seq_no integer [note: 'OCPP 2.0.1 only (CO-15): the per-transaction sequence number of TransactionEvent; NULL for 1.6J, which has none. @vi Số thứ tự theo giao dịch của OCPP; NULL nếu trụ không gửi. @example 0']
   indexes {
     (session_id, event_occurred_at, event_id) [name: 'ix_charging_session_events_session_time']
   }

@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-✅ built: 5 · 📋 planned: 8
+✅ built: 5 · 📋 planned: 9
 
 The charging network and the OCPP link to each charger (terms: CS-09).
 
@@ -70,6 +70,10 @@ erDiagram
     timestamptz occurred_at PK
     uuid station_id FK
   }
+  charging_station_configuration_captures {
+    uuid capture_id PK
+    uuid station_id FK
+  }
   charging_station_configuration_entries {
     uuid entry_id PK
     uuid station_id FK
@@ -87,6 +91,7 @@ erDiagram
   charging_connector_state |o..|| charging_connectors : "connector_id"
   charging_ocpp_messages }o--|| charging_stations : "station_id"
   charging_station_configuration_entries }o--|| charging_stations : "station_id"
+  charging_station_configuration_captures }o..|| charging_stations : "station_id"
   charging_sessions }o--|| charging_stations : "station_id"
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
@@ -265,6 +270,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [charging_evses](#charging_evses).station_id
 - [charging_ocpp_messages](#charging_ocpp_messages).station_id
 - [charging_station_configuration_entries](#charging_station_configuration_entries).station_id
+- [charging_station_configuration_captures](#charging_station_configuration_captures).station_id (planned)
 - [charging_sessions](charging_sessions.md#charging_sessions).station_id
 - [tariffs](billing.md#tariffs).station_id (planned)
 - [charging_station_history](#charging_station_history).station_id (planned)
@@ -484,11 +490,13 @@ Every OCPP frame in both directions, verbatim and append-only.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `message_id` | uuid | no | PK |  | Internal ID of the log row. | `00000006-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `occurred_at` | timestamptz | no | PK |  | When the frame was received or sent; hypertable time column. | `2026-09-15T08:30:00Z` |
+| `occurred_at` | timestamptz | no | PK |  | Our server's clock: when the gateway received the frame (CP_TO_CSMS) or sent it (CSMS_TO_CP); hypertable time column. The charger's own times are inside some payloads and go to the interpreted tables (status time, meter sample time, session start and end), so a frame replayed after an offline period shows its arrival here and its real time there (CS-18). | `2026-09-15T08:30:00Z` |
 | `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | Station the frame was exchanged with. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
 | `ocpp_subprotocol` | varchar(20) | no |  |  | OCPP version negotiated for the connection. | `ocpp1.6` |
 | `direction` | chargingocppmessagedirection | no |  |  | From the charger (CP_TO_CSMS) or to it (CSMS_TO_CP). | `CP_TO_CSMS` |
 | `raw_frame` | text | no |  |  | The exact frame text, never re-serialised. Contains RFID idTags: never copy into application logs. | `[2,"19223201","Heartbeat",{}]` |
+| `action` | varchar(50) | yes |  |  | **📋 planned (CS-18)**: Message type copied from the envelope of a request ([2, message ID, action, payload]), e.g. StatusNotification, RemoteStartTransaction; NULL for answers and errors (they carry no action) and for a frame that cannot be read. raw_frame stays the record. | `StatusNotification` |
+| `ocpp_message_id` | varchar(36) | yes |  |  | **📋 planned (CS-18)**: The frame's own message ID from the envelope, on every frame; a request and its answer share it, so (station_id, ocpp_message_id) pairs them, e.g. our RemoteStartTransaction with the charger's Accepted. NULL for a frame that cannot be read. Not unique: the charger and the gateway number their requests separately. | `19223201` |
 
 **Enum values**
 
@@ -497,23 +505,64 @@ Every OCPP frame in both directions, verbatim and append-only.
 **Indexes**
 
 - `ix_charging_ocpp_messages_station_time` (station_id, occurred_at)
+- `ix_charging_ocpp_messages_station_action_time` (station_id, action, occurred_at) - Planned (CS-18): the message viewer filtering by type (STN-15)
+- `ix_charging_ocpp_messages_station_message_id` (station_id, ocpp_message_id) - Planned (CS-18): pairing a request with its answer
 
-### charging_station_configuration_entries
+### charging_station_configuration_captures
 
-**No. 36** · ✅ built · owner: **internal** · features: F-G2
+**No. 36** · 📋 planned · owner: **internal** · features: F-G2
 
-One configuration key from a charger's GetConfiguration answer (append-only snapshots).
+One snapshot of a charger's settings: one GetConfiguration answer (1.6J) or
+one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
+themselves are rows of charging_station_configuration_entries. Append-only:
+the current settings are the newest COMPLETE snapshot, and comparing two
+snapshots shows what changed between them (CS-19). Changing a setting is a
+command we send, not a snapshot (designed with the commands of the
+charging_sessions review).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `entry_id` | uuid | no | PK |  | Internal ID of the row. | `00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | Station the configuration belongs to. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
-| `capture_id` | uuid | no |  |  | Groups all keys from one GetConfiguration answer. | `00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `captured_at` | timestamptz | no |  |  | When the charger's answer was received. | `2026-09-14T22:00:10Z` |
-| `config_key` | varchar(100) | no |  |  | Configuration key name. | `HeartbeatInterval` |
-| `value` | text | yes |  |  | Key value as text; NULL if the charger sent none. | `60` |
-| `is_readonly` | boolean | no |  |  | Whether the charger reports the key as read-only. | `false` |
+| `capture_id` | uuid | no | PK |  | Internal ID of one snapshot (photo) of a charger's settings. | `00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | The charger. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `reason` | varchar(20) | no |  |  | Why the snapshot was taken. BOOT: automatically after each boot (CO-05). ON_DEMAND: a person asked for it. AFTER_CHANGE: right after we changed a setting, to confirm the charger applied it (a push itself returns only a verdict, no values). Values: BOOT \| ON_DEMAND \| AFTER_CHANGE. | `BOOT` |
+| `ocpp_protocol_version` | varchar(20) | no |  |  | Protocol of the connection the snapshot came over; tells how its entries are named (1.6J: a key only; 2.0.1: component and variable). | `ocpp1.6` |
+| `ocpp_request_id` | integer | yes |  |  | OCPP 2.0.1 only (CO-15): the requestId of GetBaseReport, which joins the several NotifyReport parts into this one snapshot; NULL for 1.6J (one answer). | `NULL` |
+| `requested_at` | timestamptz | no |  |  | When the gateway asked the charger. | `2026-09-14T22:00:06Z` |
+| `captured_at` | timestamptz | yes |  |  | When the answer (2.0.1: its last part) arrived; NULL while waiting or when it failed. | `2026-09-14T22:00:10Z` |
+| `outcome` | varchar(20) | no |  |  | Observed result, as the charger behaved (no reason column: observed, not decided). PENDING: asked, not complete yet. COMPLETE: every part received. FAILED: no answer in time, an error answer, or parts missing. Values: PENDING \| COMPLETE \| FAILED. | `COMPLETE` |
 
 **Indexes**
 
-- `ix_charging_config_entries_station_captured` (station_id, captured_at)
+- `ix_charging_config_captures_station_captured` (station_id, captured_at) - The latest complete snapshot of a charger
+
+### charging_station_configuration_entries
+
+**No. 37** · ✅ built · owner: **internal** · features: F-G2
+
+One value of one setting in one snapshot (CS-19). Named the OCPP 2.0.1 way
+(component + variable + attribute type), which also holds 1.6J: a 1.6J key
+is a variable with no component, attribute Actual, and readonly mapped to
+mutability. Settings are stored as the charger sent them; 1.6J keys are not
+translated to 2.0.1 names. Append-only, through its capture.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `entry_id` | uuid | no | PK |  | Internal ID of the row: one value of one setting in one snapshot. | `00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | **🗑️ to be removed (CS-19)**: The charger; now on the capture. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `capture_id` | uuid | no |  |  | The snapshot this value belongs to. Built today as a plain grouping ID; it becomes a foreign key to charging_station_configuration_captures.capture_id in the refactor (CS-19; not drawn as a reference while that table is planned). | `00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `captured_at` | timestamptz | no |  |  | **🗑️ to be removed (CS-19)**: When the answer arrived; now on the capture. | `2026-09-14T22:00:10Z` |
+| `component_name` | varchar(50) | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. | `NULL` |
+| `component_instance` | varchar(50) | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): instance of the component when it has several (2.0.1); NULL otherwise. | `NULL` |
+| `ocpp_evse_id` | integer | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): EVSE the component sits on (2.0.1); NULL for the whole charger and for 1.6J. | `NULL` |
+| `ocpp_connector_id` | integer | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): connector the component sits on (2.0.1); NULL otherwise. | `NULL` |
+| `variable_name` | varchar(100) | no |  |  | **✏️ built today as `config_key`, to be renamed**: The setting: the 1.6J configuration key (e.g. HeartbeatInterval, AuthorizeRemoteTxRequests) or the 2.0.1 variable within its component. | `HeartbeatInterval` |
+| `variable_instance` | varchar(50) | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): instance of the variable (2.0.1); NULL otherwise. | `NULL` |
+| `attribute_type` | varchar(10) | no |  |  | **📋 planned (CS-19)**: Which value of the setting: Actual (the current value; always for 1.6J), Target, MinSet or MaxSet (2.0.1). | `Actual` |
+| `value` | text | yes |  |  | The value as text, as the charger sent it; NULL if it sent none (e.g. a write-only setting). | `60` |
+| `mutability` | varchar(10) | no |  |  | **📋 planned (CS-19)**: Whether the setting can be changed: READ_ONLY (a change is refused, e.g. NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, e.g. a password: no value is shown). 1.6J readonly=true maps to READ_ONLY, false to READ_WRITE. | `READ_WRITE` |
+| `is_readonly` | boolean | no |  |  | **🗑️ to be removed (CS-19)**: Whether the charger reports the key as read-only; replaced by mutability, which also covers 2.0.1. | `false` |
+
+**Indexes**
+
+- `ix_charging_config_entries_station_captured` (station_id, captured_at) - Replaced by ix_charging_config_captures_station_captured (CS-19)
+- `uq_charging_config_entries_capture_setting` (capture_id, component_name, component_instance, ocpp_evse_id, ocpp_connector_id, variable_name, variable_instance, attribute_type) unique - Planned (CS-19): NULLS NOT DISTINCT; one value per setting and attribute in a snapshot
