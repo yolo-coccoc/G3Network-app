@@ -1602,6 +1602,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Date recorded**: 2026-09-24
 - **Additional notes**: The unified `charging_session_measurements` table
   already accepts non-energy measurands; only the 2.0.1 extraction is missing.
+- **Update 2026-10-07 (CE-15 in `docs/decisions/decision-log.md`)**: the target design drops `charging_session_events`. When 2.0.1 parity is built, design two things with it: skipping replayed duplicates by the highest `seqNo` processed per session (likely one 2.0.1-only column on `charging_sessions`, CO-15, listed in the `ocpp-reference` skill), and, only if a feature needs it (e.g. an idle fee), a table of charging-state periods from `TransactionEvent.chargingState` (and 1.6J connector statuses during a transaction). Also set the charger's transaction start point so a QR transaction starts only after our remote authorization.
 - **Update 2026-10-01**: `BootNotification` (vendor, model, serial, firmware and `last_boot_at` stored through `ocpp_state_service.record_charger_boot`; heartbeat interval `CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS` returned) and `Heartbeat` are now handled by the 2.0.1 adapter too - decision D13 of the 1.6J planner was reopened for this by `docs/planners/done/backend-happy-path-completion.md`, and the 2.0.1 simulator sends a `BootNotification` first. Still open: stop reason, `idToken`, non-energy measurands (so a 2.0.1 session's SoC/power summary fields stay null) and a post-boot configuration capture.
 
 ### 79. Raw OCPP message log: read API and retention

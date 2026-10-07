@@ -10,7 +10,7 @@ What happened during each charge: events, meter readings, energy delivered.
 
 - A **session** takes place on one connector of one charger. It is created when a driver scans the QR code on the charger in our app (CE-10) and records who scanned, which organization pays and, when the driver is checked in to a truck, that truck; the charger's start message then fills in the gun and the transaction (CE-11).
 - Built today without that link (only a raw `id_tag`); it arrives with the refactor.
-- A session has many **events** and many **measurements**.
+- A session has many **measurements**. Its **events** table is built but dropped by the target design (CE-15).
 
 ## Diagram
 
@@ -123,9 +123,13 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 
 ### charging_session_events
 
-**No. 39** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at`
+**No. 39** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at` · **🗑️ to be removed (CE-15)**
 
-Each Started / Updated / Ended event of a session.
+Each Started / Updated / Ended event of a session. Dropped by the target
+design (CE-15): for OCPP 1.6J it copies the session's start and end, the raw
+OCPP log keeps every frame for audit, and no feature reads a session
+timeline. OCPP 2.0.1 duplicate handling (seqNo) and charging-state periods
+are designed when 2.0.1 support is built (deferred.md 78).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|

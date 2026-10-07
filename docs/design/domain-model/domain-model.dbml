@@ -1450,7 +1450,7 @@ The charging network and the OCPP link to each charger (terms: CS-09).
 }
 
 // ===========================================================================
-// charging_sessions: session lifecycle, events, measurements (F-B2)
+// charging_sessions: session lifecycle and measurements (F-B2)
 // ===========================================================================
 
 Table charging_sessions {
@@ -1514,10 +1514,14 @@ Table charging_session_events {
   indexes {
     (session_id, event_occurred_at, event_id) [name: 'ix_charging_session_events_session_time']
   }
-  Note: '''@status built @owner two-party @features F-B2 @hypertable event_occurred_at
-Each Started / Updated / Ended event of a session.
+  Note: '''@status built @owner two-party @features F-B2 @hypertable event_occurred_at @remove CE-15
+Each Started / Updated / Ended event of a session. Dropped by the target
+design (CE-15): for OCPP 1.6J it copies the session's start and end, the raw
+OCPP log keeps every frame for audit, and no feature reads a session
+timeline. OCPP 2.0.1 duplicate handling (seqNo) and charging-state periods
+are designed when 2.0.1 support is built (deferred.md 78).
 @vi-name Sự kiện phiên sạc
-@vi Từng sự kiện Bắt đầu / Cập nhật / Kết thúc của một phiên sạc.'''
+@vi Từng sự kiện Bắt đầu / Cập nhật / Kết thúc của một phiên sạc. Bị bỏ trong thiết kế đích (CE-15): với OCPP 1.6J bảng chỉ chép lại thời điểm bắt đầu và kết thúc của phiên, nhật ký OCPP thô đã giữ mọi bản tin để kiểm tra, và chưa tính năng nào đọc dòng thời gian của phiên. Việc loại bản tin trùng của OCPP 2.0.1 (seqNo) và các khoảng trạng thái sạc được thiết kế khi xây dựng hỗ trợ 2.0.1 (deferred.md 78).'''
 }
 
 Table charging_session_measurements {
@@ -1561,13 +1565,13 @@ What happened during each charge: events, meter readings, energy delivered.
 
 - A **session** takes place on one connector of one charger. It is created when a driver scans the QR code on the charger in our app (CE-10) and records who scanned, which organization pays and, when the driver is checked in to a truck, that truck; the charger's start message then fills in the gun and the transaction (CE-11).
 - Built today without that link (only a raw `id_tag`); it arrives with the refactor.
-- A session has many **events** and many **measurements**.
+- A session has many **measurements**. Its **events** table is built but dropped by the target design (CE-15).
 
 @vi-name Phiên sạc
 @vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
 - Một **phiên sạc** diễn ra trên một súng sạc của một trụ. Phiên được tạo khi tài xế quét mã QR trên trụ bằng ứng dụng của chúng ta (CE-10) và ghi người quét, tổ chức trả tiền và, nếu tài xế đang nhận một xe, chiếc xe đó; sau đó bản tin bắt đầu của trụ điền súng sạc và giao dịch (CE-11).
 - Bản đang chạy chưa có liên kết này (chỉ có mã `id_tag` thô); sẽ có khi tái cấu trúc.
-- Một phiên sạc có nhiều **sự kiện** và nhiều **số đo**.
+- Một phiên sạc có nhiều **số đo**. Bảng **sự kiện** đã được xây dựng nhưng bị bỏ trong thiết kế đích (CE-15).
 '''
 }
 

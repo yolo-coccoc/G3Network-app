@@ -36,7 +36,7 @@ The charging tables are protocol-neutral; each OCPP version's adapter in `chargi
 |---|---|---|---|
 | `charging_station_configuration_captures` | `ocpp_request_id` | 2.0.1 | joins the NotifyReport parts of one GetBaseReport |
 | `charging_station_configuration_entries` | `component_name`, `component_instance`, `ocpp_evse_id`, `ocpp_connector_id`, `variable_instance` | 2.0.1 | the device model names a setting by component + variable; 1.6J has a key only |
-| `charging_session_events` | `seq_no` | 2.0.1 | TransactionEvent's sequence number; 1.6J has none (reviewed with the sessions tables) |
+| `charging_session_events` | `seq_no` | 2.0.1 | TransactionEvent's sequence number; 1.6J has none. The table is dropped by the target design (CE-15); the duplicate check moves to the session when 2.0.1 support is built (deferred.md 78) |
 
 Columns filled by both versions in different ways stay off this list (e.g. `charging_station_state.charger_status`: 1.6J connector 0, 2.0.1 from its own messages, CS-15).
 

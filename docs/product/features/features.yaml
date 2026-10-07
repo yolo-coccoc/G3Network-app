@@ -2909,7 +2909,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-03]
-    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27, Decision CE-10, Decision CE-12, Decision CE-14]
+    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27, Decision CE-10, Decision CE-12, Decision CE-14, Decision CE-15]
     old_codes: [F-B2]
 
   - code: CHG-03

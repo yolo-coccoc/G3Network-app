@@ -99,7 +99,7 @@ Not drawn, to keep the map readable: 14 domains also point to **identity** throu
 | [Drivers](domains/drivers.md) | partial | 2 | 2 | 0 | 21 drivers, 21.h driver_history, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions |
 | [Fleet](domains/fleet.md) | partial | 3 | 1 | 0 | 24 fleets, 25 fleet_vehicle_memberships, 26 geofences, 27 fleet_user_assignments |
 | [Charging stations](domains/charging_stations.md) | partial | 5 | 9 | 0 | 28 charging_locations, 28.h charging_location_history, 29 charging_location_access, 30 charging_stations, 30.h charging_station_history, 31 charging_station_state, 32 charging_evses, 32.h charging_evse_history, 33 charging_connectors, 33.h charging_connector_history, 34 charging_connector_state, 35 charging_ocpp_messages, 36 charging_station_configuration_captures, 37 charging_station_configuration_entries |
-| [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 38 charging_sessions, 39 charging_session_events, 40 charging_session_measurements |
+| [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 38 charging_sessions, 39 ~~charging_session_events~~, 40 charging_session_measurements |
 | [Notifications](domains/notifications.md) | built | 1 | 0 | 0 | 41 notifications |
 | [Support](domains/support.md) | partial | 1 | 2 | 0 | 42 support_cases, 43 repair_partners, 44 maintenance_bookings |
 | [Policy](domains/policy.md) | planned | 0 | 4 | 0 | 45 charging_policies, 46 charging_policy_versions, 47 charging_policy_assignments, 48 policy_violations |
