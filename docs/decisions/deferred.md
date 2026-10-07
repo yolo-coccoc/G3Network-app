@@ -431,6 +431,8 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 
 - **Update 2026-09-24 (`docs/planners/backend-ocpp16-charger-integration.md`)**: the `idTag` presented at a charger is now stored on the session (`charging_sessions.id_tag`) and `Authorize`/`StartTransaction` accept every tag (decision D7). There is still no tag registry, no driver/vehicle mapping and no remote start/stop (see items 62 and 74).
 
+- **Update 2026-10-07 (design review, CE-10 to CE-13 in `docs/decisions/decision-log.md`)**: the target `charging_sessions` design now carries the business link this item asked for: the row is created PENDING at the QR scan with the paying organization, the scanning user and the single-use token sent in the remote start, and the truck from the driver's open driving session; only a token we issued starts a session (CE-11, replacing CO-06). Still deferred here: pricing, payment, webhooks, overdue handling and debt (billing review), and the command channel that sends the remote start (item 74).
+
 ### 27. Reliability and technical status path of the charging MVP
 
 - **Short description**: Restore the non-happy-path handling for charging,
@@ -1746,7 +1748,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   every charge at launch starts with a QR scan, including guest trucks, so nothing reads a
   credential; RFID or VIN Autocharge may be implemented in the future. Whether the Willdigits
   charger supports VIN Autocharge over OCPP is still unknown (open question 4).
-- **Related planner/feature**: CHG-08 (`docs/product/features/features.yaml`), CO-06, CO-12,
+- **Related planner/feature**: CHG-08 (`docs/product/features/features.yaml`), CO-S4 (former CO-06), CO-12,
   CO-13, VH-12, deferred.md 26 and 62.
 - **Date recorded**: 2026-10-05
 - **Additional notes**: Shape worked out in the design review, to start from when CHG-08 begins:
@@ -1759,6 +1761,11 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   OCPP gateway already calls, rather than `drivers`. Knock-on rules: a truck sale unassigns the
   seller's cards held by that truck (VH-12); a retired driver profile hands its cards back to the
   organization (DR-10).
+- **Update 2026-10-07 (CE-11, CE-13 in `docs/decisions/decision-log.md`)**: at launch only a token issued at a QR scan
+  starts a session (CE-11, replacing CO-06); when cards arrive, the same check also accepts an ACTIVE credential.
+  A truck identifier the charger reports (MAC address on CCS2, often the VIN on GB/T) would fill
+  `charging_sessions.vehicle_id`, which today comes from the driver's check-in (CE-13); the session table needs
+  no change for it.
 
 ---
 

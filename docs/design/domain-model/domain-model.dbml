@@ -107,8 +107,12 @@ Enum chargingocppmessagedirection {
 }
 
 Enum chargingsessionstatus {
-  active
-  completed
+  active [note: '@remove CE-10: becomes ACTIVE']
+  completed [note: '@remove CE-10: becomes COMPLETED']
+  PENDING [note: '@planned CE-10']
+  ACTIVE [note: '@planned CE-10']
+  COMPLETED [note: '@planned CE-10']
+  ABANDONED [note: '@planned CE-10']
 }
 
 Enum chargingsessioneventtype {
@@ -1451,24 +1455,25 @@ The charging network and the OCPP link to each charger (terms: CS-09).
 
 Table charging_sessions {
   session_id uuid [pk, note: 'Internal ID of the charging session. @vi Mã nội bộ của phiên sạc. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
-  station_id uuid [not null, note: 'Station where the session happens. @vi Trạm diễn ra phiên sạc. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  evse_id uuid [not null, note: 'EVSE used. @vi EVSE được dùng. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
-  connector_id uuid [not null, note: 'Connector (gun) used. @vi Súng sạc được dùng. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
-  organization_id uuid [note: '@planned D5: Customer organization charged for the session. @vi Tổ chức khách hàng bị tính tiền cho phiên sạc. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  vehicle_id uuid [note: '@planned: Vehicle that was charged. @vi Xe được sạc. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  ocpp_transaction_id varchar(255) [not null, note: 'Transaction ID used with the charger, unique per station. @vi Mã giao dịch dùng với trụ sạc, duy nhất trong trạm. @example 1042']
-  status chargingsessionstatus [not null, note: 'Whether the session is still running. @vi Phiên sạc còn đang chạy hay đã xong. @example completed']
-  started_at timestamptz [not null, note: 'When charging started. @vi Thời điểm bắt đầu sạc. @example 2026-09-15T08:30:00Z']
-  ended_at timestamptz [note: 'When charging ended; NULL while active. @vi Thời điểm kết thúc sạc; NULL khi đang sạc. @example 2026-09-15T09:45:00Z']
-  meter_start_wh numeric(24,3) [note: 'Charger energy meter at the start, in Wh. @vi Chỉ số công tơ của trụ lúc bắt đầu (Wh). @example 1520340.000']
-  meter_end_wh numeric(24,3) [note: 'Latest accepted meter reading, in Wh (never moves backwards in time). @vi Chỉ số công tơ mới nhất được chấp nhận (Wh), không bao giờ lùi về thời gian trước. @example 1712840.000']
-  meter_end_sampled_at timestamptz [note: 'When meter_end_wh was measured. @vi Thời điểm đo meter_end_wh. @example 2026-09-15T09:44:30Z']
-  energy_delivered_wh numeric(24,3) [note: 'Energy delivered: end reading minus start reading, in Wh. @vi Điện năng đã cấp: chỉ số cuối trừ chỉ số đầu (Wh). @example 192500.000']
-  id_tag varchar(20) [note: 'Raw identifier (RFID/token) that started the session, as sent; not validated yet. @vi Mã định danh thô (RFID/token) đã bắt đầu phiên, đúng như trụ gửi; chưa được xác thực. @example 04A1B2C3D4E5F6']
-  stop_reason varchar(30) [note: 'Why the session stopped, as the charger reported it. @vi Lý do dừng sạc, theo trụ sạc báo. @example EVDisconnected']
-  meter_stop_wh numeric(24,3) [note: 'The charger\'s own closing meter reading, in Wh. @vi Chỉ số công tơ lúc kết thúc do chính trụ sạc báo (Wh). @example 1712860.000']
-  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-15T08:30:00Z']
-  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T09:45:00Z']
+  station_id uuid [not null, note: 'The charger (charging station) where the session happens, known from the QR code at the scan. @vi Trụ sạc nơi diễn ra phiên sạc, biết được từ mã QR khi quét. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  evse_id uuid [not null, note: 'EVSE used, set from the charger\'s start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session, because the driver picks the gun on the charger\'s screen after the scan (CO-14). @vi EVSE được dùng, lấy từ bản tin bắt đầu của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED, vì tài xế chọn súng trên màn hình trụ sau khi quét (CO-14). @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
+  connector_id uuid [not null, note: 'Connector (gun) used, set from the charger\'s start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session. @vi Súng sạc được dùng, lấy từ bản tin bắt đầu của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  organization_id uuid [not null, note: '@planned CE-10: Organization that pays: the one the scanning user acted for, written once at the scan and never changed (DM-24 case C). Which wallet inside it pays is open decision D5. @vi Tổ chức trả tiền: tổ chức mà người quét mã đại diện, ghi một lần khi quét và không đổi (DM-24 trường hợp C). Ví nào trong tổ chức trả tiền là câu hỏi mở D5. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  started_by uuid [not null, note: '@planned CE-10: User who scanned the QR code in our app; every charge starts this way (CO-13). A start with a token we did not issue is refused and gets no row (CE-11). @vi Người dùng đã quét mã QR trong ứng dụng của chúng ta; mọi lần sạc đều bắt đầu như vậy (CO-13). Lần bắt đầu mang mã không do chúng ta cấp bị từ chối và không tạo dòng (CE-11). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  vehicle_id uuid [note: '@planned CE-13: Truck being charged, taken at the scan from the scanning driver\'s open driving session (CHG-07); NULL when there is none (a guest truck we have no record of, or a driver who has not checked in). A VIN or MAC address reported by the charger may fill it later (deferred.md 90). @vi Xe được sạc, lấy khi quét mã từ phiên lái đang mở của tài xế quét mã (CHG-07); NULL nếu không có (xe khách vãng lai chưa có hồ sơ, hoặc tài xế chưa nhận xe). Sau này có thể lấy từ VIN hoặc địa chỉ MAC do trụ báo (deferred.md 90). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  ocpp_transaction_id varchar(255) [not null, note: 'The charger\'s transaction ID, unique per charger: an OCPP 2.0.1 charger chooses its own (a string of up to 36 characters); for 1.6J it is our sequence number as text (CE-03). Planned (CE-10): varchar(36) and nullable, NULL while PENDING and for an ABANDONED session. @vi Mã giao dịch của trụ, duy nhất trong mỗi trụ: trụ OCPP 2.0.1 tự chọn (chuỗi tối đa 36 ký tự); với 1.6J là số thứ tự của chúng ta dạng chữ (CE-03). Dự kiến (CE-10): varchar(36) và cho phép NULL, NULL khi PENDING và với phiên ABANDONED. @example 1042']
+  status chargingsessionstatus [not null, note: 'Lifecycle of the session; observed, so no status_reason (DM-19). PENDING: the scan was accepted, waiting for the charger. ACTIVE: transaction running. COMPLETED: stopped by the charger. ABANDONED: the remote start was refused or timed out, or no transaction followed within the configured window. Planned (CE-10): upper-case values; PENDING and ABANDONED are new. @vi Vòng đời của phiên; là trạng thái quan sát được nên không có status_reason (DM-19). PENDING: đã nhận lượt quét, chờ trụ. ACTIVE: giao dịch đang chạy. COMPLETED: trụ đã dừng. ABANDONED: lệnh bắt đầu từ xa bị từ chối hoặc hết thời gian chờ, hoặc không có giao dịch nào trong khoảng thời gian cấu hình. Dự kiến (CE-10): giá trị viết hoa; PENDING và ABANDONED là giá trị mới. @example COMPLETED']
+  started_at timestamptz [not null, note: 'The charger\'s time of the start. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session; the scan time is created_at. @vi Thời điểm bắt đầu theo đồng hồ của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED; thời điểm quét mã là created_at. @example 2026-09-15T08:30:00Z']
+  ended_at timestamptz [note: 'The charger\'s time of the stop; NULL until COMPLETED. @vi Thời điểm dừng theo đồng hồ của trụ; NULL cho đến khi COMPLETED. @example 2026-09-15T09:45:00Z']
+  meter_start_wh numeric(24,3) [note: 'Meter reading the charger declares at the start, in Wh; NULL while PENDING. @vi Chỉ số công tơ trụ báo lúc bắt đầu (Wh); NULL khi PENDING. @example 1520340.000']
+  meter_end_wh numeric(24,3) [note: '@remove CE-12: Latest accepted meter reading, in Wh; a copy of the newest energy row in charging_session_measurements, read there instead. @vi Chỉ số công tơ mới nhất được chấp nhận (Wh); là bản sao của số đo điện năng mới nhất trong charging_session_measurements, nay đọc ở đó. @example 1712840.000']
+  meter_end_sampled_at timestamptz [note: '@remove CE-12: When meter_end_wh was measured; the newest measurement\'s sampled_at. @vi Thời điểm đo meter_end_wh; là sampled_at của số đo mới nhất. @example 2026-09-15T09:44:30Z']
+  energy_delivered_wh numeric(24,3) [note: '@remove CE-12: Derived: meter_stop_wh minus meter_start_wh, computed at read time; the billed kWh is frozen on the billing record (PAY-10). @vi Giá trị suy ra: meter_stop_wh trừ meter_start_wh, tính khi đọc; số kWh tính tiền được chốt trên bản ghi thanh toán (PAY-10). @example 192500.000']
+  id_token varchar(20) [note: '@built-as id_tag: Identifier the charger reports for the transaction. For a QR start, the single-use token we generate at the scan and send in the remote start (at most 20 characters, the OCPP 1.6J idTag limit); the charger echoes it in its start message, which is how that message finds this row (CE-11). Later also a card number or an Autocharge ID (CHG-08); never copy it into application logs (IS-07). Planned (CE-10): varchar(255) (the OCPP 2.1 width) and required. @vi Mã định danh trụ báo cho giao dịch. Với lần sạc bằng QR, đó là mã dùng một lần chúng ta tạo khi quét và gửi trong lệnh bắt đầu từ xa (tối đa 20 ký tự, giới hạn idTag của OCPP 1.6J); trụ gửi lại mã này trong bản tin bắt đầu, nhờ đó bản tin tìm được dòng này (CE-11). Sau này còn là số thẻ hoặc mã Autocharge (CHG-08); không bao giờ chép vào log ứng dụng (IS-07). Dự kiến (CE-10): varchar(255) (độ dài của OCPP 2.1) và bắt buộc. @example G3K7Q2M9X4T1']
+  stop_reason varchar(30) [note: 'The charger\'s stop reason, as sent (1.6J reason, 2.0.1 stoppedReason); NULL unless COMPLETED. Why a session was ABANDONED is not stored here: it belongs to the record of the remote-start command we sent (CS-18). @vi Lý do dừng theo trụ báo, giữ nguyên (reason của 1.6J, stoppedReason của 2.0.1); NULL nếu chưa COMPLETED. Lý do phiên bị ABANDONED không lưu ở đây mà thuộc về bản ghi lệnh bắt đầu từ xa chúng ta đã gửi (CS-18). @example EVDisconnected']
+  meter_stop_wh numeric(24,3) [note: 'Meter reading the charger declares in its stop message, in Wh: the billing figure (CE-12), always stored as sent (CE-03). NULL until COMPLETED, or when the stop message carries none; billing then falls back to the newest measurement. @vi Chỉ số công tơ trụ báo trong bản tin dừng (Wh): con số dùng để tính tiền (CE-12), luôn lưu đúng như trụ gửi (CE-03). NULL cho đến khi COMPLETED, hoặc khi bản tin dừng không có; khi đó tính tiền theo số đo mới nhất. @example 1712860.000']
+  created_at timestamptz [not null, note: 'When the row was created (UTC): the scan time for a QR start. @vi Thời điểm tạo bản ghi (UTC): là thời điểm quét mã với lần sạc bằng QR. @example 2026-09-15T08:29:10Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC); moves at each step of the session. @vi Thời điểm bản ghi được sửa gần nhất (UTC); thay đổi ở mỗi bước của phiên. @example 2026-09-15T09:45:00Z']
   indexes {
     ended_at [name: 'ix_charging_sessions_ended_at']
     (status, updated_at) [name: 'ix_charging_sessions_status_updated']
@@ -1476,17 +1481,28 @@ Table charging_sessions {
     (evse_id, status) [name: 'ix_charging_sessions_evse_status']
     (connector_id, status) [name: 'ix_charging_sessions_connector_status']
     started_at [name: 'ix_charging_sessions_started_at']
-    (station_id, ocpp_transaction_id) [unique, name: 'uq_charging_sessions_station_transaction']
+    (station_id, ocpp_transaction_id) [unique, name: 'uq_charging_sessions_station_transaction', note: 'Planned (CE-10): partial, WHERE ocpp_transaction_id IS NOT NULL']
+    (station_id, id_token) [name: 'ix_charging_sessions_pending_token', note: 'Planned (CE-11): WHERE status = \'PENDING\'; matches a start message to its scan']
+    (organization_id, started_at) [name: 'ix_charging_sessions_organization_started', note: 'Planned (CE-10): a customer\'s charging history (CHG-04)']
+    vehicle_id [name: 'ix_charging_sessions_vehicle_id', note: 'Planned (CE-13)']
   }
   Note: '''@status built @owner two-party @features F-B2,F-C5
-One charge on one connector, from start to stop.
-To settle in its review (CS-18): a QR start (CO-14) needs its business
-context stored when the driver scans (who scanned, which organization pays,
-the start token sent in RemoteStartTransaction, the charger's answer) so the
-StartTransaction carrying that token can be matched to it: a PENDING session
-row at the scan, a table of the commands we send, or both.
+One charge on one connector of one charger, from the QR scan to the stop
+(CE-10). The row is created PENDING when the driver scans the QR code in our
+app, with the paying organization, the user and the single-use token we send
+in the remote start; the charger's start message carrying that token on the
+same charger turns it ACTIVE (CE-11), its stop message COMPLETED; ABANDONED
+when the start never came. Live figures (kWh so far, battery %, peak power)
+are read from charging_session_measurements; the price and the billed amount
+belong to the billing record (PAY-10). No change history and no soft delete:
+nobody edits a session.
+Check constraints (CE-10): status NOT IN ('ACTIVE', 'COMPLETED') OR
+(ocpp_transaction_id IS NOT NULL AND evse_id IS NOT NULL AND connector_id IS
+NOT NULL AND started_at IS NOT NULL AND meter_start_wh IS NOT NULL);
+status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
+'ABANDONED') OR ocpp_transaction_id IS NULL.
 @vi-name Phiên sạc
-@vi Một lần sạc trên một súng sạc, từ lúc bắt đầu đến lúc kết thúc. Cần quyết định khi rà soát bảng (CS-18): lần sạc bằng QR (CO-14) cần lưu ngữ cảnh nghiệp vụ ngay khi tài xế quét (ai quét, tổ chức nào trả tiền, mã gửi trong RemoteStartTransaction, câu trả lời của trụ) để ghép với StartTransaction mang mã đó: tạo dòng phiên PENDING khi quét, một bảng các lệnh gửi xuống trụ, hoặc cả hai.'''
+@vi Một lần sạc trên một súng của một trụ, từ lúc quét mã QR đến lúc dừng (CE-10). Dòng được tạo ở trạng thái PENDING khi tài xế quét mã QR trong ứng dụng của chúng ta, cùng tổ chức trả tiền, người quét và mã dùng một lần gửi trong lệnh bắt đầu từ xa; bản tin bắt đầu của chính trụ đó mang mã này chuyển phiên sang ACTIVE (CE-11), bản tin dừng chuyển sang COMPLETED; ABANDONED khi lần bắt đầu không xảy ra. Số liệu trực tiếp (kWh đã sạc, % pin, công suất cao nhất) đọc từ charging_session_measurements; đơn giá và số tiền thuộc bản ghi thanh toán (PAY-10). Không có lịch sử thay đổi và không xóa mềm: không ai sửa một phiên sạc. Ràng buộc kiểm tra (CE-10): phiên ACTIVE hoặc COMPLETED phải có mã giao dịch, EVSE, súng, thời điểm bắt đầu và chỉ số công tơ đầu; phiên COMPLETED phải có thời điểm kết thúc; phiên PENDING hoặc ABANDONED không có mã giao dịch.'''
 }
 
 Table charging_session_events {
@@ -1527,6 +1543,7 @@ Ref: charging_sessions.station_id > charging_stations.station_id [delete: restri
 Ref: charging_sessions.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_sessions.connector_id > charging_connectors.connector_id [delete: restrict]
 Ref: charging_sessions.organization_id > organizations.organization_id [delete: restrict]
+Ref: charging_sessions.started_by > users.user_id [delete: restrict]
 Ref: charging_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: charging_session_events.session_id > charging_sessions.session_id [delete: restrict]
 Ref: charging_session_measurements.session_id > charging_sessions.session_id [delete: restrict]
@@ -1538,14 +1555,14 @@ TableGroup charging_sessions {
   Note: '''
 What happened during each charge: events, meter readings, energy delivered.
 
-- A **session** takes place on one connector of one G3 station.
-- **Gap today:** a session is not linked to any vehicle, driver, or customer, only a raw `id_tag`. Every charge at launch starts with a QR scan (CO-13), so the session will record who started it and which organization pays (designed in the charging_sessions review); billing (F-H1/F-H3) and reconciliation (NF-10) need that link.
+- A **session** takes place on one connector of one charger. It is created when a driver scans the QR code on the charger in our app (CE-10) and records who scanned, which organization pays and, when the driver is checked in to a truck, that truck; the charger's start message then fills in the gun and the transaction (CE-11).
+- Built today without that link (only a raw `id_tag`); it arrives with the refactor.
 - A session has many **events** and many **measurements**.
 
 @vi-name Phiên sạc
 @vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
-- Một **phiên sạc** diễn ra trên một súng sạc của một trạm G3.
-- **Khoảng trống hiện nay:** phiên sạc chưa gắn với xe, tài xế hay khách hàng nào, chỉ có mã `id_tag` thô. Lúc ra mắt mọi lần sạc đều bắt đầu bằng quét mã QR (CO-13), nên phiên sạc sẽ ghi người khởi động và tổ chức thanh toán (thiết kế khi rà soát charging_sessions); thanh toán (F-H1/F-H3) và đối soát (NF-10) cần liên kết này.
+- Một **phiên sạc** diễn ra trên một súng sạc của một trụ. Phiên được tạo khi tài xế quét mã QR trên trụ bằng ứng dụng của chúng ta (CE-10) và ghi người quét, tổ chức trả tiền và, nếu tài xế đang nhận một xe, chiếc xe đó; sau đó bản tin bắt đầu của trụ điền súng sạc và giao dịch (CE-11).
+- Bản đang chạy chưa có liên kết này (chỉ có mã `id_tag` thô); sẽ có khi tái cấu trúc.
 - Một phiên sạc có nhiều **sự kiện** và nhiều **số đo**.
 '''
 }

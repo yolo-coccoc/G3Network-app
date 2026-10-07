@@ -46,7 +46,7 @@ The driver scans the QR code on the charger's screen; the app authorizes them an
 **Needed by:** [CHG-07](#chg-07), [PAY-06](billing.md#pay-06)  
 **Also touches:** `charging_stations`, `identity`  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-H1 · Decision CO-12 · Decision CO-13 · Decision CO-14  
+**Sources:** PRD F-H1 · Decision CO-12 · Decision CO-13 · Decision CO-14 · Decision CE-10 · Decision CE-11  
 **Old codes:** F-H1
 
 **Open questions:**
@@ -77,7 +77,7 @@ Keep an unchangeable record of every session: time, station, gun, power, kWh, st
 **Depends on:** [STN-03](charging_stations.md#stn-03)  
 **Needed by:** [CHG-01](#chg-01), [CHG-03](#chg-03), [CHG-04](#chg-04), [CRB-02](carbon.md#crb-02), [PAY-10](billing.md#pay-10), [PLT-01](platform.md#plt-01), [STN-07](charging_stations.md#stn-07), [STN-14](charging_stations.md#stn-14)  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27  
+**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27 · Decision CE-10 · Decision CE-12  
 **Old codes:** F-B2
 
 <a id="chg-03"></a>
@@ -203,7 +203,7 @@ Link each session to the truck, the driver and the paying organization, and cros
 **Needed by:** [CHG-04](#chg-04), [CHG-05](#chg-05), [CHG-08](#chg-08), [CRB-03](carbon.md#crb-03), [CRB-07](carbon.md#crb-07), [DRV-07](drivers.md#drv-07), [FLT-08](fleet.md#flt-08), [PAY-08](billing.md#pay-08), [POL-02](policy.md#pol-02)  
 **Also touches:** `drivers`, `telemetry`, `identity`  
 **Related tables:** — (after the database review)  
-**Sources:** deferred.md 62 · Decision CO-12 · Data IN-27
+**Sources:** deferred.md 62 · Decision CO-12 · Data IN-27 · Decision CE-13
 
 **Open questions:**
 
@@ -231,7 +231,7 @@ Start charging with an RFID card or automatically by the truck's VIN, for prepai
 **Depends on:** [CHG-07](#chg-07), [PAY-07](billing.md#pay-07)  
 **Also touches:** `drivers`  
 **Related tables:** — (after the database review)  
-**Sources:** Decision CO-12 · Decision CO-06 · Decision CO-13 · deferred.md 90
+**Sources:** Decision CO-12 · Decision CE-11 · Decision CO-13 · deferred.md 90
 
 **Open questions:**
 

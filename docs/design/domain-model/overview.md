@@ -57,6 +57,7 @@ flowchart LR
   fleet -.-> identity
   charging_stations -.-> identity
   charging_sessions --> charging_stations
+  charging_sessions -.-> identity
   charging_sessions -.-> vehicles
   notifications --> vehicles
   support --> vehicles

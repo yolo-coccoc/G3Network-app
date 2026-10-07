@@ -2877,7 +2877,7 @@ features:
     offer: included
     depends_on: [STN-10, CHG-02, ACC-04]
     touches: [charging_stations, identity]
-    sources: [PRD F-H1, Decision CO-12, Decision CO-13, Decision CO-14]
+    sources: [PRD F-H1, Decision CO-12, Decision CO-13, Decision CO-14, Decision CE-10, Decision CE-11]
     questions:
       - ["Vendor to confirm: QR content, choosing the gun on the screen after a remote authorization, AuthorizeRemoteTxRequests (open question 4).", "Nhà cung cấp cần xác nhận: nội dung mã QR, chọn súng trên màn hình sau khi xác thực từ xa, AuthorizeRemoteTxRequests (câu hỏi mở 4)."]
     old_codes: [F-H1]
@@ -2909,7 +2909,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-03]
-    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27]
+    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27, Decision CE-10, Decision CE-12]
     old_codes: [F-B2]
 
   - code: CHG-03
@@ -3037,7 +3037,7 @@ features:
     offer: included
     depends_on: [CHG-01, DRV-02]
     touches: [drivers, telemetry, identity]
-    sources: [deferred.md 62, Decision CO-12, Data IN-27]
+    sources: [deferred.md 62, Decision CO-12, Data IN-27, Decision CE-13]
     questions:
       - ["A guest truck (not registered with us) has no vehicle record: does the app ask for its plate when the QR charge starts?", "Xe khách vãng lai (chưa đăng ký với chúng ta) không có hồ sơ xe: ứng dụng có hỏi biển số khi bắt đầu sạc bằng QR không?"]
 
@@ -3064,7 +3064,7 @@ features:
     offer: tbd
     depends_on: [CHG-07, PAY-07]
     touches: [drivers]
-    sources: [Decision CO-12, Decision CO-06, Decision CO-13, deferred.md 90]
+    sources: [Decision CO-12, Decision CE-11, Decision CO-13, deferred.md 90]
     questions:
       - ["Does the Willdigits charger support VIN Autocharge over OCPP?", "Trụ Willdigits có hỗ trợ VIN Autocharge qua OCPP không?"]
 

@@ -137,7 +137,8 @@ erDiagram
   charging_location_access }o..|| organizations : "allowed_organization_id"
   charging_location_access }o..|| users : "granted_by"
   charging_location_access }o..o| users : "revoked_by"
-  charging_sessions }o..o| organizations : "organization_id"
+  charging_sessions }o..|| organizations : "organization_id"
+  charging_sessions }o..|| users : "started_by"
   notifications }o..o| organizations : "organization_id"
   support_cases }o..o| organizations : "organization_id"
   repair_partners |o..|| organizations : "organization_id"
@@ -332,6 +333,7 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [access_audit_logs](#access_audit_logs).user_id (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).granted_by (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).revoked_by (planned)
+- [charging_sessions](charging_sessions.md#charging_sessions).started_by (planned)
 - [charging_policy_versions](policy.md#charging_policy_versions).created_by (planned)
 - [organization_history](#organization_history).changed_by (planned)
 - [user_history](#user_history).user_id (planned)
