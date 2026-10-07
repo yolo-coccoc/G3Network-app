@@ -77,7 +77,7 @@ Keep an unchangeable record of every session: time, station, gun, power, kWh, st
 **Depends on:** [STN-03](charging_stations.md#stn-03)  
 **Needed by:** [CHG-01](#chg-01), [CHG-03](#chg-03), [CHG-04](#chg-04), [CRB-02](carbon.md#crb-02), [PAY-10](billing.md#pay-10), [PLT-01](platform.md#plt-01), [STN-07](charging_stations.md#stn-07), [STN-14](charging_stations.md#stn-14)  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27 · Decision CE-10 · Decision CE-12  
+**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27 · Decision CE-10 · Decision CE-12 · Decision CE-14  
 **Old codes:** F-B2
 
 <a id="chg-03"></a>

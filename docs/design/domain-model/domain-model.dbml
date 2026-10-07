@@ -1522,21 +1522,25 @@ Each Started / Updated / Ended event of a session.
 
 Table charging_session_measurements {
   measurement_id uuid [pk, note: 'Internal ID of the measurement. @vi Mã nội bộ của số đo. @example 0000000b-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  sampled_at timestamptz [pk, note: 'When the value was measured; hypertable time column. @vi Thời điểm đo; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:45:00Z']
-  session_id uuid [not null, note: 'Session the measurement belongs to. @vi Phiên sạc chứa số đo. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
-  measurand varchar(60) [not null, note: 'What was measured, as the OCPP measurand name. @vi Đại lượng được đo, theo tên measurand của OCPP. @example Energy.Active.Import.Register']
-  value numeric(24,6) [not null, note: 'Measured value; energy is always stored in Wh, other measurands in unit. @vi Giá trị đo; điện năng luôn lưu bằng Wh, các đại lượng khác theo đơn vị ở cột unit. @example 1568340.000000']
-  unit varchar(20) [note: 'Unit of value. @vi Đơn vị của giá trị. @example Wh']
-  context varchar(30) [note: 'Why the charger sent the reading. @vi Lý do trụ sạc gửi số đo. @example Sample.Periodic']
-  phase varchar(10) [note: 'Electrical phase the value refers to; NULL for DC. @vi Pha điện của giá trị; NULL với sạc DC. @example NULL']
-  location varchar(20) [note: 'Where it was measured. @vi Vị trí đo. @example Outlet']
+  sampled_at timestamptz [pk, note: 'The charger\'s time of the reading; hypertable time column. @vi Thời điểm đo theo đồng hồ của trụ; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:45:00Z']
+  session_id uuid [not null, note: 'Session the measurement belongs to. Readings sent outside a session (clock-aligned samples) are kept only in the raw OCPP log (CE-06, deferred.md 77). @vi Phiên sạc chứa số đo. Số đo gửi ngoài phiên (lấy mẫu theo đồng hồ) chỉ được giữ trong nhật ký OCPP thô (CE-06, deferred.md 77). @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  measurand varchar(60) [not null, note: 'What was measured, by its OCPP name (Energy.Active.Import.Register, Power.Active.Import, Current.Import, Voltage, SoC, Temperature); a vendor-specific name is stored as sent. @vi Đại lượng được đo, theo tên của OCPP (Energy.Active.Import.Register, Power.Active.Import, Current.Import, Voltage, SoC, Temperature); tên riêng của hãng được lưu đúng như gửi. @example Energy.Active.Import.Register']
+  value numeric(24,6) [not null, note: 'The reading. Energy is stored in Wh today. Planned (CE-14): every known measurand is converted by the gateway to one fixed unit when written: energy Wh (reactive varh), power W (reactive var, apparent VA), current A, voltage V, temperature Celsius, SoC and other percentages Percent; kilo-units are multiplied by 1000, Fahrenheit and K become Celsius. A vendor measurand is stored as sent. @vi Giá trị đo. Hiện điện năng được lưu bằng Wh. Dự kiến (CE-14): cổng OCPP đổi mọi đại lượng đã biết sang một đơn vị cố định khi ghi: điện năng Wh (phản kháng varh), công suất W (phản kháng var, biểu kiến VA), dòng điện A, điện áp V, nhiệt độ Celsius, SoC và các tỷ lệ khác Percent; đơn vị kilo nhân 1000, Fahrenheit và K đổi sang Celsius. Đại lượng riêng của hãng được lưu đúng như gửi. @example 1568340.000000']
+  unit varchar(20) [note: 'Unit of value, in OCPP spelling. Planned (CE-14): always the fixed unit of a known measurand; as sent, or NULL, for a vendor one. @vi Đơn vị của giá trị, viết theo OCPP. Dự kiến (CE-14): luôn là đơn vị cố định của đại lượng đã biết; đúng như gửi, hoặc NULL, với đại lượng riêng của hãng. @example Wh']
+  context varchar(30) [note: 'Why the charger sent the reading: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Planned (CE-14): required; the OCPP default Sample.Periodic is stored when the charger omits it. @vi Lý do trụ gửi số đo: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Dự kiến (CE-14): bắt buộc; lưu giá trị mặc định của OCPP là Sample.Periodic khi trụ không gửi. @example Sample.Periodic']
+  phase varchar(10) [note: 'Electrical phase the value refers to (L1, L2, L3 ...); NULL for DC, which is every charger we have. @vi Pha điện của giá trị (L1, L2, L3 ...); NULL với sạc DC, là mọi trụ chúng ta đang có. @example NULL']
+  measurement_location varchar(20) [note: '@built-as location: Where on the charging path the value was measured (OCPP calls it location): Outlet (the charger\'s output toward the truck: live progress and the billing fallback), Inlet (its input from the grid: losses and our electricity cost), Cable, EV (reported by the truck, e.g. SoC), Body (inside the charger cabinet). Every location is stored; features read Outlet, and EV for SoC, for now (CE-14). Renamed because location reads as a place (charging_locations). Planned (CE-14): required; the OCPP default Outlet is stored when the charger omits it. @vi Điểm đo trên đường sạc (OCPP gọi là location): Outlet (đầu ra của trụ về phía xe: tiến trình trực tiếp và số dự phòng khi tính tiền), Inlet (đầu vào từ lưới: tổn thất và chi phí điện của chúng ta), Cable, EV (do xe báo, ví dụ SoC), Body (bên trong tủ trụ). Mọi điểm đo đều được lưu; hiện các tính năng chỉ đọc Outlet, và EV cho SoC (CE-14). Đổi tên vì location dễ hiểu nhầm là địa điểm (charging_locations). Dự kiến (CE-14): bắt buộc; lưu giá trị mặc định của OCPP là Outlet khi trụ không gửi. @example Outlet']
   indexes {
     (session_id, measurand, sampled_at) [name: 'ix_charging_measurements_session_measurand_time']
   }
   Note: '''@status built @owner two-party @features F-B2 @hypertable sampled_at
-Every meter value a charger reports during a session (energy, power, SoC ...).
+Every reading a charger reports during a session (energy, power, current,
+voltage, SoC, temperature ...), append-only. The gateway stores each known
+measurand in one fixed unit and fills the OCPP defaults for a missing
+context or location, so readers never convert units or guess defaults
+(CE-14). No change history and no soft delete.
 @vi-name Số đo phiên sạc
-@vi Mọi giá trị đo trụ sạc gửi trong phiên (điện năng, công suất, SOC...).'''
+@vi Mọi giá trị đo trụ sạc gửi trong phiên (điện năng, công suất, dòng điện, điện áp, SoC, nhiệt độ...), chỉ ghi thêm. Cổng OCPP lưu mỗi đại lượng đã biết theo một đơn vị cố định và điền giá trị mặc định của OCPP khi thiếu context hoặc điểm đo, nên nơi đọc không phải đổi đơn vị hay đoán giá trị mặc định (CE-14). Không có lịch sử thay đổi và không xóa mềm.'''
 }
 
 Ref: charging_sessions.station_id > charging_stations.station_id [delete: restrict]

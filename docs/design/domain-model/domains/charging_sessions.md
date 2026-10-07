@@ -147,19 +147,23 @@ Each Started / Updated / Ended event of a session.
 
 **No. 40** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
-Every meter value a charger reports during a session (energy, power, SoC ...).
+Every reading a charger reports during a session (energy, power, current,
+voltage, SoC, temperature ...), append-only. The gateway stores each known
+measurand in one fixed unit and fills the OCPP defaults for a missing
+context or location, so readers never convert units or guess defaults
+(CE-14). No change history and no soft delete.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `measurement_id` | uuid | no | PK |  | Internal ID of the measurement. | `0000000b-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `sampled_at` | timestamptz | no | PK |  | When the value was measured; hypertable time column. | `2026-09-15T08:45:00Z` |
-| `session_id` | uuid | no | FK | [charging_sessions](#charging_sessions).session_id (on delete restrict) | Session the measurement belongs to. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
-| `measurand` | varchar(60) | no |  |  | What was measured, as the OCPP measurand name. | `Energy.Active.Import.Register` |
-| `value` | numeric(24,6) | no |  |  | Measured value; energy is always stored in Wh, other measurands in unit. | `1568340.000000` |
-| `unit` | varchar(20) | yes |  |  | Unit of value. | `Wh` |
-| `context` | varchar(30) | yes |  |  | Why the charger sent the reading. | `Sample.Periodic` |
-| `phase` | varchar(10) | yes |  |  | Electrical phase the value refers to; NULL for DC. | `NULL` |
-| `location` | varchar(20) | yes |  |  | Where it was measured. | `Outlet` |
+| `sampled_at` | timestamptz | no | PK |  | The charger's time of the reading; hypertable time column. | `2026-09-15T08:45:00Z` |
+| `session_id` | uuid | no | FK | [charging_sessions](#charging_sessions).session_id (on delete restrict) | Session the measurement belongs to. Readings sent outside a session (clock-aligned samples) are kept only in the raw OCPP log (CE-06, deferred.md 77). | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
+| `measurand` | varchar(60) | no |  |  | What was measured, by its OCPP name (Energy.Active.Import.Register, Power.Active.Import, Current.Import, Voltage, SoC, Temperature); a vendor-specific name is stored as sent. | `Energy.Active.Import.Register` |
+| `value` | numeric(24,6) | no |  |  | The reading. Energy is stored in Wh today. Planned (CE-14): every known measurand is converted by the gateway to one fixed unit when written: energy Wh (reactive varh), power W (reactive var, apparent VA), current A, voltage V, temperature Celsius, SoC and other percentages Percent; kilo-units are multiplied by 1000, Fahrenheit and K become Celsius. A vendor measurand is stored as sent. | `1568340.000000` |
+| `unit` | varchar(20) | yes |  |  | Unit of value, in OCPP spelling. Planned (CE-14): always the fixed unit of a known measurand; as sent, or NULL, for a vendor one. | `Wh` |
+| `context` | varchar(30) | yes |  |  | Why the charger sent the reading: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Planned (CE-14): required; the OCPP default Sample.Periodic is stored when the charger omits it. | `Sample.Periodic` |
+| `phase` | varchar(10) | yes |  |  | Electrical phase the value refers to (L1, L2, L3 ...); NULL for DC, which is every charger we have. | `NULL` |
+| `measurement_location` | varchar(20) | yes |  |  | **✏️ built today as `location`, to be renamed**: Where on the charging path the value was measured (OCPP calls it location): Outlet (the charger's output toward the truck: live progress and the billing fallback), Inlet (its input from the grid: losses and our electricity cost), Cable, EV (reported by the truck, e.g. SoC), Body (inside the charger cabinet). Every location is stored; features read Outlet, and EV for SoC, for now (CE-14). Renamed because location reads as a place (charging_locations). Planned (CE-14): required; the OCPP default Outlet is stored when the charger omits it. | `Outlet` |
 
 **Indexes**
 
