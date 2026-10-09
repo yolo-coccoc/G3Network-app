@@ -3762,10 +3762,10 @@ features:
       - ["Retry failed critical messages on another channel", "Gửi lại tin nguy cấp thất bại qua kênh khác"]
     surfaces: {backend: todo, portal: todo}
     priority: Should
-    release: P1.0
+    release: P1.1
     offer: internal
     depends_on: [NTF-02, NTF-03]
-    sources: [Data IN-47]
+    sources: [Data IN-47, Decision NT-12]
 
   - code: NTF-08
     name: Alert escalation

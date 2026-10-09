@@ -1764,19 +1764,47 @@ change history, no soft delete.
 Ref: notification_recipients.notification_id > notifications.notification_id [delete: restrict]
 Ref: notification_recipients.user_id > users.user_id [delete: restrict]
 
+Table organization_notification_settings {
+  organization_notification_setting_id uuid [pk, note: 'Internal ID of the setting. @vi Mã nội bộ của thiết lập. @example 3d9f5b1e-7a2c-4e8d-9b6f-2c5e8a1d4b77']
+  organization_id uuid [not null, note: 'The organization the switch belongs to. @vi Tổ chức sở hữu thiết lập. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  notification_type varchar(40) [not null, note: 'The kind of alert, a notificationtype value; each kind belongs to one service, so switching a kind switches that part of the service (NT-03). @vi Loại cảnh báo, một giá trị của notificationtype; mỗi loại thuộc một dịch vụ, nên bật/tắt một loại là bật/tắt phần đó của dịch vụ (NT-03). @example GEOFENCE_ALERT']
+  push_enabled boolean [not null, note: 'Send this kind as a push to the organization\'s recipients. @vi Gửi loại này dưới dạng thông báo đẩy tới người nhận của tổ chức. @example true']
+  email_enabled boolean [not null, note: 'Send it by e-mail to recipients who have an address on file. @vi Gửi qua e-mail tới người nhận có địa chỉ e-mail. @example false']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-10-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-10-05T07:00:00Z']
+  indexes {
+    (organization_id, notification_type) [unique, name: 'uq_organization_notification_settings_type']
+  }
+  Note: '''@status planned @owner customer @features F-F3 @tracked *
+An organization's push and e-mail switch for one kind of alert (NTF-05,
+NT-12). The app and portal inbox always shows every alert (NT-03); this only
+switches push and e-mail. Only exceptions are stored: a kind with no row uses
+the default from code (sensible defaults for new organizations, e.g. push on
+for every kind, e-mail on for CRITICAL kinds). No per-person choice (NT-03).
+SMS is added here when it comes (deferred.md 96). Change history on: turning
+a channel off is the ORG_ADMIN's decision.
+@vi-name Thiết lập kênh thông báo của tổ chức
+@vi Công tắc thông báo đẩy và e-mail của một tổ chức cho một loại cảnh báo (NTF-05, NT-12). Hộp thư trên ứng dụng và portal luôn hiện mọi cảnh báo (NT-03); bảng này chỉ bật/tắt thông báo đẩy và e-mail. Chỉ lưu ngoại lệ: loại không có dòng nào dùng mặc định trong mã nguồn (mặc định hợp lý cho tổ chức mới, ví dụ bật thông báo đẩy cho mọi loại, bật e-mail cho loại CRITICAL). Không có lựa chọn theo từng người (NT-03). SMS được thêm vào đây khi có (deferred.md 96). Bật lịch sử thay đổi: tắt một kênh là quyết định của ORG_ADMIN.'''
+}
+
+Ref: organization_notification_settings.organization_id > organizations.organization_id [delete: restrict]
+
 TableGroup notifications {
   notifications
   notification_recipients
+  organization_notification_settings
   Note: '''
-Alerts raised by other domains, stored for operators to poll.
+Alerts raised by other domains: who received them, and how they are delivered.
 
 - A **notification** is usually about one vehicle.
 - It belongs to the organization owning the truck at that moment, and reaches each **recipient** (a person) once, with that person's seen and read state (NT-09, NT-10). Channels at launch: the app and portal inbox, push and e-mail; SMS later (NT-11).
+- Each **organization** switches push and e-mail per kind of alert; only its exceptions to the defaults are stored (NT-12).
 
 @vi-name Thông báo & cảnh báo
-@vi Cảnh báo do các miền khác phát sinh, được lưu để người vận hành truy vấn.
+@vi Cảnh báo do các miền khác phát sinh: ai đã nhận, và được gửi bằng cách nào.
 - Một **thông báo** thường nói về một xe.
 - Thông báo thuộc tổ chức sở hữu xe tại thời điểm đó, và tới mỗi **người nhận** một lần, kèm trạng thái đã xem và đã đọc của người đó (NT-09, NT-10). Kênh khi ra mắt: hộp thư trên ứng dụng và portal, thông báo đẩy và e-mail; SMS để sau (NT-11).
+- Mỗi **tổ chức** bật/tắt thông báo đẩy và e-mail theo từng loại cảnh báo; chỉ lưu các ngoại lệ so với mặc định (NT-12).
 '''
 }
 

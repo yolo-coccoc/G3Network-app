@@ -170,7 +170,7 @@ Decide who receives each message: people whose role and plan include the service
 
 ### NTF-07 Delivery status tracking
 
-*Theo dõi trạng thái gửi* · Should · P1.0 · Internal only
+*Theo dõi trạng thái gửi* · Should · P1.1 · Internal only
 
 Record whether each push, SMS, OTP and e-mail was delivered, from the providers' reports.
 
@@ -187,7 +187,7 @@ Record whether each push, SMS, OTP and e-mail was delivered, from the providers'
 
 **Depends on:** [NTF-02](#ntf-02), [NTF-03](#ntf-03)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-47
+**Sources:** Data IN-47 · Decision NT-12
 
 <a id="ntf-08"></a>
 

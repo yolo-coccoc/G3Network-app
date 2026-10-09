@@ -55,7 +55,7 @@ A feature is done when every surface it needs is done. A cell shows
 | CHG | [Charging sessions](domains/charging_sessions.md) | `charging_sessions` | Starting a charge, the session record, receipts, history, energy per customer and reconciliation. | 7 |  | 1 |  |
 | POL | [Charging policy & warranty](domains/policy.md) | `policy` | Warranty-linked charging rules, violation detection with evidence, and warranty risk for drivers, fleets and the warranty team. | 6 |  |  |  |
 | PAY | [Plans, payments & invoices](domains/billing.md) | `billing` | What customers buy (features, plans, add-ons), how they pay for charging and subscriptions, tariffs and e-invoices. | 11 | 2 |  |  |
-| NTF | [Notifications](domains/notifications.md) | `notifications` | Delivering alerts and messages to the right people on the right channels (app, portal, push, SMS, e-mail). | 6 | 2 |  |  |
+| NTF | [Notifications](domains/notifications.md) | `notifications` | Delivering alerts and messages to the right people on the right channels (app, portal, push, SMS, e-mail). | 5 | 3 |  |  |
 | SUP | [Support & rescue](domains/support.md) | `support` | Support tickets, SOS, the support queue and SLA, and dispatching repair and rescue partners. | 4 | 3 |  |  |
 | MNT | [Maintenance & asset lifecycle](domains/maintenance.md) | `maintenance` | Maintenance reminders and bookings, repair records, maintenance costs, depreciation and component lifetime. | 1 |  | 6 | 3 |
 | SAF | [Driver safety & camera](domains/safety.md) | `scoring` | Driver safety scoring, the driver-monitoring camera, in-cab ADAS alerts, evidence clips and the camera's legal obligations. | 9 |  |  |  |
