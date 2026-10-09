@@ -34,6 +34,8 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
 each alert type is an enum value plus a payload shape.
+Reviewed last in the design review, after every domain that raises alerts
+(NT-08, which lists the points to settle).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|

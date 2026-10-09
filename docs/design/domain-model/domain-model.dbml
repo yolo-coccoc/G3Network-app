@@ -1636,8 +1636,10 @@ Table notifications {
   Note: '''@status built @owner customer @features F-A2,F-A3,F-A4,F-J1,F-J3
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
 each alert type is an enum value plus a payload shape.
+Reviewed last in the design review, after every domain that raises alerts
+(NT-08, which lists the points to settle).
 @vi-name Thông báo
-@vi Một cảnh báo (pin, bất thường, SOH, thiết bị mất kết nối...). Một bảng chung; mỗi loại cảnh báo là một giá trị enum và một cấu trúc payload.'''
+@vi Một cảnh báo (pin, bất thường, SOH, thiết bị mất kết nối...). Một bảng chung; mỗi loại cảnh báo là một giá trị enum và một cấu trúc payload. Được rà soát sau cùng, sau mọi miền phát sinh cảnh báo (NT-08, ghi các điểm cần quyết định).'''
 }
 
 Ref: notifications.organization_id > organizations.organization_id [delete: restrict]
