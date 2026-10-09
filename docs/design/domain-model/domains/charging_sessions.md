@@ -55,7 +55,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### charging_sessions
 
-**No. 40** · ✅ built · owner: **two-party** · features: F-B2, F-C5
+**No. 39** · ✅ built · owner: **two-party** · features: F-B2, F-C5
 
 One charge on one connector of one charger, from the QR scan to the stop
 (CE-10). The row is created PENDING when the driver scans the QR code in our
@@ -123,7 +123,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 
 ### charging_session_events
 
-**No. 41** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at` · **🗑️ to be removed (CE-15)**
+**No. 40** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at` · **🗑️ to be removed (CE-15)**
 
 Each Started / Updated / Ended event of a session. Dropped by the target
 design (CE-15): for OCPP 1.6J it copies the session's start and end, the raw
@@ -149,7 +149,7 @@ are designed when 2.0.1 support is built (deferred.md 78).
 
 ### charging_session_measurements
 
-**No. 42** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
+**No. 41** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
 Every reading a charger reports during a session (energy, power, current,
 voltage, SoC, temperature ...), append-only. The gateway stores each known

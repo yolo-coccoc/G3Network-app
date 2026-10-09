@@ -108,14 +108,17 @@ Tables: `fleets`, `fleet_vehicle_memberships`, `fleet_user_assignments`,
 ## 6. Drivers and trip planning
 
 Tables: `drivers`, `driving_sessions`, `trips`. Rules: DR-07, DR-10, DR-12.
-The built `drivers` routes still use the old assignment model and are
-reworked when check-in lands.
+The built `drivers` routes use the new profile shape (WP1 chunk 4): `POST /drivers/`
+takes an existing `membership_id`, not a phone and name (the invite flow is WP2),
+and the old `/drivers/{driver_id}/assignment(s)` routes are gone. Check-in is built
+as `POST /driving-sessions/` (and `/check-out`, `GET /driving-sessions/`) with
+`driver_id` and `vehicle_vin` in the body until authentication exists.
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Register a driver: phone, name, licence number/class/expiry | `POST /drivers/` (**built**); the invite goes by SMS (flow 2) | `409` person already has a driver profile in this organization; `400` licence expired |
+| Register a driver: membership, licence number/class/expiry | `POST /drivers/` `{membership_id, license_number, license_class, license_expires_on}` (**built**); the person and invite come from flow 2 | `409` person already has a driver profile in this organization; `400` licence expired |
 | Driver list and profile | `GET /drivers/`, `GET /drivers/{driver_id}`, `PATCH`, `DELETE` (**built**) | `404`; `409` |
-| Check a driver in to a truck for them | `POST /driving-sessions` `{check_in_method: "PORTAL", driver_id, vehicle_id}` (planned) | `403` driver inactive; a takeover is not an error (old session ends TAKEN_OVER) |
+| Check a driver in to a truck for them | `POST /driving-sessions/` `{check_in_method: "PORTAL", driver_id, vehicle_vin}` (**built** without the caller check) | `403` driver inactive; a takeover is not an error (old session ends TAKEN_OVER) |
 | Who is driving now / session history | `GET /driving-sessions?vehicle_id=&driver_id=&from=&to=` (planned; managers see full detail, DR-08) | none |
 | **Plan a trip**: origin, destination, planned times, driver, truck | `POST /trips` `{origin_name, destination_name, planned_start_at, planned_end_at, planned_driver_id, planned_vehicle_id}` (planned) | `404` driver or truck; `409` truck not in reach; end before start `422` |
 | Dispatch board (by day, status) | `GET /trips?from=&to=&status=&fleet_id=` (planned) | none |

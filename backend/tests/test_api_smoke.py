@@ -53,10 +53,12 @@ def test_openapi_registers_current_backend_routes() -> None:
     # F-E1/F-A6: fleet-wide telemetry views, served by telemetry (planner D7).
     assert "/api/v1/telemetry/fleets/{fleet_id}/vehicles/latest" in paths
     assert "/api/v1/telemetry/fleets/{fleet_id}/operating-report" in paths
-    # F-E4: the drivers domain and its vehicle-assignment endpoints.
+    # F-E4: the drivers domain and its driving-session (check-in) endpoints;
+    # the old vehicle-assignment routes are gone (DR-07).
     assert any(path.startswith("/api/v1/drivers") for path in paths)
-    assert "/api/v1/drivers/{driver_id}/assignment" in paths
-    assert "/api/v1/drivers/{driver_id}/assignments" in paths
+    assert "/api/v1/driving-sessions/" in paths
+    assert "/api/v1/driving-sessions/check-out" in paths
+    assert "/api/v1/drivers/{driver_id}/assignment" not in paths
     # F-I1/F-I2: the support domain's ticket and SOS intake endpoints.
     assert "/api/v1/support/cases" in paths
     assert "/api/v1/support/sos" in paths
@@ -88,13 +90,13 @@ def test_notification_poll_limit_is_bounded_like_other_list_endpoints() -> None:
     assert limit_schema["maximum"] == settings.API_MAX_PAGE_SIZE
 
 
-def test_fleet_vehicle_removal_and_driver_assignment_contracts() -> None:
-    """Fleet removal is by VIN; driver assignment answers 201 like fleet add (F-E1/F-E4)."""
+def test_fleet_vehicle_removal_and_driver_check_in_contracts() -> None:
+    """Fleet removal is by VIN; a check-in answers 201 like fleet add (F-E1/F-E4)."""
     paths = app.openapi()["paths"]
 
     assert "delete" in paths["/api/v1/fleets/{fleet_id}/vehicles/{vehicle_vin}"]
-    assignment = paths["/api/v1/drivers/{driver_id}/assignment"]["post"]
-    assert "201" in assignment["responses"]
+    check_in = paths["/api/v1/driving-sessions/"]["post"]
+    assert "201" in check_in["responses"]
 
 
 def test_people_package_routes_are_registered() -> None:

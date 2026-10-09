@@ -13,7 +13,8 @@
 - Base path `/api/v1`. **built** = the route exists in `backend/app/domains/*/router.py`
   today; **planned** = proposed path, nothing written yet. The `identity`,
   `billing` and trips parts are all planned; the old `drivers` assignment
-  routes (`POST /drivers/{driver_id}/assignment`) are replaced by check-in (DR-07,
+  routes (`POST /drivers/{driver_id}/assignment`) are gone, replaced by check-in
+  (`POST /driving-sessions/` is built with `driver_id` and `vehicle_vin` in the body; DR-07,
   [decision-log.md:339](../decisions/decision-log.md#L339)).
 - Every call except sign-up/login/OTP sends `Authorization: Bearer <access token>`.
   The token names the person and the organization the app is acting for

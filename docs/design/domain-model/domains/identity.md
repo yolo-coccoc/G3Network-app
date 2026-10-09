@@ -125,17 +125,16 @@ erDiagram
   batteries }o--|| organizations : "organization_id"
   telematics }o--|| organizations : "organization_id"
   telemetry }o--|| organizations : "organization_id"
-  drivers |o..|| memberships : "membership_id"
-  driver_vehicle_assignments }o..o| organizations : "organization_id"
-  driving_sessions }o..|| organizations : "organization_id"
-  trips }o..|| organizations : "organization_id"
-  trips }o..o| users : "planned_by"
+  drivers |o--|| memberships : "membership_id"
+  driving_sessions }o--|| organizations : "organization_id"
+  trips }o--|| organizations : "organization_id"
+  trips }o--o| users : "planned_by"
   fleets }o--|| organizations : "organization_id"
   fleet_vehicle_memberships }o--o| users : "added_by"
   fleet_vehicle_memberships }o--o| users : "removed_by"
-  fleet_user_assignments }o..|| memberships : "membership_id"
-  fleet_user_assignments }o..o| users : "assigned_by"
-  fleet_user_assignments }o..o| users : "unassigned_by"
+  fleet_user_assignments }o--|| memberships : "membership_id"
+  fleet_user_assignments }o--o| users : "assigned_by"
+  fleet_user_assignments }o--o| users : "unassigned_by"
   geofences }o..o| organizations : "organization_id"
   charging_locations }o..|| organizations : "organization_id"
   charging_location_access }o..|| organizations : "allowed_organization_id"
@@ -189,7 +188,7 @@ erDiagram
   wallet_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [battery_history](batteries.md#battery_history), [battery_model_history](batteries.md#battery_model_history), [charging_connector_history](charging_stations.md#charging_connector_history), [charging_evse_history](charging_stations.md#charging_evse_history), [charging_location_access](charging_stations.md#charging_location_access), [charging_location_history](charging_stations.md#charging_location_history), [charging_locations](charging_stations.md#charging_locations), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_session_bill_history](billing.md#charging_session_bill_history), [charging_sessions](charging_sessions.md#charging_sessions), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_station_history](charging_stations.md#charging_station_history), [driver_history](drivers.md#driver_history), [driver_scores](scoring.md#driver_scores), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [drivers](drivers.md#drivers), [driving_sessions](drivers.md#driving_sessions), [fleet_history](fleet.md#fleet_history), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notification_recipients](notifications.md#notification_recipients), [notifications](notifications.md#notifications), [organization_notification_setting_history](notifications.md#organization_notification_setting_history), [organization_notification_settings](notifications.md#organization_notification_settings), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [tariff_history](billing.md#tariff_history), [tariff_versions](billing.md#tariff_versions), [tariffs](billing.md#tariffs), [telematic_history](telematics.md#telematic_history), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trip_history](drivers.md#trip_history), [trips](drivers.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_model_history](vehicles.md#vehicle_model_history), [vehicles](vehicles.md#vehicles), [wallet_history](billing.md#wallet_history), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets), [warranty_history](warranties.md#warranty_history).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [battery_history](batteries.md#battery_history), [battery_model_history](batteries.md#battery_model_history), [charging_connector_history](charging_stations.md#charging_connector_history), [charging_evse_history](charging_stations.md#charging_evse_history), [charging_location_access](charging_stations.md#charging_location_access), [charging_location_history](charging_stations.md#charging_location_history), [charging_locations](charging_stations.md#charging_locations), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_policy_versions](policy.md#charging_policy_versions), [charging_session_bill_history](billing.md#charging_session_bill_history), [charging_sessions](charging_sessions.md#charging_sessions), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_station_history](charging_stations.md#charging_station_history), [driver_history](drivers.md#driver_history), [driver_scores](scoring.md#driver_scores), [drivers](drivers.md#drivers), [driving_sessions](drivers.md#driving_sessions), [fleet_history](fleet.md#fleet_history), [fleet_user_assignments](fleet.md#fleet_user_assignments), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [fleets](fleet.md#fleets), [geofences](fleet.md#geofences), [invoice_lines](billing.md#invoice_lines), [invoices](billing.md#invoices), [maintenance_bookings](support.md#maintenance_bookings), [notification_recipients](notifications.md#notification_recipients), [notifications](notifications.md#notifications), [organization_notification_setting_history](notifications.md#organization_notification_setting_history), [organization_notification_settings](notifications.md#organization_notification_settings), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [repair_partners](support.md#repair_partners), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [tariff_history](billing.md#tariff_history), [tariff_versions](billing.md#tariff_versions), [tariffs](billing.md#tariffs), [telematic_history](telematics.md#telematic_history), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trip_history](drivers.md#trip_history), [trips](drivers.md#trips), [vehicle_history](vehicles.md#vehicle_history), [vehicle_model_history](vehicles.md#vehicle_model_history), [vehicles](vehicles.md#vehicles), [wallet_history](billing.md#wallet_history), [wallet_transactions](billing.md#wallet_transactions), [wallets](billing.md#wallets), [warranty_history](warranties.md#warranty_history).
 
 ## Tables
 
@@ -243,9 +242,8 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [batteries](batteries.md#batteries).organization_id
 - [telematics](telematics.md#telematics).organization_id
 - [telemetry](telemetry.md#telemetry).organization_id
-- [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
-- [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
-- [trips](drivers.md#trips).organization_id (planned)
+- [driving_sessions](drivers.md#driving_sessions).organization_id
+- [trips](drivers.md#trips).organization_id
 - [fleets](fleet.md#fleets).organization_id
 - [geofences](fleet.md#geofences).organization_id (planned)
 - [charging_locations](charging_stations.md#charging_locations).organization_id (planned)
@@ -342,11 +340,11 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [user_role_assignments](#user_role_assignments).granted_by
 - [user_role_assignments](#user_role_assignments).revoked_by
 - [access_audit_logs](#access_audit_logs).user_id
-- [trips](drivers.md#trips).planned_by (planned)
+- [trips](drivers.md#trips).planned_by
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).added_by
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).removed_by
-- [fleet_user_assignments](fleet.md#fleet_user_assignments).assigned_by (planned)
-- [fleet_user_assignments](fleet.md#fleet_user_assignments).unassigned_by (planned)
+- [fleet_user_assignments](fleet.md#fleet_user_assignments).assigned_by
+- [fleet_user_assignments](fleet.md#fleet_user_assignments).unassigned_by
 - [charging_location_access](charging_stations.md#charging_location_access).granted_by (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).revoked_by (planned)
 - [charging_station_commands](charging_stations.md#charging_station_commands).requested_by (planned)
@@ -461,8 +459,8 @@ remembered in user_state); every query then filters by that organization.
 **Referenced by**
 
 - [user_role_assignments](#user_role_assignments).membership_id
-- [drivers](drivers.md#drivers).membership_id (planned)
-- [fleet_user_assignments](fleet.md#fleet_user_assignments).membership_id (planned)
+- [drivers](drivers.md#drivers).membership_id
+- [fleet_user_assignments](fleet.md#fleet_user_assignments).membership_id
 - [membership_history](#membership_history).membership_id (planned)
 
 ### membership_history

@@ -85,7 +85,7 @@ backend/
 │   │   ├── charging_stations/# Topology, directory, nearby search, OCPP 2.0.1 + 1.6J (F-C1, F-C2, F-D1, F-G2)
 │   │   ├── charging_sessions/# Session, event and measurement lifecycle (F-B2, F-C5)
 │   │   ├── notifications/    # Notification storage and polling (F-A2)
-│   │   ├── drivers/          # Driver profile and vehicle assignments (F-E4)
+│   │   ├── drivers/          # Driver profile, driving sessions, trips (F-E4)
 │   │   ├── fleet/            # Fleets and vehicle membership (F-E1)
 │   │   └── support/          # Support tickets and SOS (F-I1, F-I2)
 │   ├── api/

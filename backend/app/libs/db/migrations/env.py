@@ -36,10 +36,12 @@ from app.domains.charging_stations.models import (  # noqa: F401
 )
 from app.domains.drivers.models import (  # noqa: F401
     DriverModel,
-    DriverVehicleAssignmentModel,
+    DrivingSessionModel,
+    TripModel,
 )
 from app.domains.fleet.models import (  # noqa: F401
     FleetModel,
+    FleetUserAssignmentModel,
     FleetVehicleMembershipModel,
     GeofenceModel,
 )

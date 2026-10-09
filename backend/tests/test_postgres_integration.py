@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -41,6 +41,13 @@ import app.domains.vehicles.service as vehicle_service
 from app.domains.batteries.models import BatteryModel, BatteryModelModel
 from app.domains.batteries.types import BatteryStatus
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
+from app.domains.drivers.models import DriverModel, TripModel
+from app.domains.drivers.types import (
+    CheckInMethod,
+    DriverStatus,
+    DrivingSessionEndCause,
+    TripStatus,
+)
 from app.domains.fleet.exceptions import (
     FleetConflictError,
     FleetHasSubFleetsError,
@@ -56,8 +63,8 @@ from app.domains.fleet.schemas import (
     GeofencePolygonGeoJson,
     GeofenceUpdateRequest,
 )
-from app.domains.identity.models import OrganizationModel, UserModel
-from app.domains.identity.types import OrganizationStatus, UserStatus
+from app.domains.identity.models import MembershipModel, OrganizationModel, UserModel
+from app.domains.identity.types import MembershipStatus, OrganizationStatus, UserStatus
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import (
     NotificationListOrder,
@@ -1532,11 +1539,52 @@ async def _integration_vehicle(db: AsyncSession, *, license_plate: str) -> Vehic
     )
 
 
+async def _integration_driver(
+    db: AsyncSession, *, license_number: str, organization_id: UUID | None = None
+) -> DriverModel:
+    """Insert an organization (unless given), a user, a membership and a driver profile.
+
+    Args:
+        db: Session of the caller's transaction.
+        license_number: Licence number of the new profile.
+        organization_id: Existing organization to join, or ``None`` for a new one.
+
+    Returns:
+        The flushed driver profile.
+    """
+    if organization_id is None:
+        organization_id = await _integration_organization(db)
+    suffix = uuid4().hex[:9]
+    user = UserModel(
+        phone_number=f"+84{suffix}",
+        full_name="Integration Driver",
+        status=UserStatus.ACTIVE.value,
+    )
+    db.add(user)
+    await db.flush()
+    membership = MembershipModel(
+        organization_id=organization_id,
+        user_id=user.user_id,
+        status=MembershipStatus.ACTIVE.value,
+    )
+    db.add(membership)
+    await db.flush()
+    return await driver_repository.insert(
+        db,
+        {
+            "membership_id": membership.membership_id,
+            "license_number": license_number,
+            "license_class": "CE",
+            "license_expires_on": date(2030, 1, 1),
+        },
+    )
+
+
 @pytest.mark.asyncio
-async def test_driver_assignment_indexes_and_list_filters_on_postgres(
+async def test_driving_session_indexes_driver_history_and_trip_checks_on_postgres(
     temporary_database: str,
 ) -> None:
-    """One open assignment per vehicle and per driver; q/vehicle filters (F-E4, #85)."""
+    """One open session per truck and per driver, driver history, trip checks (DR-07/09/12)."""
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -1547,88 +1595,114 @@ async def test_driver_assignment_indexes_and_list_filters_on_postgres(
             second_vehicle = await _integration_vehicle(db, license_plate="IT-DRV-002")
             db.add_all([first_vehicle, second_vehicle])
             await db.flush()
-            alice = await driver_repository.insert(
-                db,
-                {
-                    "full_name": "Alice Nguyen",
-                    "phone_number": "0901000001",
-                    "license_number": "LIC-50%-A",
-                },
-            )
-            bob = await driver_repository.insert(
-                db,
-                {
-                    "full_name": "Bob Tran",
-                    "phone_number": "0901000002",
-                    "license_number": "LIC-B",
-                },
-            )
+            alice = await _integration_driver(db, license_number="LIC-50%-A")
+            bob = await _integration_driver(db, license_number="LIC-B")
             now = datetime.now(timezone.utc)
-            await driver_repository.insert_assignment(
+            first_session = await driver_repository.insert_session(
                 db,
+                organization_id=first_vehicle.organization_id,
                 driver_id=alice.driver_id,
                 vehicle_id=first_vehicle.vehicle_id,
-                assigned_at=now,
+                check_in_method=CheckInMethod.APP,
+                check_in_location=None,
+                started_at=now,
             )
 
-            # A second open assignment on the same vehicle, or for the same
-            # driver, breaks one of the two partial unique indexes.
-            with pytest.raises(IntegrityError):
-                async with db.begin_nested():
-                    await driver_repository.insert_assignment(
-                        db,
-                        driver_id=bob.driver_id,
-                        vehicle_id=first_vehicle.vehicle_id,
-                        assigned_at=now,
-                    )
-            with pytest.raises(IntegrityError):
-                async with db.begin_nested():
-                    await driver_repository.insert_assignment(
-                        db,
-                        driver_id=alice.driver_id,
-                        vehicle_id=second_vehicle.vehicle_id,
-                        assigned_at=now,
-                    )
+            # A second open session on the same truck, or for the same driver,
+            # breaks one of the two partial unique indexes.
+            for driver, vehicle in (
+                (bob, first_vehicle),
+                (alice, second_vehicle),
+            ):
+                with pytest.raises(IntegrityError):
+                    async with db.begin_nested():
+                        await driver_repository.insert_session(
+                            db,
+                            organization_id=vehicle.organization_id,
+                            driver_id=driver.driver_id,
+                            vehicle_id=vehicle.vehicle_id,
+                            check_in_method=CheckInMethod.APP,
+                            check_in_location=None,
+                            started_at=now,
+                        )
 
-            # Closed history rows are unlimited: close, then reopen.
-            open_assignment = await driver_repository.find_active_assignment_by_driver(
-                db, alice.driver_id
-            )
-            assert open_assignment is not None
-            await driver_repository.close_assignment(
-                db, open_assignment, unassigned_at=now + timedelta(minutes=1)
-            )
-            await driver_repository.insert_assignment(
+            # Closed rows are unlimited: close, then another driver checks in.
+            await driver_repository.close_session(
                 db,
+                first_session,
+                ended_at=now + timedelta(minutes=1),
+                end_cause=DrivingSessionEndCause.TAKEN_OVER,
+            )
+            await driver_repository.insert_session(
+                db,
+                organization_id=first_vehicle.organization_id,
                 driver_id=bob.driver_id,
                 vehicle_id=first_vehicle.vehicle_id,
-                assigned_at=now + timedelta(minutes=2),
+                check_in_method=CheckInMethod.PORTAL,
+                check_in_location=None,
+                started_at=now + timedelta(minutes=2),
             )
-
             by_vehicle = await driver_repository.list_all(
                 db, offset=0, limit=10, vehicle_id=first_vehicle.vehicle_id
             )
-            by_name = await driver_repository.list_all(
-                db, offset=0, limit=10, search_text="alice"
-            )
-            by_phone = await driver_repository.list_all(
-                db, offset=0, limit=10, search_text="000002"
-            )
-            # "%" is matched literally, never as a wildcard.
-            by_percent = await driver_repository.list_all(
+            by_licence = await driver_repository.list_all(
                 db, offset=0, limit=10, search_text="50%"
             )
             no_wildcard = await driver_repository.count(db, search_text="%")
-            unassigned_vehicle = await driver_repository.count(
-                db, vehicle_id=second_vehicle.vehicle_id
-            )
-
             assert [driver.driver_id for driver in by_vehicle] == [bob.driver_id]
-            assert [driver.driver_id for driver in by_name] == [alice.driver_id]
-            assert [driver.driver_id for driver in by_phone] == [bob.driver_id]
-            assert [driver.driver_id for driver in by_percent] == [alice.driver_id]
+            assert [driver.driver_id for driver in by_licence] == [alice.driver_id]
             assert no_wildcard == 1
-            assert unassigned_vehicle == 0
+            assert await driver_repository.count_sessions(db, vehicle_id=None) == 2
+
+            # A tracked edit writes driver_history; a deleted profile must be INACTIVE.
+            await driver_repository.update_fields(
+                db,
+                alice.driver_id,
+                {"status": DriverStatus.INACTIVE},
+                change_reason="Suspended after an accident",
+            )
+            history_reasons = (
+                (
+                    await db.execute(
+                        text(
+                            "SELECT change_reason FROM driver_history "
+                            "WHERE driver_id = :driver_id"
+                        ),
+                        {"driver_id": alice.driver_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert history_reasons == ["Suspended after an accident"]
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    await db.execute(
+                        text(
+                            "UPDATE drivers SET deleted_at = now(), status = 'ACTIVE' "
+                            "WHERE driver_id = :driver_id"
+                        ),
+                        {"driver_id": bob.driver_id},
+                    )
+
+            # A completed trip needs its session and its end time (DR-12).
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    db.add(
+                        TripModel(
+                            organization_id=first_vehicle.organization_id,
+                            status=TripStatus.COMPLETED.value,
+                        )
+                    )
+                    await db.flush()
+            db.add(
+                TripModel(
+                    organization_id=first_vehicle.organization_id,
+                    status=TripStatus.PLANNED.value,
+                    planned_driver_id=bob.driver_id,
+                )
+            )
+            await db.flush()
             await db.rollback()
     finally:
         await engine.dispose()
@@ -2157,14 +2231,7 @@ async def test_support_filters_and_sos_alert_on_postgres(
             vehicle = await _integration_vehicle(db, license_plate="IT-SUP-001")
             db.add(vehicle)
             await db.flush()
-            driver = await driver_repository.insert(
-                db,
-                {
-                    "full_name": "Chi Le",
-                    "phone_number": "0901000003",
-                    "license_number": "LIC-C",
-                },
-            )
+            driver = await _integration_driver(db, license_number="LIC-C")
             now = datetime.now(timezone.utc)
             past_due = now - timedelta(hours=1)
             future_due = now + timedelta(hours=1)

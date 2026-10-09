@@ -31,7 +31,8 @@
 | `telematics` → `notifications` | raise device-offline alerts | F-J1/F-J3 |
 | `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push) | F-J2 |
 | `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint) | F-B2, F-C5 |
-| `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` | F-E4 |
+| `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` (check-in: the truck and its owner) | F-E4 |
+| `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses) | F-E4 |
 | `support` → `vehicles` | `resolve_vehicle_reference_by_vin` | F-I1/F-I2 |
 | `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`) | F-I1/F-I2 |
 | `support` → `notifications` | `create_notification` (`SOS_ALERT` when an SOS is created) | F-I2 |

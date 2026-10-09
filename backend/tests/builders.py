@@ -18,13 +18,16 @@ from app.domains.charging_stations.models import ChargingStationModel
 from app.domains.charging_stations.types import (
     ChargingStationMaintenanceStatus,
 )
-from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
-from app.domains.drivers.types import DriverStatus
+from app.domains.drivers.models import DriverModel, DrivingSessionModel
+from app.domains.drivers.types import CheckInMethod, DriverStatus
 from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
 from app.domains.identity.models import OrganizationModel
 from app.domains.identity.types import (
+    MembershipPersonReference,
+    MembershipStatus,
     OrganizationLegalForm,
     OrganizationStatus,
+    UserStatus,
 )
 from app.domains.support.models import SupportCaseModel
 from app.domains.support.types import (
@@ -76,35 +79,63 @@ def build_vehicle_model_record() -> VehicleModelModel:
     )
 
 
-def build_driver_record(*, driver_id: UUID | None = None) -> DriverModel:
+def build_driver_record(
+    *, driver_id: UUID | None = None, membership_id: UUID | None = None
+) -> DriverModel:
     """Create a minimal ORM driver for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return DriverModel(
         driver_id=driver_id or uuid4(),
-        full_name="Test Driver",
-        phone_number="0900000001",
+        membership_id=membership_id or uuid4(),
         license_number="LICENSE-001",
+        license_class="CE",
+        license_expires_on=(now + timedelta(days=365)).date(),
         status=DriverStatus.ACTIVE,
+        status_reason=None,
         created_at=now,
         updated_at=now,
         deleted_at=None,
     )
 
 
-def build_assignment_record(
+def build_person_reference(
+    *,
+    membership_id: UUID | None = None,
+    membership_status: MembershipStatus = MembershipStatus.ACTIVE,
+    user_status: UserStatus = UserStatus.ACTIVE,
+    left_at: datetime | None = None,
+) -> MembershipPersonReference:
+    """Create the identity DTO a driver's membership resolves to."""
+    return MembershipPersonReference(
+        membership_id=membership_id or uuid4(),
+        organization_id=uuid4(),
+        user_id=uuid4(),
+        full_name="Test Driver",
+        phone_number="+84900000001",
+        membership_status=membership_status.value,
+        user_status=user_status.value,
+        left_at=left_at,
+    )
+
+
+def build_driving_session_record(
     *,
     driver_id: UUID,
     vehicle_id: UUID,
-    unassigned_at: datetime | None = None,
-) -> DriverVehicleAssignmentModel:
-    """Create a minimal ORM assignment, open unless `unassigned_at` is given."""
+    ended_at: datetime | None = None,
+) -> DrivingSessionModel:
+    """Create a minimal ORM driving session, open unless `ended_at` is given."""
     now = datetime.now(timezone.utc)
-    return DriverVehicleAssignmentModel(
-        assignment_id=uuid4(),
+    return DrivingSessionModel(
+        driving_session_id=uuid4(),
+        organization_id=uuid4(),
         driver_id=driver_id,
         vehicle_id=vehicle_id,
-        assigned_at=now,
-        unassigned_at=unassigned_at,
+        check_in_method=CheckInMethod.APP.value,
+        check_in_location=None,
+        started_at=now,
+        ended_at=ended_at,
+        end_cause=None,
         created_at=now,
         updated_at=now,
     )

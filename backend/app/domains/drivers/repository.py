@@ -4,13 +4,24 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from geoalchemy2.elements import WKBElement
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
-from app.domains.drivers.types import DriverStatus
+from app.domains.drivers.models import DriverModel, DrivingSessionModel
+from app.domains.drivers.types import (
+    CheckInMethod,
+    DriverStatus,
+    DrivingSessionEndCause,
+)
 from app.libs.common.clock import utc_now
+from app.libs.db.history import set_change_context
+
+# Reasons recorded in `driver_history` for a routine change (the person's
+# typed `status_reason` replaces them when the change carries one).
+DRIVER_EDITED_REASON = "Driver details edited"
+DRIVER_DELETED_REASON = "Driver deleted"
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> DriverModel:
@@ -51,48 +62,23 @@ async def get_by_id(db_session: AsyncSession, driver_id: UUID) -> DriverModel | 
     return query_result.scalar_one_or_none()
 
 
-async def find_by_phone_number(
-    db_session: AsyncSession, phone_number: str
+async def find_by_membership_id(
+    db_session: AsyncSession, membership_id: UUID
 ) -> DriverModel | None:
-    """Find a driver by phone number, excluding soft-deleted records.
+    """Find the driver profile of a membership, soft-deleted ones included.
+
+    The profile is unique per membership for good (a new membership gets a
+    new profile), so a deleted profile still blocks a second one.
 
     Args:
         db_session: Current database session.
-        phone_number: Contact phone number of the driver.
+        membership_id: Internal ID of the membership.
 
     Returns:
-        The driver record, or None if not found.
+        The driver record, or None if the membership has no profile.
     """
     query_result = await db_session.execute(
-        select(DriverModel).where(
-            and_(
-                DriverModel.phone_number == phone_number,
-                DriverModel.deleted_at.is_(None),
-            )
-        )
-    )
-    return query_result.scalar_one_or_none()
-
-
-async def find_by_license_number(
-    db_session: AsyncSession, license_number: str
-) -> DriverModel | None:
-    """Find a driver by license number, excluding soft-deleted records.
-
-    Args:
-        db_session: Current database session.
-        license_number: Driving license number of the driver.
-
-    Returns:
-        The driver record, or None if not found.
-    """
-    query_result = await db_session.execute(
-        select(DriverModel).where(
-            and_(
-                DriverModel.license_number == license_number,
-                DriverModel.deleted_at.is_(None),
-            )
-        )
+        select(DriverModel).where(DriverModel.membership_id == membership_id)
     )
     return query_result.scalar_one_or_none()
 
@@ -125,10 +111,10 @@ def _driver_list_conditions(
 
     Args:
         status_filter: Status filter, if any.
-        search_text: Case-insensitive substring of the full name, phone
-            number or license number, if any.
-        vehicle_id: Only the driver currently (open assignment) assigned to
-            this vehicle, if given.
+        search_text: Case-insensitive substring of the licence number, if any.
+            The name and phone number live on the user (another domain).
+        vehicle_id: Only the driver at the wheel of this vehicle now (open
+            driving session), if given.
 
     Returns:
         Conditions to AND together; always excludes soft-deleted drivers.
@@ -138,20 +124,17 @@ def _driver_list_conditions(
     if status_filter:
         conditions.append(DriverModel.status == status_filter)
     if search_text:
-        pattern = _contains_pattern(search_text)
         conditions.append(
-            or_(
-                DriverModel.full_name.ilike(pattern, escape="\\"),
-                DriverModel.phone_number.ilike(pattern, escape="\\"),
-                DriverModel.license_number.ilike(pattern, escape="\\"),
+            DriverModel.license_number.ilike(
+                _contains_pattern(search_text), escape="\\"
             )
         )
     if vehicle_id is not None:
         conditions.append(
             DriverModel.driver_id.in_(
-                select(DriverVehicleAssignmentModel.driver_id).where(
-                    DriverVehicleAssignmentModel.vehicle_id == vehicle_id,
-                    DriverVehicleAssignmentModel.unassigned_at.is_(None),
+                select(DrivingSessionModel.driver_id).where(
+                    DrivingSessionModel.vehicle_id == vehicle_id,
+                    DrivingSessionModel.ended_at.is_(None),
                 )
             )
         )
@@ -174,10 +157,8 @@ async def list_all(
         offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Status filter, if any.
-        search_text: Case-insensitive substring of the full name, phone
-            number or license number, if any.
-        vehicle_id: Only the driver currently assigned to this vehicle, if
-            given.
+        search_text: Case-insensitive substring of the licence number, if any.
+        vehicle_id: Only the driver at the wheel of this vehicle now, if given.
 
     Returns:
         List of driver records, newest first.
@@ -208,10 +189,8 @@ async def count(
     Args:
         db_session: Current database session.
         status_filter: Status filter, if any.
-        search_text: Case-insensitive substring of the full name, phone
-            number or license number, if any.
-        vehicle_id: Only the driver currently assigned to this vehicle, if
-            given.
+        search_text: Case-insensitive substring of the licence number, if any.
+        vehicle_id: Only the driver at the wheel of this vehicle now, if given.
 
     Returns:
         Total number of matching drivers.
@@ -227,7 +206,11 @@ async def count(
 
 
 async def update_fields(
-    db_session: AsyncSession, driver_id: UUID, values: dict[str, Any]
+    db_session: AsyncSession,
+    driver_id: UUID,
+    values: dict[str, Any],
+    *,
+    change_reason: str = DRIVER_EDITED_REASON,
 ) -> DriverModel | None:
     """Update the specified fields of a driver.
 
@@ -235,6 +218,7 @@ async def update_fields(
         db_session: Current database session.
         driver_id: Internal ID of the driver.
         values: Fields to update.
+        change_reason: Reason recorded in the driver's change history.
 
     Returns:
         The updated driver record, or None if not found.
@@ -243,6 +227,9 @@ async def update_fields(
     if not driver_record:
         return None
 
+    # Drivers are change-tracked: the trigger needs the reason in this
+    # transaction (no acting user yet, DM-29).
+    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
     for field_name, value in values.items():
         if hasattr(driver_record, field_name):
             setattr(driver_record, field_name, value)
@@ -253,12 +240,15 @@ async def update_fields(
     return driver_record
 
 
-async def soft_delete(db_session: AsyncSession, driver_id: UUID) -> DriverModel | None:
-    """Soft-delete a driver by updating deleted_at and status.
+async def soft_delete(
+    db_session: AsyncSession, driver_id: UUID, *, status_reason: str
+) -> DriverModel | None:
+    """Soft-delete a driver: INACTIVE, `deleted_at` set and the reason stored (DM-25).
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
+        status_reason: Why the profile left the system.
 
     Returns:
         The driver record after soft delete, or None if not found.
@@ -267,159 +257,197 @@ async def soft_delete(db_session: AsyncSession, driver_id: UUID) -> DriverModel 
     if not driver_record:
         return None
 
+    await set_change_context(
+        db_session, changed_by=None, change_reason=DRIVER_DELETED_REASON
+    )
     driver_record.deleted_at = utc_now()
     driver_record.status = DriverStatus.INACTIVE
+    driver_record.status_reason = status_reason
     await db_session.flush()
     await db_session.refresh(driver_record)
     return driver_record
 
 
-async def find_active_assignment_by_vehicle(
+async def find_open_session_by_vehicle(
     db_session: AsyncSession, vehicle_id: UUID
-) -> DriverVehicleAssignmentModel | None:
-    """Find the open assignment for a vehicle, if any.
+) -> DrivingSessionModel | None:
+    """Find the open driving session of a truck, if any.
 
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
 
     Returns:
-        The open assignment record, or None if the vehicle is unassigned.
+        The open session, or None if nobody is checked in to the truck.
     """
     query_result = await db_session.execute(
-        select(DriverVehicleAssignmentModel).where(
-            and_(
-                DriverVehicleAssignmentModel.vehicle_id == vehicle_id,
-                DriverVehicleAssignmentModel.unassigned_at.is_(None),
-            )
+        select(DrivingSessionModel).where(
+            DrivingSessionModel.vehicle_id == vehicle_id,
+            DrivingSessionModel.ended_at.is_(None),
         )
     )
     return query_result.scalar_one_or_none()
 
 
-async def find_active_assignment_by_driver(
+async def find_open_session_by_driver(
     db_session: AsyncSession, driver_id: UUID
-) -> DriverVehicleAssignmentModel | None:
-    """Find the open assignment for a driver, if any.
+) -> DrivingSessionModel | None:
+    """Find the open driving session of a driver, if any.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
 
     Returns:
-        The open assignment record, or None if the driver is unassigned.
+        The open session, or None if the driver is not checked in anywhere.
     """
     query_result = await db_session.execute(
-        select(DriverVehicleAssignmentModel).where(
-            and_(
-                DriverVehicleAssignmentModel.driver_id == driver_id,
-                DriverVehicleAssignmentModel.unassigned_at.is_(None),
-            )
+        select(DrivingSessionModel).where(
+            DrivingSessionModel.driver_id == driver_id,
+            DrivingSessionModel.ended_at.is_(None),
         )
     )
     return query_result.scalar_one_or_none()
 
 
-async def list_assignments_by_driver(
+async def list_sessions(
     db_session: AsyncSession,
-    driver_id: UUID,
     *,
     offset: int,
     limit: int,
-) -> list[DriverVehicleAssignmentModel]:
-    """Get a driver's assignment history, newest first.
+    driver_id: UUID | None = None,
+    vehicle_id: UUID | None = None,
+) -> list[DrivingSessionModel]:
+    """Get a paginated list of driving sessions, newest first.
 
     Args:
         db_session: Current database session.
-        driver_id: Internal ID of the driver.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
+        driver_id: Only this driver's sessions, if given.
+        vehicle_id: Only this truck's sessions, if given.
 
     Returns:
-        Assignment records ordered by `assigned_at` descending.
+        Session records ordered by `started_at` descending.
     """
     query_result = await db_session.execute(
-        select(DriverVehicleAssignmentModel)
-        .where(DriverVehicleAssignmentModel.driver_id == driver_id)
-        .order_by(DriverVehicleAssignmentModel.assigned_at.desc())
+        select(DrivingSessionModel)
+        .where(*_session_conditions(driver_id, vehicle_id))
+        .order_by(DrivingSessionModel.started_at.desc())
         .offset(offset)
         .limit(limit)
     )
     return list(query_result.scalars().all())
 
 
-async def count_assignments_by_driver(db_session: AsyncSession, driver_id: UUID) -> int:
-    """Count a driver's total assignment history.
+async def count_sessions(
+    db_session: AsyncSession,
+    *,
+    driver_id: UUID | None = None,
+    vehicle_id: UUID | None = None,
+) -> int:
+    """Count the driving sessions matching the same filters as `list_sessions`.
 
     Args:
         db_session: Current database session.
-        driver_id: Internal ID of the driver.
+        driver_id: Only this driver's sessions, if given.
+        vehicle_id: Only this truck's sessions, if given.
 
     Returns:
-        Total number of assignment records, open and closed.
+        Total number of matching sessions, open and closed.
     """
     query_result = await db_session.execute(
-        select(func.count(DriverVehicleAssignmentModel.assignment_id)).where(
-            DriverVehicleAssignmentModel.driver_id == driver_id
+        select(func.count(DrivingSessionModel.driving_session_id)).where(
+            *_session_conditions(driver_id, vehicle_id)
         )
     )
     return query_result.scalar() or 0
 
 
-async def insert_assignment(
+def _session_conditions(
+    driver_id: UUID | None, vehicle_id: UUID | None
+) -> list[ColumnElement[bool]]:
+    """Build the optional driver/truck conditions of a session query.
+
+    Args:
+        driver_id: Only this driver's sessions, if given.
+        vehicle_id: Only this truck's sessions, if given.
+
+    Returns:
+        Conditions to AND together (empty when no filter is given).
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if driver_id is not None:
+        conditions.append(DrivingSessionModel.driver_id == driver_id)
+    if vehicle_id is not None:
+        conditions.append(DrivingSessionModel.vehicle_id == vehicle_id)
+    return conditions
+
+
+async def insert_session(
     db_session: AsyncSession,
     *,
+    organization_id: UUID,
     driver_id: UUID,
     vehicle_id: UUID,
-    assigned_at: datetime,
-) -> DriverVehicleAssignmentModel:
-    """Open a new assignment and flush it.
+    check_in_method: CheckInMethod,
+    check_in_location: WKBElement | None,
+    started_at: datetime,
+) -> DrivingSessionModel:
+    """Open a driving session and flush it.
 
     Args:
-        db_session: Current database session; the repository does not
-            commit the transaction.
-        driver_id: Internal ID of the driver.
-        vehicle_id: Internal ID of the vehicle.
-        assigned_at: When the assignment begins.
+        db_session: Current database session; the repository does not commit.
+        organization_id: The truck's owner now, written once (DM-24 case C).
+        driver_id: Driver profile checking in.
+        vehicle_id: Truck being driven.
+        check_in_method: How the driver checked in.
+        check_in_location: Phone position at check-in, if known.
+        started_at: Check-in time.
 
     Returns:
-        The newly created assignment record.
+        The newly created session.
 
     Side Effects:
-        Adds a record and calls `flush()`, which is where the two partial
-        unique indexes would raise `IntegrityError` if either the driver
-        or the vehicle already has a different open assignment.
+        `flush()` is where the two partial unique indexes raise
+        `IntegrityError` when the truck or the driver already has an open
+        session.
     """
-    assignment_record = DriverVehicleAssignmentModel(
+    session_record = DrivingSessionModel(
+        organization_id=organization_id,
         driver_id=driver_id,
         vehicle_id=vehicle_id,
-        assigned_at=assigned_at,
+        check_in_method=check_in_method.value,
+        check_in_location=check_in_location,
+        started_at=started_at,
     )
-    db_session.add(assignment_record)
+    db_session.add(session_record)
     await db_session.flush()
-    await db_session.refresh(assignment_record)
-    return assignment_record
+    await db_session.refresh(session_record)
+    return session_record
 
 
-async def close_assignment(
+async def close_session(
     db_session: AsyncSession,
-    assignment_record: DriverVehicleAssignmentModel,
+    session_record: DrivingSessionModel,
     *,
-    unassigned_at: datetime,
-) -> DriverVehicleAssignmentModel:
-    """Close an open assignment.
+    ended_at: datetime,
+    end_cause: DrivingSessionEndCause,
+) -> DrivingSessionModel:
+    """Close an open driving session.
 
     Args:
-        db_session: Current database session; the repository does not
-            commit the transaction.
-        assignment_record: The open assignment to close.
-        unassigned_at: When the assignment ends.
+        db_session: Current database session; the repository does not commit.
+        session_record: The open session to close.
+        ended_at: When the session ends.
+        end_cause: Why it ends.
 
     Returns:
-        The closed assignment record.
+        The closed session.
     """
-    assignment_record.unassigned_at = unassigned_at
-    assignment_record.updated_at = utc_now()
+    session_record.ended_at = ended_at
+    session_record.end_cause = end_cause.value
+    session_record.updated_at = utc_now()
     await db_session.flush()
-    await db_session.refresh(assignment_record)
-    return assignment_record
+    await db_session.refresh(session_record)
+    return session_record

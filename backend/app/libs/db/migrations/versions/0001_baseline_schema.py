@@ -73,6 +73,8 @@ _TRACKED_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("batteries", "battery_history", ()),
     ("warranties", "warranty_history", ()),
     ("telematics", "telematic_history", ()),
+    ("drivers", "driver_history", ()),
+    ("trips", "trip_history", ()),
 )
 
 # Period views over change history (DM-22, DM-27). Code reads the periods of a
@@ -281,30 +283,6 @@ def upgrade() -> None:
         unique=False,
         postgresql_using="gist",
     )
-    op.create_table(
-        "drivers",
-        sa.Column("driver_id", sa.UUID(), nullable=False),
-        sa.Column("full_name", sa.String(length=100), nullable=False),
-        sa.Column("phone_number", sa.String(length=20), nullable=False),
-        sa.Column("license_number", sa.String(length=50), nullable=False),
-        sa.Column(
-            "status", sa.Enum("ACTIVE", "INACTIVE", name="driverstatus"), nullable=False
-        ),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("driver_id"),
-    )
-    op.create_index(
-        op.f("ix_drivers_deleted_at"), "drivers", ["deleted_at"], unique=False
-    )
-    op.create_index(
-        op.f("ix_drivers_license_number"), "drivers", ["license_number"], unique=True
-    )
-    op.create_index(
-        op.f("ix_drivers_phone_number"), "drivers", ["phone_number"], unique=True
-    )
-    op.create_index(op.f("ix_drivers_status"), "drivers", ["status"], unique=False)
     op.create_table(
         "users",
         sa.Column("user_id", sa.UUID(), nullable=False),
@@ -517,55 +495,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_table(
-        "driver_vehicle_assignments",
-        sa.Column("assignment_id", sa.UUID(), nullable=False),
-        sa.Column("driver_id", sa.UUID(), nullable=False),
-        sa.Column("vehicle_id", sa.UUID(), nullable=False),
-        sa.Column("assigned_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("unassigned_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
-        ),
-        sa.ForeignKeyConstraint(
-            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("assignment_id"),
-    )
-    op.create_index(
-        op.f("ix_driver_vehicle_assignments_driver_id"),
-        "driver_vehicle_assignments",
-        ["driver_id"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_driver_vehicle_assignments_driver_time",
-        "driver_vehicle_assignments",
-        ["driver_id", "assigned_at"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_driver_vehicle_assignments_vehicle_id"),
-        "driver_vehicle_assignments",
-        ["vehicle_id"],
-        unique=False,
-    )
-    op.create_index(
-        "uq_driver_vehicle_assignments_active_driver",
-        "driver_vehicle_assignments",
-        ["driver_id"],
-        unique=True,
-        postgresql_where=sa.text("unassigned_at IS NULL"),
-    )
-    op.create_index(
-        "uq_driver_vehicle_assignments_active_vehicle",
-        "driver_vehicle_assignments",
-        ["vehicle_id"],
-        unique=True,
-        postgresql_where=sa.text("unassigned_at IS NULL"),
-    )
-    op.create_table(
         "legal_documents",
         sa.Column("legal_document_id", sa.UUID(), nullable=False),
         sa.Column("purpose", sa.String(length=30), nullable=False),
@@ -642,113 +571,6 @@ def upgrade() -> None:
         "ix_one_time_codes_phone_time",
         "one_time_codes",
         ["phone_number", "created_at"],
-        unique=False,
-    )
-    op.create_table(
-        "support_cases",
-        sa.Column("case_id", sa.UUID(), nullable=False),
-        sa.Column(
-            "case_type",
-            sa.Enum("TICKET", "SOS", name="supportcasetype"),
-            nullable=False,
-        ),
-        sa.Column(
-            "category",
-            sa.Enum(
-                "TECHNICAL",
-                "BATTERY",
-                "CHARGING",
-                "BREAKDOWN",
-                "ACCIDENT",
-                "BILLING",
-                "OTHER",
-                name="supportcasecategory",
-            ),
-            nullable=False,
-        ),
-        sa.Column(
-            "channel",
-            sa.Enum("IN_APP", "ZALO", "HOTLINE", name="supportcasechannel"),
-            nullable=False,
-        ),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "OPEN",
-                "ACKNOWLEDGED",
-                "RESOLVED",
-                "CLOSED",
-                "CANCELLED",
-                name="supportcasestatus",
-            ),
-            nullable=False,
-        ),
-        sa.Column("vehicle_id", sa.UUID(), nullable=True),
-        sa.Column("driver_id", sa.UUID(), nullable=True),
-        sa.Column("vin", sa.String(length=17), nullable=True),
-        sa.Column("error_code", sa.String(length=50), nullable=True),
-        sa.Column(
-            "location",
-            geoalchemy2.types.Geography(
-                geometry_type="POINT",
-                srid=4326,
-                dimension=2,
-                spatial_index=False,
-                from_text="ST_GeogFromText",
-                name="geography",
-            ),
-            nullable=True,
-        ),
-        sa.Column("subject", sa.String(length=200), nullable=True),
-        sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("sla_response_minutes", sa.Integer(), nullable=False),
-        sa.Column("response_due_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("first_responded_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("closed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
-        ),
-        sa.ForeignKeyConstraint(
-            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("case_id"),
-    )
-    op.create_index(
-        "ix_support_cases_deleted_at", "support_cases", ["deleted_at"], unique=False
-    )
-    op.create_index(
-        op.f("ix_support_cases_driver_id"), "support_cases", ["driver_id"], unique=False
-    )
-    op.create_index(
-        "ix_support_cases_response_due_pending",
-        "support_cases",
-        ["response_due_at"],
-        unique=False,
-        postgresql_where=sa.text("first_responded_at IS NULL"),
-    )
-    op.create_index(
-        op.f("ix_support_cases_status"), "support_cases", ["status"], unique=False
-    )
-    op.create_index(
-        "ix_support_cases_status_created_at",
-        "support_cases",
-        ["status", "created_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_support_cases_vehicle_created_at",
-        "support_cases",
-        ["vehicle_id", "created_at"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_support_cases_vehicle_id"),
-        "support_cases",
-        ["vehicle_id"],
         unique=False,
     )
     op.create_table(
@@ -1480,6 +1302,337 @@ def upgrade() -> None:
         postgresql_where=sa.text("role = 'ORG_ADMIN' AND revoked_at IS NULL"),
     )
     op.create_table(
+        "drivers",
+        sa.Column("driver_id", sa.UUID(), nullable=False),
+        sa.Column("membership_id", sa.UUID(), nullable=False),
+        sa.Column("license_number", sa.String(length=50), nullable=False),
+        sa.Column("license_class", sa.String(length=5), nullable=False),
+        sa.Column("license_expires_on", sa.Date(), nullable=False),
+        sa.Column(
+            "status", sa.Enum("ACTIVE", "INACTIVE", name="driverstatus"), nullable=False
+        ),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_drivers_deleted_is_inactive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["membership_id"], ["memberships.membership_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("driver_id"),
+        sa.UniqueConstraint("membership_id"),
+    )
+    op.create_index(
+        op.f("ix_drivers_license_number"), "drivers", ["license_number"], unique=False
+    )
+    op.create_table(
+        "driving_sessions",
+        sa.Column("driving_session_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("driver_id", sa.UUID(), nullable=False),
+        sa.Column("vehicle_id", sa.UUID(), nullable=False),
+        sa.Column("check_in_method", sa.String(length=10), nullable=False),
+        sa.Column(
+            "check_in_location",
+            geoalchemy2.types.Geography(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                from_text="ST_GeogFromText",
+                name="geography",
+                nullable=True,
+                spatial_index=False,
+            ),
+            nullable=True,
+        ),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("end_cause", sa.String(length=20), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("driving_session_id"),
+    )
+    op.create_index(
+        "ix_driving_sessions_driver_time",
+        "driving_sessions",
+        ["driver_id", "started_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_driving_sessions_vehicle_time",
+        "driving_sessions",
+        ["vehicle_id", "started_at"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_driving_sessions_open_driver",
+        "driving_sessions",
+        ["driver_id"],
+        unique=True,
+        postgresql_where=sa.text("ended_at IS NULL"),
+    )
+    op.create_index(
+        "uq_driving_sessions_open_vehicle",
+        "driving_sessions",
+        ["vehicle_id"],
+        unique=True,
+        postgresql_where=sa.text("ended_at IS NULL"),
+    )
+    op.create_table(
+        "trips",
+        sa.Column("trip_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("planned_by", sa.UUID(), nullable=True),
+        sa.Column("planned_driver_id", sa.UUID(), nullable=True),
+        sa.Column("planned_vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("origin_name", sa.String(length=200), nullable=True),
+        sa.Column("destination_name", sa.String(length=200), nullable=True),
+        sa.Column("planned_start_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("planned_end_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("driving_session_id", sa.UUID(), nullable=True),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "start_location",
+            geoalchemy2.types.Geography(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                from_text="ST_GeogFromText",
+                name="geography",
+                nullable=True,
+                spatial_index=False,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "end_location",
+            geoalchemy2.types.Geography(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                from_text="ST_GeogFromText",
+                name="geography",
+                nullable=True,
+                spatial_index=False,
+            ),
+            nullable=True,
+        ),
+        sa.Column(
+            "start_odometer_km", sa.Numeric(precision=10, scale=1), nullable=True
+        ),
+        sa.Column("end_odometer_km", sa.Numeric(precision=10, scale=1), nullable=True),
+        sa.Column("start_soc_percent", sa.Numeric(precision=5, scale=2), nullable=True),
+        sa.Column("end_soc_percent", sa.Numeric(precision=5, scale=2), nullable=True),
+        sa.Column("declared_load_status", sa.String(length=20), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "status <> 'COMPLETED' OR ended_at IS NOT NULL",
+            name="ck_trips_completed_has_end",
+        ),
+        sa.CheckConstraint(
+            "status <> 'PLANNED' OR (driving_session_id IS NULL "
+            "AND started_at IS NULL AND ended_at IS NULL)",
+            name="ck_trips_planned_has_no_actuals",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('IN_PROGRESS', 'COMPLETED') "
+            "OR (driving_session_id IS NOT NULL AND started_at IS NOT NULL)",
+            name="ck_trips_started_has_session",
+        ),
+        sa.ForeignKeyConstraint(
+            ["driving_session_id"],
+            ["driving_sessions.driving_session_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["planned_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["planned_driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["planned_vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("trip_id"),
+    )
+    op.create_index(
+        "ix_trips_organization_planned_start",
+        "trips",
+        ["organization_id", "planned_start_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_trips_planned_driver_status",
+        "trips",
+        ["planned_driver_id", "status"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_trips_session_started",
+        "trips",
+        ["driving_session_id", "started_at"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_trips_session_in_progress",
+        "trips",
+        ["driving_session_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'IN_PROGRESS'"),
+    )
+    op.create_table(
+        "support_cases",
+        sa.Column("case_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "case_type",
+            sa.Enum("TICKET", "SOS", name="supportcasetype"),
+            nullable=False,
+        ),
+        sa.Column(
+            "category",
+            sa.Enum(
+                "TECHNICAL",
+                "BATTERY",
+                "CHARGING",
+                "BREAKDOWN",
+                "ACCIDENT",
+                "BILLING",
+                "OTHER",
+                name="supportcasecategory",
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "channel",
+            sa.Enum("IN_APP", "ZALO", "HOTLINE", name="supportcasechannel"),
+            nullable=False,
+        ),
+        sa.Column(
+            "status",
+            sa.Enum(
+                "OPEN",
+                "ACKNOWLEDGED",
+                "RESOLVED",
+                "CLOSED",
+                "CANCELLED",
+                name="supportcasestatus",
+            ),
+            nullable=False,
+        ),
+        sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("driver_id", sa.UUID(), nullable=True),
+        sa.Column("vin", sa.String(length=17), nullable=True),
+        sa.Column("error_code", sa.String(length=50), nullable=True),
+        sa.Column(
+            "location",
+            geoalchemy2.types.Geography(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                spatial_index=False,
+                from_text="ST_GeogFromText",
+                name="geography",
+            ),
+            nullable=True,
+        ),
+        sa.Column("subject", sa.String(length=200), nullable=True),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("sla_response_minutes", sa.Integer(), nullable=False),
+        sa.Column("response_due_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("first_responded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("closed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("case_id"),
+    )
+    op.create_index(
+        "ix_support_cases_deleted_at", "support_cases", ["deleted_at"], unique=False
+    )
+    op.create_index(
+        op.f("ix_support_cases_driver_id"), "support_cases", ["driver_id"], unique=False
+    )
+    op.create_index(
+        "ix_support_cases_response_due_pending",
+        "support_cases",
+        ["response_due_at"],
+        unique=False,
+        postgresql_where=sa.text("first_responded_at IS NULL"),
+    )
+    op.create_index(
+        op.f("ix_support_cases_status"), "support_cases", ["status"], unique=False
+    )
+    op.create_index(
+        "ix_support_cases_status_created_at",
+        "support_cases",
+        ["status", "created_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_support_cases_vehicle_created_at",
+        "support_cases",
+        ["vehicle_id", "created_at"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_support_cases_vehicle_id"),
+        "support_cases",
+        ["vehicle_id"],
+        unique=False,
+    )
+    op.create_table(
+        "fleet_user_assignments",
+        sa.Column("fleet_user_assignment_id", sa.UUID(), nullable=False),
+        sa.Column("fleet_id", sa.UUID(), nullable=False),
+        sa.Column("membership_id", sa.UUID(), nullable=False),
+        sa.Column("assigned_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("assigned_by", sa.UUID(), nullable=True),
+        sa.Column("unassigned_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("unassigned_by", sa.UUID(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["assigned_by"], ["users.user_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["fleet_id"], ["fleets.fleet_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["membership_id"], ["memberships.membership_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["unassigned_by"], ["users.user_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("fleet_user_assignment_id"),
+    )
+    op.create_index(
+        "uq_fleet_user_assignments_active",
+        "fleet_user_assignments",
+        ["fleet_id", "membership_id"],
+        unique=True,
+        postgresql_where=sa.text("unassigned_at IS NULL"),
+    )
+    op.create_table(
         "charging_session_events",
         sa.Column("event_id", sa.UUID(), nullable=False),
         sa.Column("event_occurred_at", sa.DateTime(timezone=True), nullable=False),
@@ -1523,7 +1676,6 @@ def upgrade() -> None:
         ["session_id", "measurand", "sampled_at"],
         unique=False,
     )
-
     op.execute(
         f"CREATE SEQUENCE {_OCPP16_TRANSACTION_ID_SEQUENCE} AS integer "
         "START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 2147483647 NO CYCLE"

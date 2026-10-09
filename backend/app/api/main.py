@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.domains.charging_sessions.router import router as charging_sessions_router
 from app.domains.charging_stations.router import router as charging_stations_router
+from app.domains.drivers.router import driving_sessions_router
 from app.domains.drivers.router import router as drivers_router
 from app.domains.fleet.router import router as fleet_router
 from app.domains.notifications.router import router as notifications_router
@@ -117,5 +118,6 @@ app.include_router(charging_stations_router, prefix="/api/v1")
 app.include_router(charging_sessions_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1/notifications")
 app.include_router(drivers_router, prefix="/api/v1/drivers")
+app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")
 app.include_router(support_router, prefix="/api/v1/support")
 app.include_router(fleet_router, prefix="/api/v1/fleets")

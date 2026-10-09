@@ -1,6 +1,6 @@
-"""Smoke tests for the drivers service: profiles and vehicle assignment history (F-E4)."""
+"""Smoke tests for the drivers service: profiles and driving sessions (F-E4)."""
 
-from datetime import datetime, timezone
+from datetime import date, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -9,111 +9,152 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
+import app.domains.identity.service as identity_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.drivers.exceptions import (
-    DriverAssignmentConflictError,
-    DriverAssignmentNotFoundError,
     DriverConflictError,
-    DriverNotFoundError,
-    DriverVehicleNotFoundError,
+    DriverLicenseExpiredError,
+    DriverMembershipNotFoundError,
+    DriverNotEligibleError,
+    DrivingSessionNotFoundError,
 )
-from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
-from app.domains.drivers.schemas import DriverCreateRequest, DriverVehicleAssignRequest
-from app.domains.drivers.types import DriverStatus
-from app.domains.vehicles.types import (
-    VehicleReference,
+from app.domains.drivers.models import DriverModel, DrivingSessionModel
+from app.domains.drivers.schemas import (
+    DriverCreateRequest,
+    DrivingSessionCheckInRequest,
+    DrivingSessionCheckOutRequest,
 )
-from tests.builders import build_assignment_record, build_driver_record, fake_db_session
+from app.domains.drivers.types import (
+    CheckInMethod,
+    DriverStatus,
+    DrivingSessionEndCause,
+    LicenseClass,
+)
+from app.domains.identity.types import MembershipPersonReference, MembershipStatus
+from app.domains.vehicles.types import VehicleReference
+from app.libs.common.clock import utc_now
+from tests.builders import (
+    build_driver_record,
+    build_driving_session_record,
+    build_person_reference,
+    fake_db_session,
+)
+
+
+def _create_request(*, expires_on: date | None = None) -> DriverCreateRequest:
+    """Build a valid create request, with a licence valid for a year by default."""
+    return DriverCreateRequest(
+        membership_id=uuid4(),
+        license_number="LICENSE-001",
+        license_class=LicenseClass.CE,
+        license_expires_on=expires_on or utc_now().date() + timedelta(days=365),
+    )
+
+
+def _patch_person(
+    monkeypatch: pytest.MonkeyPatch, person: MembershipPersonReference | None
+) -> None:
+    """Make the identity service resolve every membership to `person`."""
+
+    async def resolve_person(
+        db: AsyncSession, membership_id: UUID
+    ) -> MembershipPersonReference | None:
+        return person
+
+    monkeypatch.setattr(
+        identity_service, "resolve_membership_person_reference", resolve_person
+    )
+
+
+def _patch_no_open_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make both open-session lookups find nothing."""
+
+    async def no_session(db: AsyncSession, key: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(driver_repository, "find_open_session_by_driver", no_session)
+    monkeypatch.setattr(driver_repository, "find_open_session_by_vehicle", no_session)
 
 
 @pytest.mark.asyncio
-async def test_driver_service_creates_driver_response(
+async def test_create_driver_returns_response_with_the_person(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The driver service creates a response when there's no unique conflict (F-E4)."""
+    """create_driver() builds the response from the profile and the user's data (DR-09)."""
     record = build_driver_record()
+    _patch_person(monkeypatch, build_person_reference())
+    _patch_no_open_session(monkeypatch)
 
-    async def no_existing_phone(db: AsyncSession, value: str) -> None:
-        return None
-
-    async def no_existing_license(db: AsyncSession, value: str) -> None:
+    async def no_profile(db: AsyncSession, membership_id: UUID) -> None:
         return None
 
     async def insert_driver(db: AsyncSession, values: dict[str, Any]) -> DriverModel:
         return record
 
-    async def no_active_assignment(db: AsyncSession, driver_id: UUID) -> None:
-        return None
-
-    monkeypatch.setattr(driver_repository, "find_by_phone_number", no_existing_phone)
-    monkeypatch.setattr(
-        driver_repository, "find_by_license_number", no_existing_license
-    )
+    monkeypatch.setattr(driver_repository, "find_by_membership_id", no_profile)
     monkeypatch.setattr(driver_repository, "insert", insert_driver)
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", no_active_assignment
-    )
 
-    response = await driver_service.create_driver(
-        fake_db_session(),
-        DriverCreateRequest(
-            full_name=record.full_name,
-            phone_number=record.phone_number,
-            license_number=record.license_number,
-            status=record.status,
-        ),
-    )
+    response = await driver_service.create_driver(fake_db_session(), _create_request())
 
     assert response.driver_id == record.driver_id
-    assert response.license_number == record.license_number
+    assert response.full_name == "Test Driver"
+    assert response.is_license_expired is False
     assert response.current_vehicle_id is None
-    assert response.current_vehicle_vin is None
 
 
 @pytest.mark.asyncio
-async def test_driver_service_create_rejects_duplicate_phone(
+async def test_create_driver_rejects_second_profile_unknown_membership_and_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """create_driver() raises a conflict when the phone number is already used (F-E4)."""
+    """One profile per membership; the membership must exist; the licence be valid."""
     record = build_driver_record()
 
-    async def existing_phone(db: AsyncSession, value: str) -> DriverModel:
+    async def existing_profile(db: AsyncSession, membership_id: UUID) -> DriverModel:
         return record
 
-    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert must not run when phone number already exists")
+    monkeypatch.setattr(driver_repository, "find_by_membership_id", existing_profile)
 
-    monkeypatch.setattr(driver_repository, "find_by_phone_number", existing_phone)
-    monkeypatch.setattr(driver_repository, "insert", fail_if_called)
+    _patch_person(monkeypatch, None)
+    with pytest.raises(DriverMembershipNotFoundError):
+        await driver_service.create_driver(fake_db_session(), _create_request())
 
-    with pytest.raises(DriverConflictError):
+    _patch_person(monkeypatch, build_person_reference())
+    with pytest.raises(DriverLicenseExpiredError):
         await driver_service.create_driver(
             fake_db_session(),
-            DriverCreateRequest(
-                full_name="Another Driver",
-                phone_number=record.phone_number,
-                license_number="LICENSE-002",
-                status=DriverStatus.ACTIVE,
-            ),
+            _create_request(expires_on=utc_now().date() - timedelta(days=1)),
         )
+    with pytest.raises(DriverConflictError):
+        await driver_service.create_driver(fake_db_session(), _create_request())
 
 
 @pytest.mark.asyncio
-async def test_driver_service_soft_delete_returns_success(
+async def test_soft_delete_driver_ends_the_open_session_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """soft_delete_driver() succeeds when the driver has no active assignment (F-E4)."""
+    """soft_delete_driver() ends the open session DRIVER_REMOVED, then deletes (DR-10)."""
     record = build_driver_record()
+    open_session = build_driving_session_record(
+        driver_id=record.driver_id, vehicle_id=uuid4()
+    )
+    closed_causes: list[DrivingSessionEndCause] = []
 
-    async def no_active_assignment(db: AsyncSession, driver_id: UUID) -> None:
-        return None
+    async def find_open(db: AsyncSession, driver_id: UUID) -> DrivingSessionModel:
+        return open_session
 
-    async def soft_delete(db: AsyncSession, driver_id: UUID) -> DriverModel:
+    async def close_session(
+        db: AsyncSession, session_record: DrivingSessionModel, **kwargs: Any
+    ) -> DrivingSessionModel:
+        closed_causes.append(kwargs["end_cause"])
+        return session_record
+
+    async def soft_delete(
+        db: AsyncSession, driver_id: UUID, *, status_reason: str
+    ) -> DriverModel:
         return record
 
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", no_active_assignment
-    )
+    monkeypatch.setattr(driver_repository, "find_open_session_by_driver", find_open)
+    monkeypatch.setattr(driver_repository, "close_session", close_session)
     monkeypatch.setattr(driver_repository, "soft_delete", soft_delete)
 
     deletion_response = await driver_service.soft_delete_driver(
@@ -121,497 +162,162 @@ async def test_driver_service_soft_delete_returns_success(
     )
 
     assert deletion_response == {"message": "Driver deleted successfully"}
+    assert closed_causes == [DrivingSessionEndCause.DRIVER_REMOVED]
 
 
-@pytest.mark.asyncio
-async def test_driver_service_soft_delete_closes_active_assignment_first(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """soft_delete_driver() closes an open assignment before deleting (F-E4)."""
-    record = build_driver_record()
-    vehicle_id = uuid4()
-    active_assignment = build_assignment_record(
-        driver_id=record.driver_id, vehicle_id=vehicle_id
+def _check_in_request(driver_id: UUID) -> DrivingSessionCheckInRequest:
+    """Build a PORTAL check-in request for a fixed VIN."""
+    return DrivingSessionCheckInRequest(
+        driver_id=driver_id,
+        vehicle_vin="1HGBH41JXMN109186",
+        check_in_method=CheckInMethod.PORTAL,
     )
-    closed: dict[str, object] = {}
-
-    async def find_active(
-        db: AsyncSession, driver_id: UUID
-    ) -> DriverVehicleAssignmentModel:
-        return active_assignment
-
-    async def close_assignment(
-        db: AsyncSession,
-        assignment_record: DriverVehicleAssignmentModel,
-        **kwargs: object,
-    ) -> DriverVehicleAssignmentModel:
-        closed["assignment_id"] = assignment_record.assignment_id
-        closed["unassigned_at"] = kwargs["unassigned_at"]
-        return assignment_record
-
-    async def soft_delete(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return record
-
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", find_active
-    )
-    monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
-    monkeypatch.setattr(driver_repository, "soft_delete", soft_delete)
-
-    await driver_service.soft_delete_driver(fake_db_session(), record.driver_id)
-
-    assert closed["assignment_id"] == active_assignment.assignment_id
-    assert closed["unassigned_at"] is not None
 
 
-@pytest.mark.asyncio
-async def test_assign_vehicle_to_driver_succeeds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """assign_vehicle_to_driver() opens a new assignment and enriches the VIN (F-E4)."""
-    driver_record = build_driver_record()
-    vehicle_id = uuid4()
-    vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
-        vehicle_id=vehicle_id,
+def _patch_vehicle(monkeypatch: pytest.MonkeyPatch) -> VehicleReference:
+    """Make the vehicles service resolve any VIN or ID to one truck."""
+    vehicle = VehicleReference(
+        vehicle_id=uuid4(),
         vin="1HGBH41JXMN109186",
+        organization_id=uuid4(),
         battery_capacity_kwh=None,
     )
-    inserted = build_assignment_record(
-        driver_id=driver_record.driver_id, vehicle_id=vehicle_id
-    )
 
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
+    async def resolve_vehicle(db: AsyncSession, key: object) -> VehicleReference:
+        return vehicle
 
-    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return vehicle_reference
-
-    async def no_active_by_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
-    async def no_active_by_driver(db: AsyncSession, driver_id: UUID) -> None:
-        return None
-
-    async def insert_assignment(
-        db: AsyncSession, **kwargs: object
-    ) -> DriverVehicleAssignmentModel:
-        return inserted
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vehicle
     )
     monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_vehicle", no_active_by_vehicle
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_vehicle
     )
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", no_active_by_driver
-    )
-    monkeypatch.setattr(driver_repository, "insert_assignment", insert_assignment)
-
-    response = await driver_service.assign_vehicle_to_driver(
-        fake_db_session(),
-        driver_record.driver_id,
-        DriverVehicleAssignRequest(vehicle_vin=vehicle_reference.vin),
-    )
-
-    assert response.assignment_id == inserted.assignment_id
-    assert response.vehicle_vin == vehicle_reference.vin
-    assert response.unassigned_at is None
+    return vehicle
 
 
 @pytest.mark.asyncio
-async def test_assign_vehicle_to_driver_rejects_unknown_vin(
+async def test_check_in_takes_over_a_truck_and_ends_the_drivers_other_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """assign_vehicle_to_driver() raises when the VIN doesn't resolve to a vehicle (F-E4)."""
-    driver_record = build_driver_record()
-
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def no_vehicle(db: AsyncSession, vin: str) -> None:
-        return None
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
+    """A check-in ends the driver's other session (OTHER_TRUCK) and the truck's (TAKEN_OVER)."""
+    driver = build_driver_record()
+    vehicle = _patch_vehicle(monkeypatch)
+    _patch_person(monkeypatch, build_person_reference())
+    own_other_session = build_driving_session_record(
+        driver_id=driver.driver_id, vehicle_id=uuid4()
     )
-
-    with pytest.raises(DriverVehicleNotFoundError):
-        await driver_service.assign_vehicle_to_driver(
-            fake_db_session(),
-            driver_record.driver_id,
-            DriverVehicleAssignRequest(vehicle_vin="1HGBH41JXMN109186"),
-        )
-
-
-@pytest.mark.asyncio
-async def test_assign_vehicle_to_driver_rejects_vehicle_assigned_elsewhere(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """assign_vehicle_to_driver() never silently steals a vehicle from another driver (F-E4)."""
-    driver_record = build_driver_record()
-    other_driver_id = uuid4()
-    vehicle_id = uuid4()
-    vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
-        vehicle_id=vehicle_id,
-        vin="1HGBH41JXMN109186",
-        battery_capacity_kwh=None,
+    truck_session = build_driving_session_record(
+        driver_id=uuid4(), vehicle_id=vehicle.vehicle_id
     )
-    assignment_elsewhere = build_assignment_record(
-        driver_id=other_driver_id, vehicle_id=vehicle_id
-    )
+    causes: dict[UUID, DrivingSessionEndCause] = {}
 
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
+    async def get_driver(db: AsyncSession, driver_id: UUID) -> DriverModel:
+        return driver
 
-    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return vehicle_reference
+    async def find_by_driver(db: AsyncSession, driver_id: UUID) -> DrivingSessionModel:
+        return own_other_session
 
-    async def active_by_vehicle(
+    async def find_by_vehicle(
         db: AsyncSession, vehicle_id: UUID
-    ) -> DriverVehicleAssignmentModel:
-        return assignment_elsewhere
+    ) -> DrivingSessionModel:
+        return truck_session
 
-    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert_assignment must not run on a conflict")
+    async def close_session(
+        db: AsyncSession, session_record: DrivingSessionModel, **kwargs: Any
+    ) -> DrivingSessionModel:
+        causes[session_record.driving_session_id] = kwargs["end_cause"]
+        session_record.end_cause = kwargs["end_cause"].value
+        session_record.ended_at = kwargs["ended_at"]
+        return session_record
 
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
+    async def insert_session(db: AsyncSession, **kwargs: Any) -> DrivingSessionModel:
+        assert kwargs["organization_id"] == vehicle.organization_id
+        return build_driving_session_record(
+            driver_id=kwargs["driver_id"], vehicle_id=kwargs["vehicle_id"]
+        )
+
+    monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
     monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+        driver_repository, "find_open_session_by_driver", find_by_driver
     )
     monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_vehicle", active_by_vehicle
+        driver_repository, "find_open_session_by_vehicle", find_by_vehicle
     )
-    monkeypatch.setattr(driver_repository, "insert_assignment", fail_if_called)
+    monkeypatch.setattr(driver_repository, "close_session", close_session)
+    monkeypatch.setattr(driver_repository, "insert_session", insert_session)
 
-    with pytest.raises(DriverAssignmentConflictError):
-        await driver_service.assign_vehicle_to_driver(
-            fake_db_session(),
-            driver_record.driver_id,
-            DriverVehicleAssignRequest(vehicle_vin=vehicle_reference.vin),
+    response = await driver_service.check_in_driver(
+        fake_db_session(), _check_in_request(driver.driver_id)
+    )
+
+    assert response.ended_at is None
+    assert causes == {
+        own_other_session.driving_session_id: DrivingSessionEndCause.OTHER_TRUCK,
+        truck_session.driving_session_id: DrivingSessionEndCause.TAKEN_OVER,
+    }
+    assert len(response.ended_sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DR-10: the profile, the licence, the membership and the user must all be fine."""
+    driver = build_driver_record()
+    _patch_vehicle(monkeypatch)
+
+    async def get_driver(db: AsyncSession, driver_id: UUID) -> DriverModel:
+        return driver
+
+    monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
+
+    _patch_person(monkeypatch, build_person_reference())
+    driver.status = DriverStatus.INACTIVE
+    with pytest.raises(DriverNotEligibleError):
+        await driver_service.check_in_driver(
+            fake_db_session(), _check_in_request(driver.driver_id)
+        )
+
+    driver.status = DriverStatus.ACTIVE
+    _patch_person(
+        monkeypatch, build_person_reference(membership_status=MembershipStatus.LOCKED)
+    )
+    with pytest.raises(DriverNotEligibleError):
+        await driver_service.check_in_driver(
+            fake_db_session(), _check_in_request(driver.driver_id)
         )
 
 
 @pytest.mark.asyncio
-async def test_assign_vehicle_to_driver_is_idempotent_for_same_vehicle(
+async def test_check_out_closes_the_session_and_rejects_a_driver_not_checked_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Assigning the vehicle a driver already has is a no-op returning the existing row (F-E4)."""
-    driver_record = build_driver_record()
-    vehicle_id = uuid4()
-    vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
-        vehicle_id=vehicle_id,
-        vin="1HGBH41JXMN109186",
-        battery_capacity_kwh=None,
-    )
-    existing_assignment = build_assignment_record(
-        driver_id=driver_record.driver_id, vehicle_id=vehicle_id
-    )
-
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return vehicle_reference
-
-    async def active_by_vehicle(
-        db: AsyncSession, vehicle_id: UUID
-    ) -> DriverVehicleAssignmentModel:
-        return existing_assignment
-
-    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("no new assignment should be inserted")
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
-    )
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_vehicle", active_by_vehicle
-    )
-    monkeypatch.setattr(driver_repository, "insert_assignment", fail_if_called)
-    monkeypatch.setattr(driver_repository, "close_assignment", fail_if_called)
-
-    response = await driver_service.assign_vehicle_to_driver(
-        fake_db_session(),
-        driver_record.driver_id,
-        DriverVehicleAssignRequest(vehicle_vin=vehicle_reference.vin),
-    )
-
-    assert response.assignment_id == existing_assignment.assignment_id
-
-
-@pytest.mark.asyncio
-async def test_assign_vehicle_to_driver_auto_closes_previous_assignment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Assigning a driver a second vehicle auto-closes their first one (F-E4)."""
-    driver_record = build_driver_record()
-    old_vehicle_id = uuid4()
-    new_vehicle_id = uuid4()
-    vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
-        vehicle_id=new_vehicle_id,
-        vin="1HGBH41JXMN109186",
-        battery_capacity_kwh=None,
-    )
-    previous_assignment = build_assignment_record(
-        driver_id=driver_record.driver_id, vehicle_id=old_vehicle_id
-    )
-    new_assignment = build_assignment_record(
-        driver_id=driver_record.driver_id, vehicle_id=new_vehicle_id
-    )
-    closed_ids: list[UUID] = []
-
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return vehicle_reference
-
-    async def no_active_by_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
-    async def active_by_driver(
-        db: AsyncSession, driver_id: UUID
-    ) -> DriverVehicleAssignmentModel:
-        return previous_assignment
-
-    async def close_assignment(
-        db: AsyncSession,
-        assignment_record: DriverVehicleAssignmentModel,
-        **kwargs: object,
-    ) -> DriverVehicleAssignmentModel:
-        closed_ids.append(assignment_record.assignment_id)
-        return assignment_record
-
-    async def insert_assignment(
-        db: AsyncSession, **kwargs: object
-    ) -> DriverVehicleAssignmentModel:
-        return new_assignment
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
-    )
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_vehicle", no_active_by_vehicle
-    )
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", active_by_driver
-    )
-    monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
-    monkeypatch.setattr(driver_repository, "insert_assignment", insert_assignment)
-
-    response = await driver_service.assign_vehicle_to_driver(
-        fake_db_session(),
-        driver_record.driver_id,
-        DriverVehicleAssignRequest(vehicle_vin=vehicle_reference.vin),
-    )
-
-    assert closed_ids == [previous_assignment.assignment_id]
-    assert response.assignment_id == new_assignment.assignment_id
-    assert response.vehicle_id == new_vehicle_id
-
-
-@pytest.mark.asyncio
-async def test_unassign_vehicle_from_driver_closes_assignment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """unassign_vehicle_from_driver() closes the driver's open assignment (F-E4)."""
-    driver_record = build_driver_record()
-    active_assignment = build_assignment_record(
-        driver_id=driver_record.driver_id, vehicle_id=uuid4()
-    )
-    closed: dict[str, object] = {}
-
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def find_active(
-        db: AsyncSession, driver_id: UUID
-    ) -> DriverVehicleAssignmentModel:
-        return active_assignment
-
-    async def close_assignment(
-        db: AsyncSession,
-        assignment_record: DriverVehicleAssignmentModel,
-        **kwargs: object,
-    ) -> DriverVehicleAssignmentModel:
-        closed["assignment_id"] = assignment_record.assignment_id
-        return assignment_record
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", find_active
-    )
-    monkeypatch.setattr(driver_repository, "close_assignment", close_assignment)
-
-    await driver_service.unassign_vehicle_from_driver(
-        fake_db_session(), driver_record.driver_id
-    )
-
-    assert closed["assignment_id"] == active_assignment.assignment_id
-
-
-@pytest.mark.asyncio
-async def test_unassign_vehicle_from_driver_rejects_when_no_active_assignment(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """unassign_vehicle_from_driver() raises when nothing is currently assigned (F-E4)."""
-    driver_record = build_driver_record()
-
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def no_active(db: AsyncSession, driver_id: UUID) -> None:
-        return None
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        driver_repository, "find_active_assignment_by_driver", no_active
-    )
-
-    with pytest.raises(DriverAssignmentNotFoundError):
-        await driver_service.unassign_vehicle_from_driver(
-            fake_db_session(), driver_record.driver_id
+    """check_out_driver() ends CHECKED_OUT; without an open session it is a 404."""
+    _patch_vehicle(monkeypatch)
+    driver_id = uuid4()
+    _patch_no_open_session(monkeypatch)
+    with pytest.raises(DrivingSessionNotFoundError):
+        await driver_service.check_out_driver(
+            fake_db_session(), DrivingSessionCheckOutRequest(driver_id=driver_id)
         )
 
+    open_session = build_driving_session_record(driver_id=driver_id, vehicle_id=uuid4())
 
-@pytest.mark.asyncio
-async def test_list_driver_assignment_history_enriches_each_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """list_driver_assignment_history() returns rows enriched with each vehicle's VIN (F-E4)."""
-    driver_record = build_driver_record()
-    vehicle_id = uuid4()
-    closed_at = datetime.now(timezone.utc)
-    history_row = build_assignment_record(
-        driver_id=driver_record.driver_id,
-        vehicle_id=vehicle_id,
-        unassigned_at=closed_at,
-    )
-    vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
-        vehicle_id=vehicle_id,
-        vin="1HGBH41JXMN109186",
-        battery_capacity_kwh=None,
+    async def find_open(db: AsyncSession, key: UUID) -> DrivingSessionModel:
+        return open_session
+
+    async def close_session(
+        db: AsyncSession, session_record: DrivingSessionModel, **kwargs: Any
+    ) -> DrivingSessionModel:
+        session_record.ended_at = kwargs["ended_at"]
+        session_record.end_cause = kwargs["end_cause"].value
+        return session_record
+
+    monkeypatch.setattr(driver_repository, "find_open_session_by_driver", find_open)
+    monkeypatch.setattr(driver_repository, "close_session", close_session)
+
+    response = await driver_service.check_out_driver(
+        fake_db_session(), DrivingSessionCheckOutRequest(driver_id=driver_id)
     )
 
-    async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
-        return driver_record
-
-    async def list_assignments(
-        db: AsyncSession, driver_id: UUID, **kwargs: object
-    ) -> list[DriverVehicleAssignmentModel]:
-        return [history_row]
-
-    async def count_assignments(db: AsyncSession, driver_id: UUID) -> int:
-        return 1
-
-    async def resolve_by_id(db: AsyncSession, vehicle_id: UUID) -> VehicleReference:
-        return vehicle_reference
-
-    monkeypatch.setattr(driver_repository, "get_by_id", get_by_id)
-    monkeypatch.setattr(
-        driver_repository, "list_assignments_by_driver", list_assignments
-    )
-    monkeypatch.setattr(
-        driver_repository, "count_assignments_by_driver", count_assignments
-    )
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_by_id
-    )
-
-    history = await driver_service.list_driver_assignment_history(
-        fake_db_session(), driver_record.driver_id
-    )
-
-    assert history.total == 1
-    assert history.items[0].vehicle_vin == vehicle_reference.vin
-    assert history.items[0].unassigned_at == closed_at
-
-
-@pytest.mark.asyncio
-async def test_get_driver_raises_not_found_for_unknown_driver(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """get_driver() raises when the driver doesn't exist or was soft-deleted (F-E4)."""
-
-    async def no_driver(db: AsyncSession, driver_id: UUID) -> None:
-        return None
-
-    monkeypatch.setattr(driver_repository, "get_by_id", no_driver)
-
-    with pytest.raises(DriverNotFoundError):
-        await driver_service.get_driver(fake_db_session(), uuid4())
-
-
-@pytest.mark.asyncio
-async def test_list_drivers_by_unknown_vehicle_vin_returns_an_empty_page(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """GET /drivers?vehicle_vin= with an unknown VIN is an empty page (F-E4)."""
-
-    async def no_vehicle(db: AsyncSession, vin: str) -> None:
-        return None
-
-    async def unexpected_query(*args: object, **kwargs: object) -> None:
-        raise AssertionError("no driver query expected for an unknown VIN")
-
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", no_vehicle
-    )
-    monkeypatch.setattr(driver_repository, "list_all", unexpected_query)
-    monkeypatch.setattr(driver_repository, "count", unexpected_query)
-
-    response = await driver_service.list_drivers(
-        fake_db_session(), vehicle_vin="1HGBH41JXMN109186"
-    )
-
-    assert response.items == []
-    assert response.total == 0
-
-
-@pytest.mark.asyncio
-async def test_list_drivers_passes_search_and_vehicle_filters_to_both_queries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The q and vehicle_vin filters reach both the page and the count (F-E4)."""
-    vehicle_id = uuid4()
-    seen: dict[str, dict[str, object]] = {}
-
-    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return VehicleReference(
-            organization_id=uuid4(),
-            vehicle_id=vehicle_id,
-            vin=vin,
-            battery_capacity_kwh=None,
-        )
-
-    async def list_all(db: AsyncSession, **kwargs: object) -> list[DriverModel]:
-        seen["list"] = kwargs
-        return []
-
-    async def count(db: AsyncSession, **kwargs: object) -> int:
-        seen["count"] = kwargs
-        return 0
-
-    monkeypatch.setattr(
-        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
-    )
-    monkeypatch.setattr(driver_repository, "list_all", list_all)
-    monkeypatch.setattr(driver_repository, "count", count)
-
-    await driver_service.list_drivers(
-        fake_db_session(), search_text="0900", vehicle_vin="1HGBH41JXMN109186"
-    )
-
-    for query_kwargs in (seen["list"], seen["count"]):
-        assert query_kwargs["search_text"] == "0900"
-        assert query_kwargs["vehicle_id"] == vehicle_id
+    assert response.end_cause == DrivingSessionEndCause.CHECKED_OUT

@@ -180,16 +180,15 @@ FastAPI registers the following domains:
   silent (F-J1/F-J3); `support` raises a `CRITICAL` `SOS_ALERT` for every
   new SOS (F-I2). No push and no recipient scoping yet — there is no mobile
   app and no `identity` domain.
-- `drivers`: this backend's first brand-new domain since the initial
-  baseline (F-E4). Driver profile CRUD plus a `driver_vehicle_assignments`
-  assignment-history table (`assigned_at`/`unassigned_at`) enforcing "one
-  active vehicle per driver, one active driver per vehicle" via this
-  backend's first partial unique indexes, with smooth reassignment
-  (auto-closes the driver's previous active assignment) and full
-  per-driver assignment history; the driver list searches name/phone/license
-  (`q`) and finds the driver currently assigned to a VIN (`vehicle_vin`).
-  Depends one-directionally on `vehicles`' public service to
-  resolve/validate a VIN — the same shape as `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
+- `drivers` (F-E4, F-A9): the driver profile (one per membership, DR-09; name and
+  phone live on the user and are read through `identity`'s public service),
+  `driving_sessions` (check-in / check-out; one open session per truck and per
+  driver via partial unique indexes, DR-07) and `trips` (table only, DR-12).
+  The driver list searches the licence number (`q`) and finds the driver at the
+  wheel of a VIN (`vehicle_vin`). The old `driver_vehicle_assignments` table
+  and its routes are gone. Depends one-directionally on `vehicles`' and
+  `identity`'s public services.
+   — the same shape as `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
   built here — see `deferred.md` item 67.
 - `support`: support case tickets (F-I1) and SOS intake (F-I2). One
   `support_cases` table discriminated by `case_type` rather than two
@@ -209,8 +208,7 @@ FastAPI registers the following domains:
   F-I4 (partner directory/dispatch) and F-I3 (booking) are deferred.
 - `fleet`: this backend's second brand-new domain (F-E1; FLT-01/FLT-02 in
   the feature catalog). Fleet CRUD plus a `fleet_vehicle_memberships`
-  open/close table (`added_at`/`removed_at`) mirroring
-  `driver_vehicle_assignments`'s shape, with one difference: no partial
+  open/close table (`added_at`/`removed_at`) with no partial
   unique index on `fleet_id` (a fleet holds many vehicles at once). A fleet
   has no status (it exists or is soft-deleted) and needs a `name`, a
   `fleet_code` or both (`ck_fleets_name_or_code`; the code is unique per
@@ -296,8 +294,8 @@ extensions:
   the `<->` KNN operator, filtered on connector status); F-D1's nearby-station
   search (`GET /charging-stations/nearby`) uses `ST_DWithin` for the radius
   filter with the same KNN ordering.
-- "One live row" constraints are partial unique indexes: one open driver
-  assignment per driver and per vehicle (`WHERE unassigned_at IS NULL`),
+- "One live row" constraints are partial unique indexes: one open driving
+  session per driver and per vehicle (`WHERE ended_at IS NULL`),
   one open fleet membership per vehicle (`WHERE removed_at IS NULL`), and one
   live telematic device per vehicle (`uq_telematics_active_vehicle`,
   `WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL`); a device's serial and
@@ -381,9 +379,9 @@ call each other is in
 │   │   │   ├── notifications/         # Generic operator-facing notification storage/polling (F-A2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   ├── drivers/               # Driver profile and vehicle assignment history (F-E4)
+│   │   │   ├── drivers/               # Driver profile, driving sessions, trips (F-E4, F-A9)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
-│   │   │   │       # models.py has 2 tables: DriverModel, DriverVehicleAssignmentModel
+│   │   │   │       # models.py has 3 tables: DriverModel, DrivingSessionModel, TripModel
 │   │   │   │
 │   │   │   ├── support/               # Support case tickets and SOS intake (F-I1, F-I2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -466,7 +464,7 @@ convention will be written once the first task for that part starts.
 ## Not yet in the MVP
 
 - User, authentication and RBAC (the `identity` domain has its tables only:
-  no service, login or API yet). `drivers` now has a profile-CRUD/assignment slice (F-E4),
+  no service, login or API yet). `drivers` has a profile-CRUD and check-in/check-out slice (F-E4),
   but no login/auth of its own and no empty-trip detection (F-A9,
   suspended — no trip concept exists in this backend).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's

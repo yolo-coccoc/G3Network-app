@@ -94,9 +94,8 @@ class FleetModel(Base):
 class FleetVehicleMembershipModel(Base):
     """A fleet-to-vehicle membership period, open or closed (F-E1).
 
-    Mirrors `driver_vehicle_assignments`'s open/close history-table shape,
-    with one structural difference: a fleet holds many vehicles at once,
-    so only `vehicle_id` gets a partial unique index (one active fleet per
+    An open/close history table: a fleet holds many vehicles at once, so
+    only `vehicle_id` gets a partial unique index (one active fleet per
     vehicle), not `fleet_id`. Who added or removed the vehicle
     (``added_by`` / ``removed_by``, FL-09) comes with the users table
     (planned in the DBML).
@@ -161,11 +160,10 @@ class FleetVehicleMembershipModel(Base):
     )
 
     __table_args__ = (
-        # Partial unique index (drivers' pattern): a vehicle can belong to
-        # at most one OPEN membership at a time, but any number of CLOSED
-        # ones. Deliberately no equivalent unique index on fleet_id alone -
-        # unlike a driver-vehicle assignment, a fleet legitimately holds
-        # many vehicles at once.
+        # Partial unique index: a vehicle can belong to at most one OPEN
+        # membership at a time, but any number of CLOSED ones. Deliberately
+        # no equivalent unique index on fleet_id alone - a fleet
+        # legitimately holds many vehicles at once.
         Index(
             "uq_fleet_vehicle_memberships_active_vehicle",
             "vehicle_id",
@@ -176,6 +174,74 @@ class FleetVehicleMembershipModel(Base):
             "ix_fleet_vehicle_memberships_fleet_time",
             "fleet_id",
             "added_at",
+        ),
+    )
+
+
+class FleetUserAssignmentModel(Base):
+    """A fleet a membership's fleet-level roles are limited to, open or closed.
+
+    A membership with no open row here covers every fleet of its
+    organization; with open rows it covers those fleets and every fleet below
+    them (FL-10). An open/close table: a row is only ever closed, so it has no
+    change history (DM-20). The service (WP6) checks the fleet belongs to the
+    membership's organization; the row reads its organization through either.
+
+    Attributes:
+        fleet_user_assignment_id: Primary key (UUID).
+        fleet_id: The fleet the user is limited to. ``RESTRICT``: fleets are
+            only soft-deleted.
+        membership_id: The membership (person in this organization) whose
+            roles are limited.
+        assigned_at: When the fleet was given to the user.
+        assigned_by: User who gave it; ``None`` when the system did.
+        unassigned_at: When it was taken away; ``None`` while in force.
+        unassigned_by: User who took it away; ``None`` while in force or when
+            the system ended it.
+    """
+
+    __tablename__ = "fleet_user_assignments"
+
+    fleet_user_assignment_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+    fleet_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("fleets.fleet_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    membership_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("memberships.membership_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    assigned_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    assigned_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    unassigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    unassigned_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
+    __table_args__ = (
+        # A user holds a fleet once at a time; a closed row may repeat.
+        Index(
+            "uq_fleet_user_assignments_active",
+            "fleet_id",
+            "membership_id",
+            unique=True,
+            postgresql_where=text("unassigned_at IS NULL"),
         ),
     )
 

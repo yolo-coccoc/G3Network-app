@@ -7,6 +7,9 @@ column holds the member's value, e.g. ``OrganizationStatus.ACTIVE.value``.
 """
 
 import enum
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
 
 
 class OrganizationLegalForm(str, enum.Enum):
@@ -102,3 +105,32 @@ class AccessAuditAction(str, enum.Enum):
     LOGOUT = "LOGOUT"
     PASSWORD_CHANGED = "PASSWORD_CHANGED"
     PHONE_CHANGED = "PHONE_CHANGED"
+
+
+@dataclass(frozen=True)
+class MembershipPersonReference:
+    """A membership joined with the person behind it, for other domains.
+
+    Returned by `resolve_membership_person_reference`; the drivers domain uses
+    it to check that a profile's membership exists and to show the person's
+    name and phone number, which live on the user (DR-09).
+
+    Attributes:
+        membership_id: Internal ID of the membership.
+        organization_id: The organization the person belongs to.
+        user_id: The person.
+        full_name: The person's full name.
+        phone_number: The person's phone number (the login ID).
+        membership_status: Value of `MembershipStatus`.
+        user_status: Value of `UserStatus`.
+        left_at: When the person left the organization, `None` while a member.
+    """
+
+    membership_id: UUID
+    organization_id: UUID
+    user_id: UUID
+    full_name: str
+    phone_number: str
+    membership_status: str
+    user_status: str
+    left_at: datetime | None
