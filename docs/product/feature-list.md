@@ -450,14 +450,22 @@ carries its original PRD code so you can trace it back.
 - **Backend domain:** `fleet` (list/filter query; map rendering is frontend)
 - **Status:** ✅ Done (MVP/POC scope) — `fleet` is this backend's second brand-new domain (after
   `drivers`). Fleet CRUD (`POST/GET/PATCH/DELETE /fleets`) mirrors the vehicles/drivers pattern.
+  Fleet refactor (2026-10-09, FL-02/FL-08 in `docs/decisions/decision-log.md`): a fleet has no
+  status; `name` and `fleet_code` are optional but at least one is required (422 on create,
+  `ck_fleets_name_or_code`); fleets nest through `parent_fleet_id`, set on create or by `PATCH`
+  (move) — an unknown parent is a 404, a move under the fleet itself or its own sub-fleets a 400,
+  and deleting a fleet with live sub-fleets a 409. Nothing rolls up to a parent fleet yet. The
+  owning organization, per-organization codes, who added/removed a vehicle and the fleet change
+  history wait for the identity tables (`deferred.md` item 97); clearing a name/code or moving a
+  fleet back to the top level is item 98.
   Vehicle membership is a genuine history table (`fleet_vehicle_memberships`,
-  `joined_at`/`left_at`), the same open/close shape as `driver_vehicle_assignments`, so
+  `added_at`/`removed_at`, FL-09), the same open/close shape as `driver_vehicle_assignments`, so
   `GET /fleets/{id}/memberships` gives real history and `GET /fleets/{id}/vehicles` gives the
   current list (F-E1's "full fleet list" — `vehicle_id`, `vin`, `license_plate`, `status`; a
   member whose vehicle was soft-deleted is still listed, with `vin`/`license_plate`/`status` =
   null). A vehicle joins by VIN (`POST /fleets/{id}/vehicles`) and leaves by VIN
   (`DELETE /fleets/{id}/vehicles/{vin}`). One
-  active fleet per vehicle is enforced via a partial unique index (`WHERE left_at IS NULL`), but
+  active fleet per vehicle is enforced via a partial unique index (`WHERE removed_at IS NULL`), but
   unlike `driver_vehicle_assignments` there is no equivalent index on `fleet_id` — a fleet
   legitimately holds many vehicles at once. `vehicles.fleet_id` (a dead `String(36)` column with
   no FK, no index, never queried by any code) is dropped and replaced by this membership table —
@@ -465,7 +473,7 @@ carries its original PRD code so you can trace it back.
   (name or fleet code, case-insensitive) and `vehicle_vin` ("which fleet is this vehicle in"), and
   `GET /fleets/{id}/vehicles` takes `status` (vehicle lifecycle) and `q` (VIN or plate substring).
   A membership whose vehicle was soft-deleted is closed by ID
-  (`DELETE /fleets/{fleet_id}/memberships/{membership_id}`). "Real-time location" and the online
+  (`DELETE /fleets/{fleet_id}/memberships/{fleet_vehicle_membership_id}`). "Real-time location" and the online
   "status" are served by `GET /telemetry/fleets/{fleet_id}/vehicles/latest` (paged members, oldest
   first, with VIN/plate/lifecycle status, the newest position, `recorded_at`/`received_at`,
   `is_online` = newest telemetry within `TELEMETRY_ONLINE_THRESHOLD_SECONDS`, and signal strength),

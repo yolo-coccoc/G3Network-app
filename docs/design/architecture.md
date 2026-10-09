@@ -199,10 +199,20 @@ FastAPI registers the following domains:
   edge). The case list filters by category, channel, driver,
   `awaiting_response` and `sla_breached` (the SQL form of the breach rule).
   F-I4 (partner directory/dispatch) and F-I3 (booking) are deferred.
-- `fleet`: this backend's second brand-new domain (F-E1). Fleet CRUD plus
-  a `fleet_vehicle_memberships` assignment-history table mirroring
+- `fleet`: this backend's second brand-new domain (F-E1; FLT-01/FLT-02 in
+  the feature catalog). Fleet CRUD plus a `fleet_vehicle_memberships`
+  open/close table (`added_at`/`removed_at`) mirroring
   `driver_vehicle_assignments`'s shape, with one difference: no partial
-  unique index on `fleet_id` (a fleet holds many vehicles at once).
+  unique index on `fleet_id` (a fleet holds many vehicles at once). A fleet
+  has no status (it exists or is soft-deleted) and needs a `name`, a
+  `fleet_code` or both (`ck_fleets_name_or_code`; the code is unique across
+  all fleets until fleets get their owning organization, deferred.md 97).
+  Fleets nest through `parent_fleet_id` (FL-02): a parent must be a live
+  fleet, a move under the fleet itself or one of its sub-fleets is refused
+  (400), and so is deleting a fleet that still has live sub-fleets (409).
+  Nothing rolls up the tree yet: `vehicle_count`, the fleet views in
+  `telemetry`, geofences and the fleet-wide config push all cover only a
+  fleet's own members, not those of its sub-fleets.
   Depends one-directionally on `vehicles` to resolve/validate a VIN on
   membership add/remove (both by VIN) and to enrich F-E1's vehicle list
   (`vin`/`license_plate`/`status`, via a `VehicleSummary` DTO; null for a
@@ -276,7 +286,7 @@ extensions:
   filter with the same KNN ordering.
 - "One live row" constraints are partial unique indexes: one open driver
   assignment per driver and per vehicle (`WHERE unassigned_at IS NULL`),
-  one open fleet membership per vehicle (`WHERE left_at IS NULL`), and one
+  one open fleet membership per vehicle (`WHERE removed_at IS NULL`), and one
   live telematic device per vehicle (`uq_telematics_active_vehicle`,
   `WHERE deleted_at IS NULL`).
 - `uuid-ossp` for the local database.
@@ -444,6 +454,11 @@ convention will be written once the first task for that part starts.
   trip replay is a bounded time-range history query
   (`GET /telemetry/vehicles/{id}/history`). Geofences are owned by a fleet,
   not yet by a customer account or a single vehicle (`deferred.md` item 86).
+- Fleet ownership and audit: `fleets.organization_id`, fleet codes unique
+  per organization, `added_by`/`removed_by` on memberships and the fleet
+  change history wait for the identity tables (`deferred.md` item 97);
+  `PATCH /fleets/{fleet_id}` cannot clear a name or code, nor move a fleet
+  back to the top level (`deferred.md` item 98).
 - Technical status history and stale-status handling for chargers: an
   offline charger keeps its last connector statuses, and "available" does
   not require `is_online` (`deferred.md` item 76).
