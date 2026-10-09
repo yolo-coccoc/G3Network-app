@@ -12,6 +12,7 @@ not here: they are in [`.claude/rules/`](../.claude/rules/) (see
 | [`design/`](./design/) | **How** is it built? | [architecture.md](./design/architecture.md), [domain model](./design/domain-model/overview.md) | Yes |
 | [`decisions/`](./decisions/) | **Why** is it like this, what is still open, what was left for later? | [decision-log.md](./decisions/decision-log.md) | Yes |
 | [`planners/`](./planners/) | How was each piece built and tested, step by step? | the planner of the domain | Active ones yes; `done/` is history |
+| [`scenario/`](./scenario/) | What does a user do on each screen, and which API call does it make? | [mobile-app.md](./scenario/mobile-app.md), [web-portal.md](./scenario/web-portal.md) | Yes |
 | [`reports/`](./reports/) | What did an analysis or a progress report say on a given date? | the report | No (dated snapshots) |
 | [`archive/`](./archive/) | What did we think before? | — | No (never current) |
 
@@ -47,6 +48,10 @@ One planner per piece of work: goal, decisions, steps with evidence of what
 was tested. Active planners sit at the top level, finished ones in `done/`
 (still read them before extending that domain). New planners start from
 `_TEMPLATE.md`.
+
+### `scenario/` — user flows
+
+Short step-by-step stories per surface: screen or step, the API call the client makes (built or planned), and the main error cases. They string together facts that live elsewhere; update them when a flow or an endpoint changes.
 
 ### `reports/` — dated snapshots
 
