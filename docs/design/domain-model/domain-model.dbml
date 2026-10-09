@@ -1942,6 +1942,43 @@ Check constraints (BL-09): price_per_kwh >= 0; vat_rate_percent BETWEEN 0 AND 10
 Ref: tariff_versions.tariff_id > tariffs.tariff_id [delete: restrict]
 Ref: tariff_versions.created_by > users.user_id [delete: restrict]
 
+Table charging_session_charges {
+  charging_session_charge_id uuid [pk, note: 'Internal ID of the charge. @vi Mã nội bộ của khoản phí sạc. @example 2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66']
+  session_id uuid [not null, unique, note: 'The charging session; one charge per session. The payer is read from the session (charging_sessions.organization_id, DM-24). @vi Phiên sạc; mỗi phiên một khoản phí. Bên trả tiền đọc từ phiên (charging_sessions.organization_id, DM-24). @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
+  tariff_version_id uuid [not null, note: 'Tariff version whose price was shown at the scan. @vi Phiên bản biểu giá có giá đã hiển thị khi quét mã. @example 1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55']
+  price_per_kwh numeric(12,2) [not null, note: 'Price for the scan\'s hour, before VAT, frozen for the whole session (PAY-09). @vi Đơn giá của khung giờ lúc quét mã, chưa gồm VAT, được chốt cho cả phiên (PAY-09). @example 4500.00']
+  vat_rate_percent numeric(4,2) [not null, note: 'VAT rate frozen with the price. @vi Thuế suất VAT được chốt cùng đơn giá. @example 10.00']
+  status varchar(20) [not null, note: 'QUOTED: price frozen at the scan, session not finished. BILLED: amount computed. ON_HOLD: not billed automatically, waiting for review (e.g. stop reading and last measurement disagree, CE-12). VOID: no charge (the session was ABANDONED). Values: QUOTED | BILLED | ON_HOLD | VOID. @vi QUOTED: giá đã chốt khi quét, phiên chưa xong. BILLED: đã tính tiền. ON_HOLD: không tự tính tiền, chờ xem xét (ví dụ chỉ số dừng và số đo cuối lệch nhau, CE-12). VOID: không thu phí (phiên ABANDONED). @example BILLED']
+  status_reason varchar(200) [note: 'Why the charge has its status: why it is on hold, or what a reviewer checked before releasing it (DM-19); NULL when there is nothing to explain. @vi Lý do khoản phí có trạng thái hiện tại: vì sao bị giữ lại, hoặc người xem xét đã kiểm tra gì trước khi cho tính tiền (DM-19); NULL nếu không cần giải thích. @example NULL']
+  energy_wh numeric(24,3) [note: 'Energy billed, in Wh: normally meter_stop_wh minus meter_start_wh; NULL until billed. @vi Điện năng tính tiền (Wh): thường là meter_stop_wh trừ meter_start_wh; NULL cho tới khi tính tiền. @example 192520.000']
+  energy_source varchar(20) [note: 'Where energy_wh came from. METER_STOP: the charger\'s closing reading. LAST_MEASUREMENT: the newest measurement, when the stop reading was missing (CE-12). Values: METER_STOP | LAST_MEASUREMENT. @vi Nguồn của energy_wh. METER_STOP: chỉ số đóng phiên của trụ. LAST_MEASUREMENT: số đo mới nhất, khi thiếu chỉ số dừng (CE-12). @example METER_STOP']
+  amount_before_vat numeric(14,2) [note: 'energy_wh / 1000 x price_per_kwh, rounded to whole dong; what was charged, so stored, never recomputed. NULL until billed. @vi energy_wh / 1000 x đơn giá, làm tròn tới đồng; là số tiền đã thu nên được lưu, không tính lại. NULL cho tới khi tính tiền. @example 866340.00']
+  vat_amount numeric(14,2) [note: 'VAT on amount_before_vat, rounded; the total is the sum of the two. NULL until billed. @vi VAT trên amount_before_vat, đã làm tròn; tổng tiền là tổng hai số. NULL cho tới khi tính tiền. @example 86634.00']
+  billed_at timestamptz [note: 'When the amount was fixed. @vi Thời điểm chốt số tiền. @example 2026-09-15T09:45:05Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC): the scan time. @vi Thời điểm tạo bản ghi (UTC): thời điểm quét mã. @example 2026-09-15T08:29:10Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T09:45:05Z']
+  indexes {
+    tariff_version_id [name: 'ix_charging_session_charges_tariff_version_id']
+    (status, created_at) [name: 'ix_charging_session_charges_status_created', note: 'Held charges waiting for review']
+  }
+  Note: '''@status planned @owner two-party @features F-H1,F-H3 @tracked *
+What one charge costs (BL-10, CE-12, PAY-10): the price frozen at the scan,
+the kWh billed and the amount. In billing, pointing to the session, never the
+reverse. The amounts are what was charged after rounding, so they are stored
+facts, the same on the receipt, the payment and the e-invoice. Change history
+on: releasing a held charge is a person's decision. Never edited after
+BILLED; a mistake is corrected by a refund or a credit note.
+Check constraints (BL-10): status <> 'BILLED' OR (energy_wh, energy_source,
+amount_before_vat, vat_amount, billed_at all NOT NULL); status NOT IN
+('QUOTED', 'VOID') OR (energy_wh, energy_source, amount_before_vat,
+vat_amount, billed_at all NULL).
+@vi-name Phí phiên sạc
+@vi Chi phí của một lần sạc (BL-10, CE-12, PAY-10): đơn giá chốt khi quét mã, số kWh tính tiền và số tiền. Thuộc miền thanh toán, trỏ tới phiên sạc, không bao giờ ngược lại. Số tiền là số đã thu sau làm tròn nên được lưu cố định, giống nhau trên biên nhận, thanh toán và hóa đơn điện tử. Bật lịch sử thay đổi: cho tính tiền một khoản bị giữ là quyết định của con người. Không sửa sau khi BILLED; sai sót được điều chỉnh bằng hoàn tiền hoặc hóa đơn điều chỉnh. Ràng buộc kiểm tra (BL-10): khoản BILLED phải đủ điện năng, nguồn, số tiền và thời điểm; khoản QUOTED hoặc VOID không có các giá trị đó.'''
+}
+
+Ref: charging_session_charges.session_id - charging_sessions.session_id [delete: restrict]
+Ref: charging_session_charges.tariff_version_id > tariff_versions.tariff_version_id [delete: restrict]
+
 Table payments {
   payment_id uuid [pk, note: 'Internal ID of the payment. @vi Mã nội bộ của thanh toán. @example 3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21']
   organization_id uuid [not null, note: 'Customer organization that paid. @vi Tổ chức khách hàng đã thanh toán. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
@@ -2092,6 +2129,7 @@ Ref: subscriptions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 TableGroup billing {
   tariffs
   tariff_versions
+  charging_session_charges
   payments
   wallets
   wallet_transactions

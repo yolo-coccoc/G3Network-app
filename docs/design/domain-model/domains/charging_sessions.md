@@ -45,12 +45,13 @@ erDiagram
   charging_session_events }o--|| charging_sessions : "session_id"
   charging_session_measurements }o--|| charging_sessions : "session_id"
   policy_violations }o..|| charging_sessions : "session_id"
+  charging_session_charges |o..|| charging_sessions : "session_id"
   payments }o..o| charging_sessions : "session_id"
   wallet_transactions }o..o| charging_sessions : "session_id"
   invoice_lines }o..o| charging_sessions : "session_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_session_charges](billing.md#charging_session_charges), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
 
 ## Tables
 
@@ -119,6 +120,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 - [charging_session_events](#charging_session_events).session_id
 - [charging_session_measurements](#charging_session_measurements).session_id
 - [policy_violations](policy.md#policy_violations).session_id (planned)
+- [charging_session_charges](billing.md#charging_session_charges).session_id (planned)
 - [payments](billing.md#payments).session_id (planned)
 - [wallet_transactions](billing.md#wallet_transactions).session_id (planned)
 - [invoice_lines](billing.md#invoice_lines).session_id (planned)
