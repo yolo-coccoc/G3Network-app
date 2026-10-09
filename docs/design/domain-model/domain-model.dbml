@@ -1126,7 +1126,8 @@ Table geofences {
   }
   Note: '''@status built @owner customer @features F-A5
 An area whose entry or exit by a member vehicle of its fleet raises an alert.
-Scoped to a fleet until customer organizations exist (then it moves to the organization).
+Scoped to a fleet for now; the move to the organization is designed and deferred
+(FL-11, deferred.md 86).
 @vi-name Vùng địa lý (geofence)
 @vi Một khu vực mà khi xe thuộc đội xe đi vào hoặc ra sẽ phát cảnh báo. Gắn với đội xe cho đến khi có tổ chức khách hàng (sau đó chuyển sang tổ chức).'''
 }

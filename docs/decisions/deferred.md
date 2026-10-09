@@ -1686,6 +1686,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   vehicle's account (and fleet, if kept)". Follow the DBML-first procedure in
   `.claude/rules/database.md`; `fleet.service.list_geofences_containing` is the only query to
   change on the read side.
+- **Update 2026-10-10 (FL-11 in `docs/decisions/decision-log.md`)**: the design review proposed the target and the owner deferred it, leaving `geofences` as built for now. Proposed shape, to start from: `organization_id` required as the owner (DM-24 A), `fleet_id` dropped, a `geofence_fleets` list (area × fleet) where no row means every truck of the organization and a listed fleet covers its subtree (as FL-10), change history on (an old alert stays explainable after a redraw), index on `organization_id` replacing the fleet index, still no spatial index.
 
 ### 87. Battery pack, module and cell management
 

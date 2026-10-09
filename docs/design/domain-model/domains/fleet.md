@@ -174,7 +174,8 @@ left is clear from what happened (moved, sold, fleet deleted).
 **No. 26** · ✅ built · owner: **customer** · features: F-A5
 
 An area whose entry or exit by a member vehicle of its fleet raises an alert.
-Scoped to a fleet until customer organizations exist (then it moves to the organization).
+Scoped to a fleet for now; the move to the organization is designed and deferred
+(FL-11, deferred.md 86).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
