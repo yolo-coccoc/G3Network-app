@@ -13,7 +13,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 from shapely.geometry import Polygon
 
-from app.domains.fleet.types import FleetStatus
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 
@@ -28,29 +27,60 @@ GeofencePosition = tuple[
 
 
 class _FleetInputFields(BaseModel):
-    """Fields shared by the create and response fleet schemas."""
+    """Fields shared by the create and response fleet schemas.
 
-    fleet_code: str = Field(
-        ..., min_length=1, max_length=50, description="Natural fleet code"
+    ``name`` and ``fleet_code`` are both optional, but a fleet always has at
+    least one of them (FL-08): checked on create, and guaranteed by the
+    ``ck_fleets_name_or_code`` check constraint.
+    """
+
+    fleet_code: str | None = Field(
+        default=None, min_length=1, max_length=50, description="Natural fleet code"
     )
-    name: str = Field(..., min_length=1, max_length=100, description="Fleet name")
-    status: FleetStatus = Field(default=FleetStatus.ACTIVE, description="Fleet status")
+    name: str | None = Field(
+        default=None, min_length=1, max_length=100, description="Fleet name"
+    )
+    parent_fleet_id: UUID | None = Field(
+        default=None,
+        description="Fleet this one sits under; null for a top-level fleet",
+    )
 
 
 class FleetCreateRequest(_FleetInputFields):
     """HTTP request data for creating a new fleet."""
 
+    @model_validator(mode="after")
+    def _require_name_or_code(self) -> "FleetCreateRequest":
+        """Reject a fleet with neither a name nor a code (FL-08).
+
+        Returns:
+            The validated request.
+
+        Raises:
+            ValueError: When both ``name`` and ``fleet_code`` are missing.
+        """
+        if self.name is None and self.fleet_code is None:
+            raise ValueError("a fleet needs a name, a fleet code, or both")
+        return self
+
 
 class FleetUpdateRequest(BaseModel):
-    """HTTP request data for partially updating a fleet."""
+    """HTTP request data for partially updating (renaming or moving) a fleet.
+
+    A field that is not sent, or sent as ``null``, is left unchanged, so an
+    update can neither clear the name or code nor move a fleet back to the
+    top level (deferred.md 98).
+    """
 
     fleet_code: str | None = Field(
-        None, min_length=1, max_length=50, description="Natural fleet code"
+        default=None, min_length=1, max_length=50, description="Natural fleet code"
     )
     name: str | None = Field(
-        None, min_length=1, max_length=100, description="Fleet name"
+        default=None, min_length=1, max_length=100, description="Fleet name"
     )
-    status: FleetStatus | None = Field(None, description="Fleet status")
+    parent_fleet_id: UUID | None = Field(
+        default=None, description="Move the fleet under this fleet"
+    )
 
 
 class FleetResponse(_FleetInputFields):
@@ -102,14 +132,14 @@ class FleetVehicleResponse(BaseModel):
         status: Vehicle lifecycle status - the only status this backend
             can honestly report; no online/offline signal exists yet.
             ``None`` in the same case.
-        joined_at: When this vehicle joined the fleet.
+        added_at: When this vehicle was added to the fleet.
     """
 
     vehicle_id: UUID
     vin: str | None
     license_plate: str | None
     status: VehicleStatus | None
-    joined_at: datetime
+    added_at: datetime
 
 
 class FleetVehicleListResponse(BaseModel):
@@ -129,22 +159,22 @@ class FleetMembershipResponse(BaseModel):
     """One fleet-vehicle membership record, open or closed.
 
     Attributes:
-        membership_id: Internal ID of the membership.
+        fleet_vehicle_membership_id: Internal ID of the membership.
         fleet_id: The owning fleet.
         vehicle_id: The member vehicle.
         vehicle_vin: VIN of the member vehicle, enriched by the service.
             `None` only for a historical membership whose vehicle has
             since been soft-deleted and no longer resolves.
-        joined_at: When this membership began.
-        left_at: When this membership ended, `None` while active.
+        added_at: When the vehicle was added to the fleet.
+        removed_at: When it was removed, `None` while still a member.
     """
 
-    membership_id: UUID
+    fleet_vehicle_membership_id: UUID
     fleet_id: UUID
     vehicle_id: UUID
     vehicle_vin: str | None
-    joined_at: datetime
-    left_at: datetime | None
+    added_at: datetime
+    removed_at: datetime | None
 
 
 class FleetMembershipHistoryResponse(BaseModel):

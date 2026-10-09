@@ -77,11 +77,6 @@ Enum driverstatus {
   INACTIVE
 }
 
-Enum fleetstatus {
-  ACTIVE [note: '@remove FL-08']
-  INACTIVE [note: '@remove FL-08']
-}
-
 Enum chargingstationmaintenancestatus {
   OPERATIONAL
   UNDER_MAINTENANCE
@@ -1085,20 +1080,18 @@ The people who drive the trucks, who is at the wheel of which truck, and the tri
 
 Table fleets {
   fleet_id uuid [pk, note: 'Internal ID of the fleet. @vi Mã nội bộ của đội xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  organization_id uuid [not null, note: '@planned FL-08: Organization the fleet belongs to, its own owner (DM-24 case A). @vi Tổ chức sở hữu đội xe, là chủ sở hữu trực tiếp (DM-24 trường hợp A). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  parent_fleet_id uuid [note: '@planned: The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được gán vào một đội cũng quản lý mọi đội bên dưới. @example NULL']
-  fleet_code varchar(50) [not null, unique, note: 'Short code chosen by the customer, for imports and reports. Planned (FL-08): optional, and unique only within its organization among fleets not deleted. @vi Mã ngắn do khách hàng chọn, dùng khi nhập dữ liệu và trong báo cáo. Dự kiến (FL-08): không bắt buộc, và chỉ duy nhất trong tổ chức giữa các đội chưa bị xóa. @example HCM-01']
-  name varchar(100) [not null, note: 'Name chosen by the customer, shown in the portal. Planned (FL-08): optional; a fleet has at least a name or a code (check constraint). @vi Tên do khách hàng chọn, hiển thị trên portal. Dự kiến (FL-08): không bắt buộc; một đội có ít nhất tên hoặc mã (ràng buộc kiểm tra). @example Đội xe Hồ Chí Minh']
-  status fleetstatus [not null, note: '@remove FL-08: Fleet lifecycle status; a fleet is a grouping, so it either exists or is deleted. @vi Trạng thái của đội xe; đội xe chỉ là một nhóm nên chỉ có tồn tại hoặc đã xóa. @example ACTIVE']
+  organization_id uuid [not null, note: '@planned FL-08: Organization the fleet belongs to, its own owner (DM-24 case A). Added with the organizations table (identity). @vi Tổ chức sở hữu đội xe, là chủ sở hữu trực tiếp (DM-24 trường hợp A). Sẽ được thêm cùng với bảng organizations (miền danh tính). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  parent_fleet_id uuid [note: 'The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được gán vào một đội cũng quản lý mọi đội bên dưới. @example NULL']
+  fleet_code varchar(50) [unique, note: 'Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique across all fleets for now; unique only within its organization among fleets not deleted once organization_id exists (FL-08). NULL when the fleet has only a name. @vi Mã ngắn do khách hàng chọn, dùng khi nhập dữ liệu và trong báo cáo; không bắt buộc, nhưng đội phải có ít nhất tên hoặc mã (ràng buộc kiểm tra, FL-08). Hiện tại là duy nhất trên toàn hệ thống; khi có organization_id thì chỉ cần duy nhất trong tổ chức, giữa các đội chưa bị xóa (FL-08). NULL khi đội chỉ có tên. @example HCM-01']
+  name varchar(100) [note: 'Name chosen by the customer, shown in the portal; optional, but a fleet has at least a name or a code (check constraint, FL-08). NULL when the fleet has only a code. @vi Tên do khách hàng chọn, hiển thị trên portal; không bắt buộc, nhưng đội phải có ít nhất tên hoặc mã (ràng buộc kiểm tra, FL-08). NULL khi đội chỉ có mã. @example Đội xe Hồ Chí Minh']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the fleet no longer exists (DM-25); its member trucks leave it (FL-06) and its history is kept. Why it was deleted is the change reason in its history. NULL while it exists. @vi Thời điểm xóa mềm: đội xe không còn tồn tại (DM-25); các xe thành viên rời đội (FL-06) và lịch sử được giữ lại. Lý do xóa là lý do thay đổi trong lịch sử. NULL khi đội còn tồn tại. @example NULL']
   indexes {
-    status [name: 'ix_fleets_status', note: 'Dropped with status (FL-08)']
     fleet_code [unique, name: 'ix_fleets_fleet_code', note: 'Replaced by uq_fleets_live_organization_code (FL-08)']
-    (organization_id, fleet_code) [unique, name: 'uq_fleets_live_organization_code', note: 'Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL']
-    organization_id [name: 'ix_fleets_organization_id', note: 'Planned (FL-08)']
-    parent_fleet_id [name: 'ix_fleets_parent_fleet_id', note: 'Planned (FL-08): walking the tree']
+    (organization_id, fleet_code) [unique, name: 'uq_fleets_live_organization_code', note: 'Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL. Added with organization_id.']
+    organization_id [name: 'ix_fleets_organization_id', note: 'Planned (FL-08): added with organization_id']
+    parent_fleet_id [name: 'ix_fleets_parent_fleet_id', note: 'Walking the tree']
   }
   Note: '''@status built @owner customer @features F-E1 @tracked *
 A named group of vehicles inside an organization: a node of the customer's
@@ -1107,26 +1100,25 @@ parent_fleet_id). Reorganising is editing data, never the schema.
 Change history on (FL-08): renaming, moving or deleting a fleet is a
 decision, and a move changes what a manager assigned to a parent fleet can
 see (FL-03). Deleting a fleet that still has live sub-fleets is refused.
-Check constraint (FL-08): num_nonnulls(name, fleet_code) >= 1.
+Check constraint (ck_fleets_name_or_code, FL-08): num_nonnulls(name, fleet_code) >= 1.
 @vi-name Đội xe
 @vi Một nhóm xe có tên bên trong một tổ chức: một nút trong cơ cấu riêng của khách hàng (miền, chi nhánh, bãi xe, nhóm - tên tùy ý, không giới hạn số cấp, qua parent_fleet_id). Tái cơ cấu chỉ là sửa dữ liệu, không bao giờ phải đổi thiết kế. Bật lịch sử thay đổi (FL-08): đổi tên, di chuyển hay xóa đội là một quyết định, và việc di chuyển làm thay đổi phạm vi xem của người quản lý được gán vào đội cấp trên (FL-03). Không được xóa đội còn đội con đang tồn tại. Ràng buộc kiểm tra (FL-08): đội phải có ít nhất tên hoặc mã.'''
 }
 
 Table fleet_vehicle_memberships {
-  fleet_vehicle_membership_id uuid [pk, note: '@built-as membership_id: Internal ID of one membership period. Renamed because memberships.membership_id (identity) means a person in an organization, a different thing (FL-09). @vi Mã nội bộ của một giai đoạn thành viên. Đổi tên vì memberships.membership_id (miền danh tính) là một người trong một tổ chức, một khái niệm khác (FL-09). @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  fleet_vehicle_membership_id uuid [pk, note: 'Internal ID of one membership period. Renamed because memberships.membership_id (identity) means a person in an organization, a different thing (FL-09). @vi Mã nội bộ của một giai đoạn thành viên. Đổi tên vì memberships.membership_id (miền danh tính) là một người trong một tổ chức, một khái niệm khác (FL-09). @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   fleet_id uuid [not null, note: 'Fleet the vehicle is in; the row reads its organization through it (DM-24), since a fleet never moves to another organization. @vi Đội xe chứa xe; dòng đọc tổ chức qua đội xe (DM-24), vì đội xe không bao giờ chuyển sang tổ chức khác. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
   vehicle_id uuid [not null, note: 'Vehicle in the fleet; it must belong to the fleet\'s organization when added. @vi Xe thuộc đội; xe phải thuộc tổ chức của đội khi được thêm vào. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  added_at timestamptz [not null, note: '@built-as joined_at: When the vehicle was added to the fleet (FL-09). @vi Thời điểm xe được thêm vào đội (FL-09). @example 2026-09-01T00:00:00Z']
-  removed_at timestamptz [note: '@built-as left_at: When it was removed; NULL while still a member (FL-09). @vi Thời điểm xe bị đưa ra khỏi đội; NULL khi vẫn còn trong đội (FL-09). @example NULL']
-  added_by uuid [note: '@planned FL-09: User who added the vehicle. @vi Người dùng đã thêm xe vào đội. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  removed_by uuid [note: '@planned FL-09: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). @vi Người dùng đã đưa xe ra khỏi đội; NULL khi vẫn là thành viên, hoặc khi hệ thống tự đóng (xe được bán, VH-12, hoặc đội bị xóa, FL-06). @example NULL']
+  added_at timestamptz [not null, note: 'When the vehicle was added to the fleet (FL-09). @vi Thời điểm xe được thêm vào đội (FL-09). @example 2026-09-01T00:00:00Z']
+  removed_at timestamptz [note: 'When it was removed; NULL while still a member (FL-09). @vi Thời điểm xe bị đưa ra khỏi đội; NULL khi vẫn còn trong đội (FL-09). @example NULL']
+  added_by uuid [note: '@planned FL-09: User who added the vehicle. Added with the users table (identity). @vi Người dùng đã thêm xe vào đội. Sẽ được thêm cùng với bảng users (miền danh tính). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  removed_by uuid [note: '@planned FL-09: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). Added with the users table (identity). @vi Người dùng đã đưa xe ra khỏi đội; NULL khi vẫn là thành viên, hoặc khi hệ thống tự đóng (xe được bán, VH-12, hoặc đội bị xóa, FL-06). Sẽ được thêm cùng với bảng users (miền danh tính). @example NULL']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the membership is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi xe rời đội). @example 2026-09-10T07:15:00Z']
   indexes {
-    fleet_id [name: 'ix_fleet_vehicle_memberships_fleet_id', note: 'Dropped: covered by ix_fleet_vehicle_memberships_fleet_time (FL-09)']
     (fleet_id, added_at) [name: 'ix_fleet_vehicle_memberships_fleet_time']
     vehicle_id [name: 'ix_fleet_vehicle_memberships_vehicle_id']
-    vehicle_id [unique, name: 'uq_fleet_vehicle_memberships_active_vehicle', note: 'WHERE removed_at IS NULL (built as left_at)']
+    vehicle_id [unique, name: 'uq_fleet_vehicle_memberships_active_vehicle', note: 'WHERE removed_at IS NULL']
   }
   Note: '''@status built @owner customer @features F-E1
 Which vehicle was in which fleet, and when (open/close history). A truck is

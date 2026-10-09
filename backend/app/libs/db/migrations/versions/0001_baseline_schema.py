@@ -210,19 +210,25 @@ def upgrade() -> None:
     op.create_table(
         "fleets",
         sa.Column("fleet_id", sa.UUID(), nullable=False),
-        sa.Column("fleet_code", sa.String(length=50), nullable=False),
-        sa.Column("name", sa.String(length=100), nullable=False),
-        sa.Column(
-            "status", sa.Enum("ACTIVE", "INACTIVE", name="fleetstatus"), nullable=False
-        ),
+        sa.Column("parent_fleet_id", sa.UUID(), nullable=True),
+        sa.Column("fleet_code", sa.String(length=50), nullable=True),
+        sa.Column("name", sa.String(length=100), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "num_nonnulls(name, fleet_code) >= 1", name="ck_fleets_name_or_code"
+        ),
+        sa.ForeignKeyConstraint(
+            ["parent_fleet_id"], ["fleets.fleet_id"], ondelete="RESTRICT"
+        ),
         sa.PrimaryKeyConstraint("fleet_id"),
     )
     op.create_index("ix_fleets_deleted_at", "fleets", ["deleted_at"], unique=False)
     op.create_index(op.f("ix_fleets_fleet_code"), "fleets", ["fleet_code"], unique=True)
-    op.create_index(op.f("ix_fleets_status"), "fleets", ["status"], unique=False)
+    op.create_index(
+        op.f("ix_fleets_parent_fleet_id"), "fleets", ["parent_fleet_id"], unique=False
+    )
     op.create_table(
         "geofences",
         sa.Column("geofence_id", sa.UUID(), nullable=False),
@@ -410,29 +416,23 @@ def upgrade() -> None:
     )
     op.create_table(
         "fleet_vehicle_memberships",
-        sa.Column("membership_id", sa.UUID(), nullable=False),
+        sa.Column("fleet_vehicle_membership_id", sa.UUID(), nullable=False),
         sa.Column("fleet_id", sa.UUID(), nullable=False),
         sa.Column("vehicle_id", sa.UUID(), nullable=False),
-        sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("left_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("added_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("removed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["fleet_id"], ["fleets.fleet_id"], ondelete="RESTRICT"),
         sa.ForeignKeyConstraint(
             ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
         ),
-        sa.PrimaryKeyConstraint("membership_id"),
-    )
-    op.create_index(
-        op.f("ix_fleet_vehicle_memberships_fleet_id"),
-        "fleet_vehicle_memberships",
-        ["fleet_id"],
-        unique=False,
+        sa.PrimaryKeyConstraint("fleet_vehicle_membership_id"),
     )
     op.create_index(
         "ix_fleet_vehicle_memberships_fleet_time",
         "fleet_vehicle_memberships",
-        ["fleet_id", "joined_at"],
+        ["fleet_id", "added_at"],
         unique=False,
     )
     op.create_index(
@@ -446,7 +446,7 @@ def upgrade() -> None:
         "fleet_vehicle_memberships",
         ["vehicle_id"],
         unique=True,
-        postgresql_where=sa.text("left_at IS NULL"),
+        postgresql_where=sa.text("removed_at IS NULL"),
     )
     op.create_table(
         "notifications",

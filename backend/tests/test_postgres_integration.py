@@ -38,7 +38,14 @@ import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
+from app.domains.fleet.exceptions import (
+    FleetHasSubFleetsError,
+    FleetHierarchyLoopError,
+    FleetParentNotFoundError,
+)
 from app.domains.fleet.schemas import (
+    FleetCreateRequest,
+    FleetUpdateRequest,
     GeofenceCreateRequest,
     GeofencePolygonGeoJson,
     GeofenceUpdateRequest,
@@ -1574,7 +1581,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 db,
                 fleet_id=hanoi.fleet_id,
                 vehicle_id=vehicle.vehicle_id,
-                joined_at=now,
+                added_at=now,
             )
             with pytest.raises(IntegrityError):
                 async with db.begin_nested():
@@ -1582,7 +1589,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                         db,
                         fleet_id=saigon.fleet_id,
                         vehicle_id=vehicle.vehicle_id,
-                        joined_at=now,
+                        added_at=now,
                     )
 
             by_vehicle = await fleet_repository.list_all(
@@ -1660,7 +1667,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
 
             # #84: close the membership by ID; a second close is a 404.
             await fleet_service.close_fleet_membership(
-                db, hanoi.fleet_id, membership.membership_id
+                db, hanoi.fleet_id, membership.fleet_vehicle_membership_id
             )
             assert (
                 await fleet_service.find_current_fleet_id_by_vehicle(
@@ -1668,6 +1675,55 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 )
                 is None
             )
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fleet_tree_and_name_or_code_rule_on_postgres(
+    temporary_database: str,
+) -> None:
+    """Fleets nest under live parents, never in a loop; a fleet with
+    sub-fleets cannot be deleted; a fleet needs a name or a code (FL-02,
+    FL-08)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            region = await fleet_service.create_fleet(
+                db, FleetCreateRequest(name="South")
+            )
+            depot = await fleet_service.create_fleet(
+                db,
+                FleetCreateRequest(fleet_code="SG-D1", parent_fleet_id=region.fleet_id),
+            )
+            assert depot.parent_fleet_id == region.fleet_id
+            assert (depot.name, region.fleet_code) == (None, None)
+
+            with pytest.raises(FleetHierarchyLoopError):
+                await fleet_service.update_fleet(
+                    db,
+                    region.fleet_id,
+                    FleetUpdateRequest(parent_fleet_id=depot.fleet_id),
+                )
+            with pytest.raises(FleetHasSubFleetsError):
+                await fleet_service.soft_delete_fleet(db, region.fleet_id)
+
+            await fleet_service.soft_delete_fleet(db, depot.fleet_id)
+            await fleet_service.soft_delete_fleet(db, region.fleet_id)
+            with pytest.raises(FleetParentNotFoundError):
+                await fleet_service.create_fleet(
+                    db,
+                    FleetCreateRequest(name="Orphan", parent_fleet_id=region.fleet_id),
+                )
+
+            # The database itself refuses a fleet with neither name nor code.
+            with pytest.raises(IntegrityError, match="ck_fleets_name_or_code"):
+                async with db.begin_nested():
+                    await fleet_repository.insert(db, {"name": None})
             await db.rollback()
     finally:
         await engine.dispose()
@@ -2000,7 +2056,7 @@ async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
                 db,
                 fleet_id=fleet.fleet_id,
                 vehicle_id=vehicle.vehicle_id,
-                joined_at=datetime.now(timezone.utc),
+                added_at=datetime.now(timezone.utc),
             )
             geofence = await fleet_service.create_geofence(
                 db,
@@ -2120,7 +2176,7 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                     db,
                     fleet_id=fleet.fleet_id,
                     vehicle_id=member_vehicle.vehicle_id,
-                    joined_at=joined_at + timedelta(seconds=offset_seconds),
+                    added_at=joined_at + timedelta(seconds=offset_seconds),
                 )
 
             report = await telemetry_service.get_fleet_operating_report(

@@ -24,9 +24,12 @@ import app.domains.fleet.repository as fleet_repository
 import app.domains.vehicles.service as vehicle_service
 from app.domains.fleet.exceptions import (
     FleetConflictError,
+    FleetHasSubFleetsError,
+    FleetHierarchyLoopError,
     FleetMembershipConflictError,
     FleetMembershipNotFoundError,
     FleetNotFoundError,
+    FleetParentNotFoundError,
     FleetVehicleNotFoundError,
     GeofenceNotFoundError,
 )
@@ -51,7 +54,7 @@ from app.domains.fleet.schemas import (
     GeofenceResponse,
     GeofenceUpdateRequest,
 )
-from app.domains.fleet.types import FleetStatus, GeofenceReference
+from app.domains.fleet.types import GeofenceReference
 from app.domains.vehicles.types import VehicleStatus, VehicleSummary
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -76,12 +79,12 @@ def to_membership_response(
         Response data for the membership.
     """
     return FleetMembershipResponse(
-        membership_id=membership_record.membership_id,
+        fleet_vehicle_membership_id=membership_record.fleet_vehicle_membership_id,
         fleet_id=membership_record.fleet_id,
         vehicle_id=membership_record.vehicle_id,
         vehicle_vin=vehicle_vin,
-        joined_at=membership_record.joined_at,
-        left_at=membership_record.left_at,
+        added_at=membership_record.added_at,
+        removed_at=membership_record.removed_at,
     )
 
 
@@ -110,18 +113,83 @@ async def build_fleet_response(
         fleet_id=fleet_record.fleet_id,
         fleet_code=fleet_record.fleet_code,
         name=fleet_record.name,
-        status=fleet_record.status,
+        parent_fleet_id=fleet_record.parent_fleet_id,
         vehicle_count=vehicle_count,
         created_at=fleet_record.created_at,
         updated_at=fleet_record.updated_at,
     )
 
 
+async def _ensure_valid_parent_fleet(
+    db_session: AsyncSession,
+    parent_fleet_id: UUID,
+    *,
+    moved_fleet_id: UUID | None,
+) -> None:
+    """Check that a fleet may sit under `parent_fleet_id` (FL-02).
+
+    The parent must be a live fleet, and when an existing fleet is moved,
+    the parent must be neither that fleet nor any fleet below it, or the
+    tree would become a loop. Walks up from the new parent one fleet at a
+    time (one query per level, no batching); fleet trees are a few levels
+    deep.
+
+    Two concurrent moves (A under B and B under A) can each pass this check
+    and still form a loop: the walk keeps a visited set so it always ends,
+    and preventing the race needs row locks, not worth it for an
+    administrator's rare edit.
+
+    Args:
+        db_session: Current database session.
+        parent_fleet_id: Internal ID of the proposed parent fleet.
+        moved_fleet_id: Internal ID of the fleet being moved, or `None`
+            when a new fleet is created (it cannot be anyone's ancestor).
+
+    Raises:
+        FleetParentNotFoundError: When the parent does not exist or was
+            soft-deleted.
+        FleetHierarchyLoopError: When the parent is the moved fleet itself
+            or one of its sub-fleets.
+
+    Side Effects:
+        Read-only; does not commit or rollback.
+    """
+    parent_fleet_record = await fleet_repository.get_by_id(db_session, parent_fleet_id)
+    if parent_fleet_record is None:
+        raise FleetParentNotFoundError(
+            f"Parent fleet with id '{parent_fleet_id}' not found"
+        )
+    if moved_fleet_id is None:
+        return
+
+    visited_fleet_ids: set[UUID] = set()
+    ancestor_record: FleetModel | None = parent_fleet_record
+    while (
+        ancestor_record is not None
+        and ancestor_record.fleet_id not in visited_fleet_ids
+    ):
+        if ancestor_record.fleet_id == moved_fleet_id:
+            raise FleetHierarchyLoopError(
+                f"Fleet '{moved_fleet_id}' cannot be moved under itself or "
+                "under one of its own sub-fleets"
+            )
+        visited_fleet_ids.add(ancestor_record.fleet_id)
+        if ancestor_record.parent_fleet_id is None:
+            return
+        ancestor_record = await fleet_repository.get_by_id(
+            db_session, ancestor_record.parent_fleet_id
+        )
+
+
 async def create_fleet(
     db_session: AsyncSession,
     fleet_create_request: FleetCreateRequest,
 ) -> FleetResponse:
-    """Create a new fleet after verifying that the fleet code is unique.
+    """Create a new fleet, optionally under a parent fleet.
+
+    Rules: a given fleet code must not be used by another live fleet, and a
+    given parent must be a live fleet (FL-02). The request schema already
+    guarantees a name, a code, or both (FL-08).
 
     Args:
         db_session: Database session owned by the entry boundary.
@@ -132,13 +200,19 @@ async def create_fleet(
 
     Raises:
         FleetConflictError: When the fleet code already exists.
+        FleetParentNotFoundError: When the parent fleet does not exist.
     """
-    existing_fleet = await fleet_repository.find_by_fleet_code(
-        db_session, fleet_create_request.fleet_code
-    )
-    if existing_fleet:
-        raise FleetConflictError(
-            f"Fleet with code '{fleet_create_request.fleet_code}' already exists"
+    if fleet_create_request.fleet_code is not None:
+        existing_fleet = await fleet_repository.find_by_fleet_code(
+            db_session, fleet_create_request.fleet_code
+        )
+        if existing_fleet:
+            raise FleetConflictError(
+                f"Fleet with code '{fleet_create_request.fleet_code}' already exists"
+            )
+    if fleet_create_request.parent_fleet_id is not None:
+        await _ensure_valid_parent_fleet(
+            db_session, fleet_create_request.parent_fleet_id, moved_fleet_id=None
         )
 
     try:
@@ -180,7 +254,6 @@ async def list_fleets(
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-    status_filter: FleetStatus | None = None,
     search_text: str | None = None,
     vehicle_vin: str | None = None,
 ) -> FleetListResponse:
@@ -190,7 +263,6 @@ async def list_fleets(
         db_session: Current database session.
         page: Page number, starting from 1.
         page_size: Maximum number of fleets per page.
-        status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the fleet name or fleet
             code, if any.
         vehicle_vin: Only the fleet this vehicle is currently a member of
@@ -225,13 +297,11 @@ async def list_fleets(
         db_session,
         offset=page_window.offset,
         limit=page_window.page_size,
-        status_filter=status_filter,
         search_text=search_text,
         vehicle_id=vehicle_id,
     )
     total = await fleet_repository.count(
         db_session,
-        status_filter=status_filter,
         search_text=search_text,
         vehicle_id=vehicle_id,
     )
@@ -252,7 +322,11 @@ async def update_fleet(
     fleet_id: UUID,
     fleet_update_request: FleetUpdateRequest,
 ) -> FleetResponse:
-    """Partially update a fleet after checking the unique fleet code.
+    """Partially update a fleet: rename it, change its code, or move it.
+
+    Rules: a new fleet code must not be used by another live fleet; a new
+    parent must be a live fleet that is neither this fleet nor one of its
+    sub-fleets (FL-02). Moving a fleet moves its whole subtree with it.
 
     Args:
         db_session: Current database session.
@@ -265,6 +339,9 @@ async def update_fleet(
     Raises:
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
         FleetConflictError: When the new fleet code is already in use.
+        FleetParentNotFoundError: When the new parent fleet does not exist.
+        FleetHierarchyLoopError: When the new parent is this fleet or one of
+            its sub-fleets.
     """
     fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
     if not fleet_record:
@@ -281,6 +358,14 @@ async def update_fleet(
             raise FleetConflictError(
                 f"Fleet with code '{fleet_update_request.fleet_code}' already exists"
             )
+
+    if (
+        fleet_update_request.parent_fleet_id is not None
+        and fleet_update_request.parent_fleet_id != fleet_record.parent_fleet_id
+    ):
+        await _ensure_valid_parent_fleet(
+            db_session, fleet_update_request.parent_fleet_id, moved_fleet_id=fleet_id
+        )
 
     update_values = {
         field_name: value
@@ -311,6 +396,9 @@ async def soft_delete_fleet(
 ) -> dict[str, str]:
     """Soft-delete a fleet, closing any active memberships first.
 
+    A fleet that still has live sub-fleets is refused (FL-08): they must be
+    moved or deleted first, so no live fleet ever sits under a deleted one.
+
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
@@ -320,6 +408,7 @@ async def soft_delete_fleet(
 
     Raises:
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
+        FleetHasSubFleetsError: When live fleets still sit under this one.
 
     Side Effects:
         Closes every open membership of this fleet (if any) in the same
@@ -328,12 +417,18 @@ async def soft_delete_fleet(
         One `close_membership` call per member vehicle - no batching, per
         this repo's no-premature-batching convention.
     """
+    await _get_fleet_record(db_session, fleet_id)
+    if await fleet_repository.count_child_fleets(db_session, fleet_id) > 0:
+        raise FleetHasSubFleetsError(
+            f"Fleet '{fleet_id}' still has sub-fleets; move or delete them first"
+        )
+
     active_memberships = await fleet_repository.list_all_active_memberships_by_fleet(
         db_session, fleet_id
     )
     for membership_record in active_memberships:
         await fleet_repository.close_membership(
-            db_session, membership_record, left_at=utc_now()
+            db_session, membership_record, removed_at=utc_now()
         )
 
     fleet_record = await fleet_repository.soft_delete(db_session, fleet_id)
@@ -401,7 +496,7 @@ async def add_vehicle_to_fleet(
             db_session,
             fleet_id=fleet_id,
             vehicle_id=vehicle_reference.vehicle_id,
-            joined_at=utc_now(),
+            added_at=utc_now(),
         )
     except IntegrityError as error:
         raise FleetMembershipConflictError(
@@ -454,14 +549,14 @@ async def remove_vehicle_from_fleet(
         )
 
     await fleet_repository.close_membership(
-        db_session, active_membership, left_at=utc_now()
+        db_session, active_membership, removed_at=utc_now()
     )
 
 
 async def close_fleet_membership(
     db_session: AsyncSession,
     fleet_id: UUID,
-    membership_id: UUID,
+    fleet_vehicle_membership_id: UUID,
 ) -> None:
     """Close an open membership of a fleet by its ID (D8, #84).
 
@@ -473,7 +568,7 @@ async def close_fleet_membership(
     Args:
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
-        membership_id: Internal ID of the membership to close.
+        fleet_vehicle_membership_id: Internal ID of the membership to close.
 
     Raises:
         FleetNotFoundError: When the fleet does not exist.
@@ -481,27 +576,27 @@ async def close_fleet_membership(
             belongs to another fleet, or is already closed.
 
     Side Effects:
-        Stamps the membership's ``left_at``; does not commit or rollback.
+        Stamps the membership's ``removed_at``; does not commit or rollback.
     """
     fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
     membership_record = await fleet_repository.get_membership_by_id(
-        db_session, membership_id
+        db_session, fleet_vehicle_membership_id
     )
     if (
         membership_record is None
         or membership_record.fleet_id != fleet_id
-        or membership_record.left_at is not None
+        or membership_record.removed_at is not None
     ):
         raise FleetMembershipNotFoundError(
-            f"Membership '{membership_id}' is not an open membership of "
-            f"fleet '{fleet_id}'"
+            f"Membership '{fleet_vehicle_membership_id}' is not an open "
+            f"membership of fleet '{fleet_id}'"
         )
 
     await fleet_repository.close_membership(
-        db_session, membership_record, left_at=utc_now()
+        db_session, membership_record, removed_at=utc_now()
     )
 
 
@@ -527,7 +622,7 @@ def to_fleet_vehicle_response(
         vin=vehicle_summary.vin if vehicle_summary else None,
         license_plate=vehicle_summary.license_plate if vehicle_summary else None,
         status=vehicle_summary.status if vehicle_summary else None,
-        joined_at=membership_record.joined_at,
+        added_at=membership_record.added_at,
     )
 
 
@@ -636,7 +731,7 @@ async def list_fleet_vehicles(
     )
     # Same order as the unfiltered, SQL-paged branch: newest member first.
     all_membership_records.sort(
-        key=lambda membership_record: membership_record.joined_at, reverse=True
+        key=lambda membership_record: membership_record.added_at, reverse=True
     )
     matching_responses = []
     for membership_record in all_membership_records:
@@ -1028,7 +1123,7 @@ async def list_active_member_vehicle_ids(
     membership_records = await fleet_repository.list_all_active_memberships_by_fleet(
         db, fleet_id
     )
-    membership_records.sort(key=lambda membership_record: membership_record.joined_at)
+    membership_records.sort(key=lambda membership_record: membership_record.added_at)
     return [membership_record.vehicle_id for membership_record in membership_records]
 
 

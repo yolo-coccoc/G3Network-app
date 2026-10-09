@@ -20,6 +20,14 @@ def test_fleet_create_request_validates_core_contract() -> None:
         FleetCreateRequest(fleet_code="", name="Hanoi Fleet")
 
 
+def test_fleet_create_request_needs_a_name_or_a_code() -> None:
+    """Either a name or a code is enough; a fleet with neither is rejected (FL-08)."""
+    assert FleetCreateRequest(name="Hanoi Fleet").fleet_code is None
+    assert FleetCreateRequest(fleet_code="HN-01").name is None
+    with pytest.raises(ValidationError):
+        FleetCreateRequest()
+
+
 def test_fleet_vehicle_add_request_rejects_malformed_vin() -> None:
     """F-E1's membership request enforces the same 17-character VIN length as vehicles."""
     FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186")

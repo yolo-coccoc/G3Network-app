@@ -1,6 +1,11 @@
 """Business exceptions raised by the fleet domain."""
 
-from app.libs.common.errors import ConflictError, DomainError, NotFoundError
+from app.libs.common.errors import (
+    ConflictError,
+    DomainError,
+    InvalidInputError,
+    NotFoundError,
+)
 
 
 class FleetError(DomainError):
@@ -13,6 +18,20 @@ class FleetNotFoundError(FleetError, NotFoundError):
 
 class FleetConflictError(FleetError, ConflictError):
     """Raised when unique fleet data conflicts with an existing fleet."""
+
+
+class FleetParentNotFoundError(FleetError, NotFoundError):
+    """Raised when the parent fleet given for a fleet does not exist or was
+    soft-deleted (FL-02)."""
+
+
+class FleetHierarchyLoopError(FleetError, InvalidInputError):
+    """Raised when moving a fleet under itself or under one of its own
+    sub-fleets, which would make the fleet tree a loop (FL-02)."""
+
+
+class FleetHasSubFleetsError(FleetError, ConflictError):
+    """Raised when deleting a fleet that still has live sub-fleets (FL-08)."""
 
 
 class FleetVehicleNotFoundError(FleetError, NotFoundError):
