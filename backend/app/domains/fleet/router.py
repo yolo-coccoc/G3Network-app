@@ -1,7 +1,8 @@
 """FastAPI router for the HTTP endpoints of the fleet domain.
 
 Domain exceptions are not caught here: `app/api/main.py` maps each shared
-base (`NotFoundError` -> 404, `ConflictError` -> 409) to its HTTP status.
+base (`NotFoundError` -> 404, `ConflictError` -> 409, `InvalidInputError` -> 400)
+to its HTTP status.
 """
 
 from uuid import UUID
@@ -24,7 +25,6 @@ from app.domains.fleet.schemas import (
     GeofenceResponse,
     GeofenceUpdateRequest,
 )
-from app.domains.fleet.types import FleetStatus
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -37,7 +37,10 @@ router = APIRouter(tags=["fleet"])
     status_code=status.HTTP_201_CREATED,
     response_model=FleetResponse,
     summary="Create a new fleet",
-    description="Create a new fleet in the system. Fleet code must be unique.",
+    description=(
+        "Create a new fleet, optionally under a parent fleet. A fleet needs a "
+        "name, a fleet code, or both; a fleet code must be unique."
+    ),
 )
 async def create_fleet_endpoint(
     fleet_create_request: FleetCreateRequest,
@@ -54,6 +57,7 @@ async def create_fleet_endpoint(
 
     Raises:
         FleetConflictError: 409 when the fleet code is already used.
+        FleetParentNotFoundError: 404 when the parent fleet does not exist.
     """
     return await fleet_service.create_fleet(db_session, fleet_create_request)
 
@@ -62,7 +66,7 @@ async def create_fleet_endpoint(
     "/",
     response_model=FleetListResponse,
     summary="Get the list of fleets",
-    description="Get the list of fleets with pagination and status filtering.",
+    description="Get the list of fleets with pagination and search.",
 )
 async def list_fleets_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
@@ -71,9 +75,6 @@ async def list_fleets_endpoint(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
-    ),
-    status_filter: FleetStatus | None = Query(
-        None, alias="status", description="Filter by status"
     ),
     search_text: str | None = Query(
         None,
@@ -95,7 +96,6 @@ async def list_fleets_endpoint(
     Args:
         page: Page number.
         page_size: Number of records per page.
-        status_filter: Status filter, if any.
         search_text: Name/fleet-code substring filter (`q`), if any.
         vehicle_vin: "Which fleet is this vehicle in" filter, if any; an
             unknown VIN yields an empty page.
@@ -108,7 +108,6 @@ async def list_fleets_endpoint(
         db_session,
         page=page,
         page_size=page_size,
-        status_filter=status_filter,
         search_text=search_text,
         vehicle_vin=vehicle_vin,
     )
@@ -144,7 +143,10 @@ async def get_fleet_endpoint(
     "/{fleet_id}",
     response_model=FleetResponse,
     summary="Update a fleet",
-    description="Update fleet information. Only the provided fields are updated.",
+    description=(
+        "Rename a fleet, change its code, or move it under another fleet. "
+        "Only the provided fields are updated."
+    ),
 )
 async def update_fleet_endpoint(
     fleet_id: UUID,
@@ -165,6 +167,10 @@ async def update_fleet_endpoint(
         FleetNotFoundError: 404 when the fleet does not exist or was
             soft-deleted.
         FleetConflictError: 409 when the new fleet code is already used.
+        FleetParentNotFoundError: 404 when the new parent fleet does not
+            exist.
+        FleetHierarchyLoopError: 400 when the new parent is the fleet itself
+            or one of its sub-fleets.
     """
     return await fleet_service.update_fleet(db_session, fleet_id, fleet_update_request)
 
@@ -173,7 +179,10 @@ async def update_fleet_endpoint(
     "/{fleet_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete a fleet",
-    description="Soft-delete a fleet, closing any active vehicle memberships first.",
+    description=(
+        "Soft-delete a fleet, closing any active vehicle memberships first. "
+        "Refused while live fleets still sit under it."
+    ),
 )
 async def soft_delete_fleet_endpoint(
     fleet_id: UUID,
@@ -191,6 +200,7 @@ async def soft_delete_fleet_endpoint(
     Raises:
         FleetNotFoundError: 404 when the fleet does not exist or was already
             soft-deleted.
+        FleetHasSubFleetsError: 409 when live fleets still sit under it.
     """
     return await fleet_service.soft_delete_fleet(db_session, fleet_id)
 
@@ -352,7 +362,7 @@ async def list_fleet_membership_history_endpoint(
 
 
 @router.delete(
-    "/{fleet_id}/memberships/{membership_id}",
+    "/{fleet_id}/memberships/{fleet_vehicle_membership_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Close a fleet membership by ID",
     description=(
@@ -362,14 +372,14 @@ async def list_fleet_membership_history_endpoint(
 )
 async def close_fleet_membership_endpoint(
     fleet_id: UUID,
-    membership_id: UUID,
+    fleet_vehicle_membership_id: UUID,
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Close an open membership of a fleet.
 
     Args:
         fleet_id: Internal ID of the fleet.
-        membership_id: Internal ID of the membership to close.
+        fleet_vehicle_membership_id: Internal ID of the membership to close.
         db_session: Database session owned by the HTTP boundary.
 
     Raises:
@@ -377,7 +387,9 @@ async def close_fleet_membership_endpoint(
         FleetMembershipNotFoundError: 404 when the membership is unknown,
             belongs to another fleet, or is already closed.
     """
-    await fleet_service.close_fleet_membership(db_session, fleet_id, membership_id)
+    await fleet_service.close_fleet_membership(
+        db_session, fleet_id, fleet_vehicle_membership_id
+    )
 
 
 @router.post(

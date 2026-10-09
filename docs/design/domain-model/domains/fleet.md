@@ -20,7 +20,7 @@ erDiagram
   fleets {
     uuid fleet_id PK
     uuid organization_id FK "planned"
-    uuid parent_fleet_id FK "planned"
+    uuid parent_fleet_id FK
   }
   fleet_history {
     bigint history_id PK
@@ -47,7 +47,7 @@ erDiagram
     uuid unassigned_by FK
   }
   fleets }o..|| organizations : "organization_id"
-  fleets }o..o| fleets : "parent_fleet_id"
+  fleets }o--o| fleets : "parent_fleet_id"
   fleet_vehicle_memberships }o--|| fleets : "fleet_id"
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
   fleet_vehicle_memberships }o..o| users : "added_by"
@@ -77,37 +77,31 @@ parent_fleet_id). Reorganising is editing data, never the schema.
 Change history on (FL-08): renaming, moving or deleting a fleet is a
 decision, and a move changes what a manager assigned to a parent fleet can
 see (FL-03). Deleting a fleet that still has live sub-fleets is refused.
-Check constraint (FL-08): num_nonnulls(name, fleet_code) >= 1.
+Check constraint (ck_fleets_name_or_code, FL-08): num_nonnulls(name, fleet_code) >= 1.
 
 🔍 = tracked column: a change to it copies the whole old row into [fleet_history](#fleet_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `fleet_id` | uuid | no | PK |  | Internal ID of the fleet. | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
-| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (FL-08)**: Organization the fleet belongs to, its own owner (DM-24 case A). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `parent_fleet_id` | uuid | yes | FK 🔍 | [fleets](#fleets).fleet_id (on delete restrict) | **📋 planned**: The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. | `NULL` |
-| `fleet_code` | varchar(50) | no | UQ 🔍 |  | Short code chosen by the customer, for imports and reports. Planned (FL-08): optional, and unique only within its organization among fleets not deleted. | `HCM-01` |
-| `name` | varchar(100) | no | 🔍 |  | Name chosen by the customer, shown in the portal. Planned (FL-08): optional; a fleet has at least a name or a code (check constraint). | `Đội xe Hồ Chí Minh` |
-| `status` | fleetstatus | no |  |  | **🗑️ to be removed (FL-08)**: Fleet lifecycle status; a fleet is a grouping, so it either exists or is deleted. | `ACTIVE` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (FL-08)**: Organization the fleet belongs to, its own owner (DM-24 case A). Added with the organizations table (identity). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `parent_fleet_id` | uuid | yes | FK 🔍 | [fleets](#fleets).fleet_id (on delete restrict) | The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. | `NULL` |
+| `fleet_code` | varchar(50) | yes | UQ 🔍 |  | Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique across all fleets for now; unique only within its organization among fleets not deleted once organization_id exists (FL-08). NULL when the fleet has only a name. | `HCM-01` |
+| `name` | varchar(100) | yes | 🔍 |  | Name chosen by the customer, shown in the portal; optional, but a fleet has at least a name or a code (check constraint, FL-08). NULL when the fleet has only a code. | `Đội xe Hồ Chí Minh` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the fleet no longer exists (DM-25); its member trucks leave it (FL-06) and its history is kept. Why it was deleted is the change reason in its history. NULL while it exists. | `NULL` |
 
-**Enum values**
-
-- `fleetstatus`: ~~ACTIVE~~ (to be removed), ~~INACTIVE~~ (to be removed)
-
 **Indexes**
 
-- `ix_fleets_status` (status) - Dropped with status (FL-08)
 - `ix_fleets_fleet_code` (fleet_code) unique - Replaced by uq_fleets_live_organization_code (FL-08)
-- `uq_fleets_live_organization_code` (organization_id, fleet_code) unique - Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL
-- `ix_fleets_organization_id` (organization_id) - Planned (FL-08)
-- `ix_fleets_parent_fleet_id` (parent_fleet_id) - Planned (FL-08): walking the tree
+- `uq_fleets_live_organization_code` (organization_id, fleet_code) unique - Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL. Added with organization_id.
+- `ix_fleets_organization_id` (organization_id) - Planned (FL-08): added with organization_id
+- `ix_fleets_parent_fleet_id` (parent_fleet_id) - Walking the tree
 
 **Referenced by**
 
-- [fleets](#fleets).parent_fleet_id (planned)
+- [fleets](#fleets).parent_fleet_id
 - [fleet_vehicle_memberships](#fleet_vehicle_memberships).fleet_id
 - [fleet_user_assignments](#fleet_user_assignments).fleet_id (planned)
 - [geofences](#geofences).fleet_id
@@ -152,22 +146,21 @@ left is clear from what happened (moved, sold, fleet deleted).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `fleet_vehicle_membership_id` | uuid | no | PK |  | **✏️ built today as `membership_id`, to be renamed**: Internal ID of one membership period. Renamed because memberships.membership_id (identity) means a person in an organization, a different thing (FL-09). | `00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `fleet_vehicle_membership_id` | uuid | no | PK |  | Internal ID of one membership period. Renamed because memberships.membership_id (identity) means a person in an organization, a different thing (FL-09). | `00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `fleet_id` | uuid | no | FK | [fleets](#fleets).fleet_id (on delete restrict) | Fleet the vehicle is in; the row reads its organization through it (DM-24), since a fleet never moves to another organization. | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle in the fleet; it must belong to the fleet's organization when added. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `added_at` | timestamptz | no |  |  | **✏️ built today as `joined_at`, to be renamed**: When the vehicle was added to the fleet (FL-09). | `2026-09-01T00:00:00Z` |
-| `removed_at` | timestamptz | yes |  |  | **✏️ built today as `left_at`, to be renamed**: When it was removed; NULL while still a member (FL-09). | `NULL` |
-| `added_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who added the vehicle. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `removed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). | `NULL` |
+| `added_at` | timestamptz | no |  |  | When the vehicle was added to the fleet (FL-09). | `2026-09-01T00:00:00Z` |
+| `removed_at` | timestamptz | yes |  |  | When it was removed; NULL while still a member (FL-09). | `NULL` |
+| `added_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who added the vehicle. Added with the users table (identity). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `removed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). Added with the users table (identity). | `NULL` |
 | `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no |  |  | When the row was last changed (moves when the membership is closed). | `2026-09-10T07:15:00Z` |
 
 **Indexes**
 
-- `ix_fleet_vehicle_memberships_fleet_id` (fleet_id) - Dropped: covered by ix_fleet_vehicle_memberships_fleet_time (FL-09)
 - `ix_fleet_vehicle_memberships_fleet_time` (fleet_id, added_at)
 - `ix_fleet_vehicle_memberships_vehicle_id` (vehicle_id)
-- `uq_fleet_vehicle_memberships_active_vehicle` (vehicle_id) unique - WHERE removed_at IS NULL (built as left_at)
+- `uq_fleet_vehicle_memberships_active_vehicle` (vehicle_id) unique - WHERE removed_at IS NULL
 
 ### geofences
 

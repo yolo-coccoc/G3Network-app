@@ -1,7 +1,7 @@
 # Planner: Fleet CRUD & Vehicle Membership (F-E1)
 
 > Feature code: F-E1 (Fleet list & map)
-> Status: ✅ Done (MVP/POC scope); F-E2/F-E3/F-A8 remain blocked or deferred
+> Status: ✅ Done (MVP/POC scope); F-E2/F-E3/F-A8 remain blocked or deferred; refactored 2026-10-09 (§7)
 > Created: 2026-09-18
 
 ## 1. Goal
@@ -41,7 +41,8 @@ because they are hard-blocked on data this backend genuinely doesn't have.
 - **One hierarchy level, no vehicle-group nesting.** `deferred.md` item 54
   already names "vehicle-group" as a distinct, unresolved concept from
   fleet; adding a speculative `parent_fleet_id` now would be exactly the
-  premature placeholder repo-conventions forbids.
+  premature placeholder repo-conventions forbids. *(Superseded by FL-02:
+  `parent_fleet_id` was built on 2026-10-09, see §7.)*
 - **A new `VehicleSummary` DTO, not a widened `VehicleReference`.**
   F-E1 needs `license_plate`/`status` alongside `vehicle_id`/`vin`, which
   `VehicleReference` doesn't carry. Rather than widen that existing DTO
@@ -191,3 +192,44 @@ One-directional; `vehicles` never calls back into `fleet`. No cycle.
   (`deferred.md` items 46, 35).
 - CSV/PDF export — no export machinery exists anywhere in this backend;
   not needed until F-E2/F-E3/F-A8 (all deferred) actually require it.
+
+## 7. Later change — 2026-10-09: fleet refactor (FL-08, FL-09)
+
+Sections 1-6 describe the build as of 2026-09-18 and are kept as history.
+On 2026-10-09 the domain was brought to the reviewed design (FL-02, FL-08,
+FL-09 in [`decision-log.md`](../../decisions/decision-log.md); FLT-01/FLT-02
+in the feature catalog), edited into the baseline migration:
+
+- `fleets`: `status`, the `FleetStatus` enum (`fleetstatus`) and
+  `ix_fleets_status` dropped, with the `status` field of the fleet
+  requests/responses and the `status` filter of `GET /fleets`. `name` and
+  `fleet_code` are optional, at least one required (request validation 422;
+  check constraint `ck_fleets_name_or_code`); `fleet_code` stays unique
+  across all fleets for now. New `parent_fleet_id` (self-FK, `RESTRICT`,
+  `ix_fleets_parent_fleet_id`), set on create or by `PATCH` (move) and
+  returned in `FleetResponse`: the parent must be a live fleet
+  (`FleetParentNotFoundError`, 404), a move under the fleet itself or one
+  of its sub-fleets is refused (`FleetHierarchyLoopError`, 400; the service
+  walks up from the new parent, one query per level), and deleting a fleet
+  with live sub-fleets is refused (`FleetHasSubFleetsError`, 409;
+  `repository.count_child_fleets`). Nothing rolls up to a parent fleet yet.
+- `fleet_vehicle_memberships`: `membership_id` → `fleet_vehicle_membership_id`
+  and `joined_at`/`left_at` → `added_at`/`removed_at`, in the API too
+  (`FleetMembershipResponse`, `FleetVehicleResponse.added_at`, and the path
+  `DELETE /fleets/{fleet_id}/memberships/{fleet_vehicle_membership_id}`);
+  the plain `fleet_id` index dropped (covered by
+  `ix_fleet_vehicle_memberships_fleet_time`).
+- Not built, waiting for the identity tables: `fleets.organization_id`,
+  per-organization fleet-code uniqueness, `added_by`/`removed_by`, the
+  fleet change history (`deferred.md` item 97). `PATCH` cannot clear a
+  name/code or move a fleet to the top level (`deferred.md` item 98).
+
+Verification (2026-10-09): `make check` passed (566 smoke tests passed, 19
+integration tests skipped; domain-model and feature-catalog checks OK);
+`make backend-test-integration` 19 passed; `make db-check` reported no new
+upgrade operations. New tests:
+`test_fleet_create_request_needs_a_name_or_a_code`,
+`test_create_fleet_rejects_unknown_parent`,
+`test_update_fleet_refuses_a_move_under_its_own_sub_fleet`,
+`test_soft_delete_fleet_refuses_a_fleet_with_sub_fleets` and the PostgreSQL
+`test_fleet_tree_and_name_or_code_rule_on_postgres`.

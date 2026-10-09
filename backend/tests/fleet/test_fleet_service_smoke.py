@@ -11,9 +11,12 @@ import app.domains.fleet.service as fleet_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.fleet.exceptions import (
     FleetConflictError,
+    FleetHasSubFleetsError,
+    FleetHierarchyLoopError,
     FleetMembershipConflictError,
     FleetMembershipNotFoundError,
     FleetNotFoundError,
+    FleetParentNotFoundError,
     FleetVehicleNotFoundError,
     GeofenceNotFoundError,
 )
@@ -24,6 +27,7 @@ from app.domains.fleet.models import (
 )
 from app.domains.fleet.schemas import (
     FleetCreateRequest,
+    FleetUpdateRequest,
     FleetVehicleAddRequest,
     GeofencePolygonGeoJson,
 )
@@ -126,9 +130,9 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
     )
 
-    assert response.membership_id == inserted.membership_id
+    assert response.fleet_vehicle_membership_id == inserted.fleet_vehicle_membership_id
     assert response.vehicle_vin == vehicle_reference.vin
-    assert response.left_at is None
+    assert response.removed_at is None
 
 
 @pytest.mark.asyncio
@@ -246,7 +250,10 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
     )
 
-    assert response.membership_id == existing_membership.membership_id
+    assert (
+        response.fleet_vehicle_membership_id
+        == existing_membership.fleet_vehicle_membership_id
+    )
 
 
 @pytest.mark.asyncio
@@ -406,6 +413,85 @@ async def test_list_fleet_vehicles_enriches_each_row(
 
 
 @pytest.mark.asyncio
+async def test_create_fleet_rejects_unknown_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parent that is not a live fleet is a 404, before any insert (FL-02)."""
+
+    async def no_fleet(db: AsyncSession, fleet_id: UUID) -> None:
+        return None
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("insert must not run for an unknown parent")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", no_fleet)
+    monkeypatch.setattr(fleet_repository, "insert", fail_if_called)
+
+    with pytest.raises(FleetParentNotFoundError):
+        await fleet_service.create_fleet(
+            fake_db_session(),
+            FleetCreateRequest(name="Depot 1", parent_fleet_id=uuid4()),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_fleet_refuses_a_move_under_its_own_sub_fleet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving region under its grandchild depot would close a loop (FL-02)."""
+    region = build_fleet_record()
+    branch = build_fleet_record()
+    branch.parent_fleet_id = region.fleet_id
+    depot = build_fleet_record()
+    depot.parent_fleet_id = branch.fleet_id
+    fleets_by_id = {fleet.fleet_id: fleet for fleet in (region, branch, depot)}
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel | None:
+        return fleets_by_id.get(fleet_id)
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("update must not run for a loop")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "update_fields", fail_if_called)
+
+    for new_parent in (depot, region):
+        with pytest.raises(FleetHierarchyLoopError):
+            await fleet_service.update_fleet(
+                fake_db_session(),
+                region.fleet_id,
+                FleetUpdateRequest(parent_fleet_id=new_parent.fleet_id),
+            )
+
+
+@pytest.mark.asyncio
+async def test_soft_delete_fleet_refuses_a_fleet_with_sub_fleets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fleet with live sub-fleets stays, and its members stay too (FL-08)."""
+    fleet_record = build_fleet_record()
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def count_child_fleets(db: AsyncSession, fleet_id: UUID) -> int:
+        return 1
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("nothing may be closed or deleted")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "count_child_fleets", count_child_fleets)
+    monkeypatch.setattr(
+        fleet_repository, "list_all_active_memberships_by_fleet", fail_if_called
+    )
+    monkeypatch.setattr(fleet_repository, "soft_delete", fail_if_called)
+
+    with pytest.raises(FleetHasSubFleetsError):
+        await fleet_service.soft_delete_fleet(fake_db_session(), fleet_record.fleet_id)
+
+
+@pytest.mark.asyncio
 async def test_soft_delete_fleet_closes_active_memberships_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -433,6 +519,14 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
     async def soft_delete(db: AsyncSession, fleet_id: UUID) -> FleetModel:
         return fleet_record
 
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def count_child_fleets(db: AsyncSession, fleet_id: UUID) -> int:
+        return 0
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "count_child_fleets", count_child_fleets)
     monkeypatch.setattr(
         fleet_repository, "list_all_active_memberships_by_fleet", list_all_active
     )
@@ -654,7 +748,7 @@ async def test_close_fleet_membership_closes_an_open_membership(
         return fleet_record
 
     async def get_membership(
-        db: AsyncSession, membership_id: UUID
+        db: AsyncSession, fleet_vehicle_membership_id: UUID
     ) -> FleetVehicleMembershipModel:
         return membership
 
@@ -671,7 +765,7 @@ async def test_close_fleet_membership_closes_an_open_membership(
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
 
     await fleet_service.close_fleet_membership(
-        fake_db_session(), fleet_record.fleet_id, membership.membership_id
+        fake_db_session(), fleet_record.fleet_id, membership.fleet_vehicle_membership_id
     )
 
     assert closed == [membership]
@@ -687,7 +781,7 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
     membership: FleetVehicleMembershipModel | None = build_membership_record(
         fleet_id=uuid4() if problem == "other_fleet" else fleet_record.fleet_id,
         vehicle_id=uuid4(),
-        left_at=datetime.now(timezone.utc) if problem == "already_closed" else None,
+        removed_at=datetime.now(timezone.utc) if problem == "already_closed" else None,
     )
     if problem == "unknown":
         membership = None
@@ -696,7 +790,7 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
         return fleet_record
 
     async def get_membership(
-        db: AsyncSession, membership_id: UUID
+        db: AsyncSession, fleet_vehicle_membership_id: UUID
     ) -> FleetVehicleMembershipModel | None:
         return membership
 
@@ -779,7 +873,7 @@ async def test_list_active_member_vehicle_ids_returns_oldest_member_first(
     fleet_record = build_fleet_record()
     older = build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
     newer = build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
-    older.joined_at = newer.joined_at - timedelta(days=1)
+    older.added_at = newer.added_at - timedelta(days=1)
 
     async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
         return fleet_record

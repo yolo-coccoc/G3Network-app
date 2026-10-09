@@ -15,7 +15,6 @@ from app.domains.fleet.models import (
     FleetVehicleMembershipModel,
     GeofenceModel,
 )
-from app.domains.fleet.types import FleetStatus
 from app.libs.common.clock import utc_now
 
 
@@ -100,14 +99,12 @@ def _contains_pattern(search_text: str) -> str:
 
 def _fleet_list_conditions(
     *,
-    status_filter: FleetStatus | None,
     search_text: str | None,
     vehicle_id: UUID | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_all` and `count`.
 
     Args:
-        status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the name or fleet code,
             if any.
         vehicle_id: Only the fleet this vehicle is currently (open
@@ -118,8 +115,6 @@ def _fleet_list_conditions(
     """
     conditions: list[ColumnElement[bool]] = [FleetModel.deleted_at.is_(None)]
 
-    if status_filter:
-        conditions.append(FleetModel.status == status_filter)
     if search_text:
         pattern = _contains_pattern(search_text)
         conditions.append(
@@ -133,7 +128,7 @@ def _fleet_list_conditions(
             FleetModel.fleet_id.in_(
                 select(FleetVehicleMembershipModel.fleet_id).where(
                     FleetVehicleMembershipModel.vehicle_id == vehicle_id,
-                    FleetVehicleMembershipModel.left_at.is_(None),
+                    FleetVehicleMembershipModel.removed_at.is_(None),
                 )
             )
         )
@@ -145,7 +140,6 @@ async def list_all(
     *,
     offset: int,
     limit: int,
-    status_filter: FleetStatus | None = None,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
 ) -> list[FleetModel]:
@@ -155,7 +149,6 @@ async def list_all(
         db_session: Current database session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the name or fleet code,
             if any.
         vehicle_id: Only the fleet this vehicle is currently a member of,
@@ -164,9 +157,7 @@ async def list_all(
     Returns:
         List of fleet records, newest first.
     """
-    conditions = _fleet_list_conditions(
-        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
-    )
+    conditions = _fleet_list_conditions(search_text=search_text, vehicle_id=vehicle_id)
     query_result = await db_session.execute(
         select(FleetModel)
         .where(and_(*conditions))
@@ -180,7 +171,6 @@ async def list_all(
 async def count(
     db_session: AsyncSession,
     *,
-    status_filter: FleetStatus | None = None,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
 ) -> int:
@@ -188,7 +178,6 @@ async def count(
 
     Args:
         db_session: Current database session.
-        status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the name or fleet code,
             if any.
         vehicle_id: Only the fleet this vehicle is currently a member of,
@@ -197,9 +186,7 @@ async def count(
     Returns:
         Total number of matching fleets.
     """
-    conditions = _fleet_list_conditions(
-        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
-    )
+    conditions = _fleet_list_conditions(search_text=search_text, vehicle_id=vehicle_id)
     query_result = await db_session.execute(
         select(func.count(FleetModel.fleet_id)).where(and_(*conditions))
     )
@@ -234,7 +221,7 @@ async def update_fields(
 
 
 async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | None:
-    """Soft-delete a fleet by updating deleted_at and status.
+    """Soft-delete a fleet by stamping deleted_at.
 
     Args:
         db_session: Current database session.
@@ -248,10 +235,29 @@ async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | 
         return None
 
     fleet_record.deleted_at = utc_now()
-    fleet_record.status = FleetStatus.INACTIVE
     await db_session.flush()
     await db_session.refresh(fleet_record)
     return fleet_record
+
+
+async def count_child_fleets(db_session: AsyncSession, fleet_id: UUID) -> int:
+    """Count the live fleets sitting directly under a fleet.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Internal ID of the parent fleet.
+
+    Returns:
+        Number of fleets not soft-deleted whose `parent_fleet_id` is
+        `fleet_id`.
+    """
+    query_result = await db_session.execute(
+        select(func.count(FleetModel.fleet_id)).where(
+            FleetModel.parent_fleet_id == fleet_id,
+            FleetModel.deleted_at.is_(None),
+        )
+    )
+    return query_result.scalar() or 0
 
 
 async def find_active_membership_by_vehicle(
@@ -270,7 +276,7 @@ async def find_active_membership_by_vehicle(
         select(FleetVehicleMembershipModel).where(
             and_(
                 FleetVehicleMembershipModel.vehicle_id == vehicle_id,
-                FleetVehicleMembershipModel.left_at.is_(None),
+                FleetVehicleMembershipModel.removed_at.is_(None),
             )
         )
     )
@@ -293,17 +299,17 @@ async def list_active_memberships_by_fleet(
         limit: Maximum number of records to return.
 
     Returns:
-        Open membership records ordered by `joined_at` descending.
+        Open membership records ordered by `added_at` descending.
     """
     query_result = await db_session.execute(
         select(FleetVehicleMembershipModel)
         .where(
             and_(
                 FleetVehicleMembershipModel.fleet_id == fleet_id,
-                FleetVehicleMembershipModel.left_at.is_(None),
+                FleetVehicleMembershipModel.removed_at.is_(None),
             )
         )
-        .order_by(FleetVehicleMembershipModel.joined_at.desc())
+        .order_by(FleetVehicleMembershipModel.added_at.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -332,7 +338,7 @@ async def list_all_active_memberships_by_fleet(
         select(FleetVehicleMembershipModel).where(
             and_(
                 FleetVehicleMembershipModel.fleet_id == fleet_id,
-                FleetVehicleMembershipModel.left_at.is_(None),
+                FleetVehicleMembershipModel.removed_at.is_(None),
             )
         )
     )
@@ -352,10 +358,12 @@ async def count_active_memberships_by_fleet(
         Number of vehicles currently in the fleet.
     """
     query_result = await db_session.execute(
-        select(func.count(FleetVehicleMembershipModel.membership_id)).where(
+        select(
+            func.count(FleetVehicleMembershipModel.fleet_vehicle_membership_id)
+        ).where(
             and_(
                 FleetVehicleMembershipModel.fleet_id == fleet_id,
-                FleetVehicleMembershipModel.left_at.is_(None),
+                FleetVehicleMembershipModel.removed_at.is_(None),
             )
         )
     )
@@ -378,12 +386,12 @@ async def list_memberships_by_fleet(
         limit: Maximum number of records to return.
 
     Returns:
-        Membership records (open and closed) ordered by `joined_at` descending.
+        Membership records (open and closed) ordered by `added_at` descending.
     """
     query_result = await db_session.execute(
         select(FleetVehicleMembershipModel)
         .where(FleetVehicleMembershipModel.fleet_id == fleet_id)
-        .order_by(FleetVehicleMembershipModel.joined_at.desc())
+        .order_by(FleetVehicleMembershipModel.added_at.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -401,9 +409,9 @@ async def count_memberships_by_fleet(db_session: AsyncSession, fleet_id: UUID) -
         Total number of membership records, open and closed.
     """
     query_result = await db_session.execute(
-        select(func.count(FleetVehicleMembershipModel.membership_id)).where(
-            FleetVehicleMembershipModel.fleet_id == fleet_id
-        )
+        select(
+            func.count(FleetVehicleMembershipModel.fleet_vehicle_membership_id)
+        ).where(FleetVehicleMembershipModel.fleet_id == fleet_id)
     )
     return query_result.scalar() or 0
 
@@ -413,7 +421,7 @@ async def insert_membership(
     *,
     fleet_id: UUID,
     vehicle_id: UUID,
-    joined_at: datetime,
+    added_at: datetime,
 ) -> FleetVehicleMembershipModel:
     """Open a new membership and flush it.
 
@@ -422,7 +430,7 @@ async def insert_membership(
             commit the transaction.
         fleet_id: Internal ID of the fleet.
         vehicle_id: Internal ID of the vehicle.
-        joined_at: When the membership begins.
+        added_at: When the vehicle is added to the fleet.
 
     Returns:
         The newly created membership record.
@@ -435,7 +443,7 @@ async def insert_membership(
     membership_record = FleetVehicleMembershipModel(
         fleet_id=fleet_id,
         vehicle_id=vehicle_id,
-        joined_at=joined_at,
+        added_at=added_at,
     )
     db_session.add(membership_record)
     await db_session.flush()
@@ -447,7 +455,7 @@ async def close_membership(
     db_session: AsyncSession,
     membership_record: FleetVehicleMembershipModel,
     *,
-    left_at: datetime,
+    removed_at: datetime,
 ) -> FleetVehicleMembershipModel:
     """Close an open membership.
 
@@ -455,12 +463,12 @@ async def close_membership(
         db_session: Current database session; the repository does not
             commit the transaction.
         membership_record: The open membership to close.
-        left_at: When the membership ends.
+        removed_at: When the vehicle is removed from the fleet.
 
     Returns:
         The closed membership record.
     """
-    membership_record.left_at = left_at
+    membership_record.removed_at = removed_at
     membership_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(membership_record)
@@ -468,20 +476,21 @@ async def close_membership(
 
 
 async def get_membership_by_id(
-    db_session: AsyncSession, membership_id: UUID
+    db_session: AsyncSession, fleet_vehicle_membership_id: UUID
 ) -> FleetVehicleMembershipModel | None:
     """Find a membership by ID, open or closed.
 
     Args:
         db_session: Current database session.
-        membership_id: Internal ID of the membership.
+        fleet_vehicle_membership_id: Internal ID of the membership.
 
     Returns:
         The membership record, or None if not found.
     """
     query_result = await db_session.execute(
         select(FleetVehicleMembershipModel).where(
-            FleetVehicleMembershipModel.membership_id == membership_id
+            FleetVehicleMembershipModel.fleet_vehicle_membership_id
+            == fleet_vehicle_membership_id
         )
     )
     return query_result.scalar_one_or_none()

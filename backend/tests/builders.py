@@ -21,7 +21,6 @@ from app.domains.charging_stations.types import (
 from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
 from app.domains.drivers.types import DriverStatus
 from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
-from app.domains.fleet.types import FleetStatus
 from app.domains.support.models import SupportCaseModel
 from app.domains.support.types import (
     SupportCaseCategory,
@@ -144,7 +143,7 @@ def build_fleet_record(*, fleet_id: UUID | None = None) -> FleetModel:
         fleet_id=fleet_id or uuid4(),
         fleet_code="FLEET-001",
         name="Test Fleet",
-        status=FleetStatus.ACTIVE,
+        parent_fleet_id=None,
         created_at=now,
         updated_at=now,
         deleted_at=None,
@@ -155,16 +154,16 @@ def build_membership_record(
     *,
     fleet_id: UUID,
     vehicle_id: UUID,
-    left_at: datetime | None = None,
+    removed_at: datetime | None = None,
 ) -> FleetVehicleMembershipModel:
-    """Create a minimal ORM membership, open unless `left_at` is given."""
+    """Create a minimal ORM membership, open unless `removed_at` is given."""
     now = datetime.now(timezone.utc)
     return FleetVehicleMembershipModel(
-        membership_id=uuid4(),
+        fleet_vehicle_membership_id=uuid4(),
         fleet_id=fleet_id,
         vehicle_id=vehicle_id,
-        joined_at=now,
-        left_at=left_at,
+        added_at=now,
+        removed_at=removed_at,
         created_at=now,
         updated_at=now,
     )

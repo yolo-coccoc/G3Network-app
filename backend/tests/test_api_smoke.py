@@ -101,7 +101,10 @@ def test_people_package_routes_are_registered() -> None:
     #84, F-A2); the fixed notification paths precede ``/{notification_id}``."""
     paths = app.openapi()["paths"]
 
-    assert "delete" in paths["/api/v1/fleets/{fleet_id}/memberships/{membership_id}"]
+    assert (
+        "delete"
+        in paths["/api/v1/fleets/{fleet_id}/memberships/{fleet_vehicle_membership_id}"]
+    )
     assert {"get", "post"} <= set(paths["/api/v1/fleets/{fleet_id}/geofences"])
     assert {"get", "patch", "delete"} <= set(
         paths["/api/v1/fleets/{fleet_id}/geofences/{geofence_id}"]
