@@ -206,6 +206,7 @@ A prepaid wallet for a driver or a fleet: top up, withdraw, pay for charging, wi
 **Open questions:**
 
 - Deposit rule: 300k deposit, and what happens on withdrawal? (data sheet note)
+- Legal boundaries of the prepaid balance: transfers, withdrawals, refunds, public naming (open question 11 in the decision log).
 
 <a id="pay-08"></a>
 
@@ -234,7 +235,7 @@ The company pays for its drivers' charging and receives one monthly invoice with
 
 **Open questions:**
 
-- Who pays when a fleet driver charges: the driver or the company? (open decision D5)
+- Company billing comes after launch: at launch every person pays from their own wallet (BL-13); which company method comes first (organization wallet, monthly invoice) is still to choose.
 
 <a id="pay-09"></a>
 

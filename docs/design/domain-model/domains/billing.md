@@ -4,12 +4,12 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 12 · 🆕 proposed: 1
+📋 planned: 13 · 🆕 proposed: 1
 
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
 - A **tariff** belongs to the organization owning the locations it prices (the owner's default, or one location); its prices are immutable **versions** (BL-08).
-- A **payment** usually settles one charging session; a **wallet** belongs to an organization or one driver (D5).
+- A **wallet** is a prepaid balance held by a person (launch) or an organization (later); its **transactions** are an append-only ledger. A **payment** is real money through a gateway: a top-up or a refund at launch (BL-12 to BL-14).
 - An **invoice** belongs to one organization and has **lines** for sessions or subscription periods.
 - A **subscription** puts one vehicle on one **plan**.
 - Billing a session requires knowing whose session it was.
@@ -47,19 +47,27 @@ erDiagram
   payments {
     uuid payment_id PK
     uuid organization_id FK
-    uuid session_id FK
+    uuid paid_by FK
+    uuid charging_session_bill_id FK
+    uuid invoice_id FK
+    uuid refund_of_payment_id FK
   }
   wallets {
     uuid wallet_id PK
+    uuid user_id FK
     uuid organization_id FK
-    uuid driver_id FK
+  }
+  wallet_history {
+    bigint history_id PK
+    uuid wallet_id FK
+    uuid changed_by FK
   }
   wallet_transactions {
-    uuid transaction_id PK
-    uuid organization_id FK
+    uuid wallet_transaction_id PK
     uuid wallet_id FK
-    uuid session_id FK
     uuid payment_id FK
+    uuid charging_session_bill_id FK
+    uuid created_by FK
   }
   invoices {
     uuid invoice_id PK
@@ -91,14 +99,6 @@ erDiagram
   charging_session_bills }o..|| tariff_versions : "tariff_version_id"
   tariffs }o..|| organizations : "organization_id"
   tariffs }o..o| charging_locations : "location_id"
-  payments }o..|| organizations : "organization_id"
-  payments }o..o| charging_sessions : "session_id"
-  wallets }o..|| organizations : "organization_id"
-  wallets }o..o| drivers : "driver_id"
-  wallet_transactions }o..|| organizations : "organization_id"
-  wallet_transactions }o..|| wallets : "wallet_id"
-  wallet_transactions }o..o| charging_sessions : "session_id"
-  wallet_transactions }o..o| payments : "payment_id"
   invoices }o..|| organizations : "organization_id"
   invoice_lines }o..|| invoices : "invoice_id"
   invoice_lines }o..|| organizations : "organization_id"
@@ -108,13 +108,26 @@ erDiagram
   subscriptions }o..|| subscription_plans : "plan_id"
   plan_features }o..|| subscription_plans : "plan_id"
   subscriptions }o..|| vehicles : "vehicle_id"
+  payments }o..|| organizations : "organization_id"
+  payments }o..o| users : "paid_by"
+  payments }o..o| charging_session_bills : "charging_session_bill_id"
+  payments }o..o| invoices : "invoice_id"
+  payments }o..o| payments : "refund_of_payment_id"
+  wallets }o..o| users : "user_id"
+  wallets }o..o| organizations : "organization_id"
+  wallet_transactions }o..|| wallets : "wallet_id"
+  wallet_transactions }o..o| payments : "payment_id"
+  wallet_transactions }o..o| charging_session_bills : "charging_session_bill_id"
+  wallet_transactions }o..o| users : "created_by"
   tariff_history }o..o| tariffs : "tariff_id"
   tariff_history }o..o| users : "changed_by"
   charging_session_bill_history }o..o| charging_session_bills : "charging_session_bill_id"
   charging_session_bill_history }o..o| users : "changed_by"
+  wallet_history }o..o| wallets : "wallet_id"
+  wallet_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_locations](charging_stations.md#charging_locations), [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_locations](charging_stations.md#charging_locations), [charging_sessions](charging_sessions.md#charging_sessions), [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
@@ -255,6 +268,8 @@ vat_amount, billed_at all NULL).
 
 **Referenced by**
 
+- [payments](#payments).charging_session_bill_id (planned)
+- [wallet_transactions](#wallet_transactions).charging_session_bill_id (planned)
 - [charging_session_bill_history](#charging_session_bill_history).charging_session_bill_id (planned)
 
 ### charging_session_bill_history
@@ -292,61 +307,140 @@ Every earlier version of a row of `charging_session_bills`: a copy of the whole 
 
 **No. 53** · 📋 planned · owner: **customer** · features: F-H1
 
-One payment through a gateway or wallet, usually for one session.
+Money moving through a payment gateway or bank (BL-12): only real money in
+or out. Paying a session from a wallet is a wallet transaction, not a
+payment. At launch the purposes are TOP_UP and REFUND; SESSION_BILL and
+INVOICE come with the later payment methods. No change history (the status
+comes from the gateway); no soft delete (a financial record). Saved,
+tokenized cards are a later table.
+Check constraint (BL-12): the link set matches the purpose (SESSION_BILL:
+charging_session_bill_id only; INVOICE: invoice_id only; REFUND:
+refund_of_payment_id only; TOP_UP: none, its wallet transaction points here).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `payment_id` | uuid | no | PK |  | Internal ID of the payment. | `3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization that paid. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `session_id` | uuid | yes | FK | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | Charging session paid for; NULL for other payments. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
-| `amount` | numeric(14,2) | no |  |  | Amount paid. | `866250.00` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization paying or receiving a refund, written once (DM-24 case C). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `paid_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who paid in the app; NULL for a bank transfer. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `purpose` | varchar(20) | no |  |  | What the money is for (BL-12). TOP_UP: adds money to a wallet (launch). REFUND: money returned, e.g. unused wallet balance (launch). SESSION_BILL: pays one session bill directly (later, e.g. a bank partner). INVOICE: pays an invoice (later, company billing). Values: TOP_UP \| REFUND \| SESSION_BILL \| INVOICE. | `TOP_UP` |
+| `charging_session_bill_id` | uuid | yes | FK | [charging_session_bills](#charging_session_bills).charging_session_bill_id (on delete restrict) | The bill paid; set only for SESSION_BILL. | `NULL` |
+| `invoice_id` | uuid | yes | FK | [invoices](#invoices).invoice_id (on delete restrict) | The invoice paid; set only for INVOICE. | `NULL` |
+| `refund_of_payment_id` | uuid | yes | FK | [payments](#payments).payment_id (on delete restrict) | The payment this refund returns; set only for REFUND. | `NULL` |
+| `amount` | numeric(14,2) | no |  |  | Amount, always positive; the purpose says the direction. | `500000.00` |
 | `currency` | char(3) | no |  |  | ISO 4217 currency code. | `VND` |
-| `method` | varchar(20) | no |  |  | Payment method. Values: VNPAY \| MOMO \| WALLET. | `VNPAY` |
-| `gateway_reference` | varchar(100) | yes |  |  | Reference/token from the payment gateway (never card data). (NF-05) | `VNP14592873` |
-| `status` | varchar(20) | no |  |  | Payment status. | `SUCCEEDED` |
-| `paid_at` | timestamptz | yes |  |  | When the gateway confirmed the payment; NULL until then. | `2026-09-15T09:46:12Z` |
+| `method` | varchar(20) | no |  |  | How the money moved. Paying from a wallet is not a payment (no money comes in) but a wallet transaction. Values: CARD \| VNPAY \| MOMO \| BANK_TRANSFER. | `VNPAY` |
+| `gateway_reference` | varchar(100) | yes |  |  | The gateway's transaction reference, for reconciliation; never card data (NF-05). | `VNP14592873` |
+| `gateway_result_code` | varchar(30) | yes |  |  | The gateway's own result code, as sent (PAY-06). | `00` |
+| `status` | varchar(20) | no |  |  | As the gateway reports it; observed, so no reason column. Values: PENDING \| SUCCEEDED \| FAILED. | `SUCCEEDED` |
+| `completed_at` | timestamptz | yes |  |  | When the gateway confirmed success or failure; NULL while PENDING. | `2026-09-15T09:46:12Z` |
 | `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-15T09:45:00Z` |
+| `updated_at` | timestamptz | no |  |  | When the row was last changed (UTC). | `2026-09-15T09:46:12Z` |
+
+**Indexes**
+
+- `uq_payments_method_gateway_reference` (method, gateway_reference) unique - WHERE gateway_reference IS NOT NULL: the same gateway callback is never recorded twice
+- `ix_payments_organization_created` (organization_id, created_at)
 
 **Referenced by**
 
+- [payments](#payments).refund_of_payment_id (planned)
 - [wallet_transactions](#wallet_transactions).payment_id (planned)
 
 ### wallets
 
 **No. 54** · 📋 planned · owner: **customer** · features: F-H2
 
-A prepaid balance for a driver or for a whole organization.
+A prepaid balance usable only for our own services (BL-13). At launch each
+person tops up their own wallet and pays each session from it; an
+organization-held wallet is prepared for the later methods. To start a
+session the balance must be at or above a minimum set in the backend (BL-14);
+it is checked at the scan, never by a database constraint, because the
+deduction at the end of a session may take the balance below zero, after
+which the person cannot start again until they top up above the minimum.
+Change history on for decisions (blocking), with balance excluded since every
+transaction moves it. No soft delete: the ledger must stay. In public it is
+never called an e-wallet (open question 11).
+Check constraint (BL-13): num_nonnulls(user_id, organization_id) = 1.
+
+🔍 = tracked column: a change to it copies the whole old row into [wallet_history](#wallet_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `wallet_id` | uuid | no | PK |  | Internal ID of the wallet. | `5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization the wallet belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `driver_id` | uuid | yes | FK | [drivers](drivers.md#drivers).driver_id (on delete restrict) | Driver it belongs to; NULL for the organization-level wallet. (decision D5) | `NULL` |
-| `balance` | numeric(14,2) | no |  |  | Current balance; must equal the sum of its transactions. | `12500000.00` |
-| `currency` | char(3) | no |  |  | ISO 4217 currency code. | `VND` |
-| `status` | varchar(20) | no |  |  | Whether the wallet can be used. | `ACTIVE` |
+| `user_id` | uuid | yes | FK 🔍 | [users](identity.md#users).user_id (on delete restrict) | The person holding it (launch method, BL-13): it follows them to any organization they drive for. Exactly one of user_id and organization_id is set. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `organization_id` | uuid | yes | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | The organization holding it (later methods: an organization prepays and its drivers consume, or it distributes to drivers); NULL for a personal wallet. | `NULL` |
+| `balance` | numeric(14,2) | no |  |  | Current balance, kept equal to the sum of its transactions. May go negative when a session costs more than the balance (BL-14). | `1250000.00` |
+| `currency` | char(3) | no | 🔍 |  | ISO 4217 currency code. | `VND` |
+| `status` | varchar(20) | no | 🔍 |  | Decided by us. ACTIVE: usable. BLOCKED: no top-up or session start, e.g. during a fraud check. Values: ACTIVE \| BLOCKED. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the wallet has its status, e.g. why it was blocked (DM-19); NULL when there is nothing to explain. | `NULL` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-15T09:46:12Z` |
+
+**Indexes**
+
+- `uq_wallets_user_id` (user_id) unique - WHERE user_id IS NOT NULL: one wallet per person
+- `uq_wallets_organization_id` (organization_id) unique - WHERE organization_id IS NOT NULL: one wallet per organization
 
 **Referenced by**
 
 - [wallet_transactions](#wallet_transactions).wallet_id (planned)
+- [wallet_history](#wallet_history).wallet_id (planned)
+
+### wallet_history
+
+**No. 54.h** · 📋 planned · owner: **customer** · features: F-H2 · change history of [wallets](#wallets)
+
+Every earlier version of a row of `wallets`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `wallet_id` | uuid | yes | FK | [wallets](#wallets).wallet_id (on delete restrict) | Value before the change (wallets.wallet_id). | `5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32` |
+| `user_id` | uuid | yes |  |  | Value before the change (wallets.user_id). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `organization_id` | uuid | yes |  |  | Value before the change (wallets.organization_id). | `NULL` |
+| `balance` | numeric(14,2) | yes |  |  | Value before the change (wallets.balance). | `1250000.00` |
+| `currency` | char(3) | yes |  |  | Value before the change (wallets.currency). | `VND` |
+| `status` | varchar(20) | yes |  |  | Value before the change (wallets.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (wallets.status_reason). | `NULL` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (wallets.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (wallets.updated_at). | `2026-09-15T09:46:12Z` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_wallet_history_wallet_id_time` (wallet_id, changed_at)
 
 ### wallet_transactions
 
 **No. 55** · 📋 planned · owner: **customer** · features: F-H2
 
-Append-only movement of money in or out of a wallet.
+The append-only ledger of a wallet (BL-14): every top-up, session payment,
+refund and staff adjustment, with the balance right after it. Never edited
+or deleted; a mistake is corrected by an ADJUSTMENT.
+Check constraints (BL-14): TOP_UP and REFUND have payment_id;
+SESSION_BILL has charging_session_bill_id; ADJUSTMENT has created_by and
+reason; amount > 0 for TOP_UP, < 0 for SESSION_BILL and REFUND.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `transaction_id` | uuid | no | PK |  | Internal ID of the transaction. | `00000010-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization of the wallet. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `wallet_id` | uuid | no | FK | [wallets](#wallets).wallet_id (on delete restrict) | Wallet affected. | `5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32` |
-| `transaction_type` | varchar(20) | no |  |  | Kind of money movement. Values: TOP_UP \| CHARGE \| WITHDRAW \| REFUND. | `CHARGE` |
-| `amount` | numeric(14,2) | no |  |  | Signed amount: positive adds money, negative removes it. | `-866250.00` |
-| `balance_after` | numeric(14,2) | no |  |  | Wallet balance right after this transaction. | `11633750.00` |
-| `session_id` | uuid | yes | FK | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | Charging session paid, for CHARGE transactions. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
-| `payment_id` | uuid | yes | FK | [payments](#payments).payment_id (on delete restrict) | Gateway payment behind a top-up, if any. | `NULL` |
-| `occurred_at` | timestamptz | no |  |  | When the transaction happened. | `2026-09-15T09:46:12Z` |
+| `wallet_transaction_id` | uuid | no | PK |  | Internal ID of the transaction. | `00000010-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `wallet_id` | uuid | no | FK | [wallets](#wallets).wallet_id (on delete restrict) | Wallet affected; the row reads its holder through it (DM-24). | `5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32` |
+| `transaction_type` | varchar(20) | no |  |  | Kind of movement (BL-14). TOP_UP (+, from a payment). SESSION_BILL (-, pays a session bill). REFUND (-, unused balance returned through a payment). ADJUSTMENT (+/-, by our staff, with a reason). Later TRANSFER_IN / TRANSFER_OUT for an organization distributing to its drivers. Values: TOP_UP \| SESSION_BILL \| REFUND \| ADJUSTMENT. | `SESSION_BILL` |
+| `amount` | numeric(14,2) | no |  |  | Signed amount: positive adds money, negative removes it. | `-952974.00` |
+| `balance_after` | numeric(14,2) | no |  |  | Wallet balance right after this transaction. | `297026.00` |
+| `payment_id` | uuid | yes | FK | [payments](#payments).payment_id (on delete restrict) | The gateway payment behind a TOP_UP or REFUND. | `NULL` |
+| `charging_session_bill_id` | uuid | yes | FK | [charging_session_bills](#charging_session_bills).charging_session_bill_id (on delete restrict) | The bill paid, for SESSION_BILL; unique, so a bill is paid once. Whether a bill is paid is read from here. | `2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66` |
+| `created_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | Our staff member, for an ADJUSTMENT; NULL when the system wrote the row. | `NULL` |
+| `reason` | varchar(200) | yes |  |  | Why, required for an ADJUSTMENT; NULL otherwise. | `NULL` |
+| `occurred_at` | timestamptz | no |  |  | When the transaction happened. | `2026-09-15T09:45:06Z` |
+
+**Indexes**
+
+- `ix_wallet_transactions_wallet_time` (wallet_id, occurred_at) - A wallet's statement
+- `uq_wallet_transactions_session_bill` (charging_session_bill_id) unique - WHERE charging_session_bill_id IS NOT NULL
+- `ix_wallet_transactions_payment_id` (payment_id)
 
 ### invoices
 
@@ -371,6 +465,7 @@ by a new invoice.
 **Referenced by**
 
 - [invoice_lines](#invoice_lines).invoice_id (planned)
+- [payments](#payments).invoice_id (planned)
 
 ### invoice_lines
 

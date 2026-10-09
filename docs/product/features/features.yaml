@@ -3420,6 +3420,7 @@ features:
     old_codes: [F-H2]
     questions:
       - ["Deposit rule: 300k deposit, and what happens on withdrawal? (data sheet note)", "Quy tắc tiền cọc: cọc 300 nghìn, rút thì xử lý thế nào? (ghi chú bảng dữ liệu)"]
+      - ["Legal boundaries of the prepaid balance: transfers, withdrawals, refunds, public naming (open question 11 in the decision log).", "Giới hạn pháp lý của số dư trả trước: chuyển, rút, hoàn tiền, cách gọi tên khi giới thiệu (câu hỏi mở 11 trong nhật ký quyết định)."]
 
   - code: PAY-08
     name: Fleet centralized billing
@@ -3447,7 +3448,7 @@ features:
     sources: [PRD F-H2, PRD F-H3, Data OUT-35]
     old_codes: [F-H2, F-H3]
     questions:
-      - ["Who pays when a fleet driver charges: the driver or the company? (open decision D5)", "Khi tài xế của đội xe đi sạc, ai trả tiền: tài xế hay doanh nghiệp? (quyết định mở D5)"]
+      - ["Company billing comes after launch: at launch every person pays from their own wallet (BL-13); which company method comes first (organization wallet, monthly invoice) is still to choose.", "Thanh toán doanh nghiệp đến sau khi ra mắt: khi ra mắt mỗi người trả bằng ví của chính mình (BL-13); phương thức doanh nghiệp nào làm trước (ví tổ chức, hóa đơn tháng) vẫn cần chọn."]
 
   - code: PAY-09
     name: Dynamic tariffs

@@ -46,12 +46,10 @@ erDiagram
   charging_session_measurements }o--|| charging_sessions : "session_id"
   policy_violations }o..|| charging_sessions : "session_id"
   charging_session_bills |o..|| charging_sessions : "session_id"
-  payments }o..o| charging_sessions : "session_id"
-  wallet_transactions }o..o| charging_sessions : "session_id"
   invoice_lines }o..o| charging_sessions : "session_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_session_bills](billing.md#charging_session_bills), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_session_bills](billing.md#charging_session_bills), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
@@ -80,7 +78,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 | `station_id` | uuid | no | FK | [charging_stations](charging_stations.md#charging_stations).station_id (on delete restrict) | The charger (charging station) where the session happens, known from the QR code at the scan. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
 | `evse_id` | uuid | no | FK | [charging_evses](charging_stations.md#charging_evses).evse_id (on delete restrict) | EVSE used, set from the charger's start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session, because the driver picks the gun on the charger's screen after the scan (CO-14). | `1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99` |
 | `connector_id` | uuid | no | FK | [charging_connectors](charging_stations.md#charging_connectors).connector_id (on delete restrict) | Connector (gun) used, set from the charger's start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session. | `0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (CE-10)**: Organization that pays: the one the scanning user acted for, written once at the scan and never changed (DM-24 case C). Which wallet inside it pays is open decision D5. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (CE-10)**: Organization that pays: the one the scanning user acted for, written once at the scan and never changed (DM-24 case C). At launch the scanning user's own wallet pays (BL-13). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `started_by` | uuid | no | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (CE-10)**: User who scanned the QR code in our app; every charge starts this way (CO-13). A start with a token we did not issue is refused and gets no row (CE-11). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | **📋 planned (CE-13)**: Truck being charged, taken at the scan from the scanning driver's open driving session (CHG-07); NULL when there is none (a guest truck we have no record of, or a driver who has not checked in). A VIN or MAC address reported by the charger may fill it later (deferred.md 90). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `ocpp_transaction_id` | varchar(255) | no |  |  | The charger's transaction ID, unique per charger: an OCPP 2.0.1 charger chooses its own (a string of up to 36 characters); for 1.6J it is our sequence number as text (CE-03). Planned (CE-10): varchar(36) and nullable, NULL while PENDING and for an ABANDONED session. | `1042` |
@@ -121,8 +119,6 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 - [charging_session_measurements](#charging_session_measurements).session_id
 - [policy_violations](policy.md#policy_violations).session_id (planned)
 - [charging_session_bills](billing.md#charging_session_bills).session_id (planned)
-- [payments](billing.md#payments).session_id (planned)
-- [wallet_transactions](billing.md#wallet_transactions).session_id (planned)
 - [invoice_lines](billing.md#invoice_lines).session_id (planned)
 
 ### charging_session_events

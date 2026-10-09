@@ -45,14 +45,13 @@ erDiagram
   driving_sessions }o..|| drivers : "driver_id"
   driving_sessions }o..|| vehicles : "vehicle_id"
   support_cases }o--o| drivers : "driver_id"
-  wallets }o..o| drivers : "driver_id"
   driver_scores }o..|| drivers : "driver_id"
   trips }o..o| drivers : "driver_id"
   driver_history }o..o| drivers : "driver_id"
   driver_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallets](billing.md#wallets).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
@@ -99,7 +98,6 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [driver_vehicle_assignments](#driver_vehicle_assignments).driver_id
 - [driving_sessions](#driving_sessions).driver_id (planned)
 - [support_cases](support.md#support_cases).driver_id
-- [wallets](billing.md#wallets).driver_id (planned)
 - [driver_scores](scoring.md#driver_scores).driver_id (planned)
 - [trips](unassigned.md#trips).driver_id (planned)
 - [driver_history](#driver_history).driver_id (planned)
