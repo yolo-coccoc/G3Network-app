@@ -144,7 +144,7 @@ erDiagram
   charging_station_commands }o..o| users : "requested_by"
   charging_sessions }o..|| organizations : "organization_id"
   charging_sessions }o..|| users : "started_by"
-  notifications }o..o| organizations : "organization_id"
+  notifications }o..|| organizations : "organization_id"
   support_cases }o..o| organizations : "organization_id"
   repair_partners |o..|| organizations : "organization_id"
   maintenance_bookings }o..|| organizations : "organization_id"
