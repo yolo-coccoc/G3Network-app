@@ -1817,6 +1817,29 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   CANCELLED | NO_SHOW. Revisit when designing: whether a reservation targets an EVSE (OCPP's
   unit) rather than a connector, whether the charger supports `ReserveNow` (open question 4),
   and the no-show penalty question on STN-09.
+
+### 93. Charger configuration profiles (desired settings)
+
+- **Short description**: Store the values we want each charger (or each charger model) to run,
+  e.g. `MeterValueSampleInterval` 60 s, SoC in `MeterValuesSampledData`, the settings the QR
+  flow relies on (`AuthorizeRemoteTxRequests`), as a configuration profile; compare it with the
+  newest snapshot and push the missing values with CHANGE_CONFIGURATION commands. Also the 2.0.1
+  setting descriptions (data type, unit, allowed values, min/max from `NotifyReport`
+  `variableCharacteristics`) for a portal editor that validates input.
+- **Purpose/role in the system**: Today the wanted values live only in the head of whoever sets
+  them. A profile lets the system spot a charger that drifted (e.g. after a firmware update
+  reset it) and set a new charger up the same way as the others; CSMS products (AMPECO,
+  CitrineOS) keep such profiles.
+- **Reason for deferral**: Owner decision (2026-10-09, CS-22 in `docs/decisions/decision-log.md`):
+  one charger model and few units, and no feature in the catalog asks for it. The snapshot
+  tables (`charging_station_configuration_captures` / `_entries`) and `charging_station_commands`
+  already show the current values, their history, and whether a change was applied.
+- **Related planner/feature**: STN-10 (`docs/product/features/features.yaml`), CS-19, CS-20,
+  CS-21, CO-05, deferred.md 74.
+- **Date recorded**: 2026-10-09
+- **Additional notes**: Likely shape: a profile (owner, charger model, name) with its wanted
+  values in the entries' naming (component + variable + attribute, a 1.6J key as a variable), and
+  the profile's ID on `charging_stations`. A drift check reads the newest COMPLETE snapshot.
 ---
 
 ## Update rules
