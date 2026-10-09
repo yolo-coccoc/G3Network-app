@@ -748,7 +748,7 @@ async def test_close_fleet_membership_closes_an_open_membership(
         return fleet_record
 
     async def get_membership(
-        db: AsyncSession, membership_id: UUID
+        db: AsyncSession, fleet_vehicle_membership_id: UUID
     ) -> FleetVehicleMembershipModel:
         return membership
 
@@ -790,7 +790,7 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
         return fleet_record
 
     async def get_membership(
-        db: AsyncSession, membership_id: UUID
+        db: AsyncSession, fleet_vehicle_membership_id: UUID
     ) -> FleetVehicleMembershipModel | None:
         return membership
 

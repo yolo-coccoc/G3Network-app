@@ -1,7 +1,8 @@
 """FastAPI router for the HTTP endpoints of the fleet domain.
 
 Domain exceptions are not caught here: `app/api/main.py` maps each shared
-base (`NotFoundError` -> 404, `ConflictError` -> 409) to its HTTP status.
+base (`NotFoundError` -> 404, `ConflictError` -> 409, `InvalidInputError` -> 400)
+to its HTTP status.
 """
 
 from uuid import UUID

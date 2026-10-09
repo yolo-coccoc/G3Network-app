@@ -2168,7 +2168,7 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
             fleet = await fleet_repository.insert(
                 db, {"fleet_code": "RU-01", "name": "Rollup Fleet"}
             )
-            joined_at = datetime.now(timezone.utc)
+            added_at_base = datetime.now(timezone.utc)
             for offset_seconds, member_vehicle in enumerate(
                 (first_vehicle, second_vehicle)
             ):
@@ -2176,7 +2176,7 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                     db,
                     fleet_id=fleet.fleet_id,
                     vehicle_id=member_vehicle.vehicle_id,
-                    added_at=joined_at + timedelta(seconds=offset_seconds),
+                    added_at=added_at_base + timedelta(seconds=offset_seconds),
                 )
 
             report = await telemetry_service.get_fleet_operating_report(
