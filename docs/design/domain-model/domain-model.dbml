@@ -2311,6 +2311,7 @@ Table promotion_campaigns {
   target jsonb [note: 'Who receives it, as JSON criteria. @vi Đối tượng nhận, dạng tiêu chí JSON. @example {"vehicle_models": ["EVT-400"], "organizations": "all"}']
   status varchar(20) [not null, note: 'Campaign status. @vi Trạng thái chiến dịch. @example SCHEDULED']
   Note: '''@status planned @owner internal @features F-F4
+Review parked until PAY-12 starts (BL-17).
 A maintenance reminder or promotion campaign.
 @vi-name Chiến dịch khuyến mãi
 @vi Một chiến dịch nhắc bảo dưỡng hoặc khuyến mãi.'''

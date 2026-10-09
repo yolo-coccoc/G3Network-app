@@ -25,6 +25,7 @@ Only key columns are shown. Solid line = built link, dashed = planned.
 
 **No. 63** · 📋 planned · owner: **internal** · features: F-F4
 
+Review parked until PAY-12 starts (BL-17).
 A maintenance reminder or promotion campaign.
 
 | Column | Type | Null | Key | References | Meaning | Example |
