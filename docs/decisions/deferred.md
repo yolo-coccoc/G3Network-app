@@ -1841,6 +1841,28 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Additional notes**: Likely shape: a profile (owner, charger model, name) with its wanted
   values in the entries' naming (component + variable + attribute, a 1.6J key as a variable), and
   the profile's ID on `charging_stations`. A drift check reads the newest COMPLETE snapshot.
+
+### 94. What the truck's check-in QR code encodes
+
+- **Short description**: The QR sticker on a truck that drivers scan to check in (DR-07) has no
+  specified content and no column behind it. Proposed: a short random code of ours,
+  `vehicles.check_in_code` (varchar(16), required, unique among trucks not deleted), inside a web
+  link (e.g. `https://g3.vn/t/K7Q2M9X4`) that opens the app on the check-in screen, or the store
+  page when the app is missing; the code is also printed as text for typing.
+- **Purpose/role in the system**: Identifies the truck at check-in without exposing the VIN or an
+  internal ID. A damaged or copied sticker is replaced by regenerating the code, which stops the
+  old one (impossible with the VIN). It changes rarely: a damaged, lost or copied sticker, or a new
+  owner's choice; `vehicles` change history records who regenerated it and why. Copying is
+  limited by the location check at check-in (phone near the truck's last T-Box position).
+- **Reason for deferral**: Owner decision (2026-10-10): left for later; the design review
+  continues. `driving_sessions` needs no change (it already records `check_in_method` QR).
+- **Related planner/feature**: DR-07 (`docs/decisions/decision-log.md`), DRV-02 / driver check-in
+  (`docs/product/features/features.yaml`), open question 9 (trucks without a T-Box).
+- **Date recorded**: 2026-10-10
+- **Additional notes**: Options weighed: the VIN (no column, but guessable from the chassis and
+  never revocable) and the internal ID (exposes it, never revocable). A code that changes every
+  minute needs a screen, e.g. the in-cab `vehicle-app` showing a refreshing QR; that would be a
+  separate feature, and the sticker would still serve trucks without the screen.
 ---
 
 ## Update rules
