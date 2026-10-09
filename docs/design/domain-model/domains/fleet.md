@@ -40,10 +40,11 @@ erDiagram
     uuid organization_id FK "planned"
   }
   fleet_user_assignments {
-    uuid assignment_id PK
-    uuid organization_id FK
+    uuid fleet_user_assignment_id PK
     uuid fleet_id FK
     uuid membership_id FK
+    uuid assigned_by FK
+    uuid unassigned_by FK
   }
   fleets }o..|| organizations : "organization_id"
   fleets }o..o| fleets : "parent_fleet_id"
@@ -51,9 +52,10 @@ erDiagram
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
   fleet_vehicle_memberships }o..o| users : "added_by"
   fleet_vehicle_memberships }o..o| users : "removed_by"
-  fleet_user_assignments }o..|| organizations : "organization_id"
   fleet_user_assignments }o..|| fleets : "fleet_id"
   fleet_user_assignments }o..|| memberships : "membership_id"
+  fleet_user_assignments }o..o| users : "assigned_by"
+  fleet_user_assignments }o..o| users : "unassigned_by"
   geofences }o--|| fleets : "fleet_id"
   geofences }o..o| organizations : "organization_id"
   charging_policy_assignments }o..o| fleets : "fleet_id"
@@ -195,17 +197,23 @@ Scoped to a fleet until customer organizations exist (then it moves to the organ
 
 Limits a user's fleet-level roles to some fleets of a large organization
 (e.g. one fleet manager for the Hanoi fleet, another for HCMC). A user with
-no open row here covers every fleet of their organization. Lives in the
-fleet domain, not identity, so identity keeps depending on no other domain.
+no open row here covers every fleet of their organization. The visible set
+is the union of the assigned fleets and every fleet below them, each truck
+once, and covers the trucks currently in those fleets (FL-10). A row for a
+fleet already covered by an assigned parent is allowed (it keeps access if
+the tree changes); the portal warns about it. Lives in the fleet domain, not
+identity, so identity keeps depending on no other domain. No change history:
+a row is only ever closed (DM-20); assigned_by / unassigned_by say who.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `0000001c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `organization_id` | uuid | no | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization of the fleet and the user. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `fleet_id` | uuid | no | FK | [fleets](#fleets).fleet_id (on delete restrict) | Fleet the user is limited to, together with every fleet below it. | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
+| `fleet_user_assignment_id` | uuid | no | PK |  | Internal ID of the assignment. | `0000001c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `fleet_id` | uuid | no | FK | [fleets](#fleets).fleet_id (on delete restrict) | Fleet the user is limited to, together with every fleet below it. Must belong to the membership's organization (checked by the service; the row reads its organization through either, DM-24). | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
 | `membership_id` | uuid | no | FK | [memberships](identity.md#memberships).membership_id (on delete restrict) | Membership (person in this organization) whose fleet-level roles (FLEET_MANAGER, DISPATCHER) apply only to the fleets listed for it. | `00000022-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `assigned_at` | timestamptz | no |  |  | When the user was given this fleet. | `2026-09-01T02:00:00Z` |
+| `assigned_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | Who gave it (usually the ORG_ADMIN); NULL when the system did. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `unassigned_at` | timestamptz | yes |  |  | When it was taken away; NULL while in force. | `NULL` |
+| `unassigned_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | Who took it away; NULL while in force, or when the system ended it (the membership ended or the fleet was deleted). | `NULL` |
 
 **Indexes**
 

@@ -131,8 +131,9 @@ erDiagram
   fleets }o..|| organizations : "organization_id"
   fleet_vehicle_memberships }o..o| users : "added_by"
   fleet_vehicle_memberships }o..o| users : "removed_by"
-  fleet_user_assignments }o..|| organizations : "organization_id"
   fleet_user_assignments }o..|| memberships : "membership_id"
+  fleet_user_assignments }o..o| users : "assigned_by"
+  fleet_user_assignments }o..o| users : "unassigned_by"
   geofences }o..o| organizations : "organization_id"
   charging_locations }o..|| organizations : "organization_id"
   charging_location_access }o..|| organizations : "allowed_organization_id"
@@ -235,7 +236,6 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
 - [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
 - [fleets](fleet.md#fleets).organization_id (planned)
-- [fleet_user_assignments](fleet.md#fleet_user_assignments).organization_id (planned)
 - [geofences](fleet.md#geofences).organization_id (planned)
 - [charging_locations](charging_stations.md#charging_locations).organization_id (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).allowed_organization_id (planned)
@@ -335,6 +335,8 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [access_audit_logs](#access_audit_logs).user_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).added_by (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).removed_by (planned)
+- [fleet_user_assignments](fleet.md#fleet_user_assignments).assigned_by (planned)
+- [fleet_user_assignments](fleet.md#fleet_user_assignments).unassigned_by (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).granted_by (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).revoked_by (planned)
 - [charging_station_commands](charging_stations.md#charging_station_commands).requested_by (planned)
