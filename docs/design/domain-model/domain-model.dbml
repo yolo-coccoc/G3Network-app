@@ -1049,31 +1049,38 @@ Check constraint (FL-08): num_nonnulls(name, fleet_code) >= 1.
 }
 
 Table fleet_vehicle_memberships {
-  membership_id uuid [pk, note: 'Internal ID of the membership period. @vi Mã nội bộ của giai đoạn thành viên. @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  organization_id uuid [note: '@planned: Customer organization the membership belongs to. @vi Tổ chức khách hàng của giai đoạn thành viên. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  fleet_id uuid [not null, note: 'Fleet the vehicle is in. @vi Đội xe chứa xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  vehicle_id uuid [not null, note: 'Vehicle in the fleet. @vi Xe thuộc đội. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  joined_at timestamptz [not null, note: 'When the vehicle joined the fleet. @vi Thời điểm xe vào đội. @example 2026-09-01T00:00:00Z']
-  left_at timestamptz [note: 'When it left; NULL while still a member. @vi Thời điểm xe rời đội; NULL khi vẫn còn trong đội. @example NULL']
+  fleet_vehicle_membership_id uuid [pk, note: '@built-as membership_id: Internal ID of one membership period. Renamed because memberships.membership_id (identity) means a person in an organization, a different thing (FL-09). @vi Mã nội bộ của một giai đoạn thành viên. Đổi tên vì memberships.membership_id (miền danh tính) là một người trong một tổ chức, một khái niệm khác (FL-09). @example 00000005-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  fleet_id uuid [not null, note: 'Fleet the vehicle is in; the row reads its organization through it (DM-24), since a fleet never moves to another organization. @vi Đội xe chứa xe; dòng đọc tổ chức qua đội xe (DM-24), vì đội xe không bao giờ chuyển sang tổ chức khác. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
+  vehicle_id uuid [not null, note: 'Vehicle in the fleet; it must belong to the fleet\'s organization when added. @vi Xe thuộc đội; xe phải thuộc tổ chức của đội khi được thêm vào. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  added_at timestamptz [not null, note: '@built-as joined_at: When the vehicle was added to the fleet (FL-09). @vi Thời điểm xe được thêm vào đội (FL-09). @example 2026-09-01T00:00:00Z']
+  removed_at timestamptz [note: '@built-as left_at: When it was removed; NULL while still a member (FL-09). @vi Thời điểm xe bị đưa ra khỏi đội; NULL khi vẫn còn trong đội (FL-09). @example NULL']
+  added_by uuid [note: '@planned FL-09: User who added the vehicle. @vi Người dùng đã thêm xe vào đội. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  removed_by uuid [note: '@planned FL-09: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). @vi Người dùng đã đưa xe ra khỏi đội; NULL khi vẫn là thành viên, hoặc khi hệ thống tự đóng (xe được bán, VH-12, hoặc đội bị xóa, FL-06). @example NULL']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the membership is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi xe rời đội). @example 2026-09-10T07:15:00Z']
   indexes {
-    fleet_id [name: 'ix_fleet_vehicle_memberships_fleet_id']
-    (fleet_id, joined_at) [name: 'ix_fleet_vehicle_memberships_fleet_time']
+    fleet_id [name: 'ix_fleet_vehicle_memberships_fleet_id', note: 'Dropped: covered by ix_fleet_vehicle_memberships_fleet_time (FL-09)']
+    (fleet_id, added_at) [name: 'ix_fleet_vehicle_memberships_fleet_time']
     vehicle_id [name: 'ix_fleet_vehicle_memberships_vehicle_id']
-    vehicle_id [unique, name: 'uq_fleet_vehicle_memberships_active_vehicle', note: 'WHERE left_at IS NULL']
+    vehicle_id [unique, name: 'uq_fleet_vehicle_memberships_active_vehicle', note: 'WHERE removed_at IS NULL (built as left_at)']
   }
   Note: '''@status built @owner customer @features F-E1
-Which vehicle was in which fleet, and when (open/close history).
+Which vehicle was in which fleet, and when (open/close history). A truck is
+in at most one fleet at a time and the period holds no data of its own, so
+DM-22 would put fleet_id on vehicles; the table stays because vehicles must
+not depend on fleet (FL-01, FL-09). No change history: a row is only ever
+closed (DM-20); added_by / removed_by say who. No reason column: why a truck
+left is clear from what happened (moved, sold, fleet deleted).
 @vi-name Thành viên đội xe
-@vi Xe nào thuộc đội nào, trong khoảng thời gian nào (lịch sử mở/đóng).'''
+@vi Xe nào thuộc đội nào, trong khoảng thời gian nào (lịch sử mở/đóng). Mỗi xe chỉ thuộc tối đa một đội tại một thời điểm và giai đoạn không có dữ liệu riêng, nên theo DM-22 lẽ ra đặt fleet_id trên vehicles; bảng được giữ vì miền xe không được phụ thuộc miền đội xe (FL-01, FL-09). Không có lịch sử thay đổi: dòng chỉ bị đóng (DM-20); added_by / removed_by cho biết ai thực hiện. Không có cột lý do: lý do xe rời đội rõ từ sự việc (chuyển đội, bán xe, đội bị xóa).'''
 }
 
 Ref: fleets.organization_id > organizations.organization_id [delete: restrict]
 Ref: fleets.parent_fleet_id > fleets.fleet_id [delete: restrict]
-Ref: fleet_vehicle_memberships.organization_id > organizations.organization_id [delete: restrict]
 Ref: fleet_vehicle_memberships.fleet_id > fleets.fleet_id [delete: restrict]
 Ref: fleet_vehicle_memberships.vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: fleet_vehicle_memberships.added_by > users.user_id [delete: restrict]
+Ref: fleet_vehicle_memberships.removed_by > users.user_id [delete: restrict]
 
 Table fleet_user_assignments {
   assignment_id uuid [pk, note: 'Internal ID of the assignment. @vi Mã nội bộ của lần phân công. @example 0000001c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
