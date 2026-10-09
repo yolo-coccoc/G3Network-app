@@ -2713,7 +2713,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-03]
-    sources: [Decision CO-12, deferred.md 74]
+    sources: [Decision CO-12, deferred.md 74, Decision CS-20]
 
   - code: STN-11
     name: Secure charger connections

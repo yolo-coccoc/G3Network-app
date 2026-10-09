@@ -21,7 +21,7 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**75 tables in 16 domains:** 57 main, 15 history (N.h, generated), 3 state · 18 built, 40 planned, 17 proposed.
+**76 tables in 16 domains:** 58 main, 15 history (N.h, generated), 3 state · 18 built, 41 planned, 17 proposed.
 
 ## Domain map
 
@@ -35,7 +35,7 @@ flowchart LR
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>2 built · 2 planned"]:::partial
   fleet["Fleet<br/>3 built · 1 planned"]:::partial
-  charging_stations["Charging stations<br/>5 built · 9 planned"]:::partial
+  charging_stations["Charging stations<br/>5 built · 10 planned"]:::partial
   charging_sessions["Charging sessions<br/>3 built"]:::built
   notifications["Notifications<br/>1 built"]:::built
   support["Support<br/>1 built · 2 planned"]:::partial
@@ -56,6 +56,7 @@ flowchart LR
   fleet --> vehicles
   fleet -.-> identity
   charging_stations -.-> identity
+  charging_stations -.-> charging_sessions
   charging_sessions --> charging_stations
   charging_sessions -.-> identity
   charging_sessions -.-> vehicles
@@ -98,21 +99,21 @@ Not drawn, to keep the map readable: 14 domains also point to **identity** throu
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
 | [Drivers](domains/drivers.md) | partial | 2 | 2 | 0 | 21 drivers, 21.h driver_history, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions |
 | [Fleet](domains/fleet.md) | partial | 3 | 1 | 0 | 24 fleets, 25 fleet_vehicle_memberships, 26 geofences, 27 fleet_user_assignments |
-| [Charging stations](domains/charging_stations.md) | partial | 5 | 9 | 0 | 28 charging_locations, 28.h charging_location_history, 29 charging_location_access, 30 charging_stations, 30.h charging_station_history, 31 charging_station_state, 32 charging_evses, 32.h charging_evse_history, 33 charging_connectors, 33.h charging_connector_history, 34 charging_connector_state, 35 charging_ocpp_messages, 36 charging_station_configuration_captures, 37 charging_station_configuration_entries |
-| [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 38 charging_sessions, 39 ~~charging_session_events~~, 40 charging_session_measurements |
-| [Notifications](domains/notifications.md) | built | 1 | 0 | 0 | 41 notifications |
-| [Support](domains/support.md) | partial | 1 | 2 | 0 | 42 support_cases, 43 repair_partners, 44 maintenance_bookings |
-| [Policy](domains/policy.md) | planned | 0 | 4 | 0 | 45 charging_policies, 46 charging_policy_versions, 47 charging_policy_assignments, 48 policy_violations |
-| [Billing](domains/billing.md) | planned | 0 | 8 | 1 | 49 tariffs, 50 payments, 51 wallets, 52 wallet_transactions, 53 invoices, 54 invoice_lines, 55 subscription_plans, 56 plan_features, 57 subscriptions |
-| [Scoring](domains/scoring.md) | planned | 0 | 1 | 0 | 58 driver_scores |
-| [Unassigned](domains/unassigned.md) | planned | 0 | 2 | 0 | 59 promotion_campaigns, 60 trips |
+| [Charging stations](domains/charging_stations.md) | partial | 5 | 10 | 0 | 28 charging_locations, 28.h charging_location_history, 29 charging_location_access, 30 charging_stations, 30.h charging_station_history, 31 charging_station_state, 32 charging_evses, 32.h charging_evse_history, 33 charging_connectors, 33.h charging_connector_history, 34 charging_connector_state, 35 charging_ocpp_messages, 36 charging_station_configuration_captures, 37 charging_station_configuration_entries, 38 charging_station_commands |
+| [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 39 charging_sessions, 40 ~~charging_session_events~~, 41 charging_session_measurements |
+| [Notifications](domains/notifications.md) | built | 1 | 0 | 0 | 42 notifications |
+| [Support](domains/support.md) | partial | 1 | 2 | 0 | 43 support_cases, 44 repair_partners, 45 maintenance_bookings |
+| [Policy](domains/policy.md) | planned | 0 | 4 | 0 | 46 charging_policies, 47 charging_policy_versions, 48 charging_policy_assignments, 49 policy_violations |
+| [Billing](domains/billing.md) | planned | 0 | 8 | 1 | 50 tariffs, 51 payments, 52 wallets, 53 wallet_transactions, 54 invoices, 55 invoice_lines, 56 subscription_plans, 57 plan_features, 58 subscriptions |
+| [Scoring](domains/scoring.md) | planned | 0 | 1 | 0 | 59 driver_scores |
+| [Unassigned](domains/unassigned.md) | planned | 0 | 2 | 0 | 60 promotion_campaigns, 61 trips |
 
 ## Data ownership
 
 | Owner | Meaning | Tables |
 |---|---|---|
 | **customer** | Belongs to one organization (normally a customer; a G3 company can own such rows too); carries `organization_id` or reads it through its parent (DM-24). | [memberships](domains/identity.md#memberships), [membership_history](domains/identity.md#membership_history), [user_role_assignments](domains/identity.md#user_role_assignments), [organization_settings](domains/identity.md#organization_settings), [organization_setting_history](domains/identity.md#organization_setting_history), [vehicles](domains/vehicles.md#vehicles), [vehicle_history](domains/vehicles.md#vehicle_history), [batteries](domains/batteries.md#batteries), [battery_history](domains/batteries.md#battery_history), [warranties](domains/warranties.md#warranties), [warranty_history](domains/warranties.md#warranty_history), [telematics](domains/telematics.md#telematics), [telematic_history](domains/telematics.md#telematic_history), [telematic_status_reports](domains/telematics.md#telematic_status_reports), [telemetry](domains/telemetry.md#telemetry), [drivers](domains/drivers.md#drivers), [driver_history](domains/drivers.md#driver_history), [driver_vehicle_assignments](domains/drivers.md#driver_vehicle_assignments), [driving_sessions](domains/drivers.md#driving_sessions), [fleets](domains/fleet.md#fleets), [fleet_vehicle_memberships](domains/fleet.md#fleet_vehicle_memberships), [geofences](domains/fleet.md#geofences), [fleet_user_assignments](domains/fleet.md#fleet_user_assignments), [charging_locations](domains/charging_stations.md#charging_locations), [charging_location_history](domains/charging_stations.md#charging_location_history), [charging_location_access](domains/charging_stations.md#charging_location_access), [charging_stations](domains/charging_stations.md#charging_stations), [charging_station_history](domains/charging_stations.md#charging_station_history), [charging_station_state](domains/charging_stations.md#charging_station_state), [charging_evses](domains/charging_stations.md#charging_evses), [charging_evse_history](domains/charging_stations.md#charging_evse_history), [charging_connectors](domains/charging_stations.md#charging_connectors), [charging_connector_history](domains/charging_stations.md#charging_connector_history), [charging_connector_state](domains/charging_stations.md#charging_connector_state), [notifications](domains/notifications.md#notifications), [support_cases](domains/support.md#support_cases), [maintenance_bookings](domains/support.md#maintenance_bookings), [charging_policy_assignments](domains/policy.md#charging_policy_assignments), [policy_violations](domains/policy.md#policy_violations), [payments](domains/billing.md#payments), [wallets](domains/billing.md#wallets), [wallet_transactions](domains/billing.md#wallet_transactions), [invoices](domains/billing.md#invoices), [invoice_lines](domains/billing.md#invoice_lines), [subscriptions](domains/billing.md#subscriptions), [driver_scores](domains/scoring.md#driver_scores), [trips](domains/unassigned.md#trips) |
-| **internal** | Our own data (the organization running the platform), shared across all organizations. | [organizations](domains/identity.md#organizations), [organization_history](domains/identity.md#organization_history), [users](domains/identity.md#users), [user_history](domains/identity.md#user_history), [user_state](domains/identity.md#user_state), [user_credentials](domains/identity.md#user_credentials), [user_sessions](domains/identity.md#user_sessions), [one_time_codes](domains/identity.md#one_time_codes), [user_consents](domains/identity.md#user_consents), [legal_documents](domains/identity.md#legal_documents), [access_audit_logs](domains/identity.md#access_audit_logs), [vehicle_models](domains/vehicles.md#vehicle_models), [vehicle_model_history](domains/vehicles.md#vehicle_model_history), [battery_models](domains/batteries.md#battery_models), [battery_model_history](domains/batteries.md#battery_model_history), [charging_ocpp_messages](domains/charging_stations.md#charging_ocpp_messages), [charging_station_configuration_captures](domains/charging_stations.md#charging_station_configuration_captures), [charging_station_configuration_entries](domains/charging_stations.md#charging_station_configuration_entries), [repair_partners](domains/support.md#repair_partners), [charging_policies](domains/policy.md#charging_policies), [charging_policy_versions](domains/policy.md#charging_policy_versions), [tariffs](domains/billing.md#tariffs), [subscription_plans](domains/billing.md#subscription_plans), [plan_features](domains/billing.md#plan_features), [promotion_campaigns](domains/unassigned.md#promotion_campaigns) |
+| **internal** | Our own data (the organization running the platform), shared across all organizations. | [organizations](domains/identity.md#organizations), [organization_history](domains/identity.md#organization_history), [users](domains/identity.md#users), [user_history](domains/identity.md#user_history), [user_state](domains/identity.md#user_state), [user_credentials](domains/identity.md#user_credentials), [user_sessions](domains/identity.md#user_sessions), [one_time_codes](domains/identity.md#one_time_codes), [user_consents](domains/identity.md#user_consents), [legal_documents](domains/identity.md#legal_documents), [access_audit_logs](domains/identity.md#access_audit_logs), [vehicle_models](domains/vehicles.md#vehicle_models), [vehicle_model_history](domains/vehicles.md#vehicle_model_history), [battery_models](domains/batteries.md#battery_models), [battery_model_history](domains/batteries.md#battery_model_history), [charging_ocpp_messages](domains/charging_stations.md#charging_ocpp_messages), [charging_station_configuration_captures](domains/charging_stations.md#charging_station_configuration_captures), [charging_station_configuration_entries](domains/charging_stations.md#charging_station_configuration_entries), [charging_station_commands](domains/charging_stations.md#charging_station_commands), [repair_partners](domains/support.md#repair_partners), [charging_policies](domains/policy.md#charging_policies), [charging_policy_versions](domains/policy.md#charging_policy_versions), [tariffs](domains/billing.md#tariffs), [subscription_plans](domains/billing.md#subscription_plans), [plan_features](domains/billing.md#plan_features), [promotion_campaigns](domains/unassigned.md#promotion_campaigns) |
 | **two-party** | A G3 asset used by a customer (both have a stake). | [charging_sessions](domains/charging_sessions.md#charging_sessions), [charging_session_events](domains/charging_sessions.md#charging_session_events), [charging_session_measurements](domains/charging_sessions.md#charging_session_measurements) |
 
 ## Views

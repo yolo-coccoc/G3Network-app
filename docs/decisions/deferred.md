@@ -424,8 +424,9 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   F-G2 and F-B2; the corresponding billing/payment items in
   `docs/product/feature-list.md`.
 - **Date recorded**: 2026-07-31
-- **Additional notes**: Do not create a `charging_remote_commands`, tariff,
-  payment, debt, or authorization placeholder table in the MVP. When resuming
+- **Additional notes**: Do not create a tariff, payment, debt, or authorization
+  placeholder table in the MVP (the command table is now designed as
+  `charging_station_commands`, CS-20). When resuming
   this work, the charging planner and `CLAUDE.md` must be updated before
   writing code.
 
@@ -1532,6 +1533,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   exists, use an external OCPP test tool (e.g. SteVe) for probes that need
   commands. Several of the spec's acceptance items (8, 9, 12-16) cannot be
   verified through this backend without it.
+- **Update 2026-10-09 (CS-20 in `docs/decisions/decision-log.md`)**: the table that records every command and its answer, `charging_station_commands`, is now designed (planned). Still deferred here: the cross-process channel from the API to the gateway's open socket, and building the commands themselves.
 
 ### 75. Charger fault alerting and error-code catalog
 

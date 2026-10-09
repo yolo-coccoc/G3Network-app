@@ -35,6 +35,7 @@ erDiagram
     timestamptz sampled_at PK
     uuid session_id FK
   }
+  charging_station_commands }o..o| charging_sessions : "session_id"
   charging_sessions }o--|| charging_stations : "station_id"
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
@@ -49,13 +50,13 @@ erDiagram
   invoice_lines }o..o| charging_sessions : "session_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_connectors](charging_stations.md#charging_connectors), [charging_evses](charging_stations.md#charging_evses), [charging_station_commands](charging_stations.md#charging_station_commands), [charging_stations](charging_stations.md#charging_stations), [invoice_lines](billing.md#invoice_lines), [organizations](identity.md#organizations), [payments](billing.md#payments), [policy_violations](policy.md#policy_violations), [users](identity.md#users), [vehicles](vehicles.md#vehicles), [wallet_transactions](billing.md#wallet_transactions).
 
 ## Tables
 
 ### charging_sessions
 
-**No. 38** · ✅ built · owner: **two-party** · features: F-B2, F-C5
+**No. 39** · ✅ built · owner: **two-party** · features: F-B2, F-C5
 
 One charge on one connector of one charger, from the QR scan to the stop
 (CE-10). The row is created PENDING when the driver scans the QR code in our
@@ -114,6 +115,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 
 **Referenced by**
 
+- [charging_station_commands](charging_stations.md#charging_station_commands).session_id (planned)
 - [charging_session_events](#charging_session_events).session_id
 - [charging_session_measurements](#charging_session_measurements).session_id
 - [policy_violations](policy.md#policy_violations).session_id (planned)
@@ -123,7 +125,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 
 ### charging_session_events
 
-**No. 39** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at` · **🗑️ to be removed (CE-15)**
+**No. 40** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `event_occurred_at` · **🗑️ to be removed (CE-15)**
 
 Each Started / Updated / Ended event of a session. Dropped by the target
 design (CE-15): for OCPP 1.6J it copies the session's start and end, the raw
@@ -149,7 +151,7 @@ are designed when 2.0.1 support is built (deferred.md 78).
 
 ### charging_session_measurements
 
-**No. 40** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
+**No. 41** · ✅ built · owner: **two-party** · features: F-B2 · hypertable on `sampled_at`
 
 Every reading a charger reports during a session (energy, power, current,
 voltage, SoC, temperature ...), append-only. The gateway stores each known

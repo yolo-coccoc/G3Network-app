@@ -4,13 +4,14 @@
 
 [← Overview](../overview.md)
 
-✅ built: 5 · 📋 planned: 9
+✅ built: 5 · 📋 planned: 10
 
 The charging network and the OCPP link to each charger (terms: CS-09).
 
 - A **location** (trạm) is one place drivers go, owned by one organization; it is public or private, and a private one lists the other organizations allowed to charge there (CS-10).
 - A location has one or more **charging stations** (trụ: one charger, one OCPP connection); each has one or more **EVSEs**, and each EVSE one or more **connectors** (súng).
 - Every OCPP frame and every configuration snapshot is kept against its charger.
+- Every **command** we send to a charger is kept with its answer; a remote start or stop points to its session (CS-20).
 
 ## Diagram
 
@@ -78,6 +79,13 @@ erDiagram
     uuid entry_id PK
     uuid station_id FK
   }
+  charging_station_commands {
+    uuid command_id PK
+    uuid station_id FK
+    uuid evse_id FK
+    uuid session_id FK
+    uuid requested_by FK
+  }
   warranties }o..o| charging_stations : "station_id"
   charging_locations }o..|| organizations : "organization_id"
   charging_location_access }o..|| charging_locations : "location_id"
@@ -92,6 +100,10 @@ erDiagram
   charging_ocpp_messages }o--|| charging_stations : "station_id"
   charging_station_configuration_entries }o--|| charging_stations : "station_id"
   charging_station_configuration_captures }o..|| charging_stations : "station_id"
+  charging_station_commands }o..|| charging_stations : "station_id"
+  charging_station_commands }o..o| charging_evses : "evse_id"
+  charging_station_commands }o..o| charging_sessions : "session_id"
+  charging_station_commands }o..o| users : "requested_by"
   charging_sessions }o--|| charging_stations : "station_id"
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
@@ -271,6 +283,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [charging_ocpp_messages](#charging_ocpp_messages).station_id
 - [charging_station_configuration_entries](#charging_station_configuration_entries).station_id
 - [charging_station_configuration_captures](#charging_station_configuration_captures).station_id (planned)
+- [charging_station_commands](#charging_station_commands).station_id (planned)
 - [charging_sessions](charging_sessions.md#charging_sessions).station_id
 - [tariffs](billing.md#tariffs).station_id (planned)
 - [charging_station_history](#charging_station_history).station_id (planned)
@@ -362,6 +375,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 **Referenced by**
 
 - [charging_connectors](#charging_connectors).evse_id
+- [charging_station_commands](#charging_station_commands).evse_id (planned)
 - [charging_sessions](charging_sessions.md#charging_sessions).evse_id
 - [charging_evse_history](#charging_evse_history).evse_id (planned)
 
@@ -517,8 +531,7 @@ one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
 themselves are rows of charging_station_configuration_entries. Append-only:
 the current settings are the newest COMPLETE snapshot, and comparing two
 snapshots shows what changed between them (CS-19). Changing a setting is a
-command we send, not a snapshot (designed with the commands of the
-charging_sessions review).
+command we send, not a snapshot: a row of charging_station_commands (CS-20).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
@@ -566,3 +579,40 @@ translated to 2.0.1 names. Append-only, through its capture.
 
 - `ix_charging_config_entries_station_captured` (station_id, captured_at) - Replaced by ix_charging_config_captures_station_captured (CS-19)
 - `uq_charging_config_entries_capture_setting` (capture_id, component_name, component_instance, ocpp_evse_id, ocpp_connector_id, variable_name, variable_instance, attribute_type) unique - Planned (CS-19): NULLS NOT DISTINCT; one value per setting and attribute in a snapshot
+
+### charging_station_commands
+
+**No. 38** · 📋 planned · owner: **internal** · features: F-G2, F-H1
+
+Every command we send to a charger and its answer (STN-10, CS-20): who asked,
+why, which session it is about, and outcomes that leave no frame in the raw
+log (not sent, timed out). Commands are a capability of the OCPP gateway, so
+the table lives in charging_stations, never in charging_sessions (which
+never calls back into this domain). Written when the command is created and
+updated once with the answer; no change history, no soft delete. Most
+answers are a verdict only; the result arrives later as its own message (a
+remote start's start message, a configuration read's snapshot). A T-Box
+command table (telematic_commands, deferred.md 55) would take the same shape.
+Check constraints (CS-20): outcome <> 'NOT_SENT' OR ocpp_message_id IS NULL;
+outcome IN ('PENDING', 'NOT_SENT') OR answered_at IS NOT NULL.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `command_id` | uuid | no | PK |  | Internal ID of the command. | `0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | The charger the command goes to. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `evse_id` | uuid | yes | FK | [charging_evses](#charging_evses).evse_id (on delete restrict) | The gun the command targets (an unlock, taking one gun out of service); NULL for the whole charger. | `1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99` |
+| `session_id` | uuid | yes | FK | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | The session the command is about: the PENDING session a remote start begins (CE-10), or the session a remote stop ends; NULL for every other command. | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
+| `command_type` | varchar(30) | no |  |  | What we asked, in one shape for both OCPP versions (CO-15); each version's adapter turns it into that version's message. Values: REMOTE_START \| REMOTE_STOP \| UNLOCK_CONNECTOR \| RESET \| CHANGE_AVAILABILITY \| CHANGE_CONFIGURATION \| GET_CONFIGURATION \| TRIGGER_MESSAGE. One CHANGE_CONFIGURATION sets one setting, also in 2.0.1, so a row has one answer (CS-20). | `REMOTE_START` |
+| `parameters` | jsonb | yes |  |  | What we sent besides the links: reset type, the availability asked for, the setting's key and value, the message to trigger, the 2.0.1 remoteStartId. The remote start's token is not copied: it is on the session. NULL when the command has none. | `{"remote_start_id": 1042}` |
+| `requested_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who asked for it: the scanning driver for a remote start, an operator for a manual command; NULL when the system sent it on its own (e.g. the configuration request after boot, CO-05). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `reason` | varchar(200) | yes |  |  | Why, typed by the operator for a manual command; NULL for routine ones (a QR start, the configuration request after boot). | `Súng 2 kẹt, mở khóa cho tài xế` |
+| `requested_at` | timestamptz | no |  |  | When we created the command, by our server's clock. | `2026-09-15T08:29:11Z` |
+| `ocpp_message_id` | varchar(36) | yes |  |  | Message ID of the frame we sent; finds that frame and the charger's answer in charging_ocpp_messages (CS-18). NULL when nothing was sent. | `7f3a9c1e-2b4d-4e8a-9c6f-1d0e2b7a5c33` |
+| `outcome` | varchar(20) | no |  |  | Observed result, in one shape (no reason column: observed, not decided). PENDING: sent, waiting for the answer. ACCEPTED / REJECTED: the charger's verdict. ERROR: the charger answered with an OCPP error. TIMEOUT: no answer within the configured time. NOT_SENT: the charger was not connected. Values: PENDING \| ACCEPTED \| REJECTED \| ERROR \| TIMEOUT \| NOT_SENT. | `ACCEPTED` |
+| `response_status` | varchar(30) | yes |  |  | The charger's answer as sent, which may say more than accepted or rejected: Scheduled, RebootRequired, UnlockFailed, NotSupported, or an error code such as NotImplemented. NULL when there was no answer. | `Accepted` |
+| `answered_at` | timestamptz | yes |  |  | When the answer or the timeout was recorded; NULL while PENDING or when NOT_SENT. | `2026-09-15T08:29:12Z` |
+
+**Indexes**
+
+- `ix_charging_station_commands_station_requested` (station_id, requested_at) - A charger's commands, newest first (STN-10)
+- `ix_charging_station_commands_session_id` (session_id) - A session's remote start and stop

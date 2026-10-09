@@ -291,7 +291,7 @@ Send commands to chargers: start and stop a charge, unlock a connector, reset, c
 **Depends on:** [STN-03](#stn-03)  
 **Needed by:** [CHG-01](charging_sessions.md#chg-01), [STN-09](#stn-09)  
 **Related tables:** — (after the database review)  
-**Sources:** Decision CO-12 · deferred.md 74
+**Sources:** Decision CO-12 · deferred.md 74 · Decision CS-20
 
 <a id="stn-11"></a>
 
