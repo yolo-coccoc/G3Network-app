@@ -73,7 +73,7 @@ Send alerts as push notifications to the person's phones and browsers.
 
 ### NTF-03 SMS messages
 
-*Tin nhắn SMS* · Must · P1.0 · To be priced
+*Tin nhắn SMS* · Must · P1.1 · To be priced
 
 Send SMS through a brandname provider: one-time codes, and critical alerts as a fallback (e.g. battery ≤10% with no data connection).
 
@@ -91,7 +91,7 @@ Send SMS through a brandname provider: one-time codes, and critical alerts as a 
 **Depends on:** [NTF-06](#ntf-06)  
 **Needed by:** [ACC-05](identity.md#acc-05), [NTF-07](#ntf-07)  
 **Related tables:** — (after the database review)  
-**Sources:** PRD F-F3 · Data IN-47 · Decision BL-05  
+**Sources:** PRD F-F3 · Data IN-47 · Decision BL-05 · Decision NT-11 · deferred.md 96  
 **Old codes:** F-F3
 
 <a id="ntf-04"></a>

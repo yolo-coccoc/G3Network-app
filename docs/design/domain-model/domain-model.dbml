@@ -1738,18 +1738,45 @@ Check constraint (NT-09): (subject_type IS NULL) = (subject_id IS NULL).
 Ref: notifications.organization_id > organizations.organization_id [delete: restrict]
 Ref: notifications.vehicle_id > vehicles.vehicle_id [delete: cascade]
 
+Table notification_recipients {
+  notification_recipient_id bigint [pk, increment, note: 'Auto-increasing internal ID; alerts x people is a large number, so bigint. @vi Mã nội bộ tự tăng; số cảnh báo x số người là rất lớn nên dùng bigint. @example 918273']
+  notification_id bigint [not null, note: 'The alert. @vi Cảnh báo. @example 5821']
+  user_id uuid [not null, note: 'The person who receives it: someone whose role and data scope include the alert (NTF-06, roles only until plans exist, BL-16), plus the driver checked in to the truck, even from another organization (NT-07). @vi Người nhận: người có vai trò và phạm vi dữ liệu bao gồm cảnh báo (NTF-06, chỉ theo vai trò cho tới khi có gói, BL-16), cùng tài xế đang nhận xe, kể cả thuộc tổ chức khác (NT-07). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  seen_at timestamptz [note: 'When the person opened their notification list after it arrived; clears the badge count. @vi Thời điểm người đó mở danh sách thông báo sau khi thông báo đến; xóa số đếm trên biểu tượng. @example 2026-10-12T00:20:00Z']
+  read_at timestamptz [note: 'When the person tapped it and opened its screen (NT-04: unread is read_at IS NULL). @vi Thời điểm người đó bấm vào và mở màn hình liên quan (NT-04: chưa đọc là read_at IS NULL). @example NULL']
+  created_at timestamptz [not null, note: 'When it reached their inbox (UTC). @vi Thời điểm thông báo vào hộp thư của họ (UTC). @example 2026-10-12T00:15:00Z']
+  indexes {
+    (notification_id, user_id) [unique, name: 'uq_notification_recipients_notification_user']
+    (user_id, notification_id) [name: 'ix_notification_recipients_inbox', note: 'A person\'s inbox, polled with the cursor (NT-02)']
+    user_id [name: 'ix_notification_recipients_unseen', note: 'WHERE seen_at IS NULL: the badge count']
+  }
+  Note: '''@status planned @owner customer @features F-A2,F-F3
+Who received an alert, and whether they saw and read it (NT-10). The inbox is
+per person across all their organizations (opening an alert switches to its
+organization), so the row reads its organization through the alert. Seen
+clears the badge count; read is the tap that opens the alert's screen. Mark
+all as read sets both on every unread row and is idempotent (NT-04). No
+change history, no soft delete.
+@vi-name Người nhận thông báo
+@vi Ai đã nhận một cảnh báo, và họ đã xem và đã đọc chưa (NT-10). Hộp thư theo từng người, gồm mọi tổ chức của họ (mở cảnh báo sẽ chuyển sang tổ chức của cảnh báo), nên dòng đọc tổ chức qua cảnh báo. Đã xem làm mất số đếm trên biểu tượng; đã đọc là lần bấm mở màn hình của cảnh báo. Đánh dấu tất cả đã đọc đặt cả hai giá trị cho mọi dòng chưa đọc và làm lại cũng không đổi gì (NT-04). Không lịch sử thay đổi, không xóa mềm.'''
+}
+
+Ref: notification_recipients.notification_id > notifications.notification_id [delete: restrict]
+Ref: notification_recipients.user_id > users.user_id [delete: restrict]
+
 TableGroup notifications {
   notifications
+  notification_recipients
   Note: '''
 Alerts raised by other domains, stored for operators to poll.
 
 - A **notification** is usually about one vehicle.
-- It is not yet scoped to a recipient; the planned `organization_id` gives it to the organization that owns the vehicle.
+- It belongs to the organization owning the truck at that moment, and reaches each **recipient** (a person) once, with that person's seen and read state (NT-09, NT-10). Channels at launch: the app and portal inbox, push and e-mail; SMS later (NT-11).
 
 @vi-name Thông báo & cảnh báo
 @vi Cảnh báo do các miền khác phát sinh, được lưu để người vận hành truy vấn.
 - Một **thông báo** thường nói về một xe.
-- Hiện chưa gắn với người nhận; cột `organization_id` (dự kiến) sẽ gán thông báo cho tổ chức sở hữu xe.
+- Thông báo thuộc tổ chức sở hữu xe tại thời điểm đó, và tới mỗi **người nhận** một lần, kèm trạng thái đã xem và đã đọc của người đó (NT-09, NT-10). Kênh khi ra mắt: hộp thư trên ứng dụng và portal, thông báo đẩy và e-mail; SMS để sau (NT-11).
 '''
 }
 

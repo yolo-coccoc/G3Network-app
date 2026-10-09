@@ -3665,10 +3665,10 @@ features:
       - ["OTP SMS as our operating cost; alert SMS counted against the customer's quota", "SMS OTP là chi phí vận hành của công ty; SMS cảnh báo tính vào hạn mức của khách hàng"]
     surfaces: {backend: todo}
     priority: Must
-    release: P1.0
+    release: P1.1
     offer: tbd
     depends_on: [NTF-06]
-    sources: [PRD F-F3, Data IN-47, Decision BL-05]
+    sources: [PRD F-F3, Data IN-47, Decision BL-05, Decision NT-11, deferred.md 96]
     old_codes: [F-F3]
 
   - code: NTF-04

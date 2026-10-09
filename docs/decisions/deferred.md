@@ -1883,6 +1883,25 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Additional notes**: Small change when built: one status value, one timestamp
   (`accepted_at`), and the decline reason in `status_reason`. Decide then whether an
   unconfirmed trip near its planned start alerts the manager.
+
+### 96. SMS notification channel
+
+- **Short description**: Send alerts by brandname SMS as a third channel next to push and e-mail
+  (NTF-03): a provider integration, the organization's switch per service (NTF-05), and a count
+  of alert SMS against the customer's quota (BL-05), which needs a delivery record per recipient
+  and channel (NTF-07).
+- **Purpose/role in the system**: Reaches a person whose phone has no data or who disabled push;
+  useful for critical alerts (SOS, device offline).
+- **Reason for deferral**: Owner decision (2026-10-10, NT-11 in `docs/decisions/decision-log.md`):
+  launch uses the app and portal inbox, push and e-mail only. SMS costs money per message, and
+  selling it as a feature (BL-05) is still a direction. Login OTP is a separate matter and not
+  deferred by this item.
+- **Related planner/feature**: NTF-03, NTF-05, NTF-07 (`docs/product/features/features.yaml`),
+  BL-05, NT-03.
+- **Date recorded**: 2026-10-10
+- **Additional notes**: When built, add SMS to the channel settings and design the deliveries
+  table (one row per recipient and channel, with the provider's message ID and status) if it is
+  not built already.
 ---
 
 ## Update rules

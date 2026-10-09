@@ -4,12 +4,12 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1
+✅ built: 1 · 📋 planned: 1
 
 Alerts raised by other domains, stored for operators to poll.
 
 - A **notification** is usually about one vehicle.
-- It is not yet scoped to a recipient; the planned `organization_id` gives it to the organization that owns the vehicle.
+- It belongs to the organization owning the truck at that moment, and reaches each **recipient** (a person) once, with that person's seen and read state (NT-09, NT-10). Channels at launch: the app and portal inbox, push and e-mail; SMS later (NT-11).
 
 ## Diagram
 
@@ -20,11 +20,18 @@ erDiagram
     uuid organization_id FK "planned"
     uuid vehicle_id FK
   }
+  notification_recipients {
+    bigint notification_recipient_id PK
+    bigint notification_id FK
+    uuid user_id FK
+  }
   notifications }o..|| organizations : "organization_id"
   notifications }o--o| vehicles : "vehicle_id"
+  notification_recipients }o..|| notifications : "notification_id"
+  notification_recipients }o..|| users : "user_id"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
@@ -63,3 +70,33 @@ Check constraint (NT-09): (subject_type IS NULL) = (subject_id IS NULL).
 
 - `ix_notifications_vehicle_id` (vehicle_id)
 - `ix_notifications_organization_cursor` (organization_id, notification_id) - Planned (NT-09): an organization's alerts after a cursor
+
+**Referenced by**
+
+- [notification_recipients](#notification_recipients).notification_id (planned)
+
+### notification_recipients
+
+**No. 44** · 📋 planned · owner: **customer** · features: F-A2, F-F3
+
+Who received an alert, and whether they saw and read it (NT-10). The inbox is
+per person across all their organizations (opening an alert switches to its
+organization), so the row reads its organization through the alert. Seen
+clears the badge count; read is the tap that opens the alert's screen. Mark
+all as read sets both on every unread row and is idempotent (NT-04). No
+change history, no soft delete.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `notification_recipient_id` | bigint | no | PK |  | Auto-increasing internal ID; alerts x people is a large number, so bigint. | `918273` |
+| `notification_id` | bigint | no | FK | [notifications](#notifications).notification_id (on delete restrict) | The alert. | `5821` |
+| `user_id` | uuid | no | FK | [users](identity.md#users).user_id (on delete restrict) | The person who receives it: someone whose role and data scope include the alert (NTF-06, roles only until plans exist, BL-16), plus the driver checked in to the truck, even from another organization (NT-07). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `seen_at` | timestamptz | yes |  |  | When the person opened their notification list after it arrived; clears the badge count. | `2026-10-12T00:20:00Z` |
+| `read_at` | timestamptz | yes |  |  | When the person tapped it and opened its screen (NT-04: unread is read_at IS NULL). | `NULL` |
+| `created_at` | timestamptz | no |  |  | When it reached their inbox (UTC). | `2026-10-12T00:15:00Z` |
+
+**Indexes**
+
+- `uq_notification_recipients_notification_user` (notification_id, user_id) unique
+- `ix_notification_recipients_inbox` (user_id, notification_id) - A person's inbox, polled with the cursor (NT-02)
+- `ix_notification_recipients_unseen` (user_id) - WHERE seen_at IS NULL: the badge count
