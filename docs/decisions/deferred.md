@@ -1534,6 +1534,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   commands. Several of the spec's acceptance items (8, 9, 12-16) cannot be
   verified through this backend without it.
 - **Update 2026-10-09 (CS-20 in `docs/decisions/decision-log.md`)**: the table that records every command and its answer, `charging_station_commands`, is now designed (planned). Still deferred here: the cross-process channel from the API to the gateway's open socket, and building the commands themselves.
+- **Update 2026-10-09 (PR-16 in `docs/decisions/decision-log.md`)**: the cross-process channel is decided: the API inserts a `PENDING` row in `charging_station_commands` and the gateway process picks it up, sends the OCPP call and writes the answer back. Still deferred here: the commands other than the ones the QR charging flow needs.
 
 ### 75. Charger fault alerting and error-code catalog
 
