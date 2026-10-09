@@ -42,6 +42,7 @@ erDiagram
   telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
   driving_sessions }o..|| vehicles : "vehicle_id"
+  trips }o..o| vehicles : "planned_vehicle_id"
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
   charging_sessions }o..o| vehicles : "vehicle_id"
   notifications }o--o| vehicles : "vehicle_id"
@@ -50,14 +51,13 @@ erDiagram
   charging_policy_assignments }o..o| vehicles : "vehicle_id"
   policy_violations }o..|| vehicles : "vehicle_id"
   subscriptions }o..|| vehicles : "vehicle_id"
-  trips }o..|| vehicles : "vehicle_id"
   vehicle_history }o..o| vehicles : "vehicle_id"
   vehicle_history }o..o| users : "changed_by"
   vehicle_model_history }o..o| vehicle_models : "vehicle_model_id"
   vehicle_model_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trips](unassigned.md#trips), [users](identity.md#users), [warranties](warranties.md#warranties).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [batteries](batteries.md#batteries), [charging_policy_assignments](policy.md#charging_policy_assignments), [charging_sessions](charging_sessions.md#charging_sessions), [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments), [driving_sessions](drivers.md#driving_sessions), [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships), [maintenance_bookings](support.md#maintenance_bookings), [notifications](notifications.md#notifications), [organizations](identity.md#organizations), [policy_violations](policy.md#policy_violations), [subscriptions](billing.md#subscriptions), [support_cases](support.md#support_cases), [telematics](telematics.md#telematics), [telemetry](telemetry.md#telemetry), [trips](drivers.md#trips), [users](identity.md#users), [warranties](warranties.md#warranties).
 
 ## Tables
 
@@ -110,6 +110,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [telemetry](telemetry.md#telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
 - [driving_sessions](drivers.md#driving_sessions).vehicle_id (planned)
+- [trips](drivers.md#trips).planned_vehicle_id (planned)
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).vehicle_id
 - [charging_sessions](charging_sessions.md#charging_sessions).vehicle_id (planned)
 - [notifications](notifications.md#notifications).vehicle_id
@@ -118,7 +119,6 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [charging_policy_assignments](policy.md#charging_policy_assignments).vehicle_id (planned)
 - [policy_violations](policy.md#policy_violations).vehicle_id (planned)
 - [subscriptions](billing.md#subscriptions).vehicle_id (planned)
-- [trips](unassigned.md#trips).vehicle_id (planned)
 - [vehicle_history](#vehicle_history).vehicle_id (planned)
 
 ### vehicle_history

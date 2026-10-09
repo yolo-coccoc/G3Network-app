@@ -312,7 +312,7 @@ Replay where a truck went over a chosen period on a map; history kept at least 6
 
 *Chuyến đi* · Must · P1.0 · To be priced
 
-Cut the data stream into trips (start, stops, end) with distance, energy and duration per trip; each trip gets an ID for later shipment linking.
+Trips planned by a fleet manager (A to B, planned times, driver, truck) and executed by the driver with Start and Finish in the app, with distance, energy and duration per trip; each trip gets an ID for later shipment linking.
 
 **Value:** Many reports, alerts and the Phase 2 shipment link need trips.
 
@@ -320,20 +320,18 @@ Cut the data stream into trips (start, stops, end) with distance, energy and dur
 
 **Capabilities:**
 
-- Trip detection rule agreed with operations
+- Plan a trip: A to B, planned departure and arrival, driver and truck (optional for personal drivers)
+- Driver presses Start and Finish after checking in; T-Box position, odometer and battery % recorded at both ends
+- Reminder when the truck moves with no trip started; an open trip closes when the session ends
 - Per-trip km, kWh, kWh/km and cost
 - Trip history and costs in the driver app
 
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
-**Depends on:** [MON-09](#mon-09)  
+**Depends on:** [MON-09](#mon-09), [DRV-02](drivers.md#drv-02)  
 **Needed by:** [CRB-05](carbon.md#crb-05), [FLT-07](fleet.md#flt-07), [MON-13](#mon-13), [MON-15](#mon-15), [TMS-01](tms.md#tms-01)  
 **Related tables:** — (after the database review)  
-**Sources:** Data IN-14 · Data OUT-17 · Data IN-40 · deferred.md 46
-
-**Open questions:**
-
-- What exactly is one trip? (to be defined by operations)
+**Sources:** Data IN-14 · Data OUT-17 · Data IN-40 · deferred.md 46 · Decision DR-12
 
 <a id="mon-12"></a>
 

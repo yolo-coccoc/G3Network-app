@@ -1601,29 +1601,32 @@ features:
     name: Trips
     name_vi: Chuyến đi
     what: >-
-      Cut the data stream into trips (start, stops, end) with distance, energy
-      and duration per trip; each trip gets an ID for later shipment linking.
+      Trips planned by a fleet manager (A to B, planned times, driver, truck)
+      and executed by the driver with Start and Finish in the app, with
+      distance, energy and duration per trip; each trip gets an ID for later
+      shipment linking.
     what_vi: >-
-      Chia luồng dữ liệu thành các chuyến (bắt đầu, điểm dừng, kết thúc) kèm
-      quãng đường, năng lượng và thời gian từng chuyến; mỗi chuyến có mã để
-      sau này gắn với đơn hàng.
+      Chuyến do quản lý đội xe lập kế hoạch (từ A tới B, giờ dự kiến, tài
+      xế, xe) và được tài xế thực hiện bằng nút Bắt đầu và Kết thúc trên ứng
+      dụng, kèm quãng đường, năng lượng và thời gian từng chuyến; mỗi chuyến
+      có mã để sau này gắn với đơn hàng.
     value: >-
       Many reports, alerts and the Phase 2 shipment link need trips.
     value_vi: >-
       Nhiều báo cáo, cảnh báo và việc gắn đơn hàng ở Phase 2 cần có chuyến đi.
     users: [DRIVER, FLEET_MANAGER, SYSTEM]
     capabilities:
-      - ["Trip detection rule agreed with operations", "Quy tắc xác định chuyến thống nhất với vận hành"]
+      - ["Plan a trip: A to B, planned departure and arrival, driver and truck (optional for personal drivers)", "Lập kế hoạch chuyến: từ A tới B, giờ đi và giờ đến dự kiến, tài xế và xe (không bắt buộc với tài xế tự chạy)"]
+      - ["Driver presses Start and Finish after checking in; T-Box position, odometer and battery % recorded at both ends", "Tài xế bấm Bắt đầu và Kết thúc sau khi nhận xe; ghi vị trí T-Box, số km và phần trăm pin ở hai đầu"]
+      - ["Reminder when the truck moves with no trip started; an open trip closes when the session ends", "Nhắc khi xe chạy mà chưa bắt đầu chuyến; chuyến đang mở tự đóng khi phiên lái kết thúc"]
       - ["Per-trip km, kWh, kWh/km and cost", "Km, kWh, kWh/km và chi phí theo chuyến"]
       - ["Trip history and costs in the driver app", "Lịch sử chuyến và chi phí trên app tài xế"]
     surfaces: {backend: todo, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
-    depends_on: [MON-09]
-    sources: [Data IN-14, Data OUT-17, Data IN-40, deferred.md 46]
-    questions:
-      - ["What exactly is one trip? (to be defined by operations)", "Thế nào là một chuyến? (bộ phận vận hành định nghĩa)"]
+    depends_on: [MON-09, DRV-02]
+    sources: [Data IN-14, Data OUT-17, Data IN-40, deferred.md 46, Decision DR-12]
 
   - code: MON-12
     name: Stops and parking log

@@ -996,21 +996,81 @@ Ref: driving_sessions.organization_id > organizations.organization_id [delete: r
 Ref: driving_sessions.driver_id > drivers.driver_id [delete: restrict]
 Ref: driving_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
+Table trips {
+  trip_id uuid [pk, note: 'Internal ID of the trip; stable, for the later shipment link. @vi Mã nội bộ của chuyến; cố định, để sau này gắn với đơn hàng. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
+  organization_id uuid [not null, note: 'Organization the trip belongs to, written once (DM-24 case C): the planner\'s organization, or the truck\'s owner for a personal trip. @vi Tổ chức sở hữu chuyến, ghi một lần (DM-24 trường hợp C): tổ chức của người lập kế hoạch, hoặc chủ xe với chuyến tự chạy. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  status varchar(20) [not null, note: 'PLANNED: assigned by a manager, not started. IN_PROGRESS: the driver pressed Start. COMPLETED: the driver pressed Finish, or the system closed it when the driving session ended. CANCELLED: cancelled by the manager. Values: PLANNED | IN_PROGRESS | COMPLETED | CANCELLED. @vi PLANNED: quản lý đã giao, chưa bắt đầu. IN_PROGRESS: tài xế đã bấm Bắt đầu. COMPLETED: tài xế đã bấm Kết thúc, hoặc hệ thống tự đóng khi phiên lái kết thúc. CANCELLED: quản lý đã hủy. @example COMPLETED']
+  status_reason varchar(200) [note: 'Why the trip has its status: why it was cancelled, or that it was closed automatically when the driving session ended (DM-19); NULL when there is nothing to explain. @vi Lý do chuyến có trạng thái hiện tại: vì sao bị hủy, hoặc được tự đóng khi phiên lái kết thúc (DM-19); NULL nếu không cần giải thích. @example NULL']
+  planned_by uuid [note: 'Plan: the manager who planned it; NULL for a personal trip. @vi Kế hoạch: quản lý đã lập chuyến; NULL với chuyến tự chạy. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  planned_driver_id uuid [note: 'Plan: the driver profile assigned; may be left empty and assigned later. @vi Kế hoạch: hồ sơ tài xế được giao; có thể để trống và giao sau. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
+  planned_vehicle_id uuid [note: 'Plan: the truck assigned. @vi Kế hoạch: xe được giao. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  origin_name varchar(200) [note: 'Plan: where the trip starts, as text. @vi Kế hoạch: điểm đi, dạng chữ. @example Kho M, bãi Q, phường G']
+  destination_name varchar(200) [note: 'Plan: where the trip ends, as text. @vi Kế hoạch: điểm đến, dạng chữ. @example Cảng Cát Lái, cổng B']
+  planned_start_at timestamptz [note: 'Plan: planned departure. @vi Kế hoạch: giờ khởi hành dự kiến. @example 2026-10-12T00:00:00Z']
+  planned_end_at timestamptz [note: 'Plan: planned arrival. @vi Kế hoạch: giờ đến dự kiến. @example 2026-10-12T04:00:00Z']
+  driving_session_id uuid [note: 'Actual: the driving session the trip was started in; it gives the actual driver and truck. A driver or truck other than the planned one is allowed and flagged in the portal. @vi Thực tế: phiên lái mà chuyến được bắt đầu trong đó; cho biết tài xế và xe thực tế. Tài xế hoặc xe khác với kế hoạch vẫn được phép và được đánh dấu trên portal. @example 0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  started_at timestamptz [note: 'Actual: when Start was pressed, by our server\'s clock (the app\'s press time when it was offline, checked against the server). @vi Thực tế: thời điểm bấm Bắt đầu, theo đồng hồ máy chủ (thời điểm bấm trên ứng dụng nếu ứng dụng mất mạng, có đối chiếu với máy chủ). @example 2026-10-12T00:12:00Z']
+  ended_at timestamptz [note: 'Actual: when Finish was pressed, or when the session ended for an automatically closed trip. @vi Thực tế: thời điểm bấm Kết thúc, hoặc lúc phiên lái kết thúc với chuyến được tự đóng. @example 2026-10-12T03:48:00Z']
+  start_location "geography(POINT,4326)" [note: 'Actual: the truck\'s latest T-Box position when Start was pressed; NULL when the T-Box had no recent position. @vi Thực tế: vị trí T-Box gần nhất của xe khi bấm Bắt đầu; NULL khi T-Box không có vị trí gần đây. @example POINT(106.70 11.05)']
+  end_location "geography(POINT,4326)" [note: 'Actual: the truck\'s latest T-Box position when the trip ended; NULL when none. @vi Thực tế: vị trí T-Box gần nhất của xe khi chuyến kết thúc; NULL nếu không có. @example POINT(106.79 10.76)']
+  start_odometer_km numeric(10,1) [note: 'Actual: the truck\'s odometer at Start, from the T-Box. @vi Thực tế: số km trên đồng hồ của xe lúc bắt đầu, từ T-Box. @example 48213.7']
+  end_odometer_km numeric(10,1) [note: 'Actual: the odometer at the end; the distance is end minus start, computed when read. @vi Thực tế: số km lúc kết thúc; quãng đường là hiệu hai số, tính khi đọc. @example 48261.2']
+  start_soc_percent numeric(5,2) [note: 'Actual: battery % at Start, from the T-Box. @vi Thực tế: phần trăm pin lúc bắt đầu, từ T-Box. @example 86.50']
+  end_soc_percent numeric(5,2) [note: 'Actual: battery % at the end; the energy used comes from the drop and the battery capacity, computed when read. @vi Thực tế: phần trăm pin lúc kết thúc; năng lượng đã dùng tính từ mức giảm và dung lượng pin, khi đọc. @example 61.00']
+  declared_load_status varchar(20) [note: 'Load the driver declared at Start (MON-13). Values: LOADED | EMPTY. @vi Tình trạng tải tài xế khai báo lúc bắt đầu (MON-13). @example LOADED']
+  created_at timestamptz [not null, note: 'When the row was created (UTC): when it was planned, or at Start for a personal trip. @vi Thời điểm tạo bản ghi (UTC): lúc lập kế hoạch, hoặc lúc bắt đầu với chuyến tự chạy. @example 2026-10-11T08:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-10-12T03:48:00Z']
+  indexes {
+    (organization_id, planned_start_at) [name: 'ix_trips_organization_planned_start', note: 'The dispatch board']
+    (planned_driver_id, status) [name: 'ix_trips_planned_driver_status', note: 'A driver\'s assigned trips']
+    driving_session_id [unique, name: 'uq_trips_session_in_progress', note: 'WHERE status = IN_PROGRESS: one trip at a time per driving session']
+    (driving_session_id, started_at) [name: 'ix_trips_session_started']
+  }
+  Note: '''@status planned @owner customer @features F-A9 @tracked *
+One trip: a job planned by a fleet manager and its actual execution by the
+driver (DR-12). Plan (optional; NULL for a personal driver with no fleet):
+from A to B as place names, within a planned departure and arrival, for a
+driver and a truck. Actual: the driver checks in to the truck by QR (a
+driving session, DR-07), presses Start, and presses Finish; the system
+records the times and the truck's T-Box position, odometer and battery % at
+both ends. A session (a shift) may hold several trips. Safety nets: a truck
+moving during a session with no trip started reminds the driver and shows in
+the portal; a trip still in progress when the session ends is closed
+automatically (COMPLETED, with the reason). Distance, energy, kWh/km and cost
+are differences of the stored readings, computed when read. Change history
+on: rerouting or reassigning a planned trip is the manager's decision.
+Check constraints (DR-12): status <> 'PLANNED' OR (driving_session_id,
+started_at, ended_at all NULL); status NOT IN ('IN_PROGRESS', 'COMPLETED') OR
+(driving_session_id IS NOT NULL AND started_at IS NOT NULL);
+status <> 'COMPLETED' OR ended_at IS NOT NULL.
+@vi-name Chuyến đi
+@vi Một chuyến: công việc do quản lý đội xe lập kế hoạch và việc tài xế thực hiện trên thực tế (DR-12). Kế hoạch (không bắt buộc; NULL với tài xế tự chạy không thuộc đội xe): từ A tới B bằng tên địa điểm, trong khoảng giờ đi và giờ đến dự kiến, cho một tài xế và một xe. Thực tế: tài xế quét QR để nhận xe (phiên lái, DR-07), bấm Bắt đầu, rồi bấm Kết thúc; hệ thống ghi thời gian và vị trí T-Box, số km, phần trăm pin của xe ở hai đầu. Một phiên lái (một ca) có thể gồm nhiều chuyến. Lưới an toàn: xe di chuyển trong phiên mà chưa bắt đầu chuyến thì nhắc tài xế và hiện trên portal; chuyến còn đang chạy khi phiên kết thúc được tự đóng (COMPLETED, kèm lý do). Quãng đường, năng lượng, kWh/km và chi phí là hiệu của các số đã lưu, tính khi đọc. Bật lịch sử thay đổi: đổi lộ trình hay giao lại chuyến là quyết định của quản lý. Ràng buộc kiểm tra (DR-12): chuyến PLANNED chưa có dữ liệu thực tế; chuyến đang chạy hoặc đã xong phải có phiên lái và giờ bắt đầu; chuyến COMPLETED phải có giờ kết thúc.'''
+}
+
+Ref: trips.organization_id > organizations.organization_id [delete: restrict]
+Ref: trips.planned_by > users.user_id [delete: restrict]
+Ref: trips.planned_driver_id > drivers.driver_id [delete: restrict]
+Ref: trips.planned_vehicle_id > vehicles.vehicle_id [delete: restrict]
+Ref: trips.driving_session_id > driving_sessions.driving_session_id [delete: restrict]
+
 TableGroup drivers {
   drivers
   driver_vehicle_assignments
   driving_sessions
+  trips
   Note: '''
-The people who drive the trucks, and who is at the wheel of which truck.
+The people who drive the trucks, who is at the wheel of which truck, and the trips they make.
 
 - A **driver profile** belongs to one membership: one person in one organization.
 - A **driving session** records who is at the wheel of which truck: the driver checks in by QR, in the app or through a manager in the portal; any active driver may drive any organization's truck. It replaces the built **assignments**, which are dropped in the refactor.
+- A **trip** is one job inside a driving session: optionally planned by a fleet manager (A to B, planned times, driver, truck), then started and finished by the driver in the app; a session may hold several trips (DR-12).
 - No charging credential is stored: every charge at launch starts with a QR scan (CO-13). RFID cards and VIN Autocharge may be implemented later (deferred.md 90).
 
 @vi-name Tài xế
-@vi Những người lái xe, và ai đang cầm lái xe nào.
+@vi Những người lái xe, ai đang cầm lái xe nào, và các chuyến họ chạy.
 - Một **hồ sơ tài xế** thuộc một thành viên: một người trong một tổ chức.
 - Một **phiên lái** ghi nhận ai đang cầm lái xe nào: tài xế nhận xe bằng QR, trên ứng dụng hoặc qua quản lý trên portal; tài xế đang hoạt động nào cũng có thể lái xe của bất kỳ tổ chức nào. Phiên lái thay thế **phân công** đã xây dựng, sẽ bị bỏ khi tái cấu trúc.
+- Một **chuyến** là một công việc trong phiên lái: có thể do quản lý đội xe lập kế hoạch (từ A tới B, giờ dự kiến, tài xế, xe), rồi tài xế bấm bắt đầu và kết thúc trên ứng dụng; một phiên lái có thể gồm nhiều chuyến (DR-12).
 - Không lưu phương thức xác thực sạc: lúc ra mắt mọi lần sạc đều bắt đầu bằng quét mã QR (CO-13). Thẻ RFID và VIN Autocharge có thể được triển khai sau (deferred.md 90).
 '''
 }
@@ -2256,28 +2316,10 @@ A maintenance reminder or promotion campaign.
 @vi Một chiến dịch nhắc bảo dưỡng hoặc khuyến mãi.'''
 }
 
-Table trips {
-  trip_id uuid [pk, note: 'Internal ID of the trip. @vi Mã nội bộ của chuyến đi. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
-  organization_id uuid [not null, note: 'Customer organization of the vehicle. @vi Tổ chức khách hàng sở hữu xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  vehicle_id uuid [not null, note: 'Vehicle that made the trip. @vi Xe thực hiện chuyến. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  driver_id uuid [note: 'Driver on the trip, if known. @vi Tài xế của chuyến, nếu biết. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  started_at timestamptz [not null, note: 'When the trip started. @vi Thời điểm bắt đầu chuyến. @example 2026-09-15T00:30:00Z']
-  ended_at timestamptz [note: 'When it ended; NULL while under way. @vi Thời điểm kết thúc; NULL khi đang chạy. @example 2026-09-15T06:10:00Z']
-  declared_load_status varchar(20) [note: 'Load status the driver declared. Values: LOADED | EMPTY. @vi Trạng thái tải do tài xế khai báo. Giá trị: LOADED | EMPTY. @example LOADED']
-  inferred_load_status varchar(20) [note: 'Load status inferred from telemetry. Values: LOADED | EMPTY. @vi Trạng thái tải suy ra từ dữ liệu vận hành. Giá trị: LOADED | EMPTY. @example LOADED']
-  Note: '''@status planned @owner customer @features F-A9
-One trip of a vehicle. F-A9 is suspended: no trip concept exists yet.
-@vi-name Chuyến đi
-@vi Một chuyến đi của xe. F-A9 đang tạm dừng: chưa có khái niệm chuyến đi.'''
-}
 
-Ref: trips.organization_id > organizations.organization_id [delete: restrict]
-Ref: trips.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: trips.driver_id > drivers.driver_id [delete: restrict]
 
 TableGroup unassigned {
   promotion_campaigns
-  trips
   Note: '''
 Features whose backend domain is not decided yet (see feature-list.md).
 

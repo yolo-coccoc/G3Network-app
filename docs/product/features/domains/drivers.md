@@ -69,7 +69,7 @@ The driver checks in to the truck they are about to drive by scanning its QR cod
 **Status:** Backend ⬜ · App ⬜ · Portal ⬜
 
 **Depends on:** [DRV-01](#drv-01), [VEH-01](vehicles.md#veh-01)  
-**Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07)  
+**Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07), [MON-11](telemetry.md#mon-11)  
 **Also touches:** `vehicles`, `telemetry`, `notifications`  
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision DR-08 · Decision DR-10 · Decision DR-11 · Decision NT-07 · Decision ID-45  

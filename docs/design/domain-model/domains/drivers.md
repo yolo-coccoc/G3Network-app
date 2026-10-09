@@ -4,12 +4,13 @@
 
 [← Overview](../overview.md)
 
-✅ built: 2 · 📋 planned: 2
+✅ built: 2 · 📋 planned: 4
 
-The people who drive the trucks, and who is at the wheel of which truck.
+The people who drive the trucks, who is at the wheel of which truck, and the trips they make.
 
 - A **driver profile** belongs to one membership: one person in one organization.
 - A **driving session** records who is at the wheel of which truck: the driver checks in by QR, in the app or through a manager in the portal; any active driver may drive any organization's truck. It replaces the built **assignments**, which are dropped in the refactor.
+- A **trip** is one job inside a driving session: optionally planned by a fleet manager (A to B, planned times, driver, truck), then started and finished by the driver in the app; a session may hold several trips (DR-12).
 - No charging credential is stored: every charge at launch starts with a QR scan (CO-13). RFID cards and VIN Autocharge may be implemented later (deferred.md 90).
 
 ## Diagram
@@ -37,6 +38,19 @@ erDiagram
     uuid driver_id FK
     uuid vehicle_id FK
   }
+  trips {
+    uuid trip_id PK
+    uuid organization_id FK
+    uuid planned_by FK
+    uuid planned_driver_id FK
+    uuid planned_vehicle_id FK
+    uuid driving_session_id FK
+  }
+  trip_history {
+    bigint history_id PK
+    uuid trip_id FK
+    uuid changed_by FK
+  }
   drivers |o..|| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
   driver_vehicle_assignments }o--|| drivers : "driver_id"
@@ -44,14 +58,20 @@ erDiagram
   driving_sessions }o..|| organizations : "organization_id"
   driving_sessions }o..|| drivers : "driver_id"
   driving_sessions }o..|| vehicles : "vehicle_id"
+  trips }o..|| organizations : "organization_id"
+  trips }o..o| users : "planned_by"
+  trips }o..o| drivers : "planned_driver_id"
+  trips }o..o| vehicles : "planned_vehicle_id"
+  trips }o..o| driving_sessions : "driving_session_id"
   support_cases }o--o| drivers : "driver_id"
   driver_scores }o..|| drivers : "driver_id"
-  trips }o..o| drivers : "driver_id"
   driver_history }o..o| drivers : "driver_id"
   driver_history }o..o| users : "changed_by"
+  trip_history }o..o| trips : "trip_id"
+  trip_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [trips](unassigned.md#trips), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [driver_scores](scoring.md#driver_scores), [memberships](identity.md#memberships), [organizations](identity.md#organizations), [support_cases](support.md#support_cases), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
@@ -97,9 +117,9 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 - [driver_vehicle_assignments](#driver_vehicle_assignments).driver_id
 - [driving_sessions](#driving_sessions).driver_id (planned)
+- [trips](#trips).planned_driver_id (planned)
 - [support_cases](support.md#support_cases).driver_id
 - [driver_scores](scoring.md#driver_scores).driver_id (planned)
-- [trips](unassigned.md#trips).driver_id (planned)
 - [driver_history](#driver_history).driver_id (planned)
 
 ### driver_history
@@ -198,3 +218,107 @@ driver's own employer does not see sessions on another organization's truck
 - `uq_driving_sessions_open_driver` (driver_id) unique - WHERE ended_at IS NULL: one truck per driver at a time
 - `ix_driving_sessions_vehicle_time` (vehicle_id, started_at)
 - `ix_driving_sessions_driver_time` (driver_id, started_at)
+
+**Referenced by**
+
+- [trips](#trips).driving_session_id (planned)
+
+### trips
+
+**No. 24** · 📋 planned · owner: **customer** · features: F-A9
+
+One trip: a job planned by a fleet manager and its actual execution by the
+driver (DR-12). Plan (optional; NULL for a personal driver with no fleet):
+from A to B as place names, within a planned departure and arrival, for a
+driver and a truck. Actual: the driver checks in to the truck by QR (a
+driving session, DR-07), presses Start, and presses Finish; the system
+records the times and the truck's T-Box position, odometer and battery % at
+both ends. A session (a shift) may hold several trips. Safety nets: a truck
+moving during a session with no trip started reminds the driver and shows in
+the portal; a trip still in progress when the session ends is closed
+automatically (COMPLETED, with the reason). Distance, energy, kWh/km and cost
+are differences of the stored readings, computed when read. Change history
+on: rerouting or reassigning a planned trip is the manager's decision.
+Check constraints (DR-12): status <> 'PLANNED' OR (driving_session_id,
+started_at, ended_at all NULL); status NOT IN ('IN_PROGRESS', 'COMPLETED') OR
+(driving_session_id IS NOT NULL AND started_at IS NOT NULL);
+status <> 'COMPLETED' OR ended_at IS NOT NULL.
+
+🔍 = tracked column: a change to it copies the whole old row into [trip_history](#trip_history).
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `trip_id` | uuid | no | PK |  | Internal ID of the trip; stable, for the later shipment link. | `2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization the trip belongs to, written once (DM-24 case C): the planner's organization, or the truck's owner for a personal trip. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `status` | varchar(20) | no | 🔍 |  | PLANNED: assigned by a manager, not started. IN_PROGRESS: the driver pressed Start. COMPLETED: the driver pressed Finish, or the system closed it when the driving session ended. CANCELLED: cancelled by the manager. Values: PLANNED \| IN_PROGRESS \| COMPLETED \| CANCELLED. | `COMPLETED` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the trip has its status: why it was cancelled, or that it was closed automatically when the driving session ended (DM-19); NULL when there is nothing to explain. | `NULL` |
+| `planned_by` | uuid | yes | FK 🔍 | [users](identity.md#users).user_id (on delete restrict) | Plan: the manager who planned it; NULL for a personal trip. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `planned_driver_id` | uuid | yes | FK 🔍 | [drivers](#drivers).driver_id (on delete restrict) | Plan: the driver profile assigned; may be left empty and assigned later. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
+| `planned_vehicle_id` | uuid | yes | FK 🔍 | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Plan: the truck assigned. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
+| `origin_name` | varchar(200) | yes | 🔍 |  | Plan: where the trip starts, as text. | `Kho M, bãi Q, phường G` |
+| `destination_name` | varchar(200) | yes | 🔍 |  | Plan: where the trip ends, as text. | `Cảng Cát Lái, cổng B` |
+| `planned_start_at` | timestamptz | yes | 🔍 |  | Plan: planned departure. | `2026-10-12T00:00:00Z` |
+| `planned_end_at` | timestamptz | yes | 🔍 |  | Plan: planned arrival. | `2026-10-12T04:00:00Z` |
+| `driving_session_id` | uuid | yes | FK 🔍 | [driving_sessions](#driving_sessions).driving_session_id (on delete restrict) | Actual: the driving session the trip was started in; it gives the actual driver and truck. A driver or truck other than the planned one is allowed and flagged in the portal. | `0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `started_at` | timestamptz | yes | 🔍 |  | Actual: when Start was pressed, by our server's clock (the app's press time when it was offline, checked against the server). | `2026-10-12T00:12:00Z` |
+| `ended_at` | timestamptz | yes | 🔍 |  | Actual: when Finish was pressed, or when the session ended for an automatically closed trip. | `2026-10-12T03:48:00Z` |
+| `start_location` | geography(POINT,4326) | yes | 🔍 |  | Actual: the truck's latest T-Box position when Start was pressed; NULL when the T-Box had no recent position. | `POINT(106.70 11.05)` |
+| `end_location` | geography(POINT,4326) | yes | 🔍 |  | Actual: the truck's latest T-Box position when the trip ended; NULL when none. | `POINT(106.79 10.76)` |
+| `start_odometer_km` | numeric(10,1) | yes | 🔍 |  | Actual: the truck's odometer at Start, from the T-Box. | `48213.7` |
+| `end_odometer_km` | numeric(10,1) | yes | 🔍 |  | Actual: the odometer at the end; the distance is end minus start, computed when read. | `48261.2` |
+| `start_soc_percent` | numeric(5,2) | yes | 🔍 |  | Actual: battery % at Start, from the T-Box. | `86.50` |
+| `end_soc_percent` | numeric(5,2) | yes | 🔍 |  | Actual: battery % at the end; the energy used comes from the drop and the battery capacity, computed when read. | `61.00` |
+| `declared_load_status` | varchar(20) | yes | 🔍 |  | Load the driver declared at Start (MON-13). Values: LOADED \| EMPTY. | `LOADED` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC): when it was planned, or at Start for a personal trip. | `2026-10-11T08:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-10-12T03:48:00Z` |
+
+**Indexes**
+
+- `ix_trips_organization_planned_start` (organization_id, planned_start_at) - The dispatch board
+- `ix_trips_planned_driver_status` (planned_driver_id, status) - A driver's assigned trips
+- `uq_trips_session_in_progress` (driving_session_id) unique - WHERE status = IN_PROGRESS: one trip at a time per driving session
+- `ix_trips_session_started` (driving_session_id, started_at)
+
+**Referenced by**
+
+- [trip_history](#trip_history).trip_id (planned)
+
+### trip_history
+
+**No. 24.h** · 📋 planned · owner: **customer** · features: F-A9 · change history of [trips](#trips)
+
+Every earlier version of a row of `trips`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `trip_id` | uuid | yes | FK | [trips](#trips).trip_id (on delete restrict) | Value before the change (trips.trip_id). | `2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76` |
+| `organization_id` | uuid | yes |  |  | Value before the change (trips.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `status` | varchar(20) | yes |  |  | Value before the change (trips.status). | `COMPLETED` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (trips.status_reason). | `NULL` |
+| `planned_by` | uuid | yes |  |  | Value before the change (trips.planned_by). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `planned_driver_id` | uuid | yes |  |  | Value before the change (trips.planned_driver_id). | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
+| `planned_vehicle_id` | uuid | yes |  |  | Value before the change (trips.planned_vehicle_id). | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
+| `origin_name` | varchar(200) | yes |  |  | Value before the change (trips.origin_name). | `Kho M, bãi Q, phường G` |
+| `destination_name` | varchar(200) | yes |  |  | Value before the change (trips.destination_name). | `Cảng Cát Lái, cổng B` |
+| `planned_start_at` | timestamptz | yes |  |  | Value before the change (trips.planned_start_at). | `2026-10-12T00:00:00Z` |
+| `planned_end_at` | timestamptz | yes |  |  | Value before the change (trips.planned_end_at). | `2026-10-12T04:00:00Z` |
+| `driving_session_id` | uuid | yes |  |  | Value before the change (trips.driving_session_id). | `0000001d-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
+| `started_at` | timestamptz | yes |  |  | Value before the change (trips.started_at). | `2026-10-12T00:12:00Z` |
+| `ended_at` | timestamptz | yes |  |  | Value before the change (trips.ended_at). | `2026-10-12T03:48:00Z` |
+| `start_location` | geography(POINT,4326) | yes |  |  | Value before the change (trips.start_location). | `POINT(106.70 11.05)` |
+| `end_location` | geography(POINT,4326) | yes |  |  | Value before the change (trips.end_location). | `POINT(106.79 10.76)` |
+| `start_odometer_km` | numeric(10,1) | yes |  |  | Value before the change (trips.start_odometer_km). | `48213.7` |
+| `end_odometer_km` | numeric(10,1) | yes |  |  | Value before the change (trips.end_odometer_km). | `48261.2` |
+| `start_soc_percent` | numeric(5,2) | yes |  |  | Value before the change (trips.start_soc_percent). | `86.50` |
+| `end_soc_percent` | numeric(5,2) | yes |  |  | Value before the change (trips.end_soc_percent). | `61.00` |
+| `declared_load_status` | varchar(20) | yes |  |  | Value before the change (trips.declared_load_status). | `LOADED` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (trips.created_at). | `2026-10-11T08:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (trips.updated_at). | `2026-10-12T03:48:00Z` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_trip_history_trip_id_time` (trip_id, changed_at)
