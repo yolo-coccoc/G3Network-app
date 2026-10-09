@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 9 · 🆕 proposed: 1
+📋 planned: 10 · 🆕 proposed: 1
 
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
@@ -28,6 +28,11 @@ erDiagram
     bigint history_id PK
     uuid tariff_id FK
     uuid changed_by FK
+  }
+  tariff_versions {
+    uuid tariff_version_id PK
+    uuid tariff_id FK
+    uuid created_by FK
   }
   payments {
     uuid payment_id PK
@@ -70,6 +75,8 @@ erDiagram
     uuid plan_id FK
     uuid vehicle_id FK
   }
+  tariff_versions }o..|| tariffs : "tariff_id"
+  tariff_versions }o..|| users : "created_by"
   tariffs }o..|| organizations : "organization_id"
   tariffs }o..o| charging_locations : "location_id"
   payments }o..|| organizations : "organization_id"
@@ -130,6 +137,7 @@ charger at the same location.
 
 **Referenced by**
 
+- [tariff_versions](#tariff_versions).tariff_id (planned)
 - [tariff_history](#tariff_history).tariff_id (planned)
 
 ### tariff_history
@@ -158,9 +166,39 @@ Every earlier version of a row of `tariffs`: a copy of the whole row, taken just
 
 - `ix_tariff_history_tariff_id_time` (tariff_id, changed_at)
 
+### tariff_versions
+
+**No. 51** · 📋 planned · owner: **customer** · features: F-C8, F-H1
+
+One immutable set of prices of a tariff (BL-09); a price change is a new
+version. The current version is the newest whose effective_from has passed.
+At the scan the app shows the price for that hour, and that price is frozen
+for the whole session (PAY-09) on the session's billing record, never on
+charging_sessions (billing points to sessions, not the reverse). No change
+history: a version is never edited.
+Check constraints (BL-09): price_per_kwh >= 0; vat_rate_percent BETWEEN 0 AND 100.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `tariff_version_id` | uuid | no | PK |  | Internal ID of the version. | `1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55` |
+| `tariff_id` | uuid | no | FK | [tariffs](#tariffs).tariff_id (on delete restrict) | The tariff this version belongs to. | `f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10` |
+| `version_no` | integer | no |  |  | Version number within the tariff, starting at 1. | `2` |
+| `effective_from` | timestamptz | no |  |  | When this version takes over from the previous one: the publish time or later, never earlier. | `2026-10-15T00:00:00Z` |
+| `price_per_kwh` | numeric(12,2) | no |  |  | Normal price per kWh, before VAT, in the tariff currency. | `4500.00` |
+| `time_periods` | jsonb | yes |  |  | Time-of-use prices that replace the normal price in some hours, in Vietnam time: a list of {days, from, to, price_per_kwh}; NULL for one price all day. Written once and read whole, so JSON rather than rows. | `[{"days": ["MON", "TUE", "WED", "THU", "FRI", "SAT"], "from": "22:00", "to": "04:00", "price_per_kwh": 3200}]` |
+| `vat_rate_percent` | numeric(4,2) | no |  |  | VAT rate in force for this version; prices are stored before VAT and shown with it; the e-invoice needs the two apart (PAY-11). | `10.00` |
+| `change_reason` | varchar(200) | no |  |  | Why this version was published. | `Theo khung giờ cao điểm mới của EVN` |
+| `created_by` | uuid | no | FK | [users](identity.md#users).user_id (on delete restrict) | User who published it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `created_at` | timestamptz | no |  |  | When it was published (UTC). | `2026-10-10T03:00:00Z` |
+
+**Indexes**
+
+- `uq_tariff_versions_tariff_version_no` (tariff_id, version_no) unique
+- `ix_tariff_versions_tariff_effective` (tariff_id, effective_from) - The current version: the newest whose effective_from has passed
+
 ### payments
 
-**No. 51** · 📋 planned · owner: **customer** · features: F-H1
+**No. 52** · 📋 planned · owner: **customer** · features: F-H1
 
 One payment through a gateway or wallet, usually for one session.
 
@@ -183,7 +221,7 @@ One payment through a gateway or wallet, usually for one session.
 
 ### wallets
 
-**No. 52** · 📋 planned · owner: **customer** · features: F-H2
+**No. 53** · 📋 planned · owner: **customer** · features: F-H2
 
 A prepaid balance for a driver or for a whole organization.
 
@@ -202,7 +240,7 @@ A prepaid balance for a driver or for a whole organization.
 
 ### wallet_transactions
 
-**No. 53** · 📋 planned · owner: **customer** · features: F-H2
+**No. 54** · 📋 planned · owner: **customer** · features: F-H2
 
 Append-only movement of money in or out of a wallet.
 
@@ -220,7 +258,7 @@ Append-only movement of money in or out of a wallet.
 
 ### invoices
 
-**No. 54** · 📋 planned · owner: **customer** · features: F-H3, F-H4
+**No. 55** · 📋 planned · owner: **customer** · features: F-H3, F-H4
 
 A legal e-invoice. Once ISSUED it is never edited, only adjusted or cancelled
 by a new invoice.
@@ -244,7 +282,7 @@ by a new invoice.
 
 ### invoice_lines
 
-**No. 55** · 📋 planned · owner: **customer** · features: F-H3, F-H4
+**No. 56** · 📋 planned · owner: **customer** · features: F-H3, F-H4
 
 One line of an invoice: a charging session or a subscription period.
 
@@ -262,7 +300,7 @@ One line of an invoice: a charging session or a subscription period.
 
 ### subscription_plans
 
-**No. 56** · 📋 planned · owner: **internal** · features: F-H4
+**No. 57** · 📋 planned · owner: **internal** · features: F-H4
 
 A plan: one row per offer (GUEST as the free default, STANDARD, ADVANCED,
 PRO, ..., or a private plan for one customer); its features are in
@@ -285,7 +323,7 @@ plan_features. Pricing is per feature (see the billing domain note).
 
 ### plan_features
 
-**No. 57** · 🆕 proposed · owner: **internal** · features: F-H4
+**No. 58** · 🆕 proposed · owner: **internal** · features: F-H4
 
 Which features each plan includes. Plans are data, so G3 can create a new
 plan (Pro, Max, a private plan for one customer) in the portal without a
@@ -304,7 +342,7 @@ developer; only a brand-new feature needs code.
 
 ### subscriptions
 
-**No. 58** · 📋 planned · owner: **customer** · features: F-H4
+**No. 59** · 📋 planned · owner: **customer** · features: F-H4
 
 One vehicle subscribed to a plan; overdue locks features.
 

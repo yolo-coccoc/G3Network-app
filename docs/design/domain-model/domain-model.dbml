@@ -1912,6 +1912,36 @@ charger at the same location.
 @vi Giá của ai và áp dụng ở đâu (BL-08); giá cụ thể là các phiên bản không sửa được trong tariff_versions, nên biên nhận luôn hiện đúng giá đã tính. Giá tại một trạm là biểu giá ACTIVE của chính trạm đó, nếu không có thì là biểu giá mặc định của chủ sở hữu. Bật lịch sử thay đổi; không xóa mềm. Sau này: giá riêng theo hợp đồng của một khách hàng, và giá khác nhau theo từng trụ trong cùng một trạm.'''
 }
 
+Table tariff_versions {
+  tariff_version_id uuid [pk, note: 'Internal ID of the version. @vi Mã nội bộ của phiên bản biểu giá. @example 1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55']
+  tariff_id uuid [not null, note: 'The tariff this version belongs to. @vi Biểu giá chứa phiên bản này. @example f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10']
+  version_no integer [not null, note: 'Version number within the tariff, starting at 1. @vi Số phiên bản trong biểu giá, bắt đầu từ 1. @example 2']
+  effective_from timestamptz [not null, note: 'When this version takes over from the previous one: the publish time or later, never earlier. @vi Thời điểm phiên bản này thay phiên bản trước: lúc ban hành hoặc muộn hơn, không bao giờ sớm hơn. @example 2026-10-15T00:00:00Z']
+  price_per_kwh numeric(12,2) [not null, note: 'Normal price per kWh, before VAT, in the tariff currency. @vi Đơn giá thường cho mỗi kWh, chưa gồm VAT, theo tiền tệ của biểu giá. @example 4500.00']
+  time_periods jsonb [note: 'Time-of-use prices that replace the normal price in some hours, in Vietnam time: a list of {days, from, to, price_per_kwh}; NULL for one price all day. Written once and read whole, so JSON rather than rows. @vi Giá theo khung giờ thay cho giá thường trong một số giờ, theo giờ Việt Nam: danh sách {days, from, to, price_per_kwh}; NULL nếu một giá cả ngày. Ghi một lần và đọc cả khối nên dùng JSON thay vì nhiều dòng. @example [{"days": ["MON", "TUE", "WED", "THU", "FRI", "SAT"], "from": "22:00", "to": "04:00", "price_per_kwh": 3200}]']
+  vat_rate_percent numeric(4,2) [not null, note: 'VAT rate in force for this version; prices are stored before VAT and shown with it; the e-invoice needs the two apart (PAY-11). @vi Thuế suất VAT áp dụng cho phiên bản này; giá lưu chưa gồm VAT và hiển thị đã gồm VAT; hóa đơn điện tử cần tách riêng (PAY-11). @example 10.00']
+  change_reason varchar(200) [not null, note: 'Why this version was published. @vi Lý do ban hành phiên bản này. @example Theo khung giờ cao điểm mới của EVN']
+  created_by uuid [not null, note: 'User who published it. @vi Người dùng đã ban hành. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  created_at timestamptz [not null, note: 'When it was published (UTC). @vi Thời điểm ban hành (UTC). @example 2026-10-10T03:00:00Z']
+  indexes {
+    (tariff_id, version_no) [unique, name: 'uq_tariff_versions_tariff_version_no']
+    (tariff_id, effective_from) [name: 'ix_tariff_versions_tariff_effective', note: 'The current version: the newest whose effective_from has passed']
+  }
+  Note: '''@status planned @owner customer @features F-C8,F-H1
+One immutable set of prices of a tariff (BL-09); a price change is a new
+version. The current version is the newest whose effective_from has passed.
+At the scan the app shows the price for that hour, and that price is frozen
+for the whole session (PAY-09) on the session's billing record, never on
+charging_sessions (billing points to sessions, not the reverse). No change
+history: a version is never edited.
+Check constraints (BL-09): price_per_kwh >= 0; vat_rate_percent BETWEEN 0 AND 100.
+@vi-name Phiên bản biểu giá
+@vi Một bộ giá không sửa được của biểu giá (BL-09); đổi giá là tạo phiên bản mới. Phiên bản hiện hành là phiên bản mới nhất có effective_from đã tới. Khi quét mã, ứng dụng hiện giá của khung giờ đó, và giá này được chốt cho cả phiên (PAY-09) trên bản ghi tính tiền của phiên, không ghi trên charging_sessions. Không có lịch sử thay đổi: phiên bản không bao giờ bị sửa. Ràng buộc kiểm tra (BL-09): giá không âm; thuế suất từ 0 đến 100.'''
+}
+
+Ref: tariff_versions.tariff_id > tariffs.tariff_id [delete: restrict]
+Ref: tariff_versions.created_by > users.user_id [delete: restrict]
+
 Table payments {
   payment_id uuid [pk, note: 'Internal ID of the payment. @vi Mã nội bộ của thanh toán. @example 3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21']
   organization_id uuid [not null, note: 'Customer organization that paid. @vi Tổ chức khách hàng đã thanh toán. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
@@ -2061,6 +2091,7 @@ Ref: subscriptions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
 TableGroup billing {
   tariffs
+  tariff_versions
   payments
   wallets
   wallet_transactions
