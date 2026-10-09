@@ -1863,6 +1863,26 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   never revocable) and the internal ID (exposes it, never revocable). A code that changes every
   minute needs a screen, e.g. the in-cab `vehicle-app` showing a refreshing QR; that would be a
   separate feature, and the sticker would still serve trucks without the screen.
+
+### 95. Driver confirmation of an assigned trip
+
+- **Short description**: When a fleet manager assigns a planned trip to a driver, the driver
+  receives a notification asking them to confirm it, like a phone call from the manager ("Can
+  you take this trip tomorrow?"). The driver accepts (or declines) in the app. In `trips`, an
+  ACCEPTED status between PLANNED and IN_PROGRESS, plus the time it was accepted; a decline
+  sends the trip back to the manager unassigned, with the driver's reason.
+- **Purpose/role in the system**: The manager knows before the day starts that the driver has
+  seen the trip and agrees, instead of calling each driver. Ride-hailing apps (Grab, Be) have the
+  driver accept every job, and truck dispatch apps commonly have it too.
+- **Reason for deferral**: Owner decision (2026-10-10): left for the future. At launch an assigned
+  trip simply waits in the driver's list until they press Start (DR-12).
+- **Related planner/feature**: DR-12 (`docs/decisions/decision-log.md`), MON-11
+  (`docs/product/features/features.yaml`), the notifications review (NT-08: a new alert type for
+  trip assignment).
+- **Date recorded**: 2026-10-10
+- **Additional notes**: Small change when built: one status value, one timestamp
+  (`accepted_at`), and the decline reason in `status_reason`. Decide then whether an
+  unconfirmed trip near its planned start alerts the manager.
 ---
 
 ## Update rules
