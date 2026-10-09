@@ -78,8 +78,8 @@ Enum driverstatus {
 }
 
 Enum fleetstatus {
-  ACTIVE
-  INACTIVE
+  ACTIVE [note: '@remove FL-08']
+  INACTIVE [note: '@remove FL-08']
 }
 
 Enum chargingstationmaintenancestatus {
@@ -1021,24 +1021,31 @@ The people who drive the trucks, and who is at the wheel of which truck.
 
 Table fleets {
   fleet_id uuid [pk, note: 'Internal ID of the fleet. @vi Mã nội bộ của đội xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  organization_id uuid [note: '@planned: Organization the fleet belongs to. @vi Tổ chức sở hữu đội xe. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  parent_fleet_id uuid [note: '@planned: The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được giao một đội xe thì quản lý cả mọi đội nằm dưới đội đó. @example NULL']
-  fleet_code varchar(50) [not null, unique, note: 'Short unique code; the fleet\'s business key. @vi Mã ngắn, duy nhất; là khóa nghiệp vụ của đội xe. @example MP-HCM-01']
-  name varchar(100) [not null, note: 'Fleet name shown in the portal. @vi Tên đội xe hiển thị trên portal. @example Đội xe Hồ Chí Minh']
-  status fleetstatus [not null, note: 'Fleet lifecycle status. @vi Trạng thái của đội xe. @example ACTIVE']
+  organization_id uuid [not null, note: '@planned FL-08: Organization the fleet belongs to, its own owner (DM-24 case A). @vi Tổ chức sở hữu đội xe, là chủ sở hữu trực tiếp (DM-24 trường hợp A). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  parent_fleet_id uuid [note: '@planned: The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được gán vào một đội cũng quản lý mọi đội bên dưới. @example NULL']
+  fleet_code varchar(50) [not null, unique, note: 'Short code chosen by the customer, for imports and reports. Planned (FL-08): optional, and unique only within its organization among fleets not deleted. @vi Mã ngắn do khách hàng chọn, dùng khi nhập dữ liệu và trong báo cáo. Dự kiến (FL-08): không bắt buộc, và chỉ duy nhất trong tổ chức giữa các đội chưa bị xóa. @example HCM-01']
+  name varchar(100) [not null, note: 'Name chosen by the customer, shown in the portal. Planned (FL-08): optional; a fleet has at least a name or a code (check constraint). @vi Tên do khách hàng chọn, hiển thị trên portal. Dự kiến (FL-08): không bắt buộc; một đội có ít nhất tên hoặc mã (ràng buộc kiểm tra). @example Đội xe Hồ Chí Minh']
+  status fleetstatus [not null, note: '@remove FL-08: Fleet lifecycle status; a fleet is a grouping, so it either exists or is deleted. @vi Trạng thái của đội xe; đội xe chỉ là một nhóm nên chỉ có tồn tại hoặc đã xóa. @example ACTIVE']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  deleted_at timestamptz [note: 'Soft-delete time; NULL while the row is live. Rows are never hard-deleted. @vi Thời điểm xóa mềm; NULL khi bản ghi còn hiệu lực. Không bao giờ xóa hẳn. @example NULL']
+  deleted_at timestamptz [note: 'Soft-delete time: the fleet no longer exists (DM-25); its member trucks leave it (FL-06) and its history is kept. Why it was deleted is the change reason in its history. NULL while it exists. @vi Thời điểm xóa mềm: đội xe không còn tồn tại (DM-25); các xe thành viên rời đội (FL-06) và lịch sử được giữ lại. Lý do xóa là lý do thay đổi trong lịch sử. NULL khi đội còn tồn tại. @example NULL']
   indexes {
-    status [name: 'ix_fleets_status']
-    fleet_code [unique, name: 'ix_fleets_fleet_code']
+    status [name: 'ix_fleets_status', note: 'Dropped with status (FL-08)']
+    fleet_code [unique, name: 'ix_fleets_fleet_code', note: 'Replaced by uq_fleets_live_organization_code (FL-08)']
+    (organization_id, fleet_code) [unique, name: 'uq_fleets_live_organization_code', note: 'Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL']
+    organization_id [name: 'ix_fleets_organization_id', note: 'Planned (FL-08)']
+    parent_fleet_id [name: 'ix_fleets_parent_fleet_id', note: 'Planned (FL-08): walking the tree']
   }
-  Note: '''@status built @owner customer @features F-E1
+  Note: '''@status built @owner customer @features F-E1 @tracked *
 A named group of vehicles inside an organization: a node of the customer's
 own structure (region, branch, depot, team - any name, any depth, through
 parent_fleet_id). Reorganising is editing data, never the schema.
+Change history on (FL-08): renaming, moving or deleting a fleet is a
+decision, and a move changes what a manager assigned to a parent fleet can
+see (FL-03). Deleting a fleet that still has live sub-fleets is refused.
+Check constraint (FL-08): num_nonnulls(name, fleet_code) >= 1.
 @vi-name Đội xe
-@vi Một nhóm xe có tên bên trong một tổ chức: một nút trong cơ cấu riêng của khách hàng (miền, chi nhánh, bãi xe, nhóm - tên tùy ý, không giới hạn số cấp, qua parent_fleet_id). Tái cơ cấu chỉ là sửa dữ liệu, không bao giờ phải đổi thiết kế.'''
+@vi Một nhóm xe có tên bên trong một tổ chức: một nút trong cơ cấu riêng của khách hàng (miền, chi nhánh, bãi xe, nhóm - tên tùy ý, không giới hạn số cấp, qua parent_fleet_id). Tái cơ cấu chỉ là sửa dữ liệu, không bao giờ phải đổi thiết kế. Bật lịch sử thay đổi (FL-08): đổi tên, di chuyển hay xóa đội là một quyết định, và việc di chuyển làm thay đổi phạm vi xem của người quản lý được gán vào đội cấp trên (FL-03). Không được xóa đội còn đội con đang tồn tại. Ràng buộc kiểm tra (FL-08): đội phải có ít nhất tên hoặc mã.'''
 }
 
 Table fleet_vehicle_memberships {
