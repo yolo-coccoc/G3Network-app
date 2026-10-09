@@ -21,20 +21,20 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 18 built, 51 planned, 17 proposed.
+**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 35 built, 44 planned, 7 proposed.
 
 ## Domain map
 
 ```mermaid
 flowchart LR
-  identity["Identity<br/>6 planned · 10 proposed"]:::planned
+  identity["Identity<br/>16 built"]:::built
   vehicles["Vehicles<br/>1 built · 3 planned"]:::partial
   batteries["Batteries<br/>4 proposed"]:::planned
   warranties["Warranties<br/>2 proposed"]:::planned
   telematics["Telematics<br/>1 built · 2 planned"]:::partial
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>2 built · 4 planned"]:::partial
-  fleet["Fleet<br/>3 built · 2 planned"]:::partial
+  fleet["Fleet<br/>4 built · 1 planned"]:::partial
   charging_stations["Charging stations<br/>5 built · 10 planned"]:::partial
   charging_sessions["Charging sessions<br/>3 built"]:::built
   notifications["Notifications<br/>1 built · 3 planned"]:::partial
@@ -54,7 +54,7 @@ flowchart LR
   drivers -.-> identity
   drivers --> vehicles
   fleet --> vehicles
-  fleet -.-> identity
+  fleet --> identity
   charging_stations -.-> identity
   charging_stations -.-> charging_sessions
   charging_sessions --> charging_stations
@@ -90,14 +90,14 @@ Not drawn, to keep the map readable: 13 domains also point to **identity** throu
 
 | Domain | Status | ✅ | 📋 | 🆕 | Tables |
 |---|---|---|---|---|---|
-| [Identity](domains/identity.md) | planned | 0 | 6 | 10 | 1 organizations, 1.h organization_history, 2 users, 2.h user_history, 3 user_state, 4 memberships, 4.h membership_history, 5 user_credentials, 6 user_sessions, 7 one_time_codes, 8 user_consents, 9 legal_documents, 10 user_role_assignments, 11 access_audit_logs, 12 organization_settings, 12.h organization_setting_history |
+| [Identity](domains/identity.md) | built | 16 | 0 | 0 | 1 organizations, 1.h organization_history, 2 users, 2.h user_history, 3 user_state, 4 memberships, 4.h membership_history, 5 user_credentials, 6 user_sessions, 7 one_time_codes, 8 user_consents, 9 legal_documents, 10 user_role_assignments, 11 access_audit_logs, 12 organization_settings, 12.h organization_setting_history |
 | [Vehicles](domains/vehicles.md) | partial | 1 | 3 | 0 | 13 vehicles, 13.h vehicle_history, 14 vehicle_models, 14.h vehicle_model_history |
 | [Batteries](domains/batteries.md) | planned | 0 | 0 | 4 | 15 battery_models, 15.h battery_model_history, 16 batteries, 16.h battery_history |
 | [Warranties](domains/warranties.md) | planned | 0 | 0 | 2 | 17 warranties, 17.h warranty_history |
 | [Telematics](domains/telematics.md) | partial | 1 | 2 | 0 | 18 telematics, 18.h telematic_history, 19 telematic_status_reports |
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
 | [Drivers](domains/drivers.md) | partial | 2 | 4 | 0 | 21 drivers, 21.h driver_history, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions, 24 trips, 24.h trip_history |
-| [Fleet](domains/fleet.md) | partial | 3 | 2 | 0 | 25 fleets, 25.h fleet_history, 26 fleet_vehicle_memberships, 27 geofences, 28 fleet_user_assignments |
+| [Fleet](domains/fleet.md) | partial | 4 | 1 | 0 | 25 fleets, 25.h fleet_history, 26 fleet_vehicle_memberships, 27 geofences, 28 fleet_user_assignments |
 | [Charging stations](domains/charging_stations.md) | partial | 5 | 10 | 0 | 29 charging_locations, 29.h charging_location_history, 30 charging_location_access, 31 charging_stations, 31.h charging_station_history, 32 charging_station_state, 33 charging_evses, 33.h charging_evse_history, 34 charging_connectors, 34.h charging_connector_history, 35 charging_connector_state, 36 charging_ocpp_messages, 37 charging_station_configuration_captures, 38 charging_station_configuration_entries, 39 charging_station_commands |
 | [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 40 charging_sessions, 41 ~~charging_session_events~~, 42 charging_session_measurements |
 | [Notifications](domains/notifications.md) | partial | 1 | 3 | 0 | 43 notifications, 44 notification_recipients, 45 organization_notification_settings, 45.h organization_notification_setting_history |

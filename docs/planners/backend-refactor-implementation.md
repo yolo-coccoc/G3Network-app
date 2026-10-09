@@ -27,7 +27,7 @@
 
 | WP | Scope | Features | Tables | Depends on | Status |
 |---|---|---|---|---|---|
-| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | TODO (fleets, memberships DONE) |
+| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | IN PROGRESS: fleets, memberships and the identity tables + change-history mechanism DONE (chunk 1); vehicles onward TODO |
 | WP2 | Identity: organizations, users, memberships, roles, credentials, OTP, login/sessions, consent, audit log, access rule by role only (BL-16) | ACC-01..10, 12..18, 20 | organizations, users, user_state, memberships, user_credentials, user_sessions, one_time_codes, user_consents, legal_documents, user_role_assignments, access_audit_logs, organization_settings | WP1 | TODO |
 | WP3 | Vehicles, vehicle models, battery models, batteries, warranties | VEH-01..03, 05, 06, BAT-01, WAR-01 | vehicles, vehicle_models, battery_models, batteries, warranties | WP2 | TODO |
 | WP4 | Telematics and telemetry adjustments, T-Box status reports | DEV-01..06, 08, MON-01, 02 | telematics, telematic_status_reports, telemetry | WP3 | TODO |
@@ -59,9 +59,24 @@ fleet rest, charging, billing, notifications.
 
 (Question + the assumption taken. Added as they come up.)
 
+- **WP1 chunk 1, history without a reason**: DM-21 says a tracked change without a reason fails; services have no acting user yet. Assumption: the trigger records `Unspecified change` and a NULL actor (DM-29 in the decision log, rule in `database.md`); the fleet repository sets fixed reasons for edit/delete.
+- **Chunk 1, history tables are not models**: `<singular>_history` tables are built from the live source table by `app/libs/db/history_ddl.py` and excluded from autogenerate by name; the DBML marks a built one with `@history built` (new tag, domain-model tool adapted: `check` skips generated history tables).
+- **Chunk 1, enums as varchar**: the DBML types every identity status/role/purpose as `varchar(n)` with a `Values:` list and no check constraint, so the columns are plain `String` and the allowed values live in `identity/types.py` enums (no DB-level value check).
+- **Chunk 1, `user_role_assignments` keys**: both the two-column FK `(membership_id, organization_id)` and the single `membership_id` / `organization_id` FKs of the DBML Refs are created; the domain-model `check` now accepts a Ref that matches any of a column's FKs.
+- **Chunk 1, fleet creation takes `organization_id` in the body** (required) until WP2 adds authentication; an unknown organization is detected from the FK violation (404 `FleetOrganizationNotFoundError`) because the identity domain has no service yet.
+- **Chunk 1, identity import-linter contract** lists only `identity.models` as forbidden (the other modules do not exist yet); WP2 adds `repository`/`router`/`schemas` when it creates them. Ruff's `banned-from` already lists the future `identity.service` / `identity.repository`.
+- **Chunk 1, `added_by` / `removed_by`** are parameters of the fleet repository only (default `None`); the service does not pass them until the caller is known (WP2).
+
 ## Known issues
 
 (File, what is wrong, why it was left. For the debugging phase.)
 
 | File | Issue | Why left |
 |---|---|---|
+| `backend/app/libs/db/history_ddl.py` (trigger) | A tracked update with no `set_change_context` is recorded as `Unspecified change` with a NULL actor instead of failing (DM-29). | No acting user before authentication (WP2); switch the trigger back to raising once every tracked update goes through a service that knows its user. |
+| `backend/app/domains/fleet/repository.py` | `update_fields` / `soft_delete` set fixed reasons (`Fleet details edited`, `Fleet deleted`) with `changed_by=None`; a typed reason for an administrative decision is not possible yet. | Needs the caller's user and the request's reason (WP2). |
+| `backend/app/domains/fleet/service.py` | Adding a vehicle does not check the vehicle belongs to the fleet's organization (FL-09), and `added_by` / `removed_by` are never filled. | `vehicles.organization_id` is not built (later WP1 chunk) and there is no caller (WP2). |
+| `backend/app/domains/fleet/service.py` | `FleetOrganizationNotFoundError` is derived from a foreign-key violation (SQLSTATE 23503), so any other FK failure of the insert (e.g. a parent deleted concurrently) would also report "organization not found". | No identity service yet to resolve an organization; replace with a service call in WP2. |
+| `backend/app/libs/db/history_ddl.py` | The baseline clear step does not drop the trigger functions (`fn_*_history`); they are re-created with `CREATE OR REPLACE` and stay behind if a table stops being tracked. | The clear step is documented to drop only tables, sequences and enum types; a stale function is harmless. |
+| `identity` tables | No service, repository, router or seed data (not even the default `organization_settings` / `user_state` rows "created together with" their parent). | Service layer is WP2. |
+| `backend/tests/test_postgres_integration.py` | The history trigger is tested on `organizations` only; `user_history`, `membership_history`, `organization_setting_history` and `fleet_history` are created by the same helper but not asserted row by row. | Lean tests (plan rule); same code path. |

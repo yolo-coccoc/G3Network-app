@@ -187,7 +187,7 @@ Table organizations {
   indexes {
     tax_code [unique, name: 'uq_organizations_active_tax_code', note: 'WHERE deleted_at IS NULL']
   }
-  Note: '''@status proposed @owner internal @features F-F1,F-H3 @tracked *
+  Note: '''@status built @owner internal @features F-F1,F-H3 @tracked * @history built
 Every party that people act for: customers (transport companies and
 individual owner-drivers), our own internal organization(s), and
 repair/rescue partners - all stored the same way. Every organization-owned
@@ -217,7 +217,7 @@ Table users {
     phone_number [unique, name: 'uq_users_active_phone_number', note: 'WHERE deleted_at IS NULL']
     `lower(email)` [unique, name: 'uq_users_active_email', note: 'WHERE deleted_at IS NULL AND email IS NOT NULL: case-insensitive']
   }
-  Note: '''@status planned @owner internal @features F-F1 @tracked *
+  Note: '''@status built @owner internal @features F-F1 @tracked * @history built
 A person - one account per human, across every organization they work for
 (a person may belong to several, through memberships): customer staff, a
 driver, our own staff or a partner technician. What they may do comes from their roles (job titles);
@@ -244,7 +244,7 @@ Table memberships {
     user_id [name: 'ix_memberships_user_id']
     (membership_id, organization_id) [unique, name: 'uq_memberships_id_organization', note: 'Target of the two-column foreign key from user_role_assignments, so a role can only name its membership\'s own organization']
   }
-  Note: '''@status proposed @owner customer @features F-F1 @tracked *
+  Note: '''@status built @owner customer @features F-F1 @tracked * @history built
 One person in one organization (owner decision, 2026-10-03: a person may belong to several,
 e.g. their personal organization and the company that hired them as a
 driver). Roles, fleet limits and job profiles hang off the membership. After
@@ -261,7 +261,7 @@ Table user_state {
   failed_login_count integer [not null, note: 'Consecutive failed password attempts since the last successful login; reset to 0 on a successful login and on a successful password reset. Protects against password guessing. @vi Số lần nhập sai mật khẩu liên tiếp kể từ lần đăng nhập thành công gần nhất; trở về 0 khi đăng nhập thành công và khi đặt lại mật khẩu thành công. Dùng để chống dò mật khẩu. @example 0']
   login_locked_until timestamptz [note: 'Logins are refused until this time after too many failures (e.g. 15 minutes after 5 failed attempts); NULL when not locked. Different from a LOCKED account, which an admin decides. Because anyone who knows the phone number could trigger it, the lock is short, a password reset by OTP still works during it and clears it (set back to NULL), and the API also rate-limits attempts per device/IP. @vi Từ chối đăng nhập cho tới thời điểm này sau quá nhiều lần sai (ví dụ 15 phút sau 5 lần sai); NULL khi không bị khóa. Khác với tài khoản LOCKED do quản trị viên quyết định. Vì bất kỳ ai biết số điện thoại cũng có thể gây ra việc khóa này, thời gian khóa ngắn, vẫn đặt lại mật khẩu bằng OTP được trong lúc bị khóa và việc đó gỡ khóa luôn (đưa về NULL), và API còn giới hạn số lần thử theo thiết bị/IP. @example NULL']
   last_active_at timestamptz [note: 'Latest request or action in the app or portal; NULL if never active. Written at most once every 5 minutes per user (not on every request), which is precise enough for an inactive-users report. @vi Lần gần nhất người dùng gửi yêu cầu hoặc thao tác trên app/portal; NULL nếu chưa từng hoạt động. Chỉ ghi tối đa 5 phút một lần cho mỗi người dùng (không ghi ở mọi yêu cầu), đủ chính xác cho báo cáo người dùng không hoạt động. @example 2026-09-15T08:42:10Z']
-  Note: '''@status planned @owner internal @features F-F1 @state-of users
+  Note: '''@status built @owner internal @features F-F1 @state-of users
 Live activity of a user, recorded by the system (observations, not decisions):
 updated on every login and request, so kept apart from the users profile and
 never history-tracked. Created with default values together with the user, so
@@ -282,7 +282,7 @@ Table user_credentials {
   indexes {
     (user_id, credential_type) [unique, name: 'uq_user_credentials_active_type', note: 'WHERE revoked_at IS NULL']
   }
-  Note: '''@status planned @owner internal @features F-F1
+  Note: '''@status built @owner internal @features F-F1
 How each user logs in. Kept out of the users table so a password hash is
 never copied into user history, and so new login methods are new rows, not
 new columns. A password change revokes the old row and adds a new one; only
@@ -309,7 +309,7 @@ Table user_sessions {
     user_id [name: 'ix_user_sessions_user_id']
     expires_at [name: 'ix_user_sessions_expires_at', note: 'Cleanup of expired sessions']
   }
-  Note: '''@status proposed @owner internal @features F-F1,F-F3
+  Note: '''@status built @owner internal @features F-F1,F-F3
 One login of one person on one device or browser, holding both the session
 (refresh token) and that device\'s push token. Ending a session deletes its
 row: logout, "log out this device / all devices", a password change, an
@@ -334,7 +334,7 @@ Table one_time_codes {
   indexes {
     (phone_number, created_at) [name: 'ix_one_time_codes_phone_time', note: 'Resend cooldown and per-phone rate limit']
   }
-  Note: '''@status proposed @owner internal @features F-F1
+  Note: '''@status built @owner internal @features F-F1
 One-time codes sent by SMS to prove a person holds a phone number: invites,
 guest sign-up, password reset and phone changes. Codes are stored only as
 hashes, expire quickly, work once, and die after 5 wrong attempts; when
@@ -359,7 +359,7 @@ Table user_consents {
     (user_id, legal_document_id) [unique, name: 'uq_user_consents_person_legal_document', note: 'WHERE organization_id IS NULL: a person accepts a version once']
     (organization_id, legal_document_id) [unique, name: 'uq_user_consents_organization_legal_document', note: 'WHERE organization_id IS NOT NULL: an organization accepts a version once']
   }
-  Note: '''@status proposed @owner internal @features F-F1
+  Note: '''@status built @owner internal @features F-F1
 Proof of who accepted which version of which legal text, when and from where
 (Decree 13/2023, Law 91/2025/QH15). Three levels: a company accepts the data
 processing agreement on its own behalf (it is responsible for its drivers'
@@ -385,7 +385,7 @@ Table legal_documents {
   indexes {
     (purpose, version) [unique, name: 'uq_legal_documents_purpose_version']
   }
-  Note: '''@status proposed @owner internal @features F-F1
+  Note: '''@status built @owner internal @features F-F1
 Every version of every legal text a person or a company accepts, so we can
 always show exactly what was accepted, and know which version is current.
 Only final texts are stored: adding a row publishes it, and a row is never
@@ -408,7 +408,7 @@ Table user_role_assignments {
     (membership_id, role) [unique, name: 'uq_user_role_assignments_active_role', note: 'WHERE revoked_at IS NULL']
     organization_id [unique, name: 'uq_user_role_assignments_one_org_admin', note: 'WHERE role = ORG_ADMIN AND revoked_at IS NULL: exactly one organization administrator; a handover grants the new one and revokes the old one in one transaction']
   }
-  Note: '''@status planned @owner customer @features F-F1
+  Note: '''@status built @owner customer @features F-F1
 Which roles a person holds in one organization (through their membership); they can hold several at once (e.g. a director
 who is also the fleet manager). Each organization has exactly one active ORG_ADMIN
 (owner decision, 2026-10-04): it is handed over, never shared; when the admin
@@ -435,7 +435,7 @@ Table access_audit_logs {
   details jsonb [note: 'Facts specific to the action, as JSON; NULL when there are none. Keys per action: EXPORT {"reason": text, required}; LOGIN_FAILED {"failure": "WRONG_PASSWORD" | "UNKNOWN_PHONE" | "ACCOUNT_LOCKED"}; LOGIN_LOCKED {"locked_minutes": number}. A new key is added here when an action needs one, never as a new column. @vi Thông tin riêng của từng thao tác, dạng JSON; NULL khi không có. Khóa theo thao tác: EXPORT {"reason": chuỗi, bắt buộc}; LOGIN_FAILED {"failure": "WRONG_PASSWORD" | "UNKNOWN_PHONE" | "ACCOUNT_LOCKED"}; LOGIN_LOCKED {"locked_minutes": số}. Khóa mới được bổ sung tại đây khi một thao tác cần, không thêm cột mới. @example {"reason": "Ticket #1234 – hồ sơ bồi thường tai nạn"}']
   ip_address inet [note: 'IP address the request came from; NULL for actions run by the system. @vi Địa chỉ IP gửi yêu cầu; NULL với thao tác do hệ thống tự chạy. @example 113.161.42.17']
   user_agent varchar(255) [note: 'Device and app as reported by the client at that moment, copied as text (not a link to user_sessions, whose rows are removed at logout, because an audit row never changes). Used for login history and new-device alerts. @vi Thiết bị và ứng dụng do client báo tại thời điểm đó, chép lại dạng chuỗi (không liên kết tới user_sessions, vì các dòng ở đó bị xóa khi đăng xuất, còn dòng nhật ký không bao giờ thay đổi). Dùng cho lịch sử đăng nhập và cảnh báo thiết bị mới. @example G3Driver/1.4.2 (Android 13; SM-A546E)']
-  Note: '''@status planned @owner internal @features F-F1 @hypertable occurred_at
+  Note: '''@status built @owner internal @features F-F1 @hypertable occurred_at
 Append-only record of every access to personal/location data (NF-08) and of
 account security events (logins, failed logins, lockouts, logouts, password
 and phone changes): who, what, when, from which IP and device, and action-specific
@@ -453,7 +453,7 @@ Table organization_settings {
   driving_session_auto_end_minutes integer [not null, note: 'A driving session ends on its own once the truck has not moved for this long (DR-07); default 120. @vi Phiên lái tự kết thúc khi xe không di chuyển trong khoảng thời gian này (DR-07); mặc định 120. @example 120']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When a setting was last changed (UTC). @vi Thời điểm thiết lập được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
-  Note: '''@status proposed @owner customer @features F-F1,F-E4 @tracked *
+  Note: '''@status built @owner customer @features F-F1,F-E4 @tracked * @history built
 Settings an organization chooses for itself (ID-45): one row per
 organization, created with default values together with it, one typed column
 per setting. A new setting is a new column with a default. Change history on,
@@ -1080,20 +1080,19 @@ The people who drive the trucks, who is at the wheel of which truck, and the tri
 
 Table fleets {
   fleet_id uuid [pk, note: 'Internal ID of the fleet. @vi Mã nội bộ của đội xe. @example 8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77']
-  organization_id uuid [not null, note: '@planned FL-08: Organization the fleet belongs to, its own owner (DM-24 case A). Added with the organizations table (identity). @vi Tổ chức sở hữu đội xe, là chủ sở hữu trực tiếp (DM-24 trường hợp A). Sẽ được thêm cùng với bảng organizations (miền danh tính). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Organization the fleet belongs to, its own owner (DM-24 case A). @vi Tổ chức sở hữu đội xe, là chủ sở hữu trực tiếp (DM-24 trường hợp A). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   parent_fleet_id uuid [note: 'The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. @vi Đội xe cấp trên chứa đội này, để khách hàng tự xây dựng cơ cấu của mình (miền > chi nhánh > bãi xe, không giới hạn số cấp); NULL với đội cấp cao nhất. Phải cùng tổ chức và không được tạo vòng lặp. Người dùng được gán vào một đội cũng quản lý mọi đội bên dưới. @example NULL']
-  fleet_code varchar(50) [unique, note: 'Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique across all fleets for now; unique only within its organization among fleets not deleted once organization_id exists (FL-08). NULL when the fleet has only a name. @vi Mã ngắn do khách hàng chọn, dùng khi nhập dữ liệu và trong báo cáo; không bắt buộc, nhưng đội phải có ít nhất tên hoặc mã (ràng buộc kiểm tra, FL-08). Hiện tại là duy nhất trên toàn hệ thống; khi có organization_id thì chỉ cần duy nhất trong tổ chức, giữa các đội chưa bị xóa (FL-08). NULL khi đội chỉ có tên. @example HCM-01']
+  fleet_code varchar(50) [note: 'Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique only within its organization among fleets not deleted (FL-08). NULL when the fleet has only a name. @vi Mã ngắn do khách hàng chọn, dùng khi nhập dữ liệu và trong báo cáo; không bắt buộc, nhưng đội phải có ít nhất tên hoặc mã (ràng buộc kiểm tra, FL-08). Chỉ cần duy nhất trong tổ chức, giữa các đội chưa bị xóa (FL-08). NULL khi đội chỉ có tên. @example HCM-01']
   name varchar(100) [note: 'Name chosen by the customer, shown in the portal; optional, but a fleet has at least a name or a code (check constraint, FL-08). NULL when the fleet has only a code. @vi Tên do khách hàng chọn, hiển thị trên portal; không bắt buộc, nhưng đội phải có ít nhất tên hoặc mã (ràng buộc kiểm tra, FL-08). NULL khi đội chỉ có mã. @example Đội xe Hồ Chí Minh']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the fleet no longer exists (DM-25); its member trucks leave it (FL-06) and its history is kept. Why it was deleted is the change reason in its history. NULL while it exists. @vi Thời điểm xóa mềm: đội xe không còn tồn tại (DM-25); các xe thành viên rời đội (FL-06) và lịch sử được giữ lại. Lý do xóa là lý do thay đổi trong lịch sử. NULL khi đội còn tồn tại. @example NULL']
   indexes {
-    fleet_code [unique, name: 'ix_fleets_fleet_code', note: 'Replaced by uq_fleets_live_organization_code (FL-08)']
-    (organization_id, fleet_code) [unique, name: 'uq_fleets_live_organization_code', note: 'Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL. Added with organization_id.']
-    organization_id [name: 'ix_fleets_organization_id', note: 'Planned (FL-08): added with organization_id']
+    (organization_id, fleet_code) [unique, name: 'uq_fleets_live_organization_code', note: 'WHERE deleted_at IS NULL AND fleet_code IS NOT NULL: a code names one live fleet inside its organization (FL-08)']
+    organization_id [name: 'ix_fleets_organization_id', note: 'Fleets of one organization (FL-08)']
     parent_fleet_id [name: 'ix_fleets_parent_fleet_id', note: 'Walking the tree']
   }
-  Note: '''@status built @owner customer @features F-E1 @tracked *
+  Note: '''@status built @owner customer @features F-E1 @tracked * @history built
 A named group of vehicles inside an organization: a node of the customer's
 own structure (region, branch, depot, team - any name, any depth, through
 parent_fleet_id). Reorganising is editing data, never the schema.
@@ -1111,8 +1110,8 @@ Table fleet_vehicle_memberships {
   vehicle_id uuid [not null, note: 'Vehicle in the fleet; it must belong to the fleet\'s organization when added. @vi Xe thuộc đội; xe phải thuộc tổ chức của đội khi được thêm vào. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   added_at timestamptz [not null, note: 'When the vehicle was added to the fleet (FL-09). @vi Thời điểm xe được thêm vào đội (FL-09). @example 2026-09-01T00:00:00Z']
   removed_at timestamptz [note: 'When it was removed; NULL while still a member (FL-09). @vi Thời điểm xe bị đưa ra khỏi đội; NULL khi vẫn còn trong đội (FL-09). @example NULL']
-  added_by uuid [note: '@planned FL-09: User who added the vehicle. Added with the users table (identity). @vi Người dùng đã thêm xe vào đội. Sẽ được thêm cùng với bảng users (miền danh tính). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  removed_by uuid [note: '@planned FL-09: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). Added with the users table (identity). @vi Người dùng đã đưa xe ra khỏi đội; NULL khi vẫn là thành viên, hoặc khi hệ thống tự đóng (xe được bán, VH-12, hoặc đội bị xóa, FL-06). Sẽ được thêm cùng với bảng users (miền danh tính). @example NULL']
+  added_by uuid [note: 'User who added the vehicle; NULL when unknown or done by the system. @vi Người dùng đã thêm xe vào đội; NULL khi không rõ hoặc do hệ thống thực hiện. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  removed_by uuid [note: 'User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). @vi Người dùng đã đưa xe ra khỏi đội; NULL khi vẫn là thành viên, hoặc khi hệ thống tự đóng (xe được bán, VH-12, hoặc đội bị xóa, FL-06). @example NULL']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (moves when the membership is closed). @vi Thời điểm bản ghi được sửa gần nhất (thay đổi khi xe rời đội). @example 2026-09-10T07:15:00Z']
   indexes {

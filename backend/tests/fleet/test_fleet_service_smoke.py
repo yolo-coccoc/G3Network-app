@@ -17,6 +17,7 @@ from app.domains.fleet.exceptions import (
     FleetMembershipNotFoundError,
     FleetNotFoundError,
     FleetParentNotFoundError,
+    FleetParentOrganizationMismatchError,
     FleetVehicleNotFoundError,
     GeofenceNotFoundError,
 )
@@ -46,7 +47,9 @@ async def test_create_fleet_creates_fleet_with_zero_vehicle_count(
     """create_fleet() returns a fresh fleet with vehicle_count 0 (F-E1)."""
     inserted = build_fleet_record()
 
-    async def no_existing(db: AsyncSession, fleet_code: str) -> None:
+    async def no_existing(
+        db: AsyncSession, organization_id: UUID, fleet_code: str
+    ) -> None:
         return None
 
     async def insert(db: AsyncSession, values: dict[str, object]) -> FleetModel:
@@ -63,7 +66,11 @@ async def test_create_fleet_creates_fleet_with_zero_vehicle_count(
 
     response = await fleet_service.create_fleet(
         fake_db_session(),
-        FleetCreateRequest(fleet_code=inserted.fleet_code, name=inserted.name),
+        FleetCreateRequest(
+            organization_id=inserted.organization_id,
+            fleet_code=inserted.fleet_code,
+            name=inserted.name,
+        ),
     )
 
     assert response.fleet_id == inserted.fleet_id
@@ -77,7 +84,9 @@ async def test_create_fleet_rejects_duplicate_code(
     """create_fleet() raises when the fleet code already exists (F-E1)."""
     existing = build_fleet_record()
 
-    async def find_existing(db: AsyncSession, fleet_code: str) -> FleetModel:
+    async def find_existing(
+        db: AsyncSession, organization_id: UUID, fleet_code: str
+    ) -> FleetModel:
         return existing
 
     monkeypatch.setattr(fleet_repository, "find_by_fleet_code", find_existing)
@@ -85,7 +94,11 @@ async def test_create_fleet_rejects_duplicate_code(
     with pytest.raises(FleetConflictError):
         await fleet_service.create_fleet(
             fake_db_session(),
-            FleetCreateRequest(fleet_code=existing.fleet_code, name="Another Name"),
+            FleetCreateRequest(
+                organization_id=existing.organization_id,
+                fleet_code=existing.fleet_code,
+                name="Another Name",
+            ),
         )
 
 
@@ -430,7 +443,9 @@ async def test_create_fleet_rejects_unknown_parent(
     with pytest.raises(FleetParentNotFoundError):
         await fleet_service.create_fleet(
             fake_db_session(),
-            FleetCreateRequest(name="Depot 1", parent_fleet_id=uuid4()),
+            FleetCreateRequest(
+                organization_id=uuid4(), name="Depot 1", parent_fleet_id=uuid4()
+            ),
         )
 
 
@@ -440,9 +455,9 @@ async def test_update_fleet_refuses_a_move_under_its_own_sub_fleet(
 ) -> None:
     """Moving region under its grandchild depot would close a loop (FL-02)."""
     region = build_fleet_record()
-    branch = build_fleet_record()
+    branch = build_fleet_record(organization_id=region.organization_id)
     branch.parent_fleet_id = region.fleet_id
-    depot = build_fleet_record()
+    depot = build_fleet_record(organization_id=region.organization_id)
     depot.parent_fleet_id = branch.fleet_id
     fleets_by_id = {fleet.fleet_id: fleet for fleet in (region, branch, depot)}
 
@@ -923,3 +938,28 @@ async def test_find_current_fleet_id_by_vehicle_follows_the_open_membership(
         await fleet_service.find_current_fleet_id_by_vehicle(fake_db_session(), uuid4())
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_create_fleet_rejects_parent_of_another_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parent fleet must belong to the new fleet's organization (FL-08)."""
+    parent = build_fleet_record()
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel | None:
+        return parent
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("insert must not run for a foreign parent")
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(fleet_repository, "insert", fail_if_called)
+
+    with pytest.raises(FleetParentOrganizationMismatchError):
+        await fleet_service.create_fleet(
+            fake_db_session(),
+            FleetCreateRequest(
+                organization_id=uuid4(), name="Depot", parent_fleet_id=parent.fleet_id
+            ),
+        )

@@ -21,6 +21,11 @@ from app.domains.charging_stations.types import (
 from app.domains.drivers.models import DriverModel, DriverVehicleAssignmentModel
 from app.domains.drivers.types import DriverStatus
 from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
+from app.domains.identity.models import OrganizationModel
+from app.domains.identity.types import (
+    OrganizationLegalForm,
+    OrganizationStatus,
+)
 from app.domains.support.models import SupportCaseModel
 from app.domains.support.types import (
     SupportCaseCategory,
@@ -136,11 +141,38 @@ def build_support_case_record(
     )
 
 
-def build_fleet_record(*, fleet_id: UUID | None = None) -> FleetModel:
+def build_organization_record(
+    *,
+    organization_id: UUID | None = None,
+    tax_code: str | None = None,
+) -> OrganizationModel:
+    """Create a minimal active, non-internal ORM organization.
+
+    Insert it first in an integration test that needs an owner for fleets
+    (``fleets.organization_id`` is required).
+    """
+    now = datetime.now(timezone.utc)
+    return OrganizationModel(
+        organization_id=organization_id or uuid4(),
+        is_internal=False,
+        legal_form=OrganizationLegalForm.COMPANY.value,
+        display_name="Test Organization",
+        legal_name="Test Organization Co., Ltd.",
+        tax_code=tax_code,
+        status=OrganizationStatus.ACTIVE.value,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def build_fleet_record(
+    *, fleet_id: UUID | None = None, organization_id: UUID | None = None
+) -> FleetModel:
     """Create a minimal ORM fleet for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return FleetModel(
         fleet_id=fleet_id or uuid4(),
+        organization_id=organization_id or uuid4(),
         fleet_code="FLEET-001",
         name="Test Fleet",
         parent_fleet_id=None,

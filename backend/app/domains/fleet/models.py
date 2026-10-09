@@ -18,16 +18,20 @@ class FleetModel(Base):
     A fleet is a node of the customer's own structure (region, branch,
     depot...), nested through ``parent_fleet_id`` (FL-02). It has no status:
     a fleet is a grouping, so it either exists or is soft-deleted (FL-08).
-    The owning ``organization_id`` and the per-organization code index come
-    with the organizations table (planned in the DBML); until then
-    ``fleet_code`` is unique across all fleets.
+    The fleet is owned by one organization (``organization_id``, FL-08) and
+    its code is unique within that organization among live fleets. Change
+    history is on (``fleet_history``, created by the baseline migration).
 
     Attributes:
         fleet_id: Primary key (UUID).
+        organization_id: The organization that owns the fleet (its own
+            owner, DM-24 case A). ``RESTRICT``: organizations are only
+            closed, never removed.
         parent_fleet_id: The fleet this one sits under; ``None`` for a
             top-level fleet. ``RESTRICT``: fleets are only soft-deleted.
         fleet_code: Short code chosen by the customer; optional, unique
-            across all fleets for now.
+            within the organization among fleets not deleted
+            (``uq_fleets_live_organization_code``).
         name: Display name chosen by the customer; optional. The check
             constraint ``ck_fleets_name_or_code`` requires a name or a code.
         created_at: Creation time.
@@ -42,15 +46,19 @@ class FleetModel(Base):
         primary_key=True,
         default=uuid4,
     )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     parent_fleet_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("fleets.fleet_id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
-    fleet_code: Mapped[str | None] = mapped_column(
-        String(50), unique=True, nullable=True, index=True
-    )
+    fleet_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -63,6 +71,14 @@ class FleetModel(Base):
     )
 
     __table_args__ = (
+        # A fleet code names one live fleet inside its organization (FL-08).
+        Index(
+            "uq_fleets_live_organization_code",
+            "organization_id",
+            "fleet_code",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL AND fleet_code IS NOT NULL"),
+        ),
         # A fleet with neither a name nor a code could not be told apart
         # (FL-08).
         CheckConstraint(
@@ -93,6 +109,10 @@ class FleetVehicleMembershipModel(Base):
         vehicle_id: The member vehicle. Same `RESTRICT` reasoning.
         added_at: When the vehicle was added to the fleet.
         removed_at: When the vehicle was removed, ``None`` while a member.
+        added_by: User who added the vehicle; ``None`` when unknown or done by
+            the system.
+        removed_by: User who removed it; ``None`` while a member or when the
+            system closed the period.
         created_at: Creation time.
         updated_at: Last update time (moves when the row is closed).
     """
@@ -122,6 +142,16 @@ class FleetVehicleMembershipModel(Base):
     )
     removed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    added_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    removed_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False

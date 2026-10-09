@@ -121,6 +121,10 @@ every DBML edit.
   table is an error): every source column (same type, nullable, no
   pk/unique, examples copied) plus `history_id`, `changed_at`, `changed_by`
   (→ `users`), `change_reason` (NOT NULL), an FK to the source key and an index on (key, `changed_at`).
+  `@history built` on a built table's tag line says the migration creates
+  its history table and trigger (`app/libs/db/history_ddl.py`); the history
+  table then counts as built, and `check` does not look for it in the models
+  (it is not a model).
   The views mark tracked columns with 🔍. History tables are not reviewed
   one by one; only special cases are discussed.
 - **Profile vs state (`.claude/rules/database.md`)**: decisions about a

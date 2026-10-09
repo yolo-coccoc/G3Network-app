@@ -1904,30 +1904,6 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   table (one row per recipient and channel, with the provider's message ID and status) if it is
   not built already.
 
-### 97. Fleet columns that wait for the identity tables
-
-- **Short description**: The part of the fleet refactor (FL-08, FL-09 in
-  `docs/decisions/decision-log.md`) that needs tables not built yet: `fleets.organization_id`
-  (required, its own owner, DM-24 A) with `ix_fleets_organization_id`; the fleet-code rule
-  "unique within its organization among fleets not deleted" (`uq_fleets_live_organization_code`,
-  replacing the global `ix_fleets_fleet_code`); the check that a parent fleet belongs to the same
-  organization; `fleet_vehicle_memberships.added_by` / `removed_by` (→ `users`); and the
-  `fleets` change history (`@tracked *`: `fleet_history` plus its trigger and the change reason).
-- **Purpose/role in the system**: Tenant ownership and access filtering of fleets; a customer
-  may reuse a code another customer already uses; who moved a truck and why a fleet was renamed,
-  moved or deleted is on record.
-- **Reason for deferral**: `organizations` (proposed) and `users` (planned) are not built, and no
-  table has its change-history trigger yet (`vehicles` is `@tracked *` too). The rest of the
-  refactor (status dropped, optional name/code with `ck_fleets_name_or_code`, `parent_fleet_id`,
-  the membership renames, the dropped `fleet_id` index) was built on 2026-10-09.
-- **Related planner/feature**: FLT-01, FLT-02 (`docs/product/features/features.yaml`); DBML
-  `fleets`, `fleet_vehicle_memberships` (the columns stay `@planned` there).
-- **Date recorded**: 2026-10-09
-- **Additional notes**: Do it in the same change that builds `organizations` / `users` and the
-  history mechanism. The service then takes the organization from the caller, checks the parent
-  and the added vehicle against it (FL-09), and passes the acting user to `added_by` /
-  `removed_by` (NULL when the system closes a period: a sale, VH-12, or a deleted fleet, FL-06).
-
 ### 98. Clearing a fleet's name or code, and moving a fleet back to the top level
 
 - **Short description**: `PATCH /fleets/{fleet_id}` treats a field sent as `null` as "leave

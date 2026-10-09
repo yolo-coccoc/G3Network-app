@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-✅ built: 3 · 📋 planned: 2
+✅ built: 4 · 📋 planned: 1
 
 Groups of vehicles managed together by a fleet manager.
 
@@ -19,7 +19,7 @@ Groups of vehicles managed together by a fleet manager.
 erDiagram
   fleets {
     uuid fleet_id PK
-    uuid organization_id FK "planned"
+    uuid organization_id FK
     uuid parent_fleet_id FK
   }
   fleet_history {
@@ -31,8 +31,8 @@ erDiagram
     uuid fleet_vehicle_membership_id PK
     uuid fleet_id FK
     uuid vehicle_id FK
-    uuid added_by FK "planned"
-    uuid removed_by FK "planned"
+    uuid added_by FK
+    uuid removed_by FK
   }
   geofences {
     uuid geofence_id PK
@@ -46,12 +46,12 @@ erDiagram
     uuid assigned_by FK
     uuid unassigned_by FK
   }
-  fleets }o..|| organizations : "organization_id"
+  fleets }o--|| organizations : "organization_id"
   fleets }o--o| fleets : "parent_fleet_id"
   fleet_vehicle_memberships }o--|| fleets : "fleet_id"
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
-  fleet_vehicle_memberships }o..o| users : "added_by"
-  fleet_vehicle_memberships }o..o| users : "removed_by"
+  fleet_vehicle_memberships }o--o| users : "added_by"
+  fleet_vehicle_memberships }o--o| users : "removed_by"
   fleet_user_assignments }o..|| fleets : "fleet_id"
   fleet_user_assignments }o..|| memberships : "membership_id"
   fleet_user_assignments }o..o| users : "assigned_by"
@@ -84,9 +84,9 @@ Check constraint (ck_fleets_name_or_code, FL-08): num_nonnulls(name, fleet_code)
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `fleet_id` | uuid | no | PK |  | Internal ID of the fleet. | `8d5f2b7e-1a9c-4f3d-b8e2-6c0a4d9f1e77` |
-| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (FL-08)**: Organization the fleet belongs to, its own owner (DM-24 case A). Added with the organizations table (identity). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization the fleet belongs to, its own owner (DM-24 case A). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `parent_fleet_id` | uuid | yes | FK 🔍 | [fleets](#fleets).fleet_id (on delete restrict) | The fleet this one sits under, so a customer can build its own structure (region > branch > depot, any depth); NULL for a top-level fleet. Must belong to the same organization and must not create a loop. A user assigned to a fleet also covers every fleet below it. | `NULL` |
-| `fleet_code` | varchar(50) | yes | UQ 🔍 |  | Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique across all fleets for now; unique only within its organization among fleets not deleted once organization_id exists (FL-08). NULL when the fleet has only a name. | `HCM-01` |
+| `fleet_code` | varchar(50) | yes | 🔍 |  | Short code chosen by the customer, for imports and reports; optional, but a fleet has at least a name or a code (check constraint, FL-08). Unique only within its organization among fleets not deleted (FL-08). NULL when the fleet has only a name. | `HCM-01` |
 | `name` | varchar(100) | yes | 🔍 |  | Name chosen by the customer, shown in the portal; optional, but a fleet has at least a name or a code (check constraint, FL-08). NULL when the fleet has only a code. | `Đội xe Hồ Chí Minh` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
@@ -94,9 +94,8 @@ Check constraint (ck_fleets_name_or_code, FL-08): num_nonnulls(name, fleet_code)
 
 **Indexes**
 
-- `ix_fleets_fleet_code` (fleet_code) unique - Replaced by uq_fleets_live_organization_code (FL-08)
-- `uq_fleets_live_organization_code` (organization_id, fleet_code) unique - Planned (FL-08): WHERE deleted_at IS NULL AND fleet_code IS NOT NULL. Added with organization_id.
-- `ix_fleets_organization_id` (organization_id) - Planned (FL-08): added with organization_id
+- `uq_fleets_live_organization_code` (organization_id, fleet_code) unique - WHERE deleted_at IS NULL AND fleet_code IS NOT NULL: a code names one live fleet inside its organization (FL-08)
+- `ix_fleets_organization_id` (organization_id) - Fleets of one organization (FL-08)
 - `ix_fleets_parent_fleet_id` (parent_fleet_id) - Walking the tree
 
 **Referenced by**
@@ -110,7 +109,7 @@ Check constraint (ck_fleets_name_or_code, FL-08): num_nonnulls(name, fleet_code)
 
 ### fleet_history
 
-**No. 25.h** · 📋 planned · owner: **customer** · features: F-E1 · change history of [fleets](#fleets)
+**No. 25.h** · ✅ built · owner: **customer** · features: F-E1 · change history of [fleets](#fleets)
 
 Every earlier version of a row of `fleets`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -127,7 +126,7 @@ Every earlier version of a row of `fleets`: a copy of the whole row, taken just 
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (fleets.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -151,8 +150,8 @@ left is clear from what happened (moved, sold, fleet deleted).
 | `vehicle_id` | uuid | no | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle in the fleet; it must belong to the fleet's organization when added. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `added_at` | timestamptz | no |  |  | When the vehicle was added to the fleet (FL-09). | `2026-09-01T00:00:00Z` |
 | `removed_at` | timestamptz | yes |  |  | When it was removed; NULL while still a member (FL-09). | `NULL` |
-| `added_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who added the vehicle. Added with the users table (identity). | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `removed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | **📋 planned (FL-09)**: User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). Added with the users table (identity). | `NULL` |
+| `added_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who added the vehicle; NULL when unknown or done by the system. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `removed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who removed it; NULL while a member, or when the system closed the period (the truck was sold, VH-12, or the fleet deleted, FL-06). | `NULL` |
 | `created_at` | timestamptz | no |  |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no |  |  | When the row was last changed (moves when the membership is closed). | `2026-09-10T07:15:00Z` |
 

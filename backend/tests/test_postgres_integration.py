@@ -39,9 +39,12 @@ import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
 from app.domains.fleet.exceptions import (
+    FleetConflictError,
     FleetHasSubFleetsError,
     FleetHierarchyLoopError,
+    FleetOrganizationNotFoundError,
     FleetParentNotFoundError,
+    FleetParentOrganizationMismatchError,
 )
 from app.domains.fleet.schemas import (
     FleetCreateRequest,
@@ -50,6 +53,8 @@ from app.domains.fleet.schemas import (
     GeofencePolygonGeoJson,
     GeofenceUpdateRequest,
 )
+from app.domains.identity.models import OrganizationModel, UserModel
+from app.domains.identity.types import OrganizationStatus, UserStatus
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import (
     NotificationListOrder,
@@ -74,6 +79,8 @@ from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
+from app.libs.db.history import UNSPECIFIED_CHANGE_REASON, set_change_context
+from tests.builders import build_organization_record
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DB_INTEGRATION") != "1",
@@ -233,13 +240,15 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         assert len(tables) == 11
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
-        # Exactly four hypertables: the OCPP 1.6J work replaced the session
-        # meter-values hypertable with measurements and added the raw message log.
+        # Exactly five hypertables: the OCPP 1.6J work replaced the session
+        # meter-values hypertable with measurements and added the raw message
+        # log; the identity work added the access audit log.
         assert hypertables == {
             "vehicle_telemetry",
             "charging_session_events",
             "charging_ocpp_messages",
             "charging_session_measurements",
+            "access_audit_logs",
         }
     finally:
         await engine.dispose()
@@ -1433,6 +1442,14 @@ async def test_ocpp201_boot_notification_stores_device_info_and_liveness(
         await engine.dispose()
 
 
+async def _integration_organization(db: AsyncSession) -> UUID:
+    """Insert one organization (the owner fleets require) and return its ID."""
+    organization = build_organization_record()
+    db.add(organization)
+    await db.flush()
+    return organization.organization_id
+
+
 def _integration_vehicle(*, license_plate: str) -> VehicleModel:
     """Build an unsaved, active vehicle with a random 17-character VIN."""
     return VehicleModel(
@@ -1570,11 +1587,22 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
             vehicle = _integration_vehicle(license_plate="IT-FLT-001")
             db.add(vehicle)
             await db.flush()
+            organization_id = await _integration_organization(db)
             hanoi = await fleet_repository.insert(
-                db, {"fleet_code": "HN-01", "name": "Hanoi Trucks"}
+                db,
+                {
+                    "organization_id": organization_id,
+                    "fleet_code": "HN-01",
+                    "name": "Hanoi Trucks",
+                },
             )
             saigon = await fleet_repository.insert(
-                db, {"fleet_code": "SG-01", "name": "Saigon Trucks"}
+                db,
+                {
+                    "organization_id": organization_id,
+                    "fleet_code": "SG-01",
+                    "name": "Saigon Trucks",
+                },
             )
             now = datetime.now(timezone.utc)
             membership = await fleet_repository.insert_membership(
@@ -1693,12 +1721,17 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
     )
     try:
         async with session_factory() as db:
+            organization_id = await _integration_organization(db)
             region = await fleet_service.create_fleet(
-                db, FleetCreateRequest(name="South")
+                db, FleetCreateRequest(organization_id=organization_id, name="South")
             )
             depot = await fleet_service.create_fleet(
                 db,
-                FleetCreateRequest(fleet_code="SG-D1", parent_fleet_id=region.fleet_id),
+                FleetCreateRequest(
+                    organization_id=organization_id,
+                    fleet_code="SG-D1",
+                    parent_fleet_id=region.fleet_id,
+                ),
             )
             assert depot.parent_fleet_id == region.fleet_id
             assert (depot.name, region.fleet_code) == (None, None)
@@ -1717,14 +1750,143 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
             with pytest.raises(FleetParentNotFoundError):
                 await fleet_service.create_fleet(
                     db,
-                    FleetCreateRequest(name="Orphan", parent_fleet_id=region.fleet_id),
+                    FleetCreateRequest(
+                        organization_id=organization_id,
+                        name="Orphan",
+                        parent_fleet_id=region.fleet_id,
+                    ),
                 )
 
             # The database itself refuses a fleet with neither name nor code.
             with pytest.raises(IntegrityError, match="ck_fleets_name_or_code"):
                 async with db.begin_nested():
-                    await fleet_repository.insert(db, {"name": None})
+                    await fleet_repository.insert(
+                        db, {"organization_id": organization_id, "name": None}
+                    )
             await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fleet_code_is_unique_per_organization_and_parent_shares_it(
+    temporary_database: str,
+) -> None:
+    """A fleet code is unique among live fleets of one organization only; a
+    parent must belong to the same organization; an unknown organization is a
+    404 (FL-08)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            first_organization_id = await _integration_organization(db)
+            second_organization_id = await _integration_organization(db)
+            first = await fleet_service.create_fleet(
+                db,
+                FleetCreateRequest(
+                    organization_id=first_organization_id, fleet_code="HQ"
+                ),
+            )
+            # The same code in another organization is fine.
+            await fleet_service.create_fleet(
+                db,
+                FleetCreateRequest(
+                    organization_id=second_organization_id, fleet_code="HQ"
+                ),
+            )
+            with pytest.raises(FleetConflictError):
+                await fleet_service.create_fleet(
+                    db,
+                    FleetCreateRequest(
+                        organization_id=first_organization_id, fleet_code="HQ"
+                    ),
+                )
+            with pytest.raises(FleetParentOrganizationMismatchError):
+                await fleet_service.create_fleet(
+                    db,
+                    FleetCreateRequest(
+                        organization_id=second_organization_id,
+                        name="Wrong tree",
+                        parent_fleet_id=first.fleet_id,
+                    ),
+                )
+            await db.rollback()
+
+        async with session_factory() as db:
+            with pytest.raises(FleetOrganizationNotFoundError):
+                await fleet_service.create_fleet(
+                    db, FleetCreateRequest(organization_id=uuid4(), name="Ghost")
+                )
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_tracked_update_writes_history_row_with_actor_and_reason(
+    temporary_database: str,
+) -> None:
+    """An update of a tracked table copies the old row into its history table
+    with the acting user and reason set for the transaction; without a context
+    the trigger records the fallback reason and no actor (DM-29)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            actor = UserModel(
+                phone_number="+84900000001",
+                full_name="Admin",
+                status=UserStatus.ACTIVE.value,
+            )
+            organization = build_organization_record()
+            db.add_all([actor, organization])
+            await db.flush()
+
+            await set_change_context(
+                db, changed_by=actor.user_id, change_reason="Unpaid invoices"
+            )
+            organization.status = OrganizationStatus.SUSPENDED.value
+            organization.status_reason = "Unpaid invoices"
+            await db.flush()
+
+            # A second change in the same transaction, then one with no context.
+            organization.display_name = "Renamed Organization"
+            await db.flush()
+            await db.commit()
+
+        async with session_factory() as db:
+            organization_record = await db.get(
+                OrganizationModel, organization.organization_id
+            )
+            assert organization_record is not None
+            organization_record.address = "1 Nguyen Hue"
+            await db.flush()
+            await db.commit()
+
+        async with session_factory() as db:
+            rows = (
+                await db.execute(
+                    text(
+                        "SELECT status, display_name, changed_by, change_reason "
+                        "FROM organization_history "
+                        "WHERE organization_id = :organization_id "
+                        "ORDER BY history_id"
+                    ),
+                    {"organization_id": organization.organization_id},
+                )
+            ).all()
+        assert [row.status for row in rows] == ["ACTIVE", "SUSPENDED", "SUSPENDED"]
+        assert rows[0].display_name == "Test Organization"
+        assert rows[1].display_name == "Test Organization"
+        assert rows[2].display_name == "Renamed Organization"
+        assert [row.changed_by for row in rows[:2]] == [actor.user_id] * 2
+        assert rows[0].change_reason == "Unpaid invoices"
+        assert rows[2].changed_by is None
+        assert rows[2].change_reason == UNSPECIFIED_CHANGE_REASON
     finally:
         await engine.dispose()
 
@@ -2050,7 +2212,12 @@ async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
                 )
             ).scalar_one()
             fleet = await fleet_repository.insert(
-                db, {"fleet_code": "GF-01", "name": "Geofence Fleet"}
+                db,
+                {
+                    "organization_id": await _integration_organization(db),
+                    "fleet_code": "GF-01",
+                    "name": "Geofence Fleet",
+                },
             )
             await fleet_repository.insert_membership(
                 db,
@@ -2166,7 +2333,12 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                 ],
             )
             fleet = await fleet_repository.insert(
-                db, {"fleet_code": "RU-01", "name": "Rollup Fleet"}
+                db,
+                {
+                    "organization_id": await _integration_organization(db),
+                    "fleet_code": "RU-01",
+                    "name": "Rollup Fleet",
+                },
             )
             added_at_base = datetime.now(timezone.utc)
             for offset_seconds, member_vehicle in enumerate(

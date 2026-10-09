@@ -205,8 +205,11 @@ FastAPI registers the following domains:
   `driver_vehicle_assignments`'s shape, with one difference: no partial
   unique index on `fleet_id` (a fleet holds many vehicles at once). A fleet
   has no status (it exists or is soft-deleted) and needs a `name`, a
-  `fleet_code` or both (`ck_fleets_name_or_code`; the code is unique across
-  all fleets until fleets get their owning organization, deferred.md 97).
+  `fleet_code` or both (`ck_fleets_name_or_code`; the code is unique per
+  organization among fleets not deleted, FL-08). A fleet is owned by an
+  organization (`organization_id`, required until authentication lets the
+  API take it from the caller); a parent must belong to the same one. Fleets
+  keep a change history (`fleet_history`).
   Fleets nest through `parent_fleet_id` (FL-02): a parent must be a live
   fleet, a move under the fleet itself or one of its sub-fleets is refused
   (400), and so is deleting a fleet that still has live sub-fleets (409).
@@ -267,9 +270,10 @@ Facts only; the reasoning and alternatives are in the
 Development uses a single PostgreSQL 16 container with the following
 extensions:
 
-- TimescaleDB for four hypertables: `vehicle_telemetry`,
-  `charging_session_events`, `charging_session_measurements` and
-  `charging_ocpp_messages` (the append-only raw OCPP message log).
+- TimescaleDB for five hypertables: `vehicle_telemetry`,
+  `charging_session_events`, `charging_session_measurements`,
+  `charging_ocpp_messages` (the append-only raw OCPP message log) and
+  `access_audit_logs` (identity).
   `vehicle_telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
   latest/history reads and on `(vehicle_id, received_at DESC)` for the
   device-health monitor's last-seen lookup.
@@ -375,9 +379,13 @@ call each other is in
 │   │   │   ├── support/               # Support case tickets and SOS intake (F-I1, F-I2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   └── fleet/                 # Fleet CRUD, vehicle membership and geofences (F-E1, F-A5)
-│   │   │       └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
-│   │   │           # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
+│   │   │   ├── fleet/                 # Fleet CRUD, vehicle membership and geofences (F-E1, F-A5)
+│   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
+│   │   │   │
+│   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1); models only until WP2
+│   │   │       └── models.py  types.py
+│   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); no service, router or API yet
 │   │   │
 │   │   ├── api/
 │   │   │   └── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
@@ -429,7 +437,7 @@ each part (`backend/`, `infra/`) currently keeps its own `.env.example`.
 Don't create these files/directories before a concrete task needs them.
 
 Domains that have feature codes in `docs/product/feature-list.md`
-but **no source yet**: `identity`, `policy`, `billing`, `scoring`. Don't
+but **no source yet**: `policy`, `billing`, `scoring` (`identity` has its tables only, no service or API). Don't
 create empty directories/files for them before a concrete task exists; when
 creating one, apply [domain-boundaries.md](../../.claude/rules/domain-boundaries.md) and
 reference the correct feature code.
@@ -446,17 +454,17 @@ convention will be written once the first task for that part starts.
 
 ## Not yet in the MVP
 
-- User, authentication and RBAC (the `identity` domain has no active
-  source yet). `drivers` now has a profile-CRUD/assignment slice (F-E4),
+- User, authentication and RBAC (the `identity` domain has its tables only:
+  no service, login or API yet). `drivers` now has a profile-CRUD/assignment slice (F-E4),
   but no login/auth of its own and no empty-trip detection (F-A9,
   suspended — no trip concept exists in this backend).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query
   (`GET /telemetry/vehicles/{id}/history`). Geofences are owned by a fleet,
   not yet by a customer account or a single vehicle (`deferred.md` item 86).
-- Fleet ownership and audit: `fleets.organization_id`, fleet codes unique
-  per organization, `added_by`/`removed_by` on memberships and the fleet
-  change history wait for the identity tables (`deferred.md` item 97);
+- Fleet audit: the acting user is not passed yet to `added_by`/`removed_by`
+  on memberships or as the change reason of fleet edits (waits for
+  authentication, WP2 of the refactor plan);
   `PATCH /fleets/{fleet_id}` cannot clear a name or code, nor move a fleet
   back to the top level (`deferred.md` item 98).
 - Technical status history and stale-status handling for chargers: an

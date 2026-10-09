@@ -29,7 +29,9 @@ from app.domains.fleet.exceptions import (
     FleetMembershipConflictError,
     FleetMembershipNotFoundError,
     FleetNotFoundError,
+    FleetOrganizationNotFoundError,
     FleetParentNotFoundError,
+    FleetParentOrganizationMismatchError,
     FleetVehicleNotFoundError,
     GeofenceNotFoundError,
 )
@@ -111,6 +113,7 @@ async def build_fleet_response(
     )
     return FleetResponse(
         fleet_id=fleet_record.fleet_id,
+        organization_id=fleet_record.organization_id,
         fleet_code=fleet_record.fleet_code,
         name=fleet_record.name,
         parent_fleet_id=fleet_record.parent_fleet_id,
@@ -120,15 +123,31 @@ async def build_fleet_response(
     )
 
 
+def _is_foreign_key_violation(error: IntegrityError) -> bool:
+    """Tell a foreign-key violation (SQLSTATE 23503) from other integrity errors.
+
+    Args:
+        error: The integrity error raised by a flush.
+
+    Returns:
+        True when the driver reports a foreign-key violation.
+    """
+    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(
+        error.orig, "pgcode", None
+    )
+    return sqlstate == "23503"
+
+
 async def _ensure_valid_parent_fleet(
     db_session: AsyncSession,
     parent_fleet_id: UUID,
     *,
+    organization_id: UUID,
     moved_fleet_id: UUID | None,
 ) -> None:
-    """Check that a fleet may sit under `parent_fleet_id` (FL-02).
+    """Check that a fleet may sit under `parent_fleet_id` (FL-02, FL-08).
 
-    The parent must be a live fleet, and when an existing fleet is moved,
+    The parent must be a live fleet of the same organization, and when an existing fleet is moved,
     the parent must be neither that fleet nor any fleet below it, or the
     tree would become a loop. Walks up from the new parent one fleet at a
     time (one query per level, no batching); fleet trees are a few levels
@@ -142,12 +161,16 @@ async def _ensure_valid_parent_fleet(
     Args:
         db_session: Current database session.
         parent_fleet_id: Internal ID of the proposed parent fleet.
+        organization_id: Organization of the fleet that is created or moved;
+            the parent must belong to it.
         moved_fleet_id: Internal ID of the fleet being moved, or `None`
             when a new fleet is created (it cannot be anyone's ancestor).
 
     Raises:
         FleetParentNotFoundError: When the parent does not exist or was
             soft-deleted.
+        FleetParentOrganizationMismatchError: When the parent belongs to
+            another organization.
         FleetHierarchyLoopError: When the parent is the moved fleet itself
             or one of its sub-fleets.
 
@@ -158,6 +181,10 @@ async def _ensure_valid_parent_fleet(
     if parent_fleet_record is None:
         raise FleetParentNotFoundError(
             f"Parent fleet with id '{parent_fleet_id}' not found"
+        )
+    if parent_fleet_record.organization_id != organization_id:
+        raise FleetParentOrganizationMismatchError(
+            f"Parent fleet '{parent_fleet_id}' belongs to another organization"
         )
     if moved_fleet_id is None:
         return
@@ -187,9 +214,10 @@ async def create_fleet(
 ) -> FleetResponse:
     """Create a new fleet, optionally under a parent fleet.
 
-    Rules: a given fleet code must not be used by another live fleet, and a
-    given parent must be a live fleet (FL-02). The request schema already
-    guarantees a name, a code, or both (FL-08).
+    Rules: a given fleet code must not be used by another live fleet of the
+    same organization, and a given parent must be a live fleet of the same
+    organization (FL-02, FL-08). The request schema already guarantees a
+    name, a code, or both (FL-08).
 
     Args:
         db_session: Database session owned by the entry boundary.
@@ -201,10 +229,17 @@ async def create_fleet(
     Raises:
         FleetConflictError: When the fleet code already exists.
         FleetParentNotFoundError: When the parent fleet does not exist.
+        FleetParentOrganizationMismatchError: When the parent belongs to
+            another organization.
+        FleetOrganizationNotFoundError: When the organization does not exist
+            (reported by the database foreign key until the identity service
+            can resolve it).
     """
     if fleet_create_request.fleet_code is not None:
         existing_fleet = await fleet_repository.find_by_fleet_code(
-            db_session, fleet_create_request.fleet_code
+            db_session,
+            fleet_create_request.organization_id,
+            fleet_create_request.fleet_code,
         )
         if existing_fleet:
             raise FleetConflictError(
@@ -212,7 +247,10 @@ async def create_fleet(
             )
     if fleet_create_request.parent_fleet_id is not None:
         await _ensure_valid_parent_fleet(
-            db_session, fleet_create_request.parent_fleet_id, moved_fleet_id=None
+            db_session,
+            fleet_create_request.parent_fleet_id,
+            organization_id=fleet_create_request.organization_id,
+            moved_fleet_id=None,
         )
 
     try:
@@ -221,6 +259,10 @@ async def create_fleet(
             fleet_create_request.model_dump(),
         )
     except IntegrityError as error:
+        if _is_foreign_key_violation(error):
+            raise FleetOrganizationNotFoundError(
+                f"Organization '{fleet_create_request.organization_id}' not found"
+            ) from error
         raise FleetConflictError("Fleet code already exists") from error
 
     return await build_fleet_response(db_session, fleet_record)
@@ -324,8 +366,9 @@ async def update_fleet(
 ) -> FleetResponse:
     """Partially update a fleet: rename it, change its code, or move it.
 
-    Rules: a new fleet code must not be used by another live fleet; a new
-    parent must be a live fleet that is neither this fleet nor one of its
+    Rules: a new fleet code must not be used by another live fleet of the same
+    organization; a new parent must be a live fleet of the same organization
+    that is neither this fleet nor one of its
     sub-fleets (FL-02). Moving a fleet moves its whole subtree with it.
 
     Args:
@@ -340,6 +383,8 @@ async def update_fleet(
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
         FleetConflictError: When the new fleet code is already in use.
         FleetParentNotFoundError: When the new parent fleet does not exist.
+        FleetParentOrganizationMismatchError: When the new parent belongs to
+            another organization.
         FleetHierarchyLoopError: When the new parent is this fleet or one of
             its sub-fleets.
     """
@@ -352,7 +397,7 @@ async def update_fleet(
         and fleet_update_request.fleet_code != fleet_record.fleet_code
     ):
         existing_fleet = await fleet_repository.find_by_fleet_code(
-            db_session, fleet_update_request.fleet_code
+            db_session, fleet_record.organization_id, fleet_update_request.fleet_code
         )
         if existing_fleet:
             raise FleetConflictError(
@@ -364,7 +409,10 @@ async def update_fleet(
         and fleet_update_request.parent_fleet_id != fleet_record.parent_fleet_id
     ):
         await _ensure_valid_parent_fleet(
-            db_session, fleet_update_request.parent_fleet_id, moved_fleet_id=fleet_id
+            db_session,
+            fleet_update_request.parent_fleet_id,
+            organization_id=fleet_record.organization_id,
+            moved_fleet_id=fleet_id,
         )
 
     update_values = {

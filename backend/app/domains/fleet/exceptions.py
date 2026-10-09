@@ -25,6 +25,16 @@ class FleetParentNotFoundError(FleetError, NotFoundError):
     soft-deleted (FL-02)."""
 
 
+class FleetOrganizationNotFoundError(FleetError, NotFoundError):
+    """Raised when the organization given for a new fleet does not exist
+    (FL-08)."""
+
+
+class FleetParentOrganizationMismatchError(FleetError, InvalidInputError):
+    """Raised when a fleet is placed under a parent that belongs to another
+    organization (FL-08)."""
+
+
 class FleetHierarchyLoopError(FleetError, InvalidInputError):
     """Raised when moving a fleet under itself or under one of its own
     sub-fleets, which would make the fleet tree a loop (FL-02)."""

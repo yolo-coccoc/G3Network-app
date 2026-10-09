@@ -229,6 +229,10 @@ class TableInfo:
         parent: For a history or state table, its main table; empty otherwise.
         history_table: For a tracked table, the name of its generated
             history table; empty otherwise.
+        history_built: True when the tag line says ``@history built``: the
+            baseline migration creates the history table and its trigger
+            (``app.libs.db.history_ddl``). History tables are not SQLAlchemy
+            models, so ``check`` does not look for them in the models.
         state_table: For a main table with a state companion, its name.
         number: Display number: ``1``, ``2``... shared by main and state
             tables in design order; ``<N>.h`` for a generated history table.
@@ -254,6 +258,7 @@ class TableInfo:
     kind: str = "main"
     parent: str = ""
     history_table: str = ""
+    history_built: bool = False
     state_table: str = ""
     number: str = ""
     built_as: str = ""
@@ -615,13 +620,15 @@ def _build_history_table(
             meaning=(
                 "Why the row was changed, set by the application for the "
                 "transaction: typed by the person for an administrative "
-                "decision, a fixed text for a routine action. A change "
-                "without a reason fails."
+                "decision, a fixed text for a routine action. When the "
+                "application sets none, the trigger records 'Unspecified "
+                "change' (DM-29)."
             ),
             vi_meaning=(
                 "Lý do thay đổi dòng, do ứng dụng đặt cho giao dịch: người "
                 "dùng nhập với quyết định quản trị, văn bản cố định với thao "
-                "tác thường lệ. Thay đổi không có lý do sẽ bị từ chối."
+                "tác thường lệ. Nếu ứng dụng không đặt, trigger ghi "
+                "'Unspecified change' (DM-29)."
             ),
             example="Customer moved to a new office",
             is_planned=False,
@@ -631,9 +638,14 @@ def _build_history_table(
     history = TableInfo(
         name=name,
         domain=source.domain,
-        # A history table of a built table is itself not built until the
-        # bulk refactor; otherwise it shares its source's design status.
-        status="planned" if source.status == "built" else source.status,
+        # A history table of a built table is itself not built until its
+        # source says ``@history built``; otherwise it shares its source's
+        # design status.
+        status=(
+            "planned"
+            if source.status == "built" and not source.history_built
+            else source.status
+        ),
         owner=source.owner,
         features=list(source.features),
         hypertable_column="",
@@ -855,6 +867,7 @@ def load_domain_model(source_path: Path) -> DomainModel:
             tracked_columns=tracked_columns,
             built_as=tags.get("built-as", ""),
             removed_detail=tags.get("remove"),
+            history_built=tags.get("history") == "built",
         )
         if "remove" in tags and status != "built":
             errors.append(
@@ -2009,6 +2022,10 @@ def check_against_backend(model: DomainModel) -> list[str]:
     for table in model.tables.values():
         if table.status != "built":
             continue
+        if table.kind == "history":
+            # Generated history tables are created by the migration helper,
+            # not modelled; the integration tests exercise them.
+            continue
         sql_table = metadata.tables.get(table.built_as or table.name)
         if sql_table is None:
             problems.append(f"{table.name}: @status built but not found in the models")
@@ -2075,7 +2092,18 @@ def check_against_backend(model: DomainModel) -> list[str]:
                     f"{where}: Ref in the DBML, no foreign key in the models"
                 )
             elif ref is not None:
-                sql_foreign_key = sql_foreign_keys[0]
+                # A column can also sit in a composite foreign key (e.g. the
+                # role's (membership_id, organization_id)); the Ref must match
+                # one of the column's foreign keys.
+                sql_foreign_key = next(
+                    (
+                        candidate
+                        for candidate in sql_foreign_keys
+                        if candidate.target_fullname
+                        == f"{ref.to_table}.{ref.to_column}"
+                    ),
+                    sql_foreign_keys[0],
+                )
                 if sql_foreign_key.target_fullname != f"{ref.to_table}.{ref.to_column}":
                     problems.append(
                         f"{where}: references {sql_foreign_key.target_fullname} in the "

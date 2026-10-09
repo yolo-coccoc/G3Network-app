@@ -39,6 +39,20 @@ from app.domains.fleet.models import (  # noqa: F401
     FleetVehicleMembershipModel,
     GeofenceModel,
 )
+from app.domains.identity.models import (  # noqa: F401
+    AccessAuditLogModel,
+    LegalDocumentModel,
+    MembershipModel,
+    OneTimeCodeModel,
+    OrganizationModel,
+    OrganizationSettingModel,
+    UserConsentModel,
+    UserCredentialModel,
+    UserModel,
+    UserRoleAssignmentModel,
+    UserSessionModel,
+    UserStateModel,
+)
 from app.domains.notifications.models import NotificationModel  # noqa: F401
 from app.domains.support.models import SupportCaseModel  # noqa: F401
 from app.domains.telematics.models import TelematicModel  # noqa: F401
@@ -102,7 +116,9 @@ def _include_object(
     Skips, only when they exist in the database but not in the models:
     PostGIS's ``spatial_ref_sys`` table, and the single-column
     ``<table>_<time column>_idx`` index TimescaleDB's ``create_hypertable``
-    adds to every hypertable. Everything else is compared normally.
+    adds to every hypertable, and every ``*_history`` table (change history,
+    built by ``app.libs.db.history_ddl`` and not modelled). Everything else
+    is compared normally.
 
     Args:
         object_: The SQLAlchemy schema object (table, index, column...).
@@ -113,11 +129,13 @@ def _include_object(
             don't declare it.
 
     Returns:
-        ``False`` for the extension-managed objects above, ``True`` otherwise.
+        ``False`` for the extension-managed and history objects above, ``True`` otherwise.
     """
     if not reflected or compare_to is not None:
         return True
     if type_ == "table":
+        if name is not None and name.endswith("_history"):
+            return False
         return name not in _EXTENSION_TABLES
     if type_ == "index":
         columns = list(getattr(object_, "columns", []))

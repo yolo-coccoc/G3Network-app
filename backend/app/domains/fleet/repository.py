@@ -16,6 +16,7 @@ from app.domains.fleet.models import (
     GeofenceModel,
 )
 from app.libs.common.clock import utc_now
+from app.libs.db.history import set_change_context
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> FleetModel:
@@ -57,13 +58,15 @@ async def get_by_id(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | No
 
 
 async def find_by_fleet_code(
-    db_session: AsyncSession, fleet_code: str
+    db_session: AsyncSession, organization_id: UUID, fleet_code: str
 ) -> FleetModel | None:
-    """Find a fleet by its natural code, excluding soft-deleted records.
+    """Find a fleet by its code inside one organization, excluding soft-deleted.
 
     Args:
         db_session: Current database session.
-        fleet_code: Natural business key of the fleet.
+        organization_id: Organization whose fleets are searched (a code is
+            unique per organization, FL-08).
+        fleet_code: Code of the fleet.
 
     Returns:
         The fleet record, or None if not found.
@@ -71,6 +74,7 @@ async def find_by_fleet_code(
     query_result = await db_session.execute(
         select(FleetModel).where(
             and_(
+                FleetModel.organization_id == organization_id,
                 FleetModel.fleet_code == fleet_code,
                 FleetModel.deleted_at.is_(None),
             )
@@ -210,6 +214,10 @@ async def update_fields(
     if not fleet_record:
         return None
 
+    # Fleets are change-tracked: record the fixed reason of a routine edit.
+    await set_change_context(
+        db_session, changed_by=None, change_reason="Fleet details edited"
+    )
     for field_name, value in values.items():
         if hasattr(fleet_record, field_name):
             setattr(fleet_record, field_name, value)
@@ -234,6 +242,7 @@ async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | 
     if not fleet_record:
         return None
 
+    await set_change_context(db_session, changed_by=None, change_reason="Fleet deleted")
     fleet_record.deleted_at = utc_now()
     await db_session.flush()
     await db_session.refresh(fleet_record)
@@ -422,6 +431,7 @@ async def insert_membership(
     fleet_id: UUID,
     vehicle_id: UUID,
     added_at: datetime,
+    added_by: UUID | None = None,
 ) -> FleetVehicleMembershipModel:
     """Open a new membership and flush it.
 
@@ -431,6 +441,8 @@ async def insert_membership(
         fleet_id: Internal ID of the fleet.
         vehicle_id: Internal ID of the vehicle.
         added_at: When the vehicle is added to the fleet.
+        added_by: User who added the vehicle; ``None`` until the API knows
+            the caller (WP2).
 
     Returns:
         The newly created membership record.
@@ -444,6 +456,7 @@ async def insert_membership(
         fleet_id=fleet_id,
         vehicle_id=vehicle_id,
         added_at=added_at,
+        added_by=added_by,
     )
     db_session.add(membership_record)
     await db_session.flush()
@@ -456,6 +469,7 @@ async def close_membership(
     membership_record: FleetVehicleMembershipModel,
     *,
     removed_at: datetime,
+    removed_by: UUID | None = None,
 ) -> FleetVehicleMembershipModel:
     """Close an open membership.
 
@@ -464,11 +478,14 @@ async def close_membership(
             commit the transaction.
         membership_record: The open membership to close.
         removed_at: When the vehicle is removed from the fleet.
+        removed_by: User who removed it; ``None`` when the system closes the
+            period or the caller is not known yet (WP2).
 
     Returns:
         The closed membership record.
     """
     membership_record.removed_at = removed_at
+    membership_record.removed_by = removed_by
     membership_record.updated_at = utc_now()
     await db_session.flush()
     await db_session.refresh(membership_record)

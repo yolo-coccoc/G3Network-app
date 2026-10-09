@@ -416,3 +416,30 @@
 - **Additional notes**: Needs the real power-allocation behaviour verified
   first (`Power.Offered` per gun, Step 7b).
 - **Resolution (2026-10-06)**: Designed in the database review (CS-17 in `docs/decisions/decision-log.md`): each connector gets `standard` (OCPI ConnectorType names), `max_power_kw`, `max_voltage_v` and `max_current_a`, entered from the nameplate; the charger keeps `max_power_kw` as the total shared by its guns (CS-14). Built in the bulk refactor (PR-11); the station-level `power_rating_kw`/`connector_standard` filters of F-D1 then read the connectors.
+
+---
+
+### 97. Fleet columns that wait for the identity tables — Resolved
+
+- **Short description**: The part of the fleet refactor (FL-08, FL-09 in
+  `docs/decisions/decision-log.md`) that needs tables not built yet: `fleets.organization_id`
+  (required, its own owner, DM-24 A) with `ix_fleets_organization_id`; the fleet-code rule
+  "unique within its organization among fleets not deleted" (`uq_fleets_live_organization_code`,
+  replacing the global `ix_fleets_fleet_code`); the check that a parent fleet belongs to the same
+  organization; `fleet_vehicle_memberships.added_by` / `removed_by` (→ `users`); and the
+  `fleets` change history (`@tracked *`: `fleet_history` plus its trigger and the change reason).
+- **Purpose/role in the system**: Tenant ownership and access filtering of fleets; a customer
+  may reuse a code another customer already uses; who moved a truck and why a fleet was renamed,
+  moved or deleted is on record.
+- **Reason for deferral**: `organizations` (proposed) and `users` (planned) are not built, and no
+  table has its change-history trigger yet (`vehicles` is `@tracked *` too). The rest of the
+  refactor (status dropped, optional name/code with `ck_fleets_name_or_code`, `parent_fleet_id`,
+  the membership renames, the dropped `fleet_id` index) was built on 2026-10-09.
+- **Related planner/feature**: FLT-01, FLT-02 (`docs/product/features/features.yaml`); DBML
+  `fleets`, `fleet_vehicle_memberships` (the columns stay `@planned` there).
+- **Date recorded**: 2026-10-09
+- **Additional notes**: Do it in the same change that builds `organizations` / `users` and the
+  history mechanism. The service then takes the organization from the caller, checks the parent
+  and the added vehicle against it (FL-09), and passes the acting user to `added_by` /
+  `removed_by` (NULL when the system closes a period: a sale, VH-12, or a deleted fleet, FL-06).
+- **Resolution (2026-10-09)**: Built in the refactor plan's WP1 chunk 1 (`docs/planners/backend-refactor-implementation.md`): `fleets.organization_id` with `ix_fleets_organization_id` and `uq_fleets_live_organization_code`, `fleet_vehicle_memberships.added_by` / `removed_by`, the same-organization parent check, and `fleet_history` with its trigger (DM-29 in `docs/decisions/decision-log.md`). Still open: the added-vehicle check against the fleet's organization (waits for `vehicles.organization_id`, WP1 later chunk) and the acting user passed to `added_by` / `removed_by` and the change reason (WP2, authentication).

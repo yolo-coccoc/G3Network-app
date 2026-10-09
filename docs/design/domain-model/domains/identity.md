@@ -4,7 +4,7 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 6 · 🆕 proposed: 10
+✅ built: 16
 
 Who takes part in the platform, who can log in, and what each person may do.
 This is the foundational domain: every other domain may depend on it, and it
@@ -98,29 +98,29 @@ erDiagram
     uuid organization_id FK
     uuid changed_by FK
   }
-  user_state |o..|| users : "user_id"
-  user_credentials }o..|| users : "user_id"
-  user_sessions }o..|| users : "user_id"
-  user_sessions }o..o| organizations : "organization_id"
-  organizations }o..o| users : "account_manager_id"
-  users }o..o| users : "created_by"
-  memberships }o..|| organizations : "organization_id"
-  memberships }o..|| users : "user_id"
-  memberships }o..o| users : "created_by"
-  user_state }o..o| organizations : "last_organization_id"
-  one_time_codes }o..o| users : "user_id"
-  one_time_codes }o..o| users : "issued_by"
-  user_consents }o..|| users : "user_id"
-  user_consents }o..o| organizations : "organization_id"
-  user_consents }o..|| legal_documents : "legal_document_id"
-  legal_documents }o..|| users : "created_by"
-  user_role_assignments }o..|| organizations : "organization_id"
-  user_role_assignments }o..|| memberships : "membership_id"
-  user_role_assignments }o..o| users : "granted_by"
-  user_role_assignments }o..o| users : "revoked_by"
-  access_audit_logs }o..o| users : "user_id"
-  access_audit_logs }o..o| organizations : "organization_id"
-  organization_settings |o..|| organizations : "organization_id"
+  user_state |o--|| users : "user_id"
+  user_credentials }o--|| users : "user_id"
+  user_sessions }o--|| users : "user_id"
+  user_sessions }o--o| organizations : "organization_id"
+  organizations }o--o| users : "account_manager_id"
+  users }o--o| users : "created_by"
+  memberships }o--|| organizations : "organization_id"
+  memberships }o--|| users : "user_id"
+  memberships }o--o| users : "created_by"
+  user_state }o--o| organizations : "last_organization_id"
+  one_time_codes }o--o| users : "user_id"
+  one_time_codes }o--o| users : "issued_by"
+  user_consents }o--|| users : "user_id"
+  user_consents }o--o| organizations : "organization_id"
+  user_consents }o--|| legal_documents : "legal_document_id"
+  legal_documents }o--|| users : "created_by"
+  user_role_assignments }o--|| organizations : "organization_id"
+  user_role_assignments }o--|| memberships : "membership_id"
+  user_role_assignments }o--o| users : "granted_by"
+  user_role_assignments }o--o| users : "revoked_by"
+  access_audit_logs }o--o| users : "user_id"
+  access_audit_logs }o--o| organizations : "organization_id"
+  organization_settings |o--|| organizations : "organization_id"
   vehicles }o..|| organizations : "organization_id"
   batteries }o..|| organizations : "organization_id"
   telematics }o..|| organizations : "organization_id"
@@ -130,9 +130,9 @@ erDiagram
   driving_sessions }o..|| organizations : "organization_id"
   trips }o..|| organizations : "organization_id"
   trips }o..o| users : "planned_by"
-  fleets }o..|| organizations : "organization_id"
-  fleet_vehicle_memberships }o..o| users : "added_by"
-  fleet_vehicle_memberships }o..o| users : "removed_by"
+  fleets }o--|| organizations : "organization_id"
+  fleet_vehicle_memberships }o--o| users : "added_by"
+  fleet_vehicle_memberships }o--o| users : "removed_by"
   fleet_user_assignments }o..|| memberships : "membership_id"
   fleet_user_assignments }o..o| users : "assigned_by"
   fleet_user_assignments }o..o| users : "unassigned_by"
@@ -195,7 +195,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### organizations
 
-**No. 1** · 🆕 proposed · owner: **internal** · features: F-F1, F-H3
+**No. 1** · ✅ built · owner: **internal** · features: F-F1, F-H3
 
 Every party that people act for: customers (transport companies and
 individual owner-drivers), our own internal organization(s), and
@@ -232,13 +232,13 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 
 **Referenced by**
 
-- [user_sessions](#user_sessions).organization_id (planned)
-- [memberships](#memberships).organization_id (planned)
-- [user_state](#user_state).last_organization_id (planned)
-- [user_consents](#user_consents).organization_id (planned)
-- [user_role_assignments](#user_role_assignments).organization_id (planned)
-- [access_audit_logs](#access_audit_logs).organization_id (planned)
-- [organization_settings](#organization_settings).organization_id (planned)
+- [user_sessions](#user_sessions).organization_id
+- [memberships](#memberships).organization_id
+- [user_state](#user_state).last_organization_id
+- [user_consents](#user_consents).organization_id
+- [user_role_assignments](#user_role_assignments).organization_id
+- [access_audit_logs](#access_audit_logs).organization_id
+- [organization_settings](#organization_settings).organization_id
 - [vehicles](vehicles.md#vehicles).organization_id (planned)
 - [batteries](batteries.md#batteries).organization_id (planned)
 - [telematics](telematics.md#telematics).organization_id (planned)
@@ -246,7 +246,7 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
 - [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
 - [trips](drivers.md#trips).organization_id (planned)
-- [fleets](fleet.md#fleets).organization_id (planned)
+- [fleets](fleet.md#fleets).organization_id
 - [geofences](fleet.md#geofences).organization_id (planned)
 - [charging_locations](charging_stations.md#charging_locations).organization_id (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).allowed_organization_id (planned)
@@ -267,7 +267,7 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 
 ### organization_history
 
-**No. 1.h** · 🆕 proposed · owner: **internal** · features: F-F1, F-H3 · change history of [organizations](#organizations)
+**No. 1.h** · ✅ built · owner: **internal** · features: F-F1, F-H3 · change history of [organizations](#organizations)
 
 Every earlier version of a row of `organizations`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -289,7 +289,7 @@ Every earlier version of a row of `organizations`: a copy of the whole row, take
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (organizations.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -297,7 +297,7 @@ Every earlier version of a row of `organizations`: a copy of the whole row, take
 
 ### users
 
-**No. 2** · 📋 planned · owner: **internal** · features: F-F1 · live state in [user_state](#user_state)
+**No. 2** · ✅ built · owner: **internal** · features: F-F1 · live state in [user_state](#user_state)
 
 A person - one account per human, across every organization they work for
 (a person may belong to several, through memberships): customer staff, a
@@ -328,23 +328,23 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 
 **Referenced by**
 
-- [user_state](#user_state).user_id (planned)
-- [user_credentials](#user_credentials).user_id (planned)
-- [user_sessions](#user_sessions).user_id (planned)
-- [organizations](#organizations).account_manager_id (planned)
-- [users](#users).created_by (planned)
-- [memberships](#memberships).user_id (planned)
-- [memberships](#memberships).created_by (planned)
-- [one_time_codes](#one_time_codes).user_id (planned)
-- [one_time_codes](#one_time_codes).issued_by (planned)
-- [user_consents](#user_consents).user_id (planned)
-- [legal_documents](#legal_documents).created_by (planned)
-- [user_role_assignments](#user_role_assignments).granted_by (planned)
-- [user_role_assignments](#user_role_assignments).revoked_by (planned)
-- [access_audit_logs](#access_audit_logs).user_id (planned)
+- [user_state](#user_state).user_id
+- [user_credentials](#user_credentials).user_id
+- [user_sessions](#user_sessions).user_id
+- [organizations](#organizations).account_manager_id
+- [users](#users).created_by
+- [memberships](#memberships).user_id
+- [memberships](#memberships).created_by
+- [one_time_codes](#one_time_codes).user_id
+- [one_time_codes](#one_time_codes).issued_by
+- [user_consents](#user_consents).user_id
+- [legal_documents](#legal_documents).created_by
+- [user_role_assignments](#user_role_assignments).granted_by
+- [user_role_assignments](#user_role_assignments).revoked_by
+- [access_audit_logs](#access_audit_logs).user_id
 - [trips](drivers.md#trips).planned_by (planned)
-- [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).added_by (planned)
-- [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).removed_by (planned)
+- [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).added_by
+- [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).removed_by
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).assigned_by (planned)
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).unassigned_by (planned)
 - [charging_location_access](charging_stations.md#charging_location_access).granted_by (planned)
@@ -382,7 +382,7 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 
 ### user_history
 
-**No. 2.h** · 📋 planned · owner: **internal** · features: F-F1 · change history of [users](#users)
+**No. 2.h** · ✅ built · owner: **internal** · features: F-F1 · change history of [users](#users)
 
 Every earlier version of a row of `users`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -401,7 +401,7 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (users.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -409,7 +409,7 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 
 ### user_state
 
-**No. 3** · 📋 planned · owner: **internal** · features: F-F1 · live state of [users](#users)
+**No. 3** · ✅ built · owner: **internal** · features: F-F1 · live state of [users](#users)
 
 Live activity of a user, recorded by the system (observations, not decisions):
 updated on every login and request, so kept apart from the users profile and
@@ -429,7 +429,7 @@ access_audit_logs.
 
 ### memberships
 
-**No. 4** · 🆕 proposed · owner: **customer** · features: F-F1
+**No. 4** · ✅ built · owner: **customer** · features: F-F1
 
 One person in one organization (owner decision, 2026-10-03: a person may belong to several,
 e.g. their personal organization and the company that hired them as a
@@ -460,14 +460,14 @@ remembered in user_state); every query then filters by that organization.
 
 **Referenced by**
 
-- [user_role_assignments](#user_role_assignments).membership_id (planned)
+- [user_role_assignments](#user_role_assignments).membership_id
 - [drivers](drivers.md#drivers).membership_id (planned)
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).membership_id (planned)
 - [membership_history](#membership_history).membership_id (planned)
 
 ### membership_history
 
-**No. 4.h** · 🆕 proposed · owner: **customer** · features: F-F1 · change history of [memberships](#memberships)
+**No. 4.h** · ✅ built · owner: **customer** · features: F-F1 · change history of [memberships](#memberships)
 
 Every earlier version of a row of `memberships`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -486,7 +486,7 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 | `updated_at` | timestamptz | yes |  |  | Value before the change (memberships.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -494,7 +494,7 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 
 ### user_credentials
 
-**No. 5** · 📋 planned · owner: **internal** · features: F-F1
+**No. 5** · ✅ built · owner: **internal** · features: F-F1
 
 How each user logs in. Kept out of the users table so a password hash is
 never copied into user history, and so new login methods are new rows, not
@@ -518,7 +518,7 @@ logged-in device is a row of user_sessions.
 
 ### user_sessions
 
-**No. 6** · 🆕 proposed · owner: **internal** · features: F-F1, F-F3
+**No. 6** · ✅ built · owner: **internal** · features: F-F1, F-F3
 
 One login of one person on one device or browser, holding both the session
 (refresh token) and that device's push token. Ending a session deletes its
@@ -548,7 +548,7 @@ history-tracked.
 
 ### one_time_codes
 
-**No. 7** · 🆕 proposed · owner: **internal** · features: F-F1
+**No. 7** · ✅ built · owner: **internal** · features: F-F1
 
 One-time codes sent by SMS to prove a person holds a phone number: invites,
 guest sign-up, password reset and phone changes. Codes are stored only as
@@ -578,7 +578,7 @@ hours); the permanent record of what happened is in access_audit_logs.
 
 ### user_consents
 
-**No. 8** · 🆕 proposed · owner: **internal** · features: F-F1
+**No. 8** · ✅ built · owner: **internal** · features: F-F1
 
 Proof of who accepted which version of which legal text, when and from where
 (Decree 13/2023, Law 91/2025/QH15). Three levels: a company accepts the data
@@ -608,7 +608,7 @@ never changed or deleted. Marketing consent is added when marketing exists.
 
 ### legal_documents
 
-**No. 9** · 🆕 proposed · owner: **internal** · features: F-F1
+**No. 9** · ✅ built · owner: **internal** · features: F-F1
 
 Every version of every legal text a person or a company accepts, so we can
 always show exactly what was accepted, and know which version is current.
@@ -632,11 +632,11 @@ first other language).
 
 **Referenced by**
 
-- [user_consents](#user_consents).legal_document_id (planned)
+- [user_consents](#user_consents).legal_document_id
 
 ### user_role_assignments
 
-**No. 10** · 📋 planned · owner: **customer** · features: F-F1
+**No. 10** · ✅ built · owner: **customer** · features: F-F1
 
 Which roles a person holds in one organization (through their membership); they can hold several at once (e.g. a director
 who is also the fleet manager). Each organization has exactly one active ORG_ADMIN
@@ -668,7 +668,7 @@ row with revoked_at set.
 
 ### access_audit_logs
 
-**No. 11** · 📋 planned · owner: **internal** · features: F-F1 · hypertable on `occurred_at`
+**No. 11** · ✅ built · owner: **internal** · features: F-F1 · hypertable on `occurred_at`
 
 Append-only record of every access to personal/location data (NF-08) and of
 account security events (logins, failed logins, lockouts, logouts, password
@@ -693,7 +693,7 @@ are compressed.
 
 ### organization_settings
 
-**No. 12** · 🆕 proposed · owner: **customer** · features: F-F1, F-E4
+**No. 12** · ✅ built · owner: **customer** · features: F-F1, F-E4
 
 Settings an organization chooses for itself (ID-45): one row per
 organization, created with default values together with it, one typed column
@@ -717,7 +717,7 @@ a real setting needs one.
 
 ### organization_setting_history
 
-**No. 12.h** · 🆕 proposed · owner: **customer** · features: F-F1, F-E4 · change history of [organization_settings](#organization_settings)
+**No. 12.h** · ✅ built · owner: **customer** · features: F-F1, F-E4 · change history of [organization_settings](#organization_settings)
 
 Every earlier version of a row of `organization_settings`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -731,7 +731,7 @@ Every earlier version of a row of `organization_settings`: a copy of the whole r
 | `updated_at` | timestamptz | yes |  |  | Value before the change (organization_settings.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
 
 **Indexes**
 

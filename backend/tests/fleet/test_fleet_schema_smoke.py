@@ -1,5 +1,7 @@
 """Smoke tests for the fleet request schemas."""
 
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,19 +15,37 @@ from app.domains.fleet.schemas import (
 
 def test_fleet_create_request_validates_core_contract() -> None:
     """A fleet request accepts valid data and rejects an empty fleet code (F-E1)."""
-    fleet = FleetCreateRequest(fleet_code="FLEET-001", name="Hanoi Fleet")
+    organization_id = uuid4()
+    fleet = FleetCreateRequest(
+        organization_id=organization_id, fleet_code="FLEET-001", name="Hanoi Fleet"
+    )
 
     assert fleet.fleet_code == "FLEET-001"
     with pytest.raises(ValidationError):
-        FleetCreateRequest(fleet_code="", name="Hanoi Fleet")
+        FleetCreateRequest(
+            organization_id=organization_id, fleet_code="", name="Hanoi Fleet"
+        )
+    with pytest.raises(ValidationError):
+        FleetCreateRequest(  # type: ignore[call-arg]
+            fleet_code="FLEET-001", name="No Organization"
+        )
 
 
 def test_fleet_create_request_needs_a_name_or_a_code() -> None:
     """Either a name or a code is enough; a fleet with neither is rejected (FL-08)."""
-    assert FleetCreateRequest(name="Hanoi Fleet").fleet_code is None
-    assert FleetCreateRequest(fleet_code="HN-01").name is None
+    organization_id = uuid4()
+    assert (
+        FleetCreateRequest(
+            organization_id=organization_id, name="Hanoi Fleet"
+        ).fleet_code
+        is None
+    )
+    assert (
+        FleetCreateRequest(organization_id=organization_id, fleet_code="HN-01").name
+        is None
+    )
     with pytest.raises(ValidationError):
-        FleetCreateRequest()
+        FleetCreateRequest(organization_id=organization_id)
 
 
 def test_fleet_vehicle_add_request_rejects_malformed_vin() -> None:

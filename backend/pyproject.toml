@@ -70,6 +70,9 @@ banned-from = [
     "app.domains.fleet",
     "app.domains.fleet.service",
     "app.domains.fleet.repository",
+    "app.domains.identity",
+    "app.domains.identity.service",
+    "app.domains.identity.repository",
     "app.domains.notifications",
     "app.domains.notifications.service",
     "app.domains.notifications.repository",
@@ -124,7 +127,7 @@ root_package = "app"
 [[tool.importlinter.contracts]]
 name = "Other domains use only charging_sessions's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.charging_sessions.models",
     "app.domains.charging_sessions.repository",
@@ -136,7 +139,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only charging_stations's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.charging_stations.models",
     "app.domains.charging_stations.ocpp",
@@ -151,7 +154,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only drivers's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.drivers.models",
     "app.domains.drivers.repository",
@@ -163,7 +166,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only fleet's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.fleet.models",
     "app.domains.fleet.repository",
@@ -173,9 +176,18 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
+name = "Other domains use only identity's service, types and exceptions"
+type = "forbidden"
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+forbidden_modules = [
+    "app.domains.identity.models",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
 name = "Other domains use only notifications's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.notifications.models",
     "app.domains.notifications.repository",
@@ -187,7 +199,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only support's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.support.models",
     "app.domains.support.repository",
@@ -199,7 +211,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only telematics's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telemetry", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.telematics.commands",
     "app.domains.telematics.models",
@@ -213,7 +225,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only telemetry's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.vehicles"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.telemetry.alerting",
     "app.domains.telemetry.detection",
@@ -232,7 +244,7 @@ allow_indirect_imports = true
 [[tool.importlinter.contracts]]
 name = "Other domains use only vehicles's service, types and exceptions"
 type = "forbidden"
-source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry"]
+source_modules = ["app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry"]
 forbidden_modules = [
     "app.domains.vehicles.models",
     "app.domains.vehicles.repository",
