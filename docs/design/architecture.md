@@ -32,7 +32,7 @@ flowchart LR
 
     Vehicle -->|MQTT telemetry| Broker
     Broker --> Ingestion
-    Ingestion -->|vehicle_telemetry| DB
+    Ingestion -->|telemetry| DB
     Ingestion -->|battery/SOH/anomaly/geofence alerts, F-A2-A5| Notifications
     Ingestion -->|nearest available station, fleet geofences| Domains
     Notifications -->|notifications| DB
@@ -67,7 +67,8 @@ FastAPI registers the following domains:
   machine is gone (computed later, VH-06). `batteries` (battery models,
   batteries, the `battery_installation_periods` view) and `warranties` have
   models only until WP3 (VH-20).
-- `telematics`: device CRUD and mapping devices to vehicles (an unknown
+- `telematics`: device CRUD (a device has an owning organization, change
+  history and soft-delete rules DM-25) and mapping devices to vehicles (an unknown
   VIN is a 404; at most one *live* device per vehicle, so a soft-deleted
   device no longer blocks its replacement; a device on a soft-deleted
   vehicle maps nothing), a periodic device-health monitor (F-J1/F-J3,
@@ -78,7 +79,10 @@ FastAPI registers the following domains:
   publisher (`telematics/commands/`, F-J2 partial) - this backend's only
   MQTT *publish* path, pushing a telemetry publish-interval change to
   `g3network/telematics/{serial}/command`, for one device or for every
-  current member of a fleet (sequential, one result per vehicle). Device
+  current member of a fleet (sequential, one result per vehicle; the push
+  writes nothing, the device confirms the interval in its status report).
+  What a device reports about itself goes to `telematic_status_reports`
+  (table only; ingesting the status topic is WP4, mqtt-spec.md 2.2). Device
   responses carry read-time health (`last_seen_at`, `is_online`,
   `is_silent`, `last_signal_strength_dbm`) through
   `telemetry.service.resolve_vehicle_live_status`; `is_silent` and the
@@ -274,18 +278,18 @@ Facts only; the reasoning and alternatives are in the
 Development uses a single PostgreSQL 16 container with the following
 extensions:
 
-- TimescaleDB for five hypertables: `vehicle_telemetry`,
+- TimescaleDB for five hypertables: `telemetry`,
   `charging_session_events`, `charging_session_measurements`,
   `charging_ocpp_messages` (the append-only raw OCPP message log) and
   `access_audit_logs` (identity).
-  `vehicle_telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
+  `telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
   latest/history reads and on `(vehicle_id, received_at DESC)` for the
   device-health monitor's last-seen lookup.
 - PostGIS: used for `charging_stations.location` (F-C1),
-  `vehicle_telemetry.location` and `support_cases.location` (all
+  `telemetry.location` and `support_cases.location` (all
   `geography(Point, 4326)` columns) and `geofences.boundary`
   (`geography(POLYGON, 4326)`, F-A5). Only `charging_stations.location`
-  has a GIST index: `vehicle_telemetry.location` is a high-frequency write
+  has a GIST index: `telemetry.location` is a high-frequency write
   path that is never searched spatially, and a geofence check always
   filters by fleet first (`ix_geofences_fleet_id`) before `ST_Covers`.
   F-A2's nearest-available-station lookup uses that index (`ST_Distance` +
@@ -296,7 +300,8 @@ extensions:
   assignment per driver and per vehicle (`WHERE unassigned_at IS NULL`),
   one open fleet membership per vehicle (`WHERE removed_at IS NULL`), and one
   live telematic device per vehicle (`uq_telematics_active_vehicle`,
-  `WHERE deleted_at IS NULL`).
+  `WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL`); a device's serial and
+  IMEI are unique among devices not deleted.
 - `uuid-ossp` for the local database.
 
 The schema is a single Alembic migration, `0001_baseline_schema`. During the

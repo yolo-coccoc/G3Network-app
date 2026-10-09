@@ -32,7 +32,10 @@ def live_assigned_vehicle(monkeypatch: pytest.MonkeyPatch) -> None:
         db_session: AsyncSession, vehicle_id: UUID
     ) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
         )
 
     monkeypatch.setattr(

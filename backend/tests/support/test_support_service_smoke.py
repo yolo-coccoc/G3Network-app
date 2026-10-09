@@ -191,7 +191,10 @@ async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
 
     async def resolve_vin(db: AsyncSession, vehicle_vin: str) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin=vehicle_vin, battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin=vehicle_vin,
+            battery_capacity_kwh=None,
         )
 
     async def insert(db: AsyncSession, values: dict[str, object]) -> SupportCaseModel:

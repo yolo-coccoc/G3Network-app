@@ -15,7 +15,7 @@ from app.domains.telemetry.exceptions import (
     TelemetryInvalidRangeError,
     TelemetryNotFoundError,
 )
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.vehicles.types import (
     VehicleReference,
 )
@@ -27,37 +27,37 @@ from tests.builders import build_telemetry_record, fake_db_session
 def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
     """to_vehicle_telemetry_latest_response() exposes lat/lon from the stored geography.
 
-    Regression guard for the vehicle_telemetry storage unification
+    Regression guard for the telemetry storage unification
     (deferred.md item 9): the response contract (plain latitude/longitude)
     stays the same even though the ORM model now stores a single
     ``location`` point instead.
     """
     now = datetime.now(timezone.utc)
-    record = VehicleTelemetryModel(
+    record = TelemetryModel(
         message_id=1,
-        message_uuid=uuid4(),
+        organization_id=uuid4(),
+        device_message_id=uuid4(),
         telematic_id=uuid4(),
-        telematic_serial="TBOX-TEST-001",
         vehicle_id=uuid4(),
         recorded_at=now,
         received_at=now,
         location=coordinates_to_location(10.762622, 106.660172),
-        speed=None,
-        heading=None,
-        soc=80.0,
-        battery_voltage=None,
-        battery_current=None,
-        battery_temperature=None,
-        motor_temperature=None,
-        odometer=None,
-        signal_strength=None,
+        speed_kmh=None,
+        heading_degrees=None,
+        soc_percent=80.0,
+        battery_voltage_v=None,
+        battery_current_a=None,
+        battery_temperature_celsius=None,
+        motor_temperature_celsius=None,
+        odometer_km=None,
+        signal_dbm=None,
         error_codes=None,
         raw_payload={},
         schema_version=3,
     )
 
     response = telemetry_mappers.to_vehicle_telemetry_latest_response(
-        record, is_online=False
+        record, is_online=False, telematic_serial="TBOX-TEST-001"
     )
 
     assert response.latitude == pytest.approx(10.762622)
@@ -88,7 +88,10 @@ async def test_get_vehicle_telemetry_history_response_returns_ordered_points(
     """The history service returns every point the repository provides, count included."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = datetime(2026, 9, 2, tzinfo=timezone.utc)
@@ -102,9 +105,7 @@ async def test_get_vehicle_telemetry_history_response_returns_ordered_points(
     async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
         return reference
 
-    async def history(
-        db: AsyncSession, **kwargs: object
-    ) -> list[VehicleTelemetryModel]:
+    async def history(db: AsyncSession, **kwargs: object) -> list[TelemetryModel]:
         assert kwargs["vehicle_id"] == vehicle_id
         assert kwargs["start_time"] == start
         assert kwargs["end_time"] == end
@@ -213,7 +214,10 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
     """A limit above the configured max is clamped, not rejected."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = start + timedelta(hours=1)
@@ -222,9 +226,7 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
     async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
         return reference
 
-    async def history(
-        db: AsyncSession, **kwargs: object
-    ) -> list[VehicleTelemetryModel]:
+    async def history(db: AsyncSession, **kwargs: object) -> list[TelemetryModel]:
         captured_limit["limit"] = cast(int, kwargs["limit"])
         return []
 

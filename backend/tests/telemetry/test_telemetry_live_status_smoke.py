@@ -6,10 +6,11 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicles_public_service
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.types import VehicleLiveStatusReference
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
@@ -19,7 +20,7 @@ from tests.builders import build_telemetry_record, fake_db_session
 def _patch_latest_reading(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    telemetry: VehicleTelemetryModel | None,
+    telemetry: TelemetryModel | None,
     last_received_at: datetime | None,
 ) -> None:
     """Make the repository return a given newest row and newest receive time.
@@ -32,7 +33,7 @@ def _patch_latest_reading(
 
     async def latest_reading(
         db: AsyncSession, vehicle_id: UUID
-    ) -> VehicleTelemetryModel | None:
+    ) -> TelemetryModel | None:
         return telemetry
 
     async def latest_received_at(db: AsyncSession, vehicle_id: UUID) -> datetime | None:
@@ -70,7 +71,7 @@ async def test_resolve_vehicle_live_status_is_online_for_recent_telemetry(
     telemetry = build_telemetry_record(
         vehicle_id=vehicle_id, recorded_at=now - timedelta(seconds=30)
     )
-    telemetry.signal_strength = -71
+    telemetry.signal_dbm = -71
     _patch_latest_reading(
         monkeypatch, telemetry=telemetry, last_received_at=telemetry.received_at
     )
@@ -162,12 +163,19 @@ async def test_latest_response_exposes_received_at_and_online_flag(
 
     async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=value, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=value,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
         )
+
+    async def resolve_serial(db: AsyncSession, telematic_id: UUID) -> str:
+        return "TBOX-TEST-001"
 
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
     )
+    monkeypatch.setattr(telematics_service, "resolve_serial_by_id", resolve_serial)
     _patch_latest_reading(monkeypatch, telemetry=telemetry, last_received_at=now)
 
     response = await telemetry_service.get_latest_vehicle_telemetry_response(

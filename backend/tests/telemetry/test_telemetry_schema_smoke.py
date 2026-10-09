@@ -61,13 +61,14 @@ def test_telemetry_rejects_naive_timestamp_and_invalid_location() -> None:
 def test_telemetry_message_stores_location_as_geography_not_lat_lon() -> None:
     """to_vehicle_telemetry_values() outputs a PostGIS point, not lat/lon columns.
 
-    Regression guard for the vehicle_telemetry storage unification
-    (deferred.md item 9) - the dict must match VehicleTelemetryModel's
+    Regression guard for the telemetry storage unification
+    (deferred.md item 9) - the dict must match TelemetryModel's
     location column, not the old latitude/longitude columns.
     """
     message = TelemetryMessage.model_validate(_valid_telemetry_payload())
 
     values = message.to_vehicle_telemetry_values(
+        uuid4(),
         uuid4(),
         uuid4(),
         datetime.now(timezone.utc),

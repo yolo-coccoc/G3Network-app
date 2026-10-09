@@ -20,7 +20,7 @@ import app.domains.telemetry.service as telemetry_service
 from app.domains.fleet.types import GeofenceReference
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.types import TelematicVehicleMapping
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.types import GeofenceTransition
 from tests.builders import (
     build_telemetry_envelope,
@@ -62,7 +62,7 @@ def _patch_ingestion(
     monkeypatch: pytest.MonkeyPatch,
     *,
     vehicle_id: UUID,
-    previous_telemetry: VehicleTelemetryModel | None,
+    previous_telemetry: TelemetryModel | None,
     fleet_id: UUID | None,
     geofences_by_latitude: dict[float, list[GeofenceReference]],
 ) -> list[dict[str, object]]:
@@ -80,7 +80,9 @@ def _patch_ingestion(
         The list that collects each ``create_notification`` call's kwargs.
     """
     created_notifications: list[dict[str, object]] = []
-    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=vehicle_id)
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=vehicle_id, organization_id=uuid4()
+    )
 
     async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
         return mapping
@@ -90,7 +92,7 @@ def _patch_ingestion(
 
     async def previous_reading(
         db: AsyncSession, vehicle_id: UUID
-    ) -> VehicleTelemetryModel | None:
+    ) -> TelemetryModel | None:
         return previous_telemetry
 
     async def current_fleet(db: AsyncSession, vehicle_id: UUID) -> UUID | None:
@@ -123,7 +125,7 @@ def _patch_ingestion(
     return created_notifications
 
 
-def _previous_reading(vehicle_id: UUID) -> VehicleTelemetryModel:
+def _previous_reading(vehicle_id: UUID) -> TelemetryModel:
     """Build the vehicle's previous reading (SOC 80, same as the message).
 
     Args:

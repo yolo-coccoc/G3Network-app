@@ -12,9 +12,10 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telematics.models import TelematicModel
-from app.domains.telematics.types import TelematicStatus, TelematicVehicleMapping
+from app.domains.telematics.models import TelematicModel, TelematicStatusReportModel
+from app.domains.telematics.types import TelematicStatus
 from app.libs.common.clock import utc_now
+from app.libs.db.history import set_change_context
 
 
 async def get_by_id(
@@ -89,20 +90,19 @@ async def find_by_vehicle_id(
     return query_result.scalar_one_or_none()
 
 
-async def find_mapping_by_serial(
+async def find_mounted_vehicle_id_by_serial(
     db_session: AsyncSession,
     telematic_serial: str,
-) -> TelematicVehicleMapping | None:
-    """Find a device-vehicle mapping by serial for ingestion.
+) -> tuple[UUID, UUID] | None:
+    """Find a device and the vehicle it is mounted on, by serial, for ingestion.
 
     Args:
         db_session: Database session owned by the entry boundary.
         telematic_serial: Physical serial of the device to look up.
 
     Returns:
-        A ``TelematicVehicleMapping`` when the device is not soft-deleted
-        and has been assigned a vehicle; ``None`` if there is no valid
-        mapping.
+        ``(telematic_id, vehicle_id)`` when the device is not soft-deleted
+        and is mounted on a vehicle; ``None`` if there is no valid mapping.
     """
     query_result = await db_session.execute(
         select(TelematicModel.telematic_id, TelematicModel.vehicle_id).where(
@@ -112,14 +112,31 @@ async def find_mapping_by_serial(
         )
     )
     mapping_row = query_result.one_or_none()
-    return (
-        TelematicVehicleMapping(
-            telematic_id=mapping_row.telematic_id,
-            vehicle_id=mapping_row.vehicle_id,
+    if mapping_row is None:
+        return None
+    return mapping_row.telematic_id, mapping_row.vehicle_id
+
+
+async def find_serial_by_id(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+) -> str | None:
+    """Find a device's serial by internal ID, also for a soft-deleted device.
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+
+    Returns:
+        The serial, or ``None`` if no such device exists. A deleted device is
+        included because its past telemetry still names it.
+    """
+    query_result = await db_session.execute(
+        select(TelematicModel.telematic_serial).where(
+            TelematicModel.telematic_id == telematic_id
         )
-        if mapping_row
-        else None
     )
+    return query_result.scalar_one_or_none()
 
 
 async def list_active_with_vehicle(
@@ -133,7 +150,7 @@ async def list_active_with_vehicle(
     Returns:
         Non-soft-deleted, ``ACTIVE`` devices with a non-``None``
         ``vehicle_id``. A device that's soft-deleted, explicitly
-        ``INACTIVE``/``MAINTENANCE``, or not yet assigned to a vehicle is
+        ``INACTIVE``, or not yet assigned to a vehicle is
         excluded - a device deliberately taken offline being silent is
         expected, not something to alert on. Whether the assigned vehicle
         is itself soft-deleted is not checked here (that table belongs to
@@ -234,6 +251,8 @@ async def update_fields(
     db_session: AsyncSession,
     telematic_record: TelematicModel,
     values: dict[str, object],
+    *,
+    change_reason: str,
 ) -> TelematicModel:
     """Write the fields the service has already validated onto a device.
 
@@ -241,19 +260,23 @@ async def update_fields(
         db_session: Current database session.
         telematic_record: Device record loaded in this session.
         values: Fields to set, keyed by ORM attribute name.
+        change_reason: Why the row changes; recorded in ``telematic_history``
+            (devices are change-tracked). The actor is unknown until
+            authentication exists, so ``changed_by`` is ``None`` (DM-29).
 
     Returns:
         The same record, after the flush.
 
     Raises:
         IntegrityError: When the new values break a unique constraint
-            (serial, vehicle assignment); raised by the flush for the
+            (serial, IMEI, vehicle assignment); raised by the flush for the
             service to convert.
 
     Side Effects:
-        Flushes the UPDATE; ``updated_at`` is set by the column's
-        ``onupdate`` hook.
+        Sets the change context and flushes the UPDATE; ``updated_at`` is set
+        by the column's ``onupdate`` hook.
     """
+    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
     for field_name, value in values.items():
         setattr(telematic_record, field_name, value)
     await db_session.flush()
@@ -263,20 +286,51 @@ async def update_fields(
 async def soft_delete(
     db_session: AsyncSession,
     telematic_record: TelematicModel,
+    *,
+    change_reason: str,
 ) -> None:
-    """Mark a device as soft-deleted.
+    """Soft-delete a device: it leaves the system (DM-25).
 
     Args:
         db_session: Current database session.
         telematic_record: Device record loaded in this session.
+        change_reason: Why the device left; also stored as ``status_reason``.
 
     Side Effects:
-        Sets ``deleted_at`` and flushes; ``updated_at`` is set by the
-        column's ``onupdate`` hook. The row keeps its serial and vehicle
-        assignment: the serial's unique constraint still sees it, but the
-        partial ``uq_telematics_active_vehicle`` index (``WHERE deleted_at
-        IS NULL``) doesn't, so the vehicle can take a replacement device
-        (deferred.md item 82).
+        Sets ``deleted_at``, status ``INACTIVE`` and no vehicle (the table's
+        check constraint), records the history row and flushes;
+        ``updated_at`` is set by the column's ``onupdate`` hook. The serial
+        and IMEI stay on the row but are unique only among devices not
+        deleted, so a replacement can reuse them or the truck (deferred.md
+        item 82).
     """
+    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
     telematic_record.deleted_at = utc_now()
+    telematic_record.status = TelematicStatus.INACTIVE
+    telematic_record.status_reason = change_reason
+    telematic_record.vehicle_id = None
+    telematic_record.installed_at = None
     await db_session.flush()
+
+
+async def find_latest_status_report(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+) -> TelematicStatusReportModel | None:
+    """Find the newest status report of a device (its current health, TX-11).
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+
+    Returns:
+        The report with the latest ``reported_at``, or ``None`` if the device
+        never reported.
+    """
+    query_result = await db_session.execute(
+        select(TelematicStatusReportModel)
+        .where(TelematicStatusReportModel.telematic_id == telematic_id)
+        .order_by(TelematicStatusReportModel.reported_at.desc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()

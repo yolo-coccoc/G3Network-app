@@ -126,7 +126,7 @@ so publishing a command never evicts the ingestion consumer's session.
 |---|---|---|---|
 | `command` | string | yes | One of the implemented commands below. |
 | `telemetry_interval_seconds` | integer | yes, for `set_telemetry_interval` | Desired publish interval, seconds. Bounded server-side by `TELEMATICS_MIN_TELEMETRY_INTERVAL_SECONDS`/`TELEMATICS_MAX_TELEMETRY_INTERVAL_SECONDS`. |
-| `timestamp` | string (ISO 8601, UTC offset) | yes | Backend-issued; matches the `config_pushed_at` value recorded on the `telematics` row for this same push. |
+| `timestamp` | string (ISO 8601, UTC offset) | yes | Backend-issued; backend-issued time of this push; it is not stored (the device confirms the interval it uses in its status report, §2.2). |
 
 **Defined but not implemented** - `restart`:
 ```json
@@ -382,3 +382,4 @@ in section 2.3.
 | 1.0.0 | 2026-07-25 | Initial version |
 | 1.1.0 | 2026-09-17 | F-J2 (partial): implemented `set_telemetry_interval` on the backend command topic; documented its exact payload, QoS, and the missing-ack limitation. |
 | 1.2.0 | 2026-10-04 | Provisional device health fields on the status topic (§2.2), from the database design (TX-09); not confirmed by the vendor, not ingested. |
+| 1.2.1 | 2026-10-09 | The pushed interval is no longer stored on the `telematics` row (TX-09, TX-11); `telematic_status_reports` table exists, ingestion of §2.2 still pending. |

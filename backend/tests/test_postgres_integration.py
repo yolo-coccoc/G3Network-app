@@ -75,7 +75,7 @@ from app.domains.telematics.exceptions import TelematicConflictError
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.schemas import TelematicCreateRequest
 from app.domains.telematics.types import TelematicStatus
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.telemetry.types import ReportGranularity
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
@@ -215,7 +215,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                             FROM information_schema.tables
                             WHERE table_schema = 'public'
                             AND table_name IN (
-                                'vehicles', 'telematics', 'vehicle_telemetry',
+                                'vehicles', 'telematics', 'telemetry',
                                 'charging_stations', 'charging_evses',
                                 'charging_connectors', 'charging_sessions',
                                 'charging_session_events',
@@ -249,7 +249,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # meter-values hypertable with measurements and added the raw message
         # log; the identity work added the access audit log.
         assert hypertables == {
-            "vehicle_telemetry",
+            "telemetry",
             "charging_session_events",
             "charging_ocpp_messages",
             "charging_session_measurements",
@@ -319,9 +319,10 @@ async def test_telemetry_repository_round_trip_rolls_back(
             telematic = TelematicModel(
                 telematic_id=telematic_id,
                 telematic_serial=serial,
+                organization_id=organization_id,
+                acquired_at=recorded_at,
                 vehicle_id=vehicle_id,
                 status=TelematicStatus.ACTIVE,
-                firmware_version="integration-test",
             )
             session.add(vehicle)
             await session.flush()
@@ -331,22 +332,22 @@ async def test_telemetry_repository_round_trip_rolls_back(
             inserted = await telemetry_repository.insert_telemetry(
                 session,
                 {
-                    "message_uuid": uuid4(),
+                    "organization_id": organization_id,
+                    "device_message_id": uuid4(),
                     "telematic_id": telematic_id,
-                    "telematic_serial": serial,
                     "vehicle_id": vehicle_id,
                     "recorded_at": recorded_at,
                     "received_at": recorded_at,
                     "location": coordinates_to_location(10.8, 106.7),
-                    "speed": 42.0,
-                    "heading": 180.0,
-                    "soc": 80.0,
-                    "battery_voltage": 650.0,
-                    "battery_current": -120.0,
-                    "battery_temperature": 30.0,
-                    "motor_temperature": 45.0,
-                    "odometer": 12500.5,
-                    "signal_strength": -70,
+                    "speed_kmh": 42.0,
+                    "heading_degrees": 180.0,
+                    "soc_percent": 80.0,
+                    "battery_voltage_v": 650.0,
+                    "battery_current_a": -120.0,
+                    "battery_temperature_celsius": 30.0,
+                    "motor_temperature_celsius": 45.0,
+                    "odometer_km": 12500.5,
+                    "signal_dbm": -70,
                     "error_codes": {"codes": []},
                     "raw_payload": {"source": "postgres-integration"},
                 },
@@ -357,8 +358,9 @@ async def test_telemetry_repository_round_trip_rolls_back(
 
             assert inserted == 1
             assert latest is not None
-            assert latest.telematic_serial == serial
-            assert latest.soc == 80.0
+            assert latest.telematic_id == telematic_id
+            assert latest.organization_id == organization_id
+            assert latest.soc_percent == 80.0
 
             await session.rollback()
 
@@ -367,8 +369,8 @@ async def test_telemetry_repository_round_trip_rolls_back(
                 session, vehicle_id
             )
             telemetry_after_rollback = await session.scalar(
-                select(VehicleTelemetryModel.message_id).where(
-                    VehicleTelemetryModel.vehicle_id == vehicle_id
+                select(TelemetryModel.message_id).where(
+                    TelemetryModel.vehicle_id == vehicle_id
                 )
             )
 
@@ -400,14 +402,14 @@ async def test_last_telemetry_time_follows_receive_clock_not_device_clock(
     def reading(recorded_at: datetime, received_at: datetime) -> dict[str, object]:
         """Build one minimal telemetry row for this vehicle."""
         return {
-            "message_uuid": uuid4(),
+            "organization_id": organization_id,
+            "device_message_id": uuid4(),
             "telematic_id": telematic_id,
-            "telematic_serial": serial,
             "vehicle_id": vehicle_id,
             "recorded_at": recorded_at,
             "received_at": received_at,
             "location": coordinates_to_location(10.8, 106.7),
-            "soc": 80.0,
+            "soc_percent": 80.0,
             "raw_payload": {"source": "postgres-integration"},
         }
 
@@ -430,6 +432,8 @@ async def test_last_telemetry_time_follows_receive_clock_not_device_clock(
                 TelematicModel(
                     telematic_id=telematic_id,
                     telematic_serial=serial,
+                    organization_id=organization_id,
+                    acquired_at=now,
                     vehicle_id=vehicle_id,
                     status=TelematicStatus.ACTIVE,
                 )
@@ -826,21 +830,43 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                 db,
                 TelematicCreateRequest(
                     telematic_serial=f"{serial_prefix}-A",
+                    organization_id=organization_id,
                     vehicle_vin=vin,
-                    firmware_version=None,
                 ),
             )
         async with session_factory.begin() as db:
             await telematics_service.soft_delete_telematic(
                 db, first_device.telematic_id
             )
+        async with session_factory() as db:
+            # DM-25: the deleted device is INACTIVE and unmounted, and the
+            # change history kept its last mounted state (TX-08).
+            deleted_row = (
+                await db.execute(
+                    text(
+                        "SELECT status::text, vehicle_id, deleted_at, status_reason "
+                        "FROM telematics WHERE telematic_id = :id"
+                    ),
+                    {"id": first_device.telematic_id},
+                )
+            ).one()
+            assert deleted_row.status == "INACTIVE"
+            assert deleted_row.vehicle_id is None
+            assert deleted_row.deleted_at is not None
+            history_vehicle_id = await db.scalar(
+                text(
+                    "SELECT vehicle_id FROM telematic_history WHERE telematic_id = :id"
+                ),
+                {"id": first_device.telematic_id},
+            )
+            assert history_vehicle_id == vehicle_id
         async with session_factory.begin() as db:
             replacement_device = await telematics_service.create_telematic(
                 db,
                 TelematicCreateRequest(
                     telematic_serial=f"{serial_prefix}-B",
+                    organization_id=organization_id,
                     vehicle_vin=vin,
-                    firmware_version=None,
                 ),
             )
         assert replacement_device.vehicle_id == vehicle_id
@@ -852,8 +878,8 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                     db,
                     TelematicCreateRequest(
                         telematic_serial=f"{serial_prefix}-C",
+                        organization_id=organization_id,
                         vehicle_vin=vin,
-                        firmware_version=None,
                     ),
                 )
 
@@ -871,8 +897,8 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                     db,
                     TelematicCreateRequest(
                         telematic_serial=f"{serial_prefix}-D",
+                        organization_id=organization_id,
                         vehicle_vin=vin,
-                        firmware_version=None,
                     ),
                 )
         monkeypatch.undo()
@@ -924,6 +950,8 @@ async def _seed_vehicle_readings(
     telematic = TelematicModel(
         telematic_id=uuid4(),
         telematic_serial=f"IT-TBOX-{uuid4().hex[:12]}",
+        organization_id=organization_id,
+        acquired_at=datetime.now(timezone.utc),
         vehicle_id=vehicle.vehicle_id,
         status=TelematicStatus.ACTIVE,
     )
@@ -933,9 +961,9 @@ async def _seed_vehicle_readings(
         await telemetry_repository.insert_telemetry(
             db,
             {
-                "message_uuid": uuid4(),
+                "organization_id": organization_id,
+                "device_message_id": uuid4(),
                 "telematic_id": telematic.telematic_id,
-                "telematic_serial": telematic.telematic_serial,
                 "vehicle_id": vehicle.vehicle_id,
                 "received_at": reading["recorded_at"],
                 "location": coordinates_to_location(10.8, 106.7),
@@ -982,22 +1010,22 @@ async def test_battery_health_buckets_by_report_timezone_day(
                 [
                     {
                         "recorded_at": _september_2026(1, 16, 30),
-                        "soc": 80.0,
+                        "soc_percent": 80.0,
                         "soh_percent": 95.0,
                         "cycle_count": 100,
                     },
                     {
                         "recorded_at": _september_2026(1, 17, 30),
-                        "soc": 79.0,
+                        "soc_percent": 79.0,
                         "soh_percent": 94.5,
                         "cycle_count": 100,
                     },
                     {
                         "recorded_at": _september_2026(1, 20),
-                        "soc": 78.0,
+                        "soc_percent": 78.0,
                         "cycle_count": 101,
                     },
-                    {"recorded_at": _september_2026(3, 5), "soc": 70.0},
+                    {"recorded_at": _september_2026(3, 5), "soc_percent": 70.0},
                 ],
             )
 
@@ -1049,25 +1077,29 @@ async def test_operating_report_periods_sum_to_the_whole_window(
                 [
                     {
                         "recorded_at": _september_2026(1, 1),
-                        "soc": 90.0,
-                        "odometer": 1000.0,
+                        "soc_percent": 90.0,
+                        "odometer_km": 1000.0,
                     },
                     {
                         "recorded_at": _september_2026(1, 10),
-                        "soc": 80.0,
-                        "odometer": 1050.0,
+                        "soc_percent": 80.0,
+                        "odometer_km": 1050.0,
                     },
                     {
                         "recorded_at": _september_2026(1, 18),
-                        "soc": 75.0,
-                        "odometer": 1070.0,
+                        "soc_percent": 75.0,
+                        "odometer_km": 1070.0,
                     },
                     {
                         "recorded_at": _september_2026(2, 10),
-                        "soc": 60.0,
-                        "odometer": 1120.0,
+                        "soc_percent": 60.0,
+                        "odometer_km": 1120.0,
                     },
-                    {"recorded_at": end_time, "soc": 55.0, "odometer": 1130.0},
+                    {
+                        "recorded_at": end_time,
+                        "soc_percent": 55.0,
+                        "odometer_km": 1130.0,
+                    },
                 ],
             )
 
@@ -2325,6 +2357,8 @@ async def test_device_health_fields_follow_real_telemetry_on_postgres(
                 devices[label] = TelematicModel(
                     telematic_id=uuid4(),
                     telematic_serial=f"IT-TBOX-{uuid4().hex[:12]}",
+                    organization_id=online_vehicle.organization_id,
+                    acquired_at=now,
                     vehicle_id=vehicle_id,
                     status=TelematicStatus.ACTIVE,
                 )
@@ -2338,15 +2372,15 @@ async def test_device_health_fields_follow_real_telemetry_on_postgres(
                 await telemetry_repository.insert_telemetry(
                     db,
                     {
-                        "message_uuid": uuid4(),
+                        "organization_id": device.organization_id,
+                        "device_message_id": uuid4(),
                         "telematic_id": device.telematic_id,
-                        "telematic_serial": device.telematic_serial,
                         "vehicle_id": device.vehicle_id,
                         "recorded_at": received_at,
                         "received_at": received_at,
                         "location": coordinates_to_location(10.8, 106.7),
-                        "soc": 80.0,
-                        "signal_strength": signal_strength,
+                        "soc_percent": 80.0,
+                        "signal_dbm": signal_strength,
                         "raw_payload": {"source": "postgres-integration"},
                     },
                 )
@@ -2424,7 +2458,7 @@ async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
         async with session_factory() as db:
             # The seeded previous reading sits at (10.8, 106.7): outside.
             vehicle = await _seed_vehicle_readings(
-                db, [{"recorded_at": _september_2026(1, 1), "soc": 80.0}]
+                db, [{"recorded_at": _september_2026(1, 1), "soc_percent": 80.0}]
             )
             telematic_serial = (
                 await db.execute(
@@ -2529,13 +2563,13 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                 [
                     {
                         "recorded_at": _september_2026(1, 1),
-                        "soc": 90.0,
-                        "odometer": 1000.0,
+                        "soc_percent": 90.0,
+                        "odometer_km": 1000.0,
                     },
                     {
                         "recorded_at": _september_2026(1, 5),
-                        "soc": 80.0,
-                        "odometer": 1050.0,
+                        "soc_percent": 80.0,
+                        "odometer_km": 1050.0,
                     },
                 ],
             )
@@ -2544,13 +2578,13 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                 [
                     {
                         "recorded_at": _september_2026(1, 2),
-                        "soc": 70.0,
-                        "odometer": 0.0,
+                        "soc_percent": 70.0,
+                        "odometer_km": 0.0,
                     },
                     {
                         "recorded_at": _september_2026(1, 6),
-                        "soc": 40.0,
-                        "odometer": 250.0,
+                        "soc_percent": 40.0,
+                        "odometer_km": 250.0,
                     },
                 ],
             )

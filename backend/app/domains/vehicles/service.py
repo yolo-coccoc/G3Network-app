@@ -87,8 +87,8 @@ async def build_vehicle_reference(
         vehicle_record: An active vehicle record.
 
     Returns:
-        DTO containing the internal ID, VIN, and nominal battery capacity of
-        the vehicle.
+        DTO containing the internal ID, VIN, owning organization and nominal
+        battery capacity of the vehicle.
 
     Side Effects:
         One read-only query for the vehicle model.
@@ -105,6 +105,7 @@ async def build_vehicle_reference(
     return VehicleReference(
         vehicle_id=vehicle_record.vehicle_id,
         vin=vehicle_record.vin,
+        organization_id=vehicle_record.organization_id,
         battery_capacity_kwh=battery_capacity_kwh,
     )
 

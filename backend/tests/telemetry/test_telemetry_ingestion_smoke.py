@@ -23,7 +23,7 @@ from app.domains.charging_stations.types import (
 )
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.types import TelematicVehicleMapping
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.types import (
     BatteryAlertLevel,
     VehicleAnomalyType,
@@ -80,7 +80,9 @@ async def test_telemetry_service_persists_mapped_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The telemetry service enriches and persists exactly one valid message."""
-    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
+    )
 
     async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
         return mapping
@@ -90,7 +92,7 @@ async def test_telemetry_service_persists_mapped_message(
 
     async def no_previous_telemetry(
         db: AsyncSession, vehicle_id: UUID
-    ) -> VehicleTelemetryModel | None:
+    ) -> TelemetryModel | None:
         return None
 
     monkeypatch.setattr(
@@ -115,14 +117,16 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """process_message raises exactly one notification when SOC crosses a threshold (F-A2)."""
-    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
+    )
     # battery_temperature/battery_voltage/error_codes/soh_percent are None
     # so F-A3's and F-A4's detectors (also run by process_message) find
     # nothing to report here.
     previous_telemetry = SimpleNamespace(
-        soc=25.0,
-        battery_temperature=None,
-        battery_voltage=None,
+        soc_percent=25.0,
+        battery_temperature_celsius=None,
+        battery_voltage_v=None,
         error_codes=None,
         soh_percent=None,
     )
@@ -249,11 +253,13 @@ async def test_process_message_raises_soh_alert_on_crossing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """process_message raises exactly one SOH_ALERT notification on a crossing (F-A3)."""
-    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
+    )
     previous_telemetry = SimpleNamespace(
-        soc=80.0,
-        battery_temperature=None,
-        battery_voltage=None,
+        soc_percent=80.0,
+        battery_temperature_celsius=None,
+        battery_voltage_v=None,
         error_codes=None,
         soh_percent=75.0,
     )
@@ -397,14 +403,14 @@ def test_detect_new_error_codes(
 def test_detect_vehicle_anomalies_returns_every_detector_that_fires() -> None:
     """A single reading tripping two conditions at once returns both anomalies."""
     previous_telemetry = SimpleNamespace(
-        battery_temperature=45.0, battery_voltage=650.0, error_codes=None
+        battery_temperature_celsius=45.0, battery_voltage_v=650.0, error_codes=None
     )
     message = build_telemetry_envelope(
         battery_temperature=65.0, battery_voltage=650.0, errors=["E042"]
     ).message
 
     anomalies = telemetry_detection.detect_vehicle_anomalies(
-        cast(VehicleTelemetryModel, previous_telemetry), message
+        cast(TelemetryModel, previous_telemetry), message
     )
 
     anomaly_types = {anomaly.anomaly_type for anomaly in anomalies}
@@ -417,14 +423,14 @@ def test_detect_vehicle_anomalies_returns_every_detector_that_fires() -> None:
 def test_detect_vehicle_anomalies_reads_stored_error_codes_shape() -> None:
     """The previous reading's error_codes is the stored {"codes": [...]} JSONB shape."""
     previous_telemetry = SimpleNamespace(
-        battery_temperature=None,
-        battery_voltage=None,
+        battery_temperature_celsius=None,
+        battery_voltage_v=None,
         error_codes={"codes": ["E001"]},
     )
     message = build_telemetry_envelope(errors=["E001", "E042"]).message
 
     anomalies = telemetry_detection.detect_vehicle_anomalies(
-        cast(VehicleTelemetryModel, previous_telemetry), message
+        cast(TelemetryModel, previous_telemetry), message
     )
 
     assert len(anomalies) == 1
@@ -457,11 +463,13 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """process_message raises one ANOMALY_ALERT notification per detector that fires (F-A4)."""
-    mapping = TelematicVehicleMapping(telematic_id=uuid4(), vehicle_id=uuid4())
+    mapping = TelematicVehicleMapping(
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
+    )
     previous_telemetry = SimpleNamespace(
-        soc=80.0,
-        battery_temperature=45.0,
-        battery_voltage=650.0,
+        soc_percent=80.0,
+        battery_temperature_celsius=45.0,
+        battery_voltage_v=650.0,
         error_codes=None,
         soh_percent=None,
     )
@@ -519,7 +527,7 @@ async def test_battery_alert_payload_carries_station_coordinates(
     previous_telemetry = build_telemetry_record(
         vehicle_id=vehicle_id, recorded_at=datetime(2026, 8, 26, tzinfo=timezone.utc)
     )
-    previous_telemetry.soc = 25.0
+    previous_telemetry.soc_percent = 25.0
     station = NearestChargingStationReference(
         station_id=uuid4(),
         display_name="Depot A",

@@ -46,8 +46,8 @@ forever, so bound it:
 ```bash
 uv run python ../simulator/seed_simulator_devices.py         # vehicle + TBOX-SIM-00001
 timeout 14 uv run python ../simulator/telematic_simulator.py  # ~3 messages
-Q "select count(*), count(distinct vehicle_id), max(recorded_at) from vehicle_telemetry"
-VID=$(Q "select vehicle_id from vehicle_telemetry limit 1")
+Q "select count(*), count(distinct vehicle_id), max(recorded_at) from telemetry"
+VID=$(Q "select vehicle_id from telemetry limit 1")
 curl -s localhost:8000/api/v1/telemetry/vehicles/$VID/latest  # lat/lon, soc, ...
 ```
 Expected: ≥1 row per seeded vehicle; `latest` returns the newest point.

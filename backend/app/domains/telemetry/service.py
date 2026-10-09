@@ -62,7 +62,7 @@ import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.time_windows as telemetry_time_windows
 import app.domains.vehicles.service as vehicle_service
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import (
     FleetOperatingReportResponse,
     FleetVehicleLiveStatusListResponse,
@@ -142,7 +142,7 @@ def _calculate_is_online(last_received_at: datetime | None) -> bool:
 
 async def _find_latest_telemetry_with_online_flag(
     db: AsyncSession, vehicle_id: UUID
-) -> tuple[VehicleTelemetryModel, bool] | None:
+) -> tuple[TelemetryModel, bool] | None:
     """Get a vehicle's newest reading and whether the vehicle is online.
 
     Two simple queries: the newest row by device ``recorded_at`` (what
@@ -196,8 +196,13 @@ async def get_latest_vehicle_telemetry_response(
             f"No telemetry found for vehicle with id '{vehicle_id}'"
         )
     telemetry, is_online = latest
+    telematic_serial = await telematics_service.resolve_serial_by_id(
+        db, telemetry.telematic_id
+    )
     return telemetry_mappers.to_vehicle_telemetry_latest_response(
-        telemetry, is_online=is_online
+        telemetry,
+        is_online=is_online,
+        telematic_serial=telematic_serial or "",
     )
 
 
@@ -835,6 +840,7 @@ async def process_message(
         telemetry_values = message.to_vehicle_telemetry_values(
             telematic_id,
             vehicle_id,
+            mapping.organization_id,
             utc_now(),
             envelope.raw_payload,
         )

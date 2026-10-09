@@ -77,7 +77,7 @@ class TelematicModel(Base):
     ...
 
 
-class VehicleTelemetryModel(Base):
+class TelemetryModel(Base):
     ...
 
 

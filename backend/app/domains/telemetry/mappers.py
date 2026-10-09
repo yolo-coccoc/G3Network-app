@@ -18,7 +18,7 @@ attribute name.
 from typing import Any
 from uuid import UUID
 
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import (
     FleetVehicleLiveStatusResponse,
     TelemetryMessage,
@@ -30,7 +30,7 @@ from app.domains.vehicles.types import VehicleSummary
 from app.libs.common.geo import location_to_coordinates
 
 
-def to_coordinates(telemetry: VehicleTelemetryModel) -> tuple[float, float]:
+def to_coordinates(telemetry: TelemetryModel) -> tuple[float, float]:
     """Decode a telemetry row's NOT NULL ``location`` into latitude/longitude.
 
     Args:
@@ -41,16 +41,16 @@ def to_coordinates(telemetry: VehicleTelemetryModel) -> tuple[float, float]:
     """
     latitude, longitude = location_to_coordinates(telemetry.location)
     # location_to_coordinates()'s return type is generic (Optional, since
-    # charging_stations.location can be null) - vehicle_telemetry.location
+    # charging_stations.location can be null) - telemetry.location
     # is NOT NULL, so this pair is never actually missing; the assertion
     # documents that invariant for both mypy and a future reader.
     assert latitude is not None and longitude is not None, (
-        "vehicle_telemetry.location is NOT NULL"
+        "telemetry.location is NOT NULL"
     )
     return latitude, longitude
 
 
-def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
+def _to_reading_fields(telemetry: TelemetryModel) -> dict[str, Any]:
     """Collect the per-reading fields shared by the latest and history responses.
 
     Args:
@@ -66,37 +66,39 @@ def _to_reading_fields(telemetry: VehicleTelemetryModel) -> dict[str, Any]:
         "recorded_at": telemetry.recorded_at,
         "latitude": latitude,
         "longitude": longitude,
-        "speed": telemetry.speed,
-        "heading": telemetry.heading,
-        "soc": telemetry.soc,
-        "battery_voltage": telemetry.battery_voltage,
-        "battery_current": telemetry.battery_current,
-        "battery_temperature": telemetry.battery_temperature,
+        "speed": telemetry.speed_kmh,
+        "heading": telemetry.heading_degrees,
+        "soc": telemetry.soc_percent,
+        "battery_voltage": telemetry.battery_voltage_v,
+        "battery_current": telemetry.battery_current_a,
+        "battery_temperature": telemetry.battery_temperature_celsius,
         "soh_percent": telemetry.soh_percent,
         "cycle_count": telemetry.cycle_count,
-        "motor_temperature": telemetry.motor_temperature,
-        "odometer": telemetry.odometer,
-        "signal_strength": telemetry.signal_strength,
+        "motor_temperature": telemetry.motor_temperature_celsius,
+        "odometer": telemetry.odometer_km,
+        "signal_strength": telemetry.signal_dbm,
         "error_codes": telemetry.error_codes,
         "schema_version": telemetry.schema_version,
     }
 
 
 def to_vehicle_telemetry_latest_response(
-    telemetry: VehicleTelemetryModel, *, is_online: bool
+    telemetry: TelemetryModel, *, is_online: bool, telematic_serial: str
 ) -> VehicleTelemetryLatestResponse:
     """Build the latest-telemetry response from the ORM row (F-A1).
 
     Args:
         telemetry: Telemetry ORM row queried by the repository.
         is_online: Online flag already computed by the service.
+        telematic_serial: Serial of the sending device, resolved by the
+            service (the row only keeps ``telematic_id``, TM-16).
 
     Returns:
         Response schema with latitude/longitude decoded from ``location``.
     """
     return VehicleTelemetryLatestResponse(
         vehicle_id=telemetry.vehicle_id,
-        telematic_serial=telemetry.telematic_serial,
+        telematic_serial=telematic_serial,
         received_at=telemetry.received_at,
         is_online=is_online,
         **_to_reading_fields(telemetry),
@@ -104,7 +106,7 @@ def to_vehicle_telemetry_latest_response(
 
 
 def to_vehicle_live_status_reference(
-    telemetry: VehicleTelemetryModel, *, is_online: bool
+    telemetry: TelemetryModel, *, is_online: bool
 ) -> VehicleLiveStatusReference:
     """Build the cross-domain live-status DTO from the newest ORM row (F-A1).
 
@@ -123,7 +125,7 @@ def to_vehicle_live_status_reference(
         recorded_at=telemetry.recorded_at,
         received_at=telemetry.received_at,
         is_online=is_online,
-        signal_strength_dbm=telemetry.signal_strength,
+        signal_strength_dbm=telemetry.signal_dbm,
     )
 
 
@@ -165,7 +167,7 @@ def to_fleet_vehicle_live_status_response(
 
 
 def to_vehicle_telemetry_history_point(
-    telemetry: VehicleTelemetryModel,
+    telemetry: TelemetryModel,
 ) -> VehicleTelemetryHistoryPoint:
     """Build one history point from the ORM row (F-A5).
 

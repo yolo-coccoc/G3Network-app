@@ -96,7 +96,7 @@ class SupportCaseModel(Base):
     error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
     location: Mapped[WKBElement | None] = mapped_column(
         # spatial_index=False: this column is only ever an input snapshot,
-        # never searched - matching vehicle_telemetry.location's rationale
+        # never searched - matching telemetry.location's rationale
         # rather than charging_stations.location's GIST-indexed one.
         Geography(geometry_type="POINT", srid=4326, spatial_index=False),
         nullable=True,

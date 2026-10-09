@@ -172,7 +172,10 @@ async def test_assign_vehicle_to_driver_succeeds(
     driver_record = build_driver_record()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     inserted = build_assignment_record(
         driver_id=driver_record.driver_id, vehicle_id=vehicle_id
@@ -253,7 +256,10 @@ async def test_assign_vehicle_to_driver_rejects_vehicle_assigned_elsewhere(
     other_driver_id = uuid4()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     assignment_elsewhere = build_assignment_record(
         driver_id=other_driver_id, vehicle_id=vehicle_id
@@ -298,7 +304,10 @@ async def test_assign_vehicle_to_driver_is_idempotent_for_same_vehicle(
     driver_record = build_driver_record()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     existing_assignment = build_assignment_record(
         driver_id=driver_record.driver_id, vehicle_id=vehicle_id
@@ -346,7 +355,10 @@ async def test_assign_vehicle_to_driver_auto_closes_previous_assignment(
     old_vehicle_id = uuid4()
     new_vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=new_vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=new_vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     previous_assignment = build_assignment_record(
         driver_id=driver_record.driver_id, vehicle_id=old_vehicle_id
@@ -485,7 +497,10 @@ async def test_list_driver_assignment_history_enriches_each_row(
         unassigned_at=closed_at,
     )
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
 
     async def get_by_id(db: AsyncSession, driver_id: UUID) -> DriverModel:
@@ -573,7 +588,10 @@ async def test_list_drivers_passes_search_and_vehicle_filters_to_both_queries(
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin=vin,
+            battery_capacity_kwh=None,
         )
 
     async def list_all(db: AsyncSession, **kwargs: object) -> list[DriverModel]:

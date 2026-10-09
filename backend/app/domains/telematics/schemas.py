@@ -14,16 +14,24 @@ class TelematicCreateRequest(BaseModel):
 
     Attributes:
         telematic_serial: Unique serial printed on the device.
+        imei: IMEI of the device modem, if known.
+        organization_id: The organization that owns the device (TX-07); an
+            unknown organization is rejected (404).
+        acquired_at: When the owner took the device; defaults to now.
         vehicle_vin: VIN of the vehicle to assign, if any; a VIN matching
             no live vehicle is rejected (404).
-        status: Initial operating status.
-        firmware_version: Current firmware version, if known.
+        status: Initial status.
+        status_reason: Why the device starts in that status, if it needs
+            explaining.
     """
 
     telematic_serial: str = Field(..., min_length=1, max_length=50)
-    vehicle_vin: str | None = Field(None, min_length=17, max_length=17)
+    imei: str | None = Field(default=None, min_length=15, max_length=15)
+    organization_id: UUID
+    acquired_at: datetime | None = None
+    vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus = TelematicStatus.ACTIVE
-    firmware_version: str | None = Field(None, max_length=50)
+    status_reason: str | None = Field(default=None, max_length=200)
 
 
 class TelematicUpdateRequest(BaseModel):
@@ -34,16 +42,18 @@ class TelematicUpdateRequest(BaseModel):
 
     Attributes:
         telematic_serial: New serial.
+        imei: New IMEI.
         vehicle_vin: VIN of the vehicle to (re)assign (a VIN matching no
             live vehicle is rejected with 404), or ``null`` to unassign.
-        status: New operating status.
-        firmware_version: New firmware version.
+        status: New status.
+        status_reason: Why the status changes.
     """
 
-    telematic_serial: str | None = Field(None, min_length=1, max_length=50)
-    vehicle_vin: str | None = Field(None, min_length=17, max_length=17)
+    telematic_serial: str | None = Field(default=None, min_length=1, max_length=50)
+    imei: str | None = Field(default=None, min_length=15, max_length=15)
+    vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus | None = None
-    firmware_version: str | None = Field(None, max_length=50)
+    status_reason: str | None = Field(default=None, max_length=200)
 
 
 class TelematicResponse(BaseModel):
@@ -54,13 +64,19 @@ class TelematicResponse(BaseModel):
     Attributes:
         telematic_id: Internal ID of the device.
         telematic_serial: Unique serial printed on the device.
+        imei: IMEI of the device modem, if entered.
+        organization_id: The organization that owns the device.
+        acquired_at: When the current owner took the device.
         vehicle_id: Internal ID of the assigned vehicle, if any.
         vehicle_vin: VIN of the assigned vehicle, ``None`` when unassigned
             or the vehicle is soft-deleted.
-        status: Operating status.
-        firmware_version: Current firmware version.
-        telemetry_interval_seconds: Interval last pushed over MQTT (F-J2).
-        config_pushed_at: When that interval was pushed.
+        installed_at: When it was mounted on its current vehicle.
+        status: Status set by a person.
+        status_reason: Why the device is in that status.
+        firmware_version: Firmware in the newest status report (TX-11),
+            ``None`` until the device reports one.
+        telemetry_interval_seconds: Publish interval in the newest status
+            report, ``None`` until the device reports one.
         last_seen_at: Newest telemetry ``received_at`` of the mounted
             vehicle (F-J1); ``None`` when the device is not mounted on a
             live vehicle or the vehicle never reported.
@@ -80,12 +96,16 @@ class TelematicResponse(BaseModel):
 
     telematic_id: UUID
     telematic_serial: str
+    imei: str | None
+    organization_id: UUID
+    acquired_at: datetime
     vehicle_id: UUID | None
     vehicle_vin: str | None
+    installed_at: datetime | None
     status: TelematicStatus
+    status_reason: str | None
     firmware_version: str | None
     telemetry_interval_seconds: int | None
-    config_pushed_at: datetime | None
     last_seen_at: datetime | None
     is_online: bool
     is_silent: bool
@@ -113,14 +133,14 @@ class TelematicConfigResponse(BaseModel):
     """Outcome of one successful configuration push (F-J2).
 
     Returned only on success - see ``service.push_telematic_config``'s
-    fail-closed contract: nothing is persisted and this response is never
-    built if the MQTT publish itself failed.
+    fail-closed contract: this response is never built if the MQTT publish
+    itself failed.
 
     Attributes:
         telematic_id: Internal ID of the configured device.
         telematic_serial: Serial of the configured device.
         telemetry_interval_seconds: Interval that was published.
-        config_pushed_at: Timestamp stamped on the command and stored.
+        config_pushed_at: Timestamp stamped on the command (not stored).
         command_topic: MQTT topic the command was published to.
     """
 

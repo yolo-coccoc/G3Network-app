@@ -69,7 +69,7 @@ class ChargingStationModel(Base):
         display_name: Display name.
         location: GPS location as a PostGIS geography point (SRID 4326),
             nullable. Stored as geography (not plain lat/lon columns, unlike
-            ``vehicle_telemetry``) since this is descriptive directory data
+            ``telemetry``) since this is descriptive directory data
             rather than a high-frequency telemetry stream.
         power_rating_kw: Nominal power rating of the station in kW, nullable.
             A simple station-level aggregate, not modeled per EVSE/connector.

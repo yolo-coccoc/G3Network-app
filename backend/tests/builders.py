@@ -35,7 +35,7 @@ from app.domains.support.types import (
 )
 from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.types import TelematicStatus
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.types import VehicleStatus
@@ -214,11 +214,10 @@ def build_telematic_record(vehicle_id: UUID) -> TelematicModel:
     return TelematicModel(
         telematic_id=uuid4(),
         telematic_serial="TBOX-TEST-001",
+        organization_id=uuid4(),
+        acquired_at=now,
         vehicle_id=vehicle_id,
         status=TelematicStatus.ACTIVE,
-        firmware_version="test",
-        telemetry_interval_seconds=None,
-        config_pushed_at=None,
         created_at=now,
         updated_at=now,
     )
@@ -260,28 +259,28 @@ def build_telemetry_record(
     message_id: int = 1,
     soh_percent: float | None = None,
     cycle_count: int | None = None,
-) -> VehicleTelemetryModel:
+) -> TelemetryModel:
     """Create a minimal ORM telemetry record for a history/latest test."""
-    return VehicleTelemetryModel(
+    return TelemetryModel(
         message_id=message_id,
-        message_uuid=uuid4(),
+        organization_id=uuid4(),
+        device_message_id=uuid4(),
         telematic_id=uuid4(),
-        telematic_serial="TBOX-TEST-001",
         vehicle_id=vehicle_id,
         recorded_at=recorded_at,
         received_at=recorded_at,
         location=coordinates_to_location(10.762622, 106.660172),
-        speed=None,
-        heading=None,
-        soc=80.0,
-        battery_voltage=None,
-        battery_current=None,
-        battery_temperature=None,
+        speed_kmh=None,
+        heading_degrees=None,
+        soc_percent=80.0,
+        battery_voltage_v=None,
+        battery_current_a=None,
+        battery_temperature_celsius=None,
         soh_percent=soh_percent,
         cycle_count=cycle_count,
-        motor_temperature=None,
-        odometer=None,
-        signal_strength=None,
+        motor_temperature_celsius=None,
+        odometer_km=None,
+        signal_dbm=None,
         error_codes=None,
         raw_payload={},
         schema_version=1,

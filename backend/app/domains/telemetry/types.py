@@ -109,7 +109,7 @@ class VehicleAnomaly:
 class VehicleTelemetryWindowSummary:
     """Folded telemetry deltas for one vehicle over one time window (F-A6/F-C6).
 
-    Produced by a single SQL pass over ``vehicle_telemetry`` (see
+    Produced by a single SQL pass over ``telemetry`` (see
     ``telemetry/repository.py::get_vehicle_window_summary``). Every field
     is already clamped and coalesced by the query, so an empty window
     yields zeros (never ``None``) for the sums.

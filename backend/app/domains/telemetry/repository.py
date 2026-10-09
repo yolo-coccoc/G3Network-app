@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.types import (
     ReportGranularity,
     VehicleBatteryHealthDay,
@@ -53,7 +53,7 @@ async def insert_telemetry(
     """
     query_result = cast(
         CursorResult[Any],
-        await db.execute(insert(VehicleTelemetryModel).values(telemetry_values)),
+        await db.execute(insert(TelemetryModel).values(telemetry_values)),
     )
     logger.debug(
         "insert_telemetry",
@@ -64,7 +64,7 @@ async def insert_telemetry(
 
 async def get_latest_vehicle_telemetry(
     db: AsyncSession, vehicle_id: UUID
-) -> VehicleTelemetryModel | None:
+) -> TelemetryModel | None:
     """Get the latest telemetry record for a vehicle.
 
     Args:
@@ -76,9 +76,9 @@ async def get_latest_vehicle_telemetry(
         data yet.
     """
     query_result = await db.execute(
-        select(VehicleTelemetryModel)
-        .where(VehicleTelemetryModel.vehicle_id == vehicle_id)
-        .order_by(VehicleTelemetryModel.recorded_at.desc())
+        select(TelemetryModel)
+        .where(TelemetryModel.vehicle_id == vehicle_id)
+        .order_by(TelemetryModel.recorded_at.desc())
         .limit(1)
     )
     return query_result.scalar_one_or_none()
@@ -92,7 +92,7 @@ async def find_latest_received_at(
     Ordered by `received_at` (the backend's clock), not `recorded_at` (the
     device's): a row with a future-dated `recorded_at` must not stay
     "latest" and hide newer arrivals. Served by
-    `ix_vehicle_telemetry_vehicle_received`.
+    `ix_telemetry_vehicle_received`.
 
     Args:
         db: Current database session.
@@ -102,9 +102,9 @@ async def find_latest_received_at(
         The largest `received_at`, or None if the vehicle never reported.
     """
     query_result = await db.execute(
-        select(VehicleTelemetryModel.received_at)
-        .where(VehicleTelemetryModel.vehicle_id == vehicle_id)
-        .order_by(VehicleTelemetryModel.received_at.desc())
+        select(TelemetryModel.received_at)
+        .where(TelemetryModel.vehicle_id == vehicle_id)
+        .order_by(TelemetryModel.received_at.desc())
         .limit(1)
     )
     return query_result.scalar_one_or_none()
@@ -117,7 +117,7 @@ async def get_vehicle_telemetry_history(
     start_time: datetime,
     end_time: datetime,
     limit: int,
-) -> list[VehicleTelemetryModel]:
+) -> list[TelemetryModel]:
     """Get telemetry records for a vehicle within a time range (F-A5).
 
     Args:
@@ -135,18 +135,18 @@ async def get_vehicle_telemetry_history(
         trip replay), oldest first, capped at ``limit``.
 
     Side Effects:
-        Reuses the existing ``ix_vehicle_telemetry_vehicle_time`` index
+        Reuses the existing ``ix_telemetry_vehicle_time`` index
         (btree on ``vehicle_id, recorded_at DESC``) - PostgreSQL can scan it
         backwards for this ascending range scan, so no new index is needed.
     """
     query_result = await db.execute(
-        select(VehicleTelemetryModel)
+        select(TelemetryModel)
         .where(
-            VehicleTelemetryModel.vehicle_id == vehicle_id,
-            VehicleTelemetryModel.recorded_at >= start_time,
-            VehicleTelemetryModel.recorded_at <= end_time,
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= start_time,
+            TelemetryModel.recorded_at <= end_time,
         )
-        .order_by(VehicleTelemetryModel.recorded_at.asc())
+        .order_by(TelemetryModel.recorded_at.asc())
         .limit(limit)
     )
     return list(query_result.scalars().all())
@@ -166,7 +166,7 @@ async def get_vehicle_window_summary(
     time-bounded window (an inner query), then sums the clamped
     positive deltas in an outer aggregate - a window function cannot be
     nested inside an aggregate in the same ``SELECT``. Reuses
-    ``ix_vehicle_telemetry_vehicle_time`` for both the filter and the
+    ``ix_telemetry_vehicle_time`` for both the filter and the
     window's sort order; no new index is needed. Deliberately not built
     on ``get_vehicle_telemetry_history`` - that function's hard ``limit``
     would silently truncate a month of frequent telemetry.
@@ -192,31 +192,29 @@ async def get_vehicle_window_summary(
     # partition_by is redundant while the WHERE pins one vehicle, but it
     # keeps the fold correct by construction if the filter is ever
     # widened, and costs nothing - PostgreSQL proves vehicle_id constant
-    # and reuses ix_vehicle_telemetry_vehicle_time's ordering instead of
+    # and reuses ix_telemetry_vehicle_time's ordering instead of
     # sorting.
-    previous_soc = func.lag(VehicleTelemetryModel.soc).over(
-        partition_by=VehicleTelemetryModel.vehicle_id,
-        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    previous_soc = func.lag(TelemetryModel.soc_percent).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
     )
-    previous_odometer = func.lag(VehicleTelemetryModel.odometer).over(
-        partition_by=VehicleTelemetryModel.vehicle_id,
-        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    previous_odometer = func.lag(TelemetryModel.odometer_km).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
     )
 
     deltas = (
         select(
-            VehicleTelemetryModel.recorded_at.label("recorded_at"),
-            VehicleTelemetryModel.odometer.label("odometer"),
-            (previous_soc - VehicleTelemetryModel.soc).label("soc_drop"),
-            (VehicleTelemetryModel.soc - previous_soc).label("soc_rise"),
-            (VehicleTelemetryModel.odometer - previous_odometer).label(
-                "odometer_delta"
-            ),
+            TelemetryModel.recorded_at.label("recorded_at"),
+            TelemetryModel.odometer_km.label("odometer"),
+            (previous_soc - TelemetryModel.soc_percent).label("soc_drop"),
+            (TelemetryModel.soc_percent - previous_soc).label("soc_rise"),
+            (TelemetryModel.odometer_km - previous_odometer).label("odometer_delta"),
         )
         .where(
-            VehicleTelemetryModel.vehicle_id == vehicle_id,
-            VehicleTelemetryModel.recorded_at >= start_time,
-            VehicleTelemetryModel.recorded_at <= end_time,
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= start_time,
+            TelemetryModel.recorded_at <= end_time,
         )
         .subquery()
     )
@@ -303,13 +301,13 @@ async def list_vehicle_period_summaries(
     Side Effects:
         Read-only. Single SQL round trip.
     """
-    previous_soc = func.lag(VehicleTelemetryModel.soc).over(
-        partition_by=VehicleTelemetryModel.vehicle_id,
-        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    previous_soc = func.lag(TelemetryModel.soc_percent).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
     )
-    previous_odometer = func.lag(VehicleTelemetryModel.odometer).over(
-        partition_by=VehicleTelemetryModel.vehicle_id,
-        order_by=VehicleTelemetryModel.recorded_at.asc(),
+    previous_odometer = func.lag(TelemetryModel.odometer_km).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
     )
     # The window is inclusive of end_time. When end_time sits exactly on a
     # period boundary, a reading stamped at end_time would otherwise open a
@@ -317,7 +315,7 @@ async def list_vehicle_period_summaries(
     # microsecond earlier (the timestamp resolution) keeps it in the last
     # listed period and changes no other reading's bucket.
     bucketed_time = func.least(
-        VehicleTelemetryModel.recorded_at, end_time - timedelta(microseconds=1)
+        TelemetryModel.recorded_at, end_time - timedelta(microseconds=1)
     )
     period_start = func.date_trunc(
         granularity.value,
@@ -329,18 +327,16 @@ async def list_vehicle_period_summaries(
     deltas = (
         select(
             period_start.label("period_start"),
-            VehicleTelemetryModel.recorded_at.label("recorded_at"),
-            VehicleTelemetryModel.odometer.label("odometer"),
-            (previous_soc - VehicleTelemetryModel.soc).label("soc_drop"),
-            (VehicleTelemetryModel.soc - previous_soc).label("soc_rise"),
-            (VehicleTelemetryModel.odometer - previous_odometer).label(
-                "odometer_delta"
-            ),
+            TelemetryModel.recorded_at.label("recorded_at"),
+            TelemetryModel.odometer_km.label("odometer"),
+            (previous_soc - TelemetryModel.soc_percent).label("soc_drop"),
+            (TelemetryModel.soc_percent - previous_soc).label("soc_rise"),
+            (TelemetryModel.odometer_km - previous_odometer).label("odometer_delta"),
         )
         .where(
-            VehicleTelemetryModel.vehicle_id == vehicle_id,
-            VehicleTelemetryModel.recorded_at >= start_time,
-            VehicleTelemetryModel.recorded_at <= end_time,
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= start_time,
+            TelemetryModel.recorded_at <= end_time,
         )
         .subquery()
     )
@@ -404,7 +400,7 @@ async def list_vehicle_battery_health_days(
     per day, the value of the latest reading that reported it (TimescaleDB
     ``last(value, time)`` with ``FILTER (WHERE value IS NOT NULL)``, so a
     final reading without SOH doesn't blank out an earlier one). Reuses
-    ``ix_vehicle_telemetry_vehicle_time`` for the range filter.
+    ``ix_telemetry_vehicle_time`` for the range filter.
 
     Args:
         db: Current database session.
@@ -424,21 +420,21 @@ async def list_vehicle_battery_health_days(
     """
     day_start = func.date_trunc(
         "day",
-        VehicleTelemetryModel.recorded_at,
+        TelemetryModel.recorded_at,
         time_zone,
         type_=DateTime(timezone=True),
     )
     readings = (
         select(
             day_start.label("day_start"),
-            VehicleTelemetryModel.recorded_at.label("recorded_at"),
-            VehicleTelemetryModel.soh_percent.label("soh_percent"),
-            VehicleTelemetryModel.cycle_count.label("cycle_count"),
+            TelemetryModel.recorded_at.label("recorded_at"),
+            TelemetryModel.soh_percent.label("soh_percent"),
+            TelemetryModel.cycle_count.label("cycle_count"),
         )
         .where(
-            VehicleTelemetryModel.vehicle_id == vehicle_id,
-            VehicleTelemetryModel.recorded_at >= start_time,
-            VehicleTelemetryModel.recorded_at <= end_time,
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= start_time,
+            TelemetryModel.recorded_at <= end_time,
         )
         .subquery()
     )

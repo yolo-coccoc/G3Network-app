@@ -34,7 +34,10 @@ def _patch_live_vehicle(monkeypatch: pytest.MonkeyPatch) -> None:
         db_session: AsyncSession, vehicle_id: UUID
     ) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
         )
 
     monkeypatch.setattr(
@@ -153,7 +156,7 @@ async def test_build_response_never_flags_maintenance_device_silent(
 ) -> None:
     """A device out of service is not silent, as in the monitor; last-seen still shows."""
     telematic_record = build_telematic_record(uuid4())
-    telematic_record.status = TelematicStatus.MAINTENANCE
+    telematic_record.status = TelematicStatus.INACTIVE
     last_seen_at = datetime.now(timezone.utc) - SILENT_THRESHOLD - timedelta(minutes=10)
     _patch_live_vehicle(monkeypatch)
     _patch_telemetry(

@@ -21,7 +21,7 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 44 built, 41 planned, 1 proposed.
+**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 46 built, 39 planned, 1 proposed.
 
 ## Domain map
 
@@ -31,7 +31,7 @@ flowchart LR
   vehicles["Vehicles<br/>4 built"]:::built
   batteries["Batteries<br/>4 built"]:::built
   warranties["Warranties<br/>2 built"]:::built
-  telematics["Telematics<br/>1 built · 2 planned"]:::partial
+  telematics["Telematics<br/>3 built"]:::built
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>2 built · 4 planned"]:::partial
   fleet["Fleet<br/>4 built · 1 planned"]:::partial
@@ -94,7 +94,7 @@ Not drawn, to keep the map readable: 13 domains also point to **identity** throu
 | [Vehicles](domains/vehicles.md) | built | 4 | 0 | 0 | 13 vehicles, 13.h vehicle_history, 14 vehicle_models, 14.h vehicle_model_history |
 | [Batteries](domains/batteries.md) | built | 4 | 0 | 0 | 15 battery_models, 15.h battery_model_history, 16 batteries, 16.h battery_history |
 | [Warranties](domains/warranties.md) | built | 2 | 0 | 0 | 17 warranties, 17.h warranty_history |
-| [Telematics](domains/telematics.md) | partial | 1 | 2 | 0 | 18 telematics, 18.h telematic_history, 19 telematic_status_reports |
+| [Telematics](domains/telematics.md) | built | 3 | 0 | 0 | 18 telematics, 18.h telematic_history, 19 telematic_status_reports |
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
 | [Drivers](domains/drivers.md) | partial | 2 | 4 | 0 | 21 drivers, 21.h driver_history, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions, 24 trips, 24.h trip_history |
 | [Fleet](domains/fleet.md) | partial | 4 | 1 | 0 | 25 fleets, 25.h fleet_history, 26 fleet_vehicle_memberships, 27 geofences, 28 fleet_user_assignments |

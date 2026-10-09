@@ -25,9 +25,9 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
     )
     telematic = TelematicCreateRequest(
         telematic_serial="TBOX-TEST-001",
+        organization_id=vehicle.organization_id,
         vehicle_vin=vehicle.vin,
         status=TelematicStatus.ACTIVE,
-        firmware_version=None,
     )
 
     assert telematic.vehicle_vin == vehicle.vin

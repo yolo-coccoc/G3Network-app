@@ -12,7 +12,7 @@ notification is ``alerting.py``'s job.
 
 from collections.abc import Sequence
 
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
@@ -218,7 +218,7 @@ def detect_new_error_codes(
 
 
 def detect_vehicle_anomalies(
-    previous_telemetry: VehicleTelemetryModel | None,
+    previous_telemetry: TelemetryModel | None,
     message: TelemetryMessage,
 ) -> list[VehicleAnomaly]:
     """Run every F-A4 detector against one telemetry reading.
@@ -239,10 +239,10 @@ def detect_vehicle_anomalies(
         order (temperature, voltage, then fault codes); empty if none.
     """
     previous_temperature = (
-        previous_telemetry.battery_temperature if previous_telemetry else None
+        previous_telemetry.battery_temperature_celsius if previous_telemetry else None
     )
     previous_voltage = (
-        previous_telemetry.battery_voltage if previous_telemetry else None
+        previous_telemetry.battery_voltage_v if previous_telemetry else None
     )
     # error_codes is stored as {"codes": [...]} JSONB, or None.
     previous_error_codes = (

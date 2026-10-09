@@ -59,8 +59,11 @@ from app.domains.identity.models import (  # noqa: F401
 )
 from app.domains.notifications.models import NotificationModel  # noqa: F401
 from app.domains.support.models import SupportCaseModel  # noqa: F401
-from app.domains.telematics.models import TelematicModel  # noqa: F401
-from app.domains.telemetry.models import VehicleTelemetryModel  # noqa: F401
+from app.domains.telematics.models import (  # noqa: F401
+    TelematicModel,
+    TelematicStatusReportModel,
+)
+from app.domains.telemetry.models import TelemetryModel  # noqa: F401
 from app.domains.vehicles.models import (  # noqa: F401
     VehicleModel,
     VehicleModelModel,

@@ -6,7 +6,7 @@ can never disagree.
 
 Eligibility is the caller's precondition, and both callers apply the same
 one: the device is ``ACTIVE`` and mounted on a live (not soft-deleted)
-vehicle. A device taken out of service (``INACTIVE``/``MAINTENANCE``) or
+vehicle. A device taken out of service (``INACTIVE``) or
 not mounted is never silent: its quiet is expected, not an incident.
 """
 

@@ -31,3 +31,7 @@ class TelematicNotConfigurableError(TelematicError, ConflictError):
 
 class TelematicCommandPublishError(TelematicError, UpstreamUnavailableError):
     """Publishing a device command over MQTT failed (F-J2)."""
+
+
+class TelematicOrganizationNotFoundError(TelematicError, NotFoundError):
+    """The ``organization_id`` sent on a device create matches no organization."""

@@ -123,8 +123,8 @@ erDiagram
   organization_settings |o--|| organizations : "organization_id"
   vehicles }o--|| organizations : "organization_id"
   batteries }o--|| organizations : "organization_id"
-  telematics }o..|| organizations : "organization_id"
-  telemetry }o..|| organizations : "organization_id"
+  telematics }o--|| organizations : "organization_id"
+  telemetry }o--|| organizations : "organization_id"
   drivers |o..|| memberships : "membership_id"
   driver_vehicle_assignments }o..o| organizations : "organization_id"
   driving_sessions }o..|| organizations : "organization_id"
@@ -241,8 +241,8 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [organization_settings](#organization_settings).organization_id
 - [vehicles](vehicles.md#vehicles).organization_id
 - [batteries](batteries.md#batteries).organization_id
-- [telematics](telematics.md#telematics).organization_id (planned)
-- [telemetry](telemetry.md#telemetry).organization_id (planned)
+- [telematics](telematics.md#telematics).organization_id
+- [telemetry](telemetry.md#telemetry).organization_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)
 - [driving_sessions](drivers.md#driving_sessions).organization_id (planned)
 - [trips](drivers.md#trips).organization_id (planned)

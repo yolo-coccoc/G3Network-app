@@ -27,7 +27,7 @@
 
 | WP | Scope | Features | Tables | Depends on | Status |
 |---|---|---|---|---|---|
-| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | IN PROGRESS: fleets, memberships and the identity tables + change-history mechanism DONE (chunk 1); vehicles, vehicle models, battery models, batteries, warranties DONE (chunk 2); telematics onward TODO |
+| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | IN PROGRESS: fleets, memberships and the identity tables + change-history mechanism DONE (chunk 1); vehicles, vehicle models, battery models, batteries, warranties DONE (chunk 2); telematics, telematic_status_reports and telemetry DONE (chunk 3); drivers onward TODO |
 | WP2 | Identity: organizations, users, memberships, roles, credentials, OTP, login/sessions, consent, audit log, access rule by role only (BL-16) | ACC-01..10, 12..18, 20 | organizations, users, user_state, memberships, user_credentials, user_sessions, one_time_codes, user_consents, legal_documents, user_role_assignments, access_audit_logs, organization_settings | WP1 | TODO |
 | WP3 | Vehicles, vehicle models, battery models, batteries, warranties | VEH-01..03, 05, 06, BAT-01, WAR-01 | vehicles, vehicle_models, battery_models, batteries, warranties | WP2 | TODO |
 | WP4 | Telematics and telemetry adjustments, T-Box status reports | DEV-01..06, 08, MON-01, 02 | telematics, telematic_status_reports, telemetry | WP3 | TODO |
@@ -71,6 +71,10 @@ fleet rest, charging, billing, notifications.
 - **Chunk 2, vehicle pack capacity** is the vehicle model's nominal capacity only; the installed battery's design capacity (VH-16) needs `batteries` to be readable and comes with WP3/WP4 (VH-20).
 - **Chunk 2, vehicle create body**: `organization_id` and `vehicle_model_id` are required body fields, `acquired_at` is optional (default now); `/vehicle-models` create/list/get exist so a vehicle can be created. Ownership transfer (VH-12) is WP3.
 - **Chunk 2, status of period views**: both `vehicle_ownership_periods` and `battery_installation_periods` are created by the baseline migration (the DBML defines both); no code reads them yet.
+- **Chunk 3, status reports not ingested**: `telematic_status_reports` exists (model, migration, newest report read for the device response) but nothing writes it: the status-topic fields are provisional (mqtt-spec.md 2.2). WP4 adds the consumer once the vendor confirms the format.
+- **Chunk 3, API names kept**: HTTP responses and the MQTT payload keep `soc`, `speed`, `message_uuid`, `signal_strength`...; only table columns carry the unit names (TM-16, TM-18). `GET /telemetry/.../latest` still returns `telematic_serial`, resolved from `telematic_id` through the telematics service.
+- **Chunk 3, device create**: `organization_id` is a required body field (like vehicles), `acquired_at` defaults to now, `installed_at` is set to now when a device is mounted (create or update) and cleared when unmounted; a soft delete sets INACTIVE, unmounts and stores the reason (DM-25). The organization is not validated beyond the foreign key (404 from SQLSTATE 23503, like vehicles).
+- **Chunk 3, config push**: the single and fleet pushes still refuse an INACTIVE / not-ACTIVE device but do not require the device to be mounted (TX-08 says only a mounted, ACTIVE device receives configuration); the organization-wide interval push (TX-09) is WP4.
 
 ## Known issues
 
@@ -91,3 +95,7 @@ fleet rest, charging, billing, notifications.
 | `backend/app/domains/batteries`, `warranties` | Models and enums only: no service, repository, router or seed data; the `limits` keys of a warranty are not validated. | Services are WP3. |
 | `backend/tests/test_postgres_integration.py` | The history trigger of `vehicle_models`, `battery_models`, `batteries` and `warranties` is not asserted (only `vehicles` through the ownership view and `batteries` through the installation view). | Lean tests; same helper. |
 | `backend/app/domains/vehicles/router.py` | The F-F2 activation success rate endpoint no longer exists anywhere. | Replaced by computed activation in WP4 (VH-06). |
+| `backend/app/domains/telematics/service.py` | `update_telematic` does not let a caller clear `imei` or `status_reason` (null means "unchanged"), and a status change does not require a reason. | Convention for PATCH nulls; reason handling needs the caller (WP2). |
+| `backend/app/domains/telematics`, `telemetry` | No tests of `telematic_history` beyond the soft-delete row; `telematic_status_reports` has no insert path or test. | Lean tests; ingestion is WP4. |
+| `backend/app/domains/telemetry/service.py` | `get_latest_vehicle_telemetry_response` falls back to an empty `telematic_serial` if the device row cannot be found (cannot happen under the foreign key). | Keeps the response type non-null without a new error. |
+| `simulator/seed_simulator_devices.py` | Posts a device without `organization_id` (required now) and with the dropped `firmware_version`, so the seed fails against the new API. | `simulator/` was out of scope for this chunk; fix with the e2e run. |

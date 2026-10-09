@@ -795,15 +795,18 @@ class TelemetryMessage(BaseModel):
         self,
         telematic_id: UUID,
         vehicle_id: UUID,
+        organization_id: UUID,
         received_at: datetime,
         raw_payload: dict[str, object],
     ) -> dict[str, object]:
         """
-        Convert the message into a dict matching VehicleTelemetryModel.
+        Convert the message into a dict matching TelemetryModel.
 
         Args:
             telematic_id: UUID of the telematic device (looked up from telematic_serial)
             vehicle_id: UUID of the vehicle (looked up from telematic_id)
+            organization_id: Organization that owns the vehicle now, which is
+                the owner at ``recorded_at`` for a live message (DM-24 C)
             received_at: Timestamp when the backend received the message
             raw_payload: Original JSON object before Pydantic normalization
 
@@ -815,26 +818,28 @@ class TelemetryMessage(BaseModel):
         """
         vehicle_state = self.vehicle_state
         return {
-            "message_uuid": self.message_uuid,
+            "organization_id": organization_id,
+            "device_message_id": self.message_uuid,
             "telematic_id": telematic_id,
-            "telematic_serial": self.telematic_serial,
             "vehicle_id": vehicle_id,
             "recorded_at": self.recorded_at,
             "received_at": received_at,
             "location": coordinates_to_location(
                 self.location.latitude, self.location.longitude
             ),
-            "speed": vehicle_state.speed if vehicle_state else None,
-            "heading": vehicle_state.heading if vehicle_state else None,
-            "soc": self.battery.soc,
-            "battery_voltage": self.battery.voltage,
-            "battery_current": self.battery.current,
-            "battery_temperature": self.battery.temperature,
+            "speed_kmh": vehicle_state.speed if vehicle_state else None,
+            "heading_degrees": vehicle_state.heading if vehicle_state else None,
+            "soc_percent": self.battery.soc,
+            "battery_voltage_v": self.battery.voltage,
+            "battery_current_a": self.battery.current,
+            "battery_temperature_celsius": self.battery.temperature,
             "soh_percent": self.battery.soh_percent,
             "cycle_count": self.battery.cycle_count,
-            "motor_temperature": self.motor.temperature if self.motor else None,
-            "odometer": vehicle_state.odometer if vehicle_state else None,
-            "signal_strength": self.signal.strength if self.signal else None,
+            "motor_temperature_celsius": (
+                self.motor.temperature if self.motor else None
+            ),
+            "odometer_km": vehicle_state.odometer if vehicle_state else None,
+            "signal_dbm": self.signal.strength if self.signal else None,
             "error_codes": {"codes": self.errors} if self.errors else None,
             "raw_payload": raw_payload,
             "schema_version": self.schema_version,

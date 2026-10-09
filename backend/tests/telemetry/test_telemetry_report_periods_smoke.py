@@ -157,7 +157,10 @@ def report_vehicle(monkeypatch: pytest.MonkeyPatch) -> UUID:
 
     async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=value, vin="1HGBH41JXMN109186", battery_capacity_kwh=100.0
+            organization_id=uuid4(),
+            vehicle_id=value,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=100.0,
         )
 
     monkeypatch.setattr(

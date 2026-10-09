@@ -26,7 +26,7 @@ import app.domains.notifications.service as notifications_service
 import app.domains.telemetry.detection as telemetry_detection
 import app.domains.telemetry.mappers as telemetry_mappers
 from app.domains.notifications.types import NotificationSeverity, NotificationType
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.telemetry.types import (
     BATTERY_ALERT_THRESHOLDS,
@@ -215,7 +215,7 @@ async def raise_alerts_for_reading(
     db: AsyncSession,
     *,
     vehicle_id: UUID,
-    previous_telemetry: VehicleTelemetryModel | None,
+    previous_telemetry: TelemetryModel | None,
     message: TelemetryMessage,
 ) -> None:
     """Detect every per-message alert in one reading and raise its notification.
@@ -239,7 +239,9 @@ async def raise_alerts_for_reading(
         structured line per alert; does not commit. A database error
         propagates so the worker rolls back the whole message.
     """
-    previous_soc = previous_telemetry.soc if previous_telemetry is not None else None
+    previous_soc = (
+        previous_telemetry.soc_percent if previous_telemetry is not None else None
+    )
     alert_level = telemetry_detection.detect_battery_alert_level(
         previous_soc, message.battery.soc
     )

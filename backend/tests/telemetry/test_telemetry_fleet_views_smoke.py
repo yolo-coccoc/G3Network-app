@@ -222,10 +222,16 @@ async def test_fleet_operating_report_sums_before_deriving_rates(
         monkeypatch,
         vehicle_references={
             busy_id: VehicleReference(
-                vehicle_id=busy_id, vin="VINBUSY0000000001", battery_capacity_kwh=100.0
+                organization_id=uuid4(),
+                vehicle_id=busy_id,
+                vin="VINBUSY0000000001",
+                battery_capacity_kwh=100.0,
             ),
             short_id: VehicleReference(
-                vehicle_id=short_id, vin="VINSHORT000000002", battery_capacity_kwh=None
+                organization_id=uuid4(),
+                vehicle_id=short_id,
+                vin="VINSHORT000000002",
+                battery_capacity_kwh=None,
             ),
             deleted_id: None,
         },
@@ -277,6 +283,7 @@ async def test_fleet_operating_report_leaves_rates_undefined_without_distance(
         monkeypatch,
         vehicle_references={
             vehicle_id: VehicleReference(
+                organization_id=uuid4(),
                 vehicle_id=vehicle_id,
                 vin="VINPARKED00000001",
                 battery_capacity_kwh=80.0,
@@ -342,7 +349,10 @@ def _fleet_report() -> FleetOperatingReportResponse:
             operating_summary=telemetry_reports.build_operating_summary(
                 telemetry_reports.VehicleReportContext(
                     vehicle_reference=VehicleReference(
-                        vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=100.0
+                        organization_id=uuid4(),
+                        vehicle_id=uuid4(),
+                        vin=vin,
+                        battery_capacity_kwh=100.0,
                     ),
                     start_time=_WINDOW_START,
                     end_time=_WINDOW_END,

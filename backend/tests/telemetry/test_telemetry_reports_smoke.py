@@ -121,7 +121,10 @@ async def test_operating_report_falls_back_to_default_battery_capacity(
     """A vehicle with no recorded capacity gets the documented default, flagged."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=20.0,
@@ -167,7 +170,10 @@ async def test_operating_report_uses_recorded_battery_capacity(
     """A vehicle with a recorded capacity uses it, not flagged as default."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=60.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=60.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=10.0,
@@ -210,7 +216,10 @@ async def test_operating_report_returns_none_rates_for_empty_window(
     """An empty window yields zero sums but None for every derived rate."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=75.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=0.0,
@@ -256,7 +265,10 @@ async def test_operating_report_returns_none_rates_for_single_sample(
     """A single telemetry row (no adjacent pair) yields None derived rates too."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=75.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=0.0,
@@ -300,7 +312,10 @@ async def test_operating_report_reports_energy_without_distance(
     """A parked vehicle can drain SOC (HVAC) with zero distance - energy stays positive."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=75.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=5.0,
@@ -344,7 +359,10 @@ async def test_operating_report_echoes_normalized_utc_window(
     """A non-UTC offset input is echoed back normalized to UTC."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=75.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=0.0,
@@ -388,7 +406,10 @@ async def test_energy_usage_report_reports_soc_rises(
     """F-C6 converts summed SOC rises (not drops) into charged energy."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=75.0
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=75.0,
     )
     summary = VehicleTelemetryWindowSummary(
         soc_discharge_percent=5.0,

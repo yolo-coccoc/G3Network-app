@@ -28,6 +28,7 @@ from app.domains.telematics.exceptions import (
     TelematicConflictError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
+    TelematicOrganizationNotFoundError,
     TelematicVehicleNotFoundError,
 )
 from app.domains.telematics.models import TelematicModel
@@ -52,6 +53,25 @@ from app.libs.common.pagination import normalize_page_window
 
 logger = logging.getLogger(__name__)
 
+# Fixed history reasons of routine actions (no acting user until WP2).
+TELEMATIC_EDITED_REASON = "Device details edited"
+TELEMATIC_DELETED_REASON = "Device deleted"
+
+
+def _is_foreign_key_violation(error: IntegrityError) -> bool:
+    """Tell a foreign-key violation (SQLSTATE 23503) from other integrity errors.
+
+    Args:
+        error: The integrity error raised by a flush.
+
+    Returns:
+        True when the driver reports a foreign-key violation.
+    """
+    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(
+        error.orig, "pgcode", None
+    )
+    return sqlstate == "23503"
+
 
 async def resolve_mapping_by_serial(
     db: AsyncSession,
@@ -71,7 +91,8 @@ async def resolve_mapping_by_serial(
         serial: Physical serial received from a telemetry message.
 
     Returns:
-        A ``TelematicVehicleMapping`` if the mapping is valid; ``None`` if
+        A ``TelematicVehicleMapping`` (with the vehicle's current owner) if the
+        mapping is valid; ``None`` if
         the device does not exist, has been soft-deleted, has not been
         assigned a vehicle, or is assigned to a soft-deleted vehicle.
 
@@ -80,15 +101,43 @@ async def resolve_mapping_by_serial(
         vehicles service when a mapping exists. Does not commit or roll
         back.
     """
-    telematic_vehicle_mapping = await telematics_repository.find_mapping_by_serial(
+    mounted_ids = await telematics_repository.find_mounted_vehicle_id_by_serial(
         db, serial
     )
-    if telematic_vehicle_mapping is None:
+    if mounted_ids is None:
         return None
+    telematic_id, vehicle_id = mounted_ids
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-        db, telematic_vehicle_mapping.vehicle_id
+        db, vehicle_id
     )
-    return telematic_vehicle_mapping if vehicle_reference is not None else None
+    if vehicle_reference is None:
+        return None
+    return TelematicVehicleMapping(
+        telematic_id=telematic_id,
+        vehicle_id=vehicle_id,
+        organization_id=vehicle_reference.organization_id,
+    )
+
+
+async def resolve_serial_by_id(
+    db: AsyncSession,
+    telematic_id: UUID,
+) -> str | None:
+    """Resolve a device's serial from its internal ID (for telemetry responses).
+
+    Args:
+        db: Database session owned by the entry boundary.
+        telematic_id: Internal ID of the device.
+
+    Returns:
+        The serial printed on the device, or ``None`` if there is no such
+        device. A soft-deleted device still resolves, since its past
+        telemetry names it.
+
+    Side Effects:
+        One read-only query.
+    """
+    return await telematics_repository.find_serial_by_id(db, telematic_id)
 
 
 async def _resolve_vehicle_id_by_vin(
@@ -208,14 +257,19 @@ async def build_telematic_response(
     Returns:
         The HTTP response for the device. ``vehicle_vin`` is ``None`` and
         the health fields are null/``False`` when no vehicle is assigned
-        or the assigned vehicle is soft-deleted.
+        or the assigned vehicle is soft-deleted. Firmware and the interval in
+        use come from the newest status report (TX-11).
 
     Side Effects:
-        Read-only: one vehicle lookup when a vehicle is assigned, then the
+        Read-only: one status-report lookup, one vehicle lookup when a
+        vehicle is assigned, then the
         health lookups of ``_resolve_device_health`` when it is live.
     """
     vehicle_vin = None
     device_health = _UNMOUNTED_DEVICE_HEALTH
+    latest_status_report = await telematics_repository.find_latest_status_report(
+        db_session, telematic_record.telematic_id
+    )
     if telematic_record.vehicle_id:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
             db_session,
@@ -229,12 +283,22 @@ async def build_telematic_response(
     return TelematicResponse(
         telematic_id=telematic_record.telematic_id,
         telematic_serial=telematic_record.telematic_serial,
+        imei=telematic_record.imei,
+        organization_id=telematic_record.organization_id,
+        acquired_at=telematic_record.acquired_at,
         vehicle_id=telematic_record.vehicle_id,
         vehicle_vin=vehicle_vin,
+        installed_at=telematic_record.installed_at,
         status=telematic_record.status,
-        firmware_version=telematic_record.firmware_version,
-        telemetry_interval_seconds=telematic_record.telemetry_interval_seconds,
-        config_pushed_at=telematic_record.config_pushed_at,
+        status_reason=telematic_record.status_reason,
+        firmware_version=(
+            latest_status_report.firmware_version if latest_status_report else None
+        ),
+        telemetry_interval_seconds=(
+            latest_status_report.telemetry_interval_seconds
+            if latest_status_report
+            else None
+        ),
         last_seen_at=device_health.last_seen_at,
         is_online=device_health.is_online,
         is_silent=device_health.is_silent,
@@ -265,12 +329,16 @@ async def create_telematic(
     Raises:
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
             vehicle.
-        TelematicConflictError: The serial already exists (including on a
-            soft-deleted device, detected only at flush time), or the
-            vehicle is already assigned to another live device.
+        TelematicOrganizationNotFoundError: ``organization_id`` matches no
+            organization.
+        TelematicConflictError: The serial or IMEI is already used by a
+            device still in the system, or the vehicle is already assigned
+            to another live device.
 
     Side Effects:
-        Inserts and flushes the device. Does not commit.
+        Inserts and flushes the device; a device created mounted gets
+        ``installed_at`` = now, and ``acquired_at`` defaults to now. Does not
+        commit.
     """
     if await telematics_repository.find_by_serial(
         db_session,
@@ -286,19 +354,30 @@ async def create_telematic(
             raise TelematicConflictError(
                 "Vehicle is already assigned to another telematic"
             )
+    now = utc_now()
     try:
         telematic_record = await telematics_repository.insert(
             db_session,
             {
                 "telematic_serial": telematic_create_request.telematic_serial,
+                "imei": telematic_create_request.imei,
+                "organization_id": telematic_create_request.organization_id,
+                "acquired_at": telematic_create_request.acquired_at or now,
                 "vehicle_id": vehicle_id,
+                "installed_at": now if vehicle_id is not None else None,
                 "status": telematic_create_request.status,
-                "firmware_version": telematic_create_request.firmware_version,
+                "status_reason": telematic_create_request.status_reason,
             },
         )
     except IntegrityError as error:
+        # The vehicle was resolved above, so a foreign-key failure is the
+        # organization (identity has no service to ask yet, WP2).
+        if _is_foreign_key_violation(error):
+            raise TelematicOrganizationNotFoundError(
+                f"Organization '{telematic_create_request.organization_id}' not found"
+            ) from error
         raise TelematicConflictError(
-            "Telematic serial or vehicle already exists"
+            "Telematic serial, IMEI or vehicle already exists"
         ) from error
     return await build_telematic_response(db_session, telematic_record)
 
@@ -395,12 +474,15 @@ async def update_telematic(
         TelematicNotFoundError: The device does not exist or is soft-deleted.
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
             vehicle.
-        TelematicConflictError: The new serial already exists (on a
-            soft-deleted device it is only detected at flush time), or the
-            new vehicle is already assigned to another live device.
+        TelematicConflictError: The new serial or IMEI is already used by a
+            device still in the system, or the new vehicle is already
+            assigned to another live device.
 
     Side Effects:
-        Flushes the update. Does not commit.
+        Flushes the update and records it in the device's history with the
+        fixed reason ``TELEMATIC_EDITED_REASON``. ``installed_at`` is set to
+        now when the device is mounted on a different vehicle and cleared
+        when it is unmounted. Does not commit.
     """
     telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
@@ -436,20 +518,25 @@ async def update_telematic(
                     "Vehicle is already assigned to another telematic"
                 )
         requested_values["vehicle_id"] = vehicle_id
+        if vehicle_id != telematic_record.vehicle_id:
+            requested_values["installed_at"] = (
+                utc_now() if vehicle_id is not None else None
+            )
     update_values = {
         field_name: value
         for field_name, value in requested_values.items()
-        if value is not None or field_name == "vehicle_id"
+        if value is not None or field_name in ("vehicle_id", "installed_at")
     }
     try:
         telematic_record = await telematics_repository.update_fields(
             db_session,
             telematic_record,
             update_values,
+            change_reason=TELEMATIC_EDITED_REASON,
         )
     except IntegrityError as error:
         raise TelematicConflictError(
-            "Telematic serial or vehicle already exists"
+            "Telematic serial, IMEI or vehicle already exists"
         ) from error
     return await build_telematic_response(db_session, telematic_record)
 
@@ -458,7 +545,12 @@ async def soft_delete_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
 ) -> None:
-    """Soft-delete a device.
+    """Soft-delete a device: it leaves the system (DM-25).
+
+    Rule:
+        The device is also set INACTIVE and unmounted, with a reason (the
+        table's check constraint), so a deleted row never claims to be
+        usable or mounted.
 
     Args:
         db_session: Current database session.
@@ -469,12 +561,16 @@ async def soft_delete_telematic(
             soft-deleted.
 
     Side Effects:
-        Sets ``deleted_at`` and flushes; does not commit.
+        Sets ``deleted_at``, ``status``, ``status_reason``, clears the vehicle
+        and flushes (history reason ``TELEMATIC_DELETED_REASON``); does not
+        commit.
     """
     telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
         raise TelematicNotFoundError("Telematic not found")
-    await telematics_repository.soft_delete(db_session, telematic_record)
+    await telematics_repository.soft_delete(
+        db_session, telematic_record, change_reason=TELEMATIC_DELETED_REASON
+    )
 
 
 async def push_telematic_config(
@@ -485,12 +581,10 @@ async def push_telematic_config(
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
 
     Rule:
-        Fail-closed, publish-then-record: the MQTT command is published
-        before anything is written to the database, and the database is
-        only updated when the publish succeeds. If the publish fails,
-        nothing is persisted, so ``telemetry_interval_seconds`` never
-        claims a push that didn't happen - the only honest meaning left
-        available given that no MQTT ack topic exists for this command
+        Fail-closed: a publish failure is raised, never swallowed. Nothing
+        is written to the database: the device confirms the interval it
+        uses in its next status report (TX-09, TX-11), which is the only
+        honest record given that no MQTT ack topic exists for this command
         (mqtt-spec.md 2.3).
 
     Args:
@@ -506,19 +600,12 @@ async def push_telematic_config(
         TelematicNotFoundError: Device does not exist or is soft-deleted.
         TelematicNotConfigurableError: Device status is ``INACTIVE`` - a
             device deliberately taken out of service should not silently
-            accept a new operating config. ``MAINTENANCE`` is allowed:
-            retuning a device that's being serviced is a plausible use.
+            accept a new operating config.
         TelematicCommandPublishError: The MQTT broker was unreachable or
             the publish otherwise failed.
 
     Side Effects:
-        Publishes one MQTT message, then writes the device's config-push
-        columns and flushes (commit is the caller's responsibility). A
-        crash between a successful publish and the caller's commit is a
-        known, accepted residual: the device may be on the new interval
-        while the database still shows the old one - the safer direction,
-        since the database only ever under-claims and the next push
-        reconverges it.
+        Publishes one MQTT message. Writes nothing.
     """
     telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
     if telematic_record is None:
@@ -527,40 +614,34 @@ async def push_telematic_config(
         raise TelematicNotConfigurableError(
             "Telematic is INACTIVE and cannot be configured"
         )
-    return await _publish_and_record_config(
-        db_session,
+    return await _publish_config(
         telematic_record,
         telematic_config_push_request.telemetry_interval_seconds,
     )
 
 
-async def _publish_and_record_config(
-    db_session: AsyncSession,
+async def _publish_config(
     telematic_record: TelematicModel,
     telemetry_interval_seconds: int,
 ) -> TelematicConfigResponse:
-    """Publish a set-interval command to one device, then record it (F-J2).
+    """Publish a set-interval command to one device (F-J2).
 
     The one publish path shared by the single-device and the fleet-wide
-    push. Fail-closed, publish-then-record: see ``push_telematic_config``.
-    The caller has already checked that the device may be configured.
+    push. The caller has already checked that the device may be configured.
 
     Args:
-        db_session: Session whose transaction is owned by the caller.
         telematic_record: The device to configure, loaded in this session.
-        telemetry_interval_seconds: Interval to publish and record.
+        telemetry_interval_seconds: Interval to publish.
 
     Returns:
         The pushed configuration and its command topic.
 
     Raises:
         TelematicCommandPublishError: The MQTT broker was unreachable or
-            the publish otherwise failed; nothing is recorded.
+            the publish otherwise failed.
 
     Side Effects:
-        Publishes one MQTT message, then writes the device's
-        ``telemetry_interval_seconds``/``config_pushed_at`` (the same
-        instant stamped on the command) and flushes. Does not commit.
+        Publishes one MQTT message; writes nothing to the database.
     """
     telematic_id = telematic_record.telematic_id
     issued_at = utc_now()
@@ -587,14 +668,6 @@ async def _publish_and_record_config(
             f"Failed to publish config to '{telematic_record.telematic_serial}'"
         ) from error
 
-    await telematics_repository.update_fields(
-        db_session,
-        telematic_record,
-        {
-            "telemetry_interval_seconds": telemetry_interval_seconds,
-            "config_pushed_at": issued_at,
-        },
-    )
     logger.info(
         "Device config pushed",
         extra={
@@ -624,25 +697,16 @@ async def push_fleet_config(
         One result per active fleet member, in membership order (oldest
         member first). A member is ``skipped`` - nothing attempted - when
         its vehicle is soft-deleted (D11: its device is treated as not
-        mounted), it has no live device, or its device is not ``ACTIVE``
-        (stricter than the single push, which also accepts
-        ``MAINTENANCE``: a bulk push must not retune a device that is being
-        serviced; push to it individually). Otherwise the device goes
-        through the single push's publish path and is ``published`` or,
-        when the publish raises, ``failed`` with the reason. Partial
-        failure is reported, never raised: one unreachable publish does not
-        stop the loop.
+        mounted), it has no live device, or its device is not ``ACTIVE``.
+        Otherwise the device goes through the single push's publish path
+        and is ``published`` or, when the publish raises, ``failed`` with
+        the reason. Partial failure is reported, never raised: one
+        unreachable publish does not stop the loop.
 
     Transaction / partial-failure behaviour:
-        Everything runs in the caller's one transaction. Each device is
-        publish-then-record, so a ``failed`` device records nothing and a
-        ``published`` one records its new interval and push time; a later
-        failure does not undo an earlier success - that device already
-        received the command, and the database must say so. If an
-        unexpected error (e.g. a database error) aborts the whole request,
-        the transaction rolls back while the devices already published keep
-        the new interval: the same accepted under-claiming residual as the
-        single push, reconverged by the next push.
+        Nothing is written to the database (the device confirms the interval
+        it uses in its next status report, TX-09), so a later failure cannot
+        leave the database disagreeing with a command already published.
 
     Args:
         db_session: Session whose transaction is owned by the caller.
@@ -660,8 +724,8 @@ async def push_fleet_config(
         Sequential, one member at a time (no batching): per member one
         vehicle lookup and one device lookup, then for an eligible device
         one MQTT publish (its own short-lived connection, so a broker
-        outage costs up to ``MQTT_COMMAND_TIMEOUT_SECONDS`` per device)
-        and one flush of the device row. Does not commit.
+        outage costs up to ``MQTT_COMMAND_TIMEOUT_SECONDS`` per device).
+        Writes nothing.
     """
     vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
         db_session, fleet_id
@@ -711,15 +775,15 @@ async def _push_config_to_fleet_vehicle(
     Args:
         db_session: Session whose transaction is owned by the caller.
         vehicle_id: Internal ID of the fleet member.
-        telemetry_interval_seconds: Interval to publish and record.
+        telemetry_interval_seconds: Interval to publish.
 
     Returns:
         This vehicle's result: ``published``, ``skipped`` or ``failed``.
 
     Side Effects:
         One vehicle lookup through the vehicles public service and one
-        device lookup; for an eligible device, one MQTT publish and, on
-        success, one flush of the device row. Does not commit.
+        device lookup; for an eligible device, one MQTT publish. Writes
+        nothing.
     """
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
         db_session, vehicle_id
@@ -755,12 +819,10 @@ async def _push_config_to_fleet_vehicle(
             ),
         )
     try:
-        await _publish_and_record_config(
-            db_session, telematic_record, telemetry_interval_seconds
-        )
+        await _publish_config(telematic_record, telemetry_interval_seconds)
     except TelematicCommandPublishError as error:
         # Reported, not raised (D9): the other members are still pushed.
-        # _publish_and_record_config already logged the traceback.
+        # _publish_config already logged the traceback.
         return TelematicFleetConfigPushResult(
             vehicle_id=vehicle_id,
             telematic_id=telematic_record.telematic_id,

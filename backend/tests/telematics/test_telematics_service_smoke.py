@@ -61,7 +61,10 @@ async def test_telematic_service_resolves_vehicle_vin(
     vehicle_id = uuid4()
     record = build_telematic_record(vehicle_id)
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
 
     async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
@@ -101,9 +104,9 @@ async def test_telematic_service_resolves_vehicle_vin(
         fake_db_session(),
         TelematicCreateRequest(
             telematic_serial=record.telematic_serial,
+            organization_id=record.organization_id,
             vehicle_vin=reference.vin,
             status=record.status,
-            firmware_version=record.firmware_version,
         ),
     )
 
@@ -118,7 +121,10 @@ async def test_create_telematic_rejects_vehicle_already_assigned(
     """A vehicle that already carries a live device can't get a second one."""
     vehicle_id = uuid4()
     reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
 
     async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
@@ -146,8 +152,8 @@ async def test_create_telematic_rejects_vehicle_already_assigned(
             fake_db_session(),
             TelematicCreateRequest(
                 telematic_serial="TBOX-TEST-002",
+                organization_id=uuid4(),
                 vehicle_vin=reference.vin,
-                firmware_version=None,
             ),
         )
 
@@ -163,9 +169,10 @@ async def test_build_telematic_response_handles_never_configured_device() -> Non
     telematic_record = TelematicModel(
         telematic_id=uuid4(),
         telematic_serial="TBOX-TEST-003",
+        organization_id=uuid4(),
+        acquired_at=now,
         vehicle_id=None,
         status=TelematicStatus.ACTIVE,
-        firmware_version=None,
         created_at=now,
         updated_at=now,
     )
@@ -176,7 +183,6 @@ async def test_build_telematic_response_handles_never_configured_device() -> Non
 
     assert telematic_response.vehicle_vin is None
     assert telematic_response.telemetry_interval_seconds is None
-    assert telematic_response.config_pushed_at is None
     # F-J1: an unmounted device has no health to report.
     assert telematic_response.last_seen_at is None
     assert telematic_response.is_online is False
@@ -213,13 +219,13 @@ async def test_list_telematics_normalizes_page_window(
         fake_db_session(),
         page=0,
         page_size=0,
-        status_filter=TelematicStatus.MAINTENANCE,
+        status_filter=TelematicStatus.INACTIVE,
     )
 
     assert list_arguments == {
         "offset": 0,
         "limit": 1,
-        "status_filter": TelematicStatus.MAINTENANCE,
+        "status_filter": TelematicStatus.INACTIVE,
     }
     assert telematic_list_response.page == 1
     assert telematic_list_response.page_size == 1
@@ -251,11 +257,10 @@ def test_set_telemetry_interval_payload_matches_mqtt_contract() -> None:
 async def test_push_telematic_config_publishes_and_records_interval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A successful push publishes the command and persists the new interval."""
+    """A successful push publishes the command and writes nothing (TX-09)."""
     vehicle_id = uuid4()
     record = build_telematic_record(vehicle_id)
     published: dict[str, object] = {}
-    updated: dict[str, object] = {}
 
     async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
         return record
@@ -265,10 +270,13 @@ async def test_push_telematic_config_publishes_and_records_interval(
         published["payload"] = payload
 
     async def update_fields(
-        db: AsyncSession, telematic_record: TelematicModel, values: dict[str, object]
+        db: AsyncSession,
+        telematic_record: TelematicModel,
+        values: dict[str, object],
+        *,
+        change_reason: str,
     ) -> TelematicModel:
-        updated.update(values)
-        return telematic_record
+        raise AssertionError("a config push must not write the device row")
 
     monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(telematics_mqtt_publisher, "publish_device_command", publish)
@@ -283,10 +291,8 @@ async def test_push_telematic_config_publishes_and_records_interval(
     assert published["serial"] == record.telematic_serial
     payload = cast(dict[str, object], published["payload"])
     assert payload["telemetry_interval_seconds"] == 60
-    assert updated["telemetry_interval_seconds"] == 60
-    # The DB row and the wire message must agree on the push timestamp.
-    config_pushed_at = cast(datetime, updated["config_pushed_at"])
-    assert config_pushed_at.isoformat() == payload["timestamp"]
+    # The response and the wire message agree on the command timestamp.
+    assert response.config_pushed_at.isoformat() == payload["timestamp"]
     assert response.telemetry_interval_seconds == 60
     assert response.command_topic == (
         f"g3network/telematics/{record.telematic_serial}/command"
@@ -403,8 +409,8 @@ async def test_create_telematic_rejects_unknown_vehicle_vin(
             fake_db_session(),
             TelematicCreateRequest(
                 telematic_serial="TBOX-TEST-004",
+                organization_id=uuid4(),
                 vehicle_vin=UNKNOWN_VIN,
-                firmware_version=None,
             ),
         )
 
@@ -428,7 +434,11 @@ def _patch_update_dependencies(
         return telematic_record
 
     async def update_fields(
-        db: AsyncSession, record: TelematicModel, values: dict[str, object]
+        db: AsyncSession,
+        record: TelematicModel,
+        values: dict[str, object],
+        *,
+        change_reason: str,
     ) -> TelematicModel:
         updated_values.update(values)
         return record
@@ -484,7 +494,7 @@ async def test_update_telematic_explicit_null_vin_unassigns_device(
         TelematicUpdateRequest.model_validate({"vehicle_vin": None}),
     )
 
-    assert updated_values == {"vehicle_id": None}
+    assert updated_values == {"vehicle_id": None, "installed_at": None}
 
 
 @pytest.mark.asyncio
@@ -499,10 +509,10 @@ async def test_update_telematic_without_vin_keeps_assignment(
     await telematics_service.update_telematic(
         fake_db_session(),
         telematic_record.telematic_id,
-        TelematicUpdateRequest.model_validate({"firmware_version": "2.0.0"}),
+        TelematicUpdateRequest.model_validate({"imei": "356938035643809"}),
     )
 
-    assert updated_values == {"firmware_version": "2.0.0"}
+    assert updated_values == {"imei": "356938035643809"}
 
 
 @pytest.mark.asyncio
@@ -517,7 +527,10 @@ async def test_update_telematic_rejects_vehicle_with_another_live_device(
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=target_vehicle_id, vin=vin, battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=target_vehicle_id,
+            vin=vin,
+            battery_capacity_kwh=None,
         )
 
     async def other_device(db: AsyncSession, vehicle_id: UUID) -> TelematicModel:
@@ -545,19 +558,24 @@ async def test_resolve_mapping_by_serial_ignores_soft_deleted_vehicle(
 ) -> None:
     """A device mapped to a soft-deleted vehicle resolves to no mapping (D11)."""
     telematic_vehicle_mapping = TelematicVehicleMapping(
-        telematic_id=uuid4(), vehicle_id=uuid4()
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
     )
 
     async def find_mapping(
         db: AsyncSession, telematic_serial: str
-    ) -> TelematicVehicleMapping:
-        return telematic_vehicle_mapping
+    ) -> tuple[UUID, UUID]:
+        return (
+            telematic_vehicle_mapping.telematic_id,
+            telematic_vehicle_mapping.vehicle_id,
+        )
 
     async def deleted_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
         assert vehicle_id == telematic_vehicle_mapping.vehicle_id
         return None
 
-    monkeypatch.setattr(telematics_repository, "find_mapping_by_serial", find_mapping)
+    monkeypatch.setattr(
+        telematics_repository, "find_mounted_vehicle_id_by_serial", find_mapping
+    )
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_id", deleted_vehicle
     )
@@ -576,20 +594,28 @@ async def test_resolve_mapping_by_serial_returns_mapping_for_live_vehicle(
 ) -> None:
     """A device mapped to a live vehicle resolves to its mapping unchanged."""
     telematic_vehicle_mapping = TelematicVehicleMapping(
-        telematic_id=uuid4(), vehicle_id=uuid4()
+        telematic_id=uuid4(), vehicle_id=uuid4(), organization_id=uuid4()
     )
 
     async def find_mapping(
         db: AsyncSession, telematic_serial: str
-    ) -> TelematicVehicleMapping:
-        return telematic_vehicle_mapping
+    ) -> tuple[UUID, UUID]:
+        return (
+            telematic_vehicle_mapping.telematic_id,
+            telematic_vehicle_mapping.vehicle_id,
+        )
 
     async def live_vehicle(db: AsyncSession, vehicle_id: UUID) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+            organization_id=telematic_vehicle_mapping.organization_id,
+            vehicle_id=vehicle_id,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
         )
 
-    monkeypatch.setattr(telematics_repository, "find_mapping_by_serial", find_mapping)
+    monkeypatch.setattr(
+        telematics_repository, "find_mounted_vehicle_id_by_serial", find_mapping
+    )
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_id", live_vehicle
     )

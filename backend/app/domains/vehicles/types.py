@@ -27,6 +27,8 @@ class VehicleReference:
     Attributes:
         vehicle_id: Internal ID of the vehicle.
         vin: VIN (chassis number) used to identify the vehicle in business logic.
+        organization_id: The organization that owns the vehicle now; a record
+            written at this moment (a telemetry sample) copies it (DM-24 C).
         battery_capacity_kwh: Nominal battery pack capacity in kWh from the
             vehicle's model (``vehicle_models.nominal_battery_capacity_kwh``),
             or `None` if the model has none recorded - carried here so a
@@ -36,6 +38,7 @@ class VehicleReference:
 
     vehicle_id: UUID
     vin: str
+    organization_id: UUID
     battery_capacity_kwh: float | None
 
 

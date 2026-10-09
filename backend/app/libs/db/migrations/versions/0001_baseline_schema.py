@@ -51,7 +51,7 @@ _OCPP16_TRANSACTION_ID_SEQUENCE = "charging_ocpp16_transaction_id_seq"
 # Time-series tables partitioned by TimescaleDB, with their time column.
 # Every one keeps the time column in its primary key, as TimescaleDB requires.
 _HYPERTABLES = (
-    ("vehicle_telemetry", "recorded_at"),
+    ("telemetry", "recorded_at"),
     ("charging_session_events", "event_occurred_at"),
     ("charging_ocpp_messages", "occurred_at"),
     ("charging_session_measurements", "sampled_at"),
@@ -72,6 +72,7 @@ _TRACKED_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("battery_models", "battery_model_history", ()),
     ("batteries", "battery_history", ()),
     ("warranties", "warranty_history", ()),
+    ("telematics", "telematic_history", ()),
 )
 
 # Period views over change history (DM-22, DM-27). Code reads the periods of a
@@ -753,45 +754,97 @@ def upgrade() -> None:
     op.create_table(
         "telematics",
         sa.Column("telematic_id", sa.UUID(), nullable=False),
+        sa.Column("imei", sa.String(length=15), nullable=True),
         sa.Column("telematic_serial", sa.String(length=50), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("acquired_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("installed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("ACTIVE", "INACTIVE", "MAINTENANCE", name="telematicstatus"),
+            sa.Enum("ACTIVE", "INACTIVE", name="telematicstatus"),
             nullable=False,
         ),
-        sa.Column("firmware_version", sa.String(length=50), nullable=True),
-        sa.Column("telemetry_interval_seconds", sa.Integer(), nullable=True),
-        sa.Column("config_pushed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS NULL)",
+            name="ck_telematics_deleted_inactive_unmounted",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["organizations.organization_id"],
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(
             ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="SET NULL"
         ),
         sa.PrimaryKeyConstraint("telematic_id"),
     )
     op.create_index(
-        op.f("ix_telematics_deleted_at"), "telematics", ["deleted_at"], unique=False
+        op.f("ix_telematics_organization_id"),
+        "telematics",
+        ["organization_id"],
+        unique=False,
     )
     op.create_index(
         op.f("ix_telematics_status"), "telematics", ["status"], unique=False
     )
     op.create_index(
-        op.f("ix_telematics_telematic_serial"),
+        "ix_telematics_telematic_serial",
         "telematics",
         ["telematic_serial"],
         unique=True,
-    )
-    op.create_index(
-        op.f("ix_telematics_vehicle_id"), "telematics", ["vehicle_id"], unique=False
+        postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_index(
         "uq_telematics_active_vehicle",
         "telematics",
         ["vehicle_id"],
         unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL"),
+        postgresql_where=sa.text("vehicle_id IS NOT NULL AND deleted_at IS NULL"),
+    )
+    op.create_index(
+        "uq_telematics_imei",
+        "telematics",
+        ["imei"],
+        unique=True,
+        postgresql_where=sa.text("imei IS NOT NULL AND deleted_at IS NULL"),
+    )
+    op.create_table(
+        "telematic_status_reports",
+        sa.Column(
+            "telematic_status_report_id",
+            sa.BigInteger(),
+            autoincrement=True,
+            nullable=False,
+        ),
+        sa.Column("telematic_id", sa.UUID(), nullable=False),
+        sa.Column("firmware_version", sa.String(length=50), nullable=True),
+        sa.Column("telemetry_interval_seconds", sa.Integer(), nullable=True),
+        sa.Column("sim_iccid", sa.String(length=22), nullable=True),
+        sa.Column("is_esim", sa.Boolean(), nullable=True),
+        sa.Column("sim_data_status", sa.String(length=20), nullable=True),
+        sa.Column("supply_voltage_v", sa.Numeric(precision=5, scale=2), nullable=True),
+        sa.Column("signal_dbm", sa.SmallInteger(), nullable=True),
+        sa.Column(
+            "storage_used_percent", sa.Numeric(precision=5, scale=2), nullable=True
+        ),
+        sa.Column("gnss_status", sa.String(length=20), nullable=True),
+        sa.Column("reported_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["telematic_id"], ["telematics.telematic_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("telematic_status_report_id"),
+    )
+    op.create_index(
+        "ix_telematic_status_reports_device_time",
+        "telematic_status_reports",
+        ["telematic_id", "reported_at"],
+        unique=False,
     )
     op.create_table(
         "battery_models",
@@ -1174,11 +1227,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("user_id"),
     )
     op.create_table(
-        "vehicle_telemetry",
+        "telemetry",
         sa.Column("message_id", sa.BigInteger(), autoincrement=True, nullable=False),
-        sa.Column("message_uuid", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("device_message_id", sa.UUID(), nullable=False),
         sa.Column("telematic_id", sa.UUID(), nullable=False),
-        sa.Column("telematic_serial", sa.String(length=50), nullable=False),
         sa.Column("vehicle_id", sa.UUID(), nullable=False),
         sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
@@ -1195,17 +1248,17 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
-        sa.Column("speed", sa.Double(), nullable=True),
-        sa.Column("heading", sa.Double(), nullable=True),
-        sa.Column("soc", sa.Double(), nullable=False),
-        sa.Column("battery_voltage", sa.Double(), nullable=True),
-        sa.Column("battery_current", sa.Double(), nullable=True),
-        sa.Column("battery_temperature", sa.Double(), nullable=True),
+        sa.Column("speed_kmh", sa.Double(), nullable=True),
+        sa.Column("heading_degrees", sa.Double(), nullable=True),
+        sa.Column("soc_percent", sa.Double(), nullable=False),
+        sa.Column("battery_voltage_v", sa.Double(), nullable=True),
+        sa.Column("battery_current_a", sa.Double(), nullable=True),
+        sa.Column("battery_temperature_celsius", sa.Double(), nullable=True),
         sa.Column("soh_percent", sa.Double(), nullable=True),
         sa.Column("cycle_count", sa.Integer(), nullable=True),
-        sa.Column("motor_temperature", sa.Double(), nullable=True),
-        sa.Column("odometer", sa.Double(), nullable=True),
-        sa.Column("signal_strength", sa.BigInteger(), nullable=True),
+        sa.Column("motor_temperature_celsius", sa.Double(), nullable=True),
+        sa.Column("odometer_km", sa.Double(), nullable=True),
+        sa.Column("signal_dbm", sa.BigInteger(), nullable=True),
         sa.Column(
             "error_codes", postgresql.JSONB(astext_type=sa.Text()), nullable=True
         ),
@@ -1214,6 +1267,11 @@ def upgrade() -> None:
         ),
         sa.Column("schema_version", sa.Integer(), server_default="1", nullable=False),
         sa.ForeignKeyConstraint(
+            ["organization_id"],
+            ["organizations.organization_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
             ["telematic_id"], ["telematics.telematic_id"], ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
@@ -1221,24 +1279,24 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("message_id", "recorded_at"),
         sa.UniqueConstraint(
-            "telematic_id", "recorded_at", name="uq_telematic_recorded_at"
+            "telematic_id", "recorded_at", name="uq_telemetry_telematic_recorded_at"
         ),
     )
     op.create_index(
-        op.f("ix_vehicle_telemetry_message_uuid"),
-        "vehicle_telemetry",
-        ["message_uuid"],
+        op.f("ix_telemetry_device_message_id"),
+        "telemetry",
+        ["device_message_id"],
         unique=False,
     )
     op.create_index(
-        "ix_vehicle_telemetry_vehicle_received",
-        "vehicle_telemetry",
+        "ix_telemetry_vehicle_received",
+        "telemetry",
         ["vehicle_id", sa.literal_column("received_at DESC")],
         unique=False,
     )
     op.create_index(
-        "ix_vehicle_telemetry_vehicle_time",
-        "vehicle_telemetry",
+        "ix_telemetry_vehicle_time",
+        "telemetry",
         ["vehicle_id", sa.literal_column("recorded_at DESC")],
         unique=False,
     )

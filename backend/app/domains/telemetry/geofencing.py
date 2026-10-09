@@ -42,7 +42,7 @@ import app.domains.notifications.service as notifications_service
 import app.domains.telemetry.mappers as telemetry_mappers
 from app.domains.fleet.types import GeofenceReference
 from app.domains.notifications.types import NotificationSeverity, NotificationType
-from app.domains.telemetry.models import VehicleTelemetryModel
+from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryMessage
 from app.domains.telemetry.types import GeofenceTransition
 
@@ -161,7 +161,7 @@ async def raise_geofence_alerts_for_reading(
     db: AsyncSession,
     *,
     vehicle_id: UUID,
-    previous_telemetry: VehicleTelemetryModel | None,
+    previous_telemetry: TelemetryModel | None,
     message: TelemetryMessage,
 ) -> None:
     """Detect geofence entry/exit for one reading and raise one alert per crossing.

@@ -67,7 +67,10 @@ async def test_battery_health_builds_one_point_per_reported_day(
 
     async def resolve_id(db: AsyncSession, value: UUID) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=value, vin="1HGBH41JXMN109186", battery_capacity_kwh=400.0
+            organization_id=uuid4(),
+            vehicle_id=value,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=400.0,
         )
 
     async def list_days(

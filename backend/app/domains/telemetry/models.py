@@ -1,8 +1,8 @@
-"""SQLAlchemy model for the telemetry domain's single table, ``vehicle_telemetry``.
+"""SQLAlchemy model for the telemetry domain's single table, ``telemetry``.
 
 Feature code: F-A1 (Real-time vehicle telemetry ingestion).
 
-``vehicle_telemetry`` is a TimescaleDB hypertable (1-day chunks on
+``telemetry`` is a TimescaleDB hypertable (1-day chunks on
 ``recorded_at``, which is therefore part of the primary key); the
 hypertable itself is created by the baseline migration, not by this
 model. One row per ingested MQTT message, append-only: ingestion never
@@ -23,7 +23,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String,
     UniqueConstraint,
     literal_column,
 )
@@ -35,7 +34,7 @@ from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
 
 
-class VehicleTelemetryModel(Base):
+class TelemetryModel(Base):
     """Vehicle telemetry data model for time-series storage.
 
     Stores real-time telemetry data from telematic devices installed on vehicles.
@@ -43,9 +42,11 @@ class VehicleTelemetryModel(Base):
 
     Attributes:
         message_id: BIGINT primary key (auto-generated)
-        message_uuid: UUID created by telematic device
+        organization_id: The organization that owned the vehicle at
+            ``recorded_at`` (DM-24 case C): written once at insert, never
+            updated, so the sample stays with that owner after a sale (VH-11).
+        device_message_id: ID the device gave the message (not unique, TM-06)
         telematic_id: UUID foreign key to telematics table
-        telematic_serial: Serial number stored for audit/debug
         vehicle_id: UUID foreign key to vehicles table
         recorded_at: Timestamp when telematic recorded the data
         received_at: Timestamp when backend received the message
@@ -53,18 +54,18 @@ class VehicleTelemetryModel(Base):
             No spatial index (unlike `charging_stations.location`) - this is
             a high-frequency hypertable write path and nothing currently
             runs a spatial query against it; add one if/when that changes.
-        speed: Vehicle speed in km/h
-        heading: Direction of travel in degrees (0-360), nullable
-        soc: State of Charge percentage (0-100)
-        battery_voltage: Battery voltage in volts, nullable
-        battery_current: Battery current in amperes, nullable
-        battery_temperature: Battery temperature in °C, nullable
+        speed_kmh: Vehicle speed in km/h
+        heading_degrees: Direction of travel in degrees (0-360), nullable
+        soc_percent: State of Charge percentage (0-100)
+        battery_voltage_v: Battery voltage in volts, nullable
+        battery_current_a: Battery current in amperes, nullable
+        battery_temperature_celsius: Battery temperature in °C, nullable
         soh_percent: Battery State of Health, remaining capacity vs. new
             (0-100), nullable (F-A3)
         cycle_count: Charge/discharge cycle count, nullable (F-A3)
-        motor_temperature: Motor temperature in °C, nullable
-        odometer: Total distance traveled in km, nullable
-        signal_strength: Cellular signal strength in dBm, nullable
+        motor_temperature_celsius: Motor temperature in °C, nullable
+        odometer_km: Total distance traveled in km, nullable
+        signal_dbm: Cellular signal strength in dBm, nullable
         error_codes: JSONB array of error codes, nullable
         raw_payload: Original JSON payload from telematic (for debug/reprocessing)
         schema_version: Version of the MQTT message contract the device
@@ -72,7 +73,7 @@ class VehicleTelemetryModel(Base):
             this field.
     """
 
-    __tablename__ = "vehicle_telemetry"
+    __tablename__ = "telemetry"
 
     # Primary key - BIGINT for TimescaleDB performance
     # Must include recorded_at for partition key
@@ -82,8 +83,15 @@ class VehicleTelemetryModel(Base):
         autoincrement=True,
     )
 
-    # Message UUID from telematic device
-    message_uuid: Mapped[UUID] = mapped_column(
+    # Owner of the vehicle at recorded_at (DM-24 case C), written once.
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+    # ID the telematic device gave the message (external identifier, TM-18)
+    device_message_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         nullable=False,
         index=True,
@@ -93,12 +101,6 @@ class VehicleTelemetryModel(Base):
     telematic_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("telematics.telematic_id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-    # Telematic serial for audit/debug (denormalized)
-    telematic_serial: Mapped[str] = mapped_column(
-        String(50),
         nullable=False,
     )
 
@@ -130,18 +132,24 @@ class VehicleTelemetryModel(Base):
     )
 
     # Motion data
-    speed: Mapped[float | None] = mapped_column(
+    speed_kmh: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # km/h, nullable because not every telematic device provides it
-    heading: Mapped[float | None] = mapped_column(
+    heading_degrees: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # degrees 0-360
 
     # Battery data
-    soc: Mapped[float] = mapped_column(Double(), nullable=False)  # State of Charge %
-    battery_voltage: Mapped[float | None] = mapped_column(Double(), nullable=True)  # V
-    battery_current: Mapped[float | None] = mapped_column(Double(), nullable=True)  # A
-    battery_temperature: Mapped[float | None] = mapped_column(
+    soc_percent: Mapped[float] = mapped_column(
+        Double(), nullable=False
+    )  # State of Charge %
+    battery_voltage_v: Mapped[float | None] = mapped_column(
+        Double(), nullable=True
+    )  # V
+    battery_current_a: Mapped[float | None] = mapped_column(
+        Double(), nullable=True
+    )  # A
+    battery_temperature_celsius: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # °C
     soh_percent: Mapped[float | None] = mapped_column(
@@ -152,17 +160,15 @@ class VehicleTelemetryModel(Base):
     )  # charge/discharge cycles, F-A3
 
     # Motor data
-    motor_temperature: Mapped[float | None] = mapped_column(
+    motor_temperature_celsius: Mapped[float | None] = mapped_column(
         Double(), nullable=True
     )  # °C
 
     # Vehicle data
-    odometer: Mapped[float | None] = mapped_column(Double(), nullable=True)  # km
+    odometer_km: Mapped[float | None] = mapped_column(Double(), nullable=True)  # km
 
     # Signal quality
-    signal_strength: Mapped[int | None] = mapped_column(
-        BigInteger(), nullable=True
-    )  # dBm
+    signal_dbm: Mapped[int | None] = mapped_column(BigInteger(), nullable=True)  # dBm
 
     # Error codes (JSONB array)
     error_codes: Mapped[dict[str, list[str]] | None] = mapped_column(
@@ -179,11 +185,11 @@ class VehicleTelemetryModel(Base):
     __table_args__ = (
         # Unique constraint: one message per telematic per timestamp
         UniqueConstraint(
-            "telematic_id", "recorded_at", name="uq_telematic_recorded_at"
+            "telematic_id", "recorded_at", name="uq_telemetry_telematic_recorded_at"
         ),
         # Index for querying by vehicle with time ordering
         Index(
-            "ix_vehicle_telemetry_vehicle_time",
+            "ix_telemetry_vehicle_time",
             "vehicle_id",
             literal_column("recorded_at DESC"),
         ),
@@ -191,7 +197,7 @@ class VehicleTelemetryModel(Base):
         # device-health monitor): ordered by the backend's receive clock,
         # which a device with a skewed clock cannot move.
         Index(
-            "ix_vehicle_telemetry_vehicle_received",
+            "ix_telemetry_vehicle_received",
             "vehicle_id",
             literal_column("received_at DESC"),
         ),
@@ -199,4 +205,4 @@ class VehicleTelemetryModel(Base):
 
     def __repr__(self) -> str:
         """Return a concise debug representation of the telemetry record."""
-        return f"<VehicleTelemetryModel {self.telematic_serial} @ {self.recorded_at}>"
+        return f"<TelemetryModel {self.vehicle_id} @ {self.recorded_at}>"

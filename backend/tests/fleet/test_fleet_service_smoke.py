@@ -123,7 +123,10 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
     _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     inserted = build_membership_record(
         fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
@@ -175,7 +178,12 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_of_another_organization(
         return fleet_record
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return VehicleReference(vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=None)
+        return VehicleReference(
+            organization_id=uuid4(),
+            vehicle_id=uuid4(),
+            vin=vin,
+            battery_capacity_kwh=None,
+        )
 
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(
@@ -226,7 +234,10 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
     other_fleet_id = uuid4()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     membership_elsewhere = build_membership_record(
         fleet_id=other_fleet_id, vehicle_id=vehicle_id
@@ -272,7 +283,10 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
     _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+        organization_id=uuid4(),
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
     )
     existing_membership = build_membership_record(
         fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
@@ -349,7 +363,10 @@ async def test_remove_vehicle_from_fleet_closes_membership(
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin=vin,
+            battery_capacity_kwh=None,
         )
 
     monkeypatch.setattr(
@@ -382,7 +399,12 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
     )
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
-        return VehicleReference(vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=None)
+        return VehicleReference(
+            organization_id=uuid4(),
+            vehicle_id=uuid4(),
+            vin=vin,
+            battery_capacity_kwh=None,
+        )
 
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
@@ -709,7 +731,10 @@ async def test_list_fleets_passes_search_and_vehicle_filters_to_both_queries(
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
         return VehicleReference(
-            vehicle_id=vehicle_id, vin=vin, battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin=vin,
+            battery_capacity_kwh=None,
         )
 
     async def list_all(db: AsyncSession, **kwargs: object) -> list[FleetModel]:

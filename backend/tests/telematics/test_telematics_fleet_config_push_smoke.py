@@ -31,25 +31,24 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
     """Each member gets one result in fleet order; one failure doesn't stop the rest.
 
     Members: a soft-deleted vehicle, a vehicle without a device, a
-    MAINTENANCE device, an unreachable device, then a healthy device (D9).
+    INACTIVE device, an unreachable device, then a healthy device (D9).
     """
     fleet_id = uuid4()
     member_vehicle_ids = [uuid4() for _ in range(5)]
     deleted_vehicle_id = member_vehicle_ids[0]
-    maintenance_device = build_telematic_record(member_vehicle_ids[2])
-    maintenance_device.status = TelematicStatus.MAINTENANCE
+    inactive_device = build_telematic_record(member_vehicle_ids[2])
+    inactive_device.status = TelematicStatus.INACTIVE
     unreachable_device = build_telematic_record(member_vehicle_ids[3])
     unreachable_device.telematic_serial = "TBOX-UNREACHABLE"
     healthy_device = build_telematic_record(member_vehicle_ids[4])
     healthy_device.telematic_serial = "TBOX-HEALTHY"
     # member_vehicle_ids[1] carries no device at all.
     devices_by_vehicle_id = {
-        member_vehicle_ids[2]: maintenance_device,
+        member_vehicle_ids[2]: inactive_device,
         member_vehicle_ids[3]: unreachable_device,
         member_vehicle_ids[4]: healthy_device,
     }
     published_serials: list[str] = []
-    recorded_values: dict[UUID, dict[str, object]] = {}
 
     async def member_vehicle_ids_of(
         db_session: AsyncSession, value: UUID
@@ -63,7 +62,10 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
         if vehicle_id == deleted_vehicle_id:
             return None
         return VehicleReference(
-            vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
+            organization_id=uuid4(),
+            vehicle_id=vehicle_id,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
         )
 
     async def find_device(
@@ -76,14 +78,6 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
             raise MqttError("broker unreachable")
         published_serials.append(serial)
 
-    async def update_fields(
-        db_session: AsyncSession,
-        telematic_record: TelematicModel,
-        values: dict[str, object],
-    ) -> TelematicModel:
-        recorded_values[telematic_record.telematic_id] = values
-        return telematic_record
-
     monkeypatch.setattr(
         fleet_public_service, "list_active_member_vehicle_ids", member_vehicle_ids_of
     )
@@ -92,7 +86,6 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
     )
     monkeypatch.setattr(telematics_repository, "find_by_vehicle_id", find_device)
     monkeypatch.setattr(telematics_mqtt_publisher, "publish_device_command", publish)
-    monkeypatch.setattr(telematics_repository, "update_fields", update_fields)
 
     fleet_config_push_response = await telematics_service.push_fleet_config(
         fake_db_session(),
@@ -117,19 +110,14 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
     assert results[0].telematic_id is None
     assert results[1].reason == "no device"
     assert results[1].telematic_serial is None
-    assert results[2].telematic_id == maintenance_device.telematic_id
-    assert results[2].reason is not None and "MAINTENANCE" in results[2].reason
+    assert results[2].telematic_id == inactive_device.telematic_id
+    assert results[2].reason is not None and "INACTIVE" in results[2].reason
     assert results[3].telematic_serial == unreachable_device.telematic_serial
     assert results[3].reason is not None and "TBOX-UNREACHABLE" in results[3].reason
     assert results[4].telematic_id == healthy_device.telematic_id
     assert results[4].reason is None
-    # Only the published device is recorded; the failed one stays untouched.
+    # Only the eligible, reachable device is published to; nothing is stored.
     assert published_serials == [healthy_device.telematic_serial]
-    assert set(recorded_values) == {healthy_device.telematic_id}
-    assert (
-        recorded_values[healthy_device.telematic_id]["telemetry_interval_seconds"] == 60
-    )
-    assert recorded_values[healthy_device.telematic_id]["config_pushed_at"] is not None
 
 
 @pytest.mark.asyncio

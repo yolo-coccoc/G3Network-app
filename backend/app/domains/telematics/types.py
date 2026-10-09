@@ -7,11 +7,14 @@ from uuid import UUID
 
 
 class TelematicStatus(str, enum.Enum):
-    """Operating status of a Telematic device."""
+    """Status of a Telematic device, set by a person (DM-25).
+
+    ``INACTIVE`` covers a device not usable now (the reason says why) and a
+    device that left the system (also unmounted and soft-deleted).
+    """
 
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
-    MAINTENANCE = "MAINTENANCE"
 
 
 @dataclass(frozen=True)
@@ -21,20 +24,21 @@ class TelematicVehicleMapping:
     Attributes:
         telematic_id: Internal ID of the device.
         vehicle_id: Internal ID of the assigned vehicle.
+        organization_id: The organization that owns that vehicle now; the
+            sample written at this moment copies it (DM-24 case C).
     """
 
     telematic_id: UUID
     vehicle_id: UUID
+    organization_id: UUID
 
 
 class TelematicConfigPushOutcome(str, enum.Enum):
     """Outcome for one fleet vehicle in a fleet-wide config push (F-J2, D9).
 
-    ``PUBLISHED``: the broker accepted the command and the device's
-    config-push columns were recorded. ``SKIPPED``: nothing was attempted
+    ``PUBLISHED``: the broker accepted the command. ``SKIPPED``: nothing was attempted
     (soft-deleted vehicle, no live device, or a device that is not
-    ``ACTIVE``). ``FAILED``: the publish was attempted and raised; nothing
-    was recorded for that device.
+    ``ACTIVE``). ``FAILED``: the publish was attempted and raised.
     """
 
     PUBLISHED = "published"
