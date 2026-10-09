@@ -34,14 +34,14 @@ erDiagram
     uuid tariff_id FK
     uuid created_by FK
   }
-  charging_session_charges {
-    uuid charging_session_charge_id PK
+  charging_session_bills {
+    uuid charging_session_bill_id PK
     uuid session_id FK
     uuid tariff_version_id FK
   }
-  charging_session_charge_history {
+  charging_session_bill_history {
     bigint history_id PK
-    uuid charging_session_charge_id FK
+    uuid charging_session_bill_id FK
     uuid changed_by FK
   }
   payments {
@@ -87,8 +87,8 @@ erDiagram
   }
   tariff_versions }o..|| tariffs : "tariff_id"
   tariff_versions }o..|| users : "created_by"
-  charging_session_charges |o..|| charging_sessions : "session_id"
-  charging_session_charges }o..|| tariff_versions : "tariff_version_id"
+  charging_session_bills |o..|| charging_sessions : "session_id"
+  charging_session_bills }o..|| tariff_versions : "tariff_version_id"
   tariffs }o..|| organizations : "organization_id"
   tariffs }o..o| charging_locations : "location_id"
   payments }o..|| organizations : "organization_id"
@@ -110,8 +110,8 @@ erDiagram
   subscriptions }o..|| vehicles : "vehicle_id"
   tariff_history }o..o| tariffs : "tariff_id"
   tariff_history }o..o| users : "changed_by"
-  charging_session_charge_history }o..o| charging_session_charges : "charging_session_charge_id"
-  charging_session_charge_history }o..o| users : "changed_by"
+  charging_session_bill_history }o..o| charging_session_bills : "charging_session_bill_id"
+  charging_session_bill_history }o..o| users : "changed_by"
 ```
 
 Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_locations](charging_stations.md#charging_locations), [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
@@ -212,29 +212,29 @@ Check constraints (BL-09): price_per_kwh >= 0; vat_rate_percent BETWEEN 0 AND 10
 
 **Referenced by**
 
-- [charging_session_charges](#charging_session_charges).tariff_version_id (planned)
+- [charging_session_bills](#charging_session_bills).tariff_version_id (planned)
 
-### charging_session_charges
+### charging_session_bills
 
 **No. 52** · 📋 planned · owner: **two-party** · features: F-H1, F-H3
 
-What one charge costs (BL-10, CE-12, PAY-10): the price frozen at the scan,
+The bill of one charging session (BL-10, BL-11, CE-12, PAY-10): the price frozen at the scan,
 the kWh billed and the amount. In billing, pointing to the session, never the
 reverse. The amounts are what was charged after rounding, so they are stored
 facts, the same on the receipt, the payment and the e-invoice. Change history
-on: releasing a held charge is a person's decision. Never edited after
+on: releasing a held bill is a person's decision. Never edited after
 BILLED; a mistake is corrected by a refund or a credit note.
 Check constraints (BL-10): status <> 'BILLED' OR (energy_wh, energy_source,
 amount_before_vat, vat_amount, billed_at all NOT NULL); status NOT IN
 ('QUOTED', 'VOID') OR (energy_wh, energy_source, amount_before_vat,
 vat_amount, billed_at all NULL).
 
-🔍 = tracked column: a change to it copies the whole old row into [charging_session_charge_history](#charging_session_charge_history).
+🔍 = tracked column: a change to it copies the whole old row into [charging_session_bill_history](#charging_session_bill_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
-| `charging_session_charge_id` | uuid | no | PK |  | Internal ID of the charge. | `2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66` |
-| `session_id` | uuid | no | FK UQ 🔍 | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | The charging session; one charge per session. The payer is read from the session (charging_sessions.organization_id, DM-24). | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
+| `charging_session_bill_id` | uuid | no | PK |  | Internal ID of the bill. | `2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66` |
+| `session_id` | uuid | no | FK UQ 🔍 | [charging_sessions](charging_sessions.md#charging_sessions).session_id (on delete restrict) | The charging session; one bill per session. The payer is read from the session (charging_sessions.organization_id, DM-24). | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
 | `tariff_version_id` | uuid | no | FK 🔍 | [tariff_versions](#tariff_versions).tariff_version_id (on delete restrict) | Tariff version whose price was shown at the scan. | `1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55` |
 | `price_per_kwh` | numeric(12,2) | no | 🔍 |  | Price for the scan's hour, before VAT, frozen for the whole session (PAY-09). | `4500.00` |
 | `vat_rate_percent` | numeric(4,2) | no | 🔍 |  | VAT rate frozen with the price. | `10.00` |
@@ -250,43 +250,43 @@ vat_amount, billed_at all NULL).
 
 **Indexes**
 
-- `ix_charging_session_charges_tariff_version_id` (tariff_version_id)
-- `ix_charging_session_charges_status_created` (status, created_at) - Held charges waiting for review
+- `ix_charging_session_bills_tariff_version_id` (tariff_version_id)
+- `ix_charging_session_bills_status_created` (status, created_at) - Held charges waiting for review
 
 **Referenced by**
 
-- [charging_session_charge_history](#charging_session_charge_history).charging_session_charge_id (planned)
+- [charging_session_bill_history](#charging_session_bill_history).charging_session_bill_id (planned)
 
-### charging_session_charge_history
+### charging_session_bill_history
 
-**No. 52.h** · 📋 planned · owner: **two-party** · features: F-H1, F-H3 · change history of [charging_session_charges](#charging_session_charges)
+**No. 52.h** · 📋 planned · owner: **two-party** · features: F-H1, F-H3 · change history of [charging_session_bills](#charging_session_bills)
 
-Every earlier version of a row of `charging_session_charges`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+Every earlier version of a row of `charging_session_bills`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
-| `charging_session_charge_id` | uuid | yes | FK | [charging_session_charges](#charging_session_charges).charging_session_charge_id (on delete restrict) | Value before the change (charging_session_charges.charging_session_charge_id). | `2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66` |
-| `session_id` | uuid | yes |  |  | Value before the change (charging_session_charges.session_id). | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
-| `tariff_version_id` | uuid | yes |  |  | Value before the change (charging_session_charges.tariff_version_id). | `1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55` |
-| `price_per_kwh` | numeric(12,2) | yes |  |  | Value before the change (charging_session_charges.price_per_kwh). | `4500.00` |
-| `vat_rate_percent` | numeric(4,2) | yes |  |  | Value before the change (charging_session_charges.vat_rate_percent). | `10.00` |
-| `status` | varchar(20) | yes |  |  | Value before the change (charging_session_charges.status). | `BILLED` |
-| `status_reason` | varchar(200) | yes |  |  | Value before the change (charging_session_charges.status_reason). | `NULL` |
-| `energy_wh` | numeric(24,3) | yes |  |  | Value before the change (charging_session_charges.energy_wh). | `192520.000` |
-| `energy_source` | varchar(20) | yes |  |  | Value before the change (charging_session_charges.energy_source). | `METER_STOP` |
-| `amount_before_vat` | numeric(14,2) | yes |  |  | Value before the change (charging_session_charges.amount_before_vat). | `866340.00` |
-| `vat_amount` | numeric(14,2) | yes |  |  | Value before the change (charging_session_charges.vat_amount). | `86634.00` |
-| `billed_at` | timestamptz | yes |  |  | Value before the change (charging_session_charges.billed_at). | `2026-09-15T09:45:05Z` |
-| `created_at` | timestamptz | yes |  |  | Value before the change (charging_session_charges.created_at). | `2026-09-15T08:29:10Z` |
-| `updated_at` | timestamptz | yes |  |  | Value before the change (charging_session_charges.updated_at). | `2026-09-15T09:45:05Z` |
+| `charging_session_bill_id` | uuid | yes | FK | [charging_session_bills](#charging_session_bills).charging_session_bill_id (on delete restrict) | Value before the change (charging_session_bills.charging_session_bill_id). | `2b8d4f0a-6c3e-4a9b-8d7f-1e4c9a2b8d66` |
+| `session_id` | uuid | yes |  |  | Value before the change (charging_session_bills.session_id). | `e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb` |
+| `tariff_version_id` | uuid | yes |  |  | Value before the change (charging_session_bills.tariff_version_id). | `1a7c3e9f-5b2d-4f8a-9c6e-0d3b8f1a7c55` |
+| `price_per_kwh` | numeric(12,2) | yes |  |  | Value before the change (charging_session_bills.price_per_kwh). | `4500.00` |
+| `vat_rate_percent` | numeric(4,2) | yes |  |  | Value before the change (charging_session_bills.vat_rate_percent). | `10.00` |
+| `status` | varchar(20) | yes |  |  | Value before the change (charging_session_bills.status). | `BILLED` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (charging_session_bills.status_reason). | `NULL` |
+| `energy_wh` | numeric(24,3) | yes |  |  | Value before the change (charging_session_bills.energy_wh). | `192520.000` |
+| `energy_source` | varchar(20) | yes |  |  | Value before the change (charging_session_bills.energy_source). | `METER_STOP` |
+| `amount_before_vat` | numeric(14,2) | yes |  |  | Value before the change (charging_session_bills.amount_before_vat). | `866340.00` |
+| `vat_amount` | numeric(14,2) | yes |  |  | Value before the change (charging_session_bills.vat_amount). | `86634.00` |
+| `billed_at` | timestamptz | yes |  |  | Value before the change (charging_session_bills.billed_at). | `2026-09-15T09:45:05Z` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (charging_session_bills.created_at). | `2026-09-15T08:29:10Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (charging_session_bills.updated_at). | `2026-09-15T09:45:05Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
 
 **Indexes**
 
-- `ix_charging_session_charge_history_charging_session_charge_id_time` (charging_session_charge_id, changed_at)
+- `ix_charging_session_bill_history_charging_session_bill_id_time` (charging_session_bill_id, changed_at)
 
 ### payments
 
