@@ -7,6 +7,7 @@
 📋 planned: 4
 
 Warranty-linked charging rules and the violations detected against them.
+Review parked until the battery warranty terms are known (open question 10 in the decision log).
 
 - A **policy** has many immutable **versions**; the values are G3 Mobility's decision.
 - A policy is **assigned** to a vehicle, a fleet, or a vehicle model.
