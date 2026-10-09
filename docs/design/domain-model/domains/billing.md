@@ -7,6 +7,7 @@
 📋 planned: 13 · 🆕 proposed: 1
 
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
+Plans and invoices are parked (BL-16); the access rule uses roles only until plans exist.
 
 - A **tariff** belongs to the organization owning the locations it prices (the owner's default, or one location); its prices are immutable **versions** (BL-08).
 - A **wallet** is one person's prepaid balance for charging; its **transactions** are an append-only ledger. A **payment** is real money in or out: a top-up by VietQR bank transfer, or a refund (BL-12 to BL-15).

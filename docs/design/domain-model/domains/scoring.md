@@ -31,6 +31,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 **No. 61** · 📋 planned · owner: **customer** · features: F-K1
 
+Review skipped by the owner (2026-10-10); designed when driver scoring (F-K1) starts.
 A driver's weekly safety score, computed from telemetry.
 
 | Column | Type | Null | Key | References | Meaning | Example |
