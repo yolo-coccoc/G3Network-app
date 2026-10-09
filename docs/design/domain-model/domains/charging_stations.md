@@ -73,7 +73,7 @@ erDiagram
   }
   charging_station_configuration_captures {
     uuid capture_id PK
-    uuid station_id FK
+    uuid command_id FK
   }
   charging_station_configuration_entries {
     uuid entry_id PK
@@ -99,11 +99,11 @@ erDiagram
   charging_connector_state |o..|| charging_connectors : "connector_id"
   charging_ocpp_messages }o--|| charging_stations : "station_id"
   charging_station_configuration_entries }o--|| charging_stations : "station_id"
-  charging_station_configuration_captures }o..|| charging_stations : "station_id"
   charging_station_commands }o..|| charging_stations : "station_id"
   charging_station_commands }o..o| charging_evses : "evse_id"
   charging_station_commands }o..o| charging_sessions : "session_id"
   charging_station_commands }o..o| users : "requested_by"
+  charging_station_configuration_captures |o..|| charging_station_commands : "command_id"
   charging_sessions }o--|| charging_stations : "station_id"
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
@@ -282,7 +282,6 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [charging_evses](#charging_evses).station_id
 - [charging_ocpp_messages](#charging_ocpp_messages).station_id
 - [charging_station_configuration_entries](#charging_station_configuration_entries).station_id
-- [charging_station_configuration_captures](#charging_station_configuration_captures).station_id (planned)
 - [charging_station_commands](#charging_station_commands).station_id (planned)
 - [charging_sessions](charging_sessions.md#charging_sessions).station_id
 - [tariffs](billing.md#tariffs).station_id (planned)
@@ -529,24 +528,26 @@ Every OCPP frame in both directions, verbatim and append-only.
 One snapshot of a charger's settings: one GetConfiguration answer (1.6J) or
 one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
 themselves are rows of charging_station_configuration_entries. Append-only:
-the current settings are the newest COMPLETE snapshot, and comparing two
-snapshots shows what changed between them (CS-19). Changing a setting is a
-command we send, not a snapshot: a row of charging_station_commands (CS-20).
+comparing two snapshots shows what changed between them (CS-19). Every snapshot comes
+from one GET_CONFIGURATION command, so the charger, the request time and
+who asked are read from it (CS-21); the current settings of a charger are
+its newest COMPLETE snapshot through the command's charger. Changing a
+setting is a command too (CHANGE_CONFIGURATION, CS-20); an AFTER_CHANGE
+snapshot checks that it was applied.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `capture_id` | uuid | no | PK |  | Internal ID of one snapshot (photo) of a charger's settings. | `00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | The charger. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `command_id` | uuid | no | FK UQ | [charging_station_commands](#charging_station_commands).command_id (on delete restrict) | The GET_CONFIGURATION command that asked for this snapshot (CS-21), including the automatic one after boot; one command gives one snapshot. The charger, the request time and who asked are read from it. | `0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `reason` | varchar(20) | no |  |  | Why the snapshot was taken. BOOT: automatically after each boot (CO-05). ON_DEMAND: a person asked for it. AFTER_CHANGE: right after we changed a setting, to confirm the charger applied it (a push itself returns only a verdict, no values). Values: BOOT \| ON_DEMAND \| AFTER_CHANGE. | `BOOT` |
 | `ocpp_protocol_version` | varchar(20) | no |  |  | Protocol of the connection the snapshot came over; tells how its entries are named (1.6J: a key only; 2.0.1: component and variable). | `ocpp1.6` |
 | `ocpp_request_id` | integer | yes |  |  | OCPP 2.0.1 only (CO-15): the requestId of GetBaseReport, which joins the several NotifyReport parts into this one snapshot; NULL for 1.6J (one answer). | `NULL` |
-| `requested_at` | timestamptz | no |  |  | When the gateway asked the charger. | `2026-09-14T22:00:06Z` |
 | `captured_at` | timestamptz | yes |  |  | When the answer (2.0.1: its last part) arrived; NULL while waiting or when it failed. | `2026-09-14T22:00:10Z` |
 | `outcome` | varchar(20) | no |  |  | Observed result, as the charger behaved (no reason column: observed, not decided). PENDING: asked, not complete yet. COMPLETE: every part received. FAILED: no answer in time, an error answer, or parts missing. Values: PENDING \| COMPLETE \| FAILED. | `COMPLETE` |
 
 **Indexes**
 
-- `ix_charging_config_captures_station_captured` (station_id, captured_at) - The latest complete snapshot of a charger
+- `ix_charging_config_captures_ocpp_request_id` (ocpp_request_id) - Finds the snapshot when a 2.0.1 NotifyReport part arrives, together with the command's charger
 
 ### charging_station_configuration_entries
 
@@ -561,7 +562,7 @@ translated to 2.0.1 names. Append-only, through its capture.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `entry_id` | uuid | no | PK |  | Internal ID of the row: one value of one setting in one snapshot. | `00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | **🗑️ to be removed (CS-19)**: The charger; now on the capture. | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
+| `station_id` | uuid | no | FK | [charging_stations](#charging_stations).station_id (on delete restrict) | **🗑️ to be removed (CS-19)**: The charger; now read through the capture's command (CS-21). | `4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88` |
 | `capture_id` | uuid | no |  |  | The snapshot this value belongs to. Built today as a plain grouping ID; it becomes a foreign key to charging_station_configuration_captures.capture_id in the refactor (CS-19; not drawn as a reference while that table is planned). | `00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `captured_at` | timestamptz | no |  |  | **🗑️ to be removed (CS-19)**: When the answer arrived; now on the capture. | `2026-09-14T22:00:10Z` |
 | `component_name` | varchar(50) | yes |  |  | **📋 planned (CS-19)**: OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. | `NULL` |
@@ -616,3 +617,7 @@ outcome IN ('PENDING', 'NOT_SENT') OR answered_at IS NOT NULL.
 
 - `ix_charging_station_commands_station_requested` (station_id, requested_at) - A charger's commands, newest first (STN-10)
 - `ix_charging_station_commands_session_id` (session_id) - A session's remote start and stop
+
+**Referenced by**
+
+- [charging_station_configuration_captures](#charging_station_configuration_captures).command_id (planned)

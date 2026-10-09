@@ -1363,30 +1363,32 @@ Every OCPP frame in both directions, verbatim and append-only.
 
 Table charging_station_configuration_captures {
   capture_id uuid [pk, note: 'Internal ID of one snapshot (photo) of a charger\'s settings. @vi Mã nội bộ của một lần chụp cấu hình trụ sạc. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  station_id uuid [not null, note: 'The charger. @vi Trụ sạc. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  command_id uuid [not null, unique, note: 'The GET_CONFIGURATION command that asked for this snapshot (CS-21), including the automatic one after boot; one command gives one snapshot. The charger, the request time and who asked are read from it. @vi Lệnh GET_CONFIGURATION đã yêu cầu lần chụp này (CS-21), kể cả lệnh tự động sau khi khởi động; mỗi lệnh cho một lần chụp. Trụ sạc, thời điểm yêu cầu và người yêu cầu được đọc từ lệnh. @example 0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   reason varchar(20) [not null, note: 'Why the snapshot was taken. BOOT: automatically after each boot (CO-05). ON_DEMAND: a person asked for it. AFTER_CHANGE: right after we changed a setting, to confirm the charger applied it (a push itself returns only a verdict, no values). Values: BOOT | ON_DEMAND | AFTER_CHANGE. @vi Lý do chụp. BOOT: tự động sau mỗi lần khởi động. ON_DEMAND: có người yêu cầu. AFTER_CHANGE: ngay sau khi đổi một cấu hình, để xác nhận trụ đã áp dụng (lệnh đổi chỉ trả về kết quả chấp nhận hay từ chối, không có giá trị). @example BOOT']
   ocpp_protocol_version varchar(20) [not null, note: 'Protocol of the connection the snapshot came over; tells how its entries are named (1.6J: a key only; 2.0.1: component and variable). @vi Giao thức của kết nối mà lần chụp đến qua; cho biết các dòng cấu hình được đặt tên thế nào (1.6J: chỉ có khóa; 2.0.1: thành phần và biến). @example ocpp1.6']
   ocpp_request_id integer [note: 'OCPP 2.0.1 only (CO-15): the requestId of GetBaseReport, which joins the several NotifyReport parts into this one snapshot; NULL for 1.6J (one answer). @vi requestId của GetBaseReport trong OCPP 2.0.1, dùng để ghép nhiều phần NotifyReport thành một lần chụp; NULL với 1.6J (một câu trả lời). @example NULL']
-  requested_at timestamptz [not null, note: 'When the gateway asked the charger. @vi Thời điểm cổng OCPP hỏi trụ. @example 2026-09-14T22:00:06Z']
   captured_at timestamptz [note: 'When the answer (2.0.1: its last part) arrived; NULL while waiting or when it failed. @vi Thời điểm nhận câu trả lời (2.0.1: phần cuối cùng); NULL khi đang chờ hoặc thất bại. @example 2026-09-14T22:00:10Z']
   outcome varchar(20) [not null, note: 'Observed result, as the charger behaved (no reason column: observed, not decided). PENDING: asked, not complete yet. COMPLETE: every part received. FAILED: no answer in time, an error answer, or parts missing. Values: PENDING | COMPLETE | FAILED. @vi Kết quả quan sát được. PENDING: đã hỏi, chưa đủ. COMPLETE: đã nhận đủ. FAILED: không trả lời kịp, trả lời lỗi, hoặc thiếu phần. @example COMPLETE']
   indexes {
-    (station_id, captured_at) [name: 'ix_charging_config_captures_station_captured', note: 'The latest complete snapshot of a charger']
+    ocpp_request_id [name: 'ix_charging_config_captures_ocpp_request_id', note: 'Finds the snapshot when a 2.0.1 NotifyReport part arrives, together with the command\'s charger']
   }
   Note: '''@status planned @owner internal @features F-G2
 One snapshot of a charger\'s settings: one GetConfiguration answer (1.6J) or
 one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
 themselves are rows of charging_station_configuration_entries. Append-only:
-the current settings are the newest COMPLETE snapshot, and comparing two
-snapshots shows what changed between them (CS-19). Changing a setting is a
-command we send, not a snapshot: a row of charging_station_commands (CS-20).
+comparing two snapshots shows what changed between them (CS-19). Every snapshot comes
+from one GET_CONFIGURATION command, so the charger, the request time and
+who asked are read from it (CS-21); the current settings of a charger are
+its newest COMPLETE snapshot through the command's charger. Changing a
+setting is a command too (CHANGE_CONFIGURATION, CS-20); an AFTER_CHANGE
+snapshot checks that it was applied.
 @vi-name Lần chụp cấu hình trụ
-@vi Một lần chụp cấu hình của trụ sạc: một câu trả lời GetConfiguration (1.6J) hoặc một GetBaseReport được trả lời bằng nhiều phần NotifyReport (2.0.1). Các cấu hình nằm ở charging_station_configuration_entries. Chỉ ghi thêm: cấu hình hiện tại là lần chụp COMPLETE mới nhất, so hai lần chụp cho biết những gì đã đổi (CS-19). Đổi một cấu hình là lệnh gửi xuống trụ, không phải một lần chụp.'''
+@vi Một lần chụp cấu hình của trụ sạc: một câu trả lời GetConfiguration (1.6J) hoặc một GetBaseReport được trả lời bằng nhiều phần NotifyReport (2.0.1). Các cấu hình nằm ở charging_station_configuration_entries. Chỉ ghi thêm: cấu hình hiện tại là lần chụp COMPLETE mới nhất, so hai lần chụp cho biết những gì đã đổi (CS-19). Đổi một cấu hình là lệnh gửi xuống trụ, không phải một lần chụp. Mỗi lần chụp đến từ một lệnh GET_CONFIGURATION, nên trụ sạc, thời điểm yêu cầu và người yêu cầu được đọc từ lệnh (CS-21).'''
 }
 
 Table charging_station_configuration_entries {
   entry_id uuid [pk, note: 'Internal ID of the row: one value of one setting in one snapshot. @vi Mã nội bộ của dòng: một giá trị của một cấu hình trong một lần chụp. @example 00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  station_id uuid [not null, note: '@remove CS-19: The charger; now on the capture. @vi Trụ sạc; nay nằm ở lần chụp. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
+  station_id uuid [not null, note: '@remove CS-19: The charger; now read through the capture\'s command (CS-21). @vi Trụ sạc; nay đọc qua lệnh của lần chụp (CS-21). @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
   capture_id uuid [not null, note: 'The snapshot this value belongs to. Built today as a plain grouping ID; it becomes a foreign key to charging_station_configuration_captures.capture_id in the refactor (CS-19; not drawn as a reference while that table is planned). @vi Lần chụp chứa giá trị này. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   captured_at timestamptz [not null, note: '@remove CS-19: When the answer arrived; now on the capture. @vi Thời điểm nhận câu trả lời; nay nằm ở lần chụp. @example 2026-09-14T22:00:10Z']
   component_name varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. @vi Thành phần OCPP 2.0.1, ví dụ OCPPCommCtrlr, EVSE, Connector; NULL với 1.6J (chỉ có khóa). @example NULL']
@@ -1454,11 +1456,11 @@ Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_connector_state.connector_id - charging_connectors.connector_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
-Ref: charging_station_configuration_captures.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_commands.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_commands.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_station_commands.session_id > charging_sessions.session_id [delete: restrict]
 Ref: charging_station_commands.requested_by > users.user_id [delete: restrict]
+Ref: charging_station_configuration_captures.command_id - charging_station_commands.command_id [delete: restrict]
 
 TableGroup charging_stations {
   charging_locations
