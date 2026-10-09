@@ -4,11 +4,11 @@
 
 [← Overview](../overview.md)
 
-📋 planned: 8 · 🆕 proposed: 1
+📋 planned: 9 · 🆕 proposed: 1
 
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
-- A **tariff** prices energy network-wide or per station, by time of day.
+- A **tariff** belongs to the organization owning the locations it prices (the owner's default, or one location); its prices are immutable **versions** (BL-08).
 - A **payment** usually settles one charging session; a **wallet** belongs to an organization or one driver (D5).
 - An **invoice** belongs to one organization and has **lines** for sessions or subscription periods.
 - A **subscription** puts one vehicle on one **plan**.
@@ -21,7 +21,13 @@ Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscripti
 erDiagram
   tariffs {
     uuid tariff_id PK
-    uuid station_id FK
+    uuid organization_id FK
+    uuid location_id FK
+  }
+  tariff_history {
+    bigint history_id PK
+    uuid tariff_id FK
+    uuid changed_by FK
   }
   payments {
     uuid payment_id PK
@@ -64,7 +70,8 @@ erDiagram
     uuid plan_id FK
     uuid vehicle_id FK
   }
-  tariffs }o..o| charging_stations : "station_id"
+  tariffs }o..|| organizations : "organization_id"
+  tariffs }o..o| charging_locations : "location_id"
   payments }o..|| organizations : "organization_id"
   payments }o..o| charging_sessions : "session_id"
   wallets }o..|| organizations : "organization_id"
@@ -82,29 +89,74 @@ erDiagram
   subscriptions }o..|| subscription_plans : "plan_id"
   plan_features }o..|| subscription_plans : "plan_id"
   subscriptions }o..|| vehicles : "vehicle_id"
+  tariff_history }o..o| tariffs : "tariff_id"
+  tariff_history }o..o| users : "changed_by"
 ```
 
-Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_sessions](charging_sessions.md#charging_sessions), [charging_stations](charging_stations.md#charging_stations), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [vehicles](vehicles.md#vehicles).
+Only key columns are shown. Solid line = built link, dashed = planned. Tables from other domains (no columns): [charging_locations](charging_stations.md#charging_locations), [charging_sessions](charging_sessions.md#charging_sessions), [drivers](drivers.md#drivers), [organizations](identity.md#organizations), [users](identity.md#users), [vehicles](vehicles.md#vehicles).
 
 ## Tables
 
 ### tariffs
 
-**No. 50** · 📋 planned · owner: **internal** · features: F-C8, F-H1
+**No. 50** · 📋 planned · owner: **customer** · features: F-C8, F-H1
 
-The price of energy. Who owns tariffs (G3 Energy or G3 Network) is
-feature-list item 5.
+Whose price it is and where it applies (BL-08); the prices themselves are
+immutable versions in tariff_versions, so a receipt always shows the price
+actually charged. The price at a location is its own ACTIVE tariff,
+otherwise the owner's default. Change history on (retiring or renaming is a
+decision); no soft delete (sessions point to its versions forever). Later:
+a special price for one customer's contract, and a different price per
+charger at the same location.
+
+🔍 = tracked column: a change to it copies the whole old row into [tariff_history](#tariff_history).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `tariff_id` | uuid | no | PK |  | Internal ID of the tariff. | `f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10` |
-| `tariff_code` | varchar(50) | no |  |  | Tariff code shown on receipts. | `TOU-2026-Q4` |
-| `station_id` | uuid | yes | FK | [charging_stations](charging_stations.md#charging_stations).station_id (on delete restrict) | Station it applies to; NULL for the whole network. | `NULL` |
-| `price_per_kwh` | numeric(12,2) | no |  |  | Base energy price per kWh, in the tariff currency. | `4500.00` |
-| `currency` | char(3) | no |  |  | ISO 4217 currency code. | `VND` |
-| `schedule` | jsonb | yes |  |  | Time-of-day price periods as JSON. | `[{"from": "22:00", "to": "04:00", "price_per_kwh": 3200}]` |
-| `valid_from` | timestamptz | no |  |  | When the tariff takes effect. | `2026-10-01T00:00:00Z` |
-| `valid_to` | timestamptz | yes |  |  | When it stops applying; NULL if open-ended. | `NULL` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Owner: the organization whose locations this prices (BL-08): our internal organization for the public network, or a customer for its own private chargers (CS-10). Which internal organization owns the public network (G3 Energy or G3 Network, PAY-09) is data, not design. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `location_id` | uuid | yes | FK 🔍 | [charging_locations](charging_stations.md#charging_locations).location_id (on delete restrict) | The location it prices; NULL for the owner's default for all its locations. Must belong to the owner. Drivers see one price per place. | `NULL` |
+| `name` | varchar(100) | no | 🔍 |  | Name shown in the app and on receipts. | `Giá chuẩn 2026` |
+| `currency` | char(3) | no | 🔍 |  | ISO 4217 currency code. | `VND` |
+| `status` | varchar(20) | no | 🔍 |  | Decided by the owner. ACTIVE: in use. INACTIVE: retired. Values: ACTIVE \| INACTIVE. | `ACTIVE` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the tariff has its status, e.g. why it was retired (DM-19); NULL when there is nothing to explain. | `NULL` |
+| `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
+
+**Indexes**
+
+- `uq_tariffs_active_owner_location` (organization_id, location_id) unique - WHERE status = ACTIVE, NULLS NOT DISTINCT: one active tariff per location and one default per owner
+- `ix_tariffs_location_id` (location_id)
+
+**Referenced by**
+
+- [tariff_history](#tariff_history).tariff_id (planned)
+
+### tariff_history
+
+**No. 50.h** · 📋 planned · owner: **customer** · features: F-C8, F-H1 · change history of [tariffs](#tariffs)
+
+Every earlier version of a row of `tariffs`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
+
+| Column | Type | Null | Key | References | Meaning | Example |
+|---|---|---|---|---|---|---|
+| `history_id` | bigint | no | PK |  | Auto-increasing ID of the history row. | `1024` |
+| `tariff_id` | uuid | yes | FK | [tariffs](#tariffs).tariff_id (on delete restrict) | Value before the change (tariffs.tariff_id). | `f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10` |
+| `organization_id` | uuid | yes |  |  | Value before the change (tariffs.organization_id). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `location_id` | uuid | yes |  |  | Value before the change (tariffs.location_id). | `NULL` |
+| `name` | varchar(100) | yes |  |  | Value before the change (tariffs.name). | `Giá chuẩn 2026` |
+| `currency` | char(3) | yes |  |  | Value before the change (tariffs.currency). | `VND` |
+| `status` | varchar(20) | yes |  |  | Value before the change (tariffs.status). | `ACTIVE` |
+| `status_reason` | varchar(200) | yes |  |  | Value before the change (tariffs.status_reason). | `NULL` |
+| `created_at` | timestamptz | yes |  |  | Value before the change (tariffs.created_at). | `2026-09-01T02:00:00Z` |
+| `updated_at` | timestamptz | yes |  |  | Value before the change (tariffs.updated_at). | `2026-09-10T07:15:00Z` |
+| `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
+| `changed_by` | uuid | yes | FK | [users](identity.md#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. A change without a reason fails. | `Customer moved to a new office` |
+
+**Indexes**
+
+- `ix_tariff_history_tariff_id_time` (tariff_id, changed_at)
 
 ### payments
 

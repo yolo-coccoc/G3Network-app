@@ -236,6 +236,7 @@ Answered and removed: 6 (ID-43). The next new question is number 11.
 | BL-05 | SMS is a sellable feature (quota and/or per message); OTP SMS is our operating cost. | SMS costs money per message. | ⏳ direction | 2026-10-03 | Design review |
 | BL-06 | Money is never computed by telemetry or sessions: F-C6 has no cost field; a flat per-kWh cost setting is used only for F-A6 estimates until tariffs exist. | Money belongs to billing. | ✅ 📦 deferred.md 26, 60 | 2026-09-17 | operating-energy-reports planner |
 | BL-07 | Meter readings are stored as reported and not claimed legally verified (DC meter verification in Vietnam decides whether kWh invoicing is legal). | Unresolved legal question. | ⏳ open question 5 | – | Open questions (this log); ocpp16 planner §7 |
+| BL-08 | `tariffs` review: a tariff belongs to the **organization that owns the locations it prices** (our internal organization for the public network, a customer for its own chargers, CS-10), so who owns the public network's prices (PAY-09) is data. It prices one location or, with no location, is the owner's default; the price at a location is its own ACTIVE tariff, otherwise the default. The prices are immutable **versions** (next table), so a receipt always shows the price charged. Status ACTIVE / INACTIVE with reason, change history on, no soft delete. Later: per-customer contract prices, per-charger prices. | One price per place; old receipts stay true. | ✅ | 2026-10-10 | Design review; DBML `tariffs` |
 
 ## NT — Notifications & messaging
 

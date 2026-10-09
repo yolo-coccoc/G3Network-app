@@ -1888,18 +1888,28 @@ Review parked until the battery warranty terms are known (open question 10 in th
 
 Table tariffs {
   tariff_id uuid [pk, note: 'Internal ID of the tariff. @vi Mã nội bộ của biểu giá. @example f2b9e6c3-1d8a-4f5b-a3c7-9e0d4b1f8a10']
-  tariff_code varchar(50) [not null, note: 'Tariff code shown on receipts. @vi Mã biểu giá in trên biên nhận. @example TOU-2026-Q4']
-  station_id uuid [note: 'Station it applies to; NULL for the whole network. @vi Trạm áp dụng; NULL nếu áp dụng toàn mạng. @example NULL']
-  price_per_kwh numeric(12,2) [not null, note: 'Base energy price per kWh, in the tariff currency. @vi Đơn giá điện cơ bản cho mỗi kWh, theo đơn vị tiền tệ của biểu giá. @example 4500.00']
+  organization_id uuid [not null, note: 'Owner: the organization whose locations this prices (BL-08): our internal organization for the public network, or a customer for its own private chargers (CS-10). Which internal organization owns the public network (G3 Energy or G3 Network, PAY-09) is data, not design. @vi Chủ sở hữu: tổ chức có các trạm được định giá bởi biểu giá này (BL-08): tổ chức nội bộ của chúng ta với mạng công cộng, hoặc khách hàng với các trụ riêng của mình (CS-10). Tổ chức nội bộ nào sở hữu mạng công cộng (G3 Energy hay G3 Network, PAY-09) là dữ liệu, không phải thiết kế. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  location_id uuid [note: 'The location it prices; NULL for the owner\'s default for all its locations. Must belong to the owner. Drivers see one price per place. @vi Trạm được định giá; NULL là biểu giá mặc định của chủ sở hữu cho mọi trạm của mình. Trạm phải thuộc chủ sở hữu. Tài xế thấy một giá cho mỗi địa điểm. @example NULL']
+  name varchar(100) [not null, note: 'Name shown in the app and on receipts. @vi Tên hiển thị trên ứng dụng và biên nhận. @example Giá chuẩn 2026']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
-  schedule jsonb [note: 'Time-of-day price periods as JSON. @vi Các khung giờ giá theo thời điểm trong ngày, dạng JSON. @example [{"from": "22:00", "to": "04:00", "price_per_kwh": 3200}]']
-  valid_from timestamptz [not null, note: 'When the tariff takes effect. @vi Thời điểm biểu giá có hiệu lực. @example 2026-10-01T00:00:00Z']
-  valid_to timestamptz [note: 'When it stops applying; NULL if open-ended. @vi Thời điểm hết hiệu lực; NULL nếu không thời hạn. @example NULL']
-  Note: '''@status planned @owner internal @features F-C8,F-H1
-The price of energy. Who owns tariffs (G3 Energy or G3 Network) is
-feature-list item 5.
-@vi-name Biểu giá điện
-@vi Giá điện. Ai sở hữu biểu giá (G3 Energy hay G3 Network) là mục 5 của feature-list.'''
+  status varchar(20) [not null, note: 'Decided by the owner. ACTIVE: in use. INACTIVE: retired. Values: ACTIVE | INACTIVE. @vi Do chủ sở hữu quyết định. ACTIVE: đang dùng. INACTIVE: đã ngừng. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the tariff has its status, e.g. why it was retired (DM-19); NULL when there is nothing to explain. @vi Lý do biểu giá có trạng thái hiện tại, ví dụ vì sao ngừng dùng (DM-19); NULL nếu không cần giải thích. @example NULL']
+  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
+  updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
+  indexes {
+    (organization_id, location_id) [unique, name: 'uq_tariffs_active_owner_location', note: 'WHERE status = ACTIVE, NULLS NOT DISTINCT: one active tariff per location and one default per owner']
+    location_id [name: 'ix_tariffs_location_id']
+  }
+  Note: '''@status planned @owner customer @features F-C8,F-H1 @tracked *
+Whose price it is and where it applies (BL-08); the prices themselves are
+immutable versions in tariff_versions, so a receipt always shows the price
+actually charged. The price at a location is its own ACTIVE tariff,
+otherwise the owner's default. Change history on (retiring or renaming is a
+decision); no soft delete (sessions point to its versions forever). Later:
+a special price for one customer's contract, and a different price per
+charger at the same location.
+@vi-name Biểu giá
+@vi Giá của ai và áp dụng ở đâu (BL-08); giá cụ thể là các phiên bản không sửa được trong tariff_versions, nên biên nhận luôn hiện đúng giá đã tính. Giá tại một trạm là biểu giá ACTIVE của chính trạm đó, nếu không có thì là biểu giá mặc định của chủ sở hữu. Bật lịch sử thay đổi; không xóa mềm. Sau này: giá riêng theo hợp đồng của một khách hàng, và giá khác nhau theo từng trụ trong cùng một trạm.'''
 }
 
 Table payments {
@@ -2012,7 +2022,8 @@ One vehicle subscribed to a plan; overdue locks features.
 @vi Một xe đăng ký một gói; quá hạn thanh toán sẽ khóa tính năng.'''
 }
 
-Ref: tariffs.station_id > charging_stations.station_id [delete: restrict]
+Ref: tariffs.organization_id > organizations.organization_id [delete: restrict]
+Ref: tariffs.location_id > charging_locations.location_id [delete: restrict]
 Ref: payments.organization_id > organizations.organization_id [delete: restrict]
 Ref: payments.session_id > charging_sessions.session_id [delete: restrict]
 Ref: wallets.organization_id > organizations.organization_id [delete: restrict]
@@ -2061,7 +2072,7 @@ TableGroup billing {
   Note: '''
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
-- A **tariff** prices energy network-wide or per station, by time of day.
+- A **tariff** belongs to the organization owning the locations it prices (the owner's default, or one location); its prices are immutable **versions** (BL-08).
 - A **payment** usually settles one charging session; a **wallet** belongs to an organization or one driver (D5).
 - An **invoice** belongs to one organization and has **lines** for sessions or subscription periods.
 - A **subscription** puts one vehicle on one **plan**.
