@@ -13,17 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.vehicles.service as vehicle_service
 from app.domains.vehicles.schemas import (
-    VehicleActivationSummaryResponse,
     VehicleCreateRequest,
     VehicleListResponse,
+    VehicleModelCreateRequest,
+    VehicleModelListResponse,
+    VehicleModelResponse,
     VehicleResponse,
     VehicleUpdateRequest,
 )
-from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
+from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["vehicles"])
+
+# Mounted separately (``/vehicle-models``): the shared truck-model catalog.
+vehicle_models_router = APIRouter(tags=["vehicle models"])
 
 # Body of a successful DELETE /vehicles/{vehicle_id}: part of the HTTP
 # contract, so it lives in the router rather than in the service.
@@ -35,7 +40,9 @@ VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
     status_code=status.HTTP_201_CREATED,
     response_model=VehicleResponse,
     summary="Create a new vehicle",
-    description="Create a new vehicle in the system. License plate and VIN must be unique.",
+    description="Create a new vehicle in the system. License plate and VIN must be "
+    "unique among vehicles still in the system; the organization and the vehicle "
+    "model must exist.",
 )
 async def create_vehicle_endpoint(
     vehicle_create_request: VehicleCreateRequest,
@@ -51,6 +58,8 @@ async def create_vehicle_endpoint(
         Created vehicle.
 
     Raises:
+        VehicleModelNotFoundError: The vehicle model does not exist (404).
+        VehicleOrganizationNotFoundError: The organization does not exist (404).
         VehicleConflictError: The license plate or VIN already exists (409).
     """
     return await vehicle_service.create_vehicle(
@@ -63,8 +72,7 @@ async def create_vehicle_endpoint(
     "/",
     response_model=VehicleListResponse,
     summary="Get the list of vehicles",
-    description="Get the list of vehicles with pagination, filterable by status "
-    "and by F-F2 activation status (both filters combine with AND).",
+    description="Get the list of vehicles with pagination, filterable by status.",
 )
 async def list_vehicles_endpoint(
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
@@ -77,11 +85,6 @@ async def list_vehicles_endpoint(
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Filter by status"
     ),
-    activation_status_filter: VehicleActivationStatus | None = Query(
-        None,
-        alias="activation_status",
-        description="Filter by F-F2 activation status",
-    ),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles.
@@ -89,10 +92,8 @@ async def list_vehicles_endpoint(
     Args:
         page: Page number.
         page_size: Number of records per page.
-        status_filter: Lifecycle status filter (query parameter
-            ``status``), if any.
-        activation_status_filter: F-F2 activation status filter (query
-            parameter ``activation_status``), if any.
+        status_filter: Service status filter (query parameter ``status``),
+            if any.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -103,29 +104,7 @@ async def list_vehicles_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
-        activation_status_filter=activation_status_filter,
     )
-
-
-@router.get(
-    "/activation-summary",
-    response_model=VehicleActivationSummaryResponse,
-    summary="Get the fleet-wide device-activation success rate",
-    description="Get counts and success rate for the F-F2 device-provisioning flow. "
-    "Registered before /{vehicle_id} so it isn't captured as a path parameter.",
-)
-async def get_vehicle_activation_summary_endpoint(
-    db_session: AsyncSession = Depends(get_db, scope="function"),
-) -> VehicleActivationSummaryResponse:
-    """Get the fleet-wide activation success rate (F-F2).
-
-    Args:
-        db_session: Database session owned by the HTTP boundary.
-
-    Returns:
-        Activation counts and success rate.
-    """
-    return await vehicle_service.get_vehicle_activation_summary(db_session)
 
 
 @router.get(
@@ -195,7 +174,7 @@ async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
-    """Soft-delete (and decommission) a vehicle.
+    """Soft-delete a vehicle (it leaves the system and becomes INACTIVE).
 
     Args:
         vehicle_id: Internal ID of the vehicle.
@@ -209,3 +188,88 @@ async def soft_delete_vehicle_endpoint(
     """
     await vehicle_service.soft_delete_vehicle(db_session, vehicle_id)
     return {"message": VEHICLE_DELETED_MESSAGE}
+
+
+@vehicle_models_router.post(
+    "/",
+    status_code=status.HTTP_201_CREATED,
+    response_model=VehicleModelResponse,
+    summary="Add a truck model to the catalog",
+    description="Add a truck model. Make and model name are unique among models "
+    "still offered.",
+)
+async def create_vehicle_model_endpoint(
+    vehicle_model_create_request: VehicleModelCreateRequest,
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleModelResponse:
+    """Add a truck model to the catalog.
+
+    Args:
+        vehicle_model_create_request: Request data for the new model.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Created vehicle model.
+
+    Raises:
+        VehicleModelConflictError: The make and model name already exist (409).
+    """
+    return await vehicle_service.create_vehicle_model(
+        db_session, vehicle_model_create_request
+    )
+
+
+@vehicle_models_router.get(
+    "/",
+    response_model=VehicleModelListResponse,
+    summary="Get the truck model catalog",
+    description="Get the vehicle models with pagination.",
+)
+async def list_vehicle_models_endpoint(
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+        description="Number of records per page",
+    ),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleModelListResponse:
+    """Get a paginated list of vehicle models.
+
+    Args:
+        page: Page number.
+        page_size: Number of records per page.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Paginated list of vehicle models.
+    """
+    return await vehicle_service.list_vehicle_models(
+        db_session, page=page, page_size=page_size
+    )
+
+
+@vehicle_models_router.get(
+    "/{vehicle_model_id}",
+    response_model=VehicleModelResponse,
+    summary="Get a truck model",
+    description="Get one vehicle model by ID.",
+)
+async def get_vehicle_model_endpoint(
+    vehicle_model_id: UUID,
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleModelResponse:
+    """Get a vehicle model by ID.
+
+    Args:
+        vehicle_model_id: Internal ID of the vehicle model.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Vehicle model details.
+
+    Raises:
+        VehicleModelNotFoundError: The model does not exist or was removed (404).
+    """
+    return await vehicle_service.get_vehicle_model(db_session, vehicle_model_id)

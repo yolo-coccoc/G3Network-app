@@ -1,4 +1,4 @@
-"""Repository querying the vehicles table; contains no business rules.
+"""Repository querying the vehicles and vehicle_models tables; no business rules.
 
 Only the vehicles service calls this module; other domains go through
 ``vehicles/service.py``. Every lookup excludes soft-deleted rows. Functions
@@ -13,8 +13,9 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domains.vehicles.models import VehicleModel
-from app.domains.vehicles.types import VehicleActivationStatus, VehicleStatus
+from app.domains.vehicles.models import VehicleModel, VehicleModelModel
+from app.domains.vehicles.types import VehicleStatus
+from app.libs.db.history import set_change_context
 
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleModel:
@@ -102,23 +103,19 @@ async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None
 
 def _build_list_conditions(
     status_filter: VehicleStatus | None,
-    activation_status_filter: VehicleActivationStatus | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by ``list_all`` and ``count``.
 
     Args:
-        status_filter: Lifecycle status filter, if any.
-        activation_status_filter: F-F2 activation status filter, if any.
+        status_filter: Service status filter, if any.
 
     Returns:
-        Conditions to AND together: always "not soft-deleted", plus one per
-        filter given.
+        Conditions to AND together: always "not soft-deleted", plus the
+        status filter when given.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
     if status_filter is not None:
         conditions.append(VehicleModel.status == status_filter)
-    if activation_status_filter is not None:
-        conditions.append(VehicleModel.activation_status == activation_status_filter)
     return conditions
 
 
@@ -128,7 +125,6 @@ async def list_all(
     offset: int,
     limit: int,
     status_filter: VehicleStatus | None = None,
-    activation_status_filter: VehicleActivationStatus | None = None,
 ) -> list[VehicleModel]:
     """Get a page of vehicles, newest first, excluding soft-deleted records.
 
@@ -136,14 +132,12 @@ async def list_all(
         db_session: Current database session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        status_filter: Lifecycle status filter, if any.
-        activation_status_filter: F-F2 activation status filter, if any;
-            combined with ``status_filter`` by AND.
+        status_filter: Service status filter, if any.
 
     Returns:
         List of vehicle records.
     """
-    conditions = _build_list_conditions(status_filter, activation_status_filter)
+    conditions = _build_list_conditions(status_filter)
 
     query_result = await db_session.execute(
         select(VehicleModel)
@@ -159,20 +153,17 @@ async def count(
     db_session: AsyncSession,
     *,
     status_filter: VehicleStatus | None = None,
-    activation_status_filter: VehicleActivationStatus | None = None,
 ) -> int:
     """Count the total number of vehicles, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
-        status_filter: Lifecycle status filter, if any.
-        activation_status_filter: F-F2 activation status filter, if any;
-            combined with ``status_filter`` by AND.
+        status_filter: Service status filter, if any.
 
     Returns:
-        Total number of vehicles matching the filters.
+        Total number of vehicles matching the filter.
     """
-    conditions = _build_list_conditions(status_filter, activation_status_filter)
+    conditions = _build_list_conditions(status_filter)
 
     query_result = await db_session.execute(
         select(func.count(VehicleModel.vehicle_id)).where(and_(*conditions))
@@ -180,31 +171,12 @@ async def count(
     return query_result.scalar() or 0
 
 
-async def count_by_activation_status(
-    db_session: AsyncSession, activation_status: VehicleActivationStatus
-) -> int:
-    """Count active vehicles at a given activation status (F-F2).
-
-    Args:
-        db_session: Current database session.
-        activation_status: Activation status to count.
-
-    Returns:
-        Number of non-soft-deleted vehicles at that activation status.
-    """
-    query_result = await db_session.execute(
-        select(func.count(VehicleModel.vehicle_id)).where(
-            and_(
-                VehicleModel.activation_status == activation_status,
-                VehicleModel.deleted_at.is_(None),
-            )
-        )
-    )
-    return query_result.scalar() or 0
-
-
 async def update_fields(
-    db_session: AsyncSession, vehicle_id: UUID, values: dict[str, Any]
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+    values: dict[str, Any],
+    *,
+    change_reason: str,
 ) -> VehicleModel | None:
     """Update the specified fields of a live vehicle.
 
@@ -216,6 +188,9 @@ async def update_fields(
         vehicle_id: Internal ID of the vehicle.
         values: Fields to update, keyed by ORM attribute name. A key that is
             not an attribute of ``VehicleModel`` is ignored.
+        change_reason: Why the row changes; recorded in ``vehicle_history``
+            (vehicles are change-tracked). The actor is unknown until
+            authentication exists, so ``changed_by`` is ``None`` (DM-29).
 
     Returns:
         The updated vehicle record, or None if not found or soft-deleted.
@@ -232,6 +207,7 @@ async def update_fields(
     if not vehicle_record:
         return None
 
+    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
     for field_name, value in values.items():
         if hasattr(vehicle_record, field_name):
             setattr(vehicle_record, field_name, value)
@@ -239,3 +215,115 @@ async def update_fields(
     await db_session.flush()
     await db_session.refresh(vehicle_record)
     return vehicle_record
+
+
+async def get_vehicle_model_by_id(
+    db_session: AsyncSession, vehicle_model_id: UUID, *, include_deleted: bool = False
+) -> VehicleModelModel | None:
+    """Find a vehicle model by ID.
+
+    Args:
+        db_session: Current database session.
+        vehicle_model_id: Internal ID of the vehicle model.
+        include_deleted: Also return a removed model. A vehicle keeps the
+            model it already points to, so reading a vehicle's specifications
+            includes removed ones; offering a model to a new vehicle does not.
+
+    Returns:
+        The vehicle model record, or None if not found.
+    """
+    conditions = [VehicleModelModel.vehicle_model_id == vehicle_model_id]
+    if not include_deleted:
+        conditions.append(VehicleModelModel.deleted_at.is_(None))
+    query_result = await db_session.execute(
+        select(VehicleModelModel).where(and_(*conditions))
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def find_vehicle_model_by_make_and_name(
+    db_session: AsyncSession, make: str, model_name: str
+) -> VehicleModelModel | None:
+    """Find a live vehicle model by manufacturer and model name.
+
+    Args:
+        db_session: Current database session.
+        make: Manufacturer.
+        model_name: Model line name.
+
+    Returns:
+        The vehicle model record, or None if not found or removed.
+    """
+    query_result = await db_session.execute(
+        select(VehicleModelModel).where(
+            and_(
+                VehicleModelModel.make == make,
+                VehicleModelModel.model_name == model_name,
+                VehicleModelModel.deleted_at.is_(None),
+            )
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def insert_vehicle_model(
+    db_session: AsyncSession, values: dict[str, Any]
+) -> VehicleModelModel:
+    """Insert a vehicle model into the catalog.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        values: Fields used to initialize the ORM record.
+
+    Returns:
+        The newly created record, reloaded after the flush.
+
+    Raises:
+        IntegrityError: When the make and model name already exist; raised by
+            the flush for the service to convert.
+    """
+    vehicle_model_record = VehicleModelModel(**values)
+    db_session.add(vehicle_model_record)
+    await db_session.flush()
+    await db_session.refresh(vehicle_model_record)
+    return vehicle_model_record
+
+
+async def list_vehicle_models(
+    db_session: AsyncSession, *, offset: int, limit: int
+) -> list[VehicleModelModel]:
+    """Get a page of live vehicle models, ordered by make and model name.
+
+    Args:
+        db_session: Current database session.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
+
+    Returns:
+        List of vehicle model records.
+    """
+    query_result = await db_session.execute(
+        select(VehicleModelModel)
+        .where(VehicleModelModel.deleted_at.is_(None))
+        .order_by(VehicleModelModel.make, VehicleModelModel.model_name)
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())
+
+
+async def count_vehicle_models(db_session: AsyncSession) -> int:
+    """Count the live vehicle models.
+
+    Args:
+        db_session: Current database session.
+
+    Returns:
+        Number of vehicle models not removed.
+    """
+    query_result = await db_session.execute(
+        select(func.count(VehicleModelModel.vehicle_model_id)).where(
+            VehicleModelModel.deleted_at.is_(None)
+        )
+    )
+    return query_result.scalar() or 0

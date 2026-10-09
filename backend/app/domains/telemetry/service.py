@@ -775,11 +775,6 @@ async def process_message(
     - A message conversion error only increments ``errors`` for the current
       message; a DB error is raised so the transaction boundary rolls back
       and the worker stops per MVP policy.
-    - After a successful insert, if this is the vehicle's first-ever
-      telemetry message (``previous_telemetry is None``), F-F2's activation
-      state machine advances to ``ACTIVATED`` (see
-      ``vehicle_service.mark_vehicle_activated``) - a best-effort side
-      channel that never affects this function's own return value.
     - After a successful insert, the F-A2 battery-threshold, F-A3 SOH and
       F-A4 anomaly detectors run against the vehicle's previous reading
       and each alert raises its own notification (see
@@ -867,11 +862,6 @@ async def process_message(
             "processed": processed_count,
         },
     )
-
-    if previous_telemetry is None:
-        # F-F2: this vehicle's first-ever telemetry message confirms
-        # end-to-end data flow. Best-effort side channel - never raises.
-        await vehicle_service.mark_vehicle_activated(db, vehicle_id)
 
     await telemetry_alerting.raise_alerts_for_reading(
         db,

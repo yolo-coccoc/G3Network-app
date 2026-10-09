@@ -121,8 +121,8 @@ erDiagram
   access_audit_logs }o--o| users : "user_id"
   access_audit_logs }o--o| organizations : "organization_id"
   organization_settings |o--|| organizations : "organization_id"
-  vehicles }o..|| organizations : "organization_id"
-  batteries }o..|| organizations : "organization_id"
+  vehicles }o--|| organizations : "organization_id"
+  batteries }o--|| organizations : "organization_id"
   telematics }o..|| organizations : "organization_id"
   telemetry }o..|| organizations : "organization_id"
   drivers |o..|| memberships : "membership_id"
@@ -239,8 +239,8 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [user_role_assignments](#user_role_assignments).organization_id
 - [access_audit_logs](#access_audit_logs).organization_id
 - [organization_settings](#organization_settings).organization_id
-- [vehicles](vehicles.md#vehicles).organization_id (planned)
-- [batteries](batteries.md#batteries).organization_id (planned)
+- [vehicles](vehicles.md#vehicles).organization_id
+- [batteries](batteries.md#batteries).organization_id
 - [telematics](telematics.md#telematics).organization_id (planned)
 - [telemetry](telemetry.md#telemetry).organization_id (planned)
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).organization_id (planned)

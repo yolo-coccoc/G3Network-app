@@ -21,6 +21,7 @@ from app.domains.support.router import router as support_router
 from app.domains.telematics.router import router as telematics_router
 from app.domains.telemetry.router import router as telemetry_router
 from app.domains.vehicles.router import router as vehicles_router
+from app.domains.vehicles.router import vehicle_models_router
 from app.libs.common.config import settings
 from app.libs.common.errors import (
     ConflictError,
@@ -109,6 +110,7 @@ for _error_base in _DOMAIN_ERROR_STATUS:
 
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
+app.include_router(vehicle_models_router, prefix="/api/v1/vehicle-models")
 app.include_router(telematics_router, prefix="/api/v1/telematics")
 app.include_router(telemetry_router, prefix="/api/v1/telemetry")
 app.include_router(charging_stations_router, prefix="/api/v1")

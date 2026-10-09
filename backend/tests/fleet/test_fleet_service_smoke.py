@@ -19,6 +19,7 @@ from app.domains.fleet.exceptions import (
     FleetParentNotFoundError,
     FleetParentOrganizationMismatchError,
     FleetVehicleNotFoundError,
+    FleetVehicleOrganizationMismatchError,
     GeofenceNotFoundError,
 )
 from app.domains.fleet.models import (
@@ -102,10 +103,24 @@ async def test_create_fleet_rejects_duplicate_code(
         )
 
 
+def _vehicle_owned_by(monkeypatch: pytest.MonkeyPatch, organization_id: UUID) -> None:
+    """Make the vehicles service report the given organization as the owner."""
+
+    async def resolve_organization_id(db: AsyncSession, vehicle_id: UUID) -> UUID:
+        return organization_id
+
+    monkeypatch.setattr(
+        vehicles_public_service,
+        "resolve_vehicle_organization_id",
+        resolve_organization_id,
+    )
+
+
 @pytest.mark.asyncio
 async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     """add_vehicle_to_fleet() opens a new membership and enriches the VIN (F-E1)."""
     fleet_record = build_fleet_record()
+    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
         vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
@@ -149,6 +164,33 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_add_vehicle_to_fleet_rejects_vehicle_of_another_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """add_vehicle_to_fleet() refuses a vehicle owned by another organization (FL-09)."""
+    fleet_record = build_fleet_record()
+    _vehicle_owned_by(monkeypatch, uuid4())
+
+    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+        return fleet_record
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(vehicle_id=uuid4(), vin=vin, battery_capacity_kwh=None)
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+
+    with pytest.raises(FleetVehicleOrganizationMismatchError):
+        await fleet_service.add_vehicle_to_fleet(
+            fake_db_session(),
+            fleet_record.fleet_id,
+            FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
+        )
+
+
+@pytest.mark.asyncio
 async def test_add_vehicle_to_fleet_rejects_unknown_vin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -180,6 +222,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
 ) -> None:
     """add_vehicle_to_fleet() never silently steals a vehicle from another fleet (F-E1)."""
     fleet_record = build_fleet_record()
+    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     other_fleet_id = uuid4()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
@@ -226,6 +269,7 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
 ) -> None:
     """Adding a vehicle already in this fleet is a no-op returning the existing row (F-E1)."""
     fleet_record = build_fleet_record()
+    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
         vehicle_id=vehicle_id, vin="1HGBH41JXMN109186", battery_capacity_kwh=None
@@ -699,7 +743,7 @@ async def test_list_fleet_vehicles_filters_by_status_and_text_then_pages(
     fleet_record = build_fleet_record()
     summaries = {
         uuid4(): ("1HGBH41JXMN100001", "51C-111.11", VehicleStatus.ACTIVE),
-        uuid4(): ("1HGBH41JXMN100002", "51C-222.22", VehicleStatus.MAINTENANCE),
+        uuid4(): ("1HGBH41JXMN100002", "51C-222.22", VehicleStatus.INACTIVE),
         uuid4(): ("1HGBH41JXMN100003", "30A-333.33", VehicleStatus.ACTIVE),
         uuid4(): ("1HGBH41JXMN100004", "51C-444.44", VehicleStatus.ACTIVE),
     }

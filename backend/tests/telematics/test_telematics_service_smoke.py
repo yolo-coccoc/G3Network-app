@@ -81,9 +81,6 @@ async def test_telematic_service_resolves_vehicle_vin(
     async def no_assigned_vehicle(db: AsyncSession, vehicle_id: UUID) -> None:
         return None
 
-    async def mark_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
     monkeypatch.setattr(telematics_repository, "find_by_serial", no_existing_serial)
     monkeypatch.setattr(
         telematics_repository, "find_by_vehicle_id", no_assigned_vehicle
@@ -99,9 +96,6 @@ async def test_telematic_service_resolves_vehicle_vin(
         "resolve_vehicle_reference_by_id",
         resolve_id,
     )
-    # F-F2's activation hook fires since a vehicle_id resolves; mocked out
-    # since this test is about VIN resolution, not activation.
-    monkeypatch.setattr(vehicles_public_service, "mark_device_assigned", mark_assigned)
 
     response = await telematics_service.create_telematic(
         fake_db_session(),
@@ -442,15 +436,11 @@ def _patch_update_dependencies(
     async def no_vehicle_by_id(db: AsyncSession, vehicle_id: UUID) -> None:
         return None
 
-    async def mark_assigned(db_session: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
     monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(telematics_repository, "update_fields", update_fields)
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_id", no_vehicle_by_id
     )
-    monkeypatch.setattr(vehicles_public_service, "mark_device_assigned", mark_assigned)
 
 
 @pytest.mark.asyncio

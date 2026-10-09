@@ -18,10 +18,12 @@ the OCPP 1.6J transaction-ID sequence, the five TimescaleDB hypertables and
 the change history of the tracked tables (``_TRACKED_TABLES``: a
 ``<singular>_history`` table and an ``AFTER UPDATE`` trigger each, built by
 ``app.libs.db.history_ddl``; ``env.py`` keeps ``*_history`` out of
-autogenerate because the history tables are not models).
-The three server defaults (``maintenance_status``, ``activation_status``,
-``schema_version``) are also hand-added: the models do not declare them, and
-``alembic check`` does not compare server defaults.
+autogenerate because the history tables are not models) and the two period
+views ``vehicle_ownership_periods`` and ``battery_installation_periods``
+(VH-10, VH-16), which read the history tables and are created after them.
+The server defaults the models do not declare (``maintenance_status``,
+``schema_version``) are also hand-added: ``alembic check`` does not compare
+server defaults.
 
 Revision ID: 0001_baseline_schema
 Revises:
@@ -65,7 +67,82 @@ _TRACKED_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("memberships", "membership_history", ()),
     ("organization_settings", "organization_setting_history", ()),
     ("fleets", "fleet_history", ()),
+    ("vehicle_models", "vehicle_model_history", ()),
+    ("vehicles", "vehicle_history", ()),
+    ("battery_models", "battery_model_history", ()),
+    ("batteries", "battery_history", ()),
+    ("warranties", "warranty_history", ()),
 )
+
+# Period views over change history (DM-22, DM-27). Code reads the periods of a
+# relationship only through these views, never from a history table. A
+# "version" is a row of the history table (an earlier version of the source row,
+# replaced at ``changed_at``) or the current source row, which sorts last.
+_VEHICLE_OWNERSHIP_PERIODS_VIEW = """
+    CREATE VIEW vehicle_ownership_periods AS
+    WITH versions AS (
+        SELECT vehicle_id, organization_id, acquired_at, history_id AS version_order
+        FROM vehicle_history
+        UNION ALL
+        SELECT vehicle_id, organization_id, acquired_at, 9223372036854775807
+        FROM vehicles
+    ), marked AS (
+        SELECT vehicle_id, organization_id, acquired_at, version_order,
+               LAG(organization_id) OVER (
+                   PARTITION BY vehicle_id ORDER BY version_order
+               ) AS previous_organization_id
+        FROM versions
+    ), period_starts AS (
+        SELECT vehicle_id, organization_id, acquired_at AS owned_from, version_order
+        FROM marked
+        WHERE organization_id IS DISTINCT FROM previous_organization_id
+    )
+    SELECT vehicle_id, organization_id, owned_from,
+           LEAD(owned_from) OVER (
+               PARTITION BY vehicle_id ORDER BY version_order
+           ) AS owned_until
+    FROM period_starts
+"""
+_BATTERY_INSTALLATION_PERIODS_VIEW = """
+    CREATE VIEW battery_installation_periods AS
+    WITH versions AS (
+        SELECT battery_id, vehicle_id, installed_at, changed_at,
+               history_id AS version_order
+        FROM battery_history
+        UNION ALL
+        SELECT battery_id, vehicle_id, installed_at, NULL, 9223372036854775807
+        FROM batteries
+    ), marked AS (
+        SELECT battery_id, vehicle_id, installed_at, version_order,
+               LAG(vehicle_id) OVER (
+                   PARTITION BY battery_id ORDER BY version_order
+               ) AS previous_vehicle_id,
+               LAG(changed_at) OVER (
+                   PARTITION BY battery_id ORDER BY version_order
+               ) AS previous_changed_at
+        FROM versions
+    )
+    SELECT start_version.battery_id,
+           start_version.vehicle_id,
+           start_version.installed_at AS installed_from,
+           (
+               SELECT CASE
+                          WHEN next_change.vehicle_id IS NOT NULL
+                              THEN next_change.installed_at
+                          ELSE next_change.previous_changed_at
+                      END
+               FROM marked next_change
+               WHERE next_change.battery_id = start_version.battery_id
+                 AND next_change.version_order > start_version.version_order
+                 AND next_change.vehicle_id IS DISTINCT FROM
+                     next_change.previous_vehicle_id
+               ORDER BY next_change.version_order
+               LIMIT 1
+           ) AS installed_until
+    FROM marked start_version
+    WHERE start_version.vehicle_id IS NOT NULL
+      AND start_version.vehicle_id IS DISTINCT FROM start_version.previous_vehicle_id
+"""
 
 # Application objects in ``public``: anything not owned by an extension
 # (pg_depend deptype 'e'), excluding Alembic's own version table.
@@ -260,46 +337,116 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_table(
-        "vehicles",
-        sa.Column("vehicle_id", sa.UUID(), nullable=False),
-        sa.Column("license_plate", sa.String(length=20), nullable=False),
-        sa.Column("vin", sa.String(length=17), nullable=False),
-        sa.Column("make", sa.String(length=50), nullable=False),
-        sa.Column("model", sa.String(length=50), nullable=False),
-        sa.Column("year", sa.Integer(), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "ACTIVE",
-                "INACTIVE",
-                "MAINTENANCE",
-                "DECOMMISSIONED",
-                name="vehiclestatus",
-            ),
-            nullable=False,
-        ),
-        sa.Column(
-            "activation_status",
-            sa.Enum(
-                "PENDING",
-                "DEVICE_ASSIGNED",
-                "ACTIVATED",
-                name="vehicleactivationstatus",
-            ),
-            server_default="PENDING",
-            nullable=False,
-        ),
-        sa.Column("battery_capacity_kwh", sa.Double(), nullable=True),
+        "organizations",
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("is_internal", sa.Boolean(), nullable=False),
+        sa.Column("legal_form", sa.String(length=20), nullable=False),
+        sa.Column("display_name", sa.String(length=200), nullable=False),
+        sa.Column("legal_name", sa.String(length=255), nullable=False),
+        sa.Column("tax_code", sa.String(length=20), nullable=True),
+        sa.Column("address", sa.String(length=500), nullable=True),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("account_manager_id", sa.UUID(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "(status = 'CLOSED') = (deleted_at IS NOT NULL)",
+            name="ck_organizations_closed_iff_deleted",
+        ),
+        sa.ForeignKeyConstraint(
+            ["account_manager_id"], ["users.user_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("organization_id"),
+    )
+    op.create_index(
+        "uq_organizations_active_tax_code",
+        "organizations",
+        ["tax_code"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "vehicle_models",
+        sa.Column("vehicle_model_id", sa.UUID(), nullable=False),
+        sa.Column("make", sa.String(length=50), nullable=False),
+        sa.Column("model_name", sa.String(length=50), nullable=False),
+        sa.Column("gross_vehicle_weight_kg", sa.Integer(), nullable=True),
+        sa.Column("max_payload_kg", sa.Integer(), nullable=True),
+        sa.Column(
+            "nominal_battery_capacity_kwh",
+            sa.Numeric(precision=7, scale=1),
+            nullable=True,
+        ),
+        sa.Column(
+            "consumption_curve", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.PrimaryKeyConstraint("vehicle_model_id"),
+    )
+    op.create_index(
+        "uq_vehicle_models_live_make_model",
+        "vehicle_models",
+        ["make", "model_name"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "vehicles",
+        sa.Column("vehicle_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("acquired_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("license_plate", sa.String(length=20), nullable=False),
+        sa.Column("vin", sa.String(length=17), nullable=False),
+        sa.Column("vehicle_model_id", sa.UUID(), nullable=False),
+        sa.Column("year", sa.Integer(), nullable=False),
+        sa.Column(
+            "status",
+            sa.Enum("ACTIVE", "INACTIVE", name="vehiclestatus"),
+            nullable=False,
+        ),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_vehicles_deleted_inactive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_model_id"],
+            ["vehicle_models.vehicle_model_id"],
+            ondelete="RESTRICT",
+        ),
         sa.PrimaryKeyConstraint("vehicle_id"),
     )
     op.create_index(
-        op.f("ix_vehicles_license_plate"), "vehicles", ["license_plate"], unique=True
+        op.f("ix_vehicles_organization_id"),
+        "vehicles",
+        ["organization_id"],
+        unique=False,
     )
     op.create_index(op.f("ix_vehicles_status"), "vehicles", ["status"], unique=False)
-    op.create_index(op.f("ix_vehicles_vin"), "vehicles", ["vin"], unique=True)
+    op.create_index(
+        "uq_vehicles_live_license_plate",
+        "vehicles",
+        ["license_plate"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_index(
+        "uq_vehicles_live_vin",
+        "vehicles",
+        ["vin"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
     op.create_table(
         "charging_evses",
         sa.Column("evse_id", sa.UUID(), nullable=False),
@@ -497,37 +644,6 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_table(
-        "organizations",
-        sa.Column("organization_id", sa.UUID(), nullable=False),
-        sa.Column("is_internal", sa.Boolean(), nullable=False),
-        sa.Column("legal_form", sa.String(length=20), nullable=False),
-        sa.Column("display_name", sa.String(length=200), nullable=False),
-        sa.Column("legal_name", sa.String(length=255), nullable=False),
-        sa.Column("tax_code", sa.String(length=20), nullable=True),
-        sa.Column("address", sa.String(length=500), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False),
-        sa.Column("status_reason", sa.String(length=200), nullable=True),
-        sa.Column("account_manager_id", sa.UUID(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "(status = 'CLOSED') = (deleted_at IS NOT NULL)",
-            name="ck_organizations_closed_iff_deleted",
-        ),
-        sa.ForeignKeyConstraint(
-            ["account_manager_id"], ["users.user_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("organization_id"),
-    )
-    op.create_index(
-        "uq_organizations_active_tax_code",
-        "organizations",
-        ["tax_code"],
-        unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
-    op.create_table(
         "support_cases",
         sa.Column("case_id", sa.UUID(), nullable=False),
         sa.Column(
@@ -676,6 +792,131 @@ def upgrade() -> None:
         ["vehicle_id"],
         unique=True,
         postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "battery_models",
+        sa.Column("battery_model_id", sa.UUID(), nullable=False),
+        sa.Column("manufacturer", sa.String(length=50), nullable=False),
+        sa.Column("model_name", sa.String(length=50), nullable=False),
+        sa.Column("chemistry", sa.String(length=10), nullable=False),
+        sa.Column(
+            "design_capacity_kwh", sa.Numeric(precision=7, scale=1), nullable=True
+        ),
+        sa.Column("nominal_voltage_v", sa.Numeric(precision=6, scale=1), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.PrimaryKeyConstraint("battery_model_id"),
+    )
+    op.create_index(
+        "uq_battery_models_live_manufacturer_model",
+        "battery_models",
+        ["manufacturer", "model_name"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "batteries",
+        sa.Column("battery_id", sa.UUID(), nullable=False),
+        sa.Column("serial_number", sa.String(length=50), nullable=False),
+        sa.Column("battery_model_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("acquired_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("installed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("manufactured_on", sa.Date(), nullable=True),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_batteries_deleted_inactive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["battery_model_id"],
+            ["battery_models.battery_model_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("battery_id"),
+    )
+    op.create_index(
+        "uq_batteries_installed_vehicle",
+        "batteries",
+        ["vehicle_id"],
+        unique=True,
+        postgresql_where=sa.text("vehicle_id IS NOT NULL AND deleted_at IS NULL"),
+    )
+    op.create_index(
+        "uq_batteries_live_serial_number",
+        "batteries",
+        ["serial_number"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "warranties",
+        sa.Column("warranty_id", sa.UUID(), nullable=False),
+        sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("battery_id", sa.UUID(), nullable=True),
+        sa.Column("telematic_id", sa.UUID(), nullable=True),
+        sa.Column("station_id", sa.UUID(), nullable=True),
+        sa.Column("warranty_type", sa.String(length=20), nullable=False),
+        sa.Column("contract_reference", sa.String(length=100), nullable=True),
+        sa.Column("starts_on", sa.Date(), nullable=False),
+        sa.Column("ends_on", sa.Date(), nullable=False),
+        sa.Column("limits", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("status", sa.String(length=10), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'VOIDED'",
+            name="ck_warranties_deleted_voided",
+        ),
+        sa.CheckConstraint(
+            "num_nonnulls(vehicle_id, battery_id, telematic_id, station_id) = 1",
+            name="ck_warranties_one_link",
+        ),
+        sa.ForeignKeyConstraint(
+            ["battery_id"], ["batteries.battery_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["telematic_id"], ["telematics.telematic_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("warranty_id"),
+    )
+    op.create_index(
+        op.f("ix_warranties_battery_id"), "warranties", ["battery_id"], unique=False
+    )
+    op.create_index(
+        op.f("ix_warranties_ends_on"), "warranties", ["ends_on"], unique=False
+    )
+    op.create_index(
+        op.f("ix_warranties_station_id"), "warranties", ["station_id"], unique=False
+    )
+    op.create_index(
+        op.f("ix_warranties_telematic_id"),
+        "warranties",
+        ["telematic_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_warranties_vehicle_id"), "warranties", ["vehicle_id"], unique=False
     )
     op.create_table(
         "user_credentials",
@@ -1242,6 +1483,9 @@ def upgrade() -> None:
             history_table=history_table,
             untracked_columns=untracked_columns,
         )
+    # The views read the history tables, so they come after them.
+    op.execute(_VEHICLE_OWNERSHIP_PERIODS_VIEW)
+    op.execute(_BATTERY_INSTALLATION_PERIODS_VIEW)
 
 
 def downgrade() -> None:

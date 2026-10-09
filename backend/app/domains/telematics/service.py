@@ -270,9 +270,7 @@ async def create_telematic(
             vehicle is already assigned to another live device.
 
     Side Effects:
-        Inserts and flushes the device; when a vehicle is assigned, advances
-        that vehicle's F-F2 activation status via
-        ``vehicle_service.mark_device_assigned``. Does not commit.
+        Inserts and flushes the device. Does not commit.
     """
     if await telematics_repository.find_by_serial(
         db_session,
@@ -302,10 +300,6 @@ async def create_telematic(
         raise TelematicConflictError(
             "Telematic serial or vehicle already exists"
         ) from error
-    if vehicle_id is not None:
-        # F-F2: advance the vehicle's activation state machine now that a
-        # device is assigned. Best-effort side channel - never raises.
-        await vehicle_service.mark_device_assigned(db_session, vehicle_id)
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -406,9 +400,7 @@ async def update_telematic(
             new vehicle is already assigned to another live device.
 
     Side Effects:
-        Flushes the update; when a vehicle is (re)assigned, advances that
-        vehicle's F-F2 activation status via
-        ``vehicle_service.mark_device_assigned``. Does not commit.
+        Flushes the update. Does not commit.
     """
     telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
     if not telematic_record:
@@ -459,11 +451,6 @@ async def update_telematic(
         raise TelematicConflictError(
             "Telematic serial or vehicle already exists"
         ) from error
-    assigned_vehicle_id = update_values.get("vehicle_id")
-    if assigned_vehicle_id is not None:
-        # F-F2: advance the vehicle's activation state machine now that a
-        # device is (re)assigned. Best-effort side channel - never raises.
-        await vehicle_service.mark_device_assigned(db_session, assigned_vehicle_id)
     return await build_telematic_response(db_session, telematic_record)
 
 

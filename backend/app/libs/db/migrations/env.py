@@ -18,6 +18,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Every model module must be imported so its tables join ``Base.metadata``;
 # the names themselves are unused here.
+from app.domains.batteries.models import (  # noqa: F401
+    BatteryModel,
+    BatteryModelModel,
+)
 from app.domains.charging_sessions.models import (  # noqa: F401
     ChargingSessionEventModel,
     ChargingSessionMeasurementModel,
@@ -57,7 +61,11 @@ from app.domains.notifications.models import NotificationModel  # noqa: F401
 from app.domains.support.models import SupportCaseModel  # noqa: F401
 from app.domains.telematics.models import TelematicModel  # noqa: F401
 from app.domains.telemetry.models import VehicleTelemetryModel  # noqa: F401
-from app.domains.vehicles.models import VehicleModel  # noqa: F401
+from app.domains.vehicles.models import (  # noqa: F401
+    VehicleModel,
+    VehicleModelModel,
+)
+from app.domains.warranties.models import WarrantyModel  # noqa: F401
 from app.libs.common.config import settings
 from app.libs.db.base import Base
 

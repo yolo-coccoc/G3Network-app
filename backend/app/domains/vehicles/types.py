@@ -6,32 +6,18 @@ from uuid import UUID
 
 
 class VehicleStatus(str, enum.Enum):
-    """Supported lifecycle statuses of a vehicle."""
+    """Service status of a vehicle, set by a person or a business rule (DM-25).
+
+    Attributes:
+        ACTIVE: In service.
+        INACTIVE: Not in service (e.g. in the workshop); ``status_reason`` says
+            why. A vehicle that leaves the system is ``INACTIVE`` and
+            soft-deleted. Whether it is moving or reporting is computed from
+            telemetry, never stored.
+    """
 
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
-    MAINTENANCE = "MAINTENANCE"
-    DECOMMISSIONED = "DECOMMISSIONED"
-
-
-class VehicleActivationStatus(str, enum.Enum):
-    """Progress of a vehicle through the F-F2 device-provisioning flow.
-
-    Distinct from ``VehicleStatus`` - this tracks whether a vehicle has
-    been through end-to-end provisioning at least once, not its current
-    operating state.
-
-    Attributes:
-        PENDING: No telematic device has been assigned to this vehicle yet.
-        DEVICE_ASSIGNED: A telematic device is assigned, but no telemetry
-            has been received from it yet.
-        ACTIVATED: At least one telemetry message has been received for
-            this vehicle - end-to-end data flow confirmed.
-    """
-
-    PENDING = "PENDING"
-    DEVICE_ASSIGNED = "DEVICE_ASSIGNED"
-    ACTIVATED = "ACTIVATED"
 
 
 @dataclass(frozen=True)
@@ -41,10 +27,11 @@ class VehicleReference:
     Attributes:
         vehicle_id: Internal ID of the vehicle.
         vin: VIN (chassis number) used to identify the vehicle in business logic.
-        battery_capacity_kwh: Nominal battery pack capacity in kWh, or
-            `None` if not recorded - a genuine static vehicle attribute,
-            carried here so a single cross-domain lookup can serve both
-            "does this vehicle exist" and "what's its pack size" (F-A6/F-C6).
+        battery_capacity_kwh: Nominal battery pack capacity in kWh from the
+            vehicle's model (``vehicle_models.nominal_battery_capacity_kwh``),
+            or `None` if the model has none recorded - carried here so a
+            single cross-domain lookup can serve both "does this vehicle
+            exist" and "what's its pack size" (F-A6/F-C6, VH-16).
     """
 
     vehicle_id: UUID

@@ -17,7 +17,6 @@ import app.domains.telematics.service as telematics_public_service
 import app.domains.telemetry.geofencing as telemetry_geofencing
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
-import app.domains.vehicles.service as vehicle_service
 from app.domains.fleet.types import GeofenceReference
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.types import TelematicVehicleMapping
@@ -102,9 +101,6 @@ def _patch_ingestion(
     ) -> list[GeofenceReference]:
         return geofences_by_latitude.get(round(latitude, 6), [])
 
-    async def mark_activated(db: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
     async def record_notification(db: AsyncSession, **kwargs: object) -> None:
         created_notifications.append(kwargs)
 
@@ -121,7 +117,6 @@ def _patch_ingestion(
     monkeypatch.setattr(
         fleet_service, "list_geofences_containing", geofences_containing
     )
-    monkeypatch.setattr(vehicle_service, "mark_vehicle_activated", mark_activated)
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification
     )

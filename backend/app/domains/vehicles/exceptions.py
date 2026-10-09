@@ -13,3 +13,16 @@ class VehicleNotFoundError(VehicleError, NotFoundError):
 
 class VehicleConflictError(VehicleError, ConflictError):
     """Raised when unique vehicle data conflicts with an existing vehicle."""
+
+
+class VehicleModelNotFoundError(VehicleError, NotFoundError):
+    """Raised when a requested vehicle model does not exist or was removed."""
+
+
+class VehicleModelConflictError(VehicleError, ConflictError):
+    """Raised when a vehicle model with the same make and model name exists."""
+
+
+class VehicleOrganizationNotFoundError(VehicleError, NotFoundError):
+    """Raised when the organization given for a new vehicle does not exist
+    (VH-07)."""

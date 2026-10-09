@@ -40,8 +40,9 @@ def test_openapi_registers_current_backend_routes() -> None:
     assert "/api/v1/charging-sessions/stations/energy" in paths
     # F-C2: the whole charger's and every gun's status in one read.
     assert "/api/v1/charging-stations/{station_id}/connectors" in paths
-    # F-F2: the activation summary, registered before {vehicle_id}.
-    assert "/api/v1/vehicles/activation-summary" in paths
+    # VH-15: the truck model catalog; VH-06: the activation summary is gone.
+    assert "/api/v1/vehicle-models/" in paths
+    assert "/api/v1/vehicles/activation-summary" not in paths
     # F-J2: push a telemetry publish-interval config to a device over MQTT.
     assert "/api/v1/telematics/{telematic_id}/config" in paths
     # F-J2 (D9): the fleet-wide config push, one result per member.

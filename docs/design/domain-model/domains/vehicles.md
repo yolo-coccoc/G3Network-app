@@ -4,9 +4,9 @@
 
 [← Overview](../overview.md)
 
-✅ built: 1 · 📋 planned: 3
+✅ built: 4
 
-The truck itself: identity (VIN, plate), specs, and provisioning state.
+The truck itself: owner, identity (VIN, plate), model and service status.
 
 - A **vehicle** belongs to one organization at a time (`organization_id`, `acquired_at`); earlier owners are in its change history, and the view `vehicle_ownership_periods` lists every period (VH-10).
 - **After a sale (VH-11):** rows recorded under the previous owner (telemetry and what is built from it) stay theirs; the truck's condition (health, faults, maintenance, warranties) and lifetime totals (distance, energy, charge cycles) follow the truck.
@@ -18,8 +18,8 @@ The truck itself: identity (VIN, plate), specs, and provisioning state.
 erDiagram
   vehicles {
     uuid vehicle_id PK
-    uuid organization_id FK "planned"
-    uuid vehicle_model_id FK "planned"
+    uuid organization_id FK
+    uuid vehicle_model_id FK
   }
   vehicle_history {
     bigint history_id PK
@@ -34,10 +34,10 @@ erDiagram
     uuid vehicle_model_id FK
     uuid changed_by FK
   }
-  vehicles }o..|| organizations : "organization_id"
-  vehicles }o..|| vehicle_models : "vehicle_model_id"
-  batteries }o..o| vehicles : "vehicle_id"
-  warranties }o..o| vehicles : "vehicle_id"
+  vehicles }o--|| organizations : "organization_id"
+  vehicles }o--|| vehicle_models : "vehicle_model_id"
+  batteries }o--o| vehicles : "vehicle_id"
+  warranties }o--o| vehicles : "vehicle_id"
   telematics |o--o| vehicles : "vehicle_id"
   telemetry }o--|| vehicles : "vehicle_id"
   driver_vehicle_assignments }o--|| vehicles : "vehicle_id"
@@ -75,37 +75,33 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `vehicle_id` | uuid | no | PK |  | Internal ID of the vehicle. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
-| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned (VH-07)**: Organization that owns the vehicle now; changes when ownership is transferred. Earlier owners are in vehicle_history; the ownership periods come from the view vehicle_ownership_periods (VH-10). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
-| `acquired_at` | timestamptz | no | 🔍 |  | **📋 planned (VH-10)**: When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner's acquired_at. The first owner's value is the truck's handover date. | `2026-06-01T00:00:00Z` |
+| `organization_id` | uuid | no | FK 🔍 | [organizations](identity.md#organizations).organization_id (on delete restrict) | Organization that owns the vehicle now; changes when ownership is transferred. Earlier owners are in vehicle_history; the ownership periods come from the view vehicle_ownership_periods (VH-10). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `acquired_at` | timestamptz | no | 🔍 |  | When the current owner took the truck (handover date, effective date of a transfer). A period ends at the next owner's acquired_at. The first owner's value is the truck's handover date. | `2026-06-01T00:00:00Z` |
 | `license_plate` | varchar(20) | no | 🔍 |  | Registration plate. A truck is registered in the system only once it has a plate. Editable: Vietnamese plates follow the owner (Circular 24/2023/TT-BCA), so a transferred truck gets a new plate and an old plate can reappear on another truck; the change history keeps earlier plates. Unique among vehicles not deleted, so the plate of a truck that left can move to another truck. | `51D-123.45` |
 | `vin` | varchar(17) | no | 🔍 |  | 17-character chassis number (VIN); the vehicle's business key. Editable so a typing mistake can be corrected (the app warns the user to check it before saving); the change history keeps earlier values. Other tables point to vehicle_id, never to the VIN. Unique among vehicles not deleted. | `LZGJLGR4XNX000123` |
-| `vehicle_model_id` | uuid | no | FK 🔍 | [vehicle_models](#vehicle_models).vehicle_model_id (on delete restrict) | **📋 planned (VH-15)**: The truck's model, with its specifications. | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
-| `make` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Manufacturer; now vehicle_models.make. | `Tri-Ring` |
-| `model` | varchar(50) | no |  |  | **🗑️ to be removed (VH-15)**: Model line; now vehicle_models.model_name. | `EVT-400` |
+| `vehicle_model_id` | uuid | no | FK 🔍 | [vehicle_models](#vehicle_models).vehicle_model_id (on delete restrict) | The truck's model, with its specifications. | `5d1e8a3c-2b4f-4c6d-9e7a-1f0b3c5d7e99` |
 | `year` | integer | no | 🔍 |  | Manufacturing year. | `2025` |
 | `status` | vehiclestatus | no | 🔍 |  | Service status, set by a person or by a business rule acting for the company (DM-25). ACTIVE: in service. INACTIVE: not in service, e.g. in the workshop or not used by its owner; the reason says which (once repair records exist, being in maintenance is read from an open repair record). A truck that leaves the system is INACTIVE and soft-deleted. Whether it is moving or sending data is computed from telemetry, not stored. | `ACTIVE` |
-| `status_reason` | varchar(200) | yes | 🔍 |  | **📋 planned (DM-19)**: Why the vehicle is in its current status, or why it left the system; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
-| `activation_status` | vehicleactivationstatus | no |  |  | **🗑️ to be removed (VH-06)**: Progress through device provisioning, a one-way ladder that never noticed a removed T-Box. Activation is computed instead: device fitted now from telematics, data received from telemetry. | `ACTIVATED` |
-| `battery_capacity_kwh` | float8 | yes |  |  | **🗑️ to be removed (VH-16)**: Nominal usable pack capacity in kWh, not adjusted for SOH; NULL if unknown (reports fall back to a default). Replaced by the installed battery's design capacity, or the model's nominal capacity when no battery is recorded. | `282.0` |
+| `status_reason` | varchar(200) | yes | 🔍 |  | Why the vehicle is in its current status, or why it left the system; NULL when ACTIVE. | `Brake system repair at the Binh Duong workshop` |
 | `created_at` | timestamptz | no | 🔍 |  | When the row was created (UTC). | `2026-09-01T02:00:00Z` |
 | `updated_at` | timestamptz | no | 🔍 |  | When the row was last changed (UTC). | `2026-09-10T07:15:00Z` |
 | `deleted_at` | timestamptz | yes | 🔍 |  | Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. | `NULL` |
 
 **Enum values**
 
-- `vehiclestatus`: ACTIVE, INACTIVE, ~~MAINTENANCE~~ (to be removed), ~~DECOMMISSIONED~~ (to be removed)
-- `vehicleactivationstatus`: PENDING, DEVICE_ASSIGNED, ACTIVATED
+- `vehiclestatus`: ACTIVE, INACTIVE
 
 **Indexes**
 
-- `uq_vehicles_live_vin` (vin) unique - Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL
-- `uq_vehicles_live_license_plate` (license_plate) unique - Planned (VH-07), replaces the full unique constraint: WHERE deleted_at IS NULL
+- `uq_vehicles_live_vin` (vin) unique - WHERE deleted_at IS NULL
+- `uq_vehicles_live_license_plate` (license_plate) unique - WHERE deleted_at IS NULL
 - `ix_vehicles_status` (status)
+- `ix_vehicles_organization_id` (organization_id) - Vehicles of one organization
 
 **Referenced by**
 
-- [batteries](batteries.md#batteries).vehicle_id (planned)
-- [warranties](warranties.md#warranties).vehicle_id (planned)
+- [batteries](batteries.md#batteries).vehicle_id
+- [warranties](warranties.md#warranties).vehicle_id
 - [telematics](telematics.md#telematics).vehicle_id
 - [telemetry](telemetry.md#telemetry).vehicle_id
 - [driver_vehicle_assignments](drivers.md#driver_vehicle_assignments).vehicle_id
@@ -123,7 +119,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 ### vehicle_history
 
-**No. 13.h** · 📋 planned · owner: **customer** · features: F-F2, F-A6 · change history of [vehicles](#vehicles)
+**No. 13.h** · ✅ built · owner: **customer** · features: F-F2, F-A6 · change history of [vehicles](#vehicles)
 
 Every earlier version of a row of `vehicles`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 
@@ -156,7 +152,7 @@ Every earlier version of a row of `vehicles`: a copy of the whole row, taken jus
 
 ### vehicle_models
 
-**No. 14** · 📋 planned · owner: **internal** · features: F-F2
+**No. 14** · ✅ built · owner: **internal** · features: F-F2
 
 Catalog of truck models and their specifications (VEH-03, VH-15), shared by
 every organization and maintained by our operations team. Figures are entered only once confirmed and
@@ -164,7 +160,7 @@ may be updated later (the history keeps earlier values). Electric only: no
 diesel figures here (the diesel baseline for carbon reports is its own
 feature). All current models are tractor heads; a body type column is added
 when another type arrives. Change history on: reports depend on these
-figures.
+figures. Until the batteries domain can be read, the model's nominal battery capacity is the pack capacity that reports use (VH-20).
 
 🔍 = tracked column: a change to it copies the whole old row into [vehicle_model_history](#vehicle_model_history).
 
@@ -187,12 +183,12 @@ figures.
 
 **Referenced by**
 
-- [vehicles](#vehicles).vehicle_model_id (planned)
+- [vehicles](#vehicles).vehicle_model_id
 - [vehicle_model_history](#vehicle_model_history).vehicle_model_id (planned)
 
 ### vehicle_model_history
 
-**No. 14.h** · 📋 planned · owner: **internal** · features: F-F2 · change history of [vehicle_models](#vehicle_models)
+**No. 14.h** · ✅ built · owner: **internal** · features: F-F2 · change history of [vehicle_models](#vehicle_models)
 
 Every earlier version of a row of `vehicle_models`: a copy of the whole row, taken just before a change and written by a database trigger in the same transaction. Generated by the domain-model tool from `@tracked *`; never written by hand.
 

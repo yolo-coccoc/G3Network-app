@@ -86,7 +86,7 @@ erDiagram
     uuid session_id FK
     uuid requested_by FK
   }
-  warranties }o..o| charging_stations : "station_id"
+  warranties }o--o| charging_stations : "station_id"
   charging_locations }o..|| organizations : "organization_id"
   charging_location_access }o..|| charging_locations : "location_id"
   charging_location_access }o..|| organizations : "allowed_organization_id"
@@ -278,7 +278,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 **Referenced by**
 
-- [warranties](warranties.md#warranties).station_id (planned)
+- [warranties](warranties.md#warranties).station_id
 - [charging_station_state](#charging_station_state).station_id (planned)
 - [charging_evses](#charging_evses).station_id
 - [charging_ocpp_messages](#charging_ocpp_messages).station_id

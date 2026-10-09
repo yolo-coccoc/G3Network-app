@@ -9,6 +9,7 @@ import sys
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -37,6 +38,8 @@ import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
+from app.domains.batteries.models import BatteryModel, BatteryModelModel
+from app.domains.batteries.types import BatteryStatus
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
 from app.domains.fleet.exceptions import (
     FleetConflictError,
@@ -75,8 +78,10 @@ from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.domains.telemetry.types import ReportGranularity
-from app.domains.vehicles.models import VehicleModel
+from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.types import VehicleStatus
+from app.domains.warranties.models import WarrantyModel
+from app.domains.warranties.types import WarrantyStatus, WarrantyType
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 from app.libs.db.history import UNSPECIFIED_CHANGE_REASON, set_change_context
@@ -301,12 +306,13 @@ async def test_telemetry_repository_round_trip_rolls_back(
 
     try:
         async with session_factory() as session:
+            organization_id, vehicle_model_id = await _insert_vehicle_parents(session)
             vehicle = VehicleModel(
                 vehicle_id=vehicle_id,
+                organization_id=organization_id,
+                vehicle_model_id=vehicle_model_id,
                 license_plate=license_plate,
                 vin=vin,
-                make="G3Network",
-                model="Integration Test",
                 year=2026,
                 status=VehicleStatus.ACTIVE,
             )
@@ -407,13 +413,14 @@ async def test_last_telemetry_time_follows_receive_clock_not_device_clock(
 
     try:
         async with session_factory() as session:
+            organization_id, vehicle_model_id = await _insert_vehicle_parents(session)
             session.add(
                 VehicleModel(
                     vehicle_id=vehicle_id,
+                    organization_id=organization_id,
+                    vehicle_model_id=vehicle_model_id,
                     license_plate=f"IT-{uuid4().hex[:12]}",
                     vin=f"1{uuid4().hex[:16]}",
-                    make="G3Network",
-                    model="Integration Test",
                     year=2026,
                     status=VehicleStatus.ACTIVE,
                 )
@@ -801,11 +808,12 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
     serial_prefix = f"IT-TBOX-{uuid4().hex[:8]}"
     try:
         async with session_factory.begin() as db:
+            organization_id, vehicle_model_id = await _insert_vehicle_parents(db)
             vehicle_record = VehicleModel(
+                organization_id=organization_id,
+                vehicle_model_id=vehicle_model_id,
                 license_plate=f"IT-{uuid4().hex[:12]}",
                 vin=vin,
-                make="G3Network",
-                model="Integration Test",
                 year=2026,
                 status=VehicleStatus.ACTIVE,
             )
@@ -899,15 +907,17 @@ async def _seed_vehicle_readings(
     Returns:
         The inserted vehicle.
     """
+    organization_id, vehicle_model_id = await _insert_vehicle_parents(
+        db, nominal_battery_capacity_kwh=Decimal("200.0")
+    )
     vehicle = VehicleModel(
         vehicle_id=uuid4(),
+        organization_id=organization_id,
+        vehicle_model_id=vehicle_model_id,
         license_plate=f"IT-{uuid4().hex[:12]}",
         vin=f"1{uuid4().hex[:16]}",
-        make="G3Network",
-        model="Integration Test",
         year=2026,
         status=VehicleStatus.ACTIVE,
-        battery_capacity_kwh=200.0,
     )
     db.add(vehicle)
     await db.flush()
@@ -1450,14 +1460,41 @@ async def _integration_organization(db: AsyncSession) -> UUID:
     return organization.organization_id
 
 
-def _integration_vehicle(*, license_plate: str) -> VehicleModel:
-    """Build an unsaved, active vehicle with a random 17-character VIN."""
+async def _insert_vehicle_parents(
+    db: AsyncSession, *, nominal_battery_capacity_kwh: Decimal | None = None
+) -> tuple[UUID, UUID]:
+    """Insert the organization and the vehicle model a vehicle needs.
+
+    Args:
+        db: Session of the caller's transaction.
+        nominal_battery_capacity_kwh: Battery capacity of the new model.
+
+    Returns:
+        ``(organization_id, vehicle_model_id)``, both flushed.
+    """
+    organization = build_organization_record()
+    vehicle_model = VehicleModelModel(
+        make="G3Network",
+        model_name=f"IT-{uuid4().hex[:12]}",
+        nominal_battery_capacity_kwh=nominal_battery_capacity_kwh,
+    )
+    db.add_all([organization, vehicle_model])
+    await db.flush()
+    return organization.organization_id, vehicle_model.vehicle_model_id
+
+
+async def _integration_vehicle(db: AsyncSession, *, license_plate: str) -> VehicleModel:
+    """Build an unsaved, active vehicle with a random 17-character VIN.
+
+    Its organization and vehicle model are inserted (flushed) first.
+    """
+    organization_id, vehicle_model_id = await _insert_vehicle_parents(db)
     return VehicleModel(
         vehicle_id=uuid4(),
+        organization_id=organization_id,
+        vehicle_model_id=vehicle_model_id,
         license_plate=license_plate,
         vin=f"IT{uuid4().hex[:15]}".upper(),
-        make="G3Network",
-        model="Integration Test",
         year=2026,
         status=VehicleStatus.ACTIVE,
     )
@@ -1474,8 +1511,8 @@ async def test_driver_assignment_indexes_and_list_filters_on_postgres(
     )
     try:
         async with session_factory() as db:
-            first_vehicle = _integration_vehicle(license_plate="IT-DRV-001")
-            second_vehicle = _integration_vehicle(license_plate="IT-DRV-002")
+            first_vehicle = await _integration_vehicle(db, license_plate="IT-DRV-001")
+            second_vehicle = await _integration_vehicle(db, license_plate="IT-DRV-002")
             db.add_all([first_vehicle, second_vehicle])
             await db.flush()
             alice = await driver_repository.insert(
@@ -1584,7 +1621,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
     ]
     try:
         async with session_factory() as db:
-            vehicle = _integration_vehicle(license_plate="IT-FLT-001")
+            vehicle = await _integration_vehicle(db, license_plate="IT-FLT-001")
             db.add(vehicle)
             await db.flush()
             organization_id = await _integration_organization(db)
@@ -1892,6 +1929,187 @@ async def test_tracked_update_writes_history_row_with_actor_and_reason(
 
 
 @pytest.mark.asyncio
+async def test_vehicle_history_ownership_periods_and_live_uniqueness_on_postgres(
+    temporary_database: str,
+) -> None:
+    """A transfer writes vehicle_history and shows in vehicle_ownership_periods
+    (VH-10); a plate frees up when its vehicle is deleted, and a deleted vehicle
+    must be INACTIVE (DM-25)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    first_handover = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    second_handover = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    try:
+        async with session_factory() as db:
+            vehicle = await _integration_vehicle(db, license_plate="IT-OWN-001")
+            vehicle.acquired_at = first_handover
+            seller_id = vehicle.organization_id
+            buyer = build_organization_record()
+            db.add_all([vehicle, buyer])
+            await db.commit()
+
+        async with session_factory() as db:
+            vehicle_record = await db.get(VehicleModel, vehicle.vehicle_id)
+            assert vehicle_record is not None
+            await set_change_context(
+                db, changed_by=None, change_reason="Sold to another company"
+            )
+            vehicle_record.organization_id = buyer.organization_id
+            vehicle_record.acquired_at = second_handover
+            await db.commit()
+
+        async with session_factory() as db:
+            periods = (
+                await db.execute(
+                    text(
+                        "SELECT organization_id, owned_from, owned_until "
+                        "FROM vehicle_ownership_periods "
+                        "WHERE vehicle_id = :vehicle_id ORDER BY owned_from"
+                    ),
+                    {"vehicle_id": vehicle.vehicle_id},
+                )
+            ).all()
+            assert [tuple(row) for row in periods] == [
+                (seller_id, first_handover, second_handover),
+                (buyer.organization_id, second_handover, None),
+            ]
+
+            # A deleted vehicle must be INACTIVE; once it is, its plate is free.
+            vehicle_record = await db.get(VehicleModel, vehicle.vehicle_id)
+            assert vehicle_record is not None
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    vehicle_record.deleted_at = datetime.now(timezone.utc)
+                    await db.flush()
+            await db.refresh(vehicle_record)
+            vehicle_record.status = VehicleStatus.INACTIVE
+            vehicle_record.status_reason = "Left the system"
+            vehicle_record.deleted_at = datetime.now(timezone.utc)
+            await db.flush()
+            replacement = await _integration_vehicle(db, license_plate="IT-OWN-001")
+            replacement.vin = vehicle_record.vin
+            db.add(replacement)
+            await db.flush()
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    duplicate = await _integration_vehicle(
+                        db, license_plate="IT-OWN-001"
+                    )
+                    db.add(duplicate)
+                    await db.flush()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_battery_installation_periods_and_warranty_links_on_postgres(
+    temporary_database: str,
+) -> None:
+    """One battery per truck, installation periods from battery_history
+    (VH-16), and exactly one covered object per warranty (VH-18, VH-19)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    installed_on_first = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    installed_on_second = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    try:
+        async with session_factory() as db:
+            first_vehicle = await _integration_vehicle(db, license_plate="IT-BAT-001")
+            second_vehicle = await _integration_vehicle(db, license_plate="IT-BAT-002")
+            battery_model = BatteryModelModel(
+                manufacturer="CATL", model_name="LFP-282", chemistry="LFP"
+            )
+            db.add_all([first_vehicle, second_vehicle, battery_model])
+            await db.flush()
+            battery = BatteryModel(
+                serial_number="IT-BAT-SERIAL-1",
+                battery_model_id=battery_model.battery_model_id,
+                organization_id=first_vehicle.organization_id,
+                acquired_at=installed_on_first,
+                vehicle_id=first_vehicle.vehicle_id,
+                installed_at=installed_on_first,
+                status=BatteryStatus.ACTIVE.value,
+            )
+            db.add(battery)
+            await db.commit()
+
+            # A truck holds at most one live battery.
+            with pytest.raises(IntegrityError):
+                async with db.begin_nested():
+                    db.add(
+                        BatteryModel(
+                            serial_number="IT-BAT-SERIAL-2",
+                            battery_model_id=battery_model.battery_model_id,
+                            organization_id=first_vehicle.organization_id,
+                            acquired_at=installed_on_first,
+                            vehicle_id=first_vehicle.vehicle_id,
+                            installed_at=installed_on_first,
+                            status=BatteryStatus.ACTIVE.value,
+                        )
+                    )
+                    await db.flush()
+
+            # Move to the second truck, then take it out (separate transactions,
+            # so each history row carries its own changed_at).
+            battery.vehicle_id = second_vehicle.vehicle_id
+            battery.installed_at = installed_on_second
+            await db.commit()
+            battery.vehicle_id = None
+            battery.installed_at = None
+            await db.commit()
+
+            periods = (
+                await db.execute(
+                    text(
+                        "SELECT vehicle_id, installed_from, installed_until "
+                        "FROM battery_installation_periods "
+                        "WHERE battery_id = :battery_id ORDER BY installed_from"
+                    ),
+                    {"battery_id": battery.battery_id},
+                )
+            ).all()
+            assert [(row.vehicle_id, row.installed_from) for row in periods] == [
+                (first_vehicle.vehicle_id, installed_on_first),
+                (second_vehicle.vehicle_id, installed_on_second),
+            ]
+            # Straight to another truck: ends when the next stay starts; the
+            # removal ends the second stay at the time it was saved.
+            assert periods[0].installed_until == installed_on_second
+            assert periods[1].installed_until is not None
+            assert periods[1].installed_until > installed_on_second
+
+            today = datetime.now(timezone.utc).date()
+
+            def warranty(**links: UUID) -> WarrantyModel:
+                return WarrantyModel(
+                    warranty_type=WarrantyType.STANDARD.value,
+                    starts_on=today,
+                    ends_on=today,
+                    status=WarrantyStatus.ACTIVE.value,
+                    **links,
+                )
+
+            db.add(warranty(vehicle_id=first_vehicle.vehicle_id))
+            await db.flush()
+            for invalid_warranty in (
+                warranty(),
+                warranty(
+                    vehicle_id=first_vehicle.vehicle_id,
+                    battery_id=battery.battery_id,
+                ),
+            ):
+                with pytest.raises(IntegrityError):
+                    async with db.begin_nested():
+                        db.add(invalid_warranty)
+                        await db.flush()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_support_filters_and_sos_alert_on_postgres(
     temporary_database: str,
 ) -> None:
@@ -1904,7 +2122,7 @@ async def test_support_filters_and_sos_alert_on_postgres(
     )
     try:
         async with session_factory() as db:
-            vehicle = _integration_vehicle(license_plate="IT-SUP-001")
+            vehicle = await _integration_vehicle(db, license_plate="IT-SUP-001")
             db.add(vehicle)
             await db.flush()
             driver = await driver_repository.insert(
@@ -2090,8 +2308,12 @@ async def test_device_health_fields_follow_real_telemetry_on_postgres(
     )
     try:
         async with session_factory() as db:
-            online_vehicle = _integration_vehicle(license_plate="IT-HEALTH-ON")
-            silent_vehicle = _integration_vehicle(license_plate="IT-HEALTH-OFF")
+            online_vehicle = await _integration_vehicle(
+                db, license_plate="IT-HEALTH-ON"
+            )
+            silent_vehicle = await _integration_vehicle(
+                db, license_plate="IT-HEALTH-OFF"
+            )
             db.add_all([online_vehicle, silent_vehicle])
             await db.flush()
             devices: dict[str, TelematicModel] = {}

@@ -37,11 +37,8 @@ from app.domains.telematics.models import TelematicModel
 from app.domains.telematics.types import TelematicStatus
 from app.domains.telemetry.models import VehicleTelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
-from app.domains.vehicles.models import VehicleModel
-from app.domains.vehicles.types import (
-    VehicleActivationStatus,
-    VehicleStatus,
-)
+from app.domains.vehicles.models import VehicleModel, VehicleModelModel
+from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.geo import coordinates_to_location
 
 
@@ -50,20 +47,30 @@ def fake_db_session() -> AsyncSession:
     return cast(AsyncSession, object())
 
 
-def build_vehicle_record(
-    *, activation_status: VehicleActivationStatus = VehicleActivationStatus.PENDING
-) -> VehicleModel:
+def build_vehicle_record() -> VehicleModel:
     """Create a minimal ORM vehicle for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return VehicleModel(
         vehicle_id=uuid4(),
+        organization_id=uuid4(),
+        acquired_at=now,
         license_plate="TEST-001",
         vin="1HGBH41JXMN109186",
-        make="G3Network",
-        model="E-Truck",
+        vehicle_model_id=uuid4(),
         year=2026,
         status=VehicleStatus.ACTIVE,
-        activation_status=activation_status,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def build_vehicle_model_record() -> VehicleModelModel:
+    """Create a minimal ORM vehicle model (catalog row)."""
+    now = datetime.now(timezone.utc)
+    return VehicleModelModel(
+        vehicle_model_id=uuid4(),
+        make="Tri-Ring",
+        model_name="EVT-400",
         created_at=now,
         updated_at=now,
     )

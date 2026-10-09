@@ -21,7 +21,8 @@ migration history to preserve, so a schema change never adds a revision:
    table section with `alembic revision --autogenerate` against an **empty**
    database that has only the extensions, then re-apply the hand-written parts
    listed in its module docstring (clear step, sequence, hypertables, and the
-   server defaults the models don't declare). `env.py`'s `include_object`
+   server defaults the models don't declare, and the period views that read
+   the history tables, created after them). `env.py`'s `include_object`
    filter keeps autogenerate away from PostGIS/TimescaleDB-owned objects.
 3. Run `make db-reset`: `alembic stamp --purge base` forgets the old revision
    without running a downgrade, then `upgrade head` clears every application

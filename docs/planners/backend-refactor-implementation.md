@@ -27,7 +27,7 @@
 
 | WP | Scope | Features | Tables | Depends on | Status |
 |---|---|---|---|---|---|
-| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | IN PROGRESS: fleets, memberships and the identity tables + change-history mechanism DONE (chunk 1); vehicles onward TODO |
+| WP1 | Schema refactor: every built table to its target design and every planned table a non-skipped feature needs; baseline migration; tags dropped from the DBML; code adapted to renamed/dropped columns. Fleets + memberships were done first (FL-08, FL-09). | all below | all non-skipped | – | IN PROGRESS: fleets, memberships and the identity tables + change-history mechanism DONE (chunk 1); vehicles, vehicle models, battery models, batteries, warranties DONE (chunk 2); telematics onward TODO |
 | WP2 | Identity: organizations, users, memberships, roles, credentials, OTP, login/sessions, consent, audit log, access rule by role only (BL-16) | ACC-01..10, 12..18, 20 | organizations, users, user_state, memberships, user_credentials, user_sessions, one_time_codes, user_consents, legal_documents, user_role_assignments, access_audit_logs, organization_settings | WP1 | TODO |
 | WP3 | Vehicles, vehicle models, battery models, batteries, warranties | VEH-01..03, 05, 06, BAT-01, WAR-01 | vehicles, vehicle_models, battery_models, batteries, warranties | WP2 | TODO |
 | WP4 | Telematics and telemetry adjustments, T-Box status reports | DEV-01..06, 08, MON-01, 02 | telematics, telematic_status_reports, telemetry | WP3 | TODO |
@@ -66,6 +66,11 @@ fleet rest, charging, billing, notifications.
 - **Chunk 1, fleet creation takes `organization_id` in the body** (required) until WP2 adds authentication; an unknown organization is detected from the FK violation (404 `FleetOrganizationNotFoundError`) because the identity domain has no service yet.
 - **Chunk 1, identity import-linter contract** lists only `identity.models` as forbidden (the other modules do not exist yet); WP2 adds `repository`/`router`/`schemas` when it creates them. Ruff's `banned-from` already lists the future `identity.service` / `identity.repository`.
 - **Chunk 1, `added_by` / `removed_by`** are parameters of the fleet repository only (default `None`); the service does not pass them until the caller is known (WP2).
+- **Chunk 2, batteries and warranties live in their own domains** (`backend/app/domains/batteries`, `warranties`; VH-13, VH-14) with models and enums only, not in `vehicles/models.py`; each has an import-linter contract (`models` forbidden) and a ruff `banned-from` entry. WP3 adds services, repositories and endpoints there.
+- **Chunk 2, no activation**: `vehicles.activation_status`, `mark_device_assigned`, `mark_vehicle_activated` and `GET /vehicles/activation-summary` are removed (VH-06); the computed activation and success rate are for WP4 (VH-20).
+- **Chunk 2, vehicle pack capacity** is the vehicle model's nominal capacity only; the installed battery's design capacity (VH-16) needs `batteries` to be readable and comes with WP3/WP4 (VH-20).
+- **Chunk 2, vehicle create body**: `organization_id` and `vehicle_model_id` are required body fields, `acquired_at` is optional (default now); `/vehicle-models` create/list/get exist so a vehicle can be created. Ownership transfer (VH-12) is WP3.
+- **Chunk 2, status of period views**: both `vehicle_ownership_periods` and `battery_installation_periods` are created by the baseline migration (the DBML defines both); no code reads them yet.
 
 ## Known issues
 
@@ -80,3 +85,9 @@ fleet rest, charging, billing, notifications.
 | `backend/app/libs/db/history_ddl.py` | The baseline clear step does not drop the trigger functions (`fn_*_history`); they are re-created with `CREATE OR REPLACE` and stay behind if a table stops being tracked. | The clear step is documented to drop only tables, sequences and enum types; a stale function is harmless. |
 | `identity` tables | No service, repository, router or seed data (not even the default `organization_settings` / `user_state` rows "created together with" their parent). | Service layer is WP2. |
 | `backend/tests/test_postgres_integration.py` | The history trigger is tested on `organizations` only; `user_history`, `membership_history`, `organization_setting_history` and `fleet_history` are created by the same helper but not asserted row by row. | Lean tests (plan rule); same code path. |
+| `backend/app/domains/vehicles/service.py` | `create_vehicle` derives "organization not found" from any foreign-key violation (SQLSTATE 23503) after the vehicle model was pre-checked; the same limitation as the fleet service. | No identity service to ask yet; replace with a service call in WP2. |
+| `backend/app/domains/vehicles/repository.py` | Vehicle updates record the fixed reason `Vehicle details edited` / `Vehicle deleted` with a NULL actor; a typed reason (e.g. for a status change to INACTIVE) is not possible. | Needs the caller's user and reason (WP2). |
+| `backend/app/domains/fleet/service.py` | The FL-09 organization check reads the vehicle's owner in a second query (`resolve_vehicle_organization_id`) instead of carrying `organization_id` on `VehicleReference`. | Avoided touching ~50 test constructors; fold it into the DTO when `VehicleReference` is next changed. |
+| `backend/app/domains/batteries`, `warranties` | Models and enums only: no service, repository, router or seed data; the `limits` keys of a warranty are not validated. | Services are WP3. |
+| `backend/tests/test_postgres_integration.py` | The history trigger of `vehicle_models`, `battery_models`, `batteries` and `warranties` is not asserted (only `vehicles` through the ownership view and `batteries` through the installation view). | Lean tests; same helper. |
+| `backend/app/domains/vehicles/router.py` | The F-F2 activation success rate endpoint no longer exists anywhere. | Replaced by computed activation in WP4 (VH-06). |

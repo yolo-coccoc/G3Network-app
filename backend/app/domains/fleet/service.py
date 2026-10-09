@@ -33,6 +33,7 @@ from app.domains.fleet.exceptions import (
     FleetParentNotFoundError,
     FleetParentOrganizationMismatchError,
     FleetVehicleNotFoundError,
+    FleetVehicleOrganizationMismatchError,
     GeofenceNotFoundError,
 )
 from app.domains.fleet.models import (
@@ -510,6 +511,8 @@ async def add_vehicle_to_fleet(
     Raises:
         FleetNotFoundError: When the fleet does not exist.
         FleetVehicleNotFoundError: When the VIN does not resolve to a vehicle.
+        FleetVehicleOrganizationMismatchError: When the vehicle belongs to
+            another organization than the fleet (FL-09).
         FleetMembershipConflictError: When the vehicle is already actively
             in a different fleet.
 
@@ -526,6 +529,16 @@ async def add_vehicle_to_fleet(
     if vehicle_reference is None:
         raise FleetVehicleNotFoundError(
             f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
+        )
+
+    # A fleet holds only its own organization's vehicles (FL-09).
+    vehicle_organization_id = await vehicle_service.resolve_vehicle_organization_id(
+        db_session, vehicle_reference.vehicle_id
+    )
+    if vehicle_organization_id != fleet_record.organization_id:
+        raise FleetVehicleOrganizationMismatchError(
+            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' belongs "
+            "to another organization than the fleet"
         )
 
     existing_membership = await fleet_repository.find_active_membership_by_vehicle(

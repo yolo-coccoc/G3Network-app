@@ -21,16 +21,16 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 35 built, 44 planned, 7 proposed.
+**86 tables in 16 domains:** 62 main, 21 history (N.h, generated), 3 state · 44 built, 41 planned, 1 proposed.
 
 ## Domain map
 
 ```mermaid
 flowchart LR
   identity["Identity<br/>16 built"]:::built
-  vehicles["Vehicles<br/>1 built · 3 planned"]:::partial
-  batteries["Batteries<br/>4 proposed"]:::planned
-  warranties["Warranties<br/>2 proposed"]:::planned
+  vehicles["Vehicles<br/>4 built"]:::built
+  batteries["Batteries<br/>4 built"]:::built
+  warranties["Warranties<br/>2 built"]:::built
   telematics["Telematics<br/>1 built · 2 planned"]:::partial
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>2 built · 4 planned"]:::partial
@@ -43,11 +43,11 @@ flowchart LR
   billing["Billing<br/>13 planned · 1 proposed"]:::planned
   scoring["Scoring<br/>1 planned"]:::planned
   unassigned["Unassigned<br/>1 planned"]:::planned
-  batteries -.-> vehicles
-  warranties -.-> vehicles
-  warranties -.-> batteries
-  warranties -.-> telematics
-  warranties -.-> charging_stations
+  batteries --> vehicles
+  warranties --> vehicles
+  warranties --> batteries
+  warranties --> telematics
+  warranties --> charging_stations
   telematics --> vehicles
   telemetry --> telematics
   telemetry --> vehicles
@@ -91,9 +91,9 @@ Not drawn, to keep the map readable: 13 domains also point to **identity** throu
 | Domain | Status | ✅ | 📋 | 🆕 | Tables |
 |---|---|---|---|---|---|
 | [Identity](domains/identity.md) | built | 16 | 0 | 0 | 1 organizations, 1.h organization_history, 2 users, 2.h user_history, 3 user_state, 4 memberships, 4.h membership_history, 5 user_credentials, 6 user_sessions, 7 one_time_codes, 8 user_consents, 9 legal_documents, 10 user_role_assignments, 11 access_audit_logs, 12 organization_settings, 12.h organization_setting_history |
-| [Vehicles](domains/vehicles.md) | partial | 1 | 3 | 0 | 13 vehicles, 13.h vehicle_history, 14 vehicle_models, 14.h vehicle_model_history |
-| [Batteries](domains/batteries.md) | planned | 0 | 0 | 4 | 15 battery_models, 15.h battery_model_history, 16 batteries, 16.h battery_history |
-| [Warranties](domains/warranties.md) | planned | 0 | 0 | 2 | 17 warranties, 17.h warranty_history |
+| [Vehicles](domains/vehicles.md) | built | 4 | 0 | 0 | 13 vehicles, 13.h vehicle_history, 14 vehicle_models, 14.h vehicle_model_history |
+| [Batteries](domains/batteries.md) | built | 4 | 0 | 0 | 15 battery_models, 15.h battery_model_history, 16 batteries, 16.h battery_history |
+| [Warranties](domains/warranties.md) | built | 2 | 0 | 0 | 17 warranties, 17.h warranty_history |
 | [Telematics](domains/telematics.md) | partial | 1 | 2 | 0 | 18 telematics, 18.h telematic_history, 19 telematic_status_reports |
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
 | [Drivers](domains/drivers.md) | partial | 2 | 4 | 0 | 21 drivers, 21.h driver_history, 22 ~~driver_vehicle_assignments~~, 23 driving_sessions, 24 trips, 24.h trip_history |

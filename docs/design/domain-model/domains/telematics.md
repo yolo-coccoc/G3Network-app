@@ -29,7 +29,7 @@ erDiagram
     bigint telematic_status_report_id PK
     uuid telematic_id FK
   }
-  warranties }o..o| telematics : "telematic_id"
+  warranties }o--o| telematics : "telematic_id"
   telematics |o--o| vehicles : "vehicle_id"
   telematics }o..|| organizations : "organization_id"
   telematic_status_reports }o..|| telematics : "telematic_id"
@@ -88,7 +88,7 @@ Check constraint: deleted_at IS NULL OR (status = 'INACTIVE' AND vehicle_id IS N
 
 **Referenced by**
 
-- [warranties](warranties.md#warranties).telematic_id (planned)
+- [warranties](warranties.md#warranties).telematic_id
 - [telematic_status_reports](#telematic_status_reports).telematic_id (planned)
 - [telemetry](telemetry.md#telemetry).telematic_id
 - [telematic_history](#telematic_history).telematic_id (planned)

@@ -35,6 +35,11 @@ class FleetParentOrganizationMismatchError(FleetError, InvalidInputError):
     organization (FL-08)."""
 
 
+class FleetVehicleOrganizationMismatchError(FleetError, InvalidInputError):
+    """Raised when a vehicle owned by another organization is added to a fleet
+    (FL-09): a fleet holds only its own organization's vehicles."""
+
+
 class FleetHierarchyLoopError(FleetError, InvalidInputError):
     """Raised when moving a fleet under itself or under one of its own
     sub-fleets, which would make the fleet tree a loop (FL-02)."""

@@ -18,7 +18,6 @@ import app.domains.telemetry.detection as telemetry_detection
 import app.domains.telemetry.mappers as telemetry_mappers
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.service as telemetry_service
-import app.domains.vehicles.service as vehicle_service
 from app.domains.charging_stations.types import (
     NearestChargingStationReference,
 )
@@ -94,9 +93,6 @@ async def test_telemetry_service_persists_mapped_message(
     ) -> VehicleTelemetryModel | None:
         return None
 
-    async def mark_activated(db: AsyncSession, vehicle_id: UUID) -> None:
-        return None
-
     monkeypatch.setattr(
         telematics_public_service,
         "resolve_mapping_by_serial",
@@ -106,10 +102,6 @@ async def test_telemetry_service_persists_mapped_message(
     monkeypatch.setattr(
         telemetry_repository, "get_latest_vehicle_telemetry", no_previous_telemetry
     )
-    # previous_telemetry is None here (first-ever message), which also
-    # triggers F-F2's activation hook - mocked out since this test is about
-    # the ingestion counters, not activation.
-    monkeypatch.setattr(vehicle_service, "mark_vehicle_activated", mark_activated)
 
     result = await telemetry_service.process_message(
         fake_db_session(), build_telemetry_envelope()

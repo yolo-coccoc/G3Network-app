@@ -59,10 +59,14 @@ flowchart LR
 
 FastAPI registers the following domains:
 
-- `vehicles`: vehicle CRUD and soft delete (list filterable by `status`
-  and `activation_status`), plus an F-F2 device-activation state machine
-  and its fleet-wide success-rate summary. Also carries a nullable
-  `battery_capacity_kwh` (F-A6/F-C6's kWh-conversion input).
+- `vehicles`: vehicle CRUD and soft delete (list filterable by `status`;
+  a vehicle has an owning organization, a model from the `vehicle_models`
+  catalog, change history and the `vehicle_ownership_periods` view) and the
+  catalog endpoints `/vehicle-models`. The pack capacity other domains read
+  (F-A6/F-C6) is the model's nominal capacity. The device-activation state
+  machine is gone (computed later, VH-06). `batteries` (battery models,
+  batteries, the `battery_installation_periods` view) and `warranties` have
+  models only until WP3 (VH-20).
 - `telematics`: device CRUD and mapping devices to vehicles (an unknown
   VIN is a 404; at most one *live* device per vehicle, so a soft-deleted
   device no longer blocks its replacement; a device on a soft-deleted
@@ -331,7 +335,7 @@ call each other is in
 ├── backend/
 │   ├── app/                        # Main source code (uv package layout)
 │   │   ├── domains/
-│   │   │   ├── vehicles/              # Static profile, provisioning, activate/deactivate (F-F2)
+│   │   │   ├── vehicles/              # Vehicle profile, owner, model catalog (F-F2)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── telematics/            # Telematic device profile and mapping to vehicles (F-G1)
@@ -383,6 +387,8 @@ call each other is in
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │       # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
 │   │   │   │
+│   │   │   ├── batteries/             # Battery models and batteries; models and enums only until WP3 (BAT-01)
+│   │   │   ├── warranties/            # Warranties of trucks, batteries, T-Boxes, chargers; models and enums only until WP3 (WAR-01)
 │   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1); models only until WP2
 │   │   │       └── models.py  types.py
 │   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); no service, router or API yet
