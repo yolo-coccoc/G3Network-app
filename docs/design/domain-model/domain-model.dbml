@@ -1722,6 +1722,7 @@ Table support_cases {
   }
   Note: '''@status built @owner customer @features F-I1,F-I2
 One support request: a ticket or an SOS, with its SLA timeline.
+Review of the support group postponed; the proposal is in SP-07.
 @vi-name Ca hỗ trợ
 @vi Một yêu cầu hỗ trợ: yêu cầu thường hoặc SOS, kèm mốc thời gian SLA.'''
 }

@@ -52,6 +52,7 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 **No. 43** · ✅ built · owner: **customer** · features: F-I1, F-I2
 
 One support request: a ticket or an SOS, with its SLA timeline.
+Review of the support group postponed; the proposal is in SP-07.
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
