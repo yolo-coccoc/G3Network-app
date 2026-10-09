@@ -154,10 +154,8 @@ erDiagram
   invoices }o..|| organizations : "organization_id"
   invoice_lines }o..|| organizations : "organization_id"
   subscriptions }o..|| organizations : "organization_id"
-  payments }o..|| organizations : "organization_id"
-  payments }o..o| users : "paid_by"
-  wallets }o..o| users : "user_id"
-  wallets }o..o| organizations : "organization_id"
+  payments }o..|| users : "user_id"
+  wallets }o..|| users : "user_id"
   wallet_transactions }o..o| users : "created_by"
   driver_scores }o..|| organizations : "organization_id"
   trips }o..|| organizations : "organization_id"
@@ -257,8 +255,6 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [invoices](billing.md#invoices).organization_id (planned)
 - [invoice_lines](billing.md#invoice_lines).organization_id (planned)
 - [subscriptions](billing.md#subscriptions).organization_id (planned)
-- [payments](billing.md#payments).organization_id (planned)
-- [wallets](billing.md#wallets).organization_id (planned)
 - [driver_scores](scoring.md#driver_scores).organization_id (planned)
 - [trips](unassigned.md#trips).organization_id (planned)
 - [organization_history](#organization_history).organization_id (planned)
@@ -350,7 +346,7 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [charging_sessions](charging_sessions.md#charging_sessions).started_by (planned)
 - [charging_policy_versions](policy.md#charging_policy_versions).created_by (planned)
 - [tariff_versions](billing.md#tariff_versions).created_by (planned)
-- [payments](billing.md#payments).paid_by (planned)
+- [payments](billing.md#payments).user_id (planned)
 - [wallets](billing.md#wallets).user_id (planned)
 - [wallet_transactions](billing.md#wallet_transactions).created_by (planned)
 - [organization_history](#organization_history).changed_by (planned)

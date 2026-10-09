@@ -1981,43 +1981,40 @@ Ref: charging_session_bills.tariff_version_id > tariff_versions.tariff_version_i
 
 Table payments {
   payment_id uuid [pk, note: 'Internal ID of the payment. @vi Mã nội bộ của thanh toán. @example 3e1c8b5f-9a2d-4e7b-b4f1-6c0a9e3d2b21']
-  organization_id uuid [not null, note: 'Organization paying or receiving a refund, written once (DM-24 case C). @vi Tổ chức thanh toán hoặc nhận hoàn tiền, ghi một lần (DM-24 trường hợp C). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  paid_by uuid [note: 'User who paid in the app; NULL for a bank transfer. @vi Người dùng đã thanh toán trên ứng dụng; NULL với chuyển khoản ngân hàng. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  purpose varchar(20) [not null, note: 'What the money is for (BL-12). TOP_UP: adds money to a wallet (launch). REFUND: money returned, e.g. unused wallet balance (launch). SESSION_BILL: pays one session bill directly (later, e.g. a bank partner). INVOICE: pays an invoice (later, company billing). Values: TOP_UP | REFUND | SESSION_BILL | INVOICE. @vi Tiền dùng cho việc gì (BL-12). TOP_UP: nạp tiền vào ví (khi ra mắt). REFUND: hoàn tiền, ví dụ số dư ví chưa dùng (khi ra mắt). SESSION_BILL: trả trực tiếp một phiếu tính tiền phiên sạc (sau này). INVOICE: trả một hóa đơn (sau này, thanh toán doanh nghiệp). @example TOP_UP']
-  charging_session_bill_id uuid [note: 'The bill paid; set only for SESSION_BILL. @vi Phiếu tính tiền được trả; chỉ có giá trị với SESSION_BILL. @example NULL']
-  invoice_id uuid [note: 'The invoice paid; set only for INVOICE. @vi Hóa đơn được trả; chỉ có giá trị với INVOICE. @example NULL']
-  refund_of_payment_id uuid [note: 'The payment this refund returns; set only for REFUND. @vi Thanh toán mà lần hoàn tiền này trả lại; chỉ có giá trị với REFUND. @example NULL']
-  amount numeric(14,2) [not null, note: 'Amount, always positive; the purpose says the direction. @vi Số tiền, luôn dương; mục đích cho biết chiều tiền. @example 500000.00']
+  user_id uuid [not null, note: 'The person topping up their wallet, or receiving a refund (BL-15). @vi Người nạp tiền vào ví của mình, hoặc nhận hoàn tiền (BL-15). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  purpose varchar(20) [not null, note: 'TOP_UP: adds money to the person\'s wallet. REFUND: unused balance returned (BL-15). Paying a bill or an invoice directly comes with the later methods. Values: TOP_UP | REFUND. @vi TOP_UP: nạp tiền vào ví của người đó. REFUND: hoàn lại số dư chưa dùng (BL-15). Trả trực tiếp phiếu tính tiền hay hóa đơn đến cùng các phương thức sau. @example TOP_UP']
+  refund_of_payment_id uuid [note: 'The top-up this refund returns money through; set only for REFUND (refunds go back through the original channel, open question 11). @vi Lần nạp mà khoản hoàn tiền trả lại qua; chỉ có giá trị với REFUND (hoàn tiền qua đúng kênh đã nạp, câu hỏi mở 11). @example NULL']
+  amount numeric(14,2) [not null, note: 'Amount, always positive; the purpose says the direction. For a bank transfer it is the amount actually received, which may differ from the amount the driver asked for. @vi Số tiền, luôn dương; mục đích cho biết chiều tiền. Với chuyển khoản là số tiền thực nhận, có thể khác số tài xế định nạp. @example 500000.00']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
-  method varchar(20) [not null, note: 'How the money moved. Paying from a wallet is not a payment (no money comes in) but a wallet transaction. Values: CARD | VNPAY | MOMO | BANK_TRANSFER. @vi Cách chuyển tiền. Trả bằng ví không phải là thanh toán (không có tiền vào) mà là giao dịch ví. @example VNPAY']
-  gateway_reference varchar(100) [note: 'The gateway\'s transaction reference, for reconciliation; never card data (NF-05). @vi Mã giao dịch của cổng thanh toán, dùng để đối soát; không bao giờ là dữ liệu thẻ (NF-05). @example VNP14592873']
-  gateway_result_code varchar(30) [note: 'The gateway\'s own result code, as sent (PAY-06). @vi Mã kết quả của cổng thanh toán, đúng như gửi về (PAY-06). @example 00']
-  status varchar(20) [not null, note: 'As the gateway reports it; observed, so no reason column. Values: PENDING | SUCCEEDED | FAILED. @vi Theo cổng thanh toán báo về; là trạng thái quan sát nên không có cột lý do. @example SUCCEEDED']
-  completed_at timestamptz [note: 'When the gateway confirmed success or failure; NULL while PENDING. @vi Thời điểm cổng xác nhận thành công hay thất bại; NULL khi PENDING. @example 2026-09-15T09:46:12Z']
-  created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-15T09:45:00Z']
+  method varchar(20) [not null, note: 'How the money moved. Launch: BANK_TRANSFER through a VietQR code (BL-15). Later: MOMO, ZALOPAY, CARD as new values, no table change. Paying from a wallet is not a payment but a wallet transaction. Values: BANK_TRANSFER. @vi Cách chuyển tiền. Khi ra mắt: BANK_TRANSFER qua mã VietQR (BL-15). Sau này: MOMO, ZALOPAY, CARD là giá trị mới, không đổi bảng. Trả bằng ví không phải thanh toán mà là giao dịch ví. @example BANK_TRANSFER']
+  transfer_code varchar(20) [note: 'Unique note the driver\'s bank transfer must carry, shown inside the VietQR code; it matches the incoming transfer to this row. Set for BANK_TRANSFER top-ups. @vi Nội dung chuyển khoản duy nhất mà giao dịch của tài xế phải có, nằm trong mã VietQR; dùng để ghép giao dịch đến với dòng này. Có giá trị với lần nạp BANK_TRANSFER. @example G3NAP7K2Q9']
+  gateway_reference varchar(100) [note: 'Reference of the bank or gateway transaction, for reconciliation; never card data (NF-05). @vi Mã giao dịch của ngân hàng hoặc cổng thanh toán, dùng để đối soát; không bao giờ là dữ liệu thẻ (NF-05). @example FT26283912345']
+  gateway_result_code varchar(30) [note: 'The bank\'s or gateway\'s own result code, as sent; NULL when it sends none. @vi Mã kết quả của ngân hàng hoặc cổng, đúng như gửi về; NULL nếu không có. @example NULL']
+  status varchar(20) [not null, note: 'PENDING: the QR was shown, no money yet. SUCCEEDED: money received (or refund sent). FAILED: failed or expired unpaid. Observed, so no reason column. Values: PENDING | SUCCEEDED | FAILED. @vi PENDING: đã hiện mã QR, chưa nhận tiền. SUCCEEDED: đã nhận tiền (hoặc đã chuyển hoàn). FAILED: thất bại hoặc hết hạn chưa trả. Là trạng thái quan sát nên không có cột lý do. @example SUCCEEDED']
+  completed_at timestamptz [note: 'When the money was confirmed received or sent, or the request failed; NULL while PENDING. @vi Thời điểm xác nhận đã nhận hoặc đã chuyển tiền, hoặc yêu cầu thất bại; NULL khi PENDING. @example 2026-09-15T09:46:12Z']
+  created_at timestamptz [not null, note: 'When the row was created (UTC): when the QR was shown. @vi Thời điểm tạo bản ghi (UTC): lúc hiện mã QR. @example 2026-09-15T09:45:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T09:46:12Z']
   indexes {
-    (method, gateway_reference) [unique, name: 'uq_payments_method_gateway_reference', note: 'WHERE gateway_reference IS NOT NULL: the same gateway callback is never recorded twice']
-    (organization_id, created_at) [name: 'ix_payments_organization_created']
+    transfer_code [unique, name: 'uq_payments_transfer_code', note: 'WHERE transfer_code IS NOT NULL']
+    (method, gateway_reference) [unique, name: 'uq_payments_method_gateway_reference', note: 'WHERE gateway_reference IS NOT NULL: the same bank notification is never recorded twice']
+    (user_id, created_at) [name: 'ix_payments_user_created']
   }
-  Note: '''@status planned @owner customer @features F-H1
-Money moving through a payment gateway or bank (BL-12): only real money in
-or out. Paying a session from a wallet is a wallet transaction, not a
-payment. At launch the purposes are TOP_UP and REFUND; SESSION_BILL and
-INVOICE come with the later payment methods. No change history (the status
-comes from the gateway); no soft delete (a financial record). Saved,
-tokenized cards are a later table.
-Check constraint (BL-12): the link set matches the purpose (SESSION_BILL:
-charging_session_bill_id only; INVOICE: invoice_id only; REFUND:
-refund_of_payment_id only; TOP_UP: none, its wallet transaction points here).
+  Note: '''@status planned @owner internal @features F-H1,F-H2
+Real money in or out of a person's wallet (BL-12, BL-15): top-ups and
+refunds only. At launch a driver tops up by bank transfer through a VietQR
+code carrying a unique transfer_code; a bank-notification service matches the
+incoming transfer and the wallet is credited with the amount actually
+received. MoMo, ZaloPay and cards come later as new method values. Paying a
+session from the wallet is a wallet transaction, not a payment. No change
+history (the status is observed); no soft delete (a financial record).
+Check constraint (BL-15): (purpose = 'REFUND') = (refund_of_payment_id IS NOT NULL).
 @vi-name Thanh toán
-@vi Tiền đi qua cổng thanh toán hoặc ngân hàng (BL-12): chỉ tiền thật vào hoặc ra. Trả tiền phiên sạc bằng ví là giao dịch ví, không phải thanh toán. Khi ra mắt chỉ có TOP_UP và REFUND; SESSION_BILL và INVOICE đến cùng các phương thức sau. Không có lịch sử thay đổi (trạng thái do cổng báo); không xóa mềm (chứng từ tài chính). Thẻ đã lưu (mã hóa token) là bảng sau này. Ràng buộc kiểm tra (BL-12): liên kết có giá trị khớp với mục đích.'''
+@vi Tiền thật vào hoặc ra khỏi ví của một người (BL-12, BL-15): chỉ nạp tiền và hoàn tiền. Khi ra mắt, tài xế nạp bằng chuyển khoản qua mã VietQR mang nội dung chuyển khoản duy nhất; dịch vụ nhận thông báo ngân hàng ghép giao dịch đến và ví được cộng đúng số tiền thực nhận. MoMo, ZaloPay và thẻ đến sau như giá trị mới. Trả tiền phiên sạc bằng ví là giao dịch ví, không phải thanh toán. Không có lịch sử thay đổi; không xóa mềm. Ràng buộc kiểm tra (BL-15): chỉ REFUND mới có refund_of_payment_id.'''
 }
 
 Table wallets {
   wallet_id uuid [pk, note: 'Internal ID of the wallet. @vi Mã nội bộ của ví. @example 5c3a0e7d-2f9b-4c1e-a8d3-7b6f0c2e9a32']
-  user_id uuid [note: 'The person holding it (launch method, BL-13): it follows them to any organization they drive for. Exactly one of user_id and organization_id is set. @vi Người sở hữu ví (phương thức khi ra mắt, BL-13): ví đi theo người đó sang mọi tổ chức họ lái xe cho. Chỉ đúng một trong user_id và organization_id có giá trị. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  organization_id uuid [note: 'The organization holding it (later methods: an organization prepays and its drivers consume, or it distributes to drivers); NULL for a personal wallet. @vi Tổ chức sở hữu ví (phương thức sau này: tổ chức trả trước và tài xế dùng, hoặc tổ chức phân bổ cho tài xế); NULL với ví cá nhân. @example NULL']
+  user_id uuid [not null, note: 'The person holding it (BL-13, BL-15): it follows them to any organization they drive for. An organization-held wallet is added only with the company payment methods. @vi Người sở hữu ví (BL-13, BL-15): ví đi theo người đó sang mọi tổ chức họ lái xe cho. Ví của tổ chức chỉ được thêm cùng các phương thức thanh toán doanh nghiệp. @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   balance numeric(14,2) [not null, note: 'Current balance, kept equal to the sum of its transactions. May go negative when a session costs more than the balance (BL-14). @vi Số dư hiện tại, luôn bằng tổng các giao dịch. Có thể âm khi một phiên sạc tốn nhiều hơn số dư (BL-14). @example 1250000.00']
   currency char(3) [not null, note: 'ISO 4217 currency code. @vi Mã tiền tệ ISO 4217. @example VND']
   status varchar(20) [not null, note: 'Decided by us. ACTIVE: usable. BLOCKED: no top-up or session start, e.g. during a fraud check. Values: ACTIVE | BLOCKED. @vi Do chúng ta quyết định. ACTIVE: dùng được. BLOCKED: không nạp tiền và không bắt đầu sạc, ví dụ khi đang kiểm tra gian lận. @example ACTIVE']
@@ -2025,13 +2022,12 @@ Table wallets {
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-15T09:46:12Z']
   indexes {
-    user_id [unique, name: 'uq_wallets_user_id', note: 'WHERE user_id IS NOT NULL: one wallet per person']
-    organization_id [unique, name: 'uq_wallets_organization_id', note: 'WHERE organization_id IS NOT NULL: one wallet per organization']
+    user_id [unique, name: 'uq_wallets_user_id', note: 'One wallet per person']
   }
-  Note: '''@status planned @owner customer @features F-H2 @tracked * @untracked balance
-A prepaid balance usable only for our own services (BL-13). At launch each
-person tops up their own wallet and pays each session from it; an
-organization-held wallet is prepared for the later methods. To start a
+  Note: '''@status planned @owner internal @features F-H2 @tracked * @untracked balance
+A person's prepaid balance for charging, usable only for our own services
+(BL-13, BL-15): they top it up and pay each session from it. An
+organization-held wallet is added only with the company payment methods. To start a
 session the balance must be at or above a minimum set in the backend (BL-14);
 it is checked at the scan, never by a database constraint, because the
 deduction at the end of a session may take the balance below zero, after
@@ -2039,9 +2035,8 @@ which the person cannot start again until they top up above the minimum.
 Change history on for decisions (blocking), with balance excluded since every
 transaction moves it. No soft delete: the ledger must stay. In public it is
 never called an e-wallet (open question 11).
-Check constraint (BL-13): num_nonnulls(user_id, organization_id) = 1.
 @vi-name Ví
-@vi Số dư trả trước chỉ dùng cho dịch vụ của chính chúng ta (BL-13). Khi ra mắt, mỗi người tự nạp tiền vào ví của mình và trả từng phiên sạc từ đó; ví của tổ chức được chuẩn bị cho các phương thức sau. Để bắt đầu sạc, số dư phải bằng hoặc cao hơn mức tối thiểu đặt trong backend (BL-14); kiểm tra khi quét mã, không bằng ràng buộc cơ sở dữ liệu, vì lần trừ tiền cuối phiên có thể làm số dư âm, sau đó người dùng không thể sạc tiếp cho tới khi nạp lại trên mức tối thiểu. Bật lịch sử thay đổi cho các quyết định (khóa ví), trừ cột balance vì mọi giao dịch đều làm thay đổi nó. Không xóa mềm. Không gọi là ví điện tử khi giới thiệu ra bên ngoài (câu hỏi mở 11). Ràng buộc kiểm tra (BL-13): chỉ đúng một chủ sở hữu.'''
+@vi Số dư trả trước để sạc của một người, chỉ dùng cho dịch vụ của chính chúng ta (BL-13, BL-15): người đó nạp tiền và trả từng phiên sạc từ ví. Ví của tổ chức chỉ được thêm cùng các phương thức thanh toán doanh nghiệp. Để bắt đầu sạc, số dư phải bằng hoặc cao hơn mức tối thiểu đặt trong backend (BL-14); kiểm tra khi quét mã, không bằng ràng buộc cơ sở dữ liệu, vì lần trừ tiền cuối phiên có thể làm số dư âm, sau đó người dùng không thể sạc tiếp cho tới khi nạp lại trên mức tối thiểu. Bật lịch sử thay đổi cho các quyết định (khóa ví), trừ cột balance vì mọi giao dịch đều làm thay đổi nó. Không xóa mềm. Không gọi là ví điện tử khi giới thiệu ra bên ngoài (câu hỏi mở 11).'''
 }
 
 Table wallet_transactions {
@@ -2060,7 +2055,7 @@ Table wallet_transactions {
     charging_session_bill_id [unique, name: 'uq_wallet_transactions_session_bill', note: 'WHERE charging_session_bill_id IS NOT NULL']
     payment_id [name: 'ix_wallet_transactions_payment_id']
   }
-  Note: '''@status planned @owner customer @features F-H2
+  Note: '''@status planned @owner internal @features F-H2
 The append-only ledger of a wallet (BL-14): every top-up, session payment,
 refund and staff adjustment, with the balance right after it. Never edited
 or deleted; a mistake is corrected by an ADJUSTMENT.
@@ -2164,13 +2159,9 @@ developer; only a brand-new feature needs code.
 Ref: plan_features.plan_id > subscription_plans.plan_id [delete: restrict]
 Ref: subscriptions.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
-Ref: payments.organization_id > organizations.organization_id [delete: restrict]
-Ref: payments.paid_by > users.user_id [delete: restrict]
-Ref: payments.charging_session_bill_id > charging_session_bills.charging_session_bill_id [delete: restrict]
-Ref: payments.invoice_id > invoices.invoice_id [delete: restrict]
+Ref: payments.user_id > users.user_id [delete: restrict]
 Ref: payments.refund_of_payment_id > payments.payment_id [delete: restrict]
 Ref: wallets.user_id > users.user_id [delete: restrict]
-Ref: wallets.organization_id > organizations.organization_id [delete: restrict]
 Ref: wallet_transactions.wallet_id > wallets.wallet_id [delete: restrict]
 Ref: wallet_transactions.payment_id > payments.payment_id [delete: restrict]
 Ref: wallet_transactions.charging_session_bill_id > charging_session_bills.charging_session_bill_id [delete: restrict]
@@ -2192,7 +2183,7 @@ TableGroup billing {
 Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscriptions.
 
 - A **tariff** belongs to the organization owning the locations it prices (the owner's default, or one location); its prices are immutable **versions** (BL-08).
-- A **wallet** is a prepaid balance held by a person (launch) or an organization (later); its **transactions** are an append-only ledger. A **payment** is real money through a gateway: a top-up or a refund at launch (BL-12 to BL-14).
+- A **wallet** is one person's prepaid balance for charging; its **transactions** are an append-only ledger. A **payment** is real money in or out: a top-up by VietQR bank transfer, or a refund (BL-12 to BL-15).
 - An **invoice** belongs to one organization and has **lines** for sessions or subscription periods.
 - A **subscription** puts one vehicle on one **plan**.
 - Billing a session requires knowing whose session it was.
@@ -2201,7 +2192,7 @@ Money: energy prices, payments, prepaid wallets, e-invoices, and SaaS subscripti
 @vi-name Thanh toán & hóa đơn
 @vi Tiền: giá điện, thanh toán, ví trả trước, hóa đơn điện tử và thuê bao SaaS.
 - **Biểu giá** định giá điện cho toàn mạng hoặc từng trạm, theo khung giờ.
-- Một **ví** là số dư trả trước của một người (khi ra mắt) hoặc một tổ chức (sau này); **giao dịch ví** là sổ chỉ ghi thêm. Một **thanh toán** là tiền thật qua cổng: nạp tiền hoặc hoàn tiền khi ra mắt (BL-12 đến BL-14).
+- Một **ví** là số dư trả trước để sạc của một người; **giao dịch ví** là sổ chỉ ghi thêm. Một **thanh toán** là tiền thật vào hoặc ra: nạp bằng chuyển khoản VietQR, hoặc hoàn tiền (BL-12 đến BL-15).
 - Một **hóa đơn** thuộc một tổ chức và có các **dòng hóa đơn** cho phiên sạc hoặc kỳ thuê bao.
 - Một **thuê bao** đưa một xe vào một **gói dịch vụ**.
 - Muốn tính tiền một phiên sạc phải biết phiên đó của ai.
