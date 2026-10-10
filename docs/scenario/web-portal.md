@@ -8,7 +8,7 @@
 > `backend/app/domains/*/router.py` today, **planned** = proposed path under
 > `/api/v1`. Facts live in their own homes ([decision-log.md](../decisions/decision-log.md),
 > [domain-model.dbml](../design/domain-model/domain-model.dbml),
-> [feature catalog](../product/features/README.md)). Written 2026-10-09.
+> [feature catalog](../product/features/README.md)). Written 2026-10-09; identity flows built 2026-10-10 (WP2a).
 
 ## Conventions
 
@@ -35,27 +35,27 @@ creates a company's organization, subscription and first ORG_ADMIN (ID-15).
 
 | Step | API call | Main error cases |
 |---|---|---|
-| List / search customers | `GET /organizations?q=&status=` (planned) | none |
-| Create customer: legal form, tax code, names | `POST /organizations` `{legal_form, display_name, legal_name, tax_code, address, first_admin: {phone_number, full_name}}` (planned); sends the invite code to the first ORG_ADMIN | `409` tax code already used; `400` tax code length does not fit `legal_form` |
-| Edit profile / assign account manager | `PATCH /organizations/{organization_id}` `{..., reason}` | `422` missing reason |
-| Suspend or close (unpaid debt, contract end) | `POST /organizations/{organization_id}/status` `{status, reason}`; logins are blocked, memberships stay (ID-34) | `409` same status already; `403` only HEAD_ADMIN / CO_ADMIN |
-| Own settings (ORG_ADMIN): driving-session auto-end time | `PATCH /organizations/{organization_id}/settings` `{driving_session_auto_end_minutes}` (ID-45) | `400` value out of range |
+| List / search customers | `GET /organizations?q=&status=&page=&page_size=` (**built**; internal callers see all, others their own) | none |
+| Create customer: legal form, tax code, names | `POST /organizations` `{legal_form, display_name, legal_name, tax_code, address, first_admin: {phone_number, full_name}}` (**built**; HEAD_ADMIN / CO_ADMIN / SALES; `is_internal: true` HEAD_ADMIN only); sends the invite code to the first ORG_ADMIN | `409` tax code already used; `400` tax code length does not fit `legal_form`; `403` |
+| Edit profile / assign account manager | `PATCH /organizations/{organization_id}` `{..., reason}`; `PUT /organizations/{organization_id}/account-manager` `{account_manager_id, reason}` (**built**; the manager must be an active SALES user of an internal organization) | `422` missing reason; `400` not a SALES user; `403` |
+| Suspend or close (unpaid debt, contract end) | `POST /organizations/{organization_id}/status` `{status, reason}` (**built**); logins are blocked, memberships stay (ID-34), a closed organization is soft-deleted and `ACTIVE` reopens it | `409` same status already; `403` only HEAD_ADMIN / CO_ADMIN |
+| Own settings (ORG_ADMIN): driving-session auto-end time, telemetry interval | `GET` / `PATCH /organizations/{organization_id}/settings` `{driving_session_auto_end_minutes, telemetry_interval_seconds, reason}` (**built**, ID-45) | `422` value out of range or missing reason |
 
 ## 2. Users, members and roles
 
 Tables: `users`, `memberships`, `user_role_assignments`, `one_time_codes`.
 Rules: ID-26, ID-33 ([decision-log.md:218](../decisions/decision-log.md#L218)).
 
-| Step | API call (all planned) | Main error cases |
+| Step | API call (all **built**, WP2a) | Main error cases |
 |---|---|---|
 | Members list with roles and status | `GET /organizations/{organization_id}/members` | none |
-| **Invite** by phone and name; roles chosen | `POST /organizations/{organization_id}/members` `{phone_number, full_name, roles[]}`; membership INVITED, SMS invite link (72 h) | `409` already an active member; `400` role not allowed here (HEAD_ADMIN / CO_ADMIN only in internal organizations); `400` role DRIVER without a valid driver profile |
-| Resend or cancel an invitation | `POST /organizations/{organization_id}/members/{membership_id}/resend`, `DELETE .../members/{membership_id}` | `409` already accepted |
-| Grant / revoke a role | `POST /memberships/{membership_id}/roles` `{role}`, `DELETE /memberships/{membership_id}/roles/{role}` `{reason}` | `409` role already held; `409` revoking the last ORG_ADMIN (use handover) |
+| **Invite** by phone and name; roles chosen | `POST /organizations/{organization_id}/members` `{phone_number, full_name, roles[]}`; membership INVITED, SMS invite link (72 h) | `409` already an active member; `400` role not allowed here (HEAD_ADMIN / CO_ADMIN only in internal organizations); the DRIVER role is granted without a driver-profile check (the drivers domain depends on identity, not the reverse) |
+| Resend or cancel an invitation | `POST /organizations/{organization_id}/members/{membership_id}/resend` | `409` already accepted |
+| Grant / revoke a role | `POST /memberships/{membership_id}/roles` `{role}`, `DELETE /memberships/{membership_id}/roles/{role}` | `409` role already held; `409` revoking the ORG_ADMIN (use handover); the revoke takes no reason (role assignments keep none) |
 | **Lock** a member in this organization (account-wide lock is for our HEAD_ADMIN / CO_ADMIN only) | `POST /memberships/{membership_id}/lock` `{reason}`; `.../unlock` | `409` the ORG_ADMIN cannot be locked before a handover |
-| Remove a member (ends membership, revokes roles, closes driver profile and open driving session, DR-10) | `DELETE /memberships/{membership_id}` `{reason}` | `409` ORG_ADMIN; `404` |
+| Remove a member (ends membership, revokes roles; closing the driver profile and open driving session, DR-10, is still the drivers domain's job) | `DELETE /memberships/{membership_id}?reason=` (also cancels a pending invitation); `POST /memberships/{membership_id}/leave` for the person themself | `409` ORG_ADMIN; `404` |
 | **Hand over ORG_ADMIN** to another active member (one transaction: grant new, revoke old) | `POST /organizations/{organization_id}/admin-handover` `{to_membership_id, reason}` | `409` target not ACTIVE; `403` caller is not the current ORG_ADMIN. When the admin is gone, our CO_ADMIN calls the same path with `force: true` |
-| Lock / unlock a whole account (internal only) | `POST /users/{user_id}/lock` `{reason}` | `403` not HEAD_ADMIN / CO_ADMIN |
+| Lock / unlock a whole account (internal only); list and read accounts | `POST /users/{user_id}/lock` `{reason}`, `POST /users/{user_id}/unlock`, `GET /users`, `GET /users/{user_id}` | `403` not HEAD_ADMIN / CO_ADMIN |
 
 ## 3. Vehicles, batteries, warranties
 
@@ -214,13 +214,15 @@ Built: `GET /support/cases`, `GET /support/cases/{case_id}`,
 Table: `access_audit_logs` (hypertable, append-only, kept forever; ID-41).
 Our staff and each ORG_ADMIN (own organization) read it.
 
-| Step | API call (planned) | Main error cases |
+| Step | API call | Main error cases |
 |---|---|---|
-| Search: who viewed or exported what, logins, failed logins, lockouts | `GET /access-audit-logs?user_id=&action=&resource_type=&from=&to=&offset=&limit=` | `422` range over the limit; `403` |
-| Export it | `POST /access-audit-logs/exports` `{filters, reason}` (itself logged as `EXPORT`) | `422` missing reason |
+| Search: who viewed or exported what, logins, failed logins, lockouts | `GET /access-audit-logs/?user_id=&organization_id=&action=&resource_type=&from=&to=&page=&page_size=` (**built**; an ORG_ADMIN is limited to their own organization) | `400` range over the limit (366 days); `403` |
+| Write a `VIEW` / `EXPORT` row from another domain | in code: `identity.service.record_data_access` (**built**, no endpoint) | `400` export without a reason |
+| Export the log itself | `POST /access-audit-logs/exports` `{filters, reason}` (planned, logged as `EXPORT`) | `422` missing reason |
+| Legal texts and consent | `POST /legal-documents/` (HEAD_ADMIN / CO_ADMIN), `GET /legal-documents/current`, `GET /legal-documents/pending`, `POST /consents/`, `GET /consents/me` (**built**) | `409` duplicate version or superseded text |
 
 ## Open points
 
-- The whole identity layer (`/auth`, organizations, members, roles, audit) is unbuilt: every path in flows 1, 2, 11 and 14 is a proposal for the identity planner.
+- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a). Still planned: flow 11's notification settings, the audit-log export, and the other flows' use of the login (WP2b wires `get_current_principal` into their routers).
 - Billing (`/tariffs`, `/wallets`, bills) and trips are unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

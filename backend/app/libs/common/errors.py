@@ -29,3 +29,22 @@ class InvalidInputError(DomainError):
 class UpstreamUnavailableError(DomainError):
     """An external system the operation depends on (MQTT broker, charger)
     did not accept the request (HTTP 502)."""
+
+
+class UnauthenticatedError(DomainError):
+    """The caller is not logged in, or the credential or token is not valid
+    (HTTP 401)."""
+
+
+class PermissionDeniedError(DomainError):
+    """The caller is known but may not do this: a role, status or data-reach
+    rule forbids it (HTTP 403)."""
+
+
+class LockedError(DomainError):
+    """The account is temporarily locked after repeated failures; retry later
+    (HTTP 423)."""
+
+
+class TooManyRequestsError(DomainError):
+    """A rate limit or cooldown was hit; retry later (HTTP 429)."""

@@ -1924,6 +1924,30 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   where an explicitly sent `null` clears (`model_fields_set`). Clearing must still keep a name or
   a code (`ck_fleets_name_or_code`).
 
+### 99. Per-device / per-IP rate limit on the API, recycled-phone check and session cleanup job
+
+- **Short description**: Three identity protections that are decided but not built in WP2a:
+  (1) the **per-device/IP rate limit** on login and one-time-code endpoints (ID-23) - only the
+  per-account lockout (423) and the per-phone code cooldown and daily limit (429) exist;
+  (2) the **recycled-phone check** (ID-27): a password reset by SMS code on an account inactive for
+  about 90 days should wait for customer care or the organization admin to approve it;
+  (3) a **background cleanup** of expired `user_sessions` and stale `one_time_codes` (today they are
+  deleted opportunistically at the next login and the next code request).
+- **Purpose/role in the system**: (1) stops one client from guessing passwords across many accounts
+  or pumping SMS cost; (2) stops a new owner of a recycled phone number from taking over an old
+  account; (3) keeps the two working tables small without relying on traffic.
+- **Reason for deferral**: (1) needs a rate-limiting component (middleware or a shared counter
+  store), and CLAUDE.md says to ask before adding a component; (2) needs an approval step and a
+  place to store it (no column or table is designed); (3) needs a scheduler process like the
+  device-health monitor, and the opportunistic delete is enough while traffic is low.
+- **Related planner/feature**: ACC-04, ACC-05, ACC-06 (`docs/product/features/features.yaml`),
+  ID-23, ID-27, ID-37 (`docs/decisions/decision-log.md`), WP2 of
+  `docs/planners/backend-refactor-implementation.md`.
+- **Date recorded**: 2026-10-10
+- **Additional notes**: For (1) a reverse proxy rule (nginx `limit_req`) is the cheapest first step.
+  For (2) the check can use `user_state.last_active_at` and refuse the reset with a message to
+  contact support until an approval exists.
+
 ---
 
 ## Update rules

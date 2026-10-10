@@ -14,15 +14,18 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi import APIRouter
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
 
 from app.libs.db.session import get_db
 
 DOMAINS_ROOT = Path(__file__).resolve().parents[1] / "app" / "domains"
+# Every module that holds routers: `router.py` and the `*_router.py` files of
+# a domain with several (identity).
 ROUTER_MODULES = sorted(
-    f"app.domains.{path.parent.name}.router"
-    for path in DOMAINS_ROOT.glob("*/router.py")
+    f"app.domains.{path.parent.name}.{path.stem}"
+    for path in DOMAINS_ROOT.glob("*/*router.py")
 )
 
 
@@ -43,9 +46,11 @@ def _walk(dependant: Dependant) -> Iterator[Dependant]:
 @pytest.mark.parametrize("module_name", ROUTER_MODULES)
 def test_get_db_is_function_scoped_on_every_route(module_name: str) -> None:
     """Each route using get_db declares scope="function" (commit before response)."""
-    router = importlib.import_module(module_name).router
+    module = importlib.import_module(module_name)
+    routers = [value for value in vars(module).values() if isinstance(value, APIRouter)]
     offenders = [
         f"{', '.join(sorted(route.methods or ()))} {route.path}"
+        for router in routers
         for route in router.routes
         if isinstance(route, APIRoute)
         for dependency in _walk(route.dependant)

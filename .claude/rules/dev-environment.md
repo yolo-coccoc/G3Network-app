@@ -45,6 +45,7 @@ Basic commands:
 - `make telemetry-dev` — MQTT telemetry ingestion
 - `make charging-ocpp-dev` — OCPP gateway (accepts 2.0.1 and 1.6J on port 9000)
 - `make telematics-monitor-dev` — Device-health (silence) monitor
+- `make identity-bootstrap` — Create the internal organization and the first HEAD_ADMIN from `IDENTITY_BOOTSTRAP_*` (idempotent; run once per database)
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
@@ -63,6 +64,7 @@ instructions.
 - There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`); `make setup` copies each to `.env` if missing. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
 - Every backend setting is defined (type, validation, default) in `backend/app/libs/common/config.py` and documented with its default in `backend/.env.example`, grouped by component; only `DATABASE_URL` is required. A new setting goes in both, namespaced by component.
 - OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the heartbeat interval returned at boot (both protocols), the offline threshold behind the derived `is_online`, the timeout for a charger's answer to a gateway request, and the command channel (`CHARGING_OCPP_COMMAND_POLL_SECONDS`, `CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS`: how often the gateway looks for queued commands, and how long a queued command may wait for a connected charger before it ends `NOT_SENT`).
+- Identity settings (`IDENTITY_*`): `IDENTITY_TOKEN_SECRET_KEY` (signs access tokens and keys the one-time-code hash; empty = random per process), token/session lifetimes, login lockout, one-time-code limits, `IDENTITY_SMS_PROVIDER` / `IDENTITY_EMAIL_PROVIDER` (only the logging fake `log` exists: it writes the SMS, codes included, to the log), `IDENTITY_EMERGENCY_ADMIN_PHONE` (ACC-20) and the `IDENTITY_BOOTSTRAP_*` seed values.
 - `APP_REPORT_TIMEZONE` (default `Asia/Ho_Chi_Minh`) is the calendar for every report or series cut into days/weeks/months/hours; stored and returned timestamps stay UTC.
 
 ## Claude Code tooling (checked in under `.claude/` and `.mcp.json`)

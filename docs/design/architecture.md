@@ -25,7 +25,7 @@ flowchart LR
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     Monitor["telematics/monitoring\nperiodic device-health check"]
     API["FastAPI API"]
-    Domains["vehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers\nsupport\nfleet"]
+    Domains["identity\nvehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers\nsupport\nfleet"]
     Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
     Portal["Admin web portal\n(polls, not built yet)"]
@@ -191,8 +191,24 @@ FastAPI registers the following domains:
   (F-A3), an anomaly is detected (F-A4) or a vehicle enters/leaves a fleet
   geofence (F-A5); the device-health monitor raises one when a vehicle goes
   silent (F-J1/F-J3); `support` raises a `CRITICAL` `SOS_ALERT` for every
-  new SOS (F-I2). No push and no recipient scoping yet — there is no mobile
-  app and no `identity` domain.
+  new SOS (F-I2). No push and no recipient scoping yet — nothing derives
+  recipients from `identity`'s roles (WP10).
+- `identity` (F-F1, WP2a): organizations (create by our staff with the first
+  ORG_ADMIN, status SUSPENDED/CLOSED with DM-25 soft delete, account manager,
+  per-organization settings), users and credentials (self sign-up, invitation
+  acceptance, phone + password login with a temporary lockout, refresh,
+  logout, password reset/change and phone change by SMS one-time code, "my
+  devices" and push token), memberships and roles (invite, lock, remove,
+  leave, grant/revoke, ORG_ADMIN handover), legal documents and consent, and
+  the access audit log. Sessions are rows of `user_sessions` with an opaque
+  hashed refresh token; the access token is an HMAC-signed short-lived string
+  checked against the session row (no JWT, standard library only). Other
+  domains authenticate a request with `identity.dependencies`
+  (`get_current_principal`, `require_roles`) and apply the data rule with
+  `principal.can_access_organization`. SMS and e-mail go behind
+  `providers.py`, whose only implementation logs the message. The first
+  administrator is created by `make identity-bootstrap`. Wiring `Principal`
+  into the other domains' routers is WP2b.
 - `drivers` (F-E4, F-A9): the driver profile (one per membership, DR-09; name and
   phone live on the user and are read through `identity`'s public service),
   `driving_sessions` (check-in / check-out; one open session per truck and per
@@ -410,9 +426,12 @@ call each other is in
 │   │   │   │
 │   │   │   ├── batteries/             # Battery models and batteries; models and enums only until WP3 (BAT-01)
 │   │   │   ├── warranties/            # Warranties of trucks, batteries, T-Boxes, chargers; models and enums only until WP3 (WAR-01)
-│   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1); models only until WP2
-│   │   │       └── models.py  types.py
-│   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); no service, router or API yet
+│   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1)
+│   │   │       ├── service.py  types.py  exceptions.py  dependencies.py   # public surface (dependencies = FastAPI authentication)
+│   │   │       ├── account_service.py  organization_service.py  member_service.py  legal_service.py  audit_service.py  # internal business rules
+│   │   │       ├── repository.py  schemas.py  models.py  security.py  providers.py  bootstrap.py
+│   │   │       └── router.py  organization_router.py  membership_router.py  compliance_router.py   # 7 routers: /auth, /users, /organizations, /memberships, /legal-documents, /consents, /access-audit-logs
+│   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); security.py = scrypt/HMAC/random primitives, providers.py = SMS/e-mail interface + logging fake
 │   │   │
 │   │   ├── api/
 │   │   │   └── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
@@ -464,7 +483,7 @@ each part (`backend/`, `infra/`) currently keeps its own `.env.example`.
 Don't create these files/directories before a concrete task needs them.
 
 Domains that have feature codes in `docs/product/feature-list.md`
-but **no source yet**: `policy`, `scoring` (`identity` has its tables only, no service or API). Don't
+but **no source yet**: `policy`, `scoring`. Don't
 create empty directories/files for them before a concrete task exists; when
 creating one, apply [domain-boundaries.md](../../.claude/rules/domain-boundaries.md) and
 reference the correct feature code.
@@ -481,9 +500,10 @@ convention will be written once the first task for that part starts.
 
 ## Not yet in the MVP
 
-- User, authentication and RBAC (the `identity` domain has its tables only:
-  no service, login or API yet). `drivers` has a profile-CRUD and check-in/check-out slice (F-E4),
-  but no login/auth of its own and no empty-trip detection (F-A9,
+- Authentication on the other domains' endpoints: `identity` has login,
+  sessions and the access rule (`get_current_principal`), but only its own
+  routers use it; wiring the rest is WP2b. `drivers` has a profile-CRUD and check-in/check-out slice (F-E4),
+  but no empty-trip detection (F-A9,
   suspended — no trip concept exists in this backend).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query

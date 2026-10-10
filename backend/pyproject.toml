@@ -185,12 +185,25 @@ forbidden_modules = [
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
-name = "Other domains use only identity's service, types and exceptions"
+name = "Other domains use only identity's service, types, exceptions and dependencies"
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.identity.account_service",
+    "app.domains.identity.audit_service",
+    "app.domains.identity.bootstrap",
+    "app.domains.identity.compliance_router",
+    "app.domains.identity.legal_service",
+    "app.domains.identity.member_service",
+    "app.domains.identity.membership_router",
     "app.domains.identity.models",
+    "app.domains.identity.organization_router",
+    "app.domains.identity.organization_service",
+    "app.domains.identity.providers",
     "app.domains.identity.repository",
+    "app.domains.identity.router",
+    "app.domains.identity.schemas",
+    "app.domains.identity.security",
 ]
 allow_indirect_imports = true
 

@@ -29,6 +29,11 @@ import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
+import app.domains.identity.account_service as identity_account_service
+import app.domains.identity.audit_service as identity_audit_service
+import app.domains.identity.bootstrap as identity_bootstrap
+import app.domains.identity.member_service as identity_member_service
+import app.domains.identity.organization_service as identity_organization_service
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
@@ -84,8 +89,40 @@ from app.domains.fleet.schemas import (
     GeofencePolygonGeoJson,
     GeofenceUpdateRequest,
 )
+from app.domains.identity.exceptions import (
+    FailureRecordedError,
+    InvalidCredentialsError,
+    InvalidOneTimeCodeError,
+    LoginLockedError,
+    OrgAdminProtectedError,
+    OrganizationInactiveError,
+    OrganizationNotFoundError,
+    SessionInvalidError,
+)
 from app.domains.identity.models import MembershipModel, OrganizationModel, UserModel
-from app.domains.identity.types import MembershipStatus, OrganizationStatus, UserStatus
+from app.domains.identity.schemas import (
+    AdminHandoverRequest,
+    InvitationAcceptRequest,
+    LoginRequest,
+    MemberInviteRequest,
+    OneTimeCodeSendRequest,
+    OrganizationCreateRequest,
+    OrganizationStatusRequest,
+    PasswordResetRequest,
+    RefreshRequest,
+    TokenResponse,
+)
+from app.domains.identity.types import (
+    AccessAuditAction,
+    MembershipStatus,
+    OneTimeCodePurpose,
+    OrganizationLegalForm,
+    OrganizationStatus,
+    Principal,
+    SessionPlatform,
+    UserRole,
+    UserStatus,
+)
 from app.domains.notifications.models import NotificationModel
 from app.domains.notifications.types import (
     NotificationListOrder,
@@ -3297,4 +3334,289 @@ async def test_gateway_command_loop_sends_queued_commands_and_writes_answers(
             gateway.wait(timeout=15)
         except subprocess.TimeoutExpired:
             gateway.kill()
+        await engine.dispose()
+
+
+class _CapturingSmsSender:
+    """SMS provider that keeps every message so the test can read the codes."""
+
+    def __init__(self) -> None:
+        """Start with no messages."""
+        self.messages: list[tuple[str, str]] = []
+
+    async def send_sms(self, phone_number: str, message: str) -> None:
+        """Remember the message instead of sending it."""
+        self.messages.append((phone_number, message))
+
+    def last_code(self) -> str:
+        """Return the 6-digit code in the newest message."""
+        import re
+
+        match = re.search(r"\b(\d{6})\b", self.messages[-1][1])
+        assert match is not None
+        return match.group(1)
+
+
+@pytest.mark.asyncio
+async def test_identity_login_flow_roles_lockout_and_handover(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bootstrap, login, onboarding, lockout, reset, handover and suspension work end to end.
+
+    Each step runs in its own transaction like a request; a failure that must
+    leave a trace is committed the way the router does for a
+    `FailureRecordedError`.
+    """
+    sms = _CapturingSmsSender()
+    monkeypatch.setattr(identity_account_service, "get_sms_sender", lambda: sms)
+    monkeypatch.setattr(identity_member_service, "get_sms_sender", lambda: sms)
+    monkeypatch.setattr(settings, "IDENTITY_BOOTSTRAP_ADMIN_PHONE", "+84900000001")
+    monkeypatch.setattr(settings, "IDENTITY_BOOTSTRAP_ADMIN_PASSWORD", "head admin pw")
+    monkeypatch.setattr(settings, "IDENTITY_OTP_RESEND_COOLDOWN_SECONDS", 0)
+    monkeypatch.setattr(settings, "IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS", 3)
+
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async def login(phone_number: str, password: str) -> TokenResponse:
+        """Log in as the router would: commit recorded failures, then raise."""
+        async with session_factory() as db:
+            try:
+                tokens = await identity_account_service.login(
+                    db,
+                    LoginRequest(
+                        phone_number=phone_number,
+                        password=password,
+                        platform=SessionPlatform.ANDROID,
+                    ),
+                    None,
+                )
+            except FailureRecordedError:
+                await db.commit()
+                raise
+            await db.commit()
+            return tokens
+
+    async def principal_of(tokens: TokenResponse) -> Principal:
+        """Authenticate an access token the way the dependencies do."""
+        async with session_factory() as db:
+            identity = await identity_account_service.authenticate_session(
+                db, tokens.access_token
+            )
+            principal = await identity_account_service.resolve_principal(db, identity)
+            await db.commit()
+            return principal
+
+    try:
+        # Bootstrap creates the internal organization and first HEAD_ADMIN; a
+        # second run changes nothing.
+        async with session_factory.begin() as db:
+            bootstrap_result = await identity_bootstrap.bootstrap_identity(db)
+        async with session_factory.begin() as db:
+            assert (await identity_bootstrap.bootstrap_identity(db)).created == []
+        assert "organization" in bootstrap_result.created
+
+        head_tokens = await login("+84900000001", "head admin pw")
+        head = await principal_of(head_tokens)
+        assert head.is_internal and UserRole.HEAD_ADMIN in head.roles
+        assert head.organization_id == bootstrap_result.organization_id
+
+        # Our staff create a customer; its first admin accepts the SMS invite.
+        async with session_factory.begin() as db:
+            customer = await identity_organization_service.create_organization(
+                db,
+                head,
+                OrganizationCreateRequest(
+                    legal_form=OrganizationLegalForm.COMPANY,
+                    display_name="Minh Phat",
+                    legal_name="Minh Phat Co.",
+                    tax_code="0312345678",
+                    first_admin={  # type: ignore[arg-type]
+                        "phone_number": "+84900000002",
+                        "full_name": "Customer Admin",
+                    },
+                ),
+            )
+        # A wrong code is counted against the code and the count survives.
+        async with session_factory() as db:
+            wrong_code = "000000" if sms.last_code() != "000000" else "111111"
+            with pytest.raises(InvalidOneTimeCodeError):
+                await identity_account_service.accept_invitation(
+                    db,
+                    InvitationAcceptRequest(
+                        phone_number="+84900000002",
+                        code=wrong_code,
+                        password="customer pw 1",
+                        platform=SessionPlatform.WEB,
+                    ),
+                    None,
+                )
+            await db.commit()
+        async with engine.connect() as connection:
+            failed_attempts = await connection.scalar(
+                text(
+                    "SELECT failed_attempt_count FROM one_time_codes "
+                    "WHERE phone_number = '+84900000002'"
+                )
+            )
+        assert failed_attempts == 1
+        async with session_factory() as db:
+            accepted = await identity_account_service.accept_invitation(
+                db,
+                InvitationAcceptRequest(
+                    phone_number="+84900000002",
+                    code=sms.last_code(),
+                    password="customer pw 1",
+                    platform=SessionPlatform.WEB,
+                ),
+                None,
+            )
+            await db.commit()
+        admin = await principal_of(accepted)
+        assert admin.organization_id == customer.organization_id
+        assert admin.roles == {UserRole.ORG_ADMIN}
+        assert not admin.is_internal
+        assert admin.can_access_organization(customer.organization_id)
+        assert not admin.can_access_organization(head.organization_id)
+        async with session_factory() as db:
+            with pytest.raises(OrganizationNotFoundError):
+                await identity_organization_service.get_organization(
+                    db, admin, head.organization_id
+                )
+
+        # Wrong passwords count and persist; the next try is locked out (423).
+        for _attempt in range(3):
+            with pytest.raises(InvalidCredentialsError):
+                await login("+84900000002", "wrong password")
+        with pytest.raises(LoginLockedError):
+            await login("+84900000002", "customer pw 1")
+        async with session_factory() as db:
+            audit_page = await identity_audit_service.search_audit_logs(
+                db,
+                head,
+                user_id=admin.user_id,
+                organization_id=None,
+                action=AccessAuditAction.LOGIN_LOCKED,
+                resource_type=None,
+                occurred_from=None,
+                occurred_to=None,
+                page=1,
+                page_size=10,
+            )
+        assert audit_page.total == 1
+
+        # A password reset by code clears the lockout and ends the old session.
+        async with session_factory() as db:
+            await identity_account_service.send_one_time_code(
+                db,
+                OneTimeCodeSendRequest(
+                    phone_number="+84900000002",
+                    purpose=OneTimeCodePurpose.PASSWORD_RESET,
+                ),
+            )
+            await db.commit()
+        async with session_factory() as db:
+            await identity_account_service.reset_password(
+                db,
+                PasswordResetRequest(
+                    phone_number="+84900000002",
+                    code=sms.last_code(),
+                    new_password="customer pw 2",
+                ),
+                None,
+            )
+            await db.commit()
+        with pytest.raises(SessionInvalidError):
+            await principal_of(accepted)
+        new_tokens = await login("+84900000002", "customer pw 2")
+
+        # Refreshing replaces the refresh token; the old one is dead.
+        async with session_factory() as db:
+            refreshed = await identity_account_service.refresh_session(
+                db, RefreshRequest(refresh_token=new_tokens.refresh_token)
+            )
+            await db.commit()
+        async with session_factory() as db:
+            with pytest.raises(SessionInvalidError):
+                await identity_account_service.refresh_session(
+                    db, RefreshRequest(refresh_token=new_tokens.refresh_token)
+                )
+        admin = await principal_of(refreshed)
+
+        # Invite a fleet manager, hand the ORG_ADMIN role over to them.
+        async with session_factory.begin() as db:
+            invited = await identity_member_service.invite_member(
+                db,
+                admin,
+                customer.organization_id,
+                MemberInviteRequest(
+                    phone_number="+84900000003",
+                    full_name="Fleet Manager",
+                    roles=[UserRole.FLEET_MANAGER],
+                ),
+            )
+        async with session_factory() as db:
+            manager_tokens = await identity_account_service.accept_invitation(
+                db,
+                InvitationAcceptRequest(
+                    phone_number="+84900000003",
+                    code=sms.last_code(),
+                    password="manager pw 1",
+                    platform=SessionPlatform.ANDROID,
+                ),
+                None,
+            )
+            await db.commit()
+        manager = await principal_of(manager_tokens)
+        assert manager.membership_id == invited.membership_id
+        assert manager.roles == {UserRole.FLEET_MANAGER}
+
+        async with session_factory.begin() as db:
+            new_admin = await identity_member_service.handover_org_admin(
+                db,
+                admin,
+                customer.organization_id,
+                AdminHandoverRequest(
+                    to_membership_id=invited.membership_id, reason="Retiring"
+                ),
+            )
+        assert UserRole.ORG_ADMIN in new_admin.roles
+        old_admin = await principal_of(refreshed)
+        assert UserRole.ORG_ADMIN not in old_admin.roles
+        async with session_factory() as db:
+            with pytest.raises(OrgAdminProtectedError):
+                await identity_member_service.lock_member(
+                    db, head, invited.membership_id, "test"
+                )
+
+        # Suspending the organization blocks its members' logins (ID-34).
+        async with session_factory.begin() as db:
+            await identity_organization_service.change_organization_status(
+                db,
+                head,
+                customer.organization_id,
+                OrganizationStatusRequest(
+                    status=OrganizationStatus.SUSPENDED, reason="Contract ended"
+                ),
+            )
+        with pytest.raises(OrganizationInactiveError):
+            await login("+84900000003", "manager pw 1")
+        async with engine.connect() as connection:
+            history_reasons = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT change_reason FROM organization_history "
+                            "WHERE organization_id = :organization_id"
+                        ),
+                        {"organization_id": customer.organization_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert "Contract ended" in history_reasons
+    finally:
         await engine.dispose()

@@ -72,6 +72,9 @@ component you need in its own terminal and keep it running:
 | 3 | `make charging-ocpp-dev` | OCPP gateway on port 9000 (2.0.1 and 1.6J) |
 | 4 | `make telematics-monitor-dev` | Device-health monitor: alerts when a device stops reporting |
 
+Once per database (after `make db-reset`), set `IDENTITY_BOOTSTRAP_ADMIN_PHONE` and `IDENTITY_BOOTSTRAP_ADMIN_PASSWORD` in `backend/.env` and run `make identity-bootstrap`: it creates the internal organization and the first HEAD_ADMIN, because no endpoint can.
+
+
 Only the API is needed for plain CRUD work; start the others when you touch
 their flow. The simulators (next section) run in further terminals.
 

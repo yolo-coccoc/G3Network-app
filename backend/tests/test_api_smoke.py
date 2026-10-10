@@ -169,3 +169,33 @@ async def test_domain_error_handler_keeps_status_and_detail_shape(
 
     assert response.status_code == expected_status
     assert json.loads(bytes(response.body)) == {"detail": str(error)}
+
+
+def test_openapi_registers_the_identity_routes() -> None:
+    """WP2: authentication, organizations, members, roles, consent and audit."""
+    paths = app.openapi()["paths"]
+
+    for path in (
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/sign-up",
+        "/api/v1/auth/invitations/accept",
+        "/api/v1/auth/otp/send",
+        "/api/v1/auth/password/reset",
+        "/api/v1/auth/me",
+        "/api/v1/auth/organization",
+        "/api/v1/auth/session/push-token",
+        "/api/v1/organizations/",
+        "/api/v1/organizations/{organization_id}/status",
+        "/api/v1/organizations/{organization_id}/settings",
+        "/api/v1/organizations/{organization_id}/members",
+        "/api/v1/organizations/{organization_id}/admin-handover",
+        "/api/v1/memberships/{membership_id}/lock",
+        "/api/v1/memberships/{membership_id}/roles",
+        "/api/v1/users/{user_id}/lock",
+        "/api/v1/legal-documents/current",
+        "/api/v1/consents/",
+        "/api/v1/access-audit-logs/",
+    ):
+        assert path in paths, path

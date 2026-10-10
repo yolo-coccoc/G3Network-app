@@ -11,8 +11,7 @@
 ## Conventions
 
 - Base path `/api/v1`. **built** = the route exists in `backend/app/domains/*/router.py`
-  today; **planned** = proposed path, nothing written yet. The `identity`,
-  `billing` and trips parts are all planned; the old `drivers` assignment
+  today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` and trips are planned; the old `drivers` assignment
   routes (`POST /drivers/{driver_id}/assignment`) are gone, replaced by check-in
   (`POST /driving-sessions/` is built with `driver_id` and `vehicle_vin` in the body; DR-07,
   [decision-log.md:339](../decisions/decision-log.md#L339)).
@@ -32,17 +31,19 @@ Tables: `users`, `user_credentials`, `user_sessions`, `one_time_codes`,
 `memberships`, `user_state`. Decisions: ID-15 (guest sign-up), ID-16 (codes),
 ID-23 (lockout), ID-36 (sessions), all in [decision-log.md](../decisions/decision-log.md).
 
-| # | Screen / step | API call (all planned) | Main error cases |
+| # | Screen / step | API call (all **built**, WP2a) | Main error cases |
 |---|---|---|---|
-| 1 | New guest enters phone number | `POST /auth/otp/send` `{phone_number, purpose: "SIGN_UP"}` | `409` phone already has an account (go to login); `429` resend cooldown or per-phone limit (SMS-pumping guard) |
-| 2 | Enters the 6-digit code, full name, password | `POST /auth/sign-up` `{phone_number, code, full_name, password, legal_form, platform, device_label}` returns tokens; creates user, credential, a personal INDIVIDUAL organization (the guest is its ORG_ADMIN and DRIVER) | `400` wrong or expired code (5 wrong attempts kill the code); `422` weak password |
-| 3 | Invited driver (a manager registered them by phone) taps "claim account" | `POST /auth/otp/send` `{purpose: "INVITE"}` then `POST /auth/invitations/accept` `{phone_number, code, password}` | `400` code expired (72 h) or used; `404` no invitation for this phone |
+| 1 | New guest enters phone number | `POST /auth/otp/send` `{phone_number, purpose: "SIGN_UP"}` | `409` phone already has an account (go to login); `429` resend cooldown or daily per-phone limit (SMS-pumping guard); a reset or invitation for an unknown phone answers `202` like a known one and sends nothing |
+| 2 | Enters the 6-digit code, full name, password | `POST /auth/sign-up` `{phone_number, code, full_name, email?, password, platform, app_version, device_label, push_token}` returns tokens; creates user, credential, a personal INDIVIDUAL organization (the guest is its ORG_ADMIN and DRIVER); there is no `legal_form` field, a guest is always an individual | `400` wrong or expired code (5 wrong attempts kill the code); `400` weak or recently used password; `409` phone or e-mail taken; `422` malformed body |
+| 3 | Invited driver (a manager registered them by phone) taps "claim account" | `POST /auth/otp/send` `{purpose: "INVITE"}` then `POST /auth/invitations/accept` `{phone_number, code, password}` | `400` code wrong, expired (72 h) or used; an unknown phone gets the same `400` as a wrong code (no probing) |
 | 4 | Login: phone + password | `POST /auth/login` `{phone_number, password, platform, app_version, device_label, push_token}` returns `access_token`, `refresh_token`, `memberships[]` | `401` wrong phone or password; `423` short lockout after repeated failures (ID-23); `403` user LOCKED or organization SUSPENDED/CLOSED |
-| 5 | Person has several organizations: pick one (the last one is remembered, `user_state.last_organization_id`, and opens directly) | `GET /auth/me` lists memberships; `POST /auth/organization` `{organization_id}` switches the session without a new login | `403` membership not ACTIVE; `404` not a member |
+| 5 | Person has several organizations: pick one (the last one is remembered, `user_state.last_organization_id`, and opens directly) | `GET /auth/me` lists memberships, roles and features; `POST /auth/organization` `{organization_id}` switches the session without a new login; `POST /memberships/{membership_id}/accept` accepts an invitation to a further organization | `403` membership not ACTIVE or organization suspended/closed; `404` not a member. A request made before an organization is picked answers `403` |
 | 6 | Forgot password | `POST /auth/otp/send` `{purpose: "PASSWORD_RESET"}`, then `POST /auth/password/reset` `{phone_number, code, new_password}` (also clears the lockout, ID-30) | `400` bad code; `429` limits |
-| 7 | Silent session refresh (app start, or after `401`) | `POST /auth/refresh` `{refresh_token}` returns a new pair (the old refresh token is replaced each time) | `401` token unknown, expired (90 days on mobile) or already used: session deleted, go to login |
-| 8 | Push token changed | `PUT /auth/session/push-token` `{push_token}` | `404` session gone |
-| 9 | Logout (this device or all) | `POST /auth/logout` `{all_devices: bool}` | none expected; the row is deleted, idempotent |
+| 7 | Silent session refresh (app start, or after `401`) | `POST /auth/refresh` `{refresh_token}` returns a new pair (the old refresh token is replaced each time; the access token lives 15 minutes) | `401` token unknown, expired (90 days on mobile) or already used: session deleted, go to login |
+| 8 | Push token changed | `PUT /auth/session/push-token` `{push_token}`, `DELETE` the same path to stop pushes; `GET /auth/sessions` lists the "my devices" screen, `DELETE /auth/sessions/{session_id}` logs one out | `404` session gone |
+| 9 | Logout (this device or all) | `POST /auth/logout` `{all_devices: bool}` returns `204` | none expected; the row is deleted, idempotent |
+| 10 | Change password, change phone number | `POST /auth/password/change` `{current_password, new_password}` (other devices are logged out); `POST /auth/phone/change` `{new_phone_number}` then `POST /auth/phone/change/confirm` `{code}` | `400` current password wrong or password reused; `409` phone taken |
+| 11 | Accept the legal texts | `GET /legal-documents/current` (public), `GET /legal-documents/pending`, `POST /consents/` `{legal_document_id, on_behalf_of_organization}` | `409` a newer version is in force |
 
 ## 2. Check-in to a truck and check-out
 

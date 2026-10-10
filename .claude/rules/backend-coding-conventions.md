@@ -253,7 +253,12 @@ inherits from exactly one shared base in `app/libs/common/errors.py`, which
 decides its HTTP status: `NotFoundError` (404), `ConflictError` (409 —
 duplicates and disallowed state transitions), `InvalidInputError` (400 —
 input that passes schema validation but breaks a business rule),
-`UpstreamUnavailableError` (502). A domain may add its own root
+`UpstreamUnavailableError` (502), and the authentication ones:
+`UnauthenticatedError` (401), `PermissionDeniedError` (403), `LockedError`
+(423, temporary login lockout), `TooManyRequestsError` (429). An exception
+that leaves a counter behind (a failed login) also derives from the identity
+domain's `FailureRecordedError`, which makes the router commit before it
+raises. A domain may add its own root
 (`DriverError(DomainError)`) and combine it with a base
 (`class DriverNotFoundError(DriverError, NotFoundError)`).
 

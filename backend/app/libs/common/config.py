@@ -102,6 +102,47 @@ class Settings(BaseSettings):
             responses stay UTC.
         CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: Maximum span of the F-C5
             station energy time-series query.
+        IDENTITY_TOKEN_SECRET_KEY: Secret that signs access tokens and keys
+            the hash of one-time codes; leave empty in development to get a
+            random per-process key (tokens then die with the process).
+        IDENTITY_ACCESS_TOKEN_TTL_SECONDS: Lifetime of an access token; the
+            refresh token renews it.
+        IDENTITY_SESSION_DRIVER_APP_DAYS: Idle lifetime of an Android / iOS
+            session (ID-36).
+        IDENTITY_SESSION_PORTAL_DAYS: Idle lifetime of a browser session of a
+            customer user (ID-36).
+        IDENTITY_SESSION_INTERNAL_DAYS: Idle lifetime of a session of a user
+            who belongs to an internal organization (ID-36).
+        IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS: Consecutive wrong passwords that
+            start a temporary login lockout (ID-23).
+        IDENTITY_LOGIN_LOCKOUT_MINUTES: Length of that lockout.
+        IDENTITY_PASSWORD_MIN_LENGTH: Shortest accepted new password.
+        IDENTITY_SMS_PROVIDER: SMS gateway for one-time codes and alerts;
+            only ``log`` (a fake that writes the message to the log) exists.
+        IDENTITY_EMAIL_PROVIDER: E-mail gateway; only ``log`` exists.
+        IDENTITY_OTP_TTL_MINUTES: Lifetime of a sign-up, reset or phone-change
+            code.
+        IDENTITY_INVITE_TTL_HOURS: Lifetime of an invitation code (ID-16).
+        IDENTITY_OTP_MAX_FAILED_ATTEMPTS: Wrong guesses that kill a code
+            (ID-37).
+        IDENTITY_OTP_RESEND_COOLDOWN_SECONDS: Shortest gap between two codes
+            for one phone number and purpose.
+        IDENTITY_OTP_MAX_PER_PHONE_PER_DAY: Codes one phone number may be sent
+            in 24 hours (SMS-pumping guard).
+        IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS: Longest time range of one audit
+            log search.
+        IDENTITY_EMERGENCY_ADMIN_PHONE: Phone number of the sealed emergency
+            HEAD_ADMIN account (ACC-20); a login of this account alerts the
+            other head administrators.
+        IDENTITY_BOOTSTRAP_ORGANIZATION_NAME: Display name of the internal
+            organization the bootstrap command creates.
+        IDENTITY_BOOTSTRAP_ORGANIZATION_LEGAL_NAME: Its registered name.
+        IDENTITY_BOOTSTRAP_ORGANIZATION_TAX_CODE: Its tax code (optional).
+        IDENTITY_BOOTSTRAP_ADMIN_PHONE: Phone number of the first HEAD_ADMIN.
+        IDENTITY_BOOTSTRAP_ADMIN_NAME: Full name of the first HEAD_ADMIN.
+        IDENTITY_BOOTSTRAP_ADMIN_PASSWORD: Password of the first HEAD_ADMIN.
+        IDENTITY_BOOTSTRAP_EMERGENCY_ADMIN_PASSWORD: Password of the emergency
+            account created when ``IDENTITY_EMERGENCY_ADMIN_PHONE`` is set.
     """
 
     model_config = SettingsConfigDict(
@@ -244,6 +285,39 @@ class Settings(BaseSettings):
 
     # F-C5 station energy series: hourly buckets over a month = 744 points.
     CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
+
+    # Identity (WP2): sessions, passwords, one-time codes. The secret has no
+    # default on purpose (no default credentials in source): when empty, the
+    # security module draws a random key at start-up and logs a warning.
+    IDENTITY_TOKEN_SECRET_KEY: str = ""
+    IDENTITY_ACCESS_TOKEN_TTL_SECONDS: int = Field(default=900, ge=60)
+    IDENTITY_SESSION_DRIVER_APP_DAYS: int = Field(default=90, ge=1)
+    IDENTITY_SESSION_PORTAL_DAYS: int = Field(default=7, ge=1)
+    IDENTITY_SESSION_INTERNAL_DAYS: int = Field(default=1, ge=1)
+    IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1)
+    IDENTITY_LOGIN_LOCKOUT_MINUTES: int = Field(default=15, ge=1)
+    IDENTITY_PASSWORD_MIN_LENGTH: int = Field(default=8, ge=6)
+    # External providers sit behind an interface (PR-15); only a fake that
+    # logs the message exists, so a real gateway is a new value here.
+    IDENTITY_SMS_PROVIDER: Literal["log"] = "log"
+    IDENTITY_EMAIL_PROVIDER: Literal["log"] = "log"
+    IDENTITY_OTP_TTL_MINUTES: int = Field(default=10, ge=1)
+    IDENTITY_INVITE_TTL_HOURS: int = Field(default=72, ge=1)
+    IDENTITY_OTP_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1)
+    IDENTITY_OTP_RESEND_COOLDOWN_SECONDS: int = Field(default=60, ge=0)
+    IDENTITY_OTP_MAX_PER_PHONE_PER_DAY: int = Field(default=10, ge=1)
+    IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS: int = Field(default=366, ge=1)
+    IDENTITY_EMERGENCY_ADMIN_PHONE: str | None = None
+
+    # Read only by `python -m app.domains.identity.bootstrap` (no endpoint can
+    # create the first administrator).
+    IDENTITY_BOOTSTRAP_ORGANIZATION_NAME: str = "G3 Network"
+    IDENTITY_BOOTSTRAP_ORGANIZATION_LEGAL_NAME: str = "G3 Network"
+    IDENTITY_BOOTSTRAP_ORGANIZATION_TAX_CODE: str | None = None
+    IDENTITY_BOOTSTRAP_ADMIN_PHONE: str | None = None
+    IDENTITY_BOOTSTRAP_ADMIN_NAME: str = "Head Administrator"
+    IDENTITY_BOOTSTRAP_ADMIN_PASSWORD: str | None = None
+    IDENTITY_BOOTSTRAP_EMERGENCY_ADMIN_PASSWORD: str | None = None
 
 
 @lru_cache

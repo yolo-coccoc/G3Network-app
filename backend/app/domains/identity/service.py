@@ -1,16 +1,29 @@
 """Public service of the identity domain.
 
-Only the lookups other domains already need are here; accounts, login and
-roles come with WP2. Other domains call these functions and never import the
-identity models or repository.
+The functions other domains call: lookups of a membership's person, of an
+organization and its settings, and the helper that writes the personal-data
+access audit log. Authentication of a request is exposed to FastAPI through
+`dependencies.py` (`get_current_principal`, `require_roles`). Everything else
+in the domain (accounts, login, members, roles, consent) is reached over HTTP
+only. Other domains never import the identity models or repository.
 """
 
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.identity.audit_service as audit_service
+import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
-from app.domains.identity.types import MembershipPersonReference
+from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
+    MembershipPersonReference,
+    OrganizationReference,
+    OrganizationSettingsReference,
+    Principal,
+)
 
 
 async def resolve_membership_person_reference(
@@ -44,4 +57,94 @@ async def resolve_membership_person_reference(
         membership_status=membership_record.status,
         user_status=user_record.status,
         left_at=membership_record.left_at,
+    )
+
+
+async def find_organization_reference(
+    db_session: AsyncSession, organization_id: UUID
+) -> OrganizationReference | None:
+    """Look an organization up by ID, for example to validate a foreign key.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        organization_id: Internal ID of the organization.
+
+    Returns:
+        `OrganizationReference`, or `None` if the organization is unknown (a
+        closed organization is still returned; its `status` says so).
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    return await organization_service.find_organization_reference(
+        db_session, organization_id
+    )
+
+
+async def resolve_organization_settings(
+    db_session: AsyncSession, organization_id: UUID
+) -> OrganizationSettingsReference | None:
+    """Read the settings an organization chose for itself (ID-45).
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        organization_id: Internal ID of the organization.
+
+    Returns:
+        The settings (defaults when the row is missing), or `None` if the
+        organization is unknown.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    return await organization_service.resolve_organization_settings(
+        db_session, organization_id
+    )
+
+
+async def record_data_access(
+    db_session: AsyncSession,
+    *,
+    principal: Principal,
+    action: AccessAuditAction,
+    resource_type: str,
+    resource_id: str | None,
+    client_context: ClientContext | None,
+    details: dict[str, Any] | None = None,
+    organization_id: UUID | None = None,
+) -> None:
+    """Write a `VIEW` or `EXPORT` row of the personal-data access audit log (ACC-18).
+
+    Call it once when a screen showing personal or location data is opened
+    (not per refresh), and for every export.
+
+    Args:
+        db_session: Database session owned by the entry boundary; the row is
+            written in the same transaction as the request.
+        principal: The caller who accessed the data.
+        action: `AccessAuditAction.VIEW` or `AccessAuditAction.EXPORT`.
+        resource_type: Kind of data, e.g. ``VEHICLE_LOCATION_HISTORY``.
+        resource_id: ID of the record accessed, as text.
+        client_context: IP address and user agent of the request (the
+            `get_client_context` dependency).
+        details: Facts of the action; an export needs ``{"reason": ...}``.
+        organization_id: Organization whose data was accessed; defaults to
+            the caller's organization.
+
+    Raises:
+        AuditLogInvalidError: The action is not a data action, or an export
+            has no reason.
+
+    Side Effects:
+        Inserts one `access_audit_logs` row; does not commit.
+    """
+    await audit_service.record_data_access(
+        db_session,
+        principal=principal,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details,
+        client_context=client_context,
+        organization_id=organization_id,
     )

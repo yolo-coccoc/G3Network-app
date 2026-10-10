@@ -17,6 +17,16 @@ from app.domains.charging_stations.router import router as charging_stations_rou
 from app.domains.drivers.router import driving_sessions_router
 from app.domains.drivers.router import router as drivers_router
 from app.domains.fleet.router import router as fleet_router
+from app.domains.identity.compliance_router import (
+    audit_router as access_audit_router,
+)
+from app.domains.identity.compliance_router import (
+    consents_router,
+    legal_documents_router,
+)
+from app.domains.identity.membership_router import router as memberships_router
+from app.domains.identity.organization_router import router as organizations_router
+from app.domains.identity.router import auth_router, users_router
 from app.domains.notifications.router import router as notifications_router
 from app.domains.support.router import router as support_router
 from app.domains.telematics.router import router as telematics_router
@@ -28,7 +38,11 @@ from app.libs.common.errors import (
     ConflictError,
     DomainError,
     InvalidInputError,
+    LockedError,
     NotFoundError,
+    PermissionDeniedError,
+    TooManyRequestsError,
+    UnauthenticatedError,
     UpstreamUnavailableError,
 )
 from app.libs.db.session import close_db
@@ -83,6 +97,10 @@ _DOMAIN_ERROR_STATUS: dict[type[DomainError], int] = {
     ConflictError: status.HTTP_409_CONFLICT,
     InvalidInputError: status.HTTP_400_BAD_REQUEST,
     UpstreamUnavailableError: status.HTTP_502_BAD_GATEWAY,
+    UnauthenticatedError: status.HTTP_401_UNAUTHORIZED,
+    PermissionDeniedError: status.HTTP_403_FORBIDDEN,
+    LockedError: status.HTTP_423_LOCKED,
+    TooManyRequestsError: status.HTTP_429_TOO_MANY_REQUESTS,
 }
 
 
@@ -103,7 +121,14 @@ async def domain_error_handler(_request: Request, error: Exception) -> JSONRespo
     status_code = next(
         code for base, code in _DOMAIN_ERROR_STATUS.items() if isinstance(error, base)
     )
-    return JSONResponse(status_code=status_code, content={"detail": str(error)})
+    headers = (
+        {"WWW-Authenticate": "Bearer"}
+        if status_code == status.HTTP_401_UNAUTHORIZED
+        else None
+    )
+    return JSONResponse(
+        status_code=status_code, content={"detail": str(error)}, headers=headers
+    )
 
 
 for _error_base in _DOMAIN_ERROR_STATUS:
@@ -121,3 +146,10 @@ app.include_router(drivers_router, prefix="/api/v1/drivers")
 app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")
 app.include_router(support_router, prefix="/api/v1/support")
 app.include_router(fleet_router, prefix="/api/v1/fleets")
+app.include_router(auth_router, prefix="/api/v1/auth")
+app.include_router(users_router, prefix="/api/v1/users")
+app.include_router(organizations_router, prefix="/api/v1/organizations")
+app.include_router(memberships_router, prefix="/api/v1/memberships")
+app.include_router(legal_documents_router, prefix="/api/v1/legal-documents")
+app.include_router(consents_router, prefix="/api/v1/consents")
+app.include_router(access_audit_router, prefix="/api/v1/access-audit-logs")

@@ -2,7 +2,7 @@
 
 Each domain's import-linter contract (``[tool.importlinter]`` in
 pyproject.toml) must forbid every module of that domain except its public
-surface (``service``, ``types``, ``exceptions``). A new internal module or
+surface (``service``, ``types``, ``exceptions``, and identity's ``dependencies``). A new internal module or
 subpackage that is not listed would silently become importable by other
 domains; this test fails instead.
 """
@@ -14,7 +14,9 @@ import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DOMAINS_ROOT = BACKEND_ROOT / "app" / "domains"
-PUBLIC_MODULES = frozenset({"service", "types", "exceptions"})
+# `dependencies` is the FastAPI authentication surface only the identity
+# domain has (`get_current_principal`, `require_roles`).
+PUBLIC_MODULES = frozenset({"service", "types", "exceptions", "dependencies"})
 
 
 def _domain_names() -> list[str]:
