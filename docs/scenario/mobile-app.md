@@ -45,7 +45,7 @@ ID-23 (lockout), ID-36 (sessions), all in [decision-log.md](../decisions/decisio
 | 7 | Silent session refresh (app start, or after `401`) | `POST /auth/refresh` `{refresh_token}` returns a new pair (the old refresh token is replaced each time; the access token lives 15 minutes) | `401` token unknown, expired (90 days on mobile) or already used: session deleted, go to login |
 | 8 | Push token changed | `PUT /auth/session/push-token` `{push_token}`, `DELETE` the same path to stop pushes; `GET /auth/sessions` lists the "my devices" screen, `DELETE /auth/sessions/{session_id}` logs one out | `404` session gone |
 | 9 | Logout (this device or all) | `POST /auth/logout` `{all_devices: bool}` returns `204` | none expected; the row is deleted, idempotent |
-| 10 | Change password, change phone number | `POST /auth/password/change` `{current_password, new_password}` (other devices are logged out); `POST /auth/phone/change` `{new_phone_number}` then `POST /auth/phone/change/confirm` `{code}` | `400` current password wrong or password reused; `409` phone taken |
+| 10 | Change password, change phone number | `POST /auth/password/change` `{current_password, new_password}` (other devices are logged out); `POST /auth/phone/change` `{new_phone_number, current_password}` then `POST /auth/phone/change/confirm` `{code}` (confirming logs out the other devices; a wrong current password counts towards the login lockout, `423`) | `400` current password wrong or password reused; `409` phone taken |
 | 11 | Accept the legal texts | `GET /legal-documents/current` (public), `GET /legal-documents/pending`, `POST /consents/` `{legal_document_id, on_behalf_of_organization}` | `409` a newer version is in force |
 
 ## 2. Check-in to a truck and check-out

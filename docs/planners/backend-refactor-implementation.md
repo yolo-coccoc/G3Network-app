@@ -338,7 +338,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-OP4 | H | `telemetry/ingestion/mqtt_consumer.py` | The payload's `telematic_serial` is trusted over the topic: one device's credentials can write positions and alerts for any truck. **Fixed 2026-10-10.** |
 | RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. **Fixed 2026-10-10.** |
 | RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). **Fixed 2026-10-10.** |
-| RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. |
+| RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. **Fixed 2026-10-10.** |
 | RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). **Fixed 2026-10-10.** |
 | RV-CS2 | H | `ocpp201_charge_point.py` `on_transaction_event` | `evse` / `connectorId` required on every TransactionEvent (optional in 2.0.1): an `Ended` without `evse` is refused, the session never completes. **Fixed 2026-10-10.** |
 | RV-CS3 | H | both adapters' start handlers, `charging_sessions/service.py` | A retried StartTransaction / `Started` is answered `Invalid` (transactionId 0): the session stays ACTIVE forever (PG). **Fixed 2026-10-10.** |
@@ -353,10 +353,10 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-CS7 | M | `charging_sessions/repository.py` `find_pending_session_by_token` | Activation is read-then-write without a lock: it can revive an ABANDONED session whose bill was voided (free energy) (PG). **Fixed 2026-10-10.** |
 | RV-CS8 | M | `charging_stations/service.py` command creation, `command_loop.py` | A command's `session_id` is not checked against the charger or the organization: another tenant's token can be sent to your charger and its session abandoned. **Fixed 2026-10-10.** |
 | RV-BL6 | M | `billing/router.py` simulate-transfer | The development transfer simulation is always on: an admin can credit any amount with no trace. **Fixed 2026-10-10 (BL-26).** |
-| RV-ID3 | M | `identity/member_service.py`, `account_service.py` | An invitation to an unregistered phone creates a user row that blocks the real owner's sign-up and claims them into the inviter's organization. |
+| RV-ID3 | M | `identity/member_service.py`, `account_service.py` | An invitation to an unregistered phone creates a user row that blocks the real owner's sign-up and claims them into the inviter's organization. **Fixed 2026-10-10.** |
 | RV-ID4 | M | `identity/member_service.py` handover `force` | Internal staff can replace a working customer ORG_ADMIN at will (ID-33 allows force only when the admin is gone). **Fixed 2026-10-10.** |
-| RV-ID5 | M | `identity/security.py` `normalize_phone_number` | `+84 0901…` keeps the trunk zero: one SIM can hold several accounts and OTP limits multiply. |
-| RV-ID6 | M | `identity/account_service.py` phone/e-mail/password change | Changing the login phone needs no password and ends no session; wrong current passwords are not counted. |
+| RV-ID5 | M | `identity/security.py` `normalize_phone_number` | `+84 0901…` keeps the trunk zero: one SIM can hold several accounts and OTP limits multiply. **Fixed 2026-10-10.** |
+| RV-ID6 | M | `identity/account_service.py` phone/e-mail/password change | Changing the login phone needs no password and ends no session; wrong current passwords are not counted. **Fixed 2026-10-10.** |
 | RV-AS1 | M | `fleet/service.py` `add_vehicle_to_fleet` | A fleet-limited manager can add an unassigned truck to their fleet and widen their own reach (FL-10). |
 | RV-AS2 | M | `identity/service.py` `resolve_organization_for_new_record` | A CLOSED (or SUSPENDED) organization is accepted as owner of a new or transferred vehicle, battery or fleet. |
 | RV-AS3 | M | `vehicles/service.py` transfer, `batteries/service.py` install | No row lock: concurrent transfers give negative ownership periods; a pack can sit in two trucks (PG). |
@@ -368,7 +368,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-OP9 | M | `drivers/service.py` check-in | Check-in to another organization's silent truck relies on phone-sent coordinates only; takeover then exposes the truck. Owner decision needed; no test. |
 | RV-OP10 | M | `telemetry/router.py` `FLEET_REPORT_READERS` | DRIVER can open the organization's fleet operating report. |
 | RV-AS7 | L | `batteries/service.py` `transfer_installed_battery_with_vehicle` | The pack's `acquired_at` can move backwards on a backdated truck sale. |
-| RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. |
+| RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. **Fixed 2026-10-10.** |
 | RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). |
 | RV-AS10 | L | `vehicles/service.py` `update_vehicle` | Back to ACTIVE keeps the old `status_reason`. |
 | RV-BL7 | L | `billing/schemas.py`, `providers.py` | Money and VAT values beyond their columns give 500 (VAT 100 overflows `numeric(4,2)`). **Fixed 2026-10-10.** |
@@ -378,17 +378,16 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. **Fixed 2026-10-10.** |
 | RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. **Fixed 2026-10-10.** |
 | RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. **Fixed 2026-10-10.** |
-| RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). |
-| RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. |
+| RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). **Fixed 2026-10-10.** |
+| RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. **Fixed 2026-10-10.** |
 | RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. **Fixed 2026-10-10.** |
 | RV-OP12 | L | `drivers/service.py` | Licence expiry compared with the UTC date, not the Vietnam date. |
 | RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. |
 
 Not tested (repository SQL or concurrency a fake cannot show): RV-ID7 (the
 last-HEAD_ADMIN count includes INVITED/LOCKED holders and is not locked; **the count now ignores holders who are not ACTIVE, fixed 2026-10-10 (ID-51); the missing lock is still open**),
-RV-ID9 (double grant/invite/consent gives 500, no IntegrityError mapping),
-RV-ID10 (session lifetime follows the current organization; `platform` is
-client-chosen). CS-13 of the review (missing `idTokenInfo`) was dropped: the
+RV-ID9 (double grant/invite/consent gives 500, no IntegrityError mapping; **fixed 2026-10-10, ID-52**),
+RV-ID10 (session lifetime follows the current organization; **the lifetime now follows the person's memberships, fixed 2026-10-10, ID-52; `platform` is still client-chosen, so a client can pick the 90-day phone lifetime**). CS-13 of the review (missing `idTokenInfo`) was dropped: the
 spec does not require it.
 
 ## Next steps (debugging phase)
