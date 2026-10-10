@@ -34,6 +34,7 @@ from app.domains.identity.dependencies import require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["fleet"])
@@ -288,9 +289,7 @@ async def update_fleet_endpoint(
 )
 async def soft_delete_fleet_endpoint(
     fleet_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why the fleet is deleted"
-    ),
+    reason: Reason | None = Query(None, description="Why the fleet is deleted"),
     principal: Principal = Depends(FLEET_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:

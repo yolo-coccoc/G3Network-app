@@ -23,9 +23,7 @@ from app.domains.billing.types import (
     WalletStatus,
     WalletTransactionType,
 )
-
-_REASON_FIELD = Field(..., min_length=1, max_length=200)
-
+from app.libs.common.reason import Reason
 
 # --- Tariffs ----------------------------------------------------------------
 
@@ -84,7 +82,7 @@ class TariffStatusRequest(BaseModel):
         reason: Why, stored as the tariff's ``status_reason``.
     """
 
-    reason: str = _REASON_FIELD
+    reason: Reason
 
 
 class TariffVersionPublishRequest(BaseModel):
@@ -105,7 +103,7 @@ class TariffVersionPublishRequest(BaseModel):
     )
     time_periods: list[TariffPeriodSchema] | None = None
     effective_from: datetime | None = None
-    change_reason: str = _REASON_FIELD
+    change_reason: Reason
 
 
 class TariffVersionResponse(BaseModel):
@@ -222,7 +220,7 @@ class BillReviewRequest(BaseModel):
         reason: What the reviewer checked or why the bill is voided.
     """
 
-    reason: str = _REASON_FIELD
+    reason: Reason
 
 
 class SessionBillResponse(BaseModel):
@@ -359,7 +357,7 @@ class WalletAdjustmentRequest(BaseModel):
     """
 
     amount: int = Field(..., ge=-MAX_AMOUNT_VND, le=MAX_AMOUNT_VND)
-    reason: str = _REASON_FIELD
+    reason: Reason
 
 
 class WalletStatusRequest(BaseModel):
@@ -371,7 +369,7 @@ class WalletStatusRequest(BaseModel):
     """
 
     status: WalletStatus
-    reason: str = _REASON_FIELD
+    reason: Reason
 
 
 # --- Payments ---------------------------------------------------------------

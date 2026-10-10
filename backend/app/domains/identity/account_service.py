@@ -50,6 +50,7 @@ from app.domains.identity.models import (
     OrganizationModel,
     UserModel,
     UserSessionModel,
+    UserStateModel,
 )
 from app.domains.identity.providers import get_sms_sender
 from app.domains.identity.schemas import (
@@ -124,6 +125,13 @@ _PUBLIC_CODE_PURPOSES = frozenset(
     }
 )
 
+# Fixed text for an invitation to an existing account: nothing the inviter typed
+# or chose (an organization name, free text) reaches the recipient (RV-ID2).
+_INVITE_NOTICE_MESSAGE = (
+    "G3 Network: ban co mot loi moi vao mot to chuc. "
+    "Dang nhap ung dung de xem va chap nhan."
+)
+
 _CODE_MESSAGES = {
     OneTimeCodePurpose.SIGN_UP: "Ma dang ky G3 Network: {code}. Het han sau {minutes} phut.",
     OneTimeCodePurpose.INVITE: (
@@ -136,6 +144,37 @@ _CODE_MESSAGES = {
         "Ma doi so dien thoai G3 Network: {code}. Het han sau {minutes} phut."
     ),
 }
+
+
+async def _holds_internal_membership(db_session: AsyncSession, user_id: UUID) -> bool:
+    """Tell whether any usable membership of a person is in an internal organization.
+
+    The shortest session lifetime follows the person, not the organization the
+    session happens to act for: a staff member who picks a customer
+    organization keeps the staff lifetime (RV-ID10). A membership is usable
+    when it is active and its organization is active.
+
+    Args:
+        db_session: Current database session.
+        user_id: The person.
+
+    Returns:
+        ``True`` when at least one usable membership is internal.
+    """
+    for (
+        membership_record,
+        organization_record,
+    ) in await identity_repository.list_live_memberships_with_organizations(
+        db_session, user_id
+    ):
+        if (
+            membership_record.status == MembershipStatus.ACTIVE.value
+            and organization_record.status == OrganizationStatus.ACTIVE.value
+            and organization_record.deleted_at is None
+            and organization_record.is_internal
+        ):
+            return True
+    return False
 
 
 def session_lifetime(platform: str, is_internal: bool) -> timedelta:
@@ -206,6 +245,24 @@ async def _enforce_send_limits(
         raise OneTimeCodeRateLimitError("Too many codes for this phone number today")
 
 
+async def _enforce_inviter_quota(db_session: AsyncSession, issued_by: UUID) -> None:
+    """Refuse an invitation SMS when the inviter sent too many today (RV-ID2).
+
+    Args:
+        db_session: Current database session.
+        issued_by: The person who invites.
+
+    Raises:
+        OneTimeCodeRateLimitError: If `IDENTITY_INVITES_PER_USER_PER_DAY` is
+            reached.
+    """
+    sent_today = await identity_repository.count_invitation_codes_by_issuer_since(
+        db_session, issued_by, utc_now() - timedelta(hours=24)
+    )
+    if sent_today >= settings.IDENTITY_INVITES_PER_USER_PER_DAY:
+        raise OneTimeCodeRateLimitError("Too many invitations sent today")
+
+
 async def issue_one_time_code(
     db_session: AsyncSession,
     *,
@@ -213,10 +270,14 @@ async def issue_one_time_code(
     phone_number: str,
     user_id: UUID | None,
     issued_by: UUID | None,
+    organization_id: UUID | None = None,
 ) -> OneTimeCodeModel:
     """Create a code, store its hash and send it by SMS (ID-16).
 
-    Also applies the send limits and deletes codes that expired long ago.
+    Also applies the send limits and deletes codes that expired long ago. An
+    `INVITE_NOTICE` row (an invitation to an existing account) carries a code
+    nobody is told: it only counts towards the limits, and its SMS is a fixed
+    text with no organization name (RV-ID2).
 
     Args:
         db_session: Session owned by the entry boundary.
@@ -225,6 +286,7 @@ async def issue_one_time_code(
         phone_number: Destination, E.164.
         user_id: The user the code is for; `None` for a sign-up.
         issued_by: The user who triggered it; `None` when self-requested.
+        organization_id: For an invitation, the organization it is for.
 
     Returns:
         The stored code row (the plain code is only in the SMS).
@@ -240,9 +302,14 @@ async def issue_one_time_code(
         db_session, now - STALE_CODE_RETENTION
     )
     await _enforce_send_limits(db_session, phone_number=phone_number, purpose=purpose)
+    if issued_by is not None and purpose in (
+        OneTimeCodePurpose.INVITE,
+        OneTimeCodePurpose.INVITE_NOTICE,
+    ):
+        await _enforce_inviter_quota(db_session, issued_by)
     ttl = (
         timedelta(hours=settings.IDENTITY_INVITE_TTL_HOURS)
-        if purpose is OneTimeCodePurpose.INVITE
+        if purpose in (OneTimeCodePurpose.INVITE, OneTimeCodePurpose.INVITE_NOTICE)
         else timedelta(minutes=settings.IDENTITY_OTP_TTL_MINUTES)
     )
     one_time_code_id = uuid4()
@@ -256,6 +323,7 @@ async def issue_one_time_code(
             "phone_number": phone_number,
             "code_hash": hash_one_time_code(one_time_code_id, code),
             "issued_by": issued_by,
+            "organization_id": organization_id,
             "created_at": now,
             "expires_at": now + ttl,
             "failed_attempt_count": 0,
@@ -263,7 +331,9 @@ async def issue_one_time_code(
     )
     await get_sms_sender().send_sms(
         phone_number,
-        _CODE_MESSAGES[purpose].format(
+        _INVITE_NOTICE_MESSAGE
+        if purpose is OneTimeCodePurpose.INVITE_NOTICE
+        else _CODE_MESSAGES[purpose].format(
             code=code, minutes=int(ttl.total_seconds() // 60)
         ),
     )
@@ -361,7 +431,9 @@ async def send_one_time_code(
     silent_response = OneTimeCodeSendResponse(expires_at=utc_now() + ttl)
 
     if purpose is OneTimeCodePurpose.SIGN_UP:
-        if user_record is not None:
+        # An account that only exists because someone invited the number has
+        # no password: the number's real owner may still sign up (RV-ID3).
+        if user_record is not None and user_record.status != UserStatus.INVITED.value:
             raise UserConflictError("This phone number already has an account")
         user_id = None
     elif purpose is OneTimeCodePurpose.PASSWORD_RESET:
@@ -702,6 +774,93 @@ async def _start_session_for_login(
     return await _build_token_response(db_session, session_record, refresh_token)
 
 
+async def _count_failed_password(
+    db_session: AsyncSession,
+    *,
+    user_id: UUID,
+    state_record: UserStateModel | None,
+    client_context: ClientContext | None,
+) -> None:
+    """Count a wrong password towards the login lockout (ID-23).
+
+    Shared by the login and by the checks that ask for the current password
+    (password change, phone change), so guessing through a stolen session is
+    limited like guessing at the login screen (RV-ID6). The caller flushes.
+
+    Args:
+        db_session: Current database session.
+        user_id: The person whose password was guessed.
+        state_record: The person's locked `user_state` row, if it exists.
+        client_context: IP address and user agent of the request.
+
+    Side Effects:
+        Raises the failure counter; at the limit the counter restarts and the
+        lockout window opens (with an audit row).
+    """
+    if state_record is None:
+        return
+    state_record.failed_login_count += 1
+    if state_record.failed_login_count >= settings.IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS:
+        # The counter restarts so the next burst of guesses after the lockout
+        # needs the full number of attempts again.
+        state_record.failed_login_count = 0
+        state_record.login_locked_until = utc_now() + timedelta(
+            minutes=settings.IDENTITY_LOGIN_LOCKOUT_MINUTES
+        )
+        await audit_service.record_account_event(
+            db_session,
+            user_id=user_id,
+            organization_id=None,
+            action=AccessAuditAction.LOGIN_LOCKED,
+            details={"locked_minutes": settings.IDENTITY_LOGIN_LOCKOUT_MINUTES},
+            client_context=client_context,
+        )
+
+
+async def _require_current_password(
+    db_session: AsyncSession,
+    session_identity: SessionIdentity,
+    current_password: str,
+    client_context: ClientContext | None,
+) -> None:
+    """Check the current password of a logged-in person, counting a wrong one.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        session_identity: The validated session.
+        current_password: The password the person typed.
+        client_context: IP address and user agent of the request.
+
+    Raises:
+        LoginLockedError: The account is in its temporary lockout.
+        CurrentPasswordIncorrectError: The password is wrong; the guess is
+            counted and flushed, and the router commits it.
+    """
+    state_record = await identity_repository.get_user_state_for_update(
+        db_session, session_identity.user_id
+    )
+    if (
+        state_record is not None
+        and state_record.login_locked_until is not None
+        and state_record.login_locked_until > utc_now()
+    ):
+        raise LoginLockedError("Too many wrong passwords; try again later")
+    credential_record = await identity_repository.find_active_credential(
+        db_session, session_identity.user_id
+    )
+    if credential_record is None or not await _verify_password_async(
+        current_password, credential_record.secret_hash
+    ):
+        await _count_failed_password(
+            db_session,
+            user_id=session_identity.user_id,
+            state_record=state_record,
+            client_context=client_context,
+        )
+        await db_session.flush()
+        raise CurrentPasswordIncorrectError("The current password is wrong")
+
+
 async def login(
     db_session: AsyncSession,
     login_request: LoginRequest,
@@ -777,26 +936,12 @@ async def login(
         else credential_record.secret_hash,
     )
     if credential_record is None or not password_ok:
-        if state_record is not None:
-            state_record.failed_login_count += 1
-            if (
-                state_record.failed_login_count
-                >= settings.IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS
-            ):
-                # The counter restarts so the next burst of guesses after the
-                # lockout needs the full number of attempts again.
-                state_record.failed_login_count = 0
-                state_record.login_locked_until = now + timedelta(
-                    minutes=settings.IDENTITY_LOGIN_LOCKOUT_MINUTES
-                )
-                await audit_service.record_account_event(
-                    db_session,
-                    user_id=user_record.user_id,
-                    organization_id=None,
-                    action=AccessAuditAction.LOGIN_LOCKED,
-                    details={"locked_minutes": settings.IDENTITY_LOGIN_LOCKOUT_MINUTES},
-                    client_context=client_context,
-                )
+        await _count_failed_password(
+            db_session,
+            user_id=user_record.user_id,
+            state_record=state_record,
+            client_context=client_context,
+        )
         await audit_service.record_account_event(
             db_session,
             user_id=user_record.user_id,
@@ -835,7 +980,8 @@ async def sign_up(
     """Register an individual customer after phone verification (ACC-07, ID-15).
 
     Creates the user, the password, a personal INDIVIDUAL organization whose
-    member holds ORG_ADMIN and DRIVER, and opens a session in it.
+    member holds ORG_ADMIN and DRIVER, and opens a session in it. A number that
+    was only invited (an account with no password) is taken over by its owner.
 
     Args:
         db_session: Session owned by the entry boundary.
@@ -851,11 +997,12 @@ async def sign_up(
         InvalidOneTimeCodeError: The code is wrong, expired or used.
     """
     _check_password_strength(sign_up_request.password)
+    invited_user_record = await identity_repository.find_live_user_by_phone(
+        db_session, sign_up_request.phone_number
+    )
     if (
-        await identity_repository.find_live_user_by_phone(
-            db_session, sign_up_request.phone_number
-        )
-        is not None
+        invited_user_record is not None
+        and invited_user_record.status != UserStatus.INVITED.value
     ):
         raise UserConflictError("This phone number already has an account")
     if (
@@ -874,19 +1021,41 @@ async def sign_up(
     )
     now = utc_now()
     secret_hash = await _hash_password_async(sign_up_request.password)
-    try:
-        user_record = await identity_repository.insert_user(
+    if invited_user_record is not None:
+        # The number was only invited: its owner, who just proved the phone,
+        # takes the row over with their own name and e-mail. Their pending
+        # invitations stay pending until they accept each one (RV-ID3).
+        user_record = invited_user_record
+        await set_change_context(
             db_session,
+            changed_by=user_record.user_id,
+            change_reason="Invited number signed up",
+        )
+        await identity_repository.apply_user_values(
+            db_session,
+            user_record,
             {
-                "phone_number": sign_up_request.phone_number,
                 "email": sign_up_request.email,
                 "full_name": sign_up_request.full_name,
                 "status": UserStatus.ACTIVE.value,
-                "created_by": None,
             },
         )
-    except IntegrityError as error:
-        raise UserConflictError("This phone number already has an account") from error
+    else:
+        try:
+            user_record = await identity_repository.insert_user(
+                db_session,
+                {
+                    "phone_number": sign_up_request.phone_number,
+                    "email": sign_up_request.email,
+                    "full_name": sign_up_request.full_name,
+                    "status": UserStatus.ACTIVE.value,
+                    "created_by": None,
+                },
+            )
+        except IntegrityError as error:
+            raise UserConflictError(
+                "This phone number already has an account"
+            ) from error
     await identity_repository.insert_credential(
         db_session, user_id=user_record.user_id, secret_hash=secret_hash
     )
@@ -949,7 +1118,9 @@ async def accept_invitation(
             unknown phone number gets the same answer as a wrong code.
 
     Side Effects:
-        Activates the user and every pending membership of the person.
+        Activates the user and the pending membership of the organization the
+        code was sent for; invitations from other organizations stay pending
+        until the person accepts each one (RV-ID3).
     """
     _check_password_strength(accept_request.password)
     user_record = await identity_repository.find_live_user_by_phone(
@@ -957,13 +1128,22 @@ async def accept_invitation(
     )
     if user_record is None or user_record.status != UserStatus.INVITED.value:
         raise InvalidOneTimeCodeError("The code is wrong, expired or already used")
-    await _consume_one_time_code(
+    code_record = await _consume_one_time_code(
         db_session,
         phone_number=accept_request.phone_number,
         purpose=OneTimeCodePurpose.INVITE,
         code=accept_request.code,
         user_id=user_record.user_id,
     )
+    invited_memberships = [
+        membership_record
+        for membership_record in await identity_repository.list_invited_memberships_by_user(
+            db_session, user_record.user_id
+        )
+        if membership_record.organization_id == code_record.organization_id
+    ]
+    if not invited_memberships:
+        raise InvalidOneTimeCodeError("The code is wrong, expired or already used")
     now = utc_now()
     secret_hash = await _hash_password_async(accept_request.password)
     await identity_repository.insert_credential(
@@ -977,9 +1157,7 @@ async def accept_invitation(
     await identity_repository.apply_user_values(
         db_session, user_record, {"status": UserStatus.ACTIVE.value}
     )
-    for membership_record in await identity_repository.list_invited_memberships_by_user(
-        db_session, user_record.user_id
-    ):
+    for membership_record in invited_memberships:
         await set_change_context(
             db_session,
             changed_by=user_record.user_id,
@@ -1027,14 +1205,7 @@ async def refresh_session(
         or user_record.status != UserStatus.ACTIVE.value
     ):
         raise SessionInvalidError("The session is no longer valid; log in again")
-    is_internal = False
-    if session_record.organization_id is not None:
-        organization_record = await identity_repository.get_organization(
-            db_session, session_record.organization_id
-        )
-        is_internal = (
-            organization_record is not None and organization_record.is_internal
-        )
+    is_internal = await _holds_internal_membership(db_session, user_record.user_id)
     new_refresh_token = generate_refresh_token()
     session_record.refresh_token_hash = hash_refresh_token(new_refresh_token)
     session_record.last_used_at = now
@@ -1081,17 +1252,10 @@ async def authenticate_session(
     ):
         raise SessionInvalidError("The session has ended; log in again")
     if now - session_record.last_used_at >= ACTIVITY_WRITE_INTERVAL:
-        is_internal = False
-        if session_record.organization_id is not None:
-            organization_record = await identity_repository.get_organization(
-                db_session, session_record.organization_id
-            )
-            is_internal = (
-                organization_record is not None and organization_record.is_internal
-            )
         session_record.last_used_at = now
         session_record.expires_at = now + session_lifetime(
-            session_record.platform, is_internal
+            session_record.platform,
+            await _holds_internal_membership(db_session, session_record.user_id),
         )
         state_record = await identity_repository.get_user_state(
             db_session, session_record.user_id
@@ -1237,6 +1401,12 @@ async def switch_organization(
     if session_record is None:
         raise SessionInvalidError("The session has ended; log in again")
     session_record.organization_id = organization_id
+    # Recomputed from all the person's memberships, so a switch never stretches
+    # a staff session (RV-ID10).
+    session_record.expires_at = utc_now() + session_lifetime(
+        session_record.platform,
+        await _holds_internal_membership(db_session, session_identity.user_id),
+    )
     state_record = await identity_repository.get_user_state(
         db_session, session_identity.user_id
     )
@@ -1448,17 +1618,15 @@ async def change_password(
         client_context: IP address and user agent of the request.
 
     Raises:
-        CurrentPasswordIncorrectError: The current password is wrong.
+        CurrentPasswordIncorrectError: The current password is wrong (counted
+            towards the login lockout).
+        LoginLockedError: The account is in its temporary lockout.
         WeakPasswordError: The new password breaks the policy or was used
             recently.
     """
-    credential_record = await identity_repository.find_active_credential(
-        db_session, session_identity.user_id
+    await _require_current_password(
+        db_session, session_identity, change_request.current_password, client_context
     )
-    if credential_record is None or not await _verify_password_async(
-        change_request.current_password, credential_record.secret_hash
-    ):
-        raise CurrentPasswordIncorrectError("The current password is wrong")
     await set_password(
         db_session, session_identity.user_id, change_request.new_password
     )
@@ -1481,21 +1649,31 @@ async def request_phone_change(
     db_session: AsyncSession,
     session_identity: SessionIdentity,
     change_request: PhoneChangeRequest,
+    client_context: ClientContext | None,
 ) -> OneTimeCodeSendResponse:
     """Send a code to a new phone number to prove it is the person's (ACC-06).
+
+    The current password is checked first (and a wrong one is counted towards
+    the login lockout), so a stolen session cannot move the login number.
 
     Args:
         db_session: Session owned by the entry boundary.
         session_identity: The validated session.
-        change_request: The new phone number.
+        change_request: The new phone number and the current password.
+        client_context: IP address and user agent of the request.
 
     Returns:
         When the code expires.
 
     Raises:
+        CurrentPasswordIncorrectError: The current password is wrong.
+        LoginLockedError: The account is in its temporary lockout.
         UserConflictError: The number belongs to a live account.
         OneTimeCodeRateLimitError: A send limit is reached.
     """
+    await _require_current_password(
+        db_session, session_identity, change_request.current_password, client_context
+    )
     if (
         await identity_repository.find_live_user_by_phone(
             db_session, change_request.new_phone_number
@@ -1520,6 +1698,8 @@ async def confirm_phone_change(
     client_context: ClientContext | None,
 ) -> UserResponse:
     """Change the phone number once the code sent to the new one is typed.
+
+    Every other session of the person ends; the current one stays.
 
     Args:
         db_session: Session owned by the entry boundary.
@@ -1564,6 +1744,13 @@ async def confirm_phone_change(
         )
     except IntegrityError as error:
         raise UserConflictError("This phone number already has an account") from error
+    # The login number is the account's key: every other device logs in again
+    # (RV-ID6).
+    await identity_repository.delete_sessions_by_user(
+        db_session,
+        session_identity.user_id,
+        except_session_id=session_identity.session_id,
+    )
     await audit_service.record_account_event(
         db_session,
         user_id=session_identity.user_id,
@@ -1748,6 +1935,17 @@ async def lock_user(
         {"status": UserStatus.LOCKED.value, "status_reason": reason},
     )
     await identity_repository.delete_sessions_by_user(db_session, user_id)
+    # Imported here because `member_service` imports this module. The locked
+    # person's driving sessions and trips end like for a locked membership
+    # (DR-10, RV-ID11).
+    import app.domains.identity.member_service as member_service
+
+    await member_service.run_membership_end_hooks_for_user(
+        db_session,
+        user_id=user_id,
+        acting_user_id=principal.user_id,
+        reason=reason,
+    )
     return to_user_response(user_record)
 
 

@@ -34,6 +34,7 @@ from app.domains.charging_stations.types import (
 )
 from app.libs.common.config import settings
 from app.libs.common.payload_guard import INT32_MAX
+from app.libs.common.reason import Reason
 
 
 def _strip_required_text(value: str) -> str:
@@ -126,7 +127,7 @@ class ChargingLocationUpdateRequest(BaseModel):
     longitude: float | None = Field(None, ge=-180, le=180)
     is_public: bool | None = None
     status: ChargingResourceStatus | None = None
-    status_reason: str | None = Field(None, min_length=1, max_length=200)
+    status_reason: Reason | None = Field(None)
 
     @field_validator("display_name", "address", "status_reason")
     @classmethod
@@ -226,7 +227,7 @@ class ChargingLocationAccessRevokeRequest(BaseModel):
         revoke_reason: Why the access ends.
     """
 
-    revoke_reason: str = Field(..., min_length=1, max_length=200)
+    revoke_reason: Reason = Field(...)
 
     @field_validator("revoke_reason")
     @classmethod
@@ -334,7 +335,7 @@ class ChargingStationUpdateRequest(BaseModel):
     physical_reference: str | None = Field(None, min_length=1, max_length=16)
     max_power_kw: float | None = Field(None, gt=0, le=9999.99)
     status: ChargingResourceStatus | None = None
-    status_reason: str | None = Field(None, min_length=1, max_length=200)
+    status_reason: Reason | None = Field(None)
 
     @field_validator("ocpp_identity", "registered_serial_number", "status_reason")
     @classmethod
@@ -548,7 +549,7 @@ class ChargingEvseUpdateRequest(BaseModel):
     ocpp_evse_id: int | None = Field(None, gt=0, le=INT32_MAX)
     emi3_evse_id: str | None = Field(None, min_length=1, max_length=48)
     status: ChargingResourceStatus | None = None
-    status_reason: str | None = Field(None, min_length=1, max_length=200)
+    status_reason: Reason | None = Field(None)
 
     @field_validator("emi3_evse_id", "status_reason")
     @classmethod
@@ -749,7 +750,7 @@ class ChargingStationCommandCreateRequest(BaseModel):
     evse_id: UUID | None = None
     session_id: UUID | None = None
     parameters: dict[str, Any] | None = None
-    reason: str | None = Field(None, min_length=1, max_length=200)
+    reason: Reason | None = Field(None)
 
 
 class _StationCommandParameters(BaseModel):

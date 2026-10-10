@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.domains.batteries.types import BatteryChemistry, BatteryStatus
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 
 class BatteryModelCreateRequest(BaseModel):
@@ -100,8 +101,8 @@ class BatteryCreateRequest(BaseModel):
     status: BatteryStatus = Field(
         default=BatteryStatus.ACTIVE, description="Status of the battery"
     )
-    status_reason: str | None = Field(
-        default=None, min_length=1, max_length=200, description="Why it has its status"
+    status_reason: Reason | None = Field(
+        default=None, description="Why it has its status"
     )
 
 
@@ -119,8 +120,8 @@ class BatteryUpdateRequest(BaseModel):
     battery_model_id: UUID | None = Field(default=None, description="The model")
     manufactured_on: date | None = Field(default=None, description="Manufacturing date")
     status: BatteryStatus | None = Field(default=None, description="Status")
-    status_reason: str | None = Field(
-        default=None, min_length=1, max_length=200, description="Why it has its status"
+    status_reason: Reason | None = Field(
+        default=None, description="Why it has its status"
     )
 
 
@@ -166,11 +167,8 @@ class BatteryInstallRequest(BaseModel):
         default=None,
         description="When it was fitted; defaults to the request time, not in the future",
     )
-    reason: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="Why (kept in the change history)",
+    reason: Reason | None = Field(
+        default=None, description="Why (kept in the change history)"
     )
 
 
@@ -181,9 +179,7 @@ class BatteryOwnershipTransferRequest(BaseModel):
     acquired_at: AwareDatetime | None = Field(
         default=None, description="Effective date; defaults to the request time"
     )
-    reason: str = Field(
-        ..., min_length=1, max_length=200, description="Why it changes owner"
-    )
+    reason: Reason = Field(..., description="Why it changes owner")
 
 
 class BatteryInstallationPeriodResponse(BaseModel):

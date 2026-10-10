@@ -18,6 +18,7 @@ from app.domains.charging_sessions.types import (
     SessionStatus,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 
 class ChargingSessionScanRequest(BaseModel):
@@ -68,7 +69,7 @@ class ChargingSessionStopRequest(BaseModel):
         reason: Why, typed by staff; the app sends none (a fixed text is used).
     """
 
-    reason: str | None = Field(default=None, min_length=1, max_length=200)
+    reason: Reason | None = Field(default=None)
 
 
 class ChargingSessionStopResponse(BaseModel):

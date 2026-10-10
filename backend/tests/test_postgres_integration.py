@@ -4489,7 +4489,6 @@ async def test_identity_login_flow_roles_lockout_and_handover(
     """
     sms = _CapturingSmsSender()
     monkeypatch.setattr(identity_account_service, "get_sms_sender", lambda: sms)
-    monkeypatch.setattr(identity_member_service, "get_sms_sender", lambda: sms)
     monkeypatch.setattr(settings, "IDENTITY_BOOTSTRAP_ADMIN_PHONE", "+84900000001")
     monkeypatch.setattr(settings, "IDENTITY_BOOTSTRAP_ADMIN_PASSWORD", "head admin pw")
     monkeypatch.setattr(settings, "IDENTITY_OTP_RESEND_COOLDOWN_SECONDS", 0)

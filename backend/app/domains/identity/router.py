@@ -447,9 +447,10 @@ async def change_password_endpoint(
     Returns:
         An empty 204 response.
     """
-    await account_service.change_password(
-        db_session, session_identity, change_request, client_context
-    )
+    async with persist_recorded_failure(db_session):
+        await account_service.change_password(
+            db_session, session_identity, change_request, client_context
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -462,21 +463,24 @@ async def change_password_endpoint(
 async def request_phone_change_endpoint(
     change_request: PhoneChangeRequest,
     session_identity: SessionIdentity = Depends(get_session_identity),
+    client_context: ClientContext = Depends(get_client_context),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> OneTimeCodeSendResponse:
-    """Send a code to the new phone number.
+    """Send a code to the new phone number, after checking the password.
 
     Args:
-        change_request: The new phone number.
+        change_request: The new phone number and the current password.
         session_identity: The validated session.
+        client_context: IP address and user agent of the request.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
         When the code expires.
     """
-    return await account_service.request_phone_change(
-        db_session, session_identity, change_request
-    )
+    async with persist_recorded_failure(db_session):
+        return await account_service.request_phone_change(
+            db_session, session_identity, change_request, client_context
+        )
 
 
 @auth_router.post(

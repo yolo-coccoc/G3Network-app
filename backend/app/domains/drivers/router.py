@@ -38,6 +38,7 @@ from app.domains.identity.types import (
     roles_for,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["drivers"])
@@ -238,9 +239,7 @@ async def update_driver_endpoint(
 )
 async def soft_delete_driver_endpoint(
     driver_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why the profile is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why the profile is removed"),
     principal: Principal = Depends(DRIVER_PROFILE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:

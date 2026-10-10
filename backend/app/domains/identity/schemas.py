@@ -22,6 +22,7 @@ from app.domains.identity.types import (
     UserRole,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 PhoneNumber = Annotated[
     str,
@@ -47,9 +48,6 @@ EmailAddress = Annotated[
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         description="E-mail address",
     ),
-]
-Reason = Annotated[
-    str, Field(min_length=1, max_length=200, description="Why (kept in the history)")
 ]
 
 
@@ -147,9 +145,14 @@ class PasswordChangeRequest(BaseModel):
 
 
 class PhoneChangeRequest(BaseModel):
-    """Start a phone-number change; a code goes to the new number (ACC-06)."""
+    """Start a phone-number change; a code goes to the new number (ACC-06).
+
+    The current password is required: the login number is the account's key, so
+    a stolen session alone must not be able to move it (RV-ID6).
+    """
 
     new_phone_number: PhoneNumber
+    current_password: Password
 
 
 class PhoneChangeConfirmRequest(BaseModel):
@@ -355,11 +358,15 @@ class OrganizationSettingsUpdateRequest(BaseModel):
 
 
 class MemberInviteRequest(BaseModel):
-    """Invite a person by phone number into an organization (ACC-09, ACC-10)."""
+    """Invite a person by phone number into an organization (ACC-09, ACC-10).
+
+    There is no e-mail field: an invitation never sets an e-mail address (a
+    typed one could claim an address that is not the person's, RV-ID3); the
+    person adds their own after joining.
+    """
 
     phone_number: PhoneNumber
     full_name: str = Field(..., min_length=1, max_length=100)
-    email: EmailAddress | None = None
     roles: list[UserRole] = Field(default_factory=list, max_length=12)
 
 

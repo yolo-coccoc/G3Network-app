@@ -179,6 +179,8 @@ class Settings(BaseSettings):
             for one phone number and purpose.
         IDENTITY_OTP_MAX_PER_PHONE_PER_DAY: Codes one phone number may be sent
             in 24 hours (SMS-pumping guard).
+        IDENTITY_INVITES_PER_USER_PER_DAY: Invitation SMS (new or repeated) one
+            person may trigger in 24 hours (RV-ID2).
         IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS: Longest time range of one audit
             log search.
         IDENTITY_EMERGENCY_ADMIN_PHONE: Phone number of the sealed emergency
@@ -409,6 +411,7 @@ class Settings(BaseSettings):
     IDENTITY_OTP_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1)
     IDENTITY_OTP_RESEND_COOLDOWN_SECONDS: int = Field(default=60, ge=0)
     IDENTITY_OTP_MAX_PER_PHONE_PER_DAY: int = Field(default=10, ge=1)
+    IDENTITY_INVITES_PER_USER_PER_DAY: int = Field(default=50, ge=1)
     IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS: int = Field(default=366, ge=1)
     IDENTITY_EMERGENCY_ADMIN_PHONE: str | None = None
 

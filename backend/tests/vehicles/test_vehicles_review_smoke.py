@@ -344,11 +344,6 @@ def test_vehicle_create_request_normalizes_vin_and_plate() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=ValueError,
-    reason="RV-AS8: a blank status_reason ends in ValueError (HTTP 500)",
-)
 async def test_update_vehicle_with_blank_status_reason_is_invalid_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

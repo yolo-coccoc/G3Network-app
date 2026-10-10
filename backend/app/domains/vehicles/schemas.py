@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 
 class VehicleCreateRequest(BaseModel):
@@ -46,11 +47,8 @@ class VehicleCreateRequest(BaseModel):
     status: VehicleStatus = Field(
         default=VehicleStatus.ACTIVE, description="Service status"
     )
-    status_reason: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="Why the vehicle has its status",
+    status_reason: Reason | None = Field(
+        default=None, description="Why the vehicle has its status"
     )
 
 
@@ -71,11 +69,8 @@ class VehicleUpdateRequest(BaseModel):
         default=None, ge=1900, le=2100, description="Manufacturing year"
     )
     status: VehicleStatus | None = Field(default=None, description="Service status")
-    status_reason: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="Why the vehicle has its status",
+    status_reason: Reason | None = Field(
+        default=None, description="Why the vehicle has its status"
     )
 
 
@@ -91,11 +86,8 @@ class VehicleOwnershipTransferRequest(BaseModel):
             "the current owner took the truck. Must carry a timezone."
         ),
     )
-    reason: str = Field(
-        ...,
-        min_length=1,
-        max_length=200,
-        description="Why the truck changes owner (kept in the change history)",
+    reason: Reason = Field(
+        ..., description="Why the truck changes owner (kept in the change history)"
     )
 
 

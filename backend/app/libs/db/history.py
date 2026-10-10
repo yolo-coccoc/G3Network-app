@@ -18,6 +18,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.libs.common.errors import InvalidInputError
+
 # Names of the transaction-local settings the trigger reads. They are part
 # of the contract with the SQL written by ``history_ddl``.
 CHANGE_USER_SETTING = "app.change_user_id"
@@ -49,16 +51,18 @@ async def set_change_context(
             administrative decision, a fixed text for a routine action.
 
     Raises:
-        ValueError: If the reason is blank or longer than 200 characters.
+        InvalidInputError: If the reason is blank or longer than 200
+            characters (a 400, never a 500: a reason that slipped past a
+            schema is still the caller's input).
 
     Side Effects:
         Runs one ``SELECT set_config(...)``; does not commit or roll back.
     """
     if not change_reason.strip():
-        raise ValueError("change_reason must not be blank")
+        raise InvalidInputError("A reason must not be blank")
     if len(change_reason) > CHANGE_REASON_MAX_LENGTH:
-        raise ValueError(
-            f"change_reason is longer than {CHANGE_REASON_MAX_LENGTH} characters"
+        raise InvalidInputError(
+            f"A reason is longer than {CHANGE_REASON_MAX_LENGTH} characters"
         )
     await db_session.execute(
         text(

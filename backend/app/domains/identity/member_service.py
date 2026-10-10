@@ -35,7 +35,6 @@ from app.domains.identity.exceptions import (
     UserNotFoundError,
 )
 from app.domains.identity.models import MembershipModel, OrganizationModel, UserModel
-from app.domains.identity.providers import get_sms_sender
 from app.domains.identity.schemas import (
     AdminHandoverRequest,
     MemberInviteRequest,
@@ -106,6 +105,71 @@ async def _run_membership_end_hooks(
             db_session,
             membership_id=membership_id,
             kind=kind,
+            acting_user_id=acting_user_id,
+            reason=reason,
+        )
+
+
+async def run_membership_end_hooks_for_user(
+    db_session: AsyncSession, *, user_id: UUID, acting_user_id: UUID, reason: str
+) -> None:
+    """Run the membership-end hooks (as a lock) for every active membership of a person.
+
+    Called when a whole account is locked: the person's driver check-in and
+    running trip must end like they do when one membership is locked (DR-10,
+    RV-ID11).
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        user_id: The person whose account was locked.
+        acting_user_id: Who locked it.
+        reason: Why.
+    """
+    for (
+        membership_record,
+        _organization_record,
+    ) in await identity_repository.list_live_memberships_with_organizations(
+        db_session, user_id
+    ):
+        if membership_record.status != MembershipStatus.ACTIVE.value:
+            continue
+        await _run_membership_end_hooks(
+            db_session,
+            membership_id=membership_record.membership_id,
+            kind=MembershipEndKind.LOCKED,
+            acting_user_id=acting_user_id,
+            reason=reason,
+        )
+
+
+async def run_membership_end_hooks_for_organization(
+    db_session: AsyncSession,
+    *,
+    organization_id: UUID,
+    acting_user_id: UUID,
+    reason: str,
+) -> None:
+    """Run the membership-end hooks (as a lock) for every active member of an organization.
+
+    Called when an organization is suspended or closed: its members' running
+    driving sessions and trips end like they do for a locked membership
+    (DR-10, RV-ID11). The memberships themselves stay as they are.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        organization_id: The suspended or closed organization.
+        acting_user_id: Who changed its status.
+        reason: Why.
+    """
+    for (
+        membership_id
+    ) in await identity_repository.list_active_membership_ids_by_organization(
+        db_session, organization_id
+    ):
+        await _run_membership_end_hooks(
+            db_session,
+            membership_id=membership_id,
+            kind=MembershipEndKind.LOCKED,
             acting_user_id=acting_user_id,
             reason=reason,
         )
@@ -261,14 +325,23 @@ async def _to_member_response(
     role_values = await identity_repository.list_active_roles_by_membership(
         db_session, membership_record.membership_id
     )
+    # Until an existing account accepts, the inviting organization must not
+    # learn its name, e-mail or status: it could otherwise read who owns any
+    # phone number by inviting it (RV-ID2).
+    is_account_hidden = (
+        membership_record.status == MembershipStatus.INVITED.value
+        and user_record.status != UserStatus.INVITED.value
+    )
     return MemberResponse(
         membership_id=membership_record.membership_id,
         organization_id=membership_record.organization_id,
         user_id=user_record.user_id,
-        full_name=user_record.full_name,
+        full_name="" if is_account_hidden else user_record.full_name,
         phone_number=user_record.phone_number,
-        email=user_record.email,
-        user_status=user_record.status,
+        email=None if is_account_hidden else user_record.email,
+        user_status=UserStatus.INVITED.value
+        if is_account_hidden
+        else user_record.status,
         status=membership_record.status,
         status_reason=membership_record.status_reason,
         roles=[UserRole(role_value) for role_value in role_values],
@@ -287,6 +360,9 @@ async def _notify_invited_person(
 ) -> None:
     """Tell an invited person how to join: a code for a new account, else a notice.
 
+    Both go through the one-time-code send limits (per phone and per inviter)
+    and neither carries text the inviter chose (RV-ID2).
+
     Args:
         db_session: Session owned by the entry boundary.
         user_record: The invited person.
@@ -294,21 +370,20 @@ async def _notify_invited_person(
         issued_by: The user who invites.
 
     Raises:
-        OneTimeCodeRateLimitError: A code was sent to this number too recently.
+        OneTimeCodeRateLimitError: A code was sent to this number too recently,
+            or the inviter or the number is over its daily limit.
     """
-    if user_record.status == UserStatus.INVITED.value:
-        await account_service.issue_one_time_code(
-            db_session,
-            purpose=OneTimeCodePurpose.INVITE,
-            phone_number=user_record.phone_number,
-            user_id=user_record.user_id,
-            issued_by=issued_by,
-        )
-        return
-    await get_sms_sender().send_sms(
-        user_record.phone_number,
-        f"G3 Network: ban duoc moi vao {organization_record.display_name}. "
-        "Mo ung dung de chap nhan loi moi.",
+    await account_service.issue_one_time_code(
+        db_session,
+        purpose=(
+            OneTimeCodePurpose.INVITE
+            if user_record.status == UserStatus.INVITED.value
+            else OneTimeCodePurpose.INVITE_NOTICE
+        ),
+        phone_number=user_record.phone_number,
+        user_id=user_record.user_id,
+        issued_by=issued_by,
+        organization_id=organization_record.organization_id,
     )
 
 
@@ -319,7 +394,6 @@ async def add_invited_member(
     organization_record: OrganizationModel,
     phone_number: str,
     full_name: str,
-    email: str | None,
     roles: list[UserRole],
 ) -> MembershipModel:
     """Create an INVITED membership (and the account, if the phone is new).
@@ -333,16 +407,15 @@ async def add_invited_member(
         invited_by: The user who invites.
         organization_record: The organization the person joins.
         phone_number: The person's phone number, E.164.
-        full_name: Name used when the account is new.
-        email: E-mail used when the account is new.
+        full_name: Name used when the account is new. No e-mail is ever set
+            by an invitation (RV-ID3).
         roles: Roles granted with the invitation (effective once accepted).
 
     Returns:
         The new membership.
 
     Raises:
-        UserConflictError: The e-mail belongs to another account, or the
-            person's account is locked.
+        UserConflictError: The person's account is locked.
         MembershipConflictError: The person is already a member or invited.
         OneTimeCodeRateLimitError: A code was sent to this number too recently.
 
@@ -353,22 +426,21 @@ async def add_invited_member(
         db_session, phone_number
     )
     if user_record is None:
-        if (
-            email is not None
-            and await identity_repository.find_live_user_by_email(db_session, email)
-            is not None
-        ):
-            raise UserConflictError("This e-mail address already has an account")
-        user_record = await identity_repository.insert_user(
-            db_session,
-            {
-                "phone_number": phone_number,
-                "email": email,
-                "full_name": full_name,
-                "status": UserStatus.INVITED.value,
-                "created_by": invited_by,
-            },
-        )
+        try:
+            user_record = await identity_repository.insert_user(
+                db_session,
+                {
+                    "phone_number": phone_number,
+                    "full_name": full_name,
+                    "status": UserStatus.INVITED.value,
+                    "created_by": invited_by,
+                },
+            )
+        except IntegrityError as error:
+            # The number was registered by someone else a moment ago (RV-ID9).
+            raise UserConflictError(
+                "This phone number was just registered; invite again"
+            ) from error
     elif user_record.status == UserStatus.LOCKED.value:
         raise UserConflictError("This person's account is locked")
     existing = await identity_repository.find_live_membership(
@@ -378,15 +450,21 @@ async def add_invited_member(
     )
     if existing is not None:
         raise MembershipConflictError("This person is already a member or invited")
-    membership_record = await identity_repository.insert_membership(
-        db_session,
-        {
-            "organization_id": organization_record.organization_id,
-            "user_id": user_record.user_id,
-            "status": MembershipStatus.INVITED.value,
-            "created_by": invited_by,
-        },
-    )
+    try:
+        membership_record = await identity_repository.insert_membership(
+            db_session,
+            {
+                "organization_id": organization_record.organization_id,
+                "user_id": user_record.user_id,
+                "status": MembershipStatus.INVITED.value,
+                "created_by": invited_by,
+            },
+        )
+    except IntegrityError as error:
+        # Two invitations of the same person at once (RV-ID9).
+        raise MembershipConflictError(
+            "This person is already a member or invited"
+        ) from error
     for role in roles:
         await identity_repository.insert_role_assignment(
             db_session,
@@ -424,7 +502,7 @@ async def invite_member(
         The invited member.
 
     Raises:
-        OrganizationNotFoundError: The organization is out of reach.
+        UserConflictError: The person's account is locked.
         AccessDeniedError: The caller may not invite, or not these roles.
         RoleNotAllowedError: A role cannot be held in this organization.
         MembershipConflictError: The person is already a member.
@@ -450,7 +528,6 @@ async def invite_member(
         organization_record=organization_record,
         phone_number=invite_request.phone_number,
         full_name=invite_request.full_name,
-        email=invite_request.email,
         roles=roles,
     )
     user_record = await _require_user(db_session, membership_record.user_id)
@@ -568,10 +645,15 @@ async def _assert_membership_can_end(
 ) -> None:
     """Refuse to lock or end the ORG_ADMIN or the last HEAD_ADMIN.
 
+    A pending (``INVITED``) membership is not yet an administrator, so a
+    mistyped first-administrator invitation can be withdrawn (RV-ID12).
+
     Raises:
         OrgAdminProtectedError: The membership is its organization's ORG_ADMIN.
         RoleConflictError: The membership is the only HEAD_ADMIN.
     """
+    if membership_record.status == MembershipStatus.INVITED.value:
+        return
     if (
         await identity_repository.find_active_role_assignment(
             db_session,
@@ -922,12 +1004,17 @@ async def grant_role(
         is not None
     ):
         raise RoleConflictError("The member already holds this role")
-    assignment_record = await identity_repository.insert_role_assignment(
-        db_session,
-        membership_record=membership_record,
-        role=role.value,
-        granted_by=principal.user_id,
-    )
+    try:
+        assignment_record = await identity_repository.insert_role_assignment(
+            db_session,
+            membership_record=membership_record,
+            role=role.value,
+            granted_by=principal.user_id,
+        )
+    except IntegrityError as error:
+        # Two grants of the same role at once: the partial unique index lets
+        # one through (RV-ID9).
+        raise RoleConflictError("The member already holds this role") from error
     return RoleAssignmentResponse(
         membership_id=membership_id,
         role=role,

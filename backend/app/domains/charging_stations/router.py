@@ -71,6 +71,7 @@ from app.domains.identity.types import (
     roles_for,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-stations"])
@@ -1060,9 +1061,7 @@ async def update_charging_location_endpoint(
 )
 async def soft_delete_charging_location_endpoint(
     location_id: UUID,
-    status_reason: str = Query(
-        "Charging location removed", min_length=1, max_length=200
-    ),
+    status_reason: Reason = Query("Charging location removed"),
     principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingResourceDeleteResponse:

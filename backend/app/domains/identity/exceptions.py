@@ -94,8 +94,9 @@ class WeakPasswordError(IdentityError, InvalidInputError):
     """The new password is too short, or was used recently (ID-31)."""
 
 
-class CurrentPasswordIncorrectError(IdentityError, InvalidInputError):
-    """The current password typed to authorise a password change is wrong."""
+class CurrentPasswordIncorrectError(FailureRecordedError, InvalidInputError):
+    """The current password typed to authorise a password or phone change is
+    wrong; the wrong guess is counted towards the login lockout (RV-ID6)."""
 
 
 class InvalidOneTimeCodeError(FailureRecordedError, InvalidInputError):

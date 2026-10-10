@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.notifications.types import NotificationSeverity, NotificationType
+from app.libs.common.reason import Reason
 
 
 class NotificationResponse(BaseModel):
@@ -162,4 +163,4 @@ class NotificationSettingUpdateRequest(BaseModel):
 
     push_enabled: bool
     email_enabled: bool
-    reason: str | None = Field(default=None, min_length=1, max_length=200)
+    reason: Reason | None = Field(default=None)

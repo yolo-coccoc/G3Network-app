@@ -287,17 +287,33 @@ async def accept_legal_document(
     # request's user agent, cut to the column width.
     user_agent = None if client_context is None else client_context.user_agent
     proof_device_label = (device_label or user_agent or "")[:100] or None
-    consent_record = await identity_repository.insert_consent(
-        db_session,
-        {
-            "user_id": principal.user_id,
-            "organization_id": organization_id,
-            "legal_document_id": document_record.legal_document_id,
-            "ip_address": None if client_context is None else client_context.ip_address,
-            "device_label": proof_device_label,
-            "accepted_at": utc_now(),
-        },
-    )
+    try:
+        # A savepoint, so a lost race does not poison the request's
+        # transaction: the same consent accepted twice at once is one row.
+        async with db_session.begin_nested():
+            consent_record = await identity_repository.insert_consent(
+                db_session,
+                {
+                    "user_id": principal.user_id,
+                    "organization_id": organization_id,
+                    "legal_document_id": document_record.legal_document_id,
+                    "ip_address": None
+                    if client_context is None
+                    else client_context.ip_address,
+                    "device_label": proof_device_label,
+                    "accepted_at": utc_now(),
+                },
+            )
+    except IntegrityError:
+        existing = await identity_repository.find_consent(
+            db_session,
+            user_id=principal.user_id,
+            legal_document_id=document_record.legal_document_id,
+            organization_id=organization_id,
+        )
+        if existing is None:
+            raise
+        return ConsentResponse.model_validate(existing)
     return ConsentResponse.model_validate(consent_record)
 
 

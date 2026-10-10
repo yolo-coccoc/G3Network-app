@@ -439,6 +439,7 @@ def upgrade() -> None:
         sa.Column("phone_number", sa.String(length=20), nullable=False),
         sa.Column("code_hash", sa.String(length=255), nullable=False),
         sa.Column("issued_by", sa.UUID(), nullable=True),
+        sa.Column("organization_id", sa.UUID(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
@@ -449,6 +450,9 @@ def upgrade() -> None:
         ),
         sa.Column("used_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["issued_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
         sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("one_time_code_id"),
     )

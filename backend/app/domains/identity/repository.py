@@ -33,6 +33,7 @@ from app.domains.identity.models import (
 )
 from app.domains.identity.types import (
     MembershipStatus,
+    OneTimeCodePurpose,
     OrganizationStatus,
     UserRole,
     UserStatus,
@@ -883,6 +884,35 @@ async def count_one_time_codes_since(
     return query_result.scalar() or 0
 
 
+async def count_invitation_codes_by_issuer_since(
+    db_session: AsyncSession, issued_by: UUID, since: datetime
+) -> int:
+    """Count the invitation SMS one person triggered since a time (inviter quota).
+
+    Args:
+        db_session: Current database session.
+        issued_by: The person who invited.
+        since: Start of the window.
+
+    Returns:
+        The number of `INVITE` and `INVITE_NOTICE` rows they created at or
+        after `since`.
+    """
+    query_result = await db_session.execute(
+        select(func.count(OneTimeCodeModel.one_time_code_id)).where(
+            OneTimeCodeModel.issued_by == issued_by,
+            OneTimeCodeModel.purpose.in_(
+                (
+                    OneTimeCodePurpose.INVITE.value,
+                    OneTimeCodePurpose.INVITE_NOTICE.value,
+                )
+            ),
+            OneTimeCodeModel.created_at >= since,
+        )
+    )
+    return query_result.scalar() or 0
+
+
 async def delete_stale_one_time_codes(
     db_session: AsyncSession, expired_before: datetime
 ) -> None:
@@ -981,6 +1011,28 @@ async def list_live_memberships_with_organizations(
         .order_by(MembershipModel.created_at)
     )
     return [(row[0], row[1]) for row in query_result.all()]
+
+
+async def list_active_membership_ids_by_organization(
+    db_session: AsyncSession, organization_id: UUID
+) -> list[UUID]:
+    """List the memberships of an organization that are active now.
+
+    Args:
+        db_session: Current database session.
+        organization_id: The organization.
+
+    Returns:
+        IDs of memberships in `ACTIVE` status that have not ended.
+    """
+    query_result = await db_session.execute(
+        select(MembershipModel.membership_id).where(
+            MembershipModel.organization_id == organization_id,
+            MembershipModel.status == MembershipStatus.ACTIVE.value,
+            MembershipModel.left_at.is_(None),
+        )
+    )
+    return list(query_result.scalars().all())
 
 
 async def list_invited_memberships_by_user(

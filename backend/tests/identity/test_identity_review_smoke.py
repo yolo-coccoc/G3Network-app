@@ -32,11 +32,9 @@ from app.domains.identity.exceptions import (
     AccessDeniedError,
     CurrentPasswordIncorrectError,
     MembershipNotFoundError,
-    OrgAdminProtectedError,
     OrganizationNotFoundError,
     RoleConflictError,
     SessionInvalidError,
-    UserConflictError,
 )
 from app.domains.identity.models import (
     MembershipModel,
@@ -318,6 +316,18 @@ class IdentityStore:
             1
             for code in self.codes
             if code.phone_number == phone_number and code.created_at >= since
+        )
+
+    async def count_invitation_codes_by_issuer_since(
+        self, _db: object, issued_by: UUID, since: datetime
+    ) -> int:
+        """Count the invitation rows one person created since a time."""
+        return sum(
+            1
+            for code in self.codes
+            if code.issued_by == issued_by
+            and code.purpose in ("INVITE", "INVITE_NOTICE")
+            and code.created_at >= since
         )
 
     async def insert_one_time_code(
@@ -660,7 +670,6 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Iterator[IdentityStore]:
     monkeypatch.setattr(account_service, "set_change_context", _no_change_context)
     monkeypatch.setattr(audit_service, "record_account_event", _no_audit_event)
     monkeypatch.setattr(member_service, "_membership_end_hooks", [])
-    monkeypatch.setattr(member_service, "get_sms_sender", lambda: identity_store.sms)
     monkeypatch.setattr(account_service, "get_sms_sender", lambda: identity_store.sms)
     yield identity_store
 
@@ -982,11 +991,6 @@ def _self_registered_attacker(
     return personal, principal_of(guest, personal, UserRole.ORG_ADMIN, UserRole.DRIVER)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID2: invitation SMS to an existing account has no send limit",
-)
 @pytest.mark.asyncio
 async def test_repeated_invitation_resends_stay_within_the_daily_sms_limit(
     store: IdentityStore,
@@ -1013,11 +1017,6 @@ async def test_repeated_invitation_resends_stay_within_the_daily_sms_limit(
     assert len(to_victim) <= settings.IDENTITY_OTP_MAX_PER_PHONE_PER_DAY
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID2: inviting a phone returns the account's real name/e-mail",
-)
 @pytest.mark.asyncio
 async def test_inviting_an_existing_account_does_not_reveal_its_name_or_email(
     store: IdentityStore,
@@ -1042,11 +1041,6 @@ async def test_inviting_an_existing_account_does_not_reveal_its_name_or_email(
     assert "victim@example.vn" not in response_text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=UserConflictError,
-    reason="RV-ID3: an invite squats the number; its owner cannot sign up",
-)
 @pytest.mark.asyncio
 async def test_sign_up_code_is_sent_to_an_invited_number_without_a_password(
     store: IdentityStore,
@@ -1064,33 +1058,18 @@ async def test_sign_up_code_is_sent_to_an_invited_number_without_a_password(
     assert [sms[0] for sms in _sent(store)] == ["+84907777777"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID5: '+84 0901...' normalizes to a second login ID +840901...",
-)
 def test_country_code_followed_by_trunk_zero_normalizes_to_the_same_number() -> None:
     """``+84 0901234567`` is the same phone as ``0901234567`` (ID-08)."""
     assert normalize_phone_number("+84 090 123 4567") == "+84901234567"
     assert normalize_phone_number("(+84) 0901234567") == "+84901234567"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID6: a phone change needs no password (session-only takeover)",
-)
 def test_phone_change_request_requires_the_current_password() -> None:
     """Moving the login number to another SIM asks for the current password."""
     with pytest.raises(ValidationError):
         PhoneChangeRequest.model_validate({"new_phone_number": "0907654321"})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID6: confirming a phone change keeps every other session",
-)
 @pytest.mark.asyncio
 async def test_confirming_a_phone_change_ends_the_other_sessions(
     store: IdentityStore,
@@ -1126,11 +1105,6 @@ async def test_confirming_a_phone_change_ends_the_other_sessions(
     assert list(store.sessions) == [session_record.user_session_id]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID6: wrong current passwords on /password/change are unlimited",
-)
 @pytest.mark.asyncio
 async def test_wrong_current_password_counts_towards_the_login_lockout(
     store: IdentityStore,
@@ -1157,11 +1131,6 @@ async def test_wrong_current_password_counts_towards_the_login_lockout(
     assert store.user_states[user_record.user_id].failed_login_count == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID8: a blank reason passes the schema, then 500s in the trigger",
-)
 def test_blank_reason_is_rejected_by_the_request_schemas() -> None:
     """A reason of spaces is refused at validation (422), never reaching the DB."""
     with pytest.raises(ValidationError):
@@ -1170,11 +1139,6 @@ def test_blank_reason_is_rejected_by_the_request_schemas() -> None:
         UserLockRequest.model_validate({"reason": "   "})
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-ID11: locking an account skips the membership-end hooks (DR-10)",
-)
 @pytest.mark.asyncio
 async def test_locking_an_account_runs_the_membership_end_hooks(
     store: IdentityStore, monkeypatch: pytest.MonkeyPatch
@@ -1208,11 +1172,6 @@ async def test_locking_an_account_runs_the_membership_end_hooks(
     assert hook_calls == [(driver_membership.membership_id, MembershipEndKind.LOCKED)]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=OrgAdminProtectedError,
-    reason="RV-ID12: a pending first-admin invitation cannot be cancelled",
-)
 @pytest.mark.asyncio
 async def test_internal_admin_can_cancel_a_pending_first_admin_invitation(
     store: IdentityStore,

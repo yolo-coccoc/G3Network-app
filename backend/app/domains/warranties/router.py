@@ -22,6 +22,7 @@ from app.domains.warranties.schemas import (
 )
 from app.domains.warranties.types import WarrantyStatus, WarrantyType
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["warranties"])
@@ -250,9 +251,7 @@ async def void_warranty_endpoint(
 )
 async def soft_delete_warranty_endpoint(
     warranty_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why it is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why it is removed"),
     principal: Principal = Depends(WARRANTY_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:

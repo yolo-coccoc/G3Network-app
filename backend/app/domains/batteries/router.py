@@ -28,6 +28,7 @@ from app.domains.batteries.types import BatteryChemistry, BatteryStatus
 from app.domains.identity.dependencies import get_current_principal, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["batteries"])
@@ -213,9 +214,7 @@ async def update_battery_endpoint(
 )
 async def soft_delete_battery_endpoint(
     battery_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why the battery is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why the battery is removed"),
     principal: Principal = Depends(BATTERY_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
@@ -282,9 +281,7 @@ async def install_battery_endpoint(
 )
 async def remove_battery_from_vehicle_endpoint(
     battery_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why it is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why it is removed"),
     principal: Principal = Depends(BATTERY_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> BatteryResponse:

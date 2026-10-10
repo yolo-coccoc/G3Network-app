@@ -27,6 +27,7 @@ from app.domains.telematics.types import (
     TelematicStatus,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 # A serial becomes one MQTT topic level (`g3network/telematics/{serial}/...`),
 # so '/', '+', '#' and spaces are refused, and surrounding whitespace is
@@ -65,7 +66,7 @@ class TelematicCreateRequest(BaseModel):
     acquired_at: datetime | None = None
     vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus = TelematicStatus.ACTIVE
-    status_reason: str | None = Field(default=None, max_length=200)
+    status_reason: Reason | None = Field(default=None)
 
 
 class TelematicUpdateRequest(BaseModel):
@@ -87,7 +88,7 @@ class TelematicUpdateRequest(BaseModel):
     imei: str | None = Field(default=None, min_length=15, max_length=15)
     vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus | None = None
-    status_reason: str | None = Field(default=None, max_length=200)
+    status_reason: Reason | None = Field(default=None)
 
 
 class TelematicResponse(BaseModel):

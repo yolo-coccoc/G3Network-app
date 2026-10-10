@@ -33,6 +33,7 @@ from app.domains.telematics.schemas import (
 )
 from app.domains.telematics.types import TelematicHealthState, TelematicStatus
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["telematics"])
@@ -299,9 +300,7 @@ async def update_telematic_endpoint(
 @router.delete("/{telematic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def soft_delete_telematic_endpoint(
     telematic_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why the device is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why the device is removed"),
     principal: Principal = Depends(DEVICE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:

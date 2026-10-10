@@ -31,6 +31,7 @@ from app.domains.vehicles.schemas import (
 )
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["vehicles"])
@@ -264,9 +265,7 @@ async def update_vehicle_endpoint(
 )
 async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
-    reason: str | None = Query(
-        None, min_length=1, max_length=200, description="Why the vehicle is removed"
-    ),
+    reason: Reason | None = Query(None, description="Why the vehicle is removed"),
     principal: Principal = Depends(VEHICLE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:

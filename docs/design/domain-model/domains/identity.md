@@ -66,6 +66,7 @@ erDiagram
     uuid one_time_code_id PK
     uuid user_id FK
     uuid issued_by FK
+    uuid organization_id FK
   }
   user_consents {
     uuid user_consent_id PK
@@ -110,6 +111,7 @@ erDiagram
   user_state }o--o| organizations : "last_organization_id"
   one_time_codes }o--o| users : "user_id"
   one_time_codes }o--o| users : "issued_by"
+  one_time_codes }o--o| organizations : "organization_id"
   user_consents }o--|| users : "user_id"
   user_consents }o--o| organizations : "organization_id"
   user_consents }o--|| legal_documents : "legal_document_id"
@@ -234,6 +236,7 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [user_sessions](#user_sessions).organization_id
 - [memberships](#memberships).organization_id
 - [user_state](#user_state).last_organization_id
+- [one_time_codes](#one_time_codes).organization_id
 - [user_consents](#user_consents).organization_id
 - [user_role_assignments](#user_role_assignments).organization_id
 - [access_audit_logs](#access_audit_logs).organization_id
@@ -560,11 +563,12 @@ hours); the permanent record of what happened is in access_audit_logs.
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `one_time_code_id` | uuid | no | PK |  | Internal ID of the code. | `00000020-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `purpose` | varchar(20) | no |  |  | What the code is for. INVITE: an invited user sets their password. SIGN_UP: a guest proves their phone before the account is created. PASSWORD_RESET: a forgotten password. PHONE_CHANGE: proving a new phone number. Values: INVITE \| SIGN_UP \| PASSWORD_RESET \| PHONE_CHANGE. | `INVITE` |
+| `purpose` | varchar(20) | no |  |  | What the code is for. INVITE: an invited user sets their password. SIGN_UP: a guest proves their phone before the account is created. PASSWORD_RESET: a forgotten password. PHONE_CHANGE: proving a new phone number. Values: INVITE \| INVITE_NOTICE \| SIGN_UP \| PASSWORD_RESET \| PHONE_CHANGE. INVITE_NOTICE records the notice SMS to an existing account that was invited (no code is sent; the row exists for the send limits). | `INVITE` |
 | `user_id` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User the code is for; NULL for SIGN_UP, when the account does not exist yet. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
 | `phone_number` | varchar(20) | no |  |  | Phone number the code was sent to by SMS (E.164). | `+84901234567` |
 | `code_hash` | varchar(255) | no |  |  | One-way hash of the code or link token, never the code itself. | `$argon2id$v=19$...` |
 | `issued_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who triggered the code (the admin who sent an invite); NULL when the person asked for it themselves. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
+| `organization_id` | uuid | yes | FK | [organizations](#organizations).organization_id (on delete restrict) | The organization whose invitation the code is for (INVITE and INVITE_NOTICE); NULL for the other purposes. Accepting an invitation with the code activates only the membership in this organization. | `00000010-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
 | `created_at` | timestamptz | no |  |  | When the code was sent; used for the resend cooldown and per-phone limits. | `2026-09-01T02:00:00Z` |
 | `expires_at` | timestamptz | no |  |  | When the code stops working (e.g. 10 minutes for an OTP, 72 hours for an invite link). | `2026-09-04T02:00:00Z` |
 | `failed_attempt_count` | integer | no |  |  | Wrong codes typed against this code; starts at 0. At 5 the code is dead and the person must ask for a new one (which counts against the send limit again), so a 6-digit code cannot be guessed. | `0` |

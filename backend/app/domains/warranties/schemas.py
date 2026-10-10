@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.domains.warranties.types import WarrantyType
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 
 class WarrantyCreateRequest(BaseModel):
@@ -92,9 +93,7 @@ class WarrantyUpdateRequest(BaseModel):
 class WarrantyVoidRequest(BaseModel):
     """HTTP request data for voiding a warranty (VOIDED, with the reason)."""
 
-    reason: str = Field(
-        ..., min_length=1, max_length=200, description="Why the warranty is voided"
-    )
+    reason: Reason = Field(..., description="Why the warranty is voided")
 
 
 class WarrantyResponse(BaseModel):

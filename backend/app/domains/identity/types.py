@@ -84,6 +84,7 @@ class OneTimeCodePurpose(str, enum.Enum):
     """What an SMS one-time code is for."""
 
     INVITE = "INVITE"
+    INVITE_NOTICE = "INVITE_NOTICE"
     SIGN_UP = "SIGN_UP"
     PASSWORD_RESET = "PASSWORD_RESET"
     PHONE_CHANGE = "PHONE_CHANGE"

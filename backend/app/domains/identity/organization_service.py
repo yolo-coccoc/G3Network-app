@@ -210,7 +210,6 @@ async def create_organization(
         organization_record=organization_record,
         phone_number=create_request.first_admin.phone_number,
         full_name=create_request.first_admin.full_name,
-        email=None,
         roles=[UserRole.ORG_ADMIN],
     )
     return to_organization_response(organization_record)
@@ -368,7 +367,8 @@ async def change_organization_status(
 
     SUSPENDED and CLOSED block the members' logins but leave their memberships
     as they are. CLOSED soft-deletes the row (DM-25); reactivating clears it.
-    Sessions that were acting for the organization lose it.
+    Sessions that were acting for the organization lose it, and the members'
+    running driving sessions end through the membership-end hooks (DR-10).
 
     Args:
         db_session: Session owned by the entry boundary.
@@ -421,6 +421,12 @@ async def change_organization_status(
     if new_status is not OrganizationStatus.ACTIVE:
         await identity_repository.clear_session_organization(
             db_session, user_id=None, organization_id=organization_id
+        )
+        await member_service.run_membership_end_hooks_for_organization(
+            db_session,
+            organization_id=organization_id,
+            acting_user_id=principal.user_id,
+            reason=status_request.reason,
         )
     return to_organization_response(organization_record)
 

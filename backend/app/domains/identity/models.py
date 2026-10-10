@@ -400,12 +400,14 @@ class OneTimeCodeModel(Base):
 
     Attributes:
         one_time_code_id: Primary key (UUID).
-        purpose: ``INVITE`` / ``SIGN_UP`` / ``PASSWORD_RESET`` /
-            ``PHONE_CHANGE`` (``OneTimeCodePurpose``).
+        purpose: ``INVITE`` / ``INVITE_NOTICE`` / ``SIGN_UP`` /
+            ``PASSWORD_RESET`` / ``PHONE_CHANGE`` (``OneTimeCodePurpose``).
         user_id: The user the code is for; ``None`` for ``SIGN_UP``.
         phone_number: Phone number the code was sent to (E.164).
         code_hash: One-way hash of the code or link token.
         issued_by: User who triggered the code; ``None`` when self-requested.
+        organization_id: The organization whose invitation the code is for
+            (``INVITE`` / ``INVITE_NOTICE``); ``None`` for the other purposes.
         created_at: When the code was sent.
         expires_at: When the code stops working.
         failed_attempt_count: Wrong codes typed against this code.
@@ -428,6 +430,11 @@ class OneTimeCodeModel(Base):
     issued_by: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    organization_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(

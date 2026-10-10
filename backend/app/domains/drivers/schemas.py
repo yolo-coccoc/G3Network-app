@@ -16,6 +16,7 @@ from app.domains.drivers.types import (
     TripStatus,
 )
 from app.libs.common.config import settings
+from app.libs.common.reason import Reason
 
 
 class DriverCreateRequest(BaseModel):
@@ -47,11 +48,8 @@ class DriverUpdateRequest(BaseModel):
         default=None, description="Licence expiry date"
     )
     status: DriverStatus | None = Field(default=None, description="Driver status")
-    status_reason: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="Why the status is what it is",
+    status_reason: Reason | None = Field(
+        default=None, description="Why the status is what it is"
     )
 
 
@@ -321,12 +319,7 @@ class TripUpdateRequest(BaseModel):
     planned_end_at: datetime | None = None
     planned_driver_id: UUID | None = None
     planned_vehicle_id: UUID | None = None
-    reason: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        description="Why it changes (history)",
-    )
+    reason: Reason | None = Field(default=None, description="Why it changes (history)")
 
     @model_validator(mode="after")
     def _check_times(self) -> "TripUpdateRequest":
@@ -346,7 +339,7 @@ class TripUpdateRequest(BaseModel):
 class TripCancelRequest(BaseModel):
     """HTTP request data for cancelling a planned trip."""
 
-    reason: str = Field(..., min_length=1, max_length=200, description="Why")
+    reason: Reason = Field(..., description="Why")
 
 
 class TripStartRequest(BaseModel):

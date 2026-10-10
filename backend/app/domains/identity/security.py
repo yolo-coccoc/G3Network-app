@@ -90,7 +90,11 @@ def normalize_phone_number(raw_phone_number: str) -> str:
     """Normalize a phone number to E.164, the login ID (ID-08).
 
     Spaces, dots, dashes and brackets are dropped; a Vietnamese national
-    number starting with ``0`` becomes ``+84...``; ``00`` becomes ``+``.
+    number starting with ``0`` becomes ``+84...``; ``00`` becomes ``+``. A
+    ``+84`` number written with its trunk zero (``+84 0901...``) loses that zero
+    and must then hold exactly nine digits, so one SIM has one login ID and the
+    one-time-code limits of a number cannot be multiplied by spelling it
+    differently (RV-ID5).
 
     Args:
         raw_phone_number: The number as typed.
@@ -106,8 +110,12 @@ def normalize_phone_number(raw_phone_number: str) -> str:
         cleaned = "+" + cleaned[2:]
     elif cleaned.startswith("0"):
         cleaned = "+84" + cleaned[1:]
+    if cleaned.startswith("+840"):
+        cleaned = "+84" + cleaned[4:]
     if not _E164_PATTERN.match(cleaned):
         raise ValueError("phone number must be in international format")
+    if cleaned.startswith("+84") and len(cleaned) != len("+84") + 9:
+        raise ValueError("a Vietnamese phone number has nine digits after +84")
     return cleaned
 
 

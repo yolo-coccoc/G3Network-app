@@ -21,6 +21,7 @@ from app.domains.identity.schemas import (
     RoleGrantRequest,
 )
 from app.domains.identity.types import Principal, SessionIdentity, UserRole
+from app.libs.common.reason import Reason
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["identity-memberships"])
@@ -59,7 +60,7 @@ async def accept_membership_endpoint(
 )
 async def leave_organization_endpoint(
     membership_id: UUID,
-    reason: str | None = Query(None, min_length=1, max_length=200),
+    reason: Reason | None = Query(None),
     session_identity: SessionIdentity = Depends(get_session_identity),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> MemberResponse:
@@ -142,7 +143,7 @@ async def unlock_member_endpoint(
 )
 async def remove_member_endpoint(
     membership_id: UUID,
-    reason: str = Query(..., min_length=1, max_length=200),
+    reason: Reason = Query(...),
     principal: Principal = Depends(get_current_principal),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> MemberResponse:
