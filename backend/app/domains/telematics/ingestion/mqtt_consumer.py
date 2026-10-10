@@ -8,7 +8,6 @@ dropped; there is no retry or DLQ in the MVP (same policy as telemetry).
 """
 
 import asyncio
-import json
 import logging
 
 from aiomqtt import Client as MQTTClient
@@ -20,6 +19,7 @@ from app.domains.telematics.schemas import (
     TelematicStatusMessage,
 )
 from app.libs.common.config import settings
+from app.libs.common.payload_guard import contains_nul, loads_strict
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +170,11 @@ class StatusReportConsumer:
             logger.warning("Status topic has no serial", extra={"topic": topic})
             return
         try:
-            payload = json.loads(message.payload.decode("utf-8"))
-            if not isinstance(payload, dict):
+            payload = loads_strict(message.payload.decode("utf-8"))
+            if not isinstance(payload, dict) or contains_nul(payload):
                 logger.warning(
-                    "Status payload is not a JSON object", extra={"topic": topic}
+                    "Status payload is not a JSON object or holds a NUL character",
+                    extra={"topic": topic},
                 )
                 return
             self.queue.put_nowait(

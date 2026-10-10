@@ -1089,6 +1089,21 @@ async def process_message(
         roll back.
     """
     message = envelope.message
+    received_at = utc_now()
+    if message.recorded_at > received_at + timedelta(
+        seconds=settings.TELEMETRY_MAX_FUTURE_SKEW_SECONDS
+    ):
+        # A reading dated far ahead would stay the "latest" one for good,
+        # freezing the live view and the alerts (RV-OP5).
+        logger.warning(
+            "telemetry reading dated in the future, skipping message",
+            extra={
+                "telematic_serial": message.telematic_serial,
+                "message_uuid": str(message.message_uuid),
+                "recorded_at": message.recorded_at.isoformat(),
+            },
+        )
+        return {"processed": 0, "skipped": 1, "errors": 0}
     mapping = await telematics_service.resolve_mapping_by_serial(
         db, message.telematic_serial
     )
@@ -1106,12 +1121,14 @@ async def process_message(
     vehicle_id = mapping.vehicle_id
 
     # Read the previous reading before inserting this one - once the new row
-    # is inserted, get_latest_vehicle_telemetry would return it instead of
-    # the actual previous reading, and no crossing could ever be detected.
-    # Kept as the full ORM row since the F-A2/F-A3/F-A4 detectors compare
-    # SOC, SOH, temperature, voltage and error codes.
-    previous_telemetry = await telemetry_repository.get_latest_vehicle_telemetry(
-        db, vehicle_id
+    # is inserted, the query could return it instead of the actual previous
+    # reading, and no crossing could ever be detected. It is the newest
+    # reading recorded before this one, so a late arrival is compared with
+    # its true predecessor. Kept as the full ORM row since the
+    # F-A2/F-A3/F-A4 detectors compare SOC, SOH, temperature, voltage and
+    # error codes.
+    previous_telemetry = await telemetry_repository.get_previous_vehicle_telemetry(
+        db, vehicle_id, message.recorded_at
     )
 
     try:
@@ -1119,7 +1136,7 @@ async def process_message(
             telematic_id,
             vehicle_id,
             mapping.organization_id,
-            utc_now(),
+            received_at,
             envelope.raw_payload,
         )
     except (TypeError, ValueError):

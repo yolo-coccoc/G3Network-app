@@ -9,8 +9,8 @@ or DLQ within the MVP scope.
 """
 
 import asyncio
-import json
 import logging
+from typing import cast
 
 from aiomqtt import Client as MQTTClient
 from aiomqtt import Message, MqttError, Will
@@ -18,8 +18,33 @@ from pydantic import ValidationError
 
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
 from app.libs.common.config import settings
+from app.libs.common.payload_guard import contains_nul, loads_strict
 
 logger = logging.getLogger(__name__)
+
+
+def parse_serial_from_topic(topic: str, topic_pattern: str) -> str | None:
+    """Read the device serial out of a telemetry topic.
+
+    The serial is the topic level that sits where the subscribed pattern has
+    its ``+`` wildcard, so the topic is the device's identity: the broker's
+    ACL lets each device publish to its own topic only (RV-OP4).
+
+    Args:
+        topic: Topic of the received message.
+        topic_pattern: Subscribed pattern, e.g.
+            ``g3network/telematics/+/telemetry``.
+
+    Returns:
+        The serial, or ``None`` when the topic does not have the pattern's
+        shape or the pattern has no single ``+`` level.
+    """
+    pattern_levels = topic_pattern.split("/")
+    topic_levels = topic.split("/")
+    if pattern_levels.count("+") != 1 or len(pattern_levels) != len(topic_levels):
+        return None
+    serial = topic_levels[pattern_levels.index("+")]
+    return serial or None
 
 
 class MQTTConsumer:
@@ -155,12 +180,29 @@ class MQTTConsumer:
             message: Message received from aiomqtt.
         """
         try:
-            payload_dict = json.loads(message.payload.decode("utf-8"))
+            payload_dict = loads_strict(message.payload.decode("utf-8"))
+            if contains_nul(payload_dict):
+                logger.warning(
+                    "Payload holds a NUL character, message dropped",
+                    extra={"topic": str(message.topic)},
+                )
+                return
             telemetry_message = TelemetryMessage.model_validate(payload_dict)
+            topic_serial = parse_serial_from_topic(
+                str(message.topic), self.topic_pattern
+            )
+            if topic_serial != telemetry_message.telematic_serial:
+                # A device may only report for itself: trusting the payload
+                # serial would let one device write another truck's data.
+                logger.warning(
+                    "Payload serial differs from its topic, message dropped",
+                    extra={"topic": str(message.topic)},
+                )
+                return
             self.queue.put_nowait(
                 TelemetryEnvelope(
                     message=telemetry_message,
-                    raw_payload=payload_dict,
+                    raw_payload=cast(dict[str, object], payload_dict),
                 )
             )
         except asyncio.QueueFull:

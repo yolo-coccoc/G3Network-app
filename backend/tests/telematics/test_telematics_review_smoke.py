@@ -127,22 +127,18 @@ async def test_status_consumer_drops_malformed_message_without_raising_guard(
         pytest.param(
             {"firmware_version": "1.2\x003"},
             id="nul-in-firmware-version",
-            marks=_xfail("RV-OP3", "a NUL byte reaches a varchar column"),
         ),
         pytest.param(
             {"gnss_status": "FI\x00X"},
             id="nul-in-gnss-status",
-            marks=_xfail("RV-OP3", "a NUL byte reaches a varchar column"),
         ),
         pytest.param(
             {"sim": {"iccid": "8984\x00049"}},
             id="nul-in-sim-iccid",
-            marks=_xfail("RV-OP3", "a NUL byte reaches a varchar column"),
         ),
         pytest.param(
             {"firmware_version": "1.0", "timestamp": "0001-01-01T00:00:00+05:00"},
             id="timestamp-year-1-with-offset",
-            marks=_xfail("RV-OP3", "a timestamp outside the UTC range is kept"),
         ),
     ],
 )
@@ -209,17 +205,14 @@ async def test_status_report_of_unknown_serial_is_skipped_without_error_guard(
         pytest.param(
             "TBOX/../001",
             id="slash",
-            marks=_xfail("RV-OP11", "a serial with '/' builds a deeper MQTT topic"),
         ),
         pytest.param(
             "TBOX+001",
             id="single-level-wildcard",
-            marks=_xfail("RV-OP11", "a '+' serial makes the command publish raise"),
         ),
         pytest.param(
             "TBOX#001",
             id="multi-level-wildcard",
-            marks=_xfail("RV-OP11", "a '#' serial makes the command publish raise"),
         ),
     ],
 )
@@ -236,7 +229,6 @@ def test_device_serial_rejects_mqtt_topic_characters(serial: str) -> None:
         TelematicUpdateRequest(telematic_serial=serial)
 
 
-@_xfail("RV-OP11", "a serial is stored unstripped while telemetry strips it")
 def test_device_serial_with_surrounding_spaces_is_stripped_or_refused() -> None:
     """A serial is stored exactly as telemetry will look it up (stripped).
 

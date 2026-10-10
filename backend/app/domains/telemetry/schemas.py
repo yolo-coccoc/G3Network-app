@@ -26,6 +26,7 @@ from app.domains.telemetry.types import ReportGranularity, VehicleActivationStat
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
+from app.libs.common.payload_guard import INT32_MAX, INT64_MAX
 
 
 class VehicleTelemetryLatestResponse(BaseModel):
@@ -580,12 +581,13 @@ class TelemetryLocationPayload(BaseModel):
     ]
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {"latitude": 21.0285, "longitude": 105.8542},
                 {"latitude": 10.762622, "longitude": 106.660172},
             ]
-        }
+        },
     }
 
 
@@ -617,12 +619,13 @@ class TelemetryVehicleStatePayload(BaseModel):
     ]
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {"speed": 45.2, "heading": 90.0, "odometer": 12345.6},
                 {"speed": 0, "heading": None, "odometer": 5000.0},
             ]
-        }
+        },
     }
 
 
@@ -670,10 +673,16 @@ class TelemetryBatteryPayload(BaseModel):
     ]
     cycle_count: Annotated[
         int | None,
-        Field(default=None, ge=0, description="Charge/discharge cycle count"),
+        Field(
+            default=None,
+            ge=0,
+            le=INT32_MAX,
+            description="Charge/discharge cycle count",
+        ),
     ]
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {
@@ -693,7 +702,7 @@ class TelemetryBatteryPayload(BaseModel):
                     "cycle_count": None,
                 },
             ]
-        }
+        },
     }
 
 
@@ -710,12 +719,13 @@ class TelemetryMotorPayload(BaseModel):
     ]
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {"temperature": 42.1},
                 {"temperature": None},
             ]
-        }
+        },
     }
 
 
@@ -731,17 +741,20 @@ class TelemetrySignalPayload(BaseModel):
         int | None,
         Field(
             default=None,
+            ge=-INT64_MAX,
+            le=INT64_MAX,
             description="Signal strength (dBm). Negative value, the closer to 0 the stronger",
         ),
     ]
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {"strength": -75},
                 {"strength": -95},
             ]
-        }
+        },
     }
 
 
@@ -819,6 +832,7 @@ class TelemetryMessage(BaseModel):
         Field(
             default=1,
             ge=1,
+            le=INT32_MAX,
             description="Version of this message contract the device is using",
         ),
     ]
@@ -843,6 +857,25 @@ class TelemetryMessage(BaseModel):
         if not stripped_serial:
             raise ValueError("telematic_serial must not be empty")
         return stripped_serial
+
+    @field_validator("errors")
+    @classmethod
+    def validate_error_codes(cls, value: list[str] | None) -> list[str] | None:
+        """Reject an error code that holds a NUL character.
+
+        Args:
+            value: The active error codes, or ``None``.
+
+        Returns:
+            The codes unchanged.
+
+        Raises:
+            ValueError: If a code contains ``"\\u0000"``, which JSONB refuses
+                (RV-OP3).
+        """
+        if value is not None and any("\x00" in code for code in value):
+            raise ValueError("error codes must not contain a NUL character")
+        return value
 
     @field_validator("recorded_at")
     @classmethod
@@ -925,6 +958,7 @@ class TelemetryMessage(BaseModel):
         }
 
     model_config = {
+        "allow_inf_nan": False,
         "json_schema_extra": {
             "examples": [
                 {
@@ -955,7 +989,7 @@ class TelemetryMessage(BaseModel):
                     "battery": {"soc": 50.0},
                 },
             ]
-        }
+        },
     }
 
 

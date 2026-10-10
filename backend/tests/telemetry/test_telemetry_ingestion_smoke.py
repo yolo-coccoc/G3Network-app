@@ -91,7 +91,7 @@ async def test_telemetry_service_persists_mapped_message(
         return 1
 
     async def no_previous_telemetry(
-        db: AsyncSession, vehicle_id: UUID
+        db: AsyncSession, vehicle_id: UUID, before: object
     ) -> TelemetryModel | None:
         return None
 
@@ -102,7 +102,7 @@ async def test_telemetry_service_persists_mapped_message(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", no_previous_telemetry
+        telemetry_repository, "get_previous_vehicle_telemetry", no_previous_telemetry
     )
 
     result = await telemetry_service.process_message(
@@ -138,7 +138,9 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
     async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
         return 1
 
-    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+    async def previous_reading(
+        db: AsyncSession, vehicle_id: UUID, before: object
+    ) -> SimpleNamespace:
         return previous_telemetry
 
     async def no_nearest_station(
@@ -154,7 +156,7 @@ async def test_telemetry_service_raises_battery_alert_on_crossing(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+        telemetry_repository, "get_previous_vehicle_telemetry", previous_reading
     )
     monkeypatch.setattr(
         charging_stations_service,
@@ -271,7 +273,9 @@ async def test_process_message_raises_soh_alert_on_crossing(
     async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
         return 1
 
-    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+    async def previous_reading(
+        db: AsyncSession, vehicle_id: UUID, before: object
+    ) -> SimpleNamespace:
         return previous_telemetry
 
     async def record_notification(db: AsyncSession, **kwargs: object) -> None:
@@ -282,7 +286,7 @@ async def test_process_message_raises_soh_alert_on_crossing(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+        telemetry_repository, "get_previous_vehicle_telemetry", previous_reading
     )
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification
@@ -481,7 +485,9 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
         return 1
 
-    async def previous_reading(db: AsyncSession, vehicle_id: UUID) -> SimpleNamespace:
+    async def previous_reading(
+        db: AsyncSession, vehicle_id: UUID, before: object
+    ) -> SimpleNamespace:
         return previous_telemetry
 
     async def record_notification(db: AsyncSession, **kwargs: object) -> None:
@@ -492,7 +498,7 @@ async def test_process_message_raises_one_notification_per_tripped_anomaly(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+        telemetry_repository, "get_previous_vehicle_telemetry", previous_reading
     )
     monkeypatch.setattr(
         notifications_service, "create_notification", record_notification

@@ -94,6 +94,37 @@ async def get_latest_vehicle_telemetry(
     return query_result.scalar_one_or_none()
 
 
+async def get_previous_vehicle_telemetry(
+    db: AsyncSession, vehicle_id: UUID, before: datetime
+) -> TelemetryModel | None:
+    """Get the newest reading of a vehicle recorded before a given instant.
+
+    The "previous reading" the alert detectors compare a new reading with:
+    a reading that arrives late (an offline buffer replayed) must be compared
+    with the one just before it in time, not with whatever has the largest
+    `recorded_at` (RV-OP5).
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        before: The new reading's `recorded_at`; only strictly earlier
+            readings count.
+
+    Returns:
+        The earlier record with the largest `recorded_at`, or None.
+    """
+    query_result = await db.execute(
+        select(TelemetryModel)
+        .where(
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at < before,
+        )
+        .order_by(TelemetryModel.recorded_at.desc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
 async def find_latest_received_at(
     db: AsyncSession, vehicle_id: UUID
 ) -> datetime | None:

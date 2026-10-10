@@ -36,6 +36,8 @@ class Settings(BaseSettings):
         MQTT_WILL_QOS: QoS of the MQTT Last Will.
         MQTT_WILL_RETAIN: Whether to retain the MQTT Last Will.
         TELEMETRY_QUEUE_SIZE: In-memory queue capacity.
+        TELEMETRY_MAX_FUTURE_SKEW_SECONDS: How far ahead of the backend clock a
+            reading's ``recorded_at`` may be before it is refused (RV-OP5).
         MQTT_STATUS_REPORT_TOPIC: Topic pattern for the devices' status
             reports (DEV-04, mqtt-spec.md 2.2).
         MQTT_STATUS_CLIENT_ID: Client identifier of the status-report
@@ -229,6 +231,7 @@ class Settings(BaseSettings):
     # In-RAM queue between the MQTT consumer and the per-message worker. (A
     # batched ingestion path is deferred: deferred.md item 25.)
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
+    TELEMETRY_MAX_FUTURE_SKEW_SECONDS: int = Field(default=300, ge=0)
 
     # Status-report ingestion (DEV-03/DEV-04, mqtt-spec.md 2.2): its own
     # process and client id, because a broker evicts an existing session when a

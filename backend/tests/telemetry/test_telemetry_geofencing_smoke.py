@@ -91,7 +91,7 @@ def _patch_ingestion(
         return 1
 
     async def previous_reading(
-        db: AsyncSession, vehicle_id: UUID
+        db: AsyncSession, vehicle_id: UUID, before: object
     ) -> TelemetryModel | None:
         return previous_telemetry
 
@@ -111,7 +111,7 @@ def _patch_ingestion(
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", previous_reading
+        telemetry_repository, "get_previous_vehicle_telemetry", previous_reading
     )
     monkeypatch.setattr(
         fleet_service, "find_current_fleet_id_by_vehicle", current_fleet

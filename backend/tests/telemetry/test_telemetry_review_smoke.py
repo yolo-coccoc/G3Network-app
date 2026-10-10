@@ -215,47 +215,38 @@ async def test_consumer_drops_malformed_payload_without_raising_guard(
         pytest.param(
             _payload(battery={"soc": 50.0, "temperature": float("nan")}),
             id="nan-battery-temperature",
-            marks=_xfail("RV-OP3", "NaN reaches the JSONB raw_payload"),
         ),
         pytest.param(
             _payload(battery={"soc": 50.0, "current": float("nan")}),
             id="nan-battery-current",
-            marks=_xfail("RV-OP3", "NaN reaches the JSONB raw_payload"),
         ),
         pytest.param(
             _payload(motor={"temperature": float("nan")}),
             id="nan-motor-temperature",
-            marks=_xfail("RV-OP3", "NaN reaches the JSONB raw_payload"),
         ),
         pytest.param(
             _payload(battery={"soc": 50.0, "voltage": float("inf")}),
             id="infinite-voltage",
-            marks=_xfail("RV-OP3", "Infinity reaches the JSONB raw_payload"),
         ),
         pytest.param(
             _payload(vehicle_state={"odometer": float("inf")}),
             id="infinite-odometer",
-            marks=_xfail("RV-OP3", "Infinity reaches the JSONB raw_payload"),
         ),
         pytest.param(
             _payload(errors=["E\x00"]),
             id="nul-in-error-code",
-            marks=_xfail("RV-OP3", "a NUL error code reaches JSONB"),
         ),
         pytest.param(
             _payload(vendor_extra="a\x00"),
             id="nul-in-unknown-key",
-            marks=_xfail("RV-OP3", "unknown keys with NUL are kept in raw_payload"),
         ),
         pytest.param(
             _payload(battery={"soc": 50.0, "cycle_count": 99_999_999_999}),
             id="cycle-count-over-int32",
-            marks=_xfail("RV-OP3", "cycle_count overflows the integer column"),
         ),
         pytest.param(
             _payload(signal={"strength": 10**20}),
             id="signal-over-int64",
-            marks=_xfail("RV-OP3", "signal strength overflows the bigint column"),
         ),
     ],
 )
@@ -278,7 +269,6 @@ async def test_consumer_never_queues_a_payload_postgresql_would_reject(
 
 
 @pytest.mark.asyncio
-@_xfail("RV-OP4", "the payload serial is trusted and the topic serial ignored")
 async def test_consumer_drops_payload_whose_serial_differs_from_its_topic() -> None:
     """A device may only report for itself: the topic serial must match the payload.
 
@@ -337,7 +327,6 @@ async def test_process_message_skips_unknown_serial_without_error_guard(
 
 
 @pytest.mark.asyncio
-@_xfail("RV-OP5", "a far-future recorded_at is stored and becomes the latest reading")
 async def test_far_future_recorded_at_is_never_stored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -365,7 +354,9 @@ async def test_far_future_recorded_at_is_never_stored(
     async def resolve_mapping(db: AsyncSession, serial: str) -> TelematicVehicleMapping:
         return mapping
 
-    async def no_previous(db: AsyncSession, vehicle_id: UUID) -> TelemetryModel | None:
+    async def no_previous(
+        db: AsyncSession, vehicle_id: UUID, before: object
+    ) -> TelemetryModel | None:
         return None
 
     async def insert_telemetry(db: AsyncSession, values: dict[str, object]) -> int:
@@ -376,7 +367,7 @@ async def test_far_future_recorded_at_is_never_stored(
         telematics_public_service, "resolve_mapping_by_serial", resolve_mapping
     )
     monkeypatch.setattr(
-        telemetry_repository, "get_latest_vehicle_telemetry", no_previous
+        telemetry_repository, "get_previous_vehicle_telemetry", no_previous
     )
     monkeypatch.setattr(telemetry_repository, "insert_telemetry", insert_telemetry)
 

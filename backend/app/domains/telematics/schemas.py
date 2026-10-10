@@ -8,12 +8,18 @@ MQTT consumer validates, mqtt-spec.md 2.2).
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+)
 
 from app.domains.telematics.types import (
     TelematicConfigPushOutcome,
@@ -21,6 +27,19 @@ from app.domains.telematics.types import (
     TelematicStatus,
 )
 from app.libs.common.config import settings
+
+# A serial becomes one MQTT topic level (`g3network/telematics/{serial}/...`),
+# so '/', '+', '#' and spaces are refused, and surrounding whitespace is
+# stripped the way the telemetry message strips its own serial (RV-OP11).
+DeviceSerial = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=50,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    ),
+]
 
 
 class TelematicCreateRequest(BaseModel):
@@ -40,7 +59,7 @@ class TelematicCreateRequest(BaseModel):
             explaining.
     """
 
-    telematic_serial: str = Field(..., min_length=1, max_length=50)
+    telematic_serial: DeviceSerial
     imei: str | None = Field(default=None, min_length=15, max_length=15)
     organization_id: UUID | None = None
     acquired_at: datetime | None = None
@@ -64,7 +83,7 @@ class TelematicUpdateRequest(BaseModel):
         status_reason: Why the status changes.
     """
 
-    telematic_serial: str | None = Field(default=None, min_length=1, max_length=50)
+    telematic_serial: DeviceSerial | None = None
     imei: str | None = Field(default=None, min_length=15, max_length=15)
     vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus | None = None
@@ -397,7 +416,8 @@ def _coerce_text(
 
     def coerce(value: object) -> str | None:
         """Return the cleaned string, else `None`."""
-        if not isinstance(value, str):
+        if not isinstance(value, str) or "\x00" in value:
+            # A NUL character is refused by PostgreSQL text columns (RV-OP3).
             return None
         text = value.strip()
         if not text:
@@ -422,9 +442,12 @@ def _coerce_timestamp(value: object) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+        # Year 1 or 9999 with an offset cannot be expressed in UTC: the
+        # conversion raises OverflowError, which would stop the worker later
+        # (RV-OP3), so such a time counts as absent now.
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+    except (ValueError, OverflowError):
         return None
-    return parsed if parsed.tzinfo is not None else None
 
 
 def _coerce_sim(value: object) -> object:

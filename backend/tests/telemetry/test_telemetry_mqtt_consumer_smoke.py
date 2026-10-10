@@ -12,18 +12,21 @@ from app.domains.telemetry.ingestion.mqtt_consumer import MQTTConsumer
 from app.domains.telemetry.schemas import TelemetryEnvelope
 
 
-def _message(payload: bytes) -> Message:
+def _message(
+    payload: bytes, topic: str = "g3network/telematics/TBOX-VN-000123/telemetry"
+) -> Message:
     """Build a stand-in for an aiomqtt message with the given raw payload.
 
     Args:
         payload: The raw bytes the broker delivered.
+        topic: The topic it arrived on (the device's own by default).
 
     Returns:
         An object exposing the `payload` and `topic` attributes the consumer reads.
     """
     return cast(
         Message,
-        SimpleNamespace(payload=payload, topic="g3network/telematics/X/telemetry"),
+        SimpleNamespace(payload=payload, topic=topic),
     )
 
 
