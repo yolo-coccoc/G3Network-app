@@ -10,6 +10,7 @@ domain importing another domain's models. It exports nothing.
 """
 
 import app.domains.batteries.models  # noqa: F401
+import app.domains.billing.models  # noqa: F401
 import app.domains.charging_sessions.models  # noqa: F401
 import app.domains.charging_stations.models  # noqa: F401
 import app.domains.drivers.models  # noqa: F401

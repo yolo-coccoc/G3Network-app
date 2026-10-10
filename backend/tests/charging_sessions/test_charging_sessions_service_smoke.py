@@ -1,6 +1,6 @@
-"""Smoke tests for the charging_sessions service: lifecycle, meter watermark, station energy (F-B2, F-C5)."""
+"""Smoke tests for the charging_sessions service: scan, start, stop, station energy (F-B2, F-C5, CE-10, CE-11)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
 from uuid import UUID, uuid4
@@ -13,253 +13,223 @@ import app.domains.charging_sessions.service as charging_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionStateError,
+    ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
+    QR_TOKEN_LENGTH,
     ChargingSessionListFilter,
     MeterSampleInput,
-    SessionEventType,
     SessionStatus,
 )
 from tests.builders import build_charging_session, fake_db_session
 
+NOW = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
+
 
 @pytest.mark.asyncio
-async def test_charging_service_runs_started_meter_ended_flow(
+async def test_create_pending_session_issues_a_token_that_fits_ocpp16(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The charging service runs the correct lifecycle from Started to Ended."""
-    session = build_charging_session()
-    now = datetime.now(timezone.utc)
-    inserted_events: list[SessionEventType] = []
-    inserted_meters: list[Decimal] = []
+    """A scan creates a PENDING row and returns a token of at most 20 characters."""
+    captured: dict[str, object] = {}
+    session = build_charging_session(status=SessionStatus.PENDING)
 
-    async def create_session(
+    async def create_pending(
         db: AsyncSession, **kwargs: object
     ) -> ChargingSessionModel:
-        session.meter_start_wh = cast(Decimal | None, kwargs["meter_start_wh"])
-        session.started_at = cast(datetime, kwargs["started_at"])
+        captured.update(kwargs)
         return session
 
-    async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
-    ) -> ChargingSessionModel:
-        return session
+    monkeypatch.setattr(charging_repository, "create_pending_session", create_pending)
 
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
-        return session
+    reference = await charging_service.create_pending_session(
+        fake_db_session(),
+        station_id=session.station_id,
+        organization_id=session.organization_id,
+        started_by=session.started_by,
+    )
 
-    async def insert_event(db: AsyncSession, **kwargs: object) -> None:
-        inserted_events.append(cast(SessionEventType, kwargs["event_type"]))
+    assert 0 < len(reference.id_token) <= QR_TOKEN_LENGTH <= 20
+    assert captured["id_token"] == reference.id_token
+    assert captured["vehicle_id"] is None
+    assert reference.session_id == session.session_id
 
-    async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        inserted_meters.append(cast(Decimal, kwargs["value"]))
 
-    monkeypatch.setattr(charging_repository, "create_session", create_session)
+@pytest.mark.asyncio
+async def test_activate_pending_session_fills_the_charger_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A start message with the issued token turns the PENDING row ACTIVE (CE-11)."""
+    session = build_charging_session(status=SessionStatus.PENDING)
+    evse_id, connector_id = uuid4(), uuid4()
+
+    async def find_pending(
+        db: AsyncSession, station_id: UUID, id_token: str
+    ) -> ChargingSessionModel | None:
+        return session if id_token == session.id_token else None
+
     monkeypatch.setattr(
-        charging_repository, "get_session_by_transaction", get_by_transaction
-    )
-    monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: now)
-
-    started = await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=session.station_id,
-        evse_id=session.evse_id,
-        connector_id=session.connector_id,
-        transaction_id=session.ocpp_transaction_id,
-        event_type=SessionEventType.STARTED,
-        event_occurred_at=now,
-        seq_no=0,
-        meter_start_wh=Decimal("1000"),
-    )
-    meter = await charging_service.ingest_meter_values(
-        fake_db_session(),
-        session_id=session.session_id,
-        sample=MeterSampleInput(sampled_at=now, value_wh=Decimal("1500")),
-    )
-    ended = await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=session.station_id,
-        evse_id=session.evse_id,
-        connector_id=session.connector_id,
-        transaction_id=session.ocpp_transaction_id,
-        event_type=SessionEventType.ENDED,
-        event_occurred_at=now,
-        seq_no=2,
-        meter_end_wh=Decimal("1750"),
+        charging_repository, "find_pending_session_by_token", find_pending
     )
 
-    assert started.status is SessionStatus.ACTIVE
-    assert (meter.session_id, meter.status) == (
+    result = await charging_service.activate_pending_session(
+        fake_db_session(),
+        station_id=session.station_id,
+        evse_id=evse_id,
+        connector_id=connector_id,
+        id_token=session.id_token,
+        transaction_id=" 1042 ",
+        started_at=NOW,
+        meter_start_wh=Decimal("1520340"),
+    )
+
+    assert (result.session_id, result.status) == (
         session.session_id,
         SessionStatus.ACTIVE,
     )
-    assert ended.status is SessionStatus.COMPLETED
-    assert session.meter_end_wh == Decimal("1750")
-    assert session.energy_delivered_wh == Decimal("750")
-    assert inserted_events == [SessionEventType.STARTED, SessionEventType.ENDED]
-    assert inserted_meters == [Decimal("1500")]
+    assert session.ocpp_transaction_id == "1042"
+    assert (session.evse_id, session.connector_id) == (evse_id, connector_id)
+    assert session.started_at == NOW
+    assert session.meter_start_wh == Decimal("1520340")
 
 
 @pytest.mark.asyncio
-async def test_ingest_transaction_event_persists_seq_no(
+async def test_activate_pending_session_refuses_a_token_no_scan_issued(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """seq_no is threaded through to the repository unchanged (F-B2)."""
-    session = build_charging_session()
-    now = datetime.now(timezone.utc)
-    captured: dict[str, object] = {}
+    """An unknown token creates no row and raises the token error (CE-11)."""
 
-    async def create_session(
-        db: AsyncSession, **kwargs: object
+    async def find_pending(
+        db: AsyncSession, station_id: UUID, id_token: str
+    ) -> ChargingSessionModel | None:
+        return None
+
+    monkeypatch.setattr(
+        charging_repository, "find_pending_session_by_token", find_pending
+    )
+
+    with pytest.raises(ChargingSessionTokenError):
+        await charging_service.activate_pending_session(
+            fake_db_session(),
+            station_id=uuid4(),
+            evse_id=uuid4(),
+            connector_id=uuid4(),
+            id_token="NOT-ISSUED",
+            transaction_id="1",
+            started_at=NOW,
+            meter_start_wh=Decimal(0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_activate_pending_session_requires_a_start_reading_and_timezone() -> None:
+    """An ACTIVE session always has a start reading (CE-10); naive times are refused."""
+    arguments = dict(
+        station_id=uuid4(),
+        evse_id=uuid4(),
+        connector_id=uuid4(),
+        id_token="TOKEN",
+        transaction_id="1",
+    )
+    with pytest.raises(ChargingSessionInputError, match="meter_start_wh"):
+        await charging_service.activate_pending_session(
+            fake_db_session(),
+            started_at=NOW,
+            meter_start_wh=None,
+            **arguments,  # type: ignore[arg-type]
+        )
+    with pytest.raises(ChargingSessionInputError, match="started_at"):
+        await charging_service.activate_pending_session(
+            fake_db_session(),
+            started_at=datetime(2026, 10, 1),
+            meter_start_wh=Decimal(0),
+            **arguments,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_session_stores_the_declared_closing_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stop message completes the session; meter_stop_wh is stored as sent (CE-12)."""
+    session = build_charging_session(meter_start_wh=Decimal("1000"))
+
+    async def get_by_transaction(
+        db: AsyncSession, station_id: UUID, transaction_id: str
     ) -> ChargingSessionModel:
         return session
 
-    async def insert_event(db: AsyncSession, **kwargs: object) -> None:
-        captured.update(kwargs)
+    monkeypatch.setattr(
+        charging_repository, "get_session_by_transaction", get_by_transaction
+    )
 
-    monkeypatch.setattr(charging_repository, "create_session", create_session)
-    monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: now)
-
-    await charging_service.ingest_transaction_event(
+    result = await charging_service.complete_session(
         fake_db_session(),
         station_id=session.station_id,
         evse_id=session.evse_id,
         connector_id=session.connector_id,
-        transaction_id=session.ocpp_transaction_id,
-        event_type=SessionEventType.STARTED,
-        event_occurred_at=now,
-        seq_no=7,
+        transaction_id=cast(str, session.ocpp_transaction_id),
+        ended_at=NOW,
+        stop_reason="EVDisconnected",
+        meter_stop_wh=Decimal("1750"),
     )
 
-    assert captured["seq_no"] == 7
+    assert result.status is SessionStatus.COMPLETED
+    assert session.ended_at == NOW
+    assert session.meter_stop_wh == Decimal("1750")
+    assert session.stop_reason == "EVDisconnected"
 
 
 @pytest.mark.asyncio
-async def test_ingest_transaction_event_rejects_negative_seq_no() -> None:
-    """A negative seq_no is rejected before any write (F-B2)."""
-    session = build_charging_session()
-    now = datetime.now(timezone.utc)
-
-    with pytest.raises(ChargingSessionInputError):
-        await charging_service.ingest_transaction_event(
-            fake_db_session(),
-            station_id=session.station_id,
-            evse_id=session.evse_id,
-            connector_id=session.connector_id,
-            transaction_id=session.ocpp_transaction_id,
-            event_type=SessionEventType.STARTED,
-            event_occurred_at=now,
-            seq_no=-1,
-        )
-
-
-@pytest.mark.asyncio
-async def test_ingest_transaction_event_rejects_boolean_seq_no() -> None:
-    """A bool seq_no is rejected - isinstance(True, int) must not collide with 0 (F-B2)."""
-    session = build_charging_session()
-    now = datetime.now(timezone.utc)
-
-    with pytest.raises(ChargingSessionInputError):
-        await charging_service.ingest_transaction_event(
-            fake_db_session(),
-            station_id=session.station_id,
-            evse_id=session.evse_id,
-            connector_id=session.connector_id,
-            transaction_id=session.ocpp_transaction_id,
-            event_type=SessionEventType.STARTED,
-            event_occurred_at=now,
-            seq_no=cast(int, True),
-        )
-
-
-@pytest.mark.asyncio
-async def test_ingest_transaction_event_rejects_update_on_completed_session(
+async def test_complete_session_refuses_a_repeated_stop_and_a_wrong_gun(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An event for an already-COMPLETED session is refused, not applied (F-B2)."""
+    """A duplicate stop does not re-stamp ended_at; another gun is an input error."""
     session = build_charging_session(status=SessionStatus.COMPLETED)
-    now = datetime.now(timezone.utc)
+    original_ended_at = session.ended_at
 
     async def get_by_transaction(
         db: AsyncSession, station_id: UUID, transaction_id: str
     ) -> ChargingSessionModel:
         return session
 
-    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert_event must not run on a COMPLETED session")
-
     monkeypatch.setattr(
         charging_repository, "get_session_by_transaction", get_by_transaction
     )
-    monkeypatch.setattr(charging_repository, "insert_event", fail_if_called)
 
     with pytest.raises(ChargingSessionStateError):
-        await charging_service.ingest_transaction_event(
+        await charging_service.complete_session(
             fake_db_session(),
             station_id=session.station_id,
-            evse_id=session.evse_id,
-            connector_id=session.connector_id,
-            transaction_id=session.ocpp_transaction_id,
-            event_type=SessionEventType.UPDATED,
-            event_occurred_at=now,
-            seq_no=5,
+            transaction_id="TX-TEST-001",
+            ended_at=NOW,
         )
-
-
-@pytest.mark.asyncio
-async def test_ingest_transaction_event_rejects_repeated_ended(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A duplicate Ended is refused and does not re-stamp ended_at (F-B2)."""
-    original_ended_at = datetime.now(timezone.utc)
-    session = build_charging_session(status=SessionStatus.COMPLETED)
-    session.ended_at = original_ended_at
-
-    async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
-    ) -> ChargingSessionModel:
-        return session
-
-    async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert_event must not run on a COMPLETED session")
-
-    monkeypatch.setattr(
-        charging_repository, "get_session_by_transaction", get_by_transaction
-    )
-    monkeypatch.setattr(charging_repository, "insert_event", fail_if_called)
-
-    with pytest.raises(ChargingSessionStateError):
-        await charging_service.ingest_transaction_event(
+    session.status = SessionStatus.ACTIVE
+    with pytest.raises(ChargingSessionInputError, match="topology"):
+        await charging_service.complete_session(
             fake_db_session(),
             station_id=session.station_id,
-            evse_id=session.evse_id,
-            connector_id=session.connector_id,
-            transaction_id=session.ocpp_transaction_id,
-            event_type=SessionEventType.ENDED,
-            event_occurred_at=datetime.now(timezone.utc),
-            seq_no=9,
+            connector_id=uuid4(),
+            transaction_id="TX-TEST-001",
+            ended_at=NOW,
         )
-
     assert session.ended_at == original_ended_at
 
 
 @pytest.mark.asyncio
-async def test_ingest_meter_values_rejects_sample_on_completed_session(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("status", [SessionStatus.PENDING, SessionStatus.COMPLETED])
+async def test_ingest_meter_values_refuses_a_session_that_is_not_active(
+    monkeypatch: pytest.MonkeyPatch, status: SessionStatus
 ) -> None:
-    """A MeterValues sample for a COMPLETED session is refused (F-B2)."""
-    session = build_charging_session(status=SessionStatus.COMPLETED)
+    """A sample for a session that is not ACTIVE is refused, nothing is stored (F-B2)."""
+    session = build_charging_session(status=status)
 
     async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
         return session
 
     async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
-        raise AssertionError("insert_measurement must not run on a COMPLETED session")
+        raise AssertionError("insert_measurement must not run")
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
     monkeypatch.setattr(charging_repository, "insert_measurement", fail_if_called)
@@ -268,238 +238,44 @@ async def test_ingest_meter_values_rejects_sample_on_completed_session(
         await charging_service.ingest_meter_values(
             fake_db_session(),
             session_id=session.session_id,
-            sample=MeterSampleInput(
-                sampled_at=datetime.now(timezone.utc), value_wh=Decimal("100")
-            ),
+            sample=MeterSampleInput(sampled_at=NOW, value_wh=Decimal("100")),
         )
 
 
 @pytest.mark.asyncio
-async def test_ingest_meter_values_ignores_stale_sample(
+async def test_ingest_meter_values_stores_wh_with_the_ocpp_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A sample older than the stored watermark is discarded, not applied (F-B2)."""
-    watermark = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-    session = build_charging_session(
-        meter_start_wh=Decimal("1000"),
-        meter_end_wh=Decimal("1500"),
-        meter_end_sampled_at=watermark,
-    )
-    inserted: list[Decimal] = []
+    """The energy register is stored in Wh with the default context and location."""
+    session = build_charging_session()
+    inserted: list[dict[str, object]] = []
 
     async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
         return session
 
-    async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        inserted.append(cast(Decimal, kwargs["value"]))
-
-    touched_at = watermark + timedelta(hours=1)
-    monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
-    monkeypatch.setattr(charging_service, "utc_now", lambda: touched_at)
-
-    result = await charging_service.ingest_meter_values(
-        fake_db_session(),
-        session_id=session.session_id,
-        sample=MeterSampleInput(
-            sampled_at=watermark - timedelta(minutes=5), value_wh=Decimal("1400")
-        ),
-    )
-
-    # The sample row is still appended to history (append-only)...
-    assert inserted == [Decimal("1400")]
-    # ...but the aggregate's watermark and meter reading are untouched.
-    assert session.meter_end_wh == Decimal("1500")
-    assert session.meter_end_sampled_at == watermark
-    assert (result.session_id, result.status) == (
-        session.session_id,
-        SessionStatus.ACTIVE,
-    )
-    # updated_at still records the activity: no other column changed, so the
-    # column's onupdate alone would not have fired.
-    assert session.updated_at == touched_at
-
-
-@pytest.mark.asyncio
-async def test_ingest_meter_values_applies_newer_sample(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A sample newer than the stored watermark advances the aggregate (F-B2)."""
-    watermark = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-    session = build_charging_session(
-        meter_start_wh=Decimal("1000"),
-        meter_end_wh=Decimal("1500"),
-        meter_end_sampled_at=watermark,
-    )
-
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
-        return session
-
-    async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        return None
+    async def insert_measurement(db: AsyncSession, **kwargs: object) -> None:
+        inserted.append(kwargs)
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
-
-    newer = watermark + timedelta(minutes=5)
-    await charging_service.ingest_meter_values(
-        fake_db_session(),
-        session_id=session.session_id,
-        sample=MeterSampleInput(sampled_at=newer, value_wh=Decimal("1600")),
-    )
-
-    assert session.meter_end_wh == Decimal("1600")
-    assert session.meter_end_sampled_at == newer
-    assert session.energy_delivered_wh == Decimal("600")
-
-
-@pytest.mark.asyncio
-async def test_ingest_meter_values_applies_equal_timestamp_sample(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A tie (same timestamp as the watermark) still applies (F-B2).
-
-    One OCPP message can carry several sampledValues sharing one
-    timestamp - rejecting ties would drop legitimate samples.
-    """
-    watermark = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-    session = build_charging_session(
-        meter_start_wh=Decimal("1000"),
-        meter_end_wh=Decimal("1500"),
-        meter_end_sampled_at=watermark,
-    )
-
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
-        return session
-
-    async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
+    monkeypatch.setattr(charging_repository, "insert_measurement", insert_measurement)
 
     await charging_service.ingest_meter_values(
         fake_db_session(),
         session_id=session.session_id,
-        sample=MeterSampleInput(sampled_at=watermark, value_wh=Decimal("1550")),
+        sample=MeterSampleInput(sampled_at=NOW, value_wh=Decimal("1500")),
     )
 
-    assert session.meter_end_wh == Decimal("1550")
-
-
-@pytest.mark.asyncio
-async def test_ingest_meter_values_still_applies_decreasing_register(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A newer-timestamped but lower reading still applies (F-B2).
-
-    This pins the item-27 boundary: fix #3 is a *time*-ordering check
-    only, never a value check. A meter reset (register decreases while
-    time still moves forward) is deliberately NOT caught here - that
-    belongs to the deferred reliability path. If this test starts
-    failing, someone has widened the fix beyond its intended scope.
-    """
-    watermark = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-    session = build_charging_session(
-        meter_start_wh=Decimal("1000"),
-        meter_end_wh=Decimal("1500"),
-        meter_end_sampled_at=watermark,
-    )
-
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
-        return session
-
-    async def insert_meter(db: AsyncSession, **kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_meter)
-
-    newer_but_lower = watermark + timedelta(minutes=5)
-    await charging_service.ingest_meter_values(
-        fake_db_session(),
-        session_id=session.session_id,
-        sample=MeterSampleInput(sampled_at=newer_but_lower, value_wh=Decimal("200")),
-    )
-
-    assert session.meter_end_wh == Decimal("200")
-    assert session.meter_end_sampled_at == newer_but_lower
-
-
-@pytest.mark.asyncio
-async def test_ingest_transaction_event_uses_sample_time_for_meter_watermark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The embedded meter sample's own timestamp is preferred over the event time (F-B2)."""
-    session = build_charging_session(meter_start_wh=Decimal("1000"))
-    sample_time = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-    event_time = sample_time + timedelta(minutes=10)
-
-    async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
-    ) -> ChargingSessionModel:
-        return session
-
-    async def insert_event(db: AsyncSession, **kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(
-        charging_repository, "get_session_by_transaction", get_by_transaction
-    )
-    monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: event_time)
-
-    await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=session.station_id,
-        evse_id=session.evse_id,
-        connector_id=session.connector_id,
-        transaction_id=session.ocpp_transaction_id,
-        event_type=SessionEventType.UPDATED,
-        event_occurred_at=event_time,
-        seq_no=1,
-        meter_end_wh=Decimal("1200"),
-        meter_end_sampled_at=sample_time,
-    )
-
-    assert session.meter_end_sampled_at == sample_time
-
-
-@pytest.mark.asyncio
-async def test_ingest_transaction_event_falls_back_to_event_time_for_watermark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Without an embedded sample timestamp, the event's own time is used (F-B2)."""
-    session = build_charging_session(meter_start_wh=Decimal("1000"))
-    event_time = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-
-    async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
-    ) -> ChargingSessionModel:
-        return session
-
-    async def insert_event(db: AsyncSession, **kwargs: object) -> None:
-        return None
-
-    monkeypatch.setattr(
-        charging_repository, "get_session_by_transaction", get_by_transaction
-    )
-    monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: event_time)
-
-    await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=session.station_id,
-        evse_id=session.evse_id,
-        connector_id=session.connector_id,
-        transaction_id=session.ocpp_transaction_id,
-        event_type=SessionEventType.UPDATED,
-        event_occurred_at=event_time,
-        seq_no=1,
-        meter_end_wh=Decimal("1200"),
-    )
-
-    assert session.meter_end_sampled_at == event_time
+    assert inserted == [
+        {
+            "session_id": session.session_id,
+            "sampled_at": NOW,
+            "measurand": "Energy.Active.Import.Register",
+            "value": Decimal("1500"),
+            "unit": "Wh",
+            "context": "Sample.Periodic",
+            "measurement_location": "Outlet",
+        }
+    ]
 
 
 @pytest.mark.asyncio

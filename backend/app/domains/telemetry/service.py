@@ -871,12 +871,14 @@ async def process_message(
 
     await telemetry_alerting.raise_alerts_for_reading(
         db,
+        organization_id=mapping.organization_id,
         vehicle_id=vehicle_id,
         previous_telemetry=previous_telemetry,
         message=message,
     )
     await telemetry_geofencing.raise_geofence_alerts_for_reading(
         db,
+        organization_id=mapping.organization_id,
         vehicle_id=vehicle_id,
         previous_telemetry=previous_telemetry,
         message=message,

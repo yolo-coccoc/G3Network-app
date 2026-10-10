@@ -554,6 +554,7 @@ async def test_battery_alert_payload_carries_station_coordinates(
 
     await telemetry_alerting.raise_alerts_for_reading(
         fake_db_session(),
+        organization_id=uuid4(),
         vehicle_id=vehicle_id,
         previous_telemetry=previous_telemetry,
         message=build_telemetry_envelope(soc=18.0).message,
@@ -589,6 +590,7 @@ async def test_soh_alert_uses_configured_threshold(
 
     await telemetry_alerting.raise_alerts_for_reading(
         fake_db_session(),
+        organization_id=uuid4(),
         vehicle_id=vehicle_id,
         previous_telemetry=previous_telemetry,
         message=build_telemetry_envelope(soc=80.0, soh_percent=79.0).message,

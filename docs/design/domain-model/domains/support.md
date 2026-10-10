@@ -18,10 +18,9 @@ Customer support: tickets, SOS, rescue dispatch, and maintenance bookings.
 erDiagram
   support_cases {
     uuid case_id PK
-    uuid organization_id FK "planned"
+    uuid organization_id FK
     uuid vehicle_id FK
     uuid driver_id FK
-    uuid assigned_partner_id FK "planned"
   }
   repair_partners {
     uuid partner_id PK
@@ -33,10 +32,9 @@ erDiagram
     uuid vehicle_id FK
     uuid partner_id FK
   }
-  support_cases }o..o| organizations : "organization_id"
+  support_cases }o--o| organizations : "organization_id"
   support_cases }o--o| vehicles : "vehicle_id"
   support_cases }o--o| drivers : "driver_id"
-  support_cases }o..o| repair_partners : "assigned_partner_id"
   repair_partners |o..|| organizations : "organization_id"
   maintenance_bookings }o..|| organizations : "organization_id"
   maintenance_bookings }o..|| vehicles : "vehicle_id"
@@ -49,22 +47,21 @@ Only key columns are shown. Solid line = built link, dashed = planned. Tables fr
 
 ### support_cases
 
-**No. 45** · ✅ built · owner: **customer** · features: F-I1, F-I2
+**No. 44** · ✅ built · owner: **customer** · features: F-I1, F-I2
 
 One support request: a ticket or an SOS, with its SLA timeline.
-Review of the support group postponed; the proposal is in SP-07.
+Review of the support group postponed; the proposal is in SP-07. The dispatch link to a repair partner (assigned_partner_id) is added with the parked repair_partners table (F-I4).
 
 | Column | Type | Null | Key | References | Meaning | Example |
 |---|---|---|---|---|---|---|
 | `case_id` | uuid | no | PK |  | Internal ID of the case. | `0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f` |
-| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | **📋 planned**: Customer organization the case belongs to. | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
+| `organization_id` | uuid | yes | FK | [organizations](identity.md#organizations).organization_id (on delete restrict) | Customer organization the case belongs to: the vehicle's owner when a VIN resolved, otherwise the one the caller named; NULL for a ticket with neither (an SOS always has one, because its alert belongs to an organization, NT-09). | `3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11` |
 | `case_type` | supportcasetype | no |  |  | Ordinary ticket or SOS. | `SOS` |
 | `category` | supportcasecategory | no |  |  | Business category of the problem. | `BREAKDOWN` |
 | `channel` | supportcasechannel | no |  |  | Where the case came in. | `IN_APP` |
 | `status` | supportcasestatus | no |  |  | Current lifecycle status. | `ACKNOWLEDGED` |
 | `vehicle_id` | uuid | yes | FK | [vehicles](vehicles.md#vehicles).vehicle_id (on delete restrict) | Vehicle concerned, resolved from the VIN; NULL if not resolved. | `7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44` |
 | `driver_id` | uuid | yes | FK | [drivers](drivers.md#drivers).driver_id (on delete restrict) | Driver who raised the case; NULL if not supplied. | `6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66` |
-| `assigned_partner_id` | uuid | yes | FK | [repair_partners](#repair_partners).partner_id (on delete restrict) | **📋 planned**: Repair/rescue partner the case was dispatched to. | `a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd` |
 | `vin` | varchar(17) | yes |  |  | VIN as sent with the case, kept even if the vehicle changes later. | `LZGJLGR4XNX000123` |
 | `error_code` | varchar(50) | yes |  |  | Vehicle fault code active when the case was created, as sent. | `P0A80` |
 | `location` | geography(POINT,4326) | yes |  |  | GPS position when the case was created. Snapshot only; no spatial index. | `POINT(106.7009 10.7769)` |
@@ -98,7 +95,7 @@ Review of the support group postponed; the proposal is in SP-07.
 
 ### repair_partners
 
-**No. 46** · 📋 planned · owner: **internal** · features: F-I4, F-I3
+**No. 45** · 📋 planned · owner: **internal** · features: F-I4, F-I3
 
 A workshop or rescue partner that support can dispatch to.
 
@@ -114,12 +111,11 @@ A workshop or rescue partner that support can dispatch to.
 
 **Referenced by**
 
-- [support_cases](#support_cases).assigned_partner_id (planned)
 - [maintenance_bookings](#maintenance_bookings).partner_id (planned)
 
 ### maintenance_bookings
 
-**No. 47** · 📋 planned · owner: **customer** · features: F-I3
+**No. 46** · 📋 planned · owner: **customer** · features: F-I3
 
 A maintenance appointment for a vehicle at a partner workshop.
 

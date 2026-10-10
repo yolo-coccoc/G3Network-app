@@ -33,10 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions.types import (
-    STOP_REASON_MAX_LENGTH,
-    SessionEventType,
-)
+from app.domains.charging_sessions.exceptions import ChargingSessionTokenError
+from app.domains.charging_sessions.types import STOP_REASON_MAX_LENGTH
 from app.domains.charging_stations.ocpp.command_types import (
     CommandResult,
     OutboundCommand,
@@ -296,14 +294,16 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         reservation_id: int | None = None,
         **_: object,
     ) -> call_result.StartTransaction:
-        """Open a charging session and hand the charger its transaction ID.
+        """Start the PENDING session holding the charger's token (CE-11).
 
         OCPP 1.6J requires the CSMS to assign the integer ``transactionId``;
         it comes from a database sequence (decision D6) and is stored, as text,
-        in the session's ``ocpp_transaction_id``. The ``idTag`` is stored on the
-        session and always accepted (decision D7).
+        in the session's ``ocpp_transaction_id``. The ``idTag`` must be the
+        single-use token a QR scan issued for this charger: it finds the
+        PENDING session, which turns ``ACTIVE``. Any other tag is answered
+        ``Invalid``, creates no session and stays in the raw log only.
 
-        If the connector already has an ``active`` session (a charger that
+        If the connector already has an ``ACTIVE`` session (a charger that
         rebooted mid-session, for example), a structured warning is logged and
         the old session is left untouched: orphan handling waits for real
         charger logs (decision D14).
@@ -311,14 +311,15 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         Args:
             connector_id: The gun number (``>= 1``; gun ``n`` is EVSE ``n`` /
                 connector ``1``).
-            id_tag: The tag that started the session.
+            id_tag: The tag that started the session; never log it (IS-07).
             meter_start: Meter reading at the start, an integer in Wh.
             timestamp: Start time (must carry a timezone).
             reservation_id: Reservation that led to this session; not stored.
             **_: Other optional OCPP fields.
 
         Returns:
-            ``Accepted`` with the newly allocated ``transactionId``.
+            ``Accepted`` with the newly allocated ``transactionId``, or
+            ``Invalid`` (transaction ID ``0``) for a token no scan issued.
 
         Raises:
             ValueError: If ``timestamp`` has no timezone.
@@ -330,40 +331,52 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingSessionInputError: If the tag or meter value is invalid.
 
         Side Effects:
-            Allocates an ID, creates the session and its ``Started`` event in
-            one atomic transaction; everything rolls back on any error above
-            (the ID number is then skipped, which is harmless).
+            Allocates an ID and activates the session in one atomic
+            transaction; everything rolls back on any error above (the ID
+            number is then skipped, which is harmless).
         """
         started_at = parse_ocpp_timestamp(timestamp)
-        async with self.session_factory.begin() as db:
-            (
-                station_id,
-                evse_id,
-                connector_uuid,
-            ) = await ocpp_state_service.resolve_ocpp16_topology(
-                db, self.id, connector_id
-            )
-            if await charging_sessions_service.has_active_session_on_connector(
-                db, connector_uuid
-            ):
-                logger.warning(
-                    "StartTransaction on a connector that already has an active session",
-                    extra={"ocpp_identity": self.id, "ocpp_connector_id": connector_id},
+        try:
+            async with self.session_factory.begin() as db:
+                (
+                    station_id,
+                    evse_id,
+                    connector_uuid,
+                ) = await ocpp_state_service.resolve_ocpp16_topology(
+                    db, self.id, connector_id
                 )
-            transaction_id = (
-                await charging_sessions_service.allocate_ocpp16_transaction_id(db)
+                if await charging_sessions_service.has_active_session_on_connector(
+                    db, connector_uuid
+                ):
+                    logger.warning(
+                        "StartTransaction on a connector that already has an "
+                        "active session",
+                        extra={
+                            "ocpp_identity": self.id,
+                            "ocpp_connector_id": connector_id,
+                        },
+                    )
+                transaction_id = (
+                    await charging_sessions_service.allocate_ocpp16_transaction_id(db)
+                )
+                await charging_sessions_service.activate_pending_session(
+                    db,
+                    station_id=station_id,
+                    evse_id=evse_id,
+                    connector_id=connector_uuid,
+                    id_token=id_tag,
+                    transaction_id=str(transaction_id),
+                    started_at=started_at,
+                    meter_start_wh=to_decimal(meter_start, "meter_start"),
+                )
+        except ChargingSessionTokenError:
+            logger.warning(
+                "StartTransaction refused: no scan issued its token",
+                extra={"ocpp_identity": self.id, "ocpp_connector_id": connector_id},
             )
-            await charging_sessions_service.ingest_transaction_event(
-                db,
-                station_id=station_id,
-                evse_id=evse_id,
-                connector_id=connector_uuid,
-                transaction_id=str(transaction_id),
-                event_type=SessionEventType.STARTED,
-                event_occurred_at=started_at,
-                seq_no=None,
-                meter_start_wh=to_decimal(meter_start, "meter_start"),
-                id_tag=id_tag,
+            return call_result.StartTransaction(
+                transaction_id=0,
+                id_tag_info={"status": AuthorizationStatus.invalid},
             )
         return call_result.StartTransaction(
             transaction_id=transaction_id,
@@ -386,11 +399,9 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         ``StopTransaction`` carries no connector, so the session (and with it
         the topology) is looked up in the database by ``(station,
         transactionId)`` — nothing is remembered per connection. The closing
-        ``meterStop`` is always stored as ``meter_stop_wh``; the session's
-        ``meter_end_wh`` follows the existing forward-in-time rule, so a stale
-        timestamp never overwrites a newer reading. Meter values sampled during
-        the session (``transactionData``) are stored first, while the session is
-        still ``active``.
+        ``meterStop`` is always stored as ``meter_stop_wh``, the billing figure
+        (CE-12). Meter values sampled during the session (``transactionData``)
+        are stored first, while the session is still ``ACTIVE``.
 
         JSON-schema validation is switched off for this action on purpose: the
         1.6 schema restricts ``reason`` and every sampled-value field to fixed
@@ -408,8 +419,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             reason: Why the session stopped (``EmergencyStop``,
                 ``EVDisconnected``, a vendor value…), stored as sent.
             id_tag: Tag that stopped the session; not stored.
-            transaction_data: Meter values sampled during the session; energy
-                samples update the session total, other measurands are stored
+            transaction_data: Meter values sampled during the session, stored
                 as measurements.
             **_: Other optional OCPP fields.
 
@@ -425,8 +435,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
-            Stores the samples, updates the session and appends its ``Ended``
-            event in one atomic transaction; rolls back entirely on any error.
+            Stores the samples and completes the session in one atomic
+            transaction; rolls back entirely on any error.
         """
         stopped_at = parse_ocpp_timestamp(timestamp)
         closing_meter_wh = to_decimal(meter_stop, "meter_stop")
@@ -440,17 +450,13 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 db, station_id=station_id, transaction_id=transaction_key
             )
             await self._store_extraction(db, reference.session_id, extraction)
-            await charging_sessions_service.ingest_transaction_event(
+            await charging_sessions_service.complete_session(
                 db,
                 station_id=reference.station_id,
                 evse_id=reference.evse_id,
                 connector_id=reference.connector_id,
                 transaction_id=transaction_key,
-                event_type=SessionEventType.ENDED,
-                event_occurred_at=stopped_at,
-                seq_no=None,
-                meter_end_wh=closing_meter_wh,
-                meter_end_sampled_at=stopped_at,
+                ended_at=stopped_at,
                 stop_reason=reason[:STOP_REASON_MAX_LENGTH] if reason else None,
                 meter_stop_wh=closing_meter_wh,
             )
@@ -469,10 +475,10 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
 
         The session is found in the database by ``(station, transactionId)``,
         so a message that arrives on a new connection (after a reconnect) is
-        handled exactly like one on the original connection. Energy-register
-        samples update the session's energy total; every other measurand
-        (``SoC``, power, voltage, current, temperature, ``Power.Offered``, and
-        vendor-specific names) is stored as a measurement.
+        handled exactly like one on the original connection. Every measurand
+        (the energy register, ``SoC``, power, voltage, current, temperature,
+        ``Power.Offered``, and vendor-specific names) is stored as a
+        measurement, in its fixed unit (CE-14).
 
         JSON-schema validation is switched off for this action on purpose (the
         1.6 schema rejects any measurand, unit, context, phase or location
@@ -506,8 +512,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
-            Appends the samples and updates the session in one atomic
-            transaction; rolls back entirely on any error above.
+            Appends the samples in one atomic transaction; rolls back entirely
+            on any error above.
         """
         extraction = extract_v16_measurements(meter_value)
         self._log_skipped_samples("MeterValues", extraction)
@@ -542,9 +548,9 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             extraction: Energy samples and other measurements to store.
 
         Side Effects:
-            Energy samples go through ``ingest_meter_values`` (aggregate update
-            plus a measurement row), everything else through
-            ``ingest_measurements``; both refuse a ``COMPLETED`` session.
+            Energy samples go through ``ingest_meter_values``, everything else
+            through ``ingest_measurements``; both refuse a session that is not
+            ``ACTIVE``.
         """
         for sample in extraction.energy:
             await charging_sessions_service.ingest_meter_values(

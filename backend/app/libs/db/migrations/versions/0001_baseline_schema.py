@@ -14,7 +14,7 @@ Never run this migration against a database holding data that must be kept.
 
 Objects the SQLAlchemy models do not describe, and which autogenerate
 therefore cannot produce, are written by hand at the end of ``upgrade()``:
-the OCPP 1.6J transaction-ID sequence, the five TimescaleDB hypertables and
+the OCPP 1.6J transaction-ID sequence, the four TimescaleDB hypertables and
 the change history of the tracked tables (``_TRACKED_TABLES``: a
 ``<singular>_history`` table and an ``AFTER UPDATE`` trigger each, built by
 ``app.libs.db.history_ddl``; ``env.py`` keeps ``*_history`` out of
@@ -51,7 +51,6 @@ _OCPP16_TRANSACTION_ID_SEQUENCE = "charging_ocpp16_transaction_id_seq"
 # Every one keeps the time column in its primary key, as TimescaleDB requires.
 _HYPERTABLES = (
     ("telemetry", "recorded_at"),
-    ("charging_session_events", "event_occurred_at"),
     ("charging_ocpp_messages", "occurred_at"),
     ("charging_session_measurements", "sampled_at"),
     ("access_audit_logs", "occurred_at"),
@@ -78,6 +77,14 @@ _TRACKED_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("charging_stations", "charging_station_history", ()),
     ("charging_evses", "charging_evse_history", ()),
     ("charging_connectors", "charging_connector_history", ()),
+    (
+        "organization_notification_settings",
+        "organization_notification_setting_history",
+        (),
+    ),
+    ("tariffs", "tariff_history", ()),
+    ("charging_session_bills", "charging_session_bill_history", ()),
+    ("wallets", "wallet_history", ("balance",)),
 )
 
 # Period views over change history (DM-22, DM-27). Code reads the periods of a
@@ -370,6 +377,7 @@ def upgrade() -> None:
         sa.Column(
             "notification_id", sa.BigInteger(), autoincrement=True, nullable=False
         ),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column(
             "notification_type",
             sa.Enum(
@@ -379,6 +387,12 @@ def upgrade() -> None:
                 "DEVICE_OFFLINE_ALERT",
                 "SOS_ALERT",
                 "GEOFENCE_ALERT",
+                "NO_DRIVER_CHECK_IN_ALERT",
+                "OUTSIDE_DRIVER_CHECK_IN",
+                "NO_TRIP_STARTED",
+                "LOW_WALLET_BALANCE",
+                "TOP_UP_RECEIVED",
+                "CHARGING_RECEIPT",
                 name="notificationtype",
             ),
             nullable=False,
@@ -389,15 +403,29 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("subject_type", sa.String(length=30), nullable=True),
+        sa.Column("subject_id", sa.UUID(), nullable=True),
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("body", sa.String(length=500), nullable=False),
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "(subject_type IS NULL) = (subject_id IS NULL)",
+            name="ck_notifications_subject_both_or_neither",
+        ),
         sa.ForeignKeyConstraint(
-            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="CASCADE"
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
         ),
         sa.PrimaryKeyConstraint("notification_id"),
+    )
+    op.create_index(
+        "ix_notifications_organization_cursor",
+        "notifications",
+        ["organization_id", "notification_id"],
+        unique=False,
     )
     op.create_index(
         "ix_notifications_vehicle_id", "notifications", ["vehicle_id"], unique=False
@@ -1199,27 +1227,43 @@ def upgrade() -> None:
         "charging_sessions",
         sa.Column("session_id", sa.UUID(), nullable=False),
         sa.Column("station_id", sa.UUID(), nullable=False),
-        sa.Column("evse_id", sa.UUID(), nullable=False),
-        sa.Column("connector_id", sa.UUID(), nullable=False),
-        sa.Column("ocpp_transaction_id", sa.String(length=255), nullable=False),
+        sa.Column("evse_id", sa.UUID(), nullable=True),
+        sa.Column("connector_id", sa.UUID(), nullable=True),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("started_by", sa.UUID(), nullable=False),
+        sa.Column("vehicle_id", sa.UUID(), nullable=True),
+        sa.Column("ocpp_transaction_id", sa.String(length=36), nullable=True),
         sa.Column(
             "status",
-            sa.Enum("active", "completed", name="chargingsessionstatus"),
+            sa.Enum(
+                "PENDING",
+                "ACTIVE",
+                "COMPLETED",
+                "ABANDONED",
+                name="chargingsessionstatus",
+            ),
             nullable=False,
         ),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("ended_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("meter_start_wh", sa.Numeric(precision=24, scale=3), nullable=True),
-        sa.Column("meter_end_wh", sa.Numeric(precision=24, scale=3), nullable=True),
-        sa.Column("meter_end_sampled_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "energy_delivered_wh", sa.Numeric(precision=24, scale=3), nullable=True
-        ),
-        sa.Column("id_tag", sa.String(length=20), nullable=True),
+        sa.Column("id_token", sa.String(length=255), nullable=False),
         sa.Column("stop_reason", sa.String(length=30), nullable=True),
         sa.Column("meter_stop_wh", sa.Numeric(precision=24, scale=3), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "status <> 'COMPLETED' OR ended_at IS NOT NULL",
+            name="ck_charging_sessions_completed_ended_at",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('ACTIVE', 'COMPLETED') OR (ocpp_transaction_id IS NOT NULL AND evse_id IS NOT NULL AND connector_id IS NOT NULL AND started_at IS NOT NULL AND meter_start_wh IS NOT NULL)",
+            name="ck_charging_sessions_started_columns",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('PENDING', 'ABANDONED') OR ocpp_transaction_id IS NULL",
+            name="ck_charging_sessions_unstarted_no_transaction",
+        ),
         sa.ForeignKeyConstraint(
             ["connector_id"], ["charging_connectors.connector_id"], ondelete="RESTRICT"
         ),
@@ -1227,14 +1271,16 @@ def upgrade() -> None:
             ["evse_id"], ["charging_evses.evse_id"], ondelete="RESTRICT"
         ),
         sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["started_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
             ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
         ),
-        sa.PrimaryKeyConstraint("session_id"),
-        sa.UniqueConstraint(
-            "station_id",
-            "ocpp_transaction_id",
-            name="uq_charging_sessions_station_transaction",
+        sa.ForeignKeyConstraint(
+            ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
         ),
+        sa.PrimaryKeyConstraint("session_id"),
     )
     op.create_index(
         "ix_charging_sessions_connector_status",
@@ -1250,6 +1296,19 @@ def upgrade() -> None:
         "charging_sessions",
         ["evse_id", "status"],
         unique=False,
+    )
+    op.create_index(
+        "ix_charging_sessions_organization_started",
+        "charging_sessions",
+        ["organization_id", "started_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_sessions_pending_token",
+        "charging_sessions",
+        ["station_id", "id_token"],
+        unique=False,
+        postgresql_where=sa.text("status = 'PENDING'"),
     )
     op.create_index(
         "ix_charging_sessions_started_at",
@@ -1268,6 +1327,19 @@ def upgrade() -> None:
         "charging_sessions",
         ["status", "updated_at"],
         unique=False,
+    )
+    op.create_index(
+        "ix_charging_sessions_vehicle_id",
+        "charging_sessions",
+        ["vehicle_id"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_charging_sessions_station_transaction",
+        "charging_sessions",
+        ["station_id", "ocpp_transaction_id"],
+        unique=True,
+        postgresql_where=sa.text("ocpp_transaction_id IS NOT NULL"),
     )
     op.create_table(
         "fleet_vehicle_memberships",
@@ -1573,6 +1645,7 @@ def upgrade() -> None:
     op.create_table(
         "support_cases",
         sa.Column("case_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=True),
         sa.Column(
             "case_type",
             sa.Enum("TICKET", "SOS", name="supportcasetype"),
@@ -1637,6 +1710,9 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(
             ["driver_id"], ["drivers.driver_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
         ),
         sa.ForeignKeyConstraint(
             ["vehicle_id"], ["vehicles.vehicle_id"], ondelete="RESTRICT"
@@ -1816,28 +1892,6 @@ def upgrade() -> None:
         postgresql_nulls_not_distinct=True,
     )
     op.create_table(
-        "charging_session_events",
-        sa.Column("event_id", sa.UUID(), nullable=False),
-        sa.Column("event_occurred_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("session_id", sa.UUID(), nullable=False),
-        sa.Column(
-            "event_type",
-            sa.Enum("Started", "Updated", "Ended", name="chargingsessioneventtype"),
-            nullable=False,
-        ),
-        sa.Column("seq_no", sa.Integer(), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["session_id"], ["charging_sessions.session_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("event_id", "event_occurred_at"),
-    )
-    op.create_index(
-        "ix_charging_session_events_session_time",
-        "charging_session_events",
-        ["session_id", "event_occurred_at", "event_id"],
-        unique=False,
-    )
-    op.create_table(
         "charging_session_measurements",
         sa.Column("measurement_id", sa.UUID(), nullable=False),
         sa.Column("sampled_at", sa.DateTime(timezone=True), nullable=False),
@@ -1845,9 +1899,9 @@ def upgrade() -> None:
         sa.Column("measurand", sa.String(length=60), nullable=False),
         sa.Column("value", sa.Numeric(precision=24, scale=6), nullable=False),
         sa.Column("unit", sa.String(length=20), nullable=True),
-        sa.Column("context", sa.String(length=30), nullable=True),
+        sa.Column("context", sa.String(length=30), nullable=False),
         sa.Column("phase", sa.String(length=10), nullable=True),
-        sa.Column("location", sa.String(length=20), nullable=True),
+        sa.Column("measurement_location", sa.String(length=20), nullable=False),
         sa.ForeignKeyConstraint(
             ["session_id"], ["charging_sessions.session_id"], ondelete="RESTRICT"
         ),
@@ -1858,6 +1912,290 @@ def upgrade() -> None:
         "charging_session_measurements",
         ["session_id", "measurand", "sampled_at"],
         unique=False,
+    )
+    op.create_table(
+        "payments",
+        sa.Column("payment_id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("purpose", sa.String(length=20), nullable=False),
+        sa.Column("refund_of_payment_id", sa.UUID(), nullable=True),
+        sa.Column("amount", sa.Numeric(precision=14, scale=2), nullable=False),
+        sa.Column("currency", sa.CHAR(length=3), nullable=False),
+        sa.Column("method", sa.String(length=20), nullable=False),
+        sa.Column("transfer_code", sa.String(length=20), nullable=True),
+        sa.Column("gateway_reference", sa.String(length=100), nullable=True),
+        sa.Column("gateway_result_code", sa.String(length=30), nullable=True),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "(purpose = 'REFUND') = (refund_of_payment_id IS NOT NULL)",
+            name="ck_payments_refund_links_payment",
+        ),
+        sa.ForeignKeyConstraint(
+            ["refund_of_payment_id"], ["payments.payment_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("payment_id"),
+    )
+    op.create_index(
+        "ix_payments_user_created", "payments", ["user_id", "created_at"], unique=False
+    )
+    op.create_index(
+        "uq_payments_method_gateway_reference",
+        "payments",
+        ["method", "gateway_reference"],
+        unique=True,
+        postgresql_where=sa.text("gateway_reference IS NOT NULL"),
+    )
+    op.create_index(
+        "uq_payments_transfer_code",
+        "payments",
+        ["transfer_code"],
+        unique=True,
+        postgresql_where=sa.text("transfer_code IS NOT NULL"),
+    )
+    op.create_table(
+        "wallets",
+        sa.Column("wallet_id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("balance", sa.Numeric(precision=14, scale=2), nullable=False),
+        sa.Column("currency", sa.CHAR(length=3), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("wallet_id"),
+    )
+    op.create_index("uq_wallets_user_id", "wallets", ["user_id"], unique=True)
+    op.create_table(
+        "organization_notification_settings",
+        sa.Column("organization_notification_setting_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("notification_type", sa.String(length=40), nullable=False),
+        sa.Column("push_enabled", sa.Boolean(), nullable=False),
+        sa.Column("email_enabled", sa.Boolean(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("organization_notification_setting_id"),
+    )
+    op.create_index(
+        "uq_organization_notification_settings_type",
+        "organization_notification_settings",
+        ["organization_id", "notification_type"],
+        unique=True,
+    )
+    op.create_table(
+        "tariffs",
+        sa.Column("tariff_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("location_id", sa.UUID(), nullable=True),
+        sa.Column("name", sa.String(length=100), nullable=False),
+        sa.Column("currency", sa.CHAR(length=3), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["location_id"], ["charging_locations.location_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("tariff_id"),
+    )
+    op.create_index("ix_tariffs_location_id", "tariffs", ["location_id"], unique=False)
+    op.create_index(
+        "uq_tariffs_active_owner_location",
+        "tariffs",
+        ["organization_id", "location_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'ACTIVE'"),
+        postgresql_nulls_not_distinct=True,
+    )
+    op.create_table(
+        "notification_recipients",
+        sa.Column(
+            "notification_recipient_id",
+            sa.BigInteger(),
+            autoincrement=True,
+            nullable=False,
+        ),
+        sa.Column("notification_id", sa.BigInteger(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("seen_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["notification_id"], ["notifications.notification_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("notification_recipient_id"),
+    )
+    op.create_index(
+        "ix_notification_recipients_inbox",
+        "notification_recipients",
+        ["user_id", "notification_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_notification_recipients_unseen",
+        "notification_recipients",
+        ["user_id"],
+        unique=False,
+        postgresql_where=sa.text("seen_at IS NULL"),
+    )
+    op.create_index(
+        "uq_notification_recipients_notification_user",
+        "notification_recipients",
+        ["notification_id", "user_id"],
+        unique=True,
+    )
+    op.create_table(
+        "tariff_versions",
+        sa.Column("tariff_version_id", sa.UUID(), nullable=False),
+        sa.Column("tariff_id", sa.UUID(), nullable=False),
+        sa.Column("version_no", sa.Integer(), nullable=False),
+        sa.Column("effective_from", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("price_per_kwh", sa.Numeric(precision=12, scale=2), nullable=False),
+        sa.Column(
+            "time_periods", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        sa.Column("vat_rate_percent", sa.Numeric(precision=4, scale=2), nullable=False),
+        sa.Column("change_reason", sa.String(length=200), nullable=False),
+        sa.Column("created_by", sa.UUID(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "price_per_kwh >= 0", name="ck_tariff_versions_price_non_negative"
+        ),
+        sa.CheckConstraint(
+            "vat_rate_percent BETWEEN 0 AND 100",
+            name="ck_tariff_versions_vat_rate_range",
+        ),
+        sa.ForeignKeyConstraint(["created_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["tariff_id"], ["tariffs.tariff_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("tariff_version_id"),
+    )
+    op.create_index(
+        "ix_tariff_versions_tariff_effective",
+        "tariff_versions",
+        ["tariff_id", "effective_from"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_tariff_versions_tariff_version_no",
+        "tariff_versions",
+        ["tariff_id", "version_no"],
+        unique=True,
+    )
+    op.create_table(
+        "charging_session_bills",
+        sa.Column("charging_session_bill_id", sa.UUID(), nullable=False),
+        sa.Column("session_id", sa.UUID(), nullable=False),
+        sa.Column("tariff_version_id", sa.UUID(), nullable=False),
+        sa.Column("price_per_kwh", sa.Numeric(precision=12, scale=2), nullable=False),
+        sa.Column("vat_rate_percent", sa.Numeric(precision=4, scale=2), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("energy_wh", sa.Numeric(precision=24, scale=3), nullable=True),
+        sa.Column("energy_source", sa.String(length=20), nullable=True),
+        sa.Column(
+            "amount_before_vat", sa.Numeric(precision=14, scale=2), nullable=True
+        ),
+        sa.Column("vat_amount", sa.Numeric(precision=14, scale=2), nullable=True),
+        sa.Column("billed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "status <> 'BILLED' OR (energy_wh IS NOT NULL AND energy_source IS NOT NULL AND amount_before_vat IS NOT NULL AND vat_amount IS NOT NULL AND billed_at IS NOT NULL)",
+            name="ck_charging_session_bills_billed_amounts",
+        ),
+        sa.CheckConstraint(
+            "status NOT IN ('QUOTED', 'VOID') OR (energy_wh IS NULL AND energy_source IS NULL AND amount_before_vat IS NULL AND vat_amount IS NULL AND billed_at IS NULL)",
+            name="ck_charging_session_bills_unbilled_no_amounts",
+        ),
+        sa.ForeignKeyConstraint(
+            ["session_id"], ["charging_sessions.session_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["tariff_version_id"],
+            ["tariff_versions.tariff_version_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("charging_session_bill_id"),
+        sa.UniqueConstraint("session_id", name="uq_charging_session_bills_session_id"),
+    )
+    op.create_index(
+        "ix_charging_session_bills_status_created",
+        "charging_session_bills",
+        ["status", "created_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_session_bills_tariff_version_id",
+        "charging_session_bills",
+        ["tariff_version_id"],
+        unique=False,
+    )
+    op.create_table(
+        "wallet_transactions",
+        sa.Column("wallet_transaction_id", sa.UUID(), nullable=False),
+        sa.Column("wallet_id", sa.UUID(), nullable=False),
+        sa.Column("transaction_type", sa.String(length=20), nullable=False),
+        sa.Column("amount", sa.Numeric(precision=14, scale=2), nullable=False),
+        sa.Column("balance_after", sa.Numeric(precision=14, scale=2), nullable=False),
+        sa.Column("payment_id", sa.UUID(), nullable=True),
+        sa.Column("charging_session_bill_id", sa.UUID(), nullable=True),
+        sa.Column("created_by", sa.UUID(), nullable=True),
+        sa.Column("reason", sa.String(length=200), nullable=True),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "(transaction_type <> 'TOP_UP' OR amount > 0) AND (transaction_type NOT IN ('SESSION_BILL', 'REFUND') OR amount < 0)",
+            name="ck_wallet_transactions_amount_sign",
+        ),
+        sa.CheckConstraint(
+            "(transaction_type NOT IN ('TOP_UP', 'REFUND') OR payment_id IS NOT NULL) AND (transaction_type <> 'SESSION_BILL' OR charging_session_bill_id IS NOT NULL) AND (transaction_type <> 'ADJUSTMENT' OR (created_by IS NOT NULL AND reason IS NOT NULL))",
+            name="ck_wallet_transactions_links_match_type",
+        ),
+        sa.ForeignKeyConstraint(
+            ["charging_session_bill_id"],
+            ["charging_session_bills.charging_session_bill_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(["created_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["payment_id"], ["payments.payment_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["wallet_id"], ["wallets.wallet_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("wallet_transaction_id"),
+    )
+    op.create_index(
+        "ix_wallet_transactions_payment_id",
+        "wallet_transactions",
+        ["payment_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_wallet_transactions_wallet_time",
+        "wallet_transactions",
+        ["wallet_id", "occurred_at"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_wallet_transactions_session_bill",
+        "wallet_transactions",
+        ["charging_session_bill_id"],
+        unique=True,
+        postgresql_where=sa.text("charging_session_bill_id IS NOT NULL"),
     )
     op.execute(
         f"CREATE SEQUENCE {_OCPP16_TRANSACTION_ID_SEQUENCE} AS integer "

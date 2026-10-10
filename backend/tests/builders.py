@@ -153,11 +153,13 @@ def build_support_case_record(
     resolved_at: datetime | None = None,
     closed_at: datetime | None = None,
     driver_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> SupportCaseModel:
     """Create a minimal ORM support case for the service to convert into a response."""
     now = datetime.now(timezone.utc)
     return SupportCaseModel(
         case_id=uuid4(),
+        organization_id=organization_id,
         case_type=case_type,
         category=SupportCaseCategory.TECHNICAL,
         channel=SupportCaseChannel.IN_APP,
@@ -324,24 +326,27 @@ def build_charging_session(
     *,
     status: SessionStatus = SessionStatus.ACTIVE,
     meter_start_wh: Decimal | None = None,
-    meter_end_wh: Decimal | None = None,
-    meter_end_sampled_at: datetime | None = None,
+    meter_stop_wh: Decimal | None = None,
 ) -> ChargingSessionModel:
-    """Create a minimal aggregate session for the charging service test."""
+    """Create a minimal started session for the charging service test."""
     now = datetime.now(timezone.utc)
+    is_started = status in (SessionStatus.ACTIVE, SessionStatus.COMPLETED)
     return ChargingSessionModel(
         session_id=uuid4(),
         station_id=uuid4(),
-        evse_id=uuid4(),
-        connector_id=uuid4(),
-        ocpp_transaction_id="TX-TEST-001",
+        evse_id=uuid4() if is_started else None,
+        connector_id=uuid4() if is_started else None,
+        organization_id=uuid4(),
+        started_by=uuid4(),
+        vehicle_id=None,
+        ocpp_transaction_id="TX-TEST-001" if is_started else None,
         status=status,
-        started_at=now,
-        ended_at=None,
+        started_at=now if is_started else None,
+        ended_at=now if status is SessionStatus.COMPLETED else None,
         meter_start_wh=meter_start_wh,
-        meter_end_wh=meter_end_wh,
-        meter_end_sampled_at=meter_end_sampled_at,
-        energy_delivered_wh=None,
+        id_token="TOKEN-TEST-01",
+        stop_reason=None,
+        meter_stop_wh=meter_stop_wh,
         created_at=now,
         updated_at=now,
     )

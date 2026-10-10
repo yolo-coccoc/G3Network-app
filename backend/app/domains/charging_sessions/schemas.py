@@ -1,10 +1,10 @@
-"""Pydantic response schemas for the charging session monitoring MVP.
+"""Pydantic schemas for the charging session endpoints.
 
-The schemas only expose the session aggregate (plus, on the detail read, a
-summary computed from its measurements), lifecycle events, canonical Wh meter
-samples, the other measurements, the per-station energy summary and the
-per-station energy time series. Raw OCPP payloads, authorization, payment or
-debt are not part of the contract.
+The schemas expose the session (plus, on the detail read, a summary computed
+from its measurements), the energy samples, the other measurements, the
+per-station energy summary and time series, and the scan that creates a
+PENDING session. Raw OCPP payloads are not part of the contract, and the
+single-use token is returned only to the scan that created it (IS-07).
 """
 
 from datetime import datetime
@@ -15,36 +15,65 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.charging_sessions.types import (
     EnergySeriesGranularity,
-    SessionEventType,
     SessionStatus,
 )
 from app.libs.common.config import settings
 
 
-class ChargingSessionResponse(BaseModel):
-    """Session aggregate information needed for happy-path monitoring.
+class ChargingSessionScanRequest(BaseModel):
+    """The scan of a charger's QR code that creates a PENDING session (CE-10).
 
     Attributes:
-        session_id: Internal UUID of the aggregate.
-        station_id: UUID of the station that owns the transaction.
-        evse_id: UUID of the EVSE that owns the transaction.
-        connector_id: UUID of the connector delivering power.
-        ocpp_transaction_id: The transaction identity issued by the station.
-        status: ``active`` or ``completed``.
-        started_at: The time of Started.
-        ended_at: The time of Ended, nullable while active.
-        meter_start_wh: The meter reading at the start of the session.
-        meter_end_wh: The most recently observed meter reading, as of
-            ``meter_end_sampled_at`` (F-B2).
-        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
-            nullable (F-B2).
-        energy_delivered_wh: The difference between the start/end meter
-            readings.
-        id_tag: The idTag that started the session (OCPP 1.6J), nullable.
+        station_id: UUID of the charger the QR code names.
+        organization_id: UUID of the organization that pays.
+        started_by: UUID of the user who scanned the code (until the API
+            authenticates callers, the body names them).
+        vehicle_id: UUID of the truck being charged, if known (CE-13).
+    """
+
+    station_id: UUID
+    organization_id: UUID
+    started_by: UUID
+    vehicle_id: UUID | None = None
+
+
+class ChargingSessionScanResponse(BaseModel):
+    """The PENDING session a scan created.
+
+    Attributes:
+        session_id: UUID of the new session.
+        station_id: UUID of the charger.
+        status: Always ``PENDING``.
+        id_token: The single-use token for the remote start; shown only here.
+    """
+
+    session_id: UUID
+    station_id: UUID
+    status: SessionStatus
+    id_token: str
+
+
+class ChargingSessionResponse(BaseModel):
+    """A charging session as the monitoring endpoints show it.
+
+    Attributes:
+        session_id: Internal UUID of the session.
+        station_id: UUID of the charger.
+        evse_id: UUID of the EVSE, ``null`` until the charger starts.
+        connector_id: UUID of the connector, ``null`` until the charger starts.
+        organization_id: UUID of the organization that pays.
+        started_by: UUID of the user who scanned the QR code.
+        vehicle_id: UUID of the truck being charged, nullable.
+        ocpp_transaction_id: The charger's transaction identity, ``null``
+            until the charger starts.
+        status: ``PENDING``, ``ACTIVE``, ``COMPLETED`` or ``ABANDONED``.
+        started_at: The charger's start time, ``null`` until it starts.
+        ended_at: The charger's stop time, ``null`` until completed.
+        meter_start_wh: The meter reading declared at the start.
         stop_reason: Why the session stopped, as reported, nullable.
-        meter_stop_wh: The charger's authoritative closing meter reading
-            (OCPP 1.6J ``meterStop``), nullable.
-        created_at: The time the aggregate was created.
+        meter_stop_wh: The meter reading declared in the stop message, the
+            billing figure (CE-12), nullable.
+        created_at: When the session was created: the scan time.
         updated_at: The time of the last update.
     """
 
@@ -52,17 +81,16 @@ class ChargingSessionResponse(BaseModel):
 
     session_id: UUID
     station_id: UUID
-    evse_id: UUID
-    connector_id: UUID
-    ocpp_transaction_id: str
+    evse_id: UUID | None
+    connector_id: UUID | None
+    organization_id: UUID
+    started_by: UUID
+    vehicle_id: UUID | None
+    ocpp_transaction_id: str | None
     status: SessionStatus
-    started_at: datetime
+    started_at: datetime | None
     ended_at: datetime | None
     meter_start_wh: Decimal | None
-    meter_end_wh: Decimal | None
-    meter_end_sampled_at: datetime | None
-    energy_delivered_wh: Decimal | None
-    id_tag: str | None
     stop_reason: str | None
     meter_stop_wh: Decimal | None
     created_at: datetime
@@ -70,24 +98,27 @@ class ChargingSessionResponse(BaseModel):
 
 
 class ChargingSessionDetailResponse(ChargingSessionResponse):
-    """One session aggregate plus a summary computed at read time (F-B2).
+    """One session plus a summary computed at read time (F-B2).
 
-    The summary fields are derived from ``charging_session_measurements`` on
-    every read, never stored. OCPP 2.0.1 sessions store only the energy
-    register, so their SoC and power fields are ``null``.
+    The summary fields are derived from the session and its measurements on
+    every read, never stored.
 
     Attributes:
+        energy_delivered_wh: Stop reading minus start reading; while the
+            session runs the newest outlet energy measurement stands in for
+            the stop reading. ``null`` without a start reading.
         duration_seconds: ``ended_at - started_at``, or now - ``started_at``
-            while the session is active; never negative.
+            while the session is active; never negative; ``0`` before the
+            start.
         soc_start_percent: Value of the session's first ``SoC`` sample,
             nullable.
         soc_end_percent: Value of the session's latest ``SoC`` sample,
             nullable (the latest so far while active).
-        max_power_kw: Highest ``Power.Active.Import`` sample, converted to
-            kW (``W`` samples are divided by 1000; samples in another unit
-            are ignored), nullable.
+        max_power_kw: Highest outlet ``Power.Active.Import`` sample in kW
+            (stored in W, CE-14), nullable.
     """
 
+    energy_delivered_wh: Decimal | None
     duration_seconds: int = Field(..., ge=0)
     soc_start_percent: float | None
     soc_end_percent: float | None
@@ -110,26 +141,6 @@ class ChargingSessionListResponse(BaseModel):
     page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
-class ChargingSessionEventResponse(BaseModel):
-    """One lifecycle event of a session.
-
-    Attributes:
-        event_id: Internal UUID of the event.
-        event_occurred_at: The time the event occurred.
-        session_id: UUID of the session that owns the event.
-        event_type: ``Started``, ``Updated`` or ``Ended``.
-        seq_no: OCPP's own sequence number, nullable (F-B2).
-    """
-
-    model_config = ConfigDict(from_attributes=True)
-
-    event_id: UUID
-    event_occurred_at: datetime
-    session_id: UUID
-    event_type: SessionEventType
-    seq_no: int | None
-
-
 class ChargingSessionMeterValueResponse(BaseModel):
     """One canonical Wh meter sample of a session.
 
@@ -145,22 +156,6 @@ class ChargingSessionMeterValueResponse(BaseModel):
     sampled_at: datetime
     session_id: UUID
     value_wh: Decimal
-
-
-class ChargingSessionEventListResponse(BaseModel):
-    """A paginated list of events for a session.
-
-    Attributes:
-        items: The events in the current page.
-        total: The total number of events for the session.
-        page: The current page, starting at one.
-        page_size: The maximum number of items in the page.
-    """
-
-    items: list[ChargingSessionEventResponse]
-    total: int = Field(..., ge=0)
-    page: int = Field(..., ge=1)
-    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
 class ChargingSessionMeterValueListResponse(BaseModel):
@@ -188,11 +183,12 @@ class ChargingSessionMeasurementResponse(BaseModel):
         session_id: UUID of the session that owns it.
         measurand: OCPP measurand name as reported (``SoC``,
             ``Power.Active.Import``, a vendor-specific name…).
-        value: The reading; canonical Wh for the energy register.
-        unit: Unit of ``value``, nullable.
-        context: OCPP reading context, nullable.
+        value: The reading, in the fixed unit of a known measurand (CE-14).
+        unit: Unit of ``value``, nullable for a vendor measurand.
+        context: Why the charger sent the reading (OCPP default stored when
+            it omitted it).
         phase: Electrical phase, nullable.
-        location: Measurement location, nullable.
+        measurement_location: Where it was measured (``Outlet``, ``EV``...).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -203,9 +199,9 @@ class ChargingSessionMeasurementResponse(BaseModel):
     measurand: str
     value: Decimal
     unit: str | None
-    context: str | None
+    context: str
     phase: str | None
-    location: str | None
+    measurement_location: str
 
 
 class ChargingSessionMeasurementListResponse(BaseModel):
@@ -234,8 +230,8 @@ class StationEnergySummaryResponse(BaseModel):
         station_id: UUID of the station queried.
         start_time: Inclusive lower bound of the window, as given.
         end_time: Inclusive upper bound of the window, as given.
-        total_energy_kwh: Sum of ``energy_delivered_wh`` (converted to kWh)
-            across completed sessions ending within the window.
+        total_energy_kwh: Sum of stop minus start readings (in kWh) across
+            completed sessions ending within the window.
         session_count: Number of completed sessions included in the sum.
     """
 
@@ -264,8 +260,8 @@ class StationEnergySeriesResponse(BaseModel):
     """Dense energy time series of a station (F-C5).
 
     Energy comes from energy-register deltas between consecutive readings of
-    each session (its ``meter_start_wh`` at ``started_at``, its stored
-    samples, and its latest reading), each delta attributed to the bucket of
+    each session (its ``meter_start_wh`` at ``started_at``, its stored outlet
+    samples, and its ``meter_stop_wh`` at ``ended_at``), each delta attributed to the bucket of
     the later reading; a decreasing register contributes nothing. Active
     sessions count too, so the series can differ from the completed-session
     summary.

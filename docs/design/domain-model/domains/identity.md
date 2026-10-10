@@ -141,25 +141,25 @@ erDiagram
   charging_location_access }o--|| users : "granted_by"
   charging_location_access }o--o| users : "revoked_by"
   charging_station_commands }o--o| users : "requested_by"
-  charging_sessions }o..|| organizations : "organization_id"
-  charging_sessions }o..|| users : "started_by"
-  notifications }o..|| organizations : "organization_id"
-  notification_recipients }o..|| users : "user_id"
-  organization_notification_settings }o..|| organizations : "organization_id"
-  support_cases }o..o| organizations : "organization_id"
+  charging_sessions }o--|| organizations : "organization_id"
+  charging_sessions }o--|| users : "started_by"
+  notifications }o--|| organizations : "organization_id"
+  notification_recipients }o--|| users : "user_id"
+  organization_notification_settings }o--|| organizations : "organization_id"
+  support_cases }o--o| organizations : "organization_id"
   repair_partners |o..|| organizations : "organization_id"
   maintenance_bookings }o..|| organizations : "organization_id"
   charging_policy_versions }o..|| users : "created_by"
   charging_policy_assignments }o..|| organizations : "organization_id"
   policy_violations }o..|| organizations : "organization_id"
-  tariff_versions }o..|| users : "created_by"
-  tariffs }o..|| organizations : "organization_id"
+  tariff_versions }o--|| users : "created_by"
+  tariffs }o--|| organizations : "organization_id"
   invoices }o..|| organizations : "organization_id"
   invoice_lines }o..|| organizations : "organization_id"
   subscriptions }o..|| organizations : "organization_id"
-  payments }o..|| users : "user_id"
-  wallets }o..|| users : "user_id"
-  wallet_transactions }o..o| users : "created_by"
+  payments }o--|| users : "user_id"
+  wallets }o--|| users : "user_id"
+  wallet_transactions }o--o| users : "created_by"
   driver_scores }o..|| organizations : "organization_id"
   organization_history }o..o| organizations : "organization_id"
   organization_history }o..o| users : "changed_by"
@@ -248,15 +248,15 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [geofences](fleet.md#geofences).organization_id (planned)
 - [charging_locations](charging_stations.md#charging_locations).organization_id
 - [charging_location_access](charging_stations.md#charging_location_access).allowed_organization_id
-- [charging_sessions](charging_sessions.md#charging_sessions).organization_id (planned)
-- [notifications](notifications.md#notifications).organization_id (planned)
-- [organization_notification_settings](notifications.md#organization_notification_settings).organization_id (planned)
-- [support_cases](support.md#support_cases).organization_id (planned)
+- [charging_sessions](charging_sessions.md#charging_sessions).organization_id
+- [notifications](notifications.md#notifications).organization_id
+- [organization_notification_settings](notifications.md#organization_notification_settings).organization_id
+- [support_cases](support.md#support_cases).organization_id
 - [repair_partners](support.md#repair_partners).organization_id (planned)
 - [maintenance_bookings](support.md#maintenance_bookings).organization_id (planned)
 - [charging_policy_assignments](policy.md#charging_policy_assignments).organization_id (planned)
 - [policy_violations](policy.md#policy_violations).organization_id (planned)
-- [tariffs](billing.md#tariffs).organization_id (planned)
+- [tariffs](billing.md#tariffs).organization_id
 - [invoices](billing.md#invoices).organization_id (planned)
 - [invoice_lines](billing.md#invoice_lines).organization_id (planned)
 - [subscriptions](billing.md#subscriptions).organization_id (planned)
@@ -348,13 +348,13 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [charging_location_access](charging_stations.md#charging_location_access).granted_by
 - [charging_location_access](charging_stations.md#charging_location_access).revoked_by
 - [charging_station_commands](charging_stations.md#charging_station_commands).requested_by
-- [charging_sessions](charging_sessions.md#charging_sessions).started_by (planned)
-- [notification_recipients](notifications.md#notification_recipients).user_id (planned)
+- [charging_sessions](charging_sessions.md#charging_sessions).started_by
+- [notification_recipients](notifications.md#notification_recipients).user_id
 - [charging_policy_versions](policy.md#charging_policy_versions).created_by (planned)
-- [tariff_versions](billing.md#tariff_versions).created_by (planned)
-- [payments](billing.md#payments).user_id (planned)
-- [wallets](billing.md#wallets).user_id (planned)
-- [wallet_transactions](billing.md#wallet_transactions).created_by (planned)
+- [tariff_versions](billing.md#tariff_versions).created_by
+- [payments](billing.md#payments).user_id
+- [wallets](billing.md#wallets).user_id
+- [wallet_transactions](billing.md#wallet_transactions).created_by
 - [organization_history](#organization_history).changed_by (planned)
 - [user_history](#user_history).user_id (planned)
 - [user_history](#user_history).changed_by (planned)

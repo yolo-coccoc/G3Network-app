@@ -9,13 +9,16 @@ silently store a ``kWh`` reading as Wh (1000x too small).
 Rules, in one place:
 
 * The **energy register** (``Energy.Active.Import.Register``, also the default
-  when a sample names no measurand) is the only measurand that drives a
-  session's energy total. Its unit must be ``Wh`` or ``kWh`` (default ``Wh``)
+  when a sample names no measurand) is the measurand the energy series and
+  the live energy read. Its unit must be ``Wh`` or ``kWh`` (default ``Wh``)
   and is converted to Wh; anything else, an unreadable value, or a signed-data
   value **raises** ``ValueError`` - a register reading that cannot be
-  interpreted must fail loudly instead of leaving the total stale.
-* **Every other measurand** is stored as sent, including vendor-specific names,
-  so a charger's extra data is never rejected. A sample that cannot be stored
+  interpreted must fail loudly instead of leaving the energy stale.
+* **Every other known measurand** is converted to its fixed unit (CE-14, see
+  ``measurement_units.py``); a vendor-specific name is stored as sent, so a
+  charger's extra data is never rejected. A missing context or location is
+  filled with the OCPP default (``Sample.Periodic``, ``Outlet``). A sample that
+  cannot be stored
   (signed data, a non-numeric or non-finite value, or a field longer than its
   column) is **skipped and counted**, never silently dropped and never failing
   the whole message; the caller logs the count.
@@ -31,9 +34,15 @@ from decimal import Decimal, InvalidOperation
 from typing import Final
 
 from app.domains.charging_sessions.types import (
+    DEFAULT_MEASUREMENT_CONTEXT,
+    DEFAULT_MEASUREMENT_LOCATION,
     ENERGY_ACTIVE_IMPORT_REGISTER,
     MeasurementInput,
     MeterSampleInput,
+)
+from app.domains.charging_stations.ocpp.measurement_units import (
+    KNOWN_MEASURAND_UNITS,
+    convert_measurement,
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
@@ -45,18 +54,6 @@ _ENERGY_UNIT_FACTORS_WH: Final[dict[str, Decimal]] = {
     "wh": Decimal(1),
     "kwh": Decimal(1000),
 }
-# OCPP 1.6 default units of the standard measurands (Appendix, "Measurand"),
-# used only when a non-energy sample names no unit.
-DEFAULT_UNITS: Final[dict[str, str]] = {
-    "Energy.Active.Import.Register": "Wh",
-    "Power.Active.Import": "W",
-    "Power.Offered": "W",
-    "Current.Import": "A",
-    "Current.Offered": "A",
-    "Voltage": "V",
-    "Temperature": "Celsius",
-    "SoC": "Percent",
-}
 # Column limits of charging_session_measurements.
 _MAX_MEASURAND, _MAX_UNIT, _MAX_CONTEXT, _MAX_PHASE, _MAX_LOCATION = 60, 20, 30, 10, 20
 
@@ -66,8 +63,7 @@ class V16Extraction:
     """The storable content of one or more ``meterValue`` groups.
 
     Attributes:
-        energy: Energy-register samples (canonical Wh), in payload order; they
-            update the session's energy total.
+        energy: Energy-register samples (canonical Wh), in payload order.
         measurements: Every other measurement, in payload order.
         skipped: How many samples could not be stored, by reason
             (``signed_data``, ``non_numeric``, ``non_finite``,
@@ -152,13 +148,15 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
         sampled_at = parse_ocpp_timestamp(group["timestamp"])
         for sampled_value in group["sampled_value"]:
             measurand = sampled_value.get("measurand") or ENERGY_ACTIVE_IMPORT_REGISTER
-            context = sampled_value.get("context")
+            context = sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT
+            location = sampled_value.get("location") or DEFAULT_MEASUREMENT_LOCATION
             if measurand == ENERGY_ACTIVE_IMPORT_REGISTER:
                 energy.append(
                     MeterSampleInput(
                         sampled_at=sampled_at,
                         value_wh=_energy_value_wh(sampled_value),
                         context=context,
+                        measurement_location=location,
                     )
                 )
                 continue
@@ -173,15 +171,18 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
             if not value.is_finite():
                 skipped["non_finite"] += 1
                 continue
-            unit = sampled_value.get("unit") or DEFAULT_UNITS.get(measurand)
+            value, unit = convert_measurement(
+                measurand,
+                value,
+                sampled_value.get("unit") or (KNOWN_MEASURAND_UNITS.get(measurand)),
+            )
             phase = sampled_value.get("phase")
-            location = sampled_value.get("location")
             if (
                 len(measurand) > _MAX_MEASURAND
                 or (unit is not None and len(unit) > _MAX_UNIT)
-                or (context is not None and len(context) > _MAX_CONTEXT)
+                or len(context) > _MAX_CONTEXT
                 or (phase is not None and len(phase) > _MAX_PHASE)
-                or (location is not None and len(location) > _MAX_LOCATION)
+                or len(location) > _MAX_LOCATION
             ):
                 skipped["field_too_long"] += 1
                 continue
@@ -193,7 +194,7 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
                     unit=unit,
                     context=context,
                     phase=phase,
-                    location=location,
+                    measurement_location=location,
                 )
             )
     return V16Extraction(

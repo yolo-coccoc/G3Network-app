@@ -57,12 +57,16 @@ Expected: ≥1 row per seeded vehicle; `latest` returns the newest point.
 ```bash
 make -C .. charging-ocpp16-seed     # station SIM-OCPP16-001, one EVSE per gun
 uv run python ../simulator/ocpp16_charge_point_simulator.py --scenario session
-Q "select ocpp_transaction_id, status, id_tag, meter_start_wh, meter_stop_wh, energy_delivered_wh, stop_reason from charging_sessions"
+# Only a token a scan issued starts a session (CE-11): create the PENDING session first
+curl -s -XPOST localhost:8000/api/v1/charging-sessions -H 'content-type: application/json' \
+  -d '{"station_id": "<SIM-OCPP16-001 station_id>", "organization_id": "<org>", "started_by": "<user>"}'
+# then run the simulator with the returned token: --id-tag <id_token>
+Q "select ocpp_transaction_id, status, id_token, meter_start_wh, meter_stop_wh, stop_reason from charging_sessions"
 Q "select measurand, count(*) from charging_session_measurements group by 1 order by 1"
 Q "select direction, count(*) from charging_ocpp_messages group by 1"
 Q "select count(*) from charging_station_configuration_entries"
 ```
-Expected: `1|completed|SIMTAG001|1000.000|1500.000|500.000|EVDisconnected`;
+Expected: `1|COMPLETED|<the token>|1000.000|1500.000|EVDisconnected`;
 8 measurands (energy register, SoC, power, voltage, `Voltage.Demand`, ...);
 equal CP_TO_CSMS/CSMS_TO_CP frame counts; >0 configuration entries (the
 post-boot `GetConfiguration`).
@@ -70,9 +74,10 @@ post-boot `GetConfiguration`).
 **OCPP 2.0.1 session**:
 ```bash
 make -C .. charging-ocpp-seed && make -C .. charging-ocpp-sim
-Q "select x.ocpp_transaction_id, x.status, x.energy_delivered_wh from charging_sessions x join charging_stations s using (station_id) where s.ocpp_identity='SIM-OCPP-001'"
+Q "select x.ocpp_transaction_id, x.status from charging_sessions x join charging_stations s using (station_id) where s.ocpp_identity='SIM-OCPP-001'"
 ```
-Expected: `SIM-TRANSACTION-001|completed|500.000`.
+Expected: no row: the 2.0.1 simulator sends no `idToken`, so its start is answered `Invalid` (CE-11).
+It works again once the simulator sends the token of a scanned PENDING session.
 
 API spot checks: `GET /api/v1/charging-stations?page=1&page_size=10` (both
 stations, `is_online: true` right after a run), `GET /docs` for the rest.

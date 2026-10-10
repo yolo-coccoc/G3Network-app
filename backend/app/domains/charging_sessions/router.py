@@ -1,9 +1,8 @@
-"""Read-only HTTP router for the charging session monitoring MVP.
+"""HTTP router of the charging sessions: the scan and the monitoring reads.
 
-The router only accepts HTTP dependencies and calls the public monitoring
-service; domain exceptions are mapped to status codes centrally in
-``app/api/main.py``. It does not expose raw OCPP payloads or command
-transport at this stage.
+The router only accepts HTTP dependencies and calls the public service; domain
+exceptions are mapped to status codes centrally in ``app/api/main.py``. It does
+not expose raw OCPP payloads or command transport.
 """
 
 from dataclasses import dataclass
@@ -11,15 +10,17 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi import status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
 from app.domains.charging_sessions.schemas import (
     ChargingSessionDetailResponse,
-    ChargingSessionEventListResponse,
     ChargingSessionListResponse,
     ChargingSessionMeasurementListResponse,
     ChargingSessionMeterValueListResponse,
+    ChargingSessionScanRequest,
+    ChargingSessionScanResponse,
     StationEnergySeriesResponse,
     StationEnergySummaryResponse,
 )
@@ -66,6 +67,46 @@ def _page_query(
     return _PageQuery(page=page, page_size=page_size)
 
 
+@router.post(
+    "/charging-sessions",
+    response_model=ChargingSessionScanResponse,
+    status_code=http_status.HTTP_201_CREATED,
+    summary="Scan a charger's QR code (create a PENDING session)",
+)
+async def scan_charging_session_endpoint(
+    scan_request: ChargingSessionScanRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingSessionScanResponse:
+    """Create the PENDING session of a scan and return its single-use token (CE-10).
+
+    The remote start that sends the token to the charger comes with the QR
+    start flow (WP8); until then a charger (or simulator) can be started with
+    this token.
+
+    Args:
+        scan_request: The charger, paying organization, scanning user and
+            optional truck.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
+
+    Returns:
+        The new session's ID, status ``PENDING`` and token.
+    """
+    pending_session = await charging_session_service.create_pending_session(
+        db,
+        station_id=scan_request.station_id,
+        organization_id=scan_request.organization_id,
+        started_by=scan_request.started_by,
+        vehicle_id=scan_request.vehicle_id,
+    )
+    return ChargingSessionScanResponse(
+        session_id=pending_session.session_id,
+        station_id=pending_session.station_id,
+        status=SessionStatus.PENDING,
+        id_token=pending_session.id_token,
+    )
+
+
 @router.get(
     "/charging-sessions",
     response_model=ChargingSessionListResponse,
@@ -74,6 +115,7 @@ def _page_query(
 async def list_charging_sessions_endpoint(
     station_id: UUID | None = None,
     connector_id: UUID | None = None,
+    organization_id: UUID | None = None,
     status: SessionStatus | None = None,
     started_from: datetime | None = Query(
         None, description="Inclusive lower bound on started_at, with a timezone."
@@ -89,7 +131,8 @@ async def list_charging_sessions_endpoint(
     Args:
         station_id: Only sessions of this station.
         connector_id: Only sessions on this connector.
-        status: Only ``active`` or only ``completed`` sessions.
+        organization_id: Only sessions paid by this organization.
+        status: Only sessions in this lifecycle status.
         started_from: Inclusive lower bound on ``started_at``.
         started_to: Exclusive upper bound on ``started_at``.
         page_query: The page and page size (``page``/``page_size`` query
@@ -111,6 +154,7 @@ async def list_charging_sessions_endpoint(
         page_size=page_query.page_size,
         station_id=station_id,
         connector_id=connector_id,
+        organization_id=organization_id,
         status=status,
         started_from=started_from,
         started_to=started_to,
@@ -140,39 +184,6 @@ async def get_charging_session_endpoint(
         ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
     return await charging_session_service.get_charging_session(db, session_id)
-
-
-@router.get(
-    "/charging-sessions/{session_id}/events",
-    response_model=ChargingSessionEventListResponse,
-    summary="View events of a charging session",
-)
-async def list_charging_session_events_endpoint(
-    session_id: UUID,
-    page_query: _PageQuery = Depends(_page_query),
-    db: AsyncSession = Depends(get_db, scope="function"),
-) -> ChargingSessionEventListResponse:
-    """Get the session's lifecycle events in ascending time order.
-
-    Args:
-        session_id: UUID of the session whose events to view.
-        page_query: The page and page size (``page``/``page_size`` query
-            parameters).
-        db: The async session whose transaction is owned by the ``get_db``
-            dependency.
-
-    Returns:
-        A paginated event history.
-
-    Raises:
-        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
-    """
-    return await charging_session_service.list_charging_session_events(
-        db,
-        session_id,
-        page=page_query.page,
-        page_size=page_query.page_size,
-    )
 
 
 @router.get(

@@ -16,7 +16,6 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionNotFoundError,
     ChargingSessionStateError,
 )
-from app.domains.charging_sessions.types import SessionEventType
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     extract_v16_measurements,
@@ -123,8 +122,10 @@ def test_soc_power_voltage_current_temperature_and_offered_are_all_stored() -> N
     ]
 
 
-def test_explicit_unit_context_phase_and_location_are_kept() -> None:
-    """Values the charger states are stored exactly as sent."""
+def test_explicit_context_phase_and_location_are_kept_and_the_unit_is_converted() -> (
+    None
+):
+    """Context, phase and location are stored as sent; a known unit becomes the fixed one (CE-14)."""
     result = extract_v16_measurements(
         [
             _group(
@@ -141,9 +142,10 @@ def test_explicit_unit_context_phase_and_location_are_kept() -> None:
     )
 
     measurement = result.measurements[0]
-    assert measurement.value == Decimal("-4.5")  # negative values are legitimate
-    assert (measurement.unit, measurement.context) == ("Fahrenheit", "Sample.Periodic")
-    assert (measurement.phase, measurement.location) == ("L1-N", "Cable")
+    # -4.5 F is about -20.28 Celsius: negative values are legitimate.
+    assert measurement.value == Decimal("-20.277778")
+    assert (measurement.unit, measurement.context) == ("Celsius", "Sample.Periodic")
+    assert (measurement.phase, measurement.measurement_location) == ("L1-N", "Cable")
 
 
 def test_vendor_specific_measurand_is_stored_as_sent() -> None:
@@ -303,7 +305,7 @@ def _patch(
     )
     monkeypatch.setattr(charging_service, "ingest_meter_values", fake_meter)
     monkeypatch.setattr(charging_service, "ingest_measurements", fake_measurements)
-    monkeypatch.setattr(charging_service, "ingest_transaction_event", fake_ingest)
+    monkeypatch.setattr(charging_service, "complete_session", fake_ingest)
     return calls
 
 
@@ -498,7 +500,7 @@ async def test_stop_transaction_stores_transaction_data_before_ending_the_sessio
         "event",
     ]
     assert calls[1][1]["sample"].context == "Transaction.End"
-    assert calls[3][1]["event_type"] is SessionEventType.ENDED
+    assert calls[3][1]["meter_stop_wh"] == Decimal(1500)
 
 
 @pytest.mark.asyncio

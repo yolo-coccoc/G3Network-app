@@ -1,4 +1,4 @@
-"""Smoke tests for OCPP 1.6J Authorize/StartTransaction/StopTransaction and the session fields."""
+"""Smoke tests for OCPP 1.6J Authorize/StartTransaction/StopTransaction and the session lookups."""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -15,13 +15,11 @@ import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions.exceptions import (
-    ChargingSessionInputError,
     ChargingSessionNotFoundError,
-    ChargingSessionStateError,
+    ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import ChargingSessionModel
-from app.domains.charging_sessions.schemas import ChargingSessionResponse
-from app.domains.charging_sessions.types import SessionEventType, SessionStatus
+from app.domains.charging_sessions.types import SessionStatus
 from app.domains.charging_stations.exceptions import ChargingOcppMessageInputError
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from tests.builders import fake_db_session
@@ -56,7 +54,10 @@ def _charge_point(factory: _CountingFactory | None = None) -> OCPP16ChargePoint:
 
 
 def _patch_start(
-    monkeypatch: pytest.MonkeyPatch, *, active_session: bool = False
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    active_session: bool = False,
+    token_issued: bool = True,
 ) -> dict[str, Any]:
     """Replace the service calls StartTransaction makes and record them."""
     ids = count(1)
@@ -80,6 +81,8 @@ def _patch_start(
         return allocated
 
     async def fake_ingest(db: object, **kwargs: Any) -> None:
+        if not token_issued:
+            raise ChargingSessionTokenError("no scan issued this token")
         record["ingest"].append(kwargs)
 
     monkeypatch.setattr(ocpp_state_service, "resolve_ocpp16_topology", fake_resolve)
@@ -89,7 +92,7 @@ def _patch_start(
     monkeypatch.setattr(
         charging_service, "allocate_ocpp16_transaction_id", fake_allocate
     )
-    monkeypatch.setattr(charging_service, "ingest_transaction_event", fake_ingest)
+    monkeypatch.setattr(charging_service, "activate_pending_session", fake_ingest)
     return record
 
 
@@ -109,10 +112,10 @@ async def test_authorize_accepts_every_id_tag(tag: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_transaction_creates_the_session_and_returns_the_allocated_id(
+async def test_start_transaction_activates_the_session_and_returns_the_allocated_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The CSMS assigns the integer transactionId and stores it as text."""
+    """The CSMS assigns the integer transactionId and stores it as text (CE-03, CE-11)."""
     record = _patch_start(monkeypatch)
 
     response = await _charge_point().on_start_transaction(
@@ -127,12 +130,29 @@ async def test_start_transaction_creates_the_session_and_returns_the_allocated_i
     assert record["resolve"] == {"ocpp_identity": "LSC", "ocpp_connector_id": 2}
     ingested = record["ingest"][0]
     assert ingested["transaction_id"] == "1"
-    assert ingested["event_type"] is SessionEventType.STARTED
-    assert ingested["event_occurred_at"] == NOW
+    assert ingested["started_at"] == NOW
     assert ingested["meter_start_wh"] == Decimal(1000)
-    assert ingested["id_tag"] == "TAG-1"
+    assert ingested["id_token"] == "TAG-1"
     assert ingested["station_id"] == STATION_ID
     assert ingested["connector_id"] == CONNECTOR_ID
+
+
+@pytest.mark.asyncio
+async def test_start_with_a_token_no_scan_issued_is_answered_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CE-11: any other token is answered Invalid and creates no session."""
+    record = _patch_start(monkeypatch, token_issued=False)
+
+    response = await _charge_point().on_start_transaction(
+        connector_id=1,
+        id_tag="NOT-ISSUED",
+        meter_start=0,
+        timestamp="2026-09-24T10:00:00Z",
+    )
+
+    assert response.id_tag_info["status"] == AuthorizationStatus.invalid
+    assert record["ingest"] == []
 
 
 @pytest.mark.asyncio
@@ -257,7 +277,7 @@ def _patch_stop(
     monkeypatch.setattr(
         charging_service, "resolve_session_by_transaction", fake_reference
     )
-    monkeypatch.setattr(charging_service, "ingest_transaction_event", fake_ingest)
+    monkeypatch.setattr(charging_service, "complete_session", fake_ingest)
     return ingested
 
 
@@ -277,16 +297,14 @@ async def test_stop_transaction_finds_the_session_and_stores_meter_stop_and_reas
 
     assert response is not None
     stored = ingested[0]
-    assert stored["event_type"] is SessionEventType.ENDED
     assert stored["transaction_id"] == "42"
     assert (stored["station_id"], stored["evse_id"], stored["connector_id"]) == (
         STATION_ID,
         EVSE_ID,
         CONNECTOR_ID,
     )
-    assert stored["meter_end_wh"] == stored["meter_stop_wh"] == Decimal(1500)
-    assert stored["meter_end_sampled_at"] == stored["event_occurred_at"]
-    assert stored["event_occurred_at"] == NOW + timedelta(minutes=30)
+    assert stored["meter_stop_wh"] == Decimal(1500)
+    assert stored["ended_at"] == NOW + timedelta(minutes=30)
     assert stored["stop_reason"] == "EVDisconnected"
 
 
@@ -312,204 +330,18 @@ def _session(**overrides: Any) -> ChargingSessionModel:
         "station_id": STATION_ID,
         "evse_id": EVSE_ID,
         "connector_id": CONNECTOR_ID,
+        "organization_id": uuid4(),
+        "started_by": uuid4(),
         "ocpp_transaction_id": "42",
         "status": SessionStatus.ACTIVE,
         "started_at": NOW,
-        "ended_at": None,
         "meter_start_wh": Decimal(1000),
-        "meter_end_wh": None,
-        "meter_end_sampled_at": None,
-        "energy_delivered_wh": None,
+        "id_token": "TAG-1",
         "created_at": NOW,
         "updated_at": NOW,
     }
     values.update(overrides)
     return ChargingSessionModel(**values)
-
-
-def _patch_repository(
-    monkeypatch: pytest.MonkeyPatch, session: ChargingSessionModel
-) -> dict[str, Any]:
-    seen: dict[str, Any] = {}
-
-    async def create_session(db: object, **kwargs: Any) -> ChargingSessionModel:
-        seen["create"] = kwargs
-        return session
-
-    async def get_by_transaction(
-        db: object, station_id: Any, transaction_id: str
-    ) -> Any:
-        return session
-
-    async def insert_event(db: object, **kwargs: Any) -> None:
-        return None
-
-    monkeypatch.setattr(charging_repository, "create_session", create_session)
-    monkeypatch.setattr(
-        charging_repository, "get_session_by_transaction", get_by_transaction
-    )
-    monkeypatch.setattr(charging_repository, "insert_event", insert_event)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: NOW)
-    return seen
-
-
-@pytest.mark.asyncio
-async def test_started_event_passes_the_id_tag_to_the_new_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The idTag that started the session is stored with it."""
-    seen = _patch_repository(monkeypatch, _session())
-
-    await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=STATION_ID,
-        evse_id=EVSE_ID,
-        connector_id=CONNECTOR_ID,
-        transaction_id="42",
-        event_type=SessionEventType.STARTED,
-        event_occurred_at=NOW,
-        seq_no=None,
-        meter_start_wh=Decimal(1000),
-        id_tag="TAG-1",
-    )
-
-    assert seen["create"]["id_tag"] == "TAG-1"
-
-
-@pytest.mark.asyncio
-async def test_ended_event_stores_stop_reason_and_meter_stop_and_completes_the_session(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The closing reading and reason land on the session; energy = stop - start."""
-    session = _session()
-    _patch_repository(monkeypatch, session)
-
-    result = await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=STATION_ID,
-        evse_id=EVSE_ID,
-        connector_id=CONNECTOR_ID,
-        transaction_id="42",
-        event_type=SessionEventType.ENDED,
-        event_occurred_at=NOW,
-        seq_no=None,
-        meter_end_wh=Decimal(1500),
-        meter_end_sampled_at=NOW,
-        stop_reason="EmergencyStop",
-        meter_stop_wh=Decimal(1500),
-    )
-
-    assert result.status is SessionStatus.COMPLETED
-    assert session.stop_reason == "EmergencyStop"
-    assert session.meter_stop_wh == Decimal(1500)
-    assert session.meter_end_wh == Decimal(1500)
-    assert session.energy_delivered_wh == Decimal(500)
-
-
-@pytest.mark.asyncio
-async def test_meter_stop_is_kept_even_when_a_stale_timestamp_discards_the_aggregate_update(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The charger's own closing figure is stored; the F-B2 watermark still protects meter_end."""
-    session = _session(
-        meter_end_wh=Decimal(1700),
-        meter_end_sampled_at=NOW + timedelta(minutes=5),
-    )
-    _patch_repository(monkeypatch, session)
-
-    await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=STATION_ID,
-        evse_id=EVSE_ID,
-        connector_id=CONNECTOR_ID,
-        transaction_id="42",
-        event_type=SessionEventType.ENDED,
-        event_occurred_at=NOW,
-        seq_no=None,
-        meter_end_wh=Decimal(1500),
-        meter_end_sampled_at=NOW,  # older than the stored watermark
-        meter_stop_wh=Decimal(1500),
-    )
-
-    assert session.meter_stop_wh == Decimal(1500)
-    assert session.meter_end_wh == Decimal(1700)  # not overwritten
-
-
-@pytest.mark.asyncio
-async def test_a_second_stop_for_a_completed_session_is_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """COMPLETED stays terminal for 1.6J's StopTransaction too."""
-    session = _session(status=SessionStatus.COMPLETED)
-    _patch_repository(monkeypatch, session)
-
-    with pytest.raises(ChargingSessionStateError):
-        await charging_service.ingest_transaction_event(
-            fake_db_session(),
-            station_id=STATION_ID,
-            evse_id=EVSE_ID,
-            connector_id=CONNECTOR_ID,
-            transaction_id="42",
-            event_type=SessionEventType.ENDED,
-            event_occurred_at=NOW,
-            seq_no=None,
-            meter_stop_wh=Decimal(1),
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("event_type", "kwargs"),
-    [
-        (SessionEventType.STARTED, {"id_tag": "x" * 21}),
-        (SessionEventType.ENDED, {"stop_reason": "x" * 31}),
-        (SessionEventType.ENDED, {"meter_stop_wh": Decimal(-1)}),
-    ],
-)
-async def test_ingest_rejects_out_of_contract_new_fields(
-    monkeypatch: pytest.MonkeyPatch,
-    event_type: SessionEventType,
-    kwargs: dict[str, Any],
-) -> None:
-    """An idTag over 20 characters, a stop reason over 30, or a negative meter fails."""
-    _patch_repository(monkeypatch, _session())
-
-    with pytest.raises(ChargingSessionInputError):
-        await charging_service.ingest_transaction_event(
-            fake_db_session(),
-            station_id=STATION_ID,
-            evse_id=EVSE_ID,
-            connector_id=CONNECTOR_ID,
-            transaction_id="42",
-            event_type=event_type,
-            event_occurred_at=NOW,
-            seq_no=None,
-            **kwargs,
-        )
-
-
-@pytest.mark.asyncio
-async def test_ingest_without_the_new_fields_still_works_for_the_2_0_1_caller(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The 2.0.1 caller passes none of the new arguments; they default to None."""
-    session = _session()
-    _patch_repository(monkeypatch, session)
-
-    await charging_service.ingest_transaction_event(
-        fake_db_session(),
-        station_id=STATION_ID,
-        evse_id=EVSE_ID,
-        connector_id=CONNECTOR_ID,
-        transaction_id="42",
-        event_type=SessionEventType.ENDED,
-        event_occurred_at=NOW,
-        seq_no=3,
-        meter_end_wh=Decimal(1750),
-    )
-
-    assert session.stop_reason is None
-    assert session.meter_stop_wh is None
 
 
 @pytest.mark.asyncio
@@ -586,21 +418,3 @@ async def test_allocate_ocpp16_transaction_id_returns_the_sequence_value(
     monkeypatch.setattr(charging_repository, "next_ocpp16_transaction_id", fake_next)
 
     assert await charging_service.allocate_ocpp16_transaction_id(object()) == 7  # type: ignore[arg-type]
-
-
-def test_session_response_exposes_the_new_fields() -> None:
-    """The monitoring API shows the idTag, stop reason and closing meter reading."""
-    session = _session(
-        id_tag="TAG-1",
-        stop_reason="EVDisconnected",
-        meter_stop_wh=Decimal(1500),
-        status=SessionStatus.COMPLETED,
-    )
-
-    response = ChargingSessionResponse.model_validate(session)
-
-    assert (response.id_tag, response.stop_reason, response.meter_stop_wh) == (
-        "TAG-1",
-        "EVDisconnected",
-        Decimal(1500),
-    )

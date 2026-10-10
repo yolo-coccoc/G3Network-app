@@ -105,9 +105,9 @@ erDiagram
   charging_station_commands }o--o| users : "requested_by"
   charging_station_configuration_captures |o--|| charging_station_commands : "command_id"
   charging_sessions }o--|| charging_stations : "station_id"
-  charging_sessions }o--|| charging_evses : "evse_id"
-  charging_sessions }o--|| charging_connectors : "connector_id"
-  tariffs }o..o| charging_locations : "location_id"
+  charging_sessions }o--o| charging_evses : "evse_id"
+  charging_sessions }o--o| charging_connectors : "connector_id"
+  tariffs }o--o| charging_locations : "location_id"
   charging_location_history }o..o| charging_locations : "location_id"
   charging_location_history }o..o| users : "changed_by"
   charging_station_history }o..o| charging_stations : "station_id"
@@ -158,7 +158,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 - [charging_location_access](#charging_location_access).location_id
 - [charging_stations](#charging_stations).location_id
-- [tariffs](billing.md#tariffs).location_id (planned)
+- [tariffs](billing.md#tariffs).location_id
 - [charging_location_history](#charging_location_history).location_id (planned)
 
 ### charging_location_history

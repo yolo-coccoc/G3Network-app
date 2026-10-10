@@ -74,18 +74,10 @@ Enum chargingocppmessagedirection {
 }
 
 Enum chargingsessionstatus {
-  active [note: '@remove CE-10: becomes ACTIVE']
-  completed [note: '@remove CE-10: becomes COMPLETED']
-  PENDING [note: '@planned CE-10']
-  ACTIVE [note: '@planned CE-10']
-  COMPLETED [note: '@planned CE-10']
-  ABANDONED [note: '@planned CE-10']
-}
-
-Enum chargingsessioneventtype {
-  Started
-  Updated
-  Ended
+  PENDING
+  ACTIVE
+  COMPLETED
+  ABANDONED
 }
 
 Enum notificationtype {
@@ -95,12 +87,12 @@ Enum notificationtype {
   DEVICE_OFFLINE_ALERT
   SOS_ALERT
   GEOFENCE_ALERT
-  NO_DRIVER_CHECK_IN_ALERT [note: '@planned DR-07']
-  OUTSIDE_DRIVER_CHECK_IN [note: '@planned DR-07']
-  NO_TRIP_STARTED [note: '@planned DR-12']
-  LOW_WALLET_BALANCE [note: '@planned BL-14']
-  TOP_UP_RECEIVED [note: '@planned BL-15']
-  CHARGING_RECEIPT [note: '@planned BL-10']
+  NO_DRIVER_CHECK_IN_ALERT
+  OUTSIDE_DRIVER_CHECK_IN
+  NO_TRIP_STARTED
+  LOW_WALLET_BALANCE
+  TOP_UP_RECEIVED
+  CHARGING_RECEIPT
 }
 
 Enum notificationseverity {
@@ -1487,20 +1479,17 @@ The charging network and the OCPP link to each charger (terms: CS-09).
 Table charging_sessions {
   session_id uuid [pk, note: 'Internal ID of the charging session. @vi Mã nội bộ của phiên sạc. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   station_id uuid [not null, note: 'The charger (charging station) where the session happens, known from the QR code at the scan. @vi Trụ sạc nơi diễn ra phiên sạc, biết được từ mã QR khi quét. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  evse_id uuid [not null, note: 'EVSE used, set from the charger\'s start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session, because the driver picks the gun on the charger\'s screen after the scan (CO-14). @vi EVSE được dùng, lấy từ bản tin bắt đầu của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED, vì tài xế chọn súng trên màn hình trụ sau khi quét (CO-14). @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
-  connector_id uuid [not null, note: 'Connector (gun) used, set from the charger\'s start message. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session. @vi Súng sạc được dùng, lấy từ bản tin bắt đầu của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
-  organization_id uuid [not null, note: '@planned CE-10: Organization that pays: the one the scanning user acted for, written once at the scan and never changed (DM-24 case C). At launch the scanning user\'s own wallet pays (BL-13). @vi Tổ chức trả tiền: tổ chức mà người quét mã đại diện, ghi một lần khi quét và không đổi (DM-24 trường hợp C). Khi ra mắt, ví của chính người quét mã trả tiền (BL-13). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  started_by uuid [not null, note: '@planned CE-10: User who scanned the QR code in our app; every charge starts this way (CO-13). A start with a token we did not issue is refused and gets no row (CE-11). @vi Người dùng đã quét mã QR trong ứng dụng của chúng ta; mọi lần sạc đều bắt đầu như vậy (CO-13). Lần bắt đầu mang mã không do chúng ta cấp bị từ chối và không tạo dòng (CE-11). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
-  vehicle_id uuid [note: '@planned CE-13: Truck being charged, taken at the scan from the scanning driver\'s open driving session (CHG-07); NULL when there is none (a guest truck we have no record of, or a driver who has not checked in). A VIN or MAC address reported by the charger may fill it later (deferred.md 90). @vi Xe được sạc, lấy khi quét mã từ phiên lái đang mở của tài xế quét mã (CHG-07); NULL nếu không có (xe khách vãng lai chưa có hồ sơ, hoặc tài xế chưa nhận xe). Sau này có thể lấy từ VIN hoặc địa chỉ MAC do trụ báo (deferred.md 90). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  ocpp_transaction_id varchar(255) [not null, note: 'The charger\'s transaction ID, unique per charger: an OCPP 2.0.1 charger chooses its own (a string of up to 36 characters); for 1.6J it is our sequence number as text (CE-03). Planned (CE-10): varchar(36) and nullable, NULL while PENDING and for an ABANDONED session. @vi Mã giao dịch của trụ, duy nhất trong mỗi trụ: trụ OCPP 2.0.1 tự chọn (chuỗi tối đa 36 ký tự); với 1.6J là số thứ tự của chúng ta dạng chữ (CE-03). Dự kiến (CE-10): varchar(36) và cho phép NULL, NULL khi PENDING và với phiên ABANDONED. @example 1042']
-  status chargingsessionstatus [not null, note: 'Lifecycle of the session; observed, so no status_reason (DM-19). PENDING: the scan was accepted, waiting for the charger. ACTIVE: transaction running. COMPLETED: stopped by the charger. ABANDONED: the remote start was refused or timed out, or no transaction followed within the configured window. Planned (CE-10): upper-case values; PENDING and ABANDONED are new. @vi Vòng đời của phiên; là trạng thái quan sát được nên không có status_reason (DM-19). PENDING: đã nhận lượt quét, chờ trụ. ACTIVE: giao dịch đang chạy. COMPLETED: trụ đã dừng. ABANDONED: lệnh bắt đầu từ xa bị từ chối hoặc hết thời gian chờ, hoặc không có giao dịch nào trong khoảng thời gian cấu hình. Dự kiến (CE-10): giá trị viết hoa; PENDING và ABANDONED là giá trị mới. @example COMPLETED']
-  started_at timestamptz [not null, note: 'The charger\'s time of the start. Planned (CE-10): nullable, NULL while PENDING and for an ABANDONED session; the scan time is created_at. @vi Thời điểm bắt đầu theo đồng hồ của trụ. Dự kiến (CE-10): cho phép NULL, NULL khi PENDING và với phiên ABANDONED; thời điểm quét mã là created_at. @example 2026-09-15T08:30:00Z']
+  evse_id uuid [note: 'EVSE used, set from the charger\'s start message. NULL while PENDING and for an ABANDONED session, because the driver picks the gun on the charger\'s screen after the scan (CO-14). @vi EVSE được dùng, lấy từ bản tin bắt đầu của trụ. NULL khi PENDING và với phiên ABANDONED, vì tài xế chọn súng trên màn hình trụ sau khi quét (CO-14). @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
+  connector_id uuid [note: 'Connector (gun) used, set from the charger\'s start message. NULL while PENDING and for an ABANDONED session. @vi Súng sạc được dùng, lấy từ bản tin bắt đầu của trụ. NULL khi PENDING và với phiên ABANDONED. @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
+  organization_id uuid [not null, note: 'Organization that pays: the one the scanning user acted for, written once at the scan and never changed (DM-24 case C). At launch the scanning user\'s own wallet pays (BL-13). @vi Tổ chức trả tiền: tổ chức mà người quét mã đại diện, ghi một lần khi quét và không đổi (DM-24 trường hợp C). Khi ra mắt, ví của chính người quét mã trả tiền (BL-13). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  started_by uuid [not null, note: 'User who scanned the QR code in our app; every charge starts this way (CO-13). A start with a token we did not issue is refused and gets no row (CE-11). @vi Người dùng đã quét mã QR trong ứng dụng của chúng ta; mọi lần sạc đều bắt đầu như vậy (CO-13). Lần bắt đầu mang mã không do chúng ta cấp bị từ chối và không tạo dòng (CE-11). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
+  vehicle_id uuid [note: 'Truck being charged, taken at the scan from the scanning driver\'s open driving session (CHG-07); NULL when there is none (a guest truck we have no record of, or a driver who has not checked in). A VIN or MAC address reported by the charger may fill it later (deferred.md 90). @vi Xe được sạc, lấy khi quét mã từ phiên lái đang mở của tài xế quét mã (CHG-07); NULL nếu không có (xe khách vãng lai chưa có hồ sơ, hoặc tài xế chưa nhận xe). Sau này có thể lấy từ VIN hoặc địa chỉ MAC do trụ báo (deferred.md 90). @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  ocpp_transaction_id varchar(36) [note: 'The charger\'s transaction ID, unique per charger: an OCPP 2.0.1 charger chooses its own (a string of up to 36 characters); for 1.6J it is our sequence number as text (CE-03). NULL while PENDING and for an ABANDONED session. @vi Mã giao dịch của trụ, duy nhất trong mỗi trụ: trụ OCPP 2.0.1 tự chọn (chuỗi tối đa 36 ký tự); với 1.6J là số thứ tự của chúng ta dạng chữ (CE-03). NULL khi PENDING và với phiên ABANDONED. @example 1042']
+  status chargingsessionstatus [not null, note: 'Lifecycle of the session; observed, so no status_reason (DM-19). PENDING: the scan was accepted, waiting for the charger. ACTIVE: transaction running. COMPLETED: stopped by the charger. ABANDONED: the remote start was refused or timed out, or no transaction followed within the configured window. @vi Vòng đời của phiên; là trạng thái quan sát được nên không có status_reason (DM-19). PENDING: đã nhận lượt quét, chờ trụ. ACTIVE: giao dịch đang chạy. COMPLETED: trụ đã dừng. ABANDONED: lệnh bắt đầu từ xa bị từ chối hoặc hết thời gian chờ, hoặc không có giao dịch nào trong khoảng thời gian cấu hình. @example COMPLETED']
+  started_at timestamptz [note: 'The charger\'s time of the start. NULL while PENDING and for an ABANDONED session; the scan time is created_at. @vi Thời điểm bắt đầu theo đồng hồ của trụ. NULL khi PENDING và với phiên ABANDONED; thời điểm quét mã là created_at. @example 2026-09-15T08:30:00Z']
   ended_at timestamptz [note: 'The charger\'s time of the stop; NULL until COMPLETED. @vi Thời điểm dừng theo đồng hồ của trụ; NULL cho đến khi COMPLETED. @example 2026-09-15T09:45:00Z']
   meter_start_wh numeric(24,3) [note: 'Meter reading the charger declares at the start, in Wh; NULL while PENDING. @vi Chỉ số công tơ trụ báo lúc bắt đầu (Wh); NULL khi PENDING. @example 1520340.000']
-  meter_end_wh numeric(24,3) [note: '@remove CE-12: Latest accepted meter reading, in Wh; a copy of the newest energy row in charging_session_measurements, read there instead. @vi Chỉ số công tơ mới nhất được chấp nhận (Wh); là bản sao của số đo điện năng mới nhất trong charging_session_measurements, nay đọc ở đó. @example 1712840.000']
-  meter_end_sampled_at timestamptz [note: '@remove CE-12: When meter_end_wh was measured; the newest measurement\'s sampled_at. @vi Thời điểm đo meter_end_wh; là sampled_at của số đo mới nhất. @example 2026-09-15T09:44:30Z']
-  energy_delivered_wh numeric(24,3) [note: '@remove CE-12: Derived: meter_stop_wh minus meter_start_wh, computed at read time; the billed kWh is frozen on the billing record (PAY-10). @vi Giá trị suy ra: meter_stop_wh trừ meter_start_wh, tính khi đọc; số kWh tính tiền được chốt trên bản ghi thanh toán (PAY-10). @example 192500.000']
-  id_token varchar(20) [note: '@built-as id_tag: Identifier the charger reports for the transaction. For a QR start, the single-use token we generate at the scan and send in the remote start (at most 20 characters, the OCPP 1.6J idTag limit); the charger echoes it in its start message, which is how that message finds this row (CE-11). Later also a card number or an Autocharge ID (CHG-08); never copy it into application logs (IS-07). Planned (CE-10): varchar(255) (the OCPP 2.1 width) and required. @vi Mã định danh trụ báo cho giao dịch. Với lần sạc bằng QR, đó là mã dùng một lần chúng ta tạo khi quét và gửi trong lệnh bắt đầu từ xa (tối đa 20 ký tự, giới hạn idTag của OCPP 1.6J); trụ gửi lại mã này trong bản tin bắt đầu, nhờ đó bản tin tìm được dòng này (CE-11). Sau này còn là số thẻ hoặc mã Autocharge (CHG-08); không bao giờ chép vào log ứng dụng (IS-07). Dự kiến (CE-10): varchar(255) (độ dài của OCPP 2.1) và bắt buộc. @example G3K7Q2M9X4T1']
+  id_token varchar(255) [not null, note: 'Identifier the charger reports for the transaction. For a QR start, the single-use token we generate at the scan and send in the remote start (at most 20 characters, the OCPP 1.6J idTag limit); the charger echoes it in its start message, which is how that message finds this row (CE-11). Later also a card number or an Autocharge ID (CHG-08); never copy it into application logs (IS-07). @vi Mã định danh trụ báo cho giao dịch. Với lần sạc bằng QR, đó là mã dùng một lần chúng ta tạo khi quét và gửi trong lệnh bắt đầu từ xa (tối đa 20 ký tự, giới hạn idTag của OCPP 1.6J); trụ gửi lại mã này trong bản tin bắt đầu, nhờ đó bản tin tìm được dòng này (CE-11). Sau này còn là số thẻ hoặc mã Autocharge (CHG-08); không bao giờ chép vào log ứng dụng (IS-07). @example G3K7Q2M9X4T1']
   stop_reason varchar(30) [note: 'The charger\'s stop reason, as sent (1.6J reason, 2.0.1 stoppedReason); NULL unless COMPLETED. Why a session was ABANDONED is not stored here: it belongs to the record of the remote-start command we sent (CS-18). @vi Lý do dừng theo trụ báo, giữ nguyên (reason của 1.6J, stoppedReason của 2.0.1); NULL nếu chưa COMPLETED. Lý do phiên bị ABANDONED không lưu ở đây mà thuộc về bản ghi lệnh bắt đầu từ xa chúng ta đã gửi (CS-18). @example EVDisconnected']
   meter_stop_wh numeric(24,3) [note: 'Meter reading the charger declares in its stop message, in Wh: the billing figure (CE-12), always stored as sent (CE-03). NULL until COMPLETED, or when the stop message carries none; billing then falls back to the newest measurement. @vi Chỉ số công tơ trụ báo trong bản tin dừng (Wh): con số dùng để tính tiền (CE-12), luôn lưu đúng như trụ gửi (CE-03). NULL cho đến khi COMPLETED, hoặc khi bản tin dừng không có; khi đó tính tiền theo số đo mới nhất. @example 1712860.000']
   created_at timestamptz [not null, note: 'When the row was created (UTC): the scan time for a QR start. @vi Thời điểm tạo bản ghi (UTC): là thời điểm quét mã với lần sạc bằng QR. @example 2026-09-15T08:29:10Z']
@@ -1512,10 +1501,10 @@ Table charging_sessions {
     (evse_id, status) [name: 'ix_charging_sessions_evse_status']
     (connector_id, status) [name: 'ix_charging_sessions_connector_status']
     started_at [name: 'ix_charging_sessions_started_at']
-    (station_id, ocpp_transaction_id) [unique, name: 'uq_charging_sessions_station_transaction', note: 'Planned (CE-10): partial, WHERE ocpp_transaction_id IS NOT NULL']
-    (station_id, id_token) [name: 'ix_charging_sessions_pending_token', note: 'Planned (CE-11): WHERE status = \'PENDING\'; matches a start message to its scan']
-    (organization_id, started_at) [name: 'ix_charging_sessions_organization_started', note: 'Planned (CE-10): a customer\'s charging history (CHG-04)']
-    vehicle_id [name: 'ix_charging_sessions_vehicle_id', note: 'Planned (CE-13)']
+    (station_id, ocpp_transaction_id) [unique, name: 'uq_charging_sessions_station_transaction', note: 'Partial: WHERE ocpp_transaction_id IS NOT NULL']
+    (station_id, id_token) [name: 'ix_charging_sessions_pending_token', note: 'Partial: WHERE status = \'PENDING\'; matches a start message to its scan']
+    (organization_id, started_at) [name: 'ix_charging_sessions_organization_started', note: 'A customer\'s charging history (CHG-04)']
+    vehicle_id [name: 'ix_charging_sessions_vehicle_id']
   }
   Note: '''@status built @owner two-party @features F-B2,F-C5
 One charge on one connector of one charger, from the QR scan to the stop
@@ -1536,35 +1525,16 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 @vi Một lần sạc trên một súng của một trụ, từ lúc quét mã QR đến lúc dừng (CE-10). Dòng được tạo ở trạng thái PENDING khi tài xế quét mã QR trong ứng dụng của chúng ta, cùng tổ chức trả tiền, người quét và mã dùng một lần gửi trong lệnh bắt đầu từ xa; bản tin bắt đầu của chính trụ đó mang mã này chuyển phiên sang ACTIVE (CE-11), bản tin dừng chuyển sang COMPLETED; ABANDONED khi lần bắt đầu không xảy ra. Số liệu trực tiếp (kWh đã sạc, % pin, công suất cao nhất) đọc từ charging_session_measurements; đơn giá và số tiền thuộc bản ghi thanh toán (PAY-10). Không có lịch sử thay đổi và không xóa mềm: không ai sửa một phiên sạc. Ràng buộc kiểm tra (CE-10): phiên ACTIVE hoặc COMPLETED phải có mã giao dịch, EVSE, súng, thời điểm bắt đầu và chỉ số công tơ đầu; phiên COMPLETED phải có thời điểm kết thúc; phiên PENDING hoặc ABANDONED không có mã giao dịch.'''
 }
 
-Table charging_session_events {
-  event_id uuid [pk, note: 'Internal ID of the event. @vi Mã nội bộ của sự kiện. @example 0000000a-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  event_occurred_at timestamptz [pk, note: 'When the event happened; hypertable time column. @vi Thời điểm xảy ra sự kiện; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:30:00Z']
-  session_id uuid [not null, note: 'Session the event belongs to. @vi Phiên sạc chứa sự kiện. @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
-  event_type chargingsessioneventtype [not null, note: 'Lifecycle step the event represents. @vi Bước trong vòng đời phiên sạc mà sự kiện thể hiện. @example Started']
-  seq_no integer [note: 'OCPP 2.0.1 only (CO-15): the per-transaction sequence number of TransactionEvent; NULL for 1.6J, which has none. @vi Số thứ tự theo giao dịch của OCPP; NULL nếu trụ không gửi. @example 0']
-  indexes {
-    (session_id, event_occurred_at, event_id) [name: 'ix_charging_session_events_session_time']
-  }
-  Note: '''@status built @owner two-party @features F-B2 @hypertable event_occurred_at @remove CE-15
-Each Started / Updated / Ended event of a session. Dropped by the target
-design (CE-15): for OCPP 1.6J it copies the session's start and end, the raw
-OCPP log keeps every frame for audit, and no feature reads a session
-timeline. OCPP 2.0.1 duplicate handling (seqNo) and charging-state periods
-are designed when 2.0.1 support is built (deferred.md 78).
-@vi-name Sự kiện phiên sạc
-@vi Từng sự kiện Bắt đầu / Cập nhật / Kết thúc của một phiên sạc. Bị bỏ trong thiết kế đích (CE-15): với OCPP 1.6J bảng chỉ chép lại thời điểm bắt đầu và kết thúc của phiên, nhật ký OCPP thô đã giữ mọi bản tin để kiểm tra, và chưa tính năng nào đọc dòng thời gian của phiên. Việc loại bản tin trùng của OCPP 2.0.1 (seqNo) và các khoảng trạng thái sạc được thiết kế khi xây dựng hỗ trợ 2.0.1 (deferred.md 78).'''
-}
-
 Table charging_session_measurements {
   measurement_id uuid [pk, note: 'Internal ID of the measurement. @vi Mã nội bộ của số đo. @example 0000000b-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
   sampled_at timestamptz [pk, note: 'The charger\'s time of the reading; hypertable time column. @vi Thời điểm đo theo đồng hồ của trụ; cột thời gian của bảng chuỗi thời gian. @example 2026-09-15T08:45:00Z']
   session_id uuid [not null, note: 'Session the measurement belongs to. Readings sent outside a session (clock-aligned samples) are kept only in the raw OCPP log (CE-06, deferred.md 77). @vi Phiên sạc chứa số đo. Số đo gửi ngoài phiên (lấy mẫu theo đồng hồ) chỉ được giữ trong nhật ký OCPP thô (CE-06, deferred.md 77). @example e5a2d8f1-4b7c-4e9a-b3d6-2c1f0e9a8dbb']
   measurand varchar(60) [not null, note: 'What was measured, by its OCPP name (Energy.Active.Import.Register, Power.Active.Import, Current.Import, Voltage, SoC, Temperature); a vendor-specific name is stored as sent. @vi Đại lượng được đo, theo tên của OCPP (Energy.Active.Import.Register, Power.Active.Import, Current.Import, Voltage, SoC, Temperature); tên riêng của hãng được lưu đúng như gửi. @example Energy.Active.Import.Register']
-  value numeric(24,6) [not null, note: 'The reading. Energy is stored in Wh today. Planned (CE-14): every known measurand is converted by the gateway to one fixed unit when written: energy Wh (reactive varh), power W (reactive var, apparent VA), current A, voltage V, temperature Celsius, SoC and other percentages Percent; kilo-units are multiplied by 1000, Fahrenheit and K become Celsius. A vendor measurand is stored as sent. @vi Giá trị đo. Hiện điện năng được lưu bằng Wh. Dự kiến (CE-14): cổng OCPP đổi mọi đại lượng đã biết sang một đơn vị cố định khi ghi: điện năng Wh (phản kháng varh), công suất W (phản kháng var, biểu kiến VA), dòng điện A, điện áp V, nhiệt độ Celsius, SoC và các tỷ lệ khác Percent; đơn vị kilo nhân 1000, Fahrenheit và K đổi sang Celsius. Đại lượng riêng của hãng được lưu đúng như gửi. @example 1568340.000000']
-  unit varchar(20) [note: 'Unit of value, in OCPP spelling. Planned (CE-14): always the fixed unit of a known measurand; as sent, or NULL, for a vendor one. @vi Đơn vị của giá trị, viết theo OCPP. Dự kiến (CE-14): luôn là đơn vị cố định của đại lượng đã biết; đúng như gửi, hoặc NULL, với đại lượng riêng của hãng. @example Wh']
-  context varchar(30) [note: 'Why the charger sent the reading: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Planned (CE-14): required; the OCPP default Sample.Periodic is stored when the charger omits it. @vi Lý do trụ gửi số đo: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Dự kiến (CE-14): bắt buộc; lưu giá trị mặc định của OCPP là Sample.Periodic khi trụ không gửi. @example Sample.Periodic']
+  value numeric(24,6) [not null, note: 'The reading. Every known measurand is converted by the gateway to one fixed unit when written: energy Wh (reactive varh), power W (reactive var, apparent VA), current A, voltage V, temperature Celsius, SoC and other percentages Percent; kilo-units are multiplied by 1000, Fahrenheit and K become Celsius. A vendor measurand is stored as sent. @vi Giá trị đo. Cổng OCPP đổi mọi đại lượng đã biết sang một đơn vị cố định khi ghi: điện năng Wh (phản kháng varh), công suất W (phản kháng var, biểu kiến VA), dòng điện A, điện áp V, nhiệt độ Celsius, SoC và các tỷ lệ khác Percent; đơn vị kilo nhân 1000, Fahrenheit và K đổi sang Celsius. Đại lượng riêng của hãng được lưu đúng như gửi. @example 1568340.000000']
+  unit varchar(20) [note: 'Unit of value, in OCPP spelling. Always the fixed unit of a known measurand; as sent, or NULL, for a vendor one. @vi Đơn vị của giá trị, viết theo OCPP. Luôn là đơn vị cố định của đại lượng đã biết; đúng như gửi, hoặc NULL, với đại lượng riêng của hãng. @example Wh']
+  context varchar(30) [not null, note: 'Why the charger sent the reading: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Required; the OCPP default Sample.Periodic is stored when the charger omits it. @vi Lý do trụ gửi số đo: Sample.Periodic, Transaction.Begin, Transaction.End, Sample.Clock, Trigger, Interruption.Begin, Interruption.End, Other. Bắt buộc; lưu giá trị mặc định của OCPP là Sample.Periodic khi trụ không gửi. @example Sample.Periodic']
   phase varchar(10) [note: 'Electrical phase the value refers to (L1, L2, L3 ...); NULL for DC, which is every charger we have. @vi Pha điện của giá trị (L1, L2, L3 ...); NULL với sạc DC, là mọi trụ chúng ta đang có. @example NULL']
-  measurement_location varchar(20) [note: '@built-as location: Where on the charging path the value was measured (OCPP calls it location): Outlet (the charger\'s output toward the truck: live progress and the billing fallback), Inlet (its input from the grid: losses and our electricity cost), Cable, EV (reported by the truck, e.g. SoC), Body (inside the charger cabinet). Every location is stored; features read Outlet, and EV for SoC, for now (CE-14). Renamed because location reads as a place (charging_locations). Planned (CE-14): required; the OCPP default Outlet is stored when the charger omits it. @vi Điểm đo trên đường sạc (OCPP gọi là location): Outlet (đầu ra của trụ về phía xe: tiến trình trực tiếp và số dự phòng khi tính tiền), Inlet (đầu vào từ lưới: tổn thất và chi phí điện của chúng ta), Cable, EV (do xe báo, ví dụ SoC), Body (bên trong tủ trụ). Mọi điểm đo đều được lưu; hiện các tính năng chỉ đọc Outlet, và EV cho SoC (CE-14). Đổi tên vì location dễ hiểu nhầm là địa điểm (charging_locations). Dự kiến (CE-14): bắt buộc; lưu giá trị mặc định của OCPP là Outlet khi trụ không gửi. @example Outlet']
+  measurement_location varchar(20) [not null, note: 'Where on the charging path the value was measured (OCPP calls it location): Outlet (the charger\'s output toward the truck: live progress and the billing fallback), Inlet (its input from the grid: losses and our electricity cost), Cable, EV (reported by the truck, e.g. SoC), Body (inside the charger cabinet). Every location is stored; features read Outlet, and EV for SoC, for now (CE-14). Required; the OCPP default Outlet is stored when the charger omits it. @vi Điểm đo trên đường sạc (OCPP gọi là location): Outlet (đầu ra của trụ về phía xe: tiến trình trực tiếp và số dự phòng khi tính tiền), Inlet (đầu vào từ lưới: tổn thất và chi phí điện của chúng ta), Cable, EV (do xe báo, ví dụ SoC), Body (bên trong tủ trụ). Mọi điểm đo đều được lưu; hiện các tính năng chỉ đọc Outlet, và EV cho SoC (CE-14). Bắt buộc; lưu giá trị mặc định của OCPP là Outlet khi trụ không gửi. @example Outlet']
   indexes {
     (session_id, measurand, sampled_at) [name: 'ix_charging_measurements_session_measurand_time']
   }
@@ -1584,25 +1554,21 @@ Ref: charging_sessions.connector_id > charging_connectors.connector_id [delete: 
 Ref: charging_sessions.organization_id > organizations.organization_id [delete: restrict]
 Ref: charging_sessions.started_by > users.user_id [delete: restrict]
 Ref: charging_sessions.vehicle_id > vehicles.vehicle_id [delete: restrict]
-Ref: charging_session_events.session_id > charging_sessions.session_id [delete: restrict]
 Ref: charging_session_measurements.session_id > charging_sessions.session_id [delete: restrict]
 
 TableGroup charging_sessions {
   charging_sessions
-  charging_session_events
   charging_session_measurements
   Note: '''
-What happened during each charge: events, meter readings, energy delivered.
+What happened during each charge: the session itself and the readings the charger reported.
 
 - A **session** takes place on one connector of one charger. It is created when a driver scans the QR code on the charger in our app (CE-10) and records who scanned, which organization pays and, when the driver is checked in to a truck, that truck; the charger's start message then fills in the gun and the transaction (CE-11).
-- Built today without that link (only a raw `id_tag`); it arrives with the refactor.
-- A session has many **measurements**. Its **events** table is built but dropped by the target design (CE-15).
+- A session has many **measurements**. The earlier events table is gone (CE-15): start and end live on the session, the full trail in the raw OCPP log.
 
 @vi-name Phiên sạc
 @vi Những gì diễn ra trong mỗi lần sạc: sự kiện, chỉ số công tơ, điện năng đã cấp.
 - Một **phiên sạc** diễn ra trên một súng sạc của một trụ. Phiên được tạo khi tài xế quét mã QR trên trụ bằng ứng dụng của chúng ta (CE-10) và ghi người quét, tổ chức trả tiền và, nếu tài xế đang nhận một xe, chiếc xe đó; sau đó bản tin bắt đầu của trụ điền súng sạc và giao dịch (CE-11).
-- Bản đang chạy chưa có liên kết này (chỉ có mã `id_tag` thô); sẽ có khi tái cấu trúc.
-- Một phiên sạc có nhiều **số đo**. Bảng **sự kiện** đã được xây dựng nhưng bị bỏ trong thiết kế đích (CE-15).
+- Một phiên sạc có nhiều **số đo**. Bảng sự kiện trước đây đã bị bỏ (CE-15): thời điểm bắt đầu và kết thúc nằm ngay trên phiên, toàn bộ vết nằm trong nhật ký OCPP thô.
 '''
 }
 
@@ -1612,20 +1578,19 @@ What happened during each charge: events, meter readings, energy delivered.
 
 Table notifications {
   notification_id bigint [pk, increment, note: 'Auto-increasing ID; also the polling cursor (after_id). @vi Mã tự tăng; cũng là con trỏ khi truy vấn thông báo mới (after_id). @example 5821']
-  organization_id uuid [not null, note: '@planned NT-09: Organization the alert belongs to, written once: the truck\'s owner at that moment (DM-24 case C). @vi Tổ chức sở hữu cảnh báo, ghi một lần: chủ xe tại thời điểm đó (DM-24 trường hợp C). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [not null, note: 'Organization the alert belongs to, written once: the truck\'s owner at that moment (DM-24 case C). @vi Tổ chức sở hữu cảnh báo, ghi một lần: chủ xe tại thời điểm đó (DM-24 trường hợp C). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   notification_type notificationtype [not null, note: 'Kind of event that raised it. @vi Loại sự kiện đã phát sinh thông báo. @example BATTERY_ALERT']
   severity notificationseverity [not null, note: 'How urgent it is, independent of type. @vi Mức độ khẩn cấp, độc lập với loại thông báo. @example WARNING']
-  vehicle_id uuid [note: 'The truck it concerns, for filtering by truck (NTF-01); NULL when no truck is concerned. Planned (NT-09): its foreign key becomes ON DELETE RESTRICT, like every other link (today CASCADE would delete alerts with their truck). @vi Xe mà thông báo nói tới; NULL với thông báo không liên quan xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
-  subject_type varchar(30) [note: '@planned NT-09: What the alert is about, and so which screen the app opens (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... A new kind adds a value, not a column. No foreign key (it points to different tables); the target always exists since rows are never hard-deleted (DM-25). Opening it applies that screen\'s own access check. @vi Cảnh báo nói về đối tượng nào, và do đó ứng dụng mở màn hình nào (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... Loại mới chỉ thêm giá trị, không thêm cột. Không có khóa ngoại (trỏ tới nhiều bảng khác nhau); đối tượng luôn tồn tại vì không bao giờ xóa hẳn (DM-25). Khi mở vẫn áp dụng kiểm tra quyền của màn hình đó. @example TRIP']
-  subject_id uuid [note: '@planned NT-09: ID of that object; set exactly when subject_type is set. @vi Mã của đối tượng đó; có giá trị đúng khi subject_type có giá trị. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
+  vehicle_id uuid [note: 'The truck it concerns, for filtering by truck (NTF-01); NULL when no truck is concerned. @vi Xe mà thông báo nói tới; NULL với thông báo không liên quan xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
+  subject_type varchar(30) [note: 'What the alert is about, and so which screen the app opens (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... A new kind adds a value, not a column. No foreign key (it points to different tables); the target always exists since rows are never hard-deleted (DM-25). Opening it applies that screen\'s own access check. @vi Cảnh báo nói về đối tượng nào, và do đó ứng dụng mở màn hình nào (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... Loại mới chỉ thêm giá trị, không thêm cột. Không có khóa ngoại (trỏ tới nhiều bảng khác nhau); đối tượng luôn tồn tại vì không bao giờ xóa hẳn (DM-25). Khi mở vẫn áp dụng kiểm tra quyền của màn hình đó. @example TRIP']
+  subject_id uuid [note: 'ID of that object; set exactly when subject_type is set. @vi Mã của đối tượng đó; có giá trị đúng khi subject_type có giá trị. @example 2e1c8a5f-0b7d-4e9c-b4a3-6d5f1e8c2b76']
   title varchar(200) [not null, note: 'Short summary. @vi Tóm tắt ngắn. @example Pin còn 20%']
   body varchar(500) [not null, note: 'Longer description. @vi Mô tả chi tiết. @example Xe 51D-123.45 còn 20% pin. Trạm gần nhất: Trạm sạc G3 Bình Dương (8.4 km).']
   payload jsonb [not null, note: 'Type-specific details as JSON. @vi Chi tiết riêng theo loại thông báo, dạng JSON. @example {"threshold": 20, "soc": 19.8, "nearest_station_id": "4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88", "distance_m": 8400}']
   created_at timestamptz [not null, note: 'When the notification was raised. @vi Thời điểm phát sinh thông báo. @example 2026-09-15T08:30:00Z']
-  read_at timestamptz [note: '@remove NT-09: When an operator marked it read; moves to the recipients table, because one alert reaches several people. @vi Thời điểm người vận hành đánh dấu đã đọc; NULL nếu chưa đọc. @example NULL']
   indexes {
     vehicle_id [name: 'ix_notifications_vehicle_id']
-    (organization_id, notification_id) [name: 'ix_notifications_organization_cursor', note: 'Planned (NT-09): an organization\'s alerts after a cursor']
+    (organization_id, notification_id) [name: 'ix_notifications_organization_cursor', note: 'An organization\'s alerts after a cursor']
   }
   Note: '''@status built @owner customer @features F-A2,F-A3,F-A4,F-J1,F-J3
 One alert (battery, anomaly, SOH, device offline ...). One generic table;
@@ -1639,7 +1604,7 @@ Check constraint (NT-09): (subject_type IS NULL) = (subject_id IS NULL).
 }
 
 Ref: notifications.organization_id > organizations.organization_id [delete: restrict]
-Ref: notifications.vehicle_id > vehicles.vehicle_id [delete: cascade]
+Ref: notifications.vehicle_id > vehicles.vehicle_id [delete: restrict]
 
 Table notification_recipients {
   notification_recipient_id bigint [pk, increment, note: 'Auto-increasing internal ID; alerts x people is a large number, so bigint. @vi Mã nội bộ tự tăng; số cảnh báo x số người là rất lớn nên dùng bigint. @example 918273']
@@ -1653,7 +1618,7 @@ Table notification_recipients {
     (user_id, notification_id) [name: 'ix_notification_recipients_inbox', note: 'A person\'s inbox, polled with the cursor (NT-02)']
     user_id [name: 'ix_notification_recipients_unseen', note: 'WHERE seen_at IS NULL: the badge count']
   }
-  Note: '''@status planned @owner customer @features F-A2,F-F3
+  Note: '''@status built @owner customer @features F-A2,F-F3
 Who received an alert, and whether they saw and read it (NT-10). The inbox is
 per person across all their organizations (opening an alert switches to its
 organization), so the row reads its organization through the alert. Seen
@@ -1678,7 +1643,7 @@ Table organization_notification_settings {
   indexes {
     (organization_id, notification_type) [unique, name: 'uq_organization_notification_settings_type']
   }
-  Note: '''@status planned @owner customer @features F-F3 @tracked *
+  Note: '''@status built @owner customer @features F-F3 @tracked * @history built
 An organization's push and e-mail switch for one kind of alert (NTF-05,
 NT-12). The app and portal inbox always shows every alert (NT-03); this only
 switches push and e-mail. Only exceptions are stored: a kind with no row uses
@@ -1717,14 +1682,13 @@ Alerts raised by other domains: who received them, and how they are delivered.
 
 Table support_cases {
   case_id uuid [pk, note: 'Internal ID of the case. @vi Mã nội bộ của ca hỗ trợ. @example 0000000c-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  organization_id uuid [note: '@planned: Customer organization the case belongs to. @vi Tổ chức khách hàng của ca hỗ trợ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
+  organization_id uuid [note: 'Customer organization the case belongs to: the vehicle\'s owner when a VIN resolved, otherwise the one the caller named; NULL for a ticket with neither (an SOS always has one, because its alert belongs to an organization, NT-09). @vi Tổ chức khách hàng của ca hỗ trợ. @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
   case_type supportcasetype [not null, note: 'Ordinary ticket or SOS. @vi Yêu cầu thường hay SOS. @example SOS']
   category supportcasecategory [not null, note: 'Business category of the problem. @vi Nhóm vấn đề theo nghiệp vụ. @example BREAKDOWN']
   channel supportcasechannel [not null, note: 'Where the case came in. @vi Kênh tiếp nhận ca. @example IN_APP']
   status supportcasestatus [not null, note: 'Current lifecycle status. @vi Trạng thái hiện tại trong vòng đời ca. @example ACKNOWLEDGED']
   vehicle_id uuid [note: 'Vehicle concerned, resolved from the VIN; NULL if not resolved. @vi Xe liên quan, suy ra từ VIN; NULL nếu không xác định được. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   driver_id uuid [note: 'Driver who raised the case; NULL if not supplied. @vi Tài xế tạo ca; NULL nếu không cung cấp. @example 6e3b9d2a-4c1f-4e8b-9a7d-0c2e5f1b8d66']
-  assigned_partner_id uuid [note: '@planned: Repair/rescue partner the case was dispatched to. @vi Đối tác sửa chữa/cứu hộ được điều phối xử lý ca. @example a9c6e3b1-5f2d-4a8c-b7e4-3d1f0a6c9bdd']
   vin varchar(17) [note: 'VIN as sent with the case, kept even if the vehicle changes later. @vi VIN gửi kèm ca, được giữ nguyên kể cả khi xe thay đổi sau này. @example LZGJLGR4XNX000123']
   error_code varchar(50) [note: 'Vehicle fault code active when the case was created, as sent. @vi Mã lỗi của xe tại thời điểm tạo ca, đúng như gửi lên. @example P0A80']
   location "geography(POINT,4326)" [note: 'GPS position when the case was created. Snapshot only; no spatial index. @vi Vị trí GPS khi tạo ca. Chỉ là ảnh chụp; không có chỉ mục không gian. @example POINT(106.7009 10.7769)']
@@ -1749,7 +1713,7 @@ Table support_cases {
   }
   Note: '''@status built @owner customer @features F-I1,F-I2
 One support request: a ticket or an SOS, with its SLA timeline.
-Review of the support group postponed; the proposal is in SP-07.
+Review of the support group postponed; the proposal is in SP-07. The dispatch link to a repair partner (assigned_partner_id) is added with the parked repair_partners table (F-I4).
 @vi-name Ca hỗ trợ
 @vi Một yêu cầu hỗ trợ: yêu cầu thường hoặc SOS, kèm mốc thời gian SLA.'''
 }
@@ -1785,7 +1749,6 @@ A maintenance appointment for a vehicle at a partner workshop.
 Ref: support_cases.organization_id > organizations.organization_id [delete: restrict]
 Ref: support_cases.vehicle_id > vehicles.vehicle_id [delete: restrict]
 Ref: support_cases.driver_id > drivers.driver_id [delete: restrict]
-Ref: support_cases.assigned_partner_id > repair_partners.partner_id [delete: restrict]
 Ref: repair_partners.organization_id - organizations.organization_id [delete: restrict]
 Ref: maintenance_bookings.organization_id > organizations.organization_id [delete: restrict]
 Ref: maintenance_bookings.vehicle_id > vehicles.vehicle_id [delete: restrict]
@@ -1927,7 +1890,7 @@ Table tariffs {
     (organization_id, location_id) [unique, name: 'uq_tariffs_active_owner_location', note: 'WHERE status = ACTIVE, NULLS NOT DISTINCT: one active tariff per location and one default per owner']
     location_id [name: 'ix_tariffs_location_id']
   }
-  Note: '''@status planned @owner customer @features F-C8,F-H1 @tracked *
+  Note: '''@status built @owner customer @features F-C8,F-H1 @tracked * @history built
 Whose price it is and where it applies (BL-08); the prices themselves are
 immutable versions in tariff_versions, so a receipt always shows the price
 actually charged. The price at a location is its own ACTIVE tariff,
@@ -1954,7 +1917,7 @@ Table tariff_versions {
     (tariff_id, version_no) [unique, name: 'uq_tariff_versions_tariff_version_no']
     (tariff_id, effective_from) [name: 'ix_tariff_versions_tariff_effective', note: 'The current version: the newest whose effective_from has passed']
   }
-  Note: '''@status planned @owner customer @features F-C8,F-H1
+  Note: '''@status built @owner customer @features F-C8,F-H1
 One immutable set of prices of a tariff (BL-09); a price change is a new
 version. The current version is the newest whose effective_from has passed.
 At the scan the app shows the price for that hour, and that price is frozen
@@ -1988,7 +1951,7 @@ Table charging_session_bills {
     tariff_version_id [name: 'ix_charging_session_bills_tariff_version_id']
     (status, created_at) [name: 'ix_charging_session_bills_status_created', note: 'Held charges waiting for review']
   }
-  Note: '''@status planned @owner two-party @features F-H1,F-H3 @tracked *
+  Note: '''@status built @owner two-party @features F-H1,F-H3 @tracked * @history built
 The bill of one charging session (BL-10, BL-11, CE-12, PAY-10): the price frozen at the scan,
 the kWh billed and the amount. In billing, pointing to the session, never the
 reverse. The amounts are what was charged after rounding, so they are stored
@@ -2026,7 +1989,7 @@ Table payments {
     (method, gateway_reference) [unique, name: 'uq_payments_method_gateway_reference', note: 'WHERE gateway_reference IS NOT NULL: the same bank notification is never recorded twice']
     (user_id, created_at) [name: 'ix_payments_user_created']
   }
-  Note: '''@status planned @owner internal @features F-H1,F-H2
+  Note: '''@status built @owner internal @features F-H1,F-H2
 Real money in or out of a person's wallet (BL-12, BL-15): top-ups and
 refunds only. At launch a driver tops up by bank transfer through a VietQR
 code carrying a unique transfer_code; a bank-notification service matches the
@@ -2051,7 +2014,7 @@ Table wallets {
   indexes {
     user_id [unique, name: 'uq_wallets_user_id', note: 'One wallet per person']
   }
-  Note: '''@status planned @owner internal @features F-H2 @tracked * @untracked balance
+  Note: '''@status built @owner internal @features F-H2 @tracked * @untracked balance @history built
 A person's prepaid balance for charging, usable only for our own services
 (BL-13, BL-15): they top it up and pay each session from it. An
 organization-held wallet is added only with the company payment methods. To start a
@@ -2082,7 +2045,7 @@ Table wallet_transactions {
     charging_session_bill_id [unique, name: 'uq_wallet_transactions_session_bill', note: 'WHERE charging_session_bill_id IS NOT NULL']
     payment_id [name: 'ix_wallet_transactions_payment_id']
   }
-  Note: '''@status planned @owner internal @features F-H2
+  Note: '''@status built @owner internal @features F-H2
 The append-only ledger of a wallet (BL-14): every top-up, session payment,
 refund and staff adjustment, with the balance right after it. Never edited
 or deleted; a mistake is corrected by an ADJUSTMENT.

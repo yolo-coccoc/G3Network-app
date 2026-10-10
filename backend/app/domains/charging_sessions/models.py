@@ -1,11 +1,12 @@
-"""Minimal SQLAlchemy models for the charging session lifecycle happy path.
+"""SQLAlchemy models for charging sessions and their measurements.
 
-The module stores the session aggregate, TransactionEvent history and the
-measurements (canonical Wh energy samples and, for OCPP 1.6J, other measurands)
-of each session.
+A session row is created ``PENDING`` at the QR scan in our app (CE-10) and the
+charger's start message turns it ``ACTIVE``; the measurements are the
+append-only readings of the charger during the session (CE-14). The
+``charging_session_events`` table of the earlier design is gone (CE-15): start
+and end live on the session, the full trail in the raw OCPP log.
 
-The status and event-type enums store their public values (``active``,
-``Started``) via ``enum_values``, not the Python member names.
+The status enum stores the Python member names (``PENDING``...).
 """
 
 from datetime import datetime
@@ -13,61 +14,55 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
-    Integer,
     Numeric,
     String,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domains.charging_sessions.types import (
+    ID_TOKEN_MAX_LENGTH,
+    OCPP_TRANSACTION_ID_MAX_LENGTH,
     STOP_REASON_MAX_LENGTH,
-    SessionEventType,
     SessionStatus,
 )
 from app.libs.common.clock import utc_now
 from app.libs.db.base import Base
-from app.libs.db.enums import enum_values
 
 
 class ChargingSessionModel(Base):
-    """Aggregate for one OCPP transaction in the happy path.
+    """One charge on one connector of one charger, from the QR scan to the stop.
 
     Attributes:
         session_id: Internal UUID.
-        station_id: The station that owns the transaction.
-        evse_id: The EVSE that owns the transaction.
-        connector_id: The connector currently charging.
-        ocpp_transaction_id: The transaction identity issued by the station.
-        status: Only active or completed in the MVP.
-        started_at: The time of Started.
-        ended_at: The time of Ended, nullable while still active.
-        meter_start_wh: The meter reading at the start of the session.
-        meter_end_wh: The most recently observed meter reading, as of
-            ``meter_end_sampled_at`` - not necessarily the numerically
-            latest, since a sample older than the current watermark is
-            discarded (F-B2).
-        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
-            nullable - an existing row's true sample time is genuinely
-            unknown (F-B2). Never moves backward: a sample timestamped
-            earlier than this value is discarded, not applied.
-        energy_delivered_wh: The difference between the end and start meter
-            readings.
-        id_tag: The idTag (RFID/token) that started the session, nullable
-            (OCPP 1.6J; at most 20 characters). Stored as sent, not
-            validated: every tag is accepted for now.
-        stop_reason: Why the session stopped, as reported (OCPP 1.6J
-            ``StopTransaction.reason``), nullable.
-        meter_stop_wh: The charger's authoritative closing meter reading from
-            ``StopTransaction.meterStop``, nullable. Kept apart from
-            ``meter_end_wh``, which follows the latest sample.
-        created_at: The time the record was created.
-        updated_at: The time the record was last updated.
+        station_id: The charger where the session happens, known at the scan.
+        evse_id: The EVSE used; ``NULL`` while ``PENDING`` and when
+            ``ABANDONED`` (the driver picks the gun on the charger's screen).
+        connector_id: The connector used; same nullability as ``evse_id``.
+        organization_id: The organization that pays, written once at the scan
+            (DM-24 case C).
+        started_by: The user who scanned the QR code.
+        vehicle_id: The truck being charged, taken at the scan from the
+            scanning driver's open driving session (CE-13); nullable.
+        ocpp_transaction_id: The charger's transaction ID, unique per charger;
+            ``NULL`` while ``PENDING`` and when ``ABANDONED``.
+        status: ``PENDING``, ``ACTIVE``, ``COMPLETED`` or ``ABANDONED``.
+        started_at: The charger's time of the start; ``NULL`` before it.
+        ended_at: The charger's time of the stop; ``NULL`` until completed.
+        meter_start_wh: The meter reading the charger declares at the start.
+        id_token: The single-use token we send in the remote start and the
+            charger echoes in its start message; never log it (IS-07).
+        stop_reason: The charger's stop reason, as sent.
+        meter_stop_wh: The meter reading the charger declares in its stop
+            message: the billing figure (CE-12).
+        created_at: When the row was created: the scan time.
+        updated_at: When the row last changed.
     """
 
     __tablename__ = "charging_sessions"
@@ -80,28 +75,41 @@ class ChargingSessionModel(Base):
         ForeignKey("charging_stations.station_id", ondelete="RESTRICT"),
         nullable=False,
     )
-    evse_id: Mapped[UUID] = mapped_column(
+    evse_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("charging_evses.evse_id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
     )
-    connector_id: Mapped[UUID] = mapped_column(
+    connector_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("charging_connectors.connector_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
         nullable=False,
     )
-    ocpp_transaction_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    started_by: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    vehicle_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("vehicles.vehicle_id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    ocpp_transaction_id: Mapped[str | None] = mapped_column(
+        String(OCPP_TRANSACTION_ID_MAX_LENGTH), nullable=True
+    )
     status: Mapped[SessionStatus] = mapped_column(
-        SQLEnum(
-            SessionStatus,
-            name="chargingsessionstatus",
-            values_callable=enum_values,
-        ),
+        SQLEnum(SessionStatus, name="chargingsessionstatus"),
         nullable=False,
-        default=SessionStatus.ACTIVE,
+        default=SessionStatus.PENDING,
     )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     ended_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -109,14 +117,7 @@ class ChargingSessionModel(Base):
     meter_start_wh: Mapped[Decimal | None] = mapped_column(
         Numeric(24, 3), nullable=True
     )
-    meter_end_wh: Mapped[Decimal | None] = mapped_column(Numeric(24, 3), nullable=True)
-    meter_end_sampled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    energy_delivered_wh: Mapped[Decimal | None] = mapped_column(
-        Numeric(24, 3), nullable=True
-    )
-    id_tag: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    id_token: Mapped[str] = mapped_column(String(ID_TOKEN_MAX_LENGTH), nullable=False)
     stop_reason: Mapped[str | None] = mapped_column(
         String(STOP_REASON_MAX_LENGTH), nullable=True
     )
@@ -129,11 +130,40 @@ class ChargingSessionModel(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
+        CheckConstraint(
+            "status NOT IN ('ACTIVE', 'COMPLETED') OR ("
+            "ocpp_transaction_id IS NOT NULL AND evse_id IS NOT NULL "
+            "AND connector_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND meter_start_wh IS NOT NULL)",
+            name="ck_charging_sessions_started_columns",
+        ),
+        CheckConstraint(
+            "status <> 'COMPLETED' OR ended_at IS NOT NULL",
+            name="ck_charging_sessions_completed_ended_at",
+        ),
+        CheckConstraint(
+            "status NOT IN ('PENDING', 'ABANDONED') OR ocpp_transaction_id IS NULL",
+            name="ck_charging_sessions_unstarted_no_transaction",
+        ),
+        Index(
+            "uq_charging_sessions_station_transaction",
             "station_id",
             "ocpp_transaction_id",
-            name="uq_charging_sessions_station_transaction",
+            unique=True,
+            postgresql_where=text("ocpp_transaction_id IS NOT NULL"),
         ),
+        Index(
+            "ix_charging_sessions_pending_token",
+            "station_id",
+            "id_token",
+            postgresql_where=text("status = 'PENDING'"),
+        ),
+        Index(
+            "ix_charging_sessions_organization_started",
+            "organization_id",
+            "started_at",
+        ),
+        Index("ix_charging_sessions_vehicle_id", "vehicle_id"),
         Index("ix_charging_sessions_status_updated", "status", "updated_at"),
         Index("ix_charging_sessions_station_status", "station_id", "status"),
         Index("ix_charging_sessions_evse_status", "evse_id", "status"),
@@ -143,81 +173,32 @@ class ChargingSessionModel(Base):
     )
 
 
-class ChargingSessionEventModel(Base):
-    """Minimal TransactionEvent history stored as a hypertable.
-
-    Attributes:
-        event_id: Internal UUID of the event.
-        event_occurred_at: The time the event occurred; also the time
-            partitioning key.
-        session_id: The UUID of the session aggregate that owns the event.
-        event_type: The type — ``Started``, ``Updated`` or ``Ended``.
-        seq_no: OCPP's own per-transaction sequence counter, nullable - a
-            row written before this column existed has no truthful value,
-            and 0 would collide with a real ``seqNo`` of 0. Captured so
-            ordering/duplicate detection become possible later
-            (`deferred.md` item 27); no uniqueness is enforced on it yet.
-    """
-
-    __tablename__ = "charging_session_events"
-
-    event_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), primary_key=True, default=uuid4
-    )
-    # TimescaleDB needs a time column in the key to partition the hypertable
-    # while still allowing multiple events for the same session at different
-    # times.
-    event_occurred_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), primary_key=True, nullable=False
-    )
-    session_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True),
-        ForeignKey("charging_sessions.session_id", ondelete="RESTRICT"),
-        nullable=False,
-    )
-    event_type: Mapped[SessionEventType] = mapped_column(
-        SQLEnum(
-            SessionEventType,
-            name="chargingsessioneventtype",
-            values_callable=enum_values,
-        ),
-        nullable=False,
-    )
-    seq_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    __table_args__ = (
-        Index(
-            "ix_charging_session_events_session_time",
-            "session_id",
-            "event_occurred_at",
-            "event_id",
-        ),
-    )
-
-
 class ChargingSessionMeasurementModel(Base):
     """One measurement of a session, stored as a hypertable.
 
-    Holds every measurand a charger reports during a session — the cumulative
-    energy register that drives the session total, and any other reading —
-    for both OCPP protocols. Normalization (measurand filtering, unit and
-    multiplier conversion) is owned by the OCPP adapter; this table only ever
-    stores the canonical result, never the raw pre-normalization payload (see
-    the raw OCPP message log for that).
+    Holds every measurand a charger reports during a session for both OCPP
+    protocols. The gateway stores each known measurand in one fixed unit and
+    fills the OCPP defaults for a missing context or location, so readers
+    never convert units or guess defaults (CE-14). The raw payload is never
+    stored here (see the raw OCPP message log).
 
     Attributes:
         measurement_id: Internal UUID of the measurement.
-        sampled_at: The time of measurement; also the time partitioning key.
-        session_id: The UUID of the session aggregate that owns the sample.
+        sampled_at: The charger's time of the reading; also the time
+            partitioning key.
+        session_id: The session the sample belongs to.
         measurand: What was measured, as an OCPP measurand name
-            (``Energy.Active.Import.Register``, ``SoC``, ``Power.Active.Import``…).
-            Vendor-specific names are stored as sent.
-        value: The reading. For the energy register it is canonical Wh; every
-            other measurand keeps the value as sent, in ``unit``.
-        unit: The unit of ``value`` (``Wh`` for the energy register), nullable.
-        context: OCPP reading context (``Sample.Periodic``,
-            ``Transaction.End``…), nullable.
-        phase: Electrical phase the value refers to, nullable.
-        location: Where it was measured (``EV``, ``Outlet``…), nullable.
+            (``Energy.Active.Import.Register``, ``SoC``...); vendor names are
+            stored as sent.
+        value: The reading, in the fixed unit of a known measurand.
+        unit: The unit of ``value``: the fixed unit of a known measurand; as
+            sent, or ``NULL``, for a vendor one.
+        context: Why the charger sent the reading (``Sample.Periodic``...);
+            required, the OCPP default is stored when the charger omits it.
+        phase: Electrical phase the value refers to, nullable (DC has none).
+        measurement_location: Where on the charging path it was measured
+            (``Outlet``, ``Inlet``, ``Cable``, ``EV``, ``Body``); required, the
+            OCPP default ``Outlet`` is stored when the charger omits it.
     """
 
     __tablename__ = "charging_session_measurements"
@@ -239,9 +220,9 @@ class ChargingSessionMeasurementModel(Base):
     measurand: Mapped[str] = mapped_column(String(60), nullable=False)
     value: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    context: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    context: Mapped[str] = mapped_column(String(30), nullable=False)
     phase: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    location: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    measurement_location: Mapped[str] = mapped_column(String(20), nullable=False)
     __table_args__ = (
         Index(
             "ix_charging_measurements_session_measurand_time",

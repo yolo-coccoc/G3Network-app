@@ -13,6 +13,7 @@ from app.domains.support.types import SupportCaseCategory, SupportCaseChannel
 def test_support_ticket_create_request_requires_coordinates_together() -> None:
     """F-I1's ticket request rejects a lone latitude/longitude value."""
     SupportTicketCreateRequest(
+        organization_id=None,
         vehicle_vin=None,
         driver_id=None,
         category=SupportCaseCategory.TECHNICAL,
@@ -24,6 +25,7 @@ def test_support_ticket_create_request_requires_coordinates_together() -> None:
     )
     with pytest.raises(ValidationError):
         SupportTicketCreateRequest(
+            organization_id=None,
             vehicle_vin=None,
             driver_id=None,
             category=SupportCaseCategory.TECHNICAL,
@@ -38,6 +40,7 @@ def test_support_ticket_create_request_requires_coordinates_together() -> None:
 def test_support_sos_create_request_requires_coordinates_for_in_app() -> None:
     """An in-app SOS (the default channel) requires a location (F-I2, D12)."""
     sos_request = SupportSosCreateRequest(
+        organization_id=None,
         vehicle_vin=None,
         driver_id=None,
         description=None,

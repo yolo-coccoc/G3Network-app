@@ -153,6 +153,7 @@ async def check_devices_for_silence(db_session: AsyncSession) -> None:
         await _raise_device_offline_alert(
             db_session,
             device=device,
+            organization_id=vehicle_reference.organization_id,
             vehicle_id=vehicle_id,
             last_seen_at=last_seen_at,
             now=now,
@@ -173,6 +174,7 @@ async def _raise_device_offline_alert(
     db_session: AsyncSession,
     *,
     device: TelematicModel,
+    organization_id: UUID,
     vehicle_id: UUID,
     last_seen_at: datetime,
     now: datetime,
@@ -182,6 +184,8 @@ async def _raise_device_offline_alert(
     Args:
         db_session: Session whose transaction is owned by the monitor tick.
         device: The telematic device that's gone silent.
+        organization_id: The assigned vehicle's owner now (written on the
+            alert once, DM-24 case C).
         vehicle_id: The device's assigned vehicle.
         last_seen_at: The device's last telemetry receive time.
         now: The tick's current time, for computing silence duration.
@@ -199,6 +203,7 @@ async def _raise_device_offline_alert(
     }
     await notifications_service.create_notification(
         db_session,
+        organization_id=organization_id,
         notification_type=NotificationType.DEVICE_OFFLINE_ALERT,
         severity=NotificationSeverity.WARNING,
         vehicle_id=vehicle_id,

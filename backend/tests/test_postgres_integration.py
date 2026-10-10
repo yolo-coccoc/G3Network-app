@@ -248,8 +248,12 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                                 'charging_stations', 'charging_station_state',
                                 'charging_evses', 'charging_connectors',
                                 'charging_connector_state', 'charging_sessions',
-                                'charging_session_events',
                                 'charging_session_measurements',
+                                'notification_recipients',
+                                'organization_notification_settings',
+                                'tariffs', 'tariff_versions',
+                                'charging_session_bills', 'payments', 'wallets',
+                                'wallet_transactions',
                                 'charging_ocpp_messages',
                                 'charging_station_commands',
                                 'charging_station_configuration_captures',
@@ -274,15 +278,15 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # .claude/rules/database.md): a schema change edits that revision
         # instead of adding a new one, so the head never moves.
         assert version == "0001_baseline_schema"
-        assert len(tables) == 17
+        assert len(tables) == 24
+        assert "charging_session_events" not in tables
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
-        # Exactly five hypertables: the OCPP 1.6J work replaced the session
-        # meter-values hypertable with measurements and added the raw message
-        # log; the identity work added the access audit log.
+        # Exactly four hypertables: the session events table is gone (CE-15);
+        # the measurements, the raw message log, telemetry and the access
+        # audit log remain.
         assert hypertables == {
             "telemetry",
-            "charging_session_events",
             "charging_ocpp_messages",
             "charging_session_measurements",
             "access_audit_logs",
@@ -616,6 +620,44 @@ async def _provision_station_at(
     return station_id, connector_ids
 
 
+async def _provision_organization_and_user(engine: object) -> tuple[UUID, UUID]:
+    """Insert an organization and a user; return both IDs (a payer and a scanner)."""
+    organization = build_organization_record()
+    user = UserModel(
+        phone_number=f"+849{uuid4().int % 10**8:08d}",
+        full_name="Scanner",
+        status=UserStatus.ACTIVE.value,
+    )
+    async with AsyncSession(engine, expire_on_commit=False) as db, db.begin():  # type: ignore[arg-type]
+        db.add_all([organization, user])
+    return organization.organization_id, user.user_id
+
+
+async def _scan(engine: object, identity: str, id_token: str) -> UUID:
+    """Insert the PENDING session of a QR scan on a charger; return its ID (CE-10)."""
+    organization_id, user_id = await _provision_organization_and_user(engine)
+    session_id = uuid4()
+    now = datetime.now(timezone.utc)
+    async with engine.begin() as connection:  # type: ignore[attr-defined]
+        await connection.execute(
+            text(
+                "INSERT INTO charging_sessions (session_id, station_id, "
+                "organization_id, started_by, status, id_token, created_at, "
+                "updated_at) SELECT :x, station_id, :o, :u, 'PENDING', :tok, :t, :t "
+                "FROM charging_stations WHERE ocpp_identity = :i"
+            ),
+            {
+                "x": session_id,
+                "o": organization_id,
+                "u": user_id,
+                "tok": id_token,
+                "t": now,
+                "i": identity,
+            },
+        )
+    return session_id
+
+
 async def _provision_station(
     engine: object, identity: str, evse_ids: list[int]
 ) -> None:
@@ -678,6 +720,8 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     await _provision_station(engine, "E2E-16", [1, 2])
     await _provision_station(engine, "E2E-201", [1])
+    # Only a token a scan issued starts a session (CE-11): the simulator's tag.
+    await _scan(engine, "E2E-16", "SIMTAG001")
     gateway = subprocess.Popen(
         [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
         cwd=_backend_root(),
@@ -754,9 +798,10 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             session = (
                 await connection.execute(
                     text(
-                        "SELECT session_id, ocpp_transaction_id, status::text, id_tag, "
-                        "stop_reason, meter_start_wh, meter_stop_wh, meter_end_wh, "
-                        "energy_delivered_wh FROM charging_sessions WHERE station_id = :s"
+                        "SELECT session_id, ocpp_transaction_id, status::text, id_token, "
+                        "stop_reason, meter_start_wh, meter_stop_wh, evse_id, "
+                        "connector_id, started_at FROM charging_sessions "
+                        "WHERE station_id = :s"
                     ),
                     {"s": station.station_id},
                 )
@@ -826,10 +871,11 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             legacy = (
                 await connection.execute(
                     text(
-                        "SELECT st.ocpp_protocol_version, x.status::text, x.meter_end_wh, "
-                        "x.energy_delivered_wh FROM charging_stations s "
+                        "SELECT st.ocpp_protocol_version, "
+                        "(SELECT count(*) FROM charging_sessions x "
+                        "WHERE x.station_id = s.station_id) AS sessions "
+                        "FROM charging_stations s "
                         "JOIN charging_station_state st ON st.station_id = s.station_id "
-                        "JOIN charging_sessions x ON x.station_id = s.station_id "
                         "WHERE s.ocpp_identity = 'E2E-201'"
                     )
                 )
@@ -855,11 +901,14 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             (1, "Available", "NoError", True),
             (2, "Available", "NoError", True),
         ]
-        # The session: allocated ID, idTag, reason, closing meter, energy.
-        assert (session.ocpp_transaction_id, session.status) == ("1", "completed")
-        assert (session.id_tag, session.stop_reason) == ("SIMTAG001", "EVDisconnected")
+        # The scanned session: allocated ID, gun, token, reason, declared meters.
+        assert (session.ocpp_transaction_id, session.status) == ("1", "COMPLETED")
+        assert (session.id_token, session.stop_reason) == (
+            "SIMTAG001",
+            "EVDisconnected",
+        )
         assert (session.meter_start_wh, session.meter_stop_wh) == (1000, 1500)
-        assert (session.meter_end_wh, session.energy_delivered_wh) == (1500, 500)
+        assert session.evse_id is not None and session.started_at is not None
         # Measurements: 1.25 kWh really is 1250 Wh, plus the extra measurands.
         assert list(energy) == [1250, 1450, 1500]
         assert {
@@ -896,8 +945,9 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             "ACCEPTED",
         )
         assert captures.mutability_ok and paired == 1
-        # The 2.0.1 path is unaffected.
-        assert tuple(legacy) == ("ocpp2.0.1", "completed", 1500, 500)
+        # The 2.0.1 simulator sends no idToken, so its start is refused (CE-11):
+        # the charger is served but no session row appears.
+        assert tuple(legacy) == ("ocpp2.0.1", 0)
     finally:
         gateway.terminate()
         try:
@@ -913,21 +963,25 @@ async def test_notification_insert_and_mark_read_need_no_refresh(
 ) -> None:
     """A flushed notification is fully populated without a refresh (F-A2).
 
-    The identity ID comes back from ``INSERT ... RETURNING`` and
-    ``created_at``/``read_at`` are client-side values, so the service builds
-    its response straight from the object; mark-read stays idempotent.
+    The identity ID comes back from ``INSERT ... RETURNING`` and ``created_at``
+    is a client-side value, so the service builds its response straight from
+    the object; a person's mark-read stays idempotent (NT-04, NT-10).
     """
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
     try:
+        organization_id, user_id = await _provision_organization_and_user(engine)
         async with session_factory.begin() as db:
             notification_record = await notification_repository.insert(
                 db,
+                organization_id=organization_id,
                 notification_type=NotificationType.BATTERY_ALERT,
                 severity=NotificationSeverity.WARNING,
                 vehicle_id=None,
+                subject_type=None,
+                subject_id=None,
                 title="Battery at 18%",
                 body="Vehicle battery dropped below the threshold.",
                 payload={"soc": 18.0},
@@ -938,15 +992,23 @@ async def test_notification_insert_and_mark_read_need_no_refresh(
             assert notification_record.notification_id > 0
             created_at = notification_record.created_at
             assert created_at.utcoffset() is not None
+            added = await notifications_service.add_notification_recipients(
+                db, notification_record.notification_id, [user_id]
+            )
+            assert added == 1
 
         async with session_factory.begin() as db:
             first_read = await notifications_service.mark_notification_read(
-                db, notification_record.notification_id
+                db, notification_record.notification_id, user_id
             )
         async with session_factory.begin() as db:
             second_read = await notifications_service.mark_notification_read(
-                db, notification_record.notification_id
+                db, notification_record.notification_id, user_id
             )
+            again = await notifications_service.add_notification_recipients(
+                db, notification_record.notification_id, [user_id]
+            )
+            unread = await notifications_service.count_unread_notifications(db, user_id)
 
         async with session_factory() as db:
             stored = (
@@ -961,8 +1023,9 @@ async def test_notification_insert_and_mark_read_need_no_refresh(
         assert stored.created_at == created_at
         assert stored.payload == {"soc": 18.0}
         assert first_read.read_at is not None
-        assert stored.read_at == first_read.read_at
+        assert first_read.seen_at == first_read.read_at
         assert second_read.read_at == first_read.read_at
+        assert (again, unread.unread_count) == (0, 0)
     finally:
         await engine.dispose()
 
@@ -1470,20 +1533,23 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 text("SELECT evse_id FROM charging_connectors WHERE connector_id = :c"),
                 {"c": connector_ids[0]},
             )
+            organization_id, user_id = await _provision_organization_and_user(engine)
             await connection.execute(
                 text(
                     "INSERT INTO charging_sessions (session_id, station_id, evse_id, "
-                    "connector_id, ocpp_transaction_id, status, started_at, ended_at, "
-                    "meter_start_wh, meter_end_wh, meter_end_sampled_at, "
-                    "energy_delivered_wh, created_at, updated_at) VALUES "
-                    "(:x, :s, :e, :c, 'SERIES-TX', 'completed', :start, :end, "
-                    "1000, 4000, :end, 3000, :start, :end)"
+                    "connector_id, organization_id, started_by, ocpp_transaction_id, "
+                    "status, started_at, ended_at, meter_start_wh, id_token, "
+                    "meter_stop_wh, created_at, updated_at) VALUES "
+                    "(:x, :s, :e, :c, :o, :u, 'SERIES-TX', 'COMPLETED', :start, "
+                    ":end, 1000, 'SERIES-TOKEN', 4000, :start, :end)"
                 ),
                 {
                     "x": session_id,
                     "s": station_id,
                     "e": evse_id,
                     "c": connector_ids[0],
+                    "o": organization_id,
+                    "u": user_id,
                     "start": t0 + timedelta(minutes=40),
                     "end": t0 + timedelta(hours=1, minutes=20),
                 },
@@ -1492,8 +1558,10 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 await connection.execute(
                     text(
                         "INSERT INTO charging_session_measurements (measurement_id, "
-                        "sampled_at, session_id, measurand, value, unit) VALUES "
-                        "(:m, :t, :x, 'Energy.Active.Import.Register', :v, 'Wh')"
+                        "sampled_at, session_id, measurand, value, unit, context, "
+                        "measurement_location) VALUES "
+                        "(:m, :t, :x, 'Energy.Active.Import.Register', :v, 'Wh', "
+                        "'Sample.Periodic', 'Outlet')"
                     ),
                     {
                         "m": uuid4(),
@@ -2491,11 +2559,17 @@ async def test_support_filters_and_sos_alert_on_postgres(
             )
             assert sos.channel is SupportCaseChannel.IN_APP
 
+            recipient = UserModel(
+                phone_number="+84900000077",
+                full_name="Dispatcher",
+                status=UserStatus.ACTIVE.value,
+            )
+            db.add(recipient)
+            await db.flush()
             sos_alerts = await notifications_service.list_notifications(
                 db,
                 after_id=0,
                 limit=10,
-                unread_only=True,
                 vehicle_id=vehicle.vehicle_id,
                 notification_type=NotificationType.SOS_ALERT,
                 severity=NotificationSeverity.CRITICAL,
@@ -2508,25 +2582,34 @@ async def test_support_filters_and_sos_alert_on_postgres(
             assert sos_alert.payload["latitude"] == pytest.approx(10.8)
             assert sos_alert.payload["error_code"] == "E-042"
 
+            assert sos_alert.organization_id == vehicle.organization_id
+            assert (sos_alert.subject_type, sos_alert.subject_id) == (
+                "SUPPORT_CASE",
+                sos.case_id,
+            )
+            await notifications_service.add_notification_recipients(
+                db, sos_alert.notification_id, [recipient.user_id]
+            )
             unread = await notifications_service.count_unread_notifications(
-                db, vehicle.vehicle_id
+                db, recipient.user_id
             )
             first_mark = await notifications_service.mark_all_notifications_read(
-                db, vehicle.vehicle_id
+                db, recipient.user_id
             )
             second_mark = await notifications_service.mark_all_notifications_read(
-                db, vehicle.vehicle_id
+                db, recipient.user_id
             )
-            stored = await notifications_service.get_notification(
-                db, sos_alert.notification_id
+            still_unread = await notifications_service.list_notifications(
+                db,
+                after_id=0,
+                limit=10,
+                user_id=recipient.user_id,
+                unread_only=True,
             )
             assert unread.unread_count == 1
             assert first_mark.marked_count == 1
             assert second_mark.marked_count == 0
-            assert stored.read_at is not None
-            assert (
-                await notifications_service.count_unread_notifications(db, None)
-            ).unread_count == 0
+            assert still_unread.count == 0
             await db.rollback()
     finally:
         await engine.dispose()

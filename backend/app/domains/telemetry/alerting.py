@@ -50,6 +50,7 @@ _ANOMALY_TITLES: dict[VehicleAnomalyType, str] = {
 async def _raise_battery_alert(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     alert_level: BatteryAlertLevel,
     current_soc: float,
@@ -60,6 +61,8 @@ async def _raise_battery_alert(
 
     Args:
         db: Session whose transaction is owned by the worker.
+        organization_id: The vehicle's owner at the time of the reading
+            (written on the alert once, DM-24 case C).
         vehicle_id: Vehicle the alert is about.
         alert_level: Level returned by ``detect_battery_alert_level``.
         current_soc: SOC (%) that triggered the alert.
@@ -101,6 +104,7 @@ async def _raise_battery_alert(
     }
     await notifications_service.create_notification(
         db,
+        organization_id=organization_id,
         notification_type=NotificationType.BATTERY_ALERT,
         severity=threshold.severity,
         vehicle_id=vehicle_id,
@@ -124,6 +128,7 @@ async def _raise_battery_alert(
 async def _raise_soh_alert(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     current_soh: float,
     cycle_count: int | None,
@@ -132,6 +137,8 @@ async def _raise_soh_alert(
 
     Args:
         db: Session whose transaction is owned by the worker.
+        organization_id: The vehicle's owner at the time of the reading
+            (written on the alert once, DM-24 case C).
         vehicle_id: Vehicle the alert is about.
         current_soh: SOH (%) that triggered the alert.
         cycle_count: The vehicle's current charge/discharge cycle count,
@@ -150,6 +157,7 @@ async def _raise_soh_alert(
     }
     await notifications_service.create_notification(
         db,
+        organization_id=organization_id,
         notification_type=NotificationType.SOH_ALERT,
         severity=NotificationSeverity.WARNING,
         vehicle_id=vehicle_id,
@@ -169,6 +177,7 @@ async def _raise_soh_alert(
 async def _raise_vehicle_anomaly_alert(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     anomaly: VehicleAnomaly,
     message: TelemetryMessage,
@@ -177,6 +186,8 @@ async def _raise_vehicle_anomaly_alert(
 
     Args:
         db: Session whose transaction is owned by the worker.
+        organization_id: The vehicle's owner at the time of the reading
+            (written on the alert once, DM-24 case C).
         vehicle_id: Vehicle the anomaly was detected on.
         anomaly: Anomaly already detected by ``detect_vehicle_anomalies``.
         message: The telemetry message the anomaly was detected in, used to
@@ -192,6 +203,7 @@ async def _raise_vehicle_anomaly_alert(
     }
     await notifications_service.create_notification(
         db,
+        organization_id=organization_id,
         notification_type=NotificationType.ANOMALY_ALERT,
         severity=anomaly.severity,
         vehicle_id=vehicle_id,
@@ -214,6 +226,7 @@ async def _raise_vehicle_anomaly_alert(
 async def raise_alerts_for_reading(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     previous_telemetry: TelemetryModel | None,
     message: TelemetryMessage,
@@ -248,6 +261,7 @@ async def raise_alerts_for_reading(
     if alert_level is not None:
         await _raise_battery_alert(
             db,
+            organization_id=organization_id,
             vehicle_id=vehicle_id,
             alert_level=alert_level,
             current_soc=message.battery.soc,
@@ -266,6 +280,7 @@ async def raise_alerts_for_reading(
         )
         await _raise_soh_alert(
             db,
+            organization_id=organization_id,
             vehicle_id=vehicle_id,
             current_soh=message.battery.soh_percent,
             cycle_count=message.battery.cycle_count,
@@ -276,6 +291,7 @@ async def raise_alerts_for_reading(
     ):
         await _raise_vehicle_anomaly_alert(
             db,
+            organization_id=organization_id,
             vehicle_id=vehicle_id,
             anomaly=anomaly,
             message=message,

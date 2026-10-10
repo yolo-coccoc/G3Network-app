@@ -25,6 +25,7 @@ from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
     SupportDriverNotFoundError,
+    SupportOrganizationRequiredError,
     SupportVehicleNotFoundError,
 )
 from app.domains.support.models import SupportCaseModel
@@ -108,6 +109,7 @@ async def build_support_case_response(
 
     return SupportCaseResponse(
         case_id=case_record.case_id,
+        organization_id=case_record.organization_id,
         case_type=case_record.case_type,
         category=case_record.category,
         channel=case_record.channel,
@@ -137,7 +139,7 @@ async def _resolve_case_context(
     *,
     vehicle_vin: str | None,
     driver_id: UUID | None,
-) -> tuple[UUID | None, str | None, UUID | None]:
+) -> tuple[UUID | None, str | None, UUID | None, UUID | None]:
     """Resolve an optional VIN/driver ID into internal IDs, validating both.
 
     Args:
@@ -146,7 +148,8 @@ async def _resolve_case_context(
         driver_id: Driver ID supplied by the caller, if any.
 
     Returns:
-        A tuple of `(vehicle_id, vin, driver_id)`. `vehicle_id`/`vin` are
+        A tuple of `(vehicle_id, vin, driver_id, vehicle_organization_id)`.
+        `vehicle_organization_id` is the resolved vehicle's owner now. `vehicle_id`/`vin` are
         both `None` if no VIN was supplied; `driver_id` is echoed back
         unchanged (only its existence is checked).
 
@@ -158,6 +161,7 @@ async def _resolve_case_context(
     """
     resolved_vehicle_id: UUID | None = None
     resolved_vin: str | None = None
+    vehicle_organization_id: UUID | None = None
     if vehicle_vin is not None:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
             db_session, vehicle_vin
@@ -168,6 +172,7 @@ async def _resolve_case_context(
             )
         resolved_vehicle_id = vehicle_reference.vehicle_id
         resolved_vin = vehicle_reference.vin
+        vehicle_organization_id = vehicle_reference.organization_id
 
     if driver_id is not None:
         driver_reference = await driver_service.resolve_driver_reference_by_id(
@@ -176,7 +181,7 @@ async def _resolve_case_context(
         if driver_reference is None:
             raise SupportDriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
-    return resolved_vehicle_id, resolved_vin, driver_id
+    return resolved_vehicle_id, resolved_vin, driver_id, vehicle_organization_id
 
 
 async def _insert_case(
@@ -187,6 +192,7 @@ async def _insert_case(
     channel: SupportCaseChannel,
     subject: str,
     sla_response_minutes: int,
+    is_organization_required: bool = False,
 ) -> SupportCaseResponse:
     """Validate a new case's context, insert it as OPEN and build its response.
 
@@ -203,6 +209,8 @@ async def _insert_case(
         subject: Short subject line to store.
         sla_response_minutes: Response SLA for this case type; the deadline
             `response_due_at` is now plus this many minutes.
+        is_organization_required: Whether the case must end up with an
+            organization (an SOS, whose alert belongs to one).
 
     Returns:
         Response for the newly created case.
@@ -212,20 +220,30 @@ async def _insert_case(
             resolve to a vehicle.
         SupportDriverNotFoundError: When a driver ID was supplied but
             doesn't resolve to a driver.
+        SupportOrganizationRequiredError: When an organization is required
+            and neither the request nor the vehicle gives one.
 
     Side Effects:
         Inserts one `support_cases` row (flushed, not committed).
     """
-    vehicle_id, vin, driver_id = await _resolve_case_context(
+    vehicle_id, vin, driver_id, vehicle_organization_id = await _resolve_case_context(
         db_session,
         vehicle_vin=case_create_request.vehicle_vin,
         driver_id=case_create_request.driver_id,
     )
+    # The vehicle's owner wins over a caller-supplied organization: the case
+    # belongs to whoever owns the truck now.
+    organization_id = vehicle_organization_id or case_create_request.organization_id
+    if organization_id is None and is_organization_required:
+        raise SupportOrganizationRequiredError(
+            "An SOS needs a known vehicle or an organization_id"
+        )
 
     created_at = utc_now()
     case_record = await support_repository.insert(
         db_session,
         {
+            "organization_id": organization_id,
             "case_type": case_type,
             "category": case_create_request.category,
             "channel": channel,
@@ -355,14 +373,20 @@ async def create_support_sos(
         channel=support_sos_create_request.channel,
         subject=f"SOS - {support_sos_create_request.category.value}",
         sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
+        is_organization_required=True,
     )
 
     vehicle_label = support_case_response.vehicle_vin or "unknown vehicle"
+    # _insert_case refused an SOS without an organization, so it is set here.
+    assert support_case_response.organization_id is not None
     await notifications_service.create_notification(
         db_session,
+        organization_id=support_case_response.organization_id,
         notification_type=NotificationType.SOS_ALERT,
         severity=NotificationSeverity.CRITICAL,
         vehicle_id=support_case_response.vehicle_id,
+        subject_type="SUPPORT_CASE",
+        subject_id=support_case_response.case_id,
         title=f"SOS ({support_case_response.category.value}) - {vehicle_label}",
         body=(
             f"SOS received via {support_case_response.channel.value}; respond "

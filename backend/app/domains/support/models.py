@@ -25,6 +25,9 @@ class SupportCaseModel(Base):
 
     Attributes:
         case_id: Primary key (UUID).
+        organization_id: The customer organization the case belongs to: the
+            vehicle's owner when a VIN resolved, otherwise the one the caller
+            named; nullable for a ticket with neither.
         case_type: Whether this is an ordinary ticket or an SOS report.
         category: Business categorization of the case.
         channel: Where the case originated.
@@ -64,6 +67,11 @@ class SupportCaseModel(Base):
         PG_UUID(as_uuid=True),
         primary_key=True,
         default=uuid4,
+    )
+    organization_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("organizations.organization_id", ondelete="RESTRICT"),
+        nullable=True,
     )
     case_type: Mapped[SupportCaseType] = mapped_column(
         SQLEnum(SupportCaseType), nullable=False

@@ -17,6 +17,10 @@ from app.libs.common.config import settings
 class SupportTicketCreateRequest(BaseModel):
     """HTTP request data for creating an in-app support ticket (F-I1)."""
 
+    organization_id: UUID | None = Field(
+        None,
+        description="Organization the ticket belongs to; the vehicle's owner if omitted",
+    )
     vehicle_vin: str | None = Field(
         None, min_length=17, max_length=17, description="VIN of the vehicle context"
     )
@@ -60,6 +64,13 @@ class SupportSosCreateRequest(BaseModel):
     still needs both coordinates.
     """
 
+    organization_id: UUID | None = Field(
+        None,
+        description=(
+            "Organization the SOS belongs to; the vehicle's owner if omitted. "
+            "An SOS needs one of the two"
+        ),
+    )
     vehicle_vin: str | None = Field(
         None, min_length=17, max_length=17, description="VIN of the vehicle context"
     )
@@ -116,6 +127,7 @@ class SupportCaseResponse(BaseModel):
 
     Attributes:
         case_id: Internal ID of the support case.
+        organization_id: The organization the case belongs to, if known.
         case_type: Whether this is a ticket or an SOS.
         category: Business categorization of the case.
         channel: Where the case originated.
@@ -143,6 +155,7 @@ class SupportCaseResponse(BaseModel):
     """
 
     case_id: UUID
+    organization_id: UUID | None
     case_type: SupportCaseType
     category: SupportCaseCategory
     channel: SupportCaseChannel

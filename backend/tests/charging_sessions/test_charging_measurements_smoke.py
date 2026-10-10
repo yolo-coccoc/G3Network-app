@@ -21,96 +21,16 @@ from app.domains.charging_sessions.models import (
 from app.domains.charging_sessions.schemas import ChargingSessionMeterValueResponse
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
-    ENERGY_UNIT_WH,
     MeasurementInput,
-    MeterSampleInput,
     SessionStatus,
 )
+from tests.builders import build_charging_session
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 
 
 def _active_session() -> ChargingSessionModel:
-    return ChargingSessionModel(
-        session_id=uuid4(),
-        station_id=uuid4(),
-        evse_id=uuid4(),
-        connector_id=uuid4(),
-        ocpp_transaction_id="TX-M",
-        status=SessionStatus.ACTIVE,
-        started_at=NOW,
-        ended_at=None,
-        meter_start_wh=Decimal(1000),
-        meter_end_wh=None,
-        meter_end_sampled_at=None,
-        energy_delivered_wh=None,
-        created_at=NOW,
-        updated_at=NOW,
-    )
-
-
-def _patch(
-    monkeypatch: pytest.MonkeyPatch, session: ChargingSessionModel
-) -> list[dict[str, Any]]:
-    inserted: list[dict[str, Any]] = []
-
-    async def get_by_id(db: object, session_id: Any) -> ChargingSessionModel:
-        return session
-
-    async def insert_measurement(db: object, **kwargs: Any) -> None:
-        inserted.append(kwargs)
-
-    monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
-    monkeypatch.setattr(charging_repository, "insert_measurement", insert_measurement)
-    monkeypatch.setattr(charging_repository, "utc_now", lambda: NOW)
-    return inserted
-
-
-@pytest.mark.asyncio
-async def test_ingest_meter_values_stores_the_energy_register_in_wh_with_its_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An energy sample becomes a measurement of the energy register, in Wh."""
-    session = _active_session()
-    inserted = _patch(monkeypatch, session)
-
-    await charging_service.ingest_meter_values(
-        object(),  # type: ignore[arg-type]
-        session_id=session.session_id,
-        sample=MeterSampleInput(
-            sampled_at=NOW, value_wh=Decimal("1500"), context="Sample.Periodic"
-        ),
-    )
-
-    assert inserted == [
-        {
-            "session_id": session.session_id,
-            "sampled_at": NOW,
-            "measurand": ENERGY_ACTIVE_IMPORT_REGISTER,
-            "value": Decimal("1500"),
-            "unit": ENERGY_UNIT_WH,
-            "context": "Sample.Periodic",
-        }
-    ]
-    assert session.meter_end_wh == Decimal("1500")  # the aggregate is still updated
-    assert session.energy_delivered_wh == Decimal("500")
-
-
-@pytest.mark.asyncio
-async def test_ingest_meter_values_without_context_stores_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The 2.0.1 path passes no context; it defaults to None."""
-    session = _active_session()
-    inserted = _patch(monkeypatch, session)
-
-    await charging_service.ingest_meter_values(
-        object(),  # type: ignore[arg-type]
-        session_id=session.session_id,
-        sample=MeterSampleInput(sampled_at=NOW, value_wh=Decimal("1200")),
-    )
-
-    assert inserted[0]["context"] is None
+    return build_charging_session(meter_start_wh=Decimal(1000))
 
 
 def test_meter_value_response_contract_is_unchanged_by_the_unified_table() -> None:
@@ -122,9 +42,9 @@ def test_meter_value_response_contract_is_unchanged_by_the_unified_table() -> No
         measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
         value=Decimal("1250.500000"),
         unit="Wh",
-        context=None,
+        context="Sample.Periodic",
         phase=None,
-        location=None,
+        measurement_location="Outlet",
     )
 
     response = charging_service.to_charging_session_meter_value_response(measurement)
@@ -167,7 +87,7 @@ def _patch_for_measurements(
 async def test_ingest_measurements_stores_every_sample_without_touching_the_energy_total(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SoC/power/voltage… are stored one by one; only the energy register drives the total."""
+    """SoC/power/voltage… are stored one by one; each keeps the OCPP defaults the gateway filled in."""
     session = _active_session()
     inserted = _patch_for_measurements(monkeypatch, session)
     samples = [
@@ -181,7 +101,7 @@ async def test_ingest_measurements_stores_every_sample_without_touching_the_ener
             unit="Celsius",
             context="Sample.Periodic",
             phase="L1-N",
-            location="Cable",
+            measurement_location="Cable",
         ),
         MeasurementInput(
             sampled_at=NOW, measurand="Voltage.Demand", value=Decimal(600)
@@ -201,18 +121,20 @@ async def test_ingest_measurements_stores_every_sample_without_touching_the_ener
         "Voltage.Demand",
     ]
     assert inserted[1]["value"] == Decimal("-4.5")
-    assert (inserted[1]["phase"], inserted[1]["location"]) == ("L1-N", "Cable")
-    assert session.meter_end_wh is None  # the energy total is untouched
-    assert session.energy_delivered_wh is None
+    assert (inserted[1]["phase"], inserted[1]["measurement_location"]) == (
+        "L1-N",
+        "Cable",
+    )
+    assert {row["context"] for row in inserted} == {"Sample.Periodic"}
+    assert {row["measurement_location"] for row in inserted[:1]} == {"Outlet"}
 
 
 @pytest.mark.asyncio
 async def test_ingest_measurements_refuses_a_completed_or_unknown_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """COMPLETED is terminal, and a missing session is an error."""
-    completed = _active_session()
-    completed.status = SessionStatus.COMPLETED
+    """Only an ACTIVE session takes readings, and a missing session is an error."""
+    completed = build_charging_session(status=SessionStatus.COMPLETED)
     inserted = _patch_for_measurements(monkeypatch, completed)
     sample = MeasurementInput(sampled_at=NOW, measurand="SoC", value=Decimal(1))
 
@@ -249,8 +171,12 @@ async def test_ingest_measurements_refuses_a_completed_or_unknown_session(
             sampled_at=NOW, measurand="SoC", value=Decimal(1), phase="p" * 11
         ),
         MeasurementInput(
-            sampled_at=NOW, measurand="SoC", value=Decimal(1), location="l" * 21
+            sampled_at=NOW,
+            measurand="SoC",
+            value=Decimal(1),
+            measurement_location="l" * 21,
         ),
+        MeasurementInput(sampled_at=NOW, measurand="SoC", value=Decimal(1), context=""),
         MeasurementInput(sampled_at=NOW, measurand="SoC", value=Decimal("NaN")),
         MeasurementInput(
             sampled_at=NOW.replace(tzinfo=None), measurand="SoC", value=Decimal(1)
@@ -309,9 +235,9 @@ async def test_list_measurements_passes_the_measurand_filter_and_paginates(
             measurand="SoC",
             value=Decimal(80),
             unit="Percent",
-            context=None,
+            context="Sample.Periodic",
             phase=None,
-            location=None,
+            measurement_location="Outlet",
         )
     ]
 

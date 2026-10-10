@@ -18,3 +18,11 @@ class ChargingSessionStateError(ConflictError):
     well-formed, only the aggregate's current state (e.g. already
     ``COMPLETED``) forbids the transition.
     """
+
+
+class ChargingSessionTokenError(InvalidInputError):
+    """A charger's start message carried a token no PENDING session issued (CE-11).
+
+    The gateway answers the charger ``Invalid``; no session row is created and
+    the frame stays in the raw OCPP log.
+    """

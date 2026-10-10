@@ -16,6 +16,7 @@ import app.domains.notifications.service as notification_service
 from app.domains.notifications.schemas import (
     NotificationListResponse,
     NotificationMarkAllReadResponse,
+    NotificationReadResponse,
     NotificationResponse,
     NotificationUnreadCountResponse,
 )
@@ -42,7 +43,13 @@ async def list_notifications_endpoint(
     limit: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
-    unread_only: bool = False,
+    organization_id: UUID | None = Query(None, description="Filter by organization"),
+    user_id: UUID | None = Query(
+        None, description="Only alerts delivered to this person"
+    ),
+    unread_only: bool = Query(
+        False, description="With user_id: only alerts the person has not read"
+    ),
     vehicle_id: UUID | None = Query(None, description="Filter by vehicle ID"),
     notification_type: NotificationType | None = Query(
         None, description="Filter by notification type"
@@ -67,7 +74,9 @@ async def list_notifications_endpoint(
             beginning). Ignored with ``order=desc``.
         limit: Maximum number of records to return (1 to
             ``API_MAX_PAGE_SIZE``, like every other list endpoint).
-        unread_only: Whether to exclude notifications already marked read.
+        organization_id: Organization filter, if any.
+        user_id: Only alerts delivered to this person, if given.
+        unread_only: With ``user_id``, only the alerts the person has not read.
         vehicle_id: Vehicle filter, if any.
         notification_type: Type filter, if any.
         severity: Severity filter, if any.
@@ -81,6 +90,8 @@ async def list_notifications_endpoint(
         db,
         after_id=after_id,
         limit=limit,
+        organization_id=organization_id,
+        user_id=user_id,
         unread_only=unread_only,
         vehicle_id=vehicle_id,
         notification_type=notification_type,
@@ -92,47 +103,43 @@ async def list_notifications_endpoint(
 @router.get(
     "/unread-count",
     response_model=NotificationUnreadCountResponse,
-    summary="Count unread notifications",
+    summary="Count the alerts a person has not read",
 )
 async def count_unread_notifications_endpoint(
-    vehicle_id: UUID | None = Query(
-        None, description="Only count notifications about this vehicle"
-    ),
+    user_id: UUID = Query(..., description="The person whose badge count to read"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationUnreadCountResponse:
-    """Return the number of notifications not yet marked read.
+    """Return the number of alerts a person has not read.
 
     Args:
-        vehicle_id: Vehicle filter, if any.
+        user_id: The person (until the API authenticates callers).
         db: Database session managed by the dependency.
 
     Returns:
         The unread count.
     """
-    return await notification_service.count_unread_notifications(db, vehicle_id)
+    return await notification_service.count_unread_notifications(db, user_id)
 
 
 @router.post(
     "/mark-all-read",
     response_model=NotificationMarkAllReadResponse,
-    summary="Mark every unread notification as read",
+    summary="Mark every unread alert of a person as read",
 )
 async def mark_all_notifications_read_endpoint(
-    vehicle_id: UUID | None = Query(
-        None, description="Only mark notifications about this vehicle"
-    ),
+    user_id: UUID = Query(..., description="The person whose inbox to mark"),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationMarkAllReadResponse:
-    """Mark every unread notification read; read ones keep their ``read_at``.
+    """Mark every unread alert of a person read; read ones keep their ``read_at``.
 
     Args:
-        vehicle_id: Vehicle filter, if any.
+        user_id: The person (until the API authenticates callers).
         db: Database session managed by the dependency.
 
     Returns:
-        How many notifications were marked read.
+        How many alerts were marked read.
     """
-    return await notification_service.mark_all_notifications_read(db, vehicle_id)
+    return await notification_service.mark_all_notifications_read(db, user_id)
 
 
 @router.get(
@@ -160,22 +167,28 @@ async def get_notification_endpoint(
 
 @router.patch(
     "/{notification_id}/read",
-    response_model=NotificationResponse,
-    summary="Mark a notification as read",
+    response_model=NotificationReadResponse,
+    summary="Mark an alert as read for a person",
 )
 async def mark_notification_read_endpoint(
-    notification_id: int, db: AsyncSession = Depends(get_db, scope="function")
-) -> NotificationResponse:
-    """Mark a notification read; marking it again keeps the first ``read_at``.
+    notification_id: int,
+    user_id: UUID = Query(..., description="The person who opened the alert"),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> NotificationReadResponse:
+    """Mark an alert read for a person; marking it again keeps the first ``read_at``.
 
     Args:
-        notification_id: Internal ID of the notification to mark read.
+        notification_id: Internal ID of the alert to mark read.
+        user_id: The person (until the API authenticates callers).
         db: Database session managed by the dependency.
 
     Returns:
-        The notification, with ``read_at`` set.
+        The person's inbox state for the alert.
 
     Raises:
-        NotificationNotFoundError: The notification does not exist (HTTP 404).
+        NotificationRecipientNotFoundError: The alert never reached the
+            person (HTTP 404).
     """
-    return await notification_service.mark_notification_read(db, notification_id)
+    return await notification_service.mark_notification_read(
+        db, notification_id, user_id
+    )

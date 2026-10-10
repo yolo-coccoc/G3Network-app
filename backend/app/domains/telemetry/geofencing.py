@@ -98,6 +98,7 @@ def _format_utc(timestamp: datetime) -> str:
 async def _raise_geofence_alert(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     fleet_id: UUID,
     geofence: GeofenceReference,
@@ -109,6 +110,8 @@ async def _raise_geofence_alert(
 
     Args:
         db: Session whose transaction is owned by the ingestion worker.
+        organization_id: The vehicle's owner at the time of the reading
+            (written on the alert once, DM-24 case C).
         vehicle_id: Vehicle that crossed the boundary.
         fleet_id: The vehicle's current fleet, which owns the geofence.
         geofence: The geofence entered or left.
@@ -136,6 +139,7 @@ async def _raise_geofence_alert(
     action = "entered" if transition is GeofenceTransition.ENTER else "left"
     await notifications_service.create_notification(
         db,
+        organization_id=organization_id,
         notification_type=NotificationType.GEOFENCE_ALERT,
         severity=NotificationSeverity.WARNING,
         vehicle_id=vehicle_id,
@@ -160,6 +164,7 @@ async def _raise_geofence_alert(
 async def raise_geofence_alerts_for_reading(
     db: AsyncSession,
     *,
+    organization_id: UUID,
     vehicle_id: UUID,
     previous_telemetry: TelemetryModel | None,
     message: TelemetryMessage,
@@ -173,6 +178,8 @@ async def raise_geofence_alerts_for_reading(
 
     Args:
         db: Session whose transaction is owned by the ingestion worker.
+        organization_id: The vehicle's owner at the time of the reading
+            (written on the alert once, DM-24 case C).
         vehicle_id: Vehicle the reading belongs to.
         previous_telemetry: The vehicle's reading before this one, read by
             the caller *before* inserting the current row, or ``None`` for
@@ -207,6 +214,7 @@ async def raise_geofence_alerts_for_reading(
     ):
         await _raise_geofence_alert(
             db,
+            organization_id=organization_id,
             vehicle_id=vehicle_id,
             fleet_id=fleet_id,
             geofence=geofence,

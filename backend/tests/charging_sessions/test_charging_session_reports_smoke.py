@@ -52,24 +52,16 @@ def test_duration_uses_ended_at_or_now_and_is_never_negative() -> None:
     )
 
 
-def test_max_power_converts_watts_and_ignores_unknown_units() -> None:
-    """W (or no unit, OCPP's default) is divided by 1000; kW kept; others ignored."""
-    assert charging_service.calculate_max_power_kw(
-        [("W", Decimal("118000")), ("kW", Decimal("121.5")), ("VA", Decimal("999"))]
-    ) == pytest.approx(121.5)
-    assert charging_service.calculate_max_power_kw(
-        [(None, Decimal("90000"))]
-    ) == pytest.approx(90.0)
-    assert charging_service.calculate_max_power_kw([("VA", Decimal("1"))]) is None
-    assert charging_service.calculate_max_power_kw([]) is None
-
-
 @pytest.mark.asyncio
 async def test_session_detail_adds_the_read_time_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GET /charging-sessions/{id} carries duration, first/last SoC, max power."""
-    session = build_charging_session(status=SessionStatus.COMPLETED)
+    """GET /charging-sessions/{id} carries energy, duration, first/last SoC, max power."""
+    session = build_charging_session(
+        status=SessionStatus.COMPLETED,
+        meter_start_wh=Decimal("1000"),
+        meter_stop_wh=Decimal("51000"),
+    )
     session.started_at = T0
     session.ended_at = T0 + timedelta(minutes=30)
     queried_measurands: list[str] = []
@@ -84,24 +76,30 @@ async def test_session_detail_adds_the_read_time_summary(
         return Decimal("21.5")
 
     async def last_value(
-        db: AsyncSession, session_id: UUID, *, measurand: str
+        db: AsyncSession,
+        session_id: UUID,
+        *,
+        measurand: str,
+        measurement_location: str | None = None,
     ) -> Decimal | None:
         return Decimal("80")
 
-    async def max_by_unit(
-        db: AsyncSession, session_id: UUID, *, measurand: str
-    ) -> list[tuple[str | None, Decimal]]:
-        queried_measurands.append(measurand)
-        return [("W", Decimal("150000"))]
+    async def max_value(
+        db: AsyncSession,
+        session_id: UUID,
+        *,
+        measurand: str,
+        measurement_location: str,
+    ) -> Decimal | None:
+        queried_measurands.append(f"{measurand}@{measurement_location}")
+        return Decimal("150000")
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
     monkeypatch.setattr(
         charging_repository, "find_first_measurement_value", first_value
     )
     monkeypatch.setattr(charging_repository, "find_last_measurement_value", last_value)
-    monkeypatch.setattr(
-        charging_repository, "list_max_measurement_values_by_unit", max_by_unit
-    )
+    monkeypatch.setattr(charging_repository, "find_max_measurement_value", max_value)
 
     detail = await charging_service.get_charging_session(
         fake_db_session(), session.session_id
@@ -109,44 +107,38 @@ async def test_session_detail_adds_the_read_time_summary(
 
     assert detail.session_id == session.session_id
     assert detail.duration_seconds == 1800
+    assert detail.energy_delivered_wh == Decimal("50000")
     assert (detail.soc_start_percent, detail.soc_end_percent) == (21.5, 80.0)
     assert detail.max_power_kw == pytest.approx(150.0)
-    assert queried_measurands == ["SoC", "Power.Active.Import"]
+    assert queried_measurands == ["SoC", "Power.Active.Import@Outlet"]
 
 
 @pytest.mark.asyncio
 async def test_session_detail_without_measurements_has_null_summary_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A 2.0.1 session stores energy only: SoC and power stay null."""
+    """A session with no SoC or power sample has null summary fields."""
     session = build_charging_session()
 
     async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
         return session
 
     async def no_value(
-        db: AsyncSession, session_id: UUID, *, measurand: str
+        db: AsyncSession, session_id: UUID, *, measurand: str, **_: object
     ) -> Decimal | None:
         return None
-
-    async def no_rows(
-        db: AsyncSession, session_id: UUID, *, measurand: str
-    ) -> list[tuple[str | None, Decimal]]:
-        return []
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
     monkeypatch.setattr(charging_repository, "find_first_measurement_value", no_value)
     monkeypatch.setattr(charging_repository, "find_last_measurement_value", no_value)
-    monkeypatch.setattr(
-        charging_repository, "list_max_measurement_values_by_unit", no_rows
-    )
+    monkeypatch.setattr(charging_repository, "find_max_measurement_value", no_value)
 
     detail = await charging_service.get_charging_session(
         fake_db_session(), session.session_id
     )
 
     assert (detail.soc_start_percent, detail.soc_end_percent) == (None, None)
-    assert detail.max_power_kw is None
+    assert (detail.max_power_kw, detail.energy_delivered_wh) == (None, None)
     assert detail.duration_seconds >= 0
 
 
@@ -278,8 +270,7 @@ async def test_energy_series_splits_a_session_across_a_bucket_boundary(
     session.started_at = T0 + timedelta(minutes=40)
     session.meter_start_wh = Decimal("1000")
     session.ended_at = T0 + timedelta(hours=1, minutes=20)
-    session.meter_end_wh = Decimal("4000")
-    session.meter_end_sampled_at = T0 + timedelta(hours=1, minutes=20)
+    session.meter_stop_wh = Decimal("4000")
     samples = [
         (T0 + timedelta(minutes=55), Decimal("2000")),
         (T0 + timedelta(hours=1, minutes=10), Decimal("3500")),
@@ -337,8 +328,6 @@ async def test_energy_series_counts_only_deltas_whose_later_reading_is_inside(
     session = build_charging_session()
     session.started_at = T0 - timedelta(hours=2)
     session.meter_start_wh = Decimal("0")
-    session.meter_end_wh = None
-    session.meter_end_sampled_at = None
     samples = [
         (T0 - timedelta(hours=1), Decimal("5000")),
         (T0 + timedelta(minutes=30), Decimal("7000")),

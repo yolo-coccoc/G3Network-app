@@ -155,27 +155,31 @@ FastAPI registers the following domains:
   answer (`GET /charging-stations/{id}/configuration`). The 2.0.1 adapter
   handles `BootNotification` (device info and `last_boot_at`, the same
   heartbeat interval), `Heartbeat`, `TransactionEvent`, `MeterValues`
-  (energy only) and `StatusNotification`.
+  and `StatusNotification`.
   1.6J is verified against a simulator; a real charger has not been connected.
-- `charging_sessions`: storing the session aggregate, lifecycle events and
-  the session's measurements, plus F-C5's station-level energy total over a
-  window and an hourly/daily energy series (energy-register deltas between
-  consecutive readings, each booked in the bucket of its later reading,
-  buckets cut in `APP_REPORT_TIMEZONE`). The session detail adds a
-  read-time summary (`duration_seconds`, first/last SoC, `max_power_kw`)
-  and the list filters by station, connector, status and start window;
-  `resolve_station_energy_total` is the DTO `charging_stations` uses for the
-  all-stations ranking. All measurements (the energy register that drives the session
-  total, and SoC/power/voltage/current/temperature/`Power.Offered` and
-  vendor-specific measurands) live in one `charging_session_measurements`
-  table; `/meter-values` is the energy-only view and `/measurements` shows
-  everything. The 1.6J backend assigns the integer `transactionId` from a
-  database sequence and stores the `idTag`, stop reason and the charger's
-  own `meterStop`. F-B2's four correctness fixes on the happy path still hold:
-  persisted OCPP `seqNo`, a guard refusing any event on an already-`COMPLETED`
-  session, a time-ordering watermark stopping a stale `MeterValues` from
-  overwriting a newer reading, and unit-aware energy normalization in each
-  OCPP adapter (still no retry/out-of-order recovery/DLQ/dedup).
+- `charging_sessions`: a session is created `PENDING` at the QR scan
+  (`POST /charging-sessions`: paying organization, scanning user, optional
+  truck, a single-use token) and turned `ACTIVE` by the charger's start
+  message only when it carries that token on the same charger (CE-10, CE-11;
+  any other token is answered `Invalid` and creates no row); the stop message
+  completes it and stores the charger's declared `meter_stop_wh`, the billing
+  figure (CE-12). Every measurement (energy register, SoC, power, voltage,
+  current, temperature and vendor measurands) lives in
+  `charging_session_measurements`, written by the OCPP gateway in one fixed
+  unit per known measurand with the OCPP defaults for context and location
+  (CE-14); there is no events table (CE-15). The module also serves F-C5's
+  station energy total and hourly/daily series (energy-register deltas
+  between consecutive outlet readings, each booked in the bucket of its later
+  reading, buckets cut in `APP_REPORT_TIMEZONE`), the session detail's
+  read-time summary (energy, duration, first/last SoC, `max_power_kw`) and
+  the list filters; `resolve_station_energy_total` is the DTO
+  `charging_stations` uses for the all-stations ranking. The 1.6J backend
+  assigns the integer `transactionId` from a database sequence. Still no
+  retry/out-of-order recovery/DLQ/dedup. The remote start, wallet check and
+  abandoned-session sweep of the QR flow come with WP8.
+- `billing`: tables and enums only so far (tariffs and their versions,
+  session bills, payments, wallets and the wallet ledger); services and
+  endpoints come with WP9.
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=` (ascending cursor;
   `order=desc` returns the newest page instead), filterable by vehicle,
@@ -285,8 +289,8 @@ Facts only; the reasoning and alternatives are in the
 Development uses a single PostgreSQL 16 container with the following
 extensions:
 
-- TimescaleDB for five hypertables: `telemetry`,
-  `charging_session_events`, `charging_session_measurements`,
+- TimescaleDB for four hypertables: `telemetry`,
+  `charging_session_measurements`,
   `charging_ocpp_messages` (the append-only raw OCPP message log) and
   `access_audit_logs` (identity).
   `telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
@@ -384,10 +388,13 @@ call each other is in
 │   │   │   │       ├── raw_log.py           # RecordingConnection: verbatim, append-only log of every OCPP frame
 │   │   │   │       └── entrypoint.py  # entrypoint for "make charging-ocpp-dev" (runs on the host, not a container)
 │   │   │   │
-│   │   │   ├── charging_sessions/     # Stores events, meter data, and charging session lifecycle (F-B2)
+│   │   │   ├── charging_sessions/     # QR-scan sessions, token-matched start/stop, measurements (F-B2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   ├── notifications/         # Generic operator-facing notification storage/polling (F-A2)
+│   │   │   ├── billing/               # Tariffs, session bills, payments, wallets: models only (WP9 adds the rest)
+│   │   │   │   └── models.py  types.py
+│   │   │   │
+│   │   │   ├── notifications/         # Alerts per organization, per-person inbox state, channel switches (F-A2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── drivers/               # Driver profile, driving sessions, trips (F-E4, F-A9)
@@ -457,13 +464,13 @@ each part (`backend/`, `infra/`) currently keeps its own `.env.example`.
 Don't create these files/directories before a concrete task needs them.
 
 Domains that have feature codes in `docs/product/feature-list.md`
-but **no source yet**: `policy`, `billing`, `scoring` (`identity` has its tables only, no service or API). Don't
+but **no source yet**: `policy`, `scoring` (`identity` has its tables only, no service or API). Don't
 create empty directories/files for them before a concrete task exists; when
 creating one, apply [domain-boundaries.md](../../.claude/rules/domain-boundaries.md) and
 reference the correct feature code.
 
 Some built domains are intentionally partial — `notifications` (no push, no
-recipient scoping), `support` (no partner directory/dispatch), `fleet` (no KPI
+automatic recipients: callers add them), `support` (no partner directory/dispatch), `fleet` (no KPI
 dashboard; its live-position and operating-rollup views live in `telemetry`,
 which depends on `fleet`, not the reverse). Their planners in
 `docs/planners/done/` record what was left out.

@@ -24,7 +24,7 @@ OCPP objects.
 """
 
 import logging
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Final
 from uuid import UUID
 
@@ -32,6 +32,7 @@ from ocpp.routing import on
 from ocpp.v201 import ChargePoint, call, call_result
 from ocpp.v201.enums import (
     Action,
+    AuthorizationStatusEnumType,
     ConnectorStatusEnumType,
     RegistrationStatusEnumType,
     TransactionEventEnumType,
@@ -40,15 +41,23 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
+from app.domains.charging_sessions.exceptions import ChargingSessionTokenError
 from app.domains.charging_sessions.types import (
+    DEFAULT_MEASUREMENT_CONTEXT,
+    DEFAULT_MEASUREMENT_LOCATION,
     ENERGY_ACTIVE_IMPORT_REGISTER,
+    STOP_REASON_MAX_LENGTH,
+    MeasurementInput,
     MeterSampleInput,
-    SessionEventType,
 )
 from app.domains.charging_stations.ocpp.command_types import (
     CommandResult,
     OutboundCommand,
     to_command_result,
+)
+from app.domains.charging_stations.ocpp.measurement_units import (
+    KNOWN_MEASURAND_UNITS,
+    convert_measurement,
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
@@ -101,10 +110,10 @@ def normalize_sampled_value_to_wh(sampled_value: OcppPayload) -> Decimal | None:
 
     Rule:
         Only ``Energy.Active.Import.Register`` is a cumulative import
-        register, and therefore the only measurand the session aggregate
-        can use ``meter_start_wh``/``meter_end_wh`` from; anything else
-        (power, SoC, temperature, an *interval* energy delta) is extra
-        telemetry this MVP doesn't model and is skipped, not an error. An
+        register, and therefore the only measurand the session's declared
+        ``meter_start_wh``/``meter_stop_wh`` can come from; anything else
+        (power, SoC, temperature, an *interval* energy delta) is returned as
+        ``None`` here and handled by ``extract_measurements``. An
         absent ``measurand`` means that register, per OCPP 2.0.1's own
         default. The reading is ``value * 10 ** multiplier`` in ``unit``,
         with ``unit`` defaulting to Wh and ``multiplier`` to 0 - the OCPP
@@ -166,8 +175,71 @@ def extract_meter_samples(
             value_wh = normalize_sampled_value_to_wh(sampled_value)
             if value_wh is None:
                 continue
-            samples.append(MeterSampleInput(sampled_at=sampled_at, value_wh=value_wh))
+            samples.append(
+                MeterSampleInput(
+                    sampled_at=sampled_at,
+                    value_wh=value_wh,
+                    context=sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT,
+                    measurement_location=(
+                        sampled_value.get("location") or DEFAULT_MEASUREMENT_LOCATION
+                    ),
+                )
+            )
     return samples
+
+
+def extract_measurements(
+    meter_values: list[OcppPayload],
+) -> list[MeasurementInput]:
+    """Convert the non-energy samples of an OCPP message into measurements.
+
+    Every known measurand is converted to its fixed unit (CE-14); a vendor
+    measurand is stored as sent. A missing context or location gets the OCPP
+    default. A sample with a non-numeric value is skipped.
+
+    Args:
+        meter_values: Groups of samples, snake_cased by ``python-ocpp``
+            into plain dicts - see the module docstring.
+
+    Returns:
+        The measurements in payload order, without the energy register.
+
+    Raises:
+        ValueError: If a timestamp lacks a timezone.
+    """
+    measurements: list[MeasurementInput] = []
+    for meter_value in meter_values:
+        sampled_at = parse_ocpp_timestamp(meter_value["timestamp"])
+        for sampled_value in meter_value["sampled_value"]:
+            measurand = sampled_value.get("measurand") or ENERGY_ACTIVE_IMPORT_REGISTER
+            if measurand == ENERGY_ACTIVE_IMPORT_REGISTER:
+                continue
+            try:
+                raw_value = Decimal(str(sampled_value["value"]))
+            except (InvalidOperation, KeyError):
+                continue
+            if not raw_value.is_finite():
+                continue
+            unit_of_measure = sampled_value.get("unit_of_measure") or {}
+            value, unit = convert_measurement(
+                measurand,
+                raw_value.scaleb(unit_of_measure.get("multiplier") or 0),
+                unit_of_measure.get("unit") or KNOWN_MEASURAND_UNITS.get(measurand),
+            )
+            measurements.append(
+                MeasurementInput(
+                    sampled_at=sampled_at,
+                    measurand=measurand,
+                    value=value,
+                    unit=unit,
+                    context=sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT,
+                    phase=sampled_value.get("phase"),
+                    measurement_location=(
+                        sampled_value.get("location") or DEFAULT_MEASUREMENT_LOCATION
+                    ),
+                )
+            )
+    return measurements
 
 
 def parse_ocpp_transaction_id(transaction_info: OcppPayload) -> str:
@@ -336,26 +408,39 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         transaction_info: OcppPayload,
         meter_value: list[OcppPayload] | None = None,
         evse: OcppPayload | None = None,
+        id_token: OcppPayload | None = None,
         **_: object,
     ) -> call_result.TransactionEvent:
-        """Persist a TransactionEvent using primitive values, then ACK the OCPP call.
+        """Start, update or complete a session from a TransactionEvent, then ACK.
+
+        ``Started`` must carry the single-use token a QR scan issued for this
+        charger (``idToken``): it finds the PENDING session, which turns
+        ``ACTIVE`` with the first energy reading as its start reading (CE-11).
+        Any other token is answered ``Invalid`` and creates no session.
+        ``Updated`` stores the event's samples; ``Ended`` stores them and
+        completes the session with the last energy reading as the closing
+        reading (``meter_stop_wh``, CE-12). The event itself is not stored:
+        start and end live on the session, the full trail in the raw log
+        (CE-15).
 
         Args:
             event_type: ``Started``, ``Updated``, or ``Ended``.
             timestamp: Time of the event per OCPP.
             trigger_reason: OCPP trigger, currently only parsed to preserve
                 the contract.
-            seq_no: OCPP sequence number, persisted on the event history
-                row (F-B2) but not yet used for dedup/ordering.
+            seq_no: OCPP sequence number; not stored (CE-15).
             transaction_info: The ``transactionInfo`` object, as a plain
                 dict - see the module docstring.
             meter_value: Start/end meter values depending on the event, as
                 plain dicts - see the module docstring.
             evse: OCPP EVSE and connector to resolve, as a plain dict.
+            id_token: The ``idToken`` object (``id_token`` and ``type``), as a
+                plain dict; never log it (IS-07).
             **_: Optional OCPP fields not part of the MVP.
 
         Returns:
-            A valid empty response for TransactionEvent.
+            An empty response, or one carrying ``idTokenInfo`` ``Invalid`` for
+            a start whose token no scan issued.
 
         Raises:
             KeyError: If ``event_type`` is not one of the three 2.0.1 values.
@@ -370,7 +455,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingConnectorNotFoundError: If the connector is not
                 pre-provisioned under that EVSE.
             ChargingSessionInputError: If the event violates the session
-                contract.
+                contract (for example a start without a meter reading).
             ChargingSessionNotFoundError: If a non-``Started`` event names an
                 unknown transaction.
             ChargingSessionStateError: If the session is already completed.
@@ -383,58 +468,91 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             transaction; the EVSE -> session mapping is only updated after
             the transaction commits.
         """
-        del trigger_reason
-        event_map = {
-            TransactionEventEnumType.started: SessionEventType.STARTED,
-            TransactionEventEnumType.updated: SessionEventType.UPDATED,
-            TransactionEventEnumType.ended: SessionEventType.ENDED,
-        }
-        session_event = event_map[event_type]
-        samples = extract_meter_samples(meter_value) if meter_value else []
-        meter_start_wh = samples[0].value_wh if samples else None
-        meter_end_wh = samples[-1].value_wh if samples else None
-        meter_end_sampled_at = samples[-1].sampled_at if samples else None
+        del trigger_reason, seq_no
+        event_timestamp = parse_ocpp_timestamp(timestamp)
+        energy_samples = extract_meter_samples(meter_value) if meter_value else []
+        other_measurements = extract_measurements(meter_value) if meter_value else []
         transaction_id = parse_ocpp_transaction_id(transaction_info)
         ocpp_evse_id, ocpp_connector_id = parse_ocpp_evse_reference(evse)
-        async with self.session_factory.begin() as db:
-            (
-                station_id,
-                evse_id,
-                connector_id,
-            ) = await ocpp_state_service.resolve_ocpp_topology(
-                db, self.id, ocpp_evse_id, ocpp_connector_id
+        session_id: UUID
+        try:
+            async with self.session_factory.begin() as db:
+                (
+                    station_id,
+                    evse_uuid,
+                    connector_uuid,
+                ) = await ocpp_state_service.resolve_ocpp_topology(
+                    db, self.id, ocpp_evse_id, ocpp_connector_id
+                )
+                if event_type == TransactionEventEnumType.started:
+                    token = (id_token or {}).get("id_token")
+                    if not token:
+                        raise ChargingSessionTokenError(
+                            "The start event carries no idToken"
+                        )
+                    result = await charging_sessions_service.activate_pending_session(
+                        db,
+                        station_id=station_id,
+                        evse_id=evse_uuid,
+                        connector_id=connector_uuid,
+                        id_token=str(token),
+                        transaction_id=transaction_id,
+                        started_at=event_timestamp,
+                        meter_start_wh=(
+                            energy_samples[0].value_wh if energy_samples else None
+                        ),
+                    )
+                    session_id = result.session_id
+                    if other_measurements:
+                        await charging_sessions_service.ingest_measurements(
+                            db, session_id=session_id, samples=other_measurements
+                        )
+                else:
+                    reference = (
+                        await charging_sessions_service.resolve_session_by_transaction(
+                            db, station_id=station_id, transaction_id=transaction_id
+                        )
+                    )
+                    session_id = reference.session_id
+                    for sample in energy_samples:
+                        await charging_sessions_service.ingest_meter_values(
+                            db, session_id=session_id, sample=sample
+                        )
+                    if other_measurements:
+                        await charging_sessions_service.ingest_measurements(
+                            db, session_id=session_id, samples=other_measurements
+                        )
+                    if event_type == TransactionEventEnumType.ended:
+                        await charging_sessions_service.complete_session(
+                            db,
+                            station_id=station_id,
+                            evse_id=evse_uuid,
+                            connector_id=connector_uuid,
+                            transaction_id=transaction_id,
+                            ended_at=event_timestamp,
+                            stop_reason=(
+                                str(transaction_info["stopped_reason"])[
+                                    :STOP_REASON_MAX_LENGTH
+                                ]
+                                if transaction_info.get("stopped_reason")
+                                else None
+                            ),
+                            meter_stop_wh=(
+                                energy_samples[-1].value_wh if energy_samples else None
+                            ),
+                        )
+        except ChargingSessionTokenError:
+            logger.warning(
+                "TransactionEvent refused: no scan issued its token",
+                extra={"ocpp_identity": self.id},
             )
-            result = await charging_sessions_service.ingest_transaction_event(
-                db,
-                station_id=station_id,
-                evse_id=evse_id,
-                connector_id=connector_id,
-                transaction_id=transaction_id,
-                event_type=session_event,
-                event_occurred_at=parse_ocpp_timestamp(timestamp),
-                seq_no=seq_no,
-                meter_start_wh=(
-                    meter_start_wh
-                    if session_event is SessionEventType.STARTED
-                    else None
-                ),
-                meter_end_wh=(
-                    meter_end_wh
-                    if session_event is not SessionEventType.STARTED
-                    else None
-                ),
-                meter_end_sampled_at=(
-                    meter_end_sampled_at
-                    if session_event is not SessionEventType.STARTED
-                    else None
-                ),
+            return call_result.TransactionEvent(
+                id_token_info={"status": AuthorizationStatusEnumType.invalid}
             )
-        if session_event is SessionEventType.ENDED:
-            if evse is not None:
-                self._session_by_evse.pop(evse["id"], None)
+        if event_type == TransactionEventEnumType.ended:
+            self._session_by_evse.pop(ocpp_evse_id, None)
         else:
-            if evse is not None:
-                self._session_by_evse[evse["id"]] = result.session_id
+            self._session_by_evse[ocpp_evse_id] = session_id
         return call_result.TransactionEvent()
 
     @on(Action.meter_values)  # type: ignore[untyped-decorator]
@@ -444,7 +562,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         meter_value: list[OcppPayload],
         **_: object,
     ) -> call_result.MeterValues:
-        """Persist each MeterValues energy sample within one transaction.
+        """Persist each MeterValues sample within one transaction.
 
         Args:
             evse_id: OCPP EVSE ID used to look up the session on this
@@ -480,10 +598,15 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         # surviving a reconnect is the reliability path (deferred.md item 27).
         session_id = self._session_by_evse[evse_id]
         samples = extract_meter_samples(meter_value)
+        other_measurements = extract_measurements(meter_value)
         async with self.session_factory.begin() as db:
             for sample in samples:
                 await charging_sessions_service.ingest_meter_values(
                     db, session_id=session_id, sample=sample
+                )
+            if other_measurements:
+                await charging_sessions_service.ingest_measurements(
+                    db, session_id=session_id, samples=other_measurements
                 )
         return call_result.MeterValues()
 

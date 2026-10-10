@@ -43,7 +43,7 @@ erDiagram
   driving_sessions }o--|| vehicles : "vehicle_id"
   trips }o--o| vehicles : "planned_vehicle_id"
   fleet_vehicle_memberships }o--|| vehicles : "vehicle_id"
-  charging_sessions }o..o| vehicles : "vehicle_id"
+  charging_sessions }o--o| vehicles : "vehicle_id"
   notifications }o--o| vehicles : "vehicle_id"
   support_cases }o--o| vehicles : "vehicle_id"
   maintenance_bookings }o..|| vehicles : "vehicle_id"
@@ -106,7 +106,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 - [driving_sessions](drivers.md#driving_sessions).vehicle_id
 - [trips](drivers.md#trips).planned_vehicle_id
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).vehicle_id
-- [charging_sessions](charging_sessions.md#charging_sessions).vehicle_id (planned)
+- [charging_sessions](charging_sessions.md#charging_sessions).vehicle_id
 - [notifications](notifications.md#notifications).vehicle_id
 - [support_cases](support.md#support_cases).vehicle_id
 - [maintenance_bookings](support.md#maintenance_bookings).vehicle_id (planned)

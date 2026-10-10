@@ -53,7 +53,7 @@ loaded in the same process (CS-27).
 ## Platform
 
 - One PostgreSQL 16 instance with `timescaledb`, `postgis` and `uuid-ossp` (init script in `infra/db/init/`).
-- **Hypertables** (TimescaleDB, 1-day chunks, time column part of the primary key): `telemetry` (TM-15), `charging_session_events`, `charging_session_measurements`, `charging_ocpp_messages`, `access_audit_logs`. Every other table is an ordinary relational table.
+- **Hypertables** (TimescaleDB, 1-day chunks, time column part of the primary key): `telemetry` (TM-15), `charging_session_measurements`, `charging_ocpp_messages`, `access_audit_logs`. Every other table is an ordinary relational table.
 
 ## Conventions
 

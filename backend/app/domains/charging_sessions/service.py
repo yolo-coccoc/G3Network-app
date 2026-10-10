@@ -1,24 +1,23 @@
-"""Public service ingesting TransactionEvent and individual MeterValues messages, happy path.
+"""Public service of the charging sessions: scan, start, stop and measurements.
 
-The ideal MVP assumes a fixed message order and removes reliability
-branching (retry, DLQ, out-of-order recovery, dedup - see
-``docs/decisions/deferred.md`` item 27). On top of that, this service
-enforces two correctness invariants that hold even on the happy path
-(F-B2): a session's lifecycle state can only move forward (an event
-arriving after ``COMPLETED`` is refused, not silently applied), and a
-meter reading can only move the aggregate's ``meter_end_wh`` forward in
-*time* (a sample stamped earlier than the one already applied is
-discarded). Neither invariant implements retry/dedup/out-of-order
-*recovery* - they only stop the happy path itself from writing a value
-nothing can vouch for. The caller at the entry boundary still owns
-commit/rollback of the transaction.
+A session is created ``PENDING`` at the QR scan (``create_pending_session``,
+CE-10) and turned ``ACTIVE`` by the charger's start message when its token
+matches a PENDING session of the same charger (``activate_pending_session``,
+CE-11); the stop message completes it (``complete_session``). The ideal MVP
+assumes a fixed message order and removes reliability branching (retry, DLQ,
+out-of-order recovery, dedup - see ``docs/decisions/deferred.md`` item 27).
+Two correctness invariants hold even on the happy path (F-B2): a session's
+status can only move forward (data arriving after ``COMPLETED`` is refused,
+not silently applied), and the session keeps only the readings the charger
+declares (``meter_start_wh``, ``meter_stop_wh``, CE-12). The caller at the
+entry boundary owns commit/rollback of the transaction.
 
-The module also serves the read-only monitoring endpoints (session detail
-with its read-time summary, the filtered session list, events, energy
-samples, measurements, the station energy summary and the station energy
-time series). The ingestion functions, ``allocate_ocpp16_transaction_id``,
-``has_active_session_on_connector`` and ``resolve_session_by_transaction``
-are the public entry points the ``charging_stations`` OCPP adapters call;
+The module also serves the read-only monitoring endpoints (session detail with
+its read-time summary, the filtered session list, energy samples,
+measurements, the station energy summary and the station energy time series).
+The ingestion functions, ``allocate_ocpp16_transaction_id``,
+``has_active_session_on_connector`` and ``resolve_session_by_transaction`` are
+the public entry points the ``charging_stations`` OCPP adapters call;
 ``resolve_station_energy_total`` is the one its all-stations energy report
 calls.
 """
@@ -26,6 +25,7 @@ calls.
 import bisect
 import dataclasses
 import logging
+import secrets
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -41,16 +41,14 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
     ChargingSessionStateError,
+    ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import (
-    ChargingSessionEventModel,
     ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
 from app.domains.charging_sessions.schemas import (
     ChargingSessionDetailResponse,
-    ChargingSessionEventListResponse,
-    ChargingSessionEventResponse,
     ChargingSessionListResponse,
     ChargingSessionMeasurementListResponse,
     ChargingSessionMeasurementResponse,
@@ -64,13 +62,18 @@ from app.domains.charging_sessions.schemas import (
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
     ENERGY_UNIT_WH,
+    ID_TOKEN_MAX_LENGTH,
+    MEASUREMENT_LOCATION_OUTLET,
+    OCPP_TRANSACTION_ID_MAX_LENGTH,
+    QR_TOKEN_LENGTH,
+    STOP_REASON_MAX_LENGTH,
     ChargingSessionListFilter,
     EnergySeriesGranularity,
     MeasurementInput,
     MeterIngestResult,
     MeterSampleInput,
+    PendingSessionReference,
     SessionCommandReference,
-    SessionEventType,
     SessionStatus,
     StationEnergyTotal,
     TransactionIngestResult,
@@ -82,63 +85,23 @@ from app.libs.common.pagination import PageWindow, normalize_page_window
 
 logger = logging.getLogger(__name__)
 
-# Measurands read by the session summary (F-B2). Names as OCPP defines them;
-# only OCPP 1.6J sessions store them today (2.0.1 stores energy only).
+# Measurands read by the session summary (F-B2). Names as OCPP defines them.
+# Values are stored in one fixed unit per measurand (CE-14): power in W, SoC in
+# percent, so the summary converts nothing but W to kW for display.
 _SOC_MEASURAND: Final[str] = "SoC"
 _POWER_ACTIVE_IMPORT_MEASURAND: Final[str] = "Power.Active.Import"
-# Conversion of a stored power unit (lowercased) into kW. OCPP's default
-# power unit is W, so a sample stored without a unit is read as W; any other
-# unit is not convertible and is left out of ``max_power_kw``.
-_POWER_UNIT_FACTORS_KW: Final[dict[str | None, Decimal]] = {
-    None: Decimal("0.001"),
-    "w": Decimal("0.001"),
-    "kw": Decimal(1),
-}
+_W_PER_KW: Final[Decimal] = Decimal(1000)
 _WH_PER_KWH: Final[Decimal] = Decimal(1000)
 
 # Input length limits, mirroring the widths of the columns the values are
-# stored in (``charging_sessions`` and ``charging_session_measurements``):
-# validating here turns an over-long value into a ChargingSessionInputError
-# instead of a database error at flush time.
-_TRANSACTION_ID_MAX_LENGTH: Final[int] = 255
-_ID_TAG_MAX_LENGTH: Final[int] = 20
-_STOP_REASON_MAX_LENGTH: Final[int] = 30
+# stored in (``charging_session_measurements``): validating here turns an
+# over-long value into a ChargingSessionInputError instead of a database error
+# at flush time. The session columns' widths live in ``types.py``.
 _MEASURAND_MAX_LENGTH: Final[int] = 60
 _MEASUREMENT_UNIT_MAX_LENGTH: Final[int] = 20
 _MEASUREMENT_CONTEXT_MAX_LENGTH: Final[int] = 30
 _MEASUREMENT_PHASE_MAX_LENGTH: Final[int] = 10
 _MEASUREMENT_LOCATION_MAX_LENGTH: Final[int] = 20
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ValidatedTransactionEvent:
-    """The input of one TransactionEvent after validation and normalization.
-
-    Private to this module: produced by ``_validate_transaction_event`` and
-    consumed by ``ingest_transaction_event`` in the same call.
-
-    Attributes:
-        transaction_id: The OCPP transaction identity, stripped.
-        occurred_at: The event time, in UTC.
-        seq_no: OCPP's own sequence number, or ``None``.
-        meter_start_wh: The start reading, or ``None``.
-        meter_end_wh: The latest reading, or ``None``.
-        meter_end_sampled_at: The time of ``meter_end_wh`` in UTC, defaulting
-            to ``occurred_at``.
-        meter_stop_wh: The charger's closing reading, or ``None``.
-        id_tag: The idTag that started the session, or ``None``.
-        stop_reason: Why the session stopped, or ``None``.
-    """
-
-    transaction_id: str
-    occurred_at: datetime
-    seq_no: int | None
-    meter_start_wh: Decimal | None
-    meter_end_wh: Decimal | None
-    meter_end_sampled_at: datetime
-    meter_stop_wh: Decimal | None
-    id_tag: str | None
-    stop_reason: str | None
 
 
 def _normalize_utc(value: datetime, field_name: str) -> datetime:
@@ -182,116 +145,12 @@ def _validate_energy(value: Decimal | None, field_name: str) -> Decimal | None:
     return value
 
 
-def _validate_seq_no(value: int | None, field_name: str) -> int | None:
-    """Check that the OCPP sequence number is a non-negative integer (F-B2).
-
-    Args:
-        value: The sequence number from the adapter, nullable for callers
-            that have none.
-        field_name: The field name used in the error message.
-
-    Returns:
-        The validated sequence number, or ``None``.
-
-    Raises:
-        ChargingSessionInputError: If the value is not an ``int``, is a
-            ``bool``, or is negative. ``bool`` is rejected explicitly
-            because ``isinstance(True, int)`` is ``True`` in Python - a
-            stray ``True`` must not silently collide with a real
-            ``seqNo`` of 0.
-    """
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ChargingSessionInputError(f"{field_name} must be an int")
-    if value < 0:
-        raise ChargingSessionInputError(f"{field_name} must not be negative")
-    return value
-
-
-def _validate_transaction_event(
-    *,
-    transaction_id: str,
-    event_occurred_at: datetime,
-    seq_no: int | None,
-    meter_start_wh: Decimal | None,
-    meter_end_wh: Decimal | None,
-    meter_end_sampled_at: datetime | None,
-    id_tag: str | None,
-    stop_reason: str | None,
-    meter_stop_wh: Decimal | None,
-) -> _ValidatedTransactionEvent:
-    """Validate and normalize every input field of one TransactionEvent.
-
-    Pure: performs no I/O, so an invalid event is refused before anything
-    is read or written. See ``ingest_transaction_event`` for the meaning of
-    each argument.
-
-    Args:
-        transaction_id: The OCPP transaction identity, as sent.
-        event_occurred_at: The event time; must have a timezone.
-        seq_no: OCPP's own sequence number, nullable.
-        meter_start_wh: The start reading, nullable.
-        meter_end_wh: The latest reading, nullable.
-        meter_end_sampled_at: The time of ``meter_end_wh``, nullable.
-        id_tag: The idTag, nullable.
-        stop_reason: The stop reason, nullable.
-        meter_stop_wh: The closing reading, nullable.
-
-    Returns:
-        The validated values, timestamps in UTC.
-
-    Raises:
-        ChargingSessionInputError: On an empty or over-long identity,
-            ``id_tag`` or ``stop_reason``, a naive timestamp, an invalid
-            ``seq_no`` or a negative/non-finite energy value.
-    """
-    normalized_transaction_id = transaction_id.strip()
-    if (
-        not normalized_transaction_id
-        or len(normalized_transaction_id) > _TRANSACTION_ID_MAX_LENGTH
-    ):
-        raise ChargingSessionInputError(
-            f"transaction_id is empty or exceeds {_TRANSACTION_ID_MAX_LENGTH} "
-            "characters"
-        )
-    occurred_at = _normalize_utc(event_occurred_at, "event_occurred_at")
-    validated_seq_no = _validate_seq_no(seq_no, "seq_no")
-    validated_meter_start_wh = _validate_energy(meter_start_wh, "meter_start_wh")
-    validated_meter_end_wh = _validate_energy(meter_end_wh, "meter_end_wh")
-    validated_meter_stop_wh = _validate_energy(meter_stop_wh, "meter_stop_wh")
-    if id_tag is not None and len(id_tag) > _ID_TAG_MAX_LENGTH:
-        raise ChargingSessionInputError(
-            f"id_tag exceeds {_ID_TAG_MAX_LENGTH} characters"
-        )
-    if stop_reason is not None and len(stop_reason) > _STOP_REASON_MAX_LENGTH:
-        raise ChargingSessionInputError(
-            f"stop_reason exceeds {_STOP_REASON_MAX_LENGTH} characters"
-        )
-    return _ValidatedTransactionEvent(
-        transaction_id=normalized_transaction_id,
-        occurred_at=occurred_at,
-        seq_no=validated_seq_no,
-        meter_start_wh=validated_meter_start_wh,
-        meter_end_wh=validated_meter_end_wh,
-        # F-B2: the reading's own sample time when the adapter has it,
-        # otherwise the event time.
-        meter_end_sampled_at=(
-            _normalize_utc(meter_end_sampled_at, "meter_end_sampled_at")
-            if meter_end_sampled_at is not None
-            else occurred_at
-        ),
-        meter_stop_wh=validated_meter_stop_wh,
-        id_tag=id_tag,
-        stop_reason=stop_reason,
-    )
-
-
 def _validate_measurement(sample: MeasurementInput) -> MeasurementInput:
-    """Validate one non-energy measurement and normalize its time to UTC.
+    """Validate one measurement and normalize its time to UTC.
 
     Pure: performs no I/O. Values may be negative (a temperature, an
-    exported power) and vendor-specific measurand names are accepted.
+    exported power) and vendor-specific measurand names are accepted. The
+    gateway has already converted known measurands to their fixed unit.
 
     Args:
         sample: The measurement as normalized by the OCPP adapter.
@@ -300,9 +159,9 @@ def _validate_measurement(sample: MeasurementInput) -> MeasurementInput:
         A copy of the sample with ``sampled_at`` in UTC.
 
     Raises:
-        ChargingSessionInputError: On an empty or over-long measurand, a
-            field longer than its column, a non-finite value or a naive
-            timestamp.
+        ChargingSessionInputError: On an empty or over-long measurand, an empty
+            context or location, a field longer than its column, a
+            non-finite value or a naive timestamp.
     """
     if not sample.measurand or len(sample.measurand) > _MEASURAND_MAX_LENGTH:
         raise ChargingSessionInputError(
@@ -312,69 +171,25 @@ def _validate_measurement(sample: MeasurementInput) -> MeasurementInput:
         ("unit", sample.unit, _MEASUREMENT_UNIT_MAX_LENGTH),
         ("context", sample.context, _MEASUREMENT_CONTEXT_MAX_LENGTH),
         ("phase", sample.phase, _MEASUREMENT_PHASE_MAX_LENGTH),
-        ("location", sample.location, _MEASUREMENT_LOCATION_MAX_LENGTH),
+        (
+            "measurement_location",
+            sample.measurement_location,
+            _MEASUREMENT_LOCATION_MAX_LENGTH,
+        ),
     ):
         if field_value is not None and len(field_value) > max_length:
             raise ChargingSessionInputError(
                 f"{field_name} exceeds {max_length} characters"
             )
+    if not sample.context or not sample.measurement_location:
+        raise ChargingSessionInputError(
+            "context and measurement_location are required (CE-14)"
+        )
     if not isinstance(sample.value, Decimal) or not sample.value.is_finite():
         raise ChargingSessionInputError("value must be a finite Decimal")
     return dataclasses.replace(
         sample, sampled_at=_normalize_utc(sample.sampled_at, "sampled_at")
     )
-
-
-def _apply_charging_session_meter_end(
-    session_record: ChargingSessionModel,
-    meter_end_wh: Decimal | None,
-    meter_end_sampled_at: datetime,
-) -> None:
-    """Update the final meter reading and energy delivered on the ORM session.
-
-    Args:
-        session_record: The ORM aggregate being processed in the transaction.
-        meter_end_wh: The latest meter reading; no change is made if this is
-            ``None``.
-        meter_end_sampled_at: The measurement time of ``meter_end_wh``,
-            already normalized to UTC (F-B2).
-
-    Side Effects:
-        If a watermark (``session_record.meter_end_sampled_at``) is already
-        stored and ``meter_end_sampled_at`` is *older*, the update is
-        discarded (logged at WARNING, operator-visible) and neither
-        ``meter_end_wh`` nor ``energy_delivered_wh`` changes - a message
-        that arrived out of order must not overwrite a newer reading with
-        a stale one. Ties (``==``) apply: one OCPP message can carry
-        several samples sharing one timestamp, and rejecting ties would
-        drop legitimate ones. This is a *time*-ordering check only, never
-        a value check: a register that decreases while time still moves
-        forward (a meter reset) still applies and still yields a wrong
-        total - reconciling that is the deferred reliability path
-        (``deferred.md`` item 27) and must not be opened up on its own here.
-    """
-    if meter_end_wh is None:
-        return
-    if (
-        session_record.meter_end_sampled_at is not None
-        and meter_end_sampled_at < session_record.meter_end_sampled_at
-    ):
-        logger.warning(
-            "Discarded stale charging meter reading",
-            extra={
-                "session_id": str(session_record.session_id),
-                "stale_sampled_at": meter_end_sampled_at.isoformat(),
-                "current_sampled_at": (session_record.meter_end_sampled_at.isoformat()),
-                "stale_value_wh": str(meter_end_wh),
-            },
-        )
-        return
-    session_record.meter_end_wh = meter_end_wh
-    session_record.meter_end_sampled_at = meter_end_sampled_at
-    if session_record.meter_start_wh is not None:
-        session_record.energy_delivered_wh = (
-            meter_end_wh - session_record.meter_start_wh
-        )
 
 
 def _touch_session(session_record: ChargingSessionModel) -> None:
@@ -422,24 +237,26 @@ async def _get_charging_session_record(
 async def _get_open_charging_session_record(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSessionModel:
-    """Load a session aggregate that must exist and still accept data (F-B2).
+    """Load a session that must exist and still accept readings (F-B2).
 
     Args:
         db: The current async session.
         session_id: UUID of the session to load.
 
     Returns:
-        The existing, not yet ``COMPLETED`` session aggregate.
+        The existing ``ACTIVE`` session.
 
     Raises:
         ChargingSessionNotFoundError: If the session is not found.
-        ChargingSessionStateError: If the session is already ``COMPLETED``:
-            data landing after ``Ended`` must not silently rewrite a
-            finished session.
+        ChargingSessionStateError: If the session is not ``ACTIVE``: data
+            landing after the stop must not silently rewrite a finished
+            session, and a session that never started has no readings.
     """
     session_record = await _get_charging_session_record(db, session_id)
-    if session_record.status is SessionStatus.COMPLETED:
-        raise ChargingSessionStateError(f"Session '{session_id}' is already completed")
+    if session_record.status is not SessionStatus.ACTIVE:
+        raise ChargingSessionStateError(
+            f"Session '{session_id}' is {session_record.status.value}, not active"
+        )
     return session_record
 
 
@@ -447,44 +264,46 @@ async def _get_open_session_by_transaction(
     db: AsyncSession,
     *,
     station_id: UUID,
-    evse_id: UUID,
-    connector_id: UUID,
     transaction_id: str,
+    evse_id: UUID | None,
+    connector_id: UUID | None,
 ) -> ChargingSessionModel:
-    """Load the aggregate an ``Updated``/``Ended`` event belongs to.
+    """Load the session a stop message belongs to.
 
     Args:
         db: The current async session.
         station_id: UUID of the station that raised the transaction.
-        evse_id: UUID of the EVSE the event names.
-        connector_id: UUID of the connector the event names.
         transaction_id: The validated OCPP transaction identity.
+        evse_id: UUID of the EVSE the message names, if it names one.
+        connector_id: UUID of the connector the message names, if it names one.
 
     Returns:
-        The existing, not yet ``COMPLETED`` aggregate.
+        The existing ``ACTIVE`` session.
 
     Raises:
-        ChargingSessionNotFoundError: If no ``Started`` created it yet.
-        ChargingSessionInputError: If the event's EVSE/connector differ from
-            the aggregate's.
-        ChargingSessionStateError: If the session is already ``COMPLETED``.
+        ChargingSessionNotFoundError: If no start created it.
+        ChargingSessionInputError: If the message's EVSE/connector differ from
+            the session's.
+        ChargingSessionStateError: If the session is not ``ACTIVE`` (already
+            ``COMPLETED``, or never started).
     """
     session_record = await charging_session_repository.get_session_by_transaction(
         db, station_id, transaction_id
     )
     if session_record is None:
         raise ChargingSessionNotFoundError(
-            f"Transaction '{transaction_id}' has no Started yet"
+            f"Transaction '{transaction_id}' has no start yet"
         )
-    if session_record.evse_id != evse_id or session_record.connector_id != connector_id:
+    if (evse_id is not None and session_record.evse_id != evse_id) or (
+        connector_id is not None and session_record.connector_id != connector_id
+    ):
         raise ChargingSessionInputError("Transaction topology does not match")
-    if session_record.status is SessionStatus.COMPLETED:
-        # COMPLETED is terminal: re-stamping ended_at or re-applying a meter
-        # reading would silently rewrite a finished session and corrupt
-        # F-C5's energy totals. Distinguishing a harmless replay from a
-        # genuinely different late event needs seq_no-keyed dedup
-        # (deferred.md item 27), so every post-Ended event is refused the same
-        # way, whether it's a duplicate Ended or a late Updated.
+    if session_record.status is not SessionStatus.ACTIVE:
+        # COMPLETED is terminal: re-stamping ended_at or re-applying a reading
+        # would silently rewrite a finished session and corrupt F-C5's energy
+        # totals. Distinguishing a harmless replay from a genuinely different
+        # late message needs sequence-number dedup (deferred.md item 27), so
+        # every post-stop message is refused the same way.
         raise ChargingSessionStateError(
             f"Transaction '{transaction_id}' is already completed"
         )
@@ -537,37 +356,51 @@ def calculate_session_duration_seconds(
     """Compute how long a session lasted, or has lasted so far (F-B2).
 
     Args:
-        session_record: The session aggregate.
+        session_record: The session.
         now: Reference time used while the session has no ``ended_at``.
 
     Returns:
         Whole seconds from ``started_at`` to ``ended_at`` (or ``now``),
         floored at zero so a charger clock ahead of the server never yields
-        a negative duration.
+        a negative duration; ``0`` for a session that never started.
     """
+    if session_record.started_at is None:
+        return 0
     ended_at = session_record.ended_at if session_record.ended_at is not None else now
     return max(int((ended_at - session_record.started_at).total_seconds()), 0)
 
 
-def calculate_max_power_kw(
-    max_values_by_unit: Sequence[tuple[str | None, Decimal]],
-) -> float | None:
-    """Pick the highest power across units, converted to kW (F-B2).
+async def _resolve_energy_delivered_wh(
+    db: AsyncSession, session_record: ChargingSessionModel
+) -> Decimal | None:
+    """Compute the energy a session delivered, at read time (CE-12).
 
     Args:
-        max_values_by_unit: ``(unit, max_value)`` pairs as stored; ``W`` (or
-            no unit, OCPP's default) is divided by 1000, ``kW`` is kept, any
-            other unit is ignored.
+        db: The current async session.
+        session_record: The session.
 
     Returns:
-        The highest power in kW, or ``None`` if no pair is convertible.
+        The charger's stop reading minus its start reading; while the session
+        runs (or when the stop message carried no reading) the newest outlet
+        energy measurement stands in for the stop reading. ``None`` without a
+        start reading or any closing figure.
+
+    Side Effects:
+        Runs one measurement query when the stop reading is missing.
     """
-    converted_values_kw: list[Decimal] = []
-    for unit, max_value in max_values_by_unit:
-        factor = _POWER_UNIT_FACTORS_KW.get(unit.lower() if unit is not None else None)
-        if factor is not None:
-            converted_values_kw.append(max_value * factor)
-    return float(max(converted_values_kw)) if converted_values_kw else None
+    if session_record.meter_start_wh is None:
+        return None
+    closing_wh = session_record.meter_stop_wh
+    if closing_wh is None:
+        closing_wh = await charging_session_repository.find_last_measurement_value(
+            db,
+            session_record.session_id,
+            measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
+            measurement_location=MEASUREMENT_LOCATION_OUTLET,
+        )
+    if closing_wh is None:
+        return None
+    return closing_wh - session_record.meter_start_wh
 
 
 async def _build_charging_session_detail_response(
@@ -577,15 +410,15 @@ async def _build_charging_session_detail_response(
 
     Args:
         db: The async session owned by the HTTP boundary.
-        session_record: The session aggregate already loaded.
+        session_record: The session already loaded.
 
     Returns:
-        The session response plus ``duration_seconds``, the first/last SoC
-        and the maximum import power in kW (``None`` where the session has
-        no such sample).
+        The session response plus the delivered energy, ``duration_seconds``,
+        the first/last SoC and the maximum outlet import power in kW
+        (``None`` where the session has no such sample).
 
     Side Effects:
-        Runs three measurement queries; does not commit or roll back.
+        Runs up to four measurement queries; does not commit or roll back.
     """
     soc_start = await charging_session_repository.find_first_measurement_value(
         db, session_record.session_id, measurand=_SOC_MEASURAND
@@ -593,20 +426,24 @@ async def _build_charging_session_detail_response(
     soc_end = await charging_session_repository.find_last_measurement_value(
         db, session_record.session_id, measurand=_SOC_MEASURAND
     )
-    max_power_values = (
-        await charging_session_repository.list_max_measurement_values_by_unit(
-            db, session_record.session_id, measurand=_POWER_ACTIVE_IMPORT_MEASURAND
-        )
+    max_power_w = await charging_session_repository.find_max_measurement_value(
+        db,
+        session_record.session_id,
+        measurand=_POWER_ACTIVE_IMPORT_MEASURAND,
+        measurement_location=MEASUREMENT_LOCATION_OUTLET,
     )
     session_response = ChargingSessionResponse.model_validate(session_record)
     return ChargingSessionDetailResponse(
         **session_response.model_dump(),
+        energy_delivered_wh=await _resolve_energy_delivered_wh(db, session_record),
         duration_seconds=calculate_session_duration_seconds(
             session_record, now=utc_now()
         ),
         soc_start_percent=float(soc_start) if soc_start is not None else None,
         soc_end_percent=float(soc_end) if soc_end is not None else None,
-        max_power_kw=calculate_max_power_kw(max_power_values),
+        max_power_kw=(
+            float(max_power_w / _W_PER_KW) if max_power_w is not None else None
+        ),
     )
 
 
@@ -642,6 +479,7 @@ async def list_charging_sessions(
     page_size: int,
     station_id: UUID | None = None,
     connector_id: UUID | None = None,
+    organization_id: UUID | None = None,
     status: SessionStatus | None = None,
     started_from: datetime | None = None,
     started_to: datetime | None = None,
@@ -654,6 +492,7 @@ async def list_charging_sessions(
         page_size: The page size.
         station_id: Only sessions of this station, if given.
         connector_id: Only sessions on this connector, if given.
+        organization_id: Only sessions paid by this organization, if given.
         status: Only sessions in this status, if given.
         started_from: Only sessions with ``started_at >= started_from``;
             must carry a timezone.
@@ -689,6 +528,7 @@ async def list_charging_sessions(
     filters = ChargingSessionListFilter(
         station_id=station_id,
         connector_id=connector_id,
+        organization_id=organization_id,
         status=status,
         started_from=normalized_from,
         started_to=normalized_to,
@@ -705,43 +545,6 @@ async def list_charging_sessions(
         ),
         count_rows=lambda: charging_session_repository.count_sessions(db, filters),
         to_item=ChargingSessionResponse.model_validate,
-    )
-
-
-async def list_charging_session_events(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    page: int,
-    page_size: int,
-) -> ChargingSessionEventListResponse:
-    """Get paginated lifecycle events for the monitoring endpoint.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_id: UUID of the session whose events to view.
-        page: The page, starting at one.
-        page_size: The page size.
-
-    Returns:
-        The event response and pagination metadata.
-
-    Raises:
-        ChargingSessionNotFoundError: If the session does not exist.
-
-    Side Effects:
-        Performs one session lookup and two event queries (items/count).
-    """
-    await _get_charging_session_record(db, session_id)
-    return await _build_page_response(
-        ChargingSessionEventListResponse,
-        page=page,
-        page_size=page_size,
-        list_rows=lambda page_window: charging_session_repository.list_events(
-            db, session_id, offset=page_window.offset, limit=page_window.page_size
-        ),
-        count_rows=lambda: charging_session_repository.count_events(db, session_id),
-        to_item=to_charging_session_event_response,
     )
 
 
@@ -833,20 +636,6 @@ async def list_charging_session_measurements(
     )
 
 
-def to_charging_session_event_response(
-    event_record: ChargingSessionEventModel,
-) -> ChargingSessionEventResponse:
-    """Convert an ORM event into the monitoring response schema.
-
-    Args:
-        event_record: The ORM event already queried by the repository.
-
-    Returns:
-        An event response containing no raw payload.
-    """
-    return ChargingSessionEventResponse.model_validate(event_record)
-
-
 def to_charging_session_meter_value_response(
     measurement_record: ChargingSessionMeasurementModel,
 ) -> ChargingSessionMeterValueResponse:
@@ -872,139 +661,205 @@ def to_charging_session_meter_value_response(
     )
 
 
-async def ingest_transaction_event(
+async def create_pending_session(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    organization_id: UUID,
+    started_by: UUID,
+    vehicle_id: UUID | None = None,
+) -> PendingSessionReference:
+    """Create a PENDING session for a QR scan and issue its single-use token.
+
+    The token is sent to the charger in the remote start; the charger echoes it
+    in its start message, which is how that message finds this row (CE-11).
+    Sending the remote start, checking the scanning user's wallet and taking
+    the truck from the user's driving session come with the QR start flow
+    (WP8); this function is the row creation they build on.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger the scan named.
+        organization_id: UUID of the organization that pays.
+        started_by: UUID of the user who scanned the code.
+        vehicle_id: UUID of the truck being charged, if known (CE-13).
+
+    Returns:
+        A reference holding the new session's ID and its token.
+
+    Side Effects:
+        Inserts one PENDING row in the caller's transaction; an unknown
+        station, organization, user or vehicle fails at flush time with an
+        ``IntegrityError``.
+    """
+    id_token = secrets.token_urlsafe(QR_TOKEN_LENGTH)[:QR_TOKEN_LENGTH]
+    session_record = await charging_session_repository.create_pending_session(
+        db,
+        station_id=station_id,
+        organization_id=organization_id,
+        started_by=started_by,
+        vehicle_id=vehicle_id,
+        id_token=id_token,
+    )
+    return PendingSessionReference(
+        session_id=session_record.session_id,
+        station_id=station_id,
+        id_token=id_token,
+    )
+
+
+async def activate_pending_session(
     db: AsyncSession,
     *,
     station_id: UUID,
     evse_id: UUID,
     connector_id: UUID,
+    id_token: str,
     transaction_id: str,
-    event_type: SessionEventType,
-    event_occurred_at: datetime,
-    seq_no: int | None,
-    meter_start_wh: Decimal | None = None,
-    meter_end_wh: Decimal | None = None,
-    meter_end_sampled_at: datetime | None = None,
-    id_tag: str | None = None,
-    stop_reason: str | None = None,
-    meter_stop_wh: Decimal | None = None,
+    started_at: datetime,
+    meter_start_wh: Decimal | None,
 ) -> TransactionIngestResult:
-    """Process one TransactionEvent according to the happy-path lifecycle.
+    """Turn the PENDING session holding a start message's token ACTIVE (CE-11).
 
     Rule:
         1. Every input field is validated and normalized before anything is
-           read or written (``_validate_transaction_event``).
-        2. ``Started`` creates a new aggregate. ``Updated``/``Ended`` load
-           the existing one, which must exist, match the event's topology
-           and not be ``COMPLETED`` (F-B2) - a duplicate ``Ended`` or a late
-           ``Updated`` must not silently re-mutate a finished record
-           (``_get_open_session_by_transaction``).
-        3. The event is appended to the history, always before the
-           aggregate is updated.
-        4. The meter reading is applied unless it is stale (older than one
-           already applied) - see ``_apply_charging_session_meter_end``.
-        5. ``Ended`` completes the aggregate: ``ended_at``, status,
-           ``stop_reason`` and ``meter_stop_wh``.
-        6. ``updated_at`` is stamped (``_touch_session``).
+           read or written.
+        2. The token must belong to a PENDING session of the same charger;
+           otherwise the start is refused and no row is created.
+        3. The charger's gun, transaction ID, start time and start reading are
+           filled in and the status becomes ``ACTIVE``.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger that sent the message.
+        evse_id: UUID of the EVSE the transaction runs on.
+        connector_id: UUID of the connector the transaction runs on.
+        id_token: The token the message carries.
+        transaction_id: The charger's transaction identity (a 1.6J number as
+            text, or a 2.0.1 string of at most 36 characters).
+        started_at: The charger's start time; must have a timezone.
+        meter_start_wh: The start reading in Wh; required, because an ACTIVE
+            session always has one (CE-10).
+
+    Returns:
+        The session ID and its status after the start.
+
+    Raises:
+        ChargingSessionInputError: If a field is empty, over-long, naive or
+            negative, or the start reading is missing.
+        ChargingSessionTokenError: If no PENDING session of this charger holds
+            the token (CE-11).
+
+    Side Effects:
+        Updates the session in the caller's transaction; a duplicate
+        ``(station, transaction ID)`` is refused by the unique index at flush
+        time.
+    """
+    normalized_transaction_id = transaction_id.strip()
+    if (
+        not normalized_transaction_id
+        or len(normalized_transaction_id) > OCPP_TRANSACTION_ID_MAX_LENGTH
+    ):
+        raise ChargingSessionInputError(
+            f"transaction_id is empty or exceeds {OCPP_TRANSACTION_ID_MAX_LENGTH} "
+            "characters"
+        )
+    if not id_token or len(id_token) > ID_TOKEN_MAX_LENGTH:
+        raise ChargingSessionInputError(
+            f"id_token is empty or exceeds {ID_TOKEN_MAX_LENGTH} characters"
+        )
+    started_at_utc = _normalize_utc(started_at, "started_at")
+    validated_meter_start_wh = _validate_energy(meter_start_wh, "meter_start_wh")
+    if validated_meter_start_wh is None:
+        raise ChargingSessionInputError("meter_start_wh is required to start a session")
+    session_record = await charging_session_repository.find_pending_session_by_token(
+        db, station_id, id_token
+    )
+    if session_record is None:
+        # The token is deliberately left out of the message and the log (IS-07).
+        raise ChargingSessionTokenError(
+            "The start message carries no token issued for this charger"
+        )
+    session_record.evse_id = evse_id
+    session_record.connector_id = connector_id
+    session_record.ocpp_transaction_id = normalized_transaction_id
+    session_record.started_at = started_at_utc
+    session_record.meter_start_wh = validated_meter_start_wh
+    session_record.status = SessionStatus.ACTIVE
+    _touch_session(session_record)
+    return TransactionIngestResult(
+        session_id=session_record.session_id, status=session_record.status
+    )
+
+
+async def complete_session(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    transaction_id: str,
+    ended_at: datetime,
+    stop_reason: str | None = None,
+    meter_stop_wh: Decimal | None = None,
+    evse_id: UUID | None = None,
+    connector_id: UUID | None = None,
+) -> TransactionIngestResult:
+    """Complete the ACTIVE session a stop message belongs to.
+
+    Rule:
+        1. Every input field is validated and normalized before anything is
+           read or written.
+        2. The session must exist, match the message's topology (when it
+           names one) and be ``ACTIVE`` (F-B2): a duplicate stop or a late
+           message must not silently re-mutate a finished record.
+        3. The stop time, reason and the charger's closing reading (the
+           billing figure, CE-12, stored as sent) are written and the status
+           becomes ``COMPLETED``.
 
     Args:
         db: The async session owned by the entry boundary.
         station_id: UUID of the station that raised the transaction.
-        evse_id: UUID of the transaction's EVSE.
-        connector_id: UUID of the transaction's connector.
-        transaction_id: The OCPP transaction identity.
-        event_type: The canonical event type.
-        event_occurred_at: The event time; must have a timezone.
-        seq_no: OCPP's own sequence number for this event, nullable for a
-            caller with none (F-B2). Persisted, not yet used for dedup.
-        meter_start_wh: The meter reading at the start of the session, for
-            ``Started``.
-        meter_end_wh: The latest meter reading, for ``Updated``/``Ended``.
-        meter_end_sampled_at: The measurement time of ``meter_end_wh``, if
-            the adapter has the embedded sample's own timestamp; falls
-            back to ``event_occurred_at`` when omitted (F-B2).
-        id_tag: The idTag that started the session, for ``Started`` only
-            (OCPP 1.6J; at most 20 characters). Stored as sent.
-        stop_reason: Why the session stopped, for ``Ended`` only (at most 30
-            characters).
-        meter_stop_wh: The charger's authoritative closing meter reading, for
-            ``Ended`` only. Always stored, even when ``meter_end_wh`` is
-            discarded by the stale-sample rule, because it is the
-            charger's own final figure.
+        transaction_id: The charger's transaction identity.
+        ended_at: The charger's stop time; must have a timezone.
+        stop_reason: Why the session stopped, as sent (at most 30 characters).
+        meter_stop_wh: The closing reading in Wh, if the message carries one.
+        evse_id: UUID of the EVSE the message names, if it names one.
+        connector_id: UUID of the connector the message names, if it names one.
 
     Returns:
-        A result containing the session UUID and its status after the
-        event.
+        The session ID and its status after the stop.
 
     Raises:
-        ChargingSessionInputError: If the input violates the contract (an
-            ``id_tag`` longer than 20 or a ``stop_reason`` longer than 30
-            characters, a negative energy) or the topology does not match.
-        ChargingSessionNotFoundError: If the event is not ``Started`` but
-            the aggregate does not yet exist.
-        ChargingSessionStateError: If the session is already ``COMPLETED``.
+        ChargingSessionInputError: If a field is invalid or the topology does
+            not match.
+        ChargingSessionNotFoundError: If the station has no such transaction.
+        ChargingSessionStateError: If the session is not ``ACTIVE``.
 
     Side Effects:
-        Creates or updates the aggregate and appends an event in the
-        current transaction; does not commit or roll back on its own. A
-        duplicate ``Started`` has no dedicated branch yet: the unique
-        ``(station_id, ocpp_transaction_id)`` constraint refuses it at
-        flush time.
+        Updates the session in the caller's transaction.
     """
-    validated_event = _validate_transaction_event(
-        transaction_id=transaction_id,
-        event_occurred_at=event_occurred_at,
-        seq_no=seq_no,
-        meter_start_wh=meter_start_wh,
-        meter_end_wh=meter_end_wh,
-        meter_end_sampled_at=meter_end_sampled_at,
-        id_tag=id_tag,
-        stop_reason=stop_reason,
-        meter_stop_wh=meter_stop_wh,
-    )
-
-    session_record: ChargingSessionModel
-    if event_type == SessionEventType.STARTED:
-        session_record = await charging_session_repository.create_session(
-            db,
-            station_id=station_id,
-            evse_id=evse_id,
-            connector_id=connector_id,
-            transaction_id=validated_event.transaction_id,
-            started_at=validated_event.occurred_at,
-            meter_start_wh=validated_event.meter_start_wh,
-            id_tag=validated_event.id_tag,
+    normalized_transaction_id = transaction_id.strip()
+    if not normalized_transaction_id:
+        raise ChargingSessionInputError("transaction_id is empty")
+    ended_at_utc = _normalize_utc(ended_at, "ended_at")
+    validated_meter_stop_wh = _validate_energy(meter_stop_wh, "meter_stop_wh")
+    if stop_reason is not None and len(stop_reason) > STOP_REASON_MAX_LENGTH:
+        raise ChargingSessionInputError(
+            f"stop_reason exceeds {STOP_REASON_MAX_LENGTH} characters"
         )
-    else:
-        session_record = await _get_open_session_by_transaction(
-            db,
-            station_id=station_id,
-            evse_id=evse_id,
-            connector_id=connector_id,
-            transaction_id=validated_event.transaction_id,
-        )
-
-    await charging_session_repository.insert_event(
+    session_record = await _get_open_session_by_transaction(
         db,
-        session_id=session_record.session_id,
-        event_occurred_at=validated_event.occurred_at,
-        event_type=event_type,
-        seq_no=validated_event.seq_no,
+        station_id=station_id,
+        transaction_id=normalized_transaction_id,
+        evse_id=evse_id,
+        connector_id=connector_id,
     )
-    _apply_charging_session_meter_end(
-        session_record,
-        validated_event.meter_end_wh,
-        validated_event.meter_end_sampled_at,
-    )
-    if event_type is SessionEventType.ENDED:
-        session_record.ended_at = validated_event.occurred_at
-        session_record.status = SessionStatus.COMPLETED
-        session_record.stop_reason = validated_event.stop_reason
-        session_record.meter_stop_wh = validated_event.meter_stop_wh
+    session_record.ended_at = ended_at_utc
+    session_record.status = SessionStatus.COMPLETED
+    session_record.stop_reason = stop_reason
+    session_record.meter_stop_wh = validated_meter_stop_wh
     _touch_session(session_record)
     return TransactionIngestResult(
-        session_id=session_record.session_id,
-        status=session_record.status,
+        session_id=session_record.session_id, status=session_record.status
     )
 
 
@@ -1014,23 +869,20 @@ async def ingest_meter_values(
     session_id: UUID,
     sample: MeterSampleInput,
 ) -> MeterIngestResult:
-    """Store one energy-register sample and update the aggregate.
+    """Store one energy-register sample (Wh) of an ACTIVE session.
 
     Rule:
-        1. The session must exist and not be ``COMPLETED`` (F-B2), for the
-           same reason as ``ingest_transaction_event``'s guard: a sample
-           landing after ``Ended`` must not silently rewrite a finished
-           session's energy total.
+        1. The session must exist and be ``ACTIVE`` (F-B2), for the same
+           reason as ``complete_session``'s guard.
         2. The sample's time and Wh value are validated.
-        3. The sample is always appended to the history (append-only).
-        4. The aggregate's ``meter_end_wh`` only advances if the sample is
-           not stale - see ``_apply_charging_session_meter_end`` (F-B2).
-        5. ``updated_at`` is stamped (``_touch_session``).
+        3. The sample is appended to the measurements (append-only); the
+           session row keeps only the readings the charger declares, so
+           nothing else changes except ``updated_at`` (CE-12).
 
     Args:
         db: The async session owned by the entry boundary.
-        session_id: UUID of the aggregate to update.
-        sample: The sample, already canonicalized to Wh by the adapter.
+        session_id: UUID of the session to update.
+        sample: The sample, already converted to Wh by the gateway.
 
     Returns:
         A result containing the session UUID and its status.
@@ -1038,19 +890,23 @@ async def ingest_meter_values(
     Raises:
         ChargingSessionInputError: If the sample lacks a timezone or the
             energy value is invalid.
-        ChargingSessionNotFoundError: If the aggregate does not exist.
-        ChargingSessionStateError: If the session is already ``COMPLETED``.
+        ChargingSessionNotFoundError: If the session does not exist.
+        ChargingSessionStateError: If the session is not ``ACTIVE``.
 
     Side Effects:
-        Appends a measurement row and updates the aggregate in the same
-        transaction; the caller must commit or roll back the transaction at
-        the entry boundary.
+        Appends a measurement row and stamps the session in the same
+        transaction; the caller must commit or roll back at the entry
+        boundary.
     """
     session_record = await _get_open_charging_session_record(db, session_id)
     sampled_at = _normalize_utc(sample.sampled_at, "sampled_at")
     value_wh = _validate_energy(sample.value_wh, "value_wh")
     if value_wh is None:
         raise ChargingSessionInputError("value_wh is required")
+    if not sample.context or not sample.measurement_location:
+        raise ChargingSessionInputError(
+            "context and measurement_location are required (CE-14)"
+        )
     await charging_session_repository.insert_measurement(
         db,
         session_id=session_record.session_id,
@@ -1059,8 +915,8 @@ async def ingest_meter_values(
         value=value_wh,
         unit=ENERGY_UNIT_WH,
         context=sample.context,
+        measurement_location=sample.measurement_location,
     )
-    _apply_charging_session_meter_end(session_record, value_wh, sampled_at)
     _touch_session(session_record)
     return MeterIngestResult(
         session_id=session_record.session_id,
@@ -1074,19 +930,17 @@ async def ingest_measurements(
     session_id: UUID,
     samples: Sequence[MeasurementInput],
 ) -> int:
-    """Store non-energy measurements of an active session (SoC, power, voltage…).
+    """Store non-energy measurements of an ACTIVE session (SoC, power, voltage…).
 
     Rule:
-        1. The session must exist and not be ``COMPLETED``, for the same
-           reason as in ``ingest_meter_values``.
+        1. The session must exist and be ``ACTIVE``, for the same reason as in
+           ``ingest_meter_values``.
         2. Every sample is validated, in payload order, before the first
            insert (``_validate_measurement``). Vendor-specific measurand
            names are accepted as sent; values may be negative (a
            temperature, an exported power).
         3. Each sample is inserted individually (append-only history, no
-           batching). The aggregate's energy fields are **not** affected:
-           only the energy register drives ``meter_end_wh``/
-           ``energy_delivered_wh`` (see ``ingest_meter_values``).
+           batching).
         4. ``updated_at`` is stamped (``_touch_session``).
 
     Args:
@@ -1099,7 +953,7 @@ async def ingest_measurements(
 
     Raises:
         ChargingSessionNotFoundError: If the session does not exist.
-        ChargingSessionStateError: If the session is already ``COMPLETED``.
+        ChargingSessionStateError: If the session is not ``ACTIVE``.
         ChargingSessionInputError: If a sample lacks a timezone, has a
             non-finite value, an empty measurand, or a field longer than its
             column (measurand 60, unit 20, context 30, phase 10, location 20).
@@ -1120,7 +974,7 @@ async def ingest_measurements(
             unit=validated_sample.unit,
             context=validated_sample.context,
             phase=validated_sample.phase,
-            location=validated_sample.location,
+            measurement_location=validated_sample.measurement_location,
         )
     _touch_session(session_record)
     return len(validated_samples)
@@ -1340,32 +1194,27 @@ def _session_energy_readings(
     """Assemble every energy-register reading known for one session.
 
     The stored samples alone miss energy: ``meter_start_wh`` (taken at
-    ``started_at``) is never stored as a sample, and a 2.0.1 ``Ended``
-    reading only moves the aggregate's ``meter_end_wh``. Adding both as
-    readings makes a finished session's deltas sum to its
-    ``energy_delivered_wh``; when the latest reading is also a stored sample
-    it only adds a zero delta.
+    ``started_at``) and the charger's closing ``meter_stop_wh`` (taken at
+    ``ended_at``) are declared on the session row, not stored as samples.
+    Adding both as readings makes a finished session's deltas sum to its
+    delivered energy; when the closing reading is also a stored sample it only
+    adds a zero delta.
 
     Args:
-        session_record: The session aggregate.
-        samples: The session's stored energy samples, ``(sampled_at,
+        session_record: The session.
+        samples: The session's stored outlet energy samples, ``(sampled_at,
             value_wh)``.
 
     Returns:
-        The start reading (if any), the samples, then the latest reading (if
+        The start reading (if any), the samples, then the closing reading (if
         any), in that order before sorting by time.
     """
     readings: list[tuple[datetime, Decimal]] = []
-    if session_record.meter_start_wh is not None:
+    if session_record.meter_start_wh is not None and session_record.started_at:
         readings.append((session_record.started_at, session_record.meter_start_wh))
     readings.extend(samples)
-    if (
-        session_record.meter_end_wh is not None
-        and session_record.meter_end_sampled_at is not None
-    ):
-        readings.append(
-            (session_record.meter_end_sampled_at, session_record.meter_end_wh)
-        )
+    if session_record.meter_stop_wh is not None and session_record.ended_at:
+        readings.append((session_record.ended_at, session_record.meter_stop_wh))
     return readings
 
 
@@ -1487,7 +1336,7 @@ async def allocate_ocpp16_transaction_id(db: AsyncSession) -> int:
 
 
 async def has_active_session_on_connector(db: AsyncSession, connector_id: UUID) -> bool:
-    """Tell whether a connector already has an open (``active``) session.
+    """Tell whether a connector already has an open (``ACTIVE``) session.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -1534,6 +1383,10 @@ async def resolve_session_by_transaction(
         raise ChargingSessionNotFoundError(
             f"Transaction '{transaction_id}' not found for this station"
         )
+    if session_record.evse_id is None or session_record.connector_id is None:
+        raise ChargingSessionStateError(
+            f"Transaction '{transaction_id}' has no gun recorded"
+        )
     return TransactionSessionReference(
         session_id=session_record.session_id,
         station_id=session_record.station_id,
@@ -1566,6 +1419,6 @@ async def resolve_session_command_reference(
         raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
     return SessionCommandReference(
         session_id=session_record.session_id,
-        id_token=session_record.id_tag,
+        id_token=session_record.id_token,
         ocpp_transaction_id=session_record.ocpp_transaction_id,
     )

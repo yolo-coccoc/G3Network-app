@@ -1,11 +1,11 @@
-"""Minimal async repository for the charging session happy path.
+"""Async repository of the charging sessions and their measurements.
 
-The repository only queries, creates and flushes the aggregate/history; it
-holds no lifecycle rule (those live in the service) and never commits or
-rolls back the transaction. Besides the lifecycle writes it serves the
-monitoring reads: the filtered session list, the per-session measurement
-lookups behind the session summary (first/last value, maximum per unit), and
-the per-session energy samples behind the station energy series (F-C5).
+The repository only queries, creates and flushes rows; it holds no lifecycle
+rule (those live in the service) and never commits or rolls back the
+transaction. Besides the lifecycle writes it serves the monitoring reads: the
+filtered session list, the per-session measurement lookups behind the session
+summary (first/last/maximum value) and the per-session energy samples behind
+the station energy series (F-C5).
 """
 
 from datetime import datetime
@@ -17,14 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.charging_sessions.models import (
-    ChargingSessionEventModel,
     ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
+    MEASUREMENT_LOCATION_OUTLET,
     ChargingSessionListFilter,
-    SessionEventType,
     SessionStatus,
 )
 from app.libs.common.clock import utc_now
@@ -58,6 +57,33 @@ async def get_session_by_transaction(
             ChargingSessionModel.station_id == station_id,
             ChargingSessionModel.ocpp_transaction_id == transaction_id,
         )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def find_pending_session_by_token(
+    db: AsyncSession, station_id: UUID, id_token: str
+) -> ChargingSessionModel | None:
+    """Find the PENDING session a charger's start message belongs to (CE-11).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger that sent the start message.
+        id_token: The token the message carries.
+
+    Returns:
+        The PENDING session of that charger holding the token (the newest if
+        several), or ``None`` when no scan issued it.
+    """
+    query_result = await db.execute(
+        select(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.id_token == id_token,
+            ChargingSessionModel.status == SessionStatus.PENDING,
+        )
+        .order_by(ChargingSessionModel.created_at.desc())
+        .limit(1)
     )
     return query_result.scalar_one_or_none()
 
@@ -99,6 +125,10 @@ def _session_list_conditions(
         conditions.append(ChargingSessionModel.station_id == filters.station_id)
     if filters.connector_id is not None:
         conditions.append(ChargingSessionModel.connector_id == filters.connector_id)
+    if filters.organization_id is not None:
+        conditions.append(
+            ChargingSessionModel.organization_id == filters.organization_id
+        )
     if filters.status is not None:
         conditions.append(ChargingSessionModel.status == filters.status)
     if filters.started_from is not None:
@@ -223,6 +253,8 @@ async def list_energy_samples_before(
         .where(
             ChargingSessionMeasurementModel.session_id == session_id,
             ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
+            ChargingSessionMeasurementModel.measurement_location
+            == MEASUREMENT_LOCATION_OUTLET,
             ChargingSessionMeasurementModel.sampled_at < end_time,
         )
         .order_by(
@@ -262,7 +294,11 @@ async def find_first_measurement_value(
 
 
 async def find_last_measurement_value(
-    db: AsyncSession, session_id: UUID, *, measurand: str
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    measurand: str,
+    measurement_location: str | None = None,
 ) -> Decimal | None:
     """Get the value of a session's latest sample of one measurand.
 
@@ -270,103 +306,59 @@ async def find_last_measurement_value(
         db: The current async session.
         session_id: UUID of the session.
         measurand: The measurand name, e.g. ``SoC``.
+        measurement_location: Only samples measured there, or any location
+            if ``None``.
 
     Returns:
         The latest value, or ``None`` if the session has no such sample.
     """
-    query_result = await db.execute(
-        select(ChargingSessionMeasurementModel.value)
-        .where(
-            ChargingSessionMeasurementModel.session_id == session_id,
-            ChargingSessionMeasurementModel.measurand == measurand,
+    statement = select(ChargingSessionMeasurementModel.value).where(
+        ChargingSessionMeasurementModel.session_id == session_id,
+        ChargingSessionMeasurementModel.measurand == measurand,
+    )
+    if measurement_location is not None:
+        statement = statement.where(
+            ChargingSessionMeasurementModel.measurement_location == measurement_location
         )
-        .order_by(
+    query_result = await db.execute(
+        statement.order_by(
             ChargingSessionMeasurementModel.sampled_at.desc(),
             ChargingSessionMeasurementModel.measurement_id.desc(),
-        )
-        .limit(1)
+        ).limit(1)
     )
     return query_result.scalar_one_or_none()
 
 
-async def list_max_measurement_values_by_unit(
-    db: AsyncSession, session_id: UUID, *, measurand: str
-) -> list[tuple[str | None, Decimal]]:
-    """Get the maximum value of one measurand of a session, per stored unit.
+async def find_max_measurement_value(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    measurand: str,
+    measurement_location: str,
+) -> Decimal | None:
+    """Get the maximum value of one measurand of a session at one location.
 
-    The unit is kept as reported (``W`` or ``kW`` for power), so the maximum
-    is taken per unit and the service converts before comparing.
+    Values are stored in one fixed unit per measurand (CE-14), so no unit
+    handling is needed here.
 
     Args:
         db: The current async session.
         session_id: UUID of the session.
         measurand: The measurand name, e.g. ``Power.Active.Import``.
+        measurement_location: Only samples measured there, e.g. ``Outlet``.
 
     Returns:
-        ``(unit, max_value)`` pairs, one per distinct unit; empty if the
-        session has no such sample.
+        The maximum value, or ``None`` if the session has no such sample.
     """
     query_result = await db.execute(
-        select(
-            ChargingSessionMeasurementModel.unit,
-            func.max(ChargingSessionMeasurementModel.value),
-        )
-        .where(
+        select(func.max(ChargingSessionMeasurementModel.value)).where(
             ChargingSessionMeasurementModel.session_id == session_id,
             ChargingSessionMeasurementModel.measurand == measurand,
-        )
-        .group_by(ChargingSessionMeasurementModel.unit)
-    )
-    return [(unit, max_value) for unit, max_value in query_result.all()]
-
-
-async def list_events(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    offset: int,
-    limit: int,
-) -> list[ChargingSessionEventModel]:
-    """Get the lifecycle events of a session in ascending time order.
-
-    Args:
-        db: The current async session.
-        session_id: UUID of the session to query.
-        offset: The number of events to skip.
-        limit: The maximum number of events to return.
-
-    Returns:
-        The event history, stably paginated.
-    """
-    query_result = await db.execute(
-        select(ChargingSessionEventModel)
-        .where(ChargingSessionEventModel.session_id == session_id)
-        .order_by(
-            ChargingSessionEventModel.event_occurred_at.asc(),
-            ChargingSessionEventModel.event_id.asc(),
-        )
-        .offset(offset)
-        .limit(limit)
-    )
-    return list(query_result.scalars().all())
-
-
-async def count_events(db: AsyncSession, session_id: UUID) -> int:
-    """Count the lifecycle events of a session.
-
-    Args:
-        db: The current async session.
-        session_id: UUID of the session whose events to count.
-
-    Returns:
-        The total number of events for the session.
-    """
-    query_result = await db.execute(
-        select(func.count(ChargingSessionEventModel.event_id)).where(
-            ChargingSessionEventModel.session_id == session_id
+            ChargingSessionMeasurementModel.measurement_location
+            == measurement_location,
         )
     )
-    return int(query_result.scalar() or 0)
+    return query_result.scalar_one_or_none()
 
 
 async def list_energy_measurements(
@@ -378,8 +370,9 @@ async def list_energy_measurements(
 ) -> list[ChargingSessionMeasurementModel]:
     """Get the energy-register samples of a session in ascending time order.
 
-    The measurements table also holds other measurands; this listing (the
-    ``/meter-values`` view) only returns the energy register.
+    The measurements table also holds other measurands and locations; this
+    listing (the ``/meter-values`` view) only returns the energy register
+    measured at the outlet (CE-14).
 
     Args:
         db: The current async session.
@@ -395,6 +388,8 @@ async def list_energy_measurements(
         .where(
             ChargingSessionMeasurementModel.session_id == session_id,
             ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
+            ChargingSessionMeasurementModel.measurement_location
+            == MEASUREMENT_LOCATION_OUTLET,
         )
         .order_by(
             ChargingSessionMeasurementModel.sampled_at.asc(),
@@ -420,6 +415,8 @@ async def count_energy_measurements(db: AsyncSession, session_id: UUID) -> int:
         select(func.count(ChargingSessionMeasurementModel.measurement_id)).where(
             ChargingSessionMeasurementModel.session_id == session_id,
             ChargingSessionMeasurementModel.measurand == ENERGY_ACTIVE_IMPORT_REGISTER,
+            ChargingSessionMeasurementModel.measurement_location
+            == MEASUREMENT_LOCATION_OUTLET,
         )
     )
     return int(query_result.scalar() or 0)
@@ -433,6 +430,10 @@ async def get_station_energy_summary(
     end_time: datetime,
 ) -> tuple[Decimal, int]:
     """Sum delivered energy and count completed sessions for a station (F-C5).
+
+    The energy of a session is the charger's declared stop reading minus its
+    start reading (CE-12); a completed session whose stop message carried no
+    reading is left out.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -451,11 +452,18 @@ async def get_station_energy_summary(
     """
     query_result = await db.execute(
         select(
-            func.coalesce(func.sum(ChargingSessionModel.energy_delivered_wh), 0),
+            func.coalesce(
+                func.sum(
+                    ChargingSessionModel.meter_stop_wh
+                    - ChargingSessionModel.meter_start_wh
+                ),
+                0,
+            ),
             func.count(ChargingSessionModel.session_id),
         ).where(
             ChargingSessionModel.station_id == station_id,
             ChargingSessionModel.status == SessionStatus.COMPLETED,
+            ChargingSessionModel.meter_stop_wh.is_not(None),
             ChargingSessionModel.ended_at.is_not(None),
             ChargingSessionModel.ended_at >= start_time,
             ChargingSessionModel.ended_at <= end_time,
@@ -465,95 +473,50 @@ async def get_station_energy_summary(
     return Decimal(total_energy_wh), int(session_count)
 
 
-async def create_session(
+async def create_pending_session(
     db: AsyncSession,
     *,
     station_id: UUID,
-    evse_id: UUID,
-    connector_id: UUID,
-    transaction_id: str,
-    started_at: datetime,
-    meter_start_wh: Decimal | None,
-    id_tag: str | None = None,
+    organization_id: UUID,
+    started_by: UUID,
+    vehicle_id: UUID | None,
+    id_token: str,
 ) -> ChargingSessionModel:
-    """Create an active session and flush constraints in the current transaction.
+    """Create a PENDING session at the QR scan and flush it (CE-10).
 
     Args:
         db: The current async session; the repository does not commit the
             transaction.
-        station_id: UUID of the station that owns the transaction.
-        evse_id: UUID of the EVSE that owns the transaction.
-        connector_id: UUID of the connector currently delivering power.
-        transaction_id: The OCPP transaction identity already normalized by
-            the service.
-        started_at: The ``Started`` time, already normalized to UTC.
-        meter_start_wh: The meter reading at the start of the session,
-            nullable if absent from the payload.
-        id_tag: The idTag that started the session, if the protocol carries
-            one (OCPP 1.6J does).
+        station_id: UUID of the charger the scan named.
+        organization_id: UUID of the organization that pays.
+        started_by: UUID of the user who scanned the code.
+        vehicle_id: UUID of the truck being charged, if known (CE-13).
+        id_token: The single-use token sent in the remote start.
 
     Returns:
-        The active aggregate just added to the session.
+        The PENDING session just added.
 
     Side Effects:
         Adds an ORM record and calls ``flush`` to obtain the UUID / detect
-        constraint violations.
+        constraint violations (an unknown station, organization, user or
+        vehicle).
     """
-    # One clock read for both timestamps, so a new aggregate starts with
+    # One clock read for both timestamps, so a new row starts with
     # created_at == updated_at instead of two model defaults a tick apart.
     created_at = utc_now()
     session_record = ChargingSessionModel(
         station_id=station_id,
-        evse_id=evse_id,
-        connector_id=connector_id,
-        ocpp_transaction_id=transaction_id,
-        status=SessionStatus.ACTIVE,
-        started_at=started_at,
-        meter_start_wh=meter_start_wh,
-        id_tag=id_tag,
+        organization_id=organization_id,
+        started_by=started_by,
+        vehicle_id=vehicle_id,
+        id_token=id_token,
+        status=SessionStatus.PENDING,
         created_at=created_at,
         updated_at=created_at,
     )
     db.add(session_record)
     await db.flush()
     return session_record
-
-
-async def insert_event(
-    db: AsyncSession,
-    *,
-    session_id: UUID,
-    event_occurred_at: datetime,
-    event_type: SessionEventType,
-    seq_no: int | None,
-) -> ChargingSessionEventModel:
-    """Append one TransactionEvent history record and flush it.
-
-    Args:
-        db: The current async session; the repository does not commit the
-            transaction.
-        session_id: UUID of the aggregate that owns the event.
-        event_occurred_at: The event time, already normalized to UTC.
-        event_type: The canonical TransactionEvent type.
-        seq_no: OCPP's own sequence number, already validated by the
-            service; nullable for callers that have none (F-B2).
-
-    Returns:
-        The ORM event just added.
-
-    Side Effects:
-        Adds a history record and calls ``flush`` in the current
-        transaction.
-    """
-    event_record = ChargingSessionEventModel(
-        session_id=session_id,
-        event_occurred_at=event_occurred_at,
-        event_type=event_type,
-        seq_no=seq_no,
-    )
-    db.add(event_record)
-    await db.flush()
-    return event_record
 
 
 async def insert_measurement(
@@ -564,9 +527,9 @@ async def insert_measurement(
     measurand: str,
     value: Decimal,
     unit: str | None,
-    context: str | None = None,
+    context: str,
     phase: str | None = None,
-    location: str | None = None,
+    measurement_location: str,
 ) -> ChargingSessionMeasurementModel:
     """Append one measurement of a session and flush it.
 
@@ -578,9 +541,10 @@ async def insert_measurement(
         measurand: The OCPP measurand name.
         value: The reading; canonical Wh for the energy register.
         unit: Unit of ``value``, if known.
-        context: OCPP reading context, if any.
+        context: OCPP reading context (the default already filled in).
         phase: Electrical phase, if any.
-        location: Measurement location, if any.
+        measurement_location: Measurement location (the default already
+            filled in).
 
     Returns:
         The ORM measurement just added.
@@ -597,7 +561,7 @@ async def insert_measurement(
         unit=unit,
         context=context,
         phase=phase,
-        location=location,
+        measurement_location=measurement_location,
     )
     db.add(measurement_record)
     await db.flush()
@@ -633,7 +597,7 @@ async def count_active_sessions_by_connector_id(
         connector_id: UUID of the connector.
 
     Returns:
-        The number of sessions with status ``active`` on the connector.
+        The number of sessions with status ``ACTIVE`` on the connector.
     """
     query_result = await db.execute(
         select(func.count())

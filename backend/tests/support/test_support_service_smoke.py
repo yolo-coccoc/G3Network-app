@@ -1,6 +1,7 @@
 """Smoke tests for the support service: tickets, SOS and SLA (F-I1, F-I2)."""
 
 from datetime import datetime, timedelta, timezone
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,6 +21,7 @@ from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
     SupportDriverNotFoundError,
+    SupportOrganizationRequiredError,
     SupportVehicleNotFoundError,
 )
 from app.domains.support.models import SupportCaseModel
@@ -63,6 +65,7 @@ async def test_create_support_ticket_creates_open_case(
     response = await support_service.create_support_ticket(
         fake_db_session(),
         SupportTicketCreateRequest(
+            organization_id=None,
             vehicle_vin=None,
             driver_id=None,
             category=SupportCaseCategory.TECHNICAL,
@@ -96,6 +99,7 @@ async def test_create_support_ticket_rejects_unknown_vin(
         await support_service.create_support_ticket(
             fake_db_session(),
             SupportTicketCreateRequest(
+                organization_id=None,
                 vehicle_vin="1HGBH41JXMN109186",
                 driver_id=None,
                 category=SupportCaseCategory.TECHNICAL,
@@ -123,6 +127,7 @@ async def test_create_support_ticket_rejects_unknown_driver(
         await support_service.create_support_ticket(
             fake_db_session(),
             SupportTicketCreateRequest(
+                organization_id=None,
                 vehicle_vin=None,
                 driver_id=uuid4(),
                 category=SupportCaseCategory.TECHNICAL,
@@ -147,6 +152,7 @@ async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
         return build_support_case_record(
             case_type=SupportCaseType.SOS,
             sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
+            organization_id=cast(UUID, values["organization_id"]),
         )
 
     async def create_notification(
@@ -162,6 +168,7 @@ async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
     await support_service.create_support_sos(
         fake_db_session(),
         SupportSosCreateRequest(
+            organization_id=uuid4(),
             vehicle_vin=None,
             driver_id=None,
             category=SupportCaseCategory.BREAKDOWN,
@@ -189,9 +196,11 @@ async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
     captured_values: dict[str, object] = {}
     captured_notifications: list[dict[str, object]] = []
 
+    owner_id = uuid4()
+
     async def resolve_vin(db: AsyncSession, vehicle_vin: str) -> VehicleReference:
         return VehicleReference(
-            organization_id=uuid4(),
+            organization_id=owner_id,
             vehicle_id=vehicle_id,
             vin=vehicle_vin,
             battery_capacity_kwh=None,
@@ -202,6 +211,7 @@ async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
         case_record = build_support_case_record(
             case_type=SupportCaseType.SOS,
             sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
+            organization_id=cast(UUID, values["organization_id"]),
         )
         case_record.channel = SupportCaseChannel.HOTLINE
         case_record.vehicle_id = vehicle_id
@@ -241,6 +251,11 @@ async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
     assert notification["notification_type"] is NotificationType.SOS_ALERT
     assert notification["severity"] is NotificationSeverity.CRITICAL
     assert notification["vehicle_id"] == vehicle_id
+    assert notification["organization_id"] == owner_id
+    assert (notification["subject_type"], notification["subject_id"]) == (
+        "SUPPORT_CASE",
+        response.case_id,
+    )
     payload = notification["payload"]
     assert isinstance(payload, dict)
     assert payload["case_id"] == str(response.case_id)
@@ -511,3 +526,22 @@ def test_calculate_is_sla_breached_true_for_case_cancelled_after_due() -> None:
     )
 
     assert support_service.calculate_is_sla_breached(case_record) is True
+
+
+@pytest.mark.asyncio
+async def test_create_support_sos_without_any_organization_is_refused() -> None:
+    """An SOS alert belongs to an organization, so a request with no vehicle and no organization fails."""
+    with pytest.raises(SupportOrganizationRequiredError):
+        await support_service.create_support_sos(
+            fake_db_session(),
+            SupportSosCreateRequest(
+                organization_id=None,
+                vehicle_vin=None,
+                driver_id=None,
+                category=SupportCaseCategory.BREAKDOWN,
+                description=None,
+                error_code=None,
+                latitude=10.8,
+                longitude=106.7,
+            ),
+        )

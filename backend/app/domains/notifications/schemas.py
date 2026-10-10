@@ -13,27 +13,32 @@ class NotificationResponse(BaseModel):
 
     Attributes:
         notification_id: Internal ID; also the poll cursor for later calls.
+        organization_id: The organization the alert belongs to.
         notification_type: Kind of event that raised the notification.
         severity: Severity independent of type.
         vehicle_id: Vehicle the notification is about, nullable.
+        subject_type: What the alert is about (which screen to open),
+            nullable.
+        subject_id: ID of that object, nullable.
         title: Short human-readable summary.
         body: Longer human-readable description.
         payload: Type-specific structured data.
         created_at: Time the notification was raised.
-        read_at: Time an operator marked it read, nullable.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     notification_id: int
+    organization_id: UUID
     notification_type: NotificationType
     severity: NotificationSeverity
     vehicle_id: UUID | None
+    subject_type: str | None
+    subject_id: UUID | None
     title: str
     body: str
     payload: dict[str, object]
     created_at: datetime
-    read_at: datetime | None
 
 
 class NotificationListResponse(BaseModel):
@@ -54,23 +59,37 @@ class NotificationListResponse(BaseModel):
 
 
 class NotificationUnreadCountResponse(BaseModel):
-    """Number of notifications not yet marked read.
+    """Number of alerts a person has not read (their badge count).
 
     Attributes:
-        unread_count: Unread notifications, for one vehicle when the request
-            named one, otherwise in total.
+        unread_count: Inbox rows of the person with no read time.
     """
 
     unread_count: int = Field(..., ge=0)
 
 
 class NotificationMarkAllReadResponse(BaseModel):
-    """Outcome of marking every unread notification read.
+    """Outcome of marking every unread alert of a person read.
 
     Attributes:
-        marked_count: Notifications that were unread and are now read;
-            already-read ones keep their first ``read_at`` and are not
-            counted.
+        marked_count: Alerts that were unread and are now read; already-read
+            ones keep their first ``read_at`` and are not counted.
     """
 
     marked_count: int = Field(..., ge=0)
+
+
+class NotificationReadResponse(BaseModel):
+    """One person's inbox state for an alert after it was marked read.
+
+    Attributes:
+        notification_id: The alert.
+        user_id: The person.
+        seen_at: When the person first saw it (set with the read at the latest).
+        read_at: When the person first opened it.
+    """
+
+    notification_id: int
+    user_id: UUID
+    seen_at: datetime | None
+    read_at: datetime | None
