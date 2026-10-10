@@ -333,9 +333,9 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 |---|---|---|---|
 | RV-OP1 | C | `telemetry/ingestion/mqtt_consumer.py`, `telematics/ingestion/mqtt_consumer.py` | A deeply nested JSON, an integer over 4300 digits, or a year-1/9999 timestamp with an offset raises an exception the handler does not catch: one MQTT message stops ingestion for every truck. **Fixed 2026-10-10.** |
 | RV-OP2 | C | `telemetry/repository.py` `insert_telemetry` | Plain INSERT against `uq_telemetry_telematic_recorded_at`: a repeated reading (offline-buffer replay, 1 Hz with second timestamps) raises IntegrityError and stops the worker (PG). **Fixed 2026-10-10.** |
-| RV-OP3 | H | `telemetry/schemas.py`, `telematics/schemas.py` | NaN/Infinity, `\u0000`, and integers beyond the column pass validation and fail in PostgreSQL, which stops the worker. |
-| RV-OP4 | H | `telemetry/ingestion/mqtt_consumer.py` | The payload's `telematic_serial` is trusted over the topic: one device's credentials can write positions and alerts for any truck. |
-| RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. |
+| RV-OP3 | H | `telemetry/schemas.py`, `telematics/schemas.py` | NaN/Infinity, `\u0000`, and integers beyond the column pass validation and fail in PostgreSQL, which stops the worker. **Fixed 2026-10-10.** |
+| RV-OP4 | H | `telemetry/ingestion/mqtt_consumer.py` | The payload's `telematic_serial` is trusted over the topic: one device's credentials can write positions and alerts for any truck. **Fixed 2026-10-10.** |
+| RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. **Fixed 2026-10-10.** |
 | RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). |
 | RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. |
 | RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). |
@@ -379,7 +379,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. |
 | RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). |
 | RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. |
-| RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. |
+| RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. **Fixed 2026-10-10.** |
 | RV-OP12 | L | `drivers/service.py` | Licence expiry compared with the UTC date, not the Vietnam date. |
 | RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. |
 
