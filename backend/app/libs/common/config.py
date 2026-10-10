@@ -75,6 +75,22 @@ class Settings(BaseSettings):
             sweeps expired PENDING sessions.
         BILLING_MIN_BALANCE_VND: Wallet balance needed to start a charge
             (BL-14); 0 disables the check.
+        BILLING_TOPUP_MIN_VND: Smallest wallet top-up a person may ask for.
+        BILLING_TOPUP_MAX_VND: Largest wallet top-up a person may ask for.
+        BILLING_TOPUP_EXPIRY_MINUTES: How long a top-up QR code waits for the
+            transfer before the payment is shown as failed (unpaid).
+        BILLING_BANK_PROVIDER: Which bank-notification provider reads the
+            incoming transfers (PR-15); only the logging ``fake`` exists.
+        BILLING_WEBHOOK_SECRET: Shared secret the bank-notification service
+            sends in the ``X-Webhook-Secret`` header; empty refuses every
+            notification.
+        BILLING_VIETQR_BANK_BIN: NAPAS bank identification number (BIN) of the
+            account that receives top-ups, e.g. ``970436``.
+        BILLING_VIETQR_ACCOUNT_NUMBER: The receiving bank account number.
+        BILLING_VIETQR_ACCOUNT_NAME: Account holder name shown to the payer.
+        BILLING_ENERGY_MISMATCH_TOLERANCE_PERCENT: How far the charger's stop
+            reading may differ from the newest measurement before the bill is
+            put on hold for review (CE-12).
         CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
             accepts; bigger ones are refused by the WebSocket library
             instead of being stored truncated in the raw message log.
@@ -251,6 +267,23 @@ class Settings(BaseSettings):
     # Wallet minimum balance to start a charge, in VND (BL-14). 0 turns the check
     # off, which is the default until top-ups exist (WP9).
     BILLING_MIN_BALANCE_VND: Decimal = Field(default=Decimal(0), ge=0)
+    # Wallet top-up by VietQR bank transfer (BL-15). Amounts are whole dong.
+    BILLING_TOPUP_MIN_VND: int = Field(default=10_000, ge=1)
+    BILLING_TOPUP_MAX_VND: int = Field(default=50_000_000, ge=1)
+    BILLING_TOPUP_EXPIRY_MINUTES: int = Field(default=15, ge=1)
+    # Bank-notification provider behind an interface (PR-15): only the logging
+    # fake exists. The webhook secret is empty by default, which refuses every
+    # notification (fail closed).
+    BILLING_BANK_PROVIDER: Literal["fake"] = "fake"
+    BILLING_WEBHOOK_SECRET: str = ""
+    BILLING_VIETQR_BANK_BIN: str = Field(default="970436", pattern=r"^\d{6}$")
+    BILLING_VIETQR_ACCOUNT_NUMBER: str = Field(default="0000000000", max_length=19)
+    BILLING_VIETQR_ACCOUNT_NAME: str = Field(default="G3 NETWORK", max_length=25)
+    # Stop reading versus newest measurement (CE-12): a larger gap, in percent
+    # of the energy, puts the bill ON_HOLD.
+    BILLING_ENERGY_MISMATCH_TOLERANCE_PERCENT: Decimal = Field(
+        default=Decimal(5), ge=0, le=100
+    )
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.

@@ -312,8 +312,17 @@ name = "Other domains use only billing's service, types and exceptions"
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.billing.bill_service",
+    "app.domains.billing.ledger_service",
     "app.domains.billing.models",
+    "app.domains.billing.pricing",
+    "app.domains.billing.providers",
     "app.domains.billing.repository",
+    "app.domains.billing.router",
+    "app.domains.billing.schemas",
+    "app.domains.billing.tariff_service",
+    "app.domains.billing.topup_service",
+    "app.domains.billing.vietqr",
 ]
 allow_indirect_imports = true
 

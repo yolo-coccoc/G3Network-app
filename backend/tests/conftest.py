@@ -3,6 +3,7 @@
 import pytest
 
 import app.domains.batteries.service as battery_service
+import app.domains.charging_sessions.service as charging_session_service
 import app.domains.identity.service as identity_service
 from app.domains.identity.types import Principal
 
@@ -48,3 +49,15 @@ def no_installed_battery(monkeypatch: pytest.MonkeyPatch) -> None:
         "resolve_installed_battery_capacity_kwh",
         resolve_installed_battery_capacity_kwh,
     )
+
+
+@pytest.fixture(autouse=True)
+def no_session_ended_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test with no session-ended hook registered (BL-19).
+
+    Importing ``app.api.main`` registers the billing hook in the test process.
+    A smoke test that completes or abandons a session with a fake database
+    session must not run it; a test that wants billing registers the hook
+    itself.
+    """
+    monkeypatch.setattr(charging_session_service, "_session_ended_hooks", [])

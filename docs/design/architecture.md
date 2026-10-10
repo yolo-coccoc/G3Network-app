@@ -204,9 +204,17 @@ FastAPI registers the following domains:
   the domains (CE-20): the scan resolves the charger and checks its location's
   visibility, that it is in service and connected
   (`charging_stations.resolve_scan_target`), that the gun and the person have no
-  charge open, the wallet (`billing.has_minimum_balance`), takes the truck from
-  the person's open driving session (`drivers`), creates the PENDING row and
-  queues a `REMOTE_START` command for the gateway. A PENDING row ends
+  charge open, the wallet (`billing.has_minimum_balance`), that a tariff prices
+  the charger (`billing.resolve_tariff_for_station`, else `409 NO_TARIFF`),
+  takes the truck from the person's open driving session (`drivers`), creates
+  the PENDING row and a QUOTED bill that freezes the price
+  (`billing.create_quoted_bill`, BL-10), and queues a `REMOTE_START` command for
+  the gateway. The end of a session (the charger's stop message, or an
+  abandoned scan) reaches billing through a hook list in
+  `charging_sessions.service` (`register_session_ended_hook`), filled by
+  `app/api/billing_hooks.py` in the API **and** in the OCPP gateway process
+  (`app/api/startup.py`, BL-19): a completed session is billed and the wallet
+  debited in the stop message's transaction, an abandoned one voids its bill. A PENDING row ends
   `ABANDONED` when its remote start is refused / times out / is not sent (the
   gateway's command loop, in the same step as the command's outcome) or when
   the scan is older than `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (swept by
@@ -224,11 +232,22 @@ FastAPI registers the following domains:
   `resolve_station_energy_total` is the DTO `charging_stations` uses for the
   all-stations ranking. The 1.6J backend assigns the integer `transactionId`
   from a database sequence. Still no retry/out-of-order recovery/DLQ/dedup.
-- `billing`: tables and enums, plus the small service the QR charge needs
-  (WP8): `has_minimum_balance` (the wallet minimum of BL-14, setting
-  `BILLING_MIN_BALANCE_VND`, 0 = off; a missing wallet counts as zero),
-  `resolve_wallet_standing` and `find_session_bill_reference`. The tariff, bill,
-  payment and ledger services and the endpoints come with WP9.
+- `billing` (WP9, PAY-06, 07, 09, 10): tariffs, immutable tariff versions with
+  time-of-use periods in Vietnam time (`tariff_service`, `pricing`), the bill of
+  each session (QUOTED at the scan, BILLED / ON_HOLD / VOID at the end:
+  `bill_service`), wallets with their append-only ledger (`ledger_service`) and
+  the VietQR top-up with its bank-notification webhook (`topup_service`,
+  `vietqr` = pure-Python EMVCo encoder with CRC-16, `providers` = the
+  bank-notification interface with a logging fake chosen by
+  `BILLING_BANK_PROVIDER`). Money is whole dong (`numeric(14,2)` columns that
+  only hold integers, integers on the wire). `service.py` is the public
+  surface: `resolve_tariff_for_station`, `create_quoted_bill`,
+  `settle_session_bill`, `void_session_bill`, `has_minimum_balance`,
+  `resolve_wallet_standing`, `find_session_bill_reference`. Endpoints:
+  `/tariffs`, `/tariffs/{id}/versions`, `/tariffs/in-force`,
+  `/charging-session-bills`, `/wallets/me`, `/wallets/{user_id}`,
+  `/payments/{id}`, `/payments/vietqr/notifications` (public, shared-secret
+  header), and `GET /charging-sessions/{id}/bill` in the session flow.
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=` (ascending cursor;
   `order=desc` returns the newest page instead), filterable by vehicle,
@@ -493,8 +512,9 @@ call each other is in
 │   │   │   ├── charging_sessions/     # QR-scan sessions, token-matched start/stop, measurements (F-B2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   ├── billing/               # Tariffs, session bills, payments, wallets: models + the wallet-minimum / bill reads (WP9 adds the rest)
-│   │   │   │   └── service.py  repository.py  models.py  types.py  exceptions.py
+│   │   │   ├── billing/               # Tariffs + versions, session bills, wallets + ledger, VietQR top-up (WP9)
+│   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       # tariff_service.py, bill_service.py, ledger_service.py, topup_service.py = the logic; pricing.py = periods and rounding; vietqr.py = EMVCo encoder; providers.py = bank-notification interface + logging fake
 │   │   │   │
 │   │   │   ├── notifications/         # Alerts per organization, per-person inbox state, channel switches (F-A2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -527,7 +547,9 @@ call each other is in
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
 │   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the vehicle, driving-session and trip lists (FL-13)
 │   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
-│   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt across charging_stations, billing, drivers, charging_sessions (CE-20)
+│   │   │   ├── billing_hooks.py       # Wires the end of a charging session to billing (BL-19)
+│   │   │   ├── startup.py             # register_api_hooks / register_session_hooks: shared by the API and the OCPP gateway
+│   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt, bill across charging_stations, billing, drivers, charging_sessions (CE-20)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
 │   │   └── libs/

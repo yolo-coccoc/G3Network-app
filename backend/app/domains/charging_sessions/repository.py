@@ -195,7 +195,7 @@ async def abandon_pending_session(db: AsyncSession, session_id: UUID) -> bool:
 
 async def abandon_pending_sessions_created_before(
     db: AsyncSession, created_before: datetime
-) -> int:
+) -> list[UUID]:
     """Turn every PENDING session scanned before a time ABANDONED.
 
     Args:
@@ -203,10 +203,10 @@ async def abandon_pending_sessions_created_before(
         created_before: Scans older than this have waited too long.
 
     Returns:
-        The number of sessions changed.
+        The IDs of the sessions changed (the session-ended hooks need them).
 
     Side Effects:
-        One UPDATE; flushes, does not commit.
+        One UPDATE ... RETURNING; flushes, does not commit.
     """
     result = await db.execute(
         update(ChargingSessionModel)
@@ -215,9 +215,10 @@ async def abandon_pending_sessions_created_before(
             ChargingSessionModel.created_at < created_before,
         )
         .values(status=SessionStatus.ABANDONED, updated_at=utc_now())
+        .returning(ChargingSessionModel.session_id)
     )
     await db.flush()
-    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+    return list(result.scalars().all())
 
 
 async def get_session_by_id(

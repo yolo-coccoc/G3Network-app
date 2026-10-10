@@ -15,6 +15,7 @@ the DTO ``charging_stations`` receives for its all-stations energy report.
 """
 
 import enum
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -118,6 +119,43 @@ class TransactionIngestResult:
 
     session_id: UUID
     status: SessionStatus
+
+
+@dataclass(frozen=True, slots=True)
+class SessionEndedEvent:
+    """What a session-ended hook is told when a session reaches its last status.
+
+    Sent after the stop message completed a session (``COMPLETED``) or after a
+    scan that never started was given up (``ABANDONED``), inside the same
+    transaction (BL-10, PAY-10).
+
+    Attributes:
+        session_id: The session that ended.
+        status: ``COMPLETED`` or ``ABANDONED``.
+        started_by: The scanning user; ``None`` for an abandoned session (the
+            hook does not need it).
+        meter_start_wh: The charger's start reading, ``None`` if it declared none.
+        meter_stop_wh: The charger's closing reading, ``None`` if it declared
+            none (CE-12).
+        last_measured_wh: The newest outlet energy-register measurement, the
+            fallback when the closing reading is missing and the cross-check
+            when it is present; ``None`` if the session has none.
+    """
+
+    session_id: UUID
+    status: SessionStatus
+    started_by: UUID | None
+    meter_start_wh: Decimal | None
+    meter_stop_wh: Decimal | None
+    last_measured_wh: Decimal | None
+
+
+# A callback another part of the application registers to react, inside the
+# same transaction, when a session ends. Called as ``hook(db, event)`` with a
+# ``SessionEndedEvent``. charging_sessions imports no billing code (the edge
+# between the two domains stays one-way): billing is wired to it in
+# ``app/api/billing_hooks.py`` (decision log BL-19).
+SessionEndedHook = Callable[..., Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)

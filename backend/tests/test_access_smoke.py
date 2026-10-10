@@ -76,6 +76,9 @@ PUBLIC_OPERATIONS = {
     ("POST", "/api/v1/auth/password/reset"),
     ("GET", "/api/v1/legal-documents/current"),
     ("GET", "/api/v1/legal-documents/{legal_document_id}"),
+    # Called by the bank-notification service, authenticated by a shared
+    # secret header instead of a bearer token (BL-15).
+    ("POST", "/api/v1/payments/vietqr/notifications"),
 }
 
 

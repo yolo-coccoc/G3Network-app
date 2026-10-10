@@ -26,6 +26,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 import app.api.charging_session_flow as charging_session_flow
+import app.domains.billing.router as billing_router
+import app.domains.billing.service as billing_service
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
@@ -55,7 +57,23 @@ import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
 from app.domains.batteries.models import BatteryModel, BatteryModelModel
 from app.domains.batteries.types import BatteryStatus
-from app.domains.billing.exceptions import InsufficientBalanceError
+from app.domains.billing.exceptions import (
+    InsufficientBalanceError,
+    NoTariffInForceError,
+    TariffConflictError,
+    TariffInputError,
+    WalletBlockedError,
+)
+from app.domains.billing.schemas import (
+    TariffCreateRequest,
+    TariffPeriodSchema,
+    TariffStatusRequest,
+    TariffVersionPublishRequest,
+    TopUpRequest,
+    WalletAdjustmentRequest,
+    WalletStatusRequest,
+)
+from app.domains.billing.types import BankNotificationResult, WalletStatus
 from app.domains.charging_sessions.exceptions import ChargingSessionAlreadyOpenError
 from app.domains.charging_sessions.schemas import (
     ChargingSessionScanRequest,
@@ -756,9 +774,13 @@ async def _scan(engine: object, identity: str, id_token: str) -> UUID:
 
 async def _provision_station(
     engine: object, identity: str, evse_ids: list[int]
-) -> None:
-    """Insert a public location with a station and one EVSE (and connector) per EVSE number."""
-    _, location_id = await _provision_location(engine)
+) -> UUID:
+    """Insert a public location with a station and one EVSE (and connector) per EVSE number.
+
+    Returns:
+        The organization that owns the location (whose tariff prices the charger).
+    """
+    owner_id, location_id = await _provision_location(engine)
     station_id, _ = await _provision_station_at(engine, location_id, identity, [])
     now = datetime.now(timezone.utc)
     async with engine.begin() as connection:  # type: ignore[attr-defined]
@@ -791,6 +813,7 @@ async def _provision_station(
                 text("INSERT INTO charging_connector_state (connector_id) VALUES (:c)"),
                 {"c": connector_id},
             )
+    return owner_id
 
 
 @pytest.mark.asyncio
@@ -3718,6 +3741,11 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
     read it. Then a rejected remote start abandons its session at once, and a
     scan the charger never starts is swept to ABANDONED, after which its token
     is refused.
+
+    WP9 adds the money side: the wallet is funded through a VietQR top-up and a
+    (duplicated) bank notification, a scan needs a tariff and freezes its price
+    on a QUOTED bill, the gateway process bills the stop (BILLED, wallet debited
+    once) and voids the bills of the abandoned scans.
     """
     port = _free_port()
     environment = os.environ | {
@@ -3732,7 +3760,7 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
-    await _provision_station(engine, "QR-16", [1])
+    station_owner_id = await _provision_station(engine, "QR-16", [1])
     await _provision_station(engine, "QR-OFFLINE", [1])
     organization_id, user_id = await _provision_organization_and_user(engine)
     driver = build_principal(
@@ -3740,6 +3768,9 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
         organization_id=organization_id,
         user_id=user_id,
     )
+    billing_staff = build_internal_principal(roles=frozenset({UserRole.ACCOUNTANT}))
+    owner_admin = build_internal_principal()
+    monkeypatch.setattr(settings, "BILLING_WEBHOOK_SECRET", "it-secret")
     gateway = subprocess.Popen(
         [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
         cwd=_backend_root(),
@@ -3830,15 +3861,71 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                     await charging_session_flow.scan_charging_session_endpoint(
                         scan_request, principal=driver, db_session=db
                     )
-            now = datetime.now(timezone.utc)
-            async with engine.begin() as connection:
-                await connection.execute(
-                    text(
-                        "INSERT INTO wallets (wallet_id, user_id, balance, currency, "
-                        "status, created_at, updated_at) VALUES "
-                        "(:w, :u, 60000, 'VND', 'ACTIVE', :t, :t)"
+
+            # Top up 60,000 through VietQR: the bank notification (sent twice)
+            # credits the wallet exactly once.
+            async with session_factory.begin() as db:
+                top_up = await billing_router.create_top_up_endpoint(
+                    TopUpRequest(amount=60_000), principal=driver, db_session=db
+                )
+            assert top_up.transfer_code in top_up.vietqr_payload
+            bank_notification = {
+                "bank_transaction_id": "FT-IT-1",
+                "amount": 60_000,
+                "content": f"{top_up.transfer_code.lower()} nap tien",
+            }
+            results = []
+            for _ in range(2):
+                async with session_factory.begin() as db:
+                    answer = await billing_router.receive_bank_notification_endpoint(
+                        bank_notification, "it-secret", db
+                    )
+                results.append(answer.result)
+            assert results == [
+                BankNotificationResult.CREDITED,
+                BankNotificationResult.DUPLICATE,
+            ]
+            async with session_factory.begin() as db:
+                paid = await billing_router.get_payment_endpoint(
+                    top_up.payment_id, principal=driver, db_session=db
+                )
+                wallet = await billing_router.get_my_wallet_endpoint(
+                    principal=driver, db_session=db
+                )
+            assert (paid.status.value, wallet.balance) == ("SUCCEEDED", 60_000)
+
+            # No tariff prices the charger yet: the scan is refused and nothing
+            # is created.
+            async with session_factory.begin() as db:
+                with pytest.raises(NoTariffInForceError):
+                    await charging_session_flow.scan_charging_session_endpoint(
+                        scan_request, principal=driver, db_session=db
+                    )
+            async with engine.connect() as connection:
+                assert (
+                    await connection.execute(
+                        text("SELECT count(*) FROM charging_sessions")
+                    )
+                ).scalar_one() == 0
+
+            # The station owner's default tariff: 4,500 per kWh, 10 % VAT.
+            async with session_factory.begin() as db:
+                tariff = await billing_router.create_tariff_endpoint(
+                    TariffCreateRequest(
+                        name="IT standard", organization_id=station_owner_id
                     ),
-                    {"w": uuid4(), "u": user_id, "t": now},
+                    principal=owner_admin,
+                    db_session=db,
+                )
+                version = await billing_router.publish_tariff_version_endpoint(
+                    tariff.tariff_id,
+                    TariffVersionPublishRequest(
+                        price_per_kwh=4500,
+                        vat_rate_percent=Decimal(10),
+                        change_reason="Launch price",
+                    ),
+                    principal=owner_admin,
+                    db_session=db,
                 )
 
             # 1. The scan: PENDING session, token, REMOTE_START queued.
@@ -3847,6 +3934,17 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                     scan_request, principal=driver, db_session=db
                 )
             assert scan.status is SessionStatus.PENDING
+            # The price of the scan's hour is frozen on a QUOTED bill (PAY-10).
+            assert (scan.tariff_version_id, scan.price_per_kwh) == (
+                version.tariff_version_id,
+                4500,
+            )
+            async with session_factory.begin() as db:
+                quoted = await charging_session_flow.get_charging_session_bill_endpoint(
+                    scan.session_id, principal=driver, db_session=db
+                )
+            assert (quoted.status.value, quoted.price_per_kwh) == ("QUOTED", 4500)
+            assert quoted.total_amount is None and not quoted.is_paid
             remote_start = await next_call(charger, "RemoteStartTransaction")
             assert remote_start[3]["idTag"] == scan.id_token
             assert remote_start[3]["connectorId"] == 1
@@ -3971,9 +4069,46 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             assert receipt.energy_delivered_wh == Decimal(500)
             assert (receipt.location_name, receipt.gun_number) == ("IT location", 1)
             assert receipt.stop_reason == "Remote"
-            assert receipt.bill_status is None and receipt.total_amount is None
+            # 500 Wh x 4,500 = 2,250 + 10 % VAT 225, billed by the gateway's hook.
+            assert (receipt.bill_status, receipt.price_per_kwh) == ("BILLED", 4500)
+            assert (
+                receipt.amount_before_vat,
+                receipt.vat_amount,
+                receipt.total_amount,
+            ) == (2250, 225, 2475)
             assert [item.session_id for item in history.items] == [scan.session_id]
             assert history.items[0].energy_delivered_wh == Decimal(500)
+
+            # The wallet paid the bill once: top-up, then the session bill.
+            async with session_factory.begin() as db:
+                bill = await charging_session_flow.get_charging_session_bill_endpoint(
+                    scan.session_id, principal=driver, db_session=db
+                )
+                wallet = await billing_router.get_my_wallet_endpoint(
+                    principal=driver, db_session=db
+                )
+                statement = await billing_router.list_my_wallet_transactions_endpoint(
+                    page=1, page_size=10, principal=driver, db_session=db
+                )
+                org_bills = await billing_router.list_session_bills_endpoint(
+                    page=1,
+                    page_size=10,
+                    organization_id=None,
+                    started_by=None,
+                    status_filter=None,
+                    created_from=None,
+                    created_to=None,
+                    principal=billing_staff,
+                    db_session=db,
+                )
+            assert (bill.status.value, bill.is_paid) == ("BILLED", True)
+            assert bill.energy_source == "METER_STOP"
+            assert wallet.balance == 60_000 - 2475
+            assert [
+                (line.transaction_type.value, line.amount, line.balance_after)
+                for line in statement.items
+            ] == [("SESSION_BILL", -2475, 57_525), ("TOP_UP", 60_000, 60_000)]
+            assert [item.session_id for item in org_bills.items] == [scan.session_id]
 
             # 7. A rejected remote start abandons its session at once.
             async with session_factory.begin() as db:
@@ -3988,6 +4123,11 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             )
             assert await command_outcome(rejected_scan.command_id) == "REJECTED"
             assert await session_status(rejected_scan.session_id) == "ABANDONED"
+            async with session_factory.begin() as db:
+                voided = await charging_session_flow.get_charging_session_bill_endpoint(
+                    rejected_scan.session_id, principal=driver, db_session=db
+                )
+            assert voided.status.value == "VOID"
 
             # 8. An accepted remote start nobody follows up is swept, and its
             #    token no longer starts a charge.
@@ -4014,12 +4154,296 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                 },
             )
             assert late["idTagInfo"]["status"] == "Invalid"
+            async with session_factory.begin() as db:
+                swept = await charging_session_flow.get_charging_session_bill_endpoint(
+                    idle_scan.session_id, principal=driver, db_session=db
+                )
+            assert swept.status.value == "VOID"
+
+            # Staff correct the balance by hand; the ledger keeps the running balance.
+            async with session_factory.begin() as db:
+                adjustment = await billing_router.adjust_wallet_endpoint(
+                    user_id,
+                    WalletAdjustmentRequest(amount=-525, reason="Goodwill test"),
+                    principal=billing_staff,
+                    db_session=db,
+                )
+            assert adjustment.balance_after == 57_000
+            async with engine.connect() as connection:
+                ledger_sum, balance = (
+                    await connection.execute(
+                        text(
+                            "SELECT (SELECT sum(amount) FROM wallet_transactions), "
+                            "(SELECT balance FROM wallets WHERE user_id = :u)"
+                        ),
+                        {"u": user_id},
+                    )
+                ).one()
+            assert ledger_sum == balance == 57_000
     finally:
         gateway.terminate()
         try:
             gateway.wait(timeout=15)
         except subprocess.TimeoutExpired:
             gateway.kill()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_tariff_versions_wallet_ledger_and_concurrent_notifications_on_postgres(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tariff rules, ledger sums and the once-only credit on real tables (WP9).
+
+    One active tariff per owner and location (the partial unique index), the
+    location tariff beating the owner's default, time-of-use prices read in
+    Vietnam time, versions that never change and take over on their start
+    date, tracked retirement; a wallet whose ledger sums to its balance
+    without flooding its history, blocking that records a history row and
+    refuses a top-up but not a bank transfer, and two bank notifications for
+    one top-up arriving at the same moment crediting it once.
+    """
+    monkeypatch.setattr(settings, "BILLING_WEBHOOK_SECRET", "it-secret")
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    owner_id = await _provision_station(engine, "TAR-1", [1])
+    _, user_id = await _provision_organization_and_user(engine)
+    driver = build_principal(roles=frozenset({UserRole.DRIVER}), user_id=user_id)
+    admin = build_internal_principal()
+    async with engine.connect() as connection:
+        station_id, location_id = (
+            await connection.execute(
+                text(
+                    "SELECT station_id, location_id FROM charging_stations "
+                    "WHERE ocpp_identity = 'TAR-1'"
+                )
+            )
+        ).one()
+    try:
+        # One ACTIVE default per owner: the second is a conflict, and the
+        # database index is the last line of defence.
+        async with session_factory.begin() as db:
+            default = await billing_router.create_tariff_endpoint(
+                TariffCreateRequest(name="Default", organization_id=owner_id),
+                principal=admin,
+                db_session=db,
+            )
+        async with session_factory.begin() as db:
+            with pytest.raises(TariffConflictError):
+                await billing_router.create_tariff_endpoint(
+                    TariffCreateRequest(name="Second", organization_id=owner_id),
+                    principal=admin,
+                    db_session=db,
+                )
+        with pytest.raises(IntegrityError):
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "INSERT INTO tariffs (tariff_id, organization_id, name, "
+                        "currency, status, created_at, updated_at) VALUES "
+                        "(:t, :o, 'Dup', 'VND', 'ACTIVE', now(), now())"
+                    ),
+                    {"t": uuid4(), "o": owner_id},
+                )
+        # A tariff of another owner's location is refused.
+        other_owner_id, _ = await _provision_organization_and_user(engine)
+        async with session_factory.begin() as db:
+            with pytest.raises(TariffInputError):
+                await billing_router.create_tariff_endpoint(
+                    TariffCreateRequest(
+                        name="Foreign",
+                        location_id=location_id,
+                        organization_id=other_owner_id,
+                    ),
+                    principal=admin,
+                    db_session=db,
+                )
+
+        night_periods = [
+            TariffPeriodSchema.model_validate(
+                {
+                    "days": ["MON", "TUE", "WED", "THU", "FRI", "SAT"],
+                    "from": "22:00",
+                    "to": "04:00",
+                    "price_per_kwh": 3200,
+                }
+            )
+        ]
+        async with session_factory.begin() as db:
+            await billing_router.publish_tariff_version_endpoint(
+                default.tariff_id,
+                TariffVersionPublishRequest(
+                    price_per_kwh=4500,
+                    vat_rate_percent=Decimal(10),
+                    change_reason="Default price",
+                ),
+                principal=admin,
+                db_session=db,
+            )
+            local = await billing_router.create_tariff_endpoint(
+                TariffCreateRequest(
+                    name="Depot", location_id=location_id, organization_id=owner_id
+                ),
+                principal=admin,
+                db_session=db,
+            )
+            local_v1 = await billing_router.publish_tariff_version_endpoint(
+                local.tariff_id,
+                TariffVersionPublishRequest(
+                    price_per_kwh=4000,
+                    vat_rate_percent=Decimal(8),
+                    time_periods=night_periods,
+                    change_reason="Depot price",
+                ),
+                principal=admin,
+                db_session=db,
+            )
+        # Monday 2027-01-04 23:00 Vietnam time (16:00 UTC) is in the night window.
+        night = datetime(2027, 1, 4, 16, tzinfo=timezone.utc)
+        day = datetime(2027, 1, 4, 3, tzinfo=timezone.utc)
+        async with session_factory.begin() as db:
+            at_night = await billing_service.resolve_tariff_for_station(
+                db, station_id, night
+            )
+            at_day = await billing_service.resolve_tariff_for_station(
+                db, station_id, day
+            )
+        assert at_night.tariff_version_id == at_day.tariff_version_id
+        assert (at_night.price_per_kwh, at_day.price_per_kwh) == (
+            Decimal(3200),
+            Decimal(4000),
+        )
+        assert at_day.vat_rate_percent == Decimal("8.00")
+
+        # Versions never change: a new one takes over only on its date.
+        async with session_factory.begin() as db:
+            local_v2 = await billing_router.publish_tariff_version_endpoint(
+                local.tariff_id,
+                TariffVersionPublishRequest(
+                    price_per_kwh=5000,
+                    vat_rate_percent=Decimal(10),
+                    effective_from=datetime.now(timezone.utc) + timedelta(days=1),
+                    change_reason="Winter price",
+                ),
+                principal=admin,
+                db_session=db,
+            )
+            now_quote = await billing_service.resolve_tariff_for_station(
+                db, station_id, datetime.now(timezone.utc)
+            )
+            later_quote = await billing_service.resolve_tariff_for_station(
+                db, station_id, datetime.now(timezone.utc) + timedelta(days=2)
+            )
+            versions = await billing_router.list_tariff_versions_endpoint(
+                local.tariff_id, principal=admin, db_session=db
+            )
+        assert now_quote.tariff_version_id == local_v1.tariff_version_id
+        assert later_quote.tariff_version_id == local_v2.tariff_version_id
+        assert [(v.version_no, v.price_per_kwh) for v in versions] == [
+            (2, 5000),
+            (1, 4000),
+        ]
+
+        # Retiring is a tracked decision; the price falls back to the default.
+        async with session_factory.begin() as db:
+            await billing_router.retire_tariff_endpoint(
+                local.tariff_id,
+                TariffStatusRequest(reason="Depot closed for works"),
+                principal=admin,
+                db_session=db,
+            )
+            fallback = await billing_service.resolve_tariff_for_station(
+                db, station_id, datetime.now(timezone.utc)
+            )
+        assert fallback.price_per_kwh == Decimal(4500)
+        async with engine.connect() as connection:
+            history = (
+                await connection.execute(
+                    text(
+                        "SELECT status, change_reason, changed_by FROM tariff_history "
+                        "WHERE tariff_id = :t"
+                    ),
+                    {"t": local.tariff_id},
+                )
+            ).all()
+        assert [tuple(row) for row in history] == [
+            ("ACTIVE", "Depot closed for works", admin.user_id)
+        ]
+
+        # Two bank notifications for one top-up at the same moment: one credit.
+        async with session_factory.begin() as db:
+            top_up = await billing_router.create_top_up_endpoint(
+                TopUpRequest(amount=200_000), principal=driver, db_session=db
+            )
+
+        async def notify(reference: str) -> BankNotificationResult:
+            async with session_factory.begin() as db:
+                answer = await billing_router.receive_bank_notification_endpoint(
+                    {
+                        "bank_transaction_id": reference,
+                        "amount": 200_000,
+                        "content": top_up.transfer_code,
+                    },
+                    "it-secret",
+                    db,
+                )
+            return answer.result
+
+        outcomes = await asyncio.gather(notify("FT-A"), notify("FT-A"), notify("FT-B"))
+        assert sorted(outcome.value for outcome in outcomes).count("CREDITED") == 1
+        async with session_factory.begin() as db:
+            wallet = await billing_router.get_my_wallet_endpoint(
+                principal=driver, db_session=db
+            )
+        assert wallet.balance == 200_000
+
+        # Blocking is a tracked decision: top-ups are refused, but money that
+        # arrives by bank transfer is still credited; the balance moves leave
+        # the wallet history alone.
+        staff = build_internal_principal(roles=frozenset({UserRole.ACCOUNTANT}))
+        async with session_factory.begin() as db:
+            await billing_router.set_wallet_status_endpoint(
+                user_id,
+                WalletStatusRequest(status=WalletStatus.BLOCKED, reason="Fraud check"),
+                principal=staff,
+                db_session=db,
+            )
+        async with session_factory.begin() as db:
+            with pytest.raises(WalletBlockedError):
+                await billing_router.create_top_up_endpoint(
+                    TopUpRequest(amount=50_000), principal=driver, db_session=db
+                )
+        async with session_factory.begin() as db:
+            await billing_router.adjust_wallet_endpoint(
+                user_id,
+                WalletAdjustmentRequest(amount=-1000, reason="Test correction"),
+                principal=staff,
+                db_session=db,
+            )
+        async with engine.connect() as connection:
+            wallet_history = (
+                await connection.execute(
+                    text(
+                        "SELECT status, change_reason FROM wallet_history "
+                        "WHERE user_id = :u"
+                    ),
+                    {"u": user_id},
+                )
+            ).all()
+            ledger_sum, balance = (
+                await connection.execute(
+                    text(
+                        "SELECT (SELECT sum(amount) FROM wallet_transactions), "
+                        "(SELECT balance FROM wallets WHERE user_id = :u)"
+                    ),
+                    {"u": user_id},
+                )
+            ).one()
+        assert [tuple(row) for row in wallet_history] == [("ACTIVE", "Fraud check")]
+        assert ledger_sum == balance == 199_000
+    finally:
         await engine.dispose()
 
 

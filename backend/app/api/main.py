@@ -12,12 +12,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-import app.api.fleet_visibility as fleet_visibility
-import app.api.membership_end_hooks as membership_end_hooks
+import app.api.startup as startup
 from app.api.charging_session_flow import router as charging_session_flow_router
 from app.api.vehicle_transfer import router as vehicle_transfer_router
 from app.domains.batteries.router import battery_models_router
 from app.domains.batteries.router import router as batteries_router
+from app.domains.billing.router import router as billing_router
 from app.domains.charging_sessions.router import router as charging_sessions_router
 from app.domains.charging_stations.router import router as charging_stations_router
 from app.domains.drivers.router import driving_sessions_router
@@ -143,10 +143,10 @@ async def domain_error_handler(_request: Request, error: Exception) -> JSONRespo
 for _error_base in _DOMAIN_ERROR_STATUS:
     app.add_exception_handler(_error_base, domain_error_handler)
 
-# Ending or locking a membership also closes the driver profile and the open
-# driving session (DR-10); identity cannot call drivers, so it is wired here.
-membership_end_hooks.register_membership_end_hooks()
-fleet_visibility.register_fleet_visibility()
+# Cross-domain reactions wired from above the domains: ending a membership
+# closes the driver profile (DR-10), the fleet limit reaches the vehicle
+# endpoints (FL-10), the end of a charging session bills it (BL-19).
+startup.register_api_hooks()
 
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
@@ -160,6 +160,7 @@ app.include_router(telemetry_router, prefix="/api/v1/telemetry")
 app.include_router(charging_stations_router, prefix="/api/v1")
 app.include_router(charging_sessions_router, prefix="/api/v1")
 app.include_router(charging_session_flow_router, prefix="/api/v1")
+app.include_router(billing_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1/notifications")
 app.include_router(drivers_router, prefix="/api/v1/drivers")
 app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")

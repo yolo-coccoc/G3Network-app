@@ -11,7 +11,7 @@
 ## Conventions
 
 - Base path `/api/v1`. **built** = the route exists in `backend/app/domains/*/router.py`
-  today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` is planned; check-in, the driver's own summary and trips are **built** (WP5, DR-15); the old `drivers` assignment
+  today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` (wallet, top-up, tariffs, bills) is **built** (WP9, BL-19..BL-24); check-in, the driver's own summary and trips are **built** (WP5, DR-15); the old `drivers` assignment
   routes (`POST /drivers/{driver_id}/assignment`) are gone, replaced by check-in
   (`POST /driving-sessions/` is built with `vehicle_code` (VIN or plate) or `vehicle_vin` in the body and no `driver_id` for the driver's own check-in; DR-07,
   [decision-log.md:339](../decisions/decision-log.md#L339)).
@@ -88,18 +88,20 @@ the list until Start.
 ## 4. Wallet
 
 Tables: `wallets`, `payments`, `wallet_transactions`. Decisions: BL-13, BL-14,
-BL-15 ([decision-log.md:248](../decisions/decision-log.md#L248)). The wallet is
-the person's, across organizations. Top-up at launch is a **VietQR bank
-transfer**: the app shows a QR carrying a unique `transfer_code`; a
-bank-notification service matches the incoming transfer (no card gateway).
+BL-15, BL-22, BL-23 ([decision-log.md:248](../decisions/decision-log.md#L248)).
+The wallet is the person's, across organizations, and is created the first time
+something needs it. Top-up at launch is a **VietQR bank transfer**: the app
+draws a QR from the `vietqr_payload` string; it carries a unique `transfer_code`;
+a bank-notification service tells us when the money arrives (no card gateway).
+All amounts are whole dong (`int`).
 
-| # | Screen / step | API call (all planned) | Main error cases |
+| # | Screen / step | API call (**built**, WP9) | Main error cases |
 |---|---|---|---|
-| 1 | Wallet tab: balance (may be negative after a session overrun, BL-14) | `GET /wallet` returns `balance`, `currency`, `status`, `minimum_balance_to_charge` | `404` wallet is created at first login, so unexpected |
-| 2 | Top up: enter amount | `POST /wallet/top-ups` `{amount}` returns `payment_id`, `transfer_code`, VietQR payload, `expires_at` (payment PENDING) | `400` amount below the minimum; `403` wallet BLOCKED |
-| 3 | Waiting screen after the transfer | `GET /wallet/top-ups/{payment_id}` polled, or push `TOP_UP_RECEIVED` | status FAILED (expired unpaid or amount mismatch): start again; a transfer with a wrong code is not matched and goes to staff (portal, wallets) |
-| 4 | Transaction list (TOP_UP, SESSION_BILL, REFUND, ADJUSTMENT) with balance after each | `GET /wallet/transactions?offset=&limit=` | none |
-| 5 | Low balance notice | push `LOW_WALLET_BALANCE` (BL-14) | none |
+| 1 | Wallet tab: balance (may be negative after a session overrun, BL-14) | `GET /wallets/me` returns `wallet_id`, `balance`, `currency`, `status`, `status_reason`, `minimum_balance_to_charge` (created on first call) | none |
+| 2 | Top up: enter amount | `POST /wallets/me/top-ups` `{amount}` returns `payment_id`, `transfer_code`, `vietqr_payload` (draw it as a QR), `bank_bin`, `account_number`, `account_name`, `expires_at`, status `PENDING` (201) | `400` amount outside `BILLING_TOPUP_MIN_VND`..`MAX_VND`; `403` wallet BLOCKED |
+| 3 | Waiting screen after the transfer | poll `GET /payments/{payment_id}` until `SUCCEEDED` (push `TOP_UP_RECEIVED` is WP10) | `FAILED` = the code expired unpaid: start again (a transfer that still arrives is credited with the amount received); a transfer with a wrong code is not matched, it is only logged for staff (BL-23); a different amount is credited as received |
+| 4 | Transaction list (TOP_UP, SESSION_BILL, REFUND, ADJUSTMENT) with balance after each | `GET /wallets/me/transactions?page=&page_size=` (newest first; REFUND is not built) | none |
+| 5 | Low balance notice | push `LOW_WALLET_BALANCE` (BL-14, WP10) | none |
 
 ## 5. QR charging
 
@@ -114,19 +116,19 @@ Only a token we issued starts a session (CE-11).
 | # | Screen / step | API call | Main error cases |
 |---|---|---|---|
 | 1 | Map of charging locations near me, with free connectors | `GET /charging-stations/nearby?lat=&lon=` (**built**; public locations plus the caller's own organization's and those granted to it, CS-28) | `422` bad coordinates |
-| 2 | Open a station: price, connectors | `GET /charging-stations/{station_id}` and `GET /charging-stations/{station_id}/connectors` (**built**) | `404` unknown or deleted station |
-| 3 | Tap "Scan to charge", scan the QR on the charger screen | `POST /charging-sessions/scan` `{charger_code, connector_number?}` (**built**, CE-20, CE-21; `charger_code` is what the QR carries: the charger's OCPP identity, its serial number also matches; `connector_number` is the gun when the QR names one). The backend: finds the charger, checks the location's visibility, that charger and gun are in service and connected, that no charge runs on the gun and the caller has none open, then the wallet (blocked, minimum balance `BILLING_MIN_BALANCE_VND`, BL-14); takes the truck from the caller's open driving session (CE-13); creates the session PENDING with a single-use token (`id_token`) and writes a `REMOTE_START` row in `charging_station_commands`; the gateway sends `RemoteStartTransaction` (1.6J) or `RequestStartTransaction` (2.0.1). Returns `session_id`, `id_token`, `command_id`, `expires_at` (201). The bill (QUOTED, price per kWh) comes with WP9 | `404` unknown charger or gun; `403` private location not allowed for this organization, or wallet BLOCKED; `409` charger or gun out of service, charger offline, a charge already running on the gun, or the caller already has a charge open; `409` with the message `INSUFFICIENT_BALANCE: top up at least N VND` |
-| 4 | Progress screen: kWh, power, battery % (cost so far with WP9) | poll `GET /charging-sessions/{session_id}` (**built**: `energy_delivered_wh`, `duration_seconds`, `soc_start_percent`, `soc_end_percent`, `current_power_kw`, `max_power_kw`) and `GET /charging-sessions/{session_id}/measurements` (**built**), every few seconds; the session is PENDING until the charger confirms | `404` not the caller's session; PENDING longer than `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (300 s), or a refused / timed-out remote start, becomes ABANDONED at once (the app says "charger did not start"; the bill will be VOID with WP9) |
+| 2 | Open a station: price, connectors | `GET /charging-stations/{station_id}` and `GET /charging-stations/{station_id}/connectors` (**built**); the price: `GET /tariffs/in-force?station_id=&at=` (**built**, PAY-09: price for that hour before and with VAT, normal price, VAT, time-of-use periods) | `404` unknown or deleted station |
+| 3 | Tap "Scan to charge", scan the QR on the charger screen | `POST /charging-sessions/scan` `{charger_code, connector_number?}` (**built**, CE-20, CE-21; `charger_code` is what the QR carries: the charger's OCPP identity, its serial number also matches; `connector_number` is the gun when the QR names one). The backend: finds the charger, checks the location's visibility, that charger and gun are in service and connected, that no charge runs on the gun and the caller has none open, then the wallet (blocked, minimum balance `BILLING_MIN_BALANCE_VND`, BL-14); takes the truck from the caller's open driving session (CE-13); creates the session PENDING with a single-use token (`id_token`) and writes a `REMOTE_START` row in `charging_station_commands`; the gateway sends `RemoteStartTransaction` (1.6J) or `RequestStartTransaction` (2.0.1). Then the price: the tariff in force for the charger and the hour is resolved (`billing.resolve_tariff_for_station`) and frozen on a QUOTED bill (BL-10, BL-20). Returns `session_id`, `id_token`, `command_id`, `expires_at`, and the frozen price `tariff_version_id`, `currency`, `price_per_kwh` (before VAT, whole dong), `vat_rate_percent` (201) | `404` unknown charger or gun; `403` private location not allowed for this organization, or wallet BLOCKED; `409` charger or gun out of service, charger offline, a charge already running on the gun, or the caller already has a charge open; `409` with the message `INSUFFICIENT_BALANCE: top up at least N VND`; `409` `NO_TARIFF: no price is set for this charger` |
+| 4 | Progress screen: kWh, power, battery % (cost so far = energy x the frozen price, computed by the app from the scan response) | poll `GET /charging-sessions/{session_id}` (**built**: `energy_delivered_wh`, `duration_seconds`, `soc_start_percent`, `soc_end_percent`, `current_power_kw`, `max_power_kw`) and `GET /charging-sessions/{session_id}/measurements` (**built**), every few seconds; the session is PENDING until the charger confirms | `404` not the caller's session; PENDING longer than `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (300 s), or a refused / timed-out remote start, becomes ABANDONED at once (the app says "charger did not start"; its bill becomes VOID) |
 | 5 | Stop | by default on the charger screen or the truck stops itself. The app may offer a stop button: `POST /charging-sessions/{session_id}/stop` (**built**, 202; queues `REMOTE_STOP`; only the person who started the charge, or staff; body `{reason?}`) returns `command_id`; the session turns COMPLETED when the charger sends its own stop message | `403` not the starter; `409` session not ACTIVE; a command outcome REJECTED / TIMEOUT / NOT_SENT (read `GET /charging-stations/{id}/commands/{command_id}`) is shown as "could not stop, use the charger screen" |
-| 6 | Summary after the stop: energy, amount before VAT, VAT, total, wallet balance after | `GET /charging-sessions/{session_id}/receipt` (**built**, COMPLETED sessions: place, gun, times, energy, stop reason; price, amounts and VAT are `null` until WP9 creates the bill); push `CHARGING_RECEIPT` (WP10) | `409` session not finished; bill ON_HOLD (meter mismatch): "being checked", amount appears later |
+| 6 | Summary after the stop: energy, amount before VAT, VAT, total, wallet balance after | `GET /charging-sessions/{session_id}/receipt` (**built**, COMPLETED sessions: place, gun, times, energy, stop reason, `bill_status`, `price_per_kwh`, `vat_rate_percent`, `amount_before_vat`, `vat_amount`, `total_amount` in whole dong; the amounts are `null` while the bill is ON_HOLD); the wallet balance after is `GET /wallets/me`; push `CHARGING_RECEIPT` (WP10) | `409` session not finished; bill ON_HOLD (meter mismatch): "being checked", amount appears later |
 
 ## 6. Session history and bills
 
 | # | Screen / step | API call | Main error cases |
 |---|---|---|---|
 | 1 | History list, newest first | `GET /charging-sessions/mine?page=&page_size=&vehicle_id=&started_from=&started_to=&status=` (**built**, CE-24: every session the caller started, across organizations); a manager lists the organization's with `GET /charging-sessions` (filters `vehicle_id`, `started_by`, `station_id`, dates, `status`) | none |
-| 2 | Open one session and its bill (tariff version, energy, amount, VAT) | `GET /charging-sessions/{session_id}` (**built**); the bill fields are in `GET /charging-sessions/{session_id}/receipt` (**built**, `null` until WP9) | `404` not the caller's; no receipt for ABANDONED |
-| 3 | Download / share a receipt | `GET /charging-sessions/{session_id}/bill?format=pdf` (planned; e-invoices belong to organizations, not to the driver wallet at launch) | `404` bill not BILLED yet |
+| 2 | Open one session and its bill (tariff version, energy, amount, VAT) | `GET /charging-sessions/{session_id}` (**built**); the bill: `GET /charging-sessions/{session_id}/bill` (**built**: status, frozen price and tariff version, energy and its source, amounts, `is_paid`) and the receipt `GET /charging-sessions/{session_id}/receipt` (**built**) | `404` not the caller's; no receipt for ABANDONED |
+| 3 | Download / share a receipt | a PDF `GET /charging-sessions/{session_id}/bill?format=pdf` (planned, not built; e-invoices belong to organizations, not to the driver wallet at launch) | `404` bill not BILLED yet |
 
 ## 7. Own driving summary (DR-11)
 

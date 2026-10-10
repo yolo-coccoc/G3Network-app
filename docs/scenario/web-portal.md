@@ -184,30 +184,41 @@ owner and to organizations in `charging_location_access`.
 ## 9. Tariffs and bills
 
 Tables: `tariffs`, `tariff_versions`, `charging_session_bills`. Rules: BL-08,
-BL-10. Only our HEAD_ADMIN / CO_ADMIN publish versions for the public
-network; a customer owning private chargers prices its own locations.
+BL-10, BL-20, BL-21. Only our HEAD_ADMIN / CO_ADMIN publish versions for the
+public network; a customer's organization administrator prices its own
+locations (OPERATIONS read). **Built** (WP9). Amounts are whole dong.
 
-| Step | API call (all planned) | Main error cases |
+| Step | API call (**built**) | Main error cases |
 |---|---|---|
-| Tariff list per owner and location | `GET /tariffs?organization_id=&location_id=` | none |
-| Create a tariff | `POST /tariffs` `{location_id?, name}` | `409` a second ACTIVE default for the owner |
-| **Publish a version**: price per kWh, time-of-use periods (Vietnam time), VAT rate, reason | `POST /tariffs/{tariff_id}/versions` | `400` `effective_from` in the past; `422` overlapping periods; `422` missing reason |
-| Retire a tariff | `POST /tariffs/{tariff_id}/retire` `{reason}` | `409` |
-| Bills list (by organization, status, month) | `GET /charging-session-bills?status=&from=&to=` | none |
-| Review an ON_HOLD bill (meter mismatch) and release or void | `POST /charging-session-bills/{bill_id}/release` or `/void` `{reason}` | `409` bill already BILLED (never edited, corrections are refunds or adjustments) |
+| Tariff list per owner and location | `GET /tariffs?organization_id=&location_id=&status=&page=&page_size=` (each with the version in force now; `organization_id` only for staff) | none |
+| Create a tariff | `POST /tariffs` `{name, location_id?, organization_id?}` (staff may name the owner; the location must belong to the owner) | `409` a second ACTIVE tariff for the owner and location; `400` location of another owner; `404` unknown location |
+| **Publish a version**: price per kWh, time-of-use periods (Vietnam time), VAT rate, reason | `POST /tariffs/{tariff_id}/versions` `{price_per_kwh, vat_rate_percent, time_periods?, effective_from?, change_reason}`; `GET /tariffs/{tariff_id}/versions` lists them; versions are never edited | `400` `effective_from` in the past or not after the previous version, bad or overlapping periods, a price with a fraction; `409` tariff retired |
+| Rename / retire / reactivate | `PATCH /tariffs/{tariff_id}` `{name}`, `POST /tariffs/{tariff_id}/retire`, `POST /tariffs/{tariff_id}/reactivate` `{reason}` | `409` already in that state, or another ACTIVE tariff holds the owner and location |
+| Price of a charger now | `GET /tariffs/in-force?station_id=&at=` | `404` charger not visible; `409` `NO_TARIFF` |
+| Bills list (by organization, status, month) | `GET /charging-session-bills?status=&from=&to=&started_by=&organization_id=&page=&page_size=` (ACCOUNTANT, FLEET_MANAGER: their own organization; staff: any) | none |
+| One session's bill | `GET /charging-sessions/{session_id}/bill` | `404` |
+| Review an ON_HOLD bill (meter mismatch) and release or void | `POST /charging-session-bills/{bill_id}/release` or `/void` `{reason}` (our billing staff only) | `409` bill not ON_HOLD (a BILLED bill is never edited, corrections are refunds or adjustments), or release of a hold with no computed figures |
 
 ## 10. Wallets and top-ups (our billing staff)
 
-Tables: `wallets`, `payments`, `wallet_transactions`. BL-13 .. BL-15.
+Tables: `wallets`, `payments`, `wallet_transactions`. BL-13 .. BL-15, BL-22,
+BL-23. **Built** (WP9) except where marked. A wallet is keyed by the **user**
+(the portal finds the user first, ACC-02).
 
-| Step | API call (all planned) | Main error cases |
+| Step | API call | Main error cases |
 |---|---|---|
-| Find a wallet by phone | `GET /wallets?phone_number=` | `404` |
-| Transactions and payments of a wallet | `GET /wallets/{wallet_id}/transactions`, `GET /wallets/{wallet_id}/payments` | none |
-| Unmatched bank transfers (wrong `transfer_code`) and manual match | `GET /payments/unmatched`, `POST /payments/{payment_id}/match` `{user_id, reason}` | `409` payment already SUCCEEDED |
-| **Adjust** a balance | `POST /wallets/{wallet_id}/adjustments` `{amount, reason}` (ADJUSTMENT row) | `422` reason required; `403` role |
-| Block / unblock a wallet (fraud check) | `POST /wallets/{wallet_id}/status` `{status, reason}` | `409` same status |
-| Refund unused balance through the original top-up | `POST /payments/{payment_id}/refund` `{amount, reason}` | `409` more than was topped up |
+| Find a wallet by phone | **not built**: find the user (`GET /users`), then `GET /wallets/{user_id}` | `404` no wallet yet |
+| Balance, transactions of a wallet | `GET /wallets/{user_id}`, `GET /wallets/{user_id}/transactions?page=&page_size=` (**built**, internal billing staff) | `404` |
+| A person's payments | not built (`GET /payments/{payment_id}` reads one; staff may read any) | `404` |
+| Unmatched bank transfers (wrong `transfer_code`) and manual match | **not built**: such a transfer is only logged (BL-23, no table to hold it) | – |
+| **Adjust** a balance | `POST /wallets/{user_id}/adjustments` `{amount, reason}` (**built**, ADJUSTMENT row with who and why) | `400` zero amount; `422` reason missing; `403` role |
+| Block / unblock a wallet (fraud check) | `POST /wallets/{user_id}/status` `{status, reason}` (**built**; a tracked decision) | `409` same status; `404` no wallet |
+| Simulate a bank transfer (development, fake provider) | `POST /payments/vietqr/simulate` `{transfer_code, amount?, bank_transaction_id?}` (HEAD_ADMIN / CO_ADMIN) | `404` unknown code |
+| Refund unused balance through the original top-up | **not built** (`POST /payments/{payment_id}/refund`; REFUND payments wait for a real bank channel) | – |
+
+The bank-notification service calls `POST /payments/vietqr/notifications` with
+the header `X-Webhook-Secret` (`BILLING_WEBHOOK_SECRET`); it is the only public
+billing endpoint.
 
 ## 11. Notification settings
 
@@ -248,5 +259,5 @@ Our staff and each ORG_ADMIN (own organization) read it.
 ## Open points
 
 - The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings and the audit-log export. The per-manager fleet limits (FL-10) are built (WP6, FL-13).
-- Billing (`/tariffs`, `/wallets`, bills) is unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
+- Billing (`/tariffs`, `/wallets`, `/payments`, bills) is built (WP9, BL-19..BL-24); what is not: unmatched-transfer review, refunds, payment lists, the wallet lookup by phone. The charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

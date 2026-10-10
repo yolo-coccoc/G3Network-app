@@ -4,14 +4,15 @@ The billing tables store the enums as plain ``varchar`` columns (the DBML lists
 the allowed values in each column note, with no database value check); the
 enums name the allowed values for code. The frozen dataclasses are what other
 domains receive from the billing service (never an ORM model). The tariff,
-bill and payment services come with the billing work package (WP9); today the
-service answers only what the QR start and the receipt need (WP8).
+bill, wallet and payment services are built (WP9); money is held as whole dong
+in ``Decimal`` (the columns are ``numeric(14,2)``) and shown as integers.
 """
 
 import enum
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 
 class TariffStatus(str, enum.Enum):
@@ -155,3 +156,77 @@ class SessionBillReference:
     amount_before_vat: Decimal | None
     vat_amount: Decimal | None
     billed_at: datetime | None
+
+
+class BankNotificationResult(str, enum.Enum):
+    """What happened to one incoming bank notification (BL-15).
+
+    Attributes:
+        CREDITED: A pending top-up was matched and the wallet credited.
+        DUPLICATE: The same bank transaction was already recorded; nothing
+            changed (banks resend notifications).
+        UNMATCHED: No payment carries the transfer content; only logged, for
+            staff to look at (there is no table for it, BL-19).
+        ALREADY_PAID: The matched payment was already paid by another
+            transfer; not credited again, only logged.
+        REJECTED: The notification itself is unusable (no amount).
+    """
+
+    CREDITED = "CREDITED"
+    DUPLICATE = "DUPLICATE"
+    UNMATCHED = "UNMATCHED"
+    ALREADY_PAID = "ALREADY_PAID"
+    REJECTED = "REJECTED"
+
+
+@dataclass(frozen=True, slots=True)
+class TariffQuote:
+    """The price a charger asks at a moment, from the tariff in force (BL-08, BL-09).
+
+    Attributes:
+        tariff_id: The tariff in force at the charger's location.
+        tariff_version_id: Its version in force at that moment.
+        version_no: The version number.
+        tariff_name: Name shown in the app and on receipts.
+        organization_id: The tariff's owner.
+        currency: ISO 4217 currency code.
+        price_per_kwh: Price for the hour asked, before VAT (a time-of-use
+            period replaces the normal price in its hours).
+        normal_price_per_kwh: The version's normal price, before VAT.
+        vat_rate_percent: VAT rate of the version.
+        time_periods: The version's time-of-use periods, ``None`` for one
+            price all day.
+        at: The moment the price is for.
+    """
+
+    tariff_id: UUID
+    tariff_version_id: UUID
+    version_no: int
+    tariff_name: str
+    organization_id: UUID
+    currency: str
+    price_per_kwh: Decimal
+    normal_price_per_kwh: Decimal
+    vat_rate_percent: Decimal
+    time_periods: list[dict[str, object]] | None
+    at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class BankNotification:
+    """One incoming bank transfer, normalized by a bank-notification provider.
+
+    Attributes:
+        bank_transaction_id: The bank's own reference of the transfer; the
+            notification is recorded once per reference.
+        amount: Amount received in whole dong.
+        content: The transfer content the payer typed (may carry extra text).
+        account_number: The receiving account, if the provider says.
+        transferred_at: When the bank booked it, if the provider says.
+    """
+
+    bank_transaction_id: str
+    amount: int
+    content: str
+    account_number: str | None = None
+    transferred_at: datetime | None = None

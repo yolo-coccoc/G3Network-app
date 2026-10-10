@@ -19,6 +19,7 @@ import app.domains.charging_stations.repository as stations_repository
 import app.domains.charging_stations.service as stations_service
 import app.domains.drivers.service as driver_service
 from app.domains.billing.exceptions import InsufficientBalanceError, WalletBlockedError
+from app.domains.billing.types import TariffQuote
 from app.domains.charging_sessions.exceptions import (
     ChargingConnectorBusyError,
     ChargingSessionAlreadyOpenError,
@@ -58,6 +59,7 @@ from tests.principals import build_internal_principal, build_principal
 
 STATION_ID, EVSE_ID, CONNECTOR_ID = uuid4(), uuid4(), uuid4()
 DRIVER = build_principal(roles=frozenset({UserRole.DRIVER}))
+TARIFF_VERSION_ID = uuid4()
 
 
 # --- Wallet minimum (BL-14) --------------------------------------------------
@@ -257,6 +259,25 @@ def _patch_scan(
             session_id=uuid4(), station_id=STATION_ID, id_token="TOKEN-1"
         )
 
+    async def resolve_tariff(db: object, station_id: UUID, at: datetime) -> TariffQuote:
+        record["quote_for"] = (station_id, at)
+        return TariffQuote(
+            tariff_id=uuid4(),
+            tariff_version_id=TARIFF_VERSION_ID,
+            version_no=2,
+            tariff_name="Standard",
+            organization_id=uuid4(),
+            currency="VND",
+            price_per_kwh=Decimal(4500),
+            normal_price_per_kwh=Decimal(4500),
+            vat_rate_percent=Decimal(10),
+            time_periods=None,
+            at=at,
+        )
+
+    async def create_bill(db: object, **kwargs: Any) -> None:
+        record["bill"] = kwargs
+
     async def queue(db: object, **kwargs: Any) -> StationCommandReference:
         record["command"] = kwargs
         return StationCommandReference(
@@ -275,6 +296,8 @@ def _patch_scan(
         driver_service, "find_open_vehicle_id_by_membership", open_vehicle
     )
     monkeypatch.setattr(charging_service, "create_pending_session", create_pending)
+    monkeypatch.setattr(billing_service, "resolve_tariff_for_station", resolve_tariff)
+    monkeypatch.setattr(billing_service, "create_quoted_bill", create_bill)
     monkeypatch.setattr(stations_service, "queue_station_command", queue)
     monkeypatch.setattr(settings, "BILLING_MIN_BALANCE_VND", Decimal(50_000))
     return record
@@ -295,6 +318,11 @@ async def test_scan_creates_the_pending_session_and_queues_the_remote_start(
 
     assert response.status is SessionStatus.PENDING
     assert response.id_token == "TOKEN-1"
+    # The price of the scan's hour is frozen on a QUOTED bill (PAY-10).
+    assert record["quote_for"][0] == STATION_ID
+    assert record["bill"]["session_id"] == response.session_id
+    assert record["bill"]["quote"].tariff_version_id == TARIFF_VERSION_ID
+    assert (response.price_per_kwh, response.vat_rate_percent) == (4500, Decimal(10))
     assert record["pending"] == {
         "station_id": STATION_ID,
         "organization_id": DRIVER.organization_id,
@@ -499,9 +527,9 @@ async def test_sweep_abandons_scans_older_than_the_pending_window(
     """The gateway sweep passes now minus the configured timeout."""
     asked: list[datetime] = []
 
-    async def abandon_before(db: object, created_before: datetime) -> int:
+    async def abandon_before(db: object, created_before: datetime) -> list[UUID]:
         asked.append(created_before)
-        return 2
+        return [uuid4(), uuid4()]
 
     monkeypatch.setattr(
         charging_repository, "abandon_pending_sessions_created_before", abandon_before

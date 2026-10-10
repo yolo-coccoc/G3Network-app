@@ -27,6 +27,11 @@ The ingestion functions, ``allocate_ocpp16_transaction_id``,
 the public entry points the ``charging_stations`` OCPP adapters call;
 ``resolve_station_energy_total`` is the one its all-stations energy report
 calls.
+
+Billing reacts to the end of a session through hooks (``register_session_ended_hook``):
+``COMPLETED`` by ``complete_session``, ``ABANDONED`` by the two abandon functions.
+This domain imports no billing code; ``app/api/billing_hooks.py`` wires the two
+(BL-19).
 """
 
 import bisect
@@ -82,6 +87,8 @@ from app.domains.charging_sessions.types import (
     MeterSampleInput,
     PendingSessionReference,
     SessionCommandReference,
+    SessionEndedEvent,
+    SessionEndedHook,
     SessionStatus,
     StationEnergyTotal,
     TransactionIngestResult,
@@ -93,6 +100,58 @@ from app.libs.common.config import settings
 from app.libs.common.pagination import PageWindow, normalize_page_window
 
 logger = logging.getLogger(__name__)
+
+# Callbacks run, in the caller's transaction, after a session ended (BL-19).
+# Registered once per process at start-up through `register_session_ended_hook`
+# (API and OCPP gateway both do, see `app/api/startup.py`); this domain imports
+# no other domain.
+_session_ended_hooks: list[SessionEndedHook] = []
+
+
+def register_session_ended_hook(hook: SessionEndedHook) -> None:
+    """Register a callback for the end of a session (completed or abandoned).
+
+    Args:
+        hook: Async callable ``hook(db, event)`` taking the database session
+            and a `SessionEndedEvent`. It runs in the same transaction, inside
+            a savepoint: if it raises, its own changes are rolled back and the
+            error is logged, but the session still ends (a billing fault must
+            never make the charger's stop message fail).
+
+    Side Effects:
+        Appends to a module-level list; registering the same hook twice is
+        ignored.
+    """
+    if hook not in _session_ended_hooks:
+        _session_ended_hooks.append(hook)
+
+
+async def _run_session_ended_hooks(db: AsyncSession, event: SessionEndedEvent) -> None:
+    """Run every registered session-ended hook, in registration order.
+
+    Each hook runs inside its own savepoint so a failing hook leaves no
+    half-written rows behind; the failure is logged with the traceback and the
+    session's own end is kept.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        event: What ended.
+
+    Side Effects:
+        Whatever the hooks write, in the caller's transaction.
+    """
+    for hook in _session_ended_hooks:
+        try:
+            async with db.begin_nested():
+                await hook(db, event)
+        # A hook is a task boundary (backend-runtime-conventions.md): its
+        # failure is isolated by the savepoint and must not undo the stop.
+        except Exception:
+            logger.exception(
+                "Session-ended hook failed",
+                extra={"session_id": str(event.session_id)},
+            )
+
 
 # Roles that read every session of their organization (CHG-02/04/05); a
 # caller holding only DRIVER sees the sessions they started themselves.
@@ -991,7 +1050,8 @@ async def complete_session(
         ChargingSessionStateError: If the session is not ``ACTIVE``.
 
     Side Effects:
-        Updates the session in the caller's transaction.
+        Updates the session in the caller's transaction, then runs the
+        session-ended hooks (billing computes the bill, BL-10).
     """
     normalized_transaction_id = transaction_id.strip()
     if not normalized_transaction_id:
@@ -1014,6 +1074,28 @@ async def complete_session(
     session_record.stop_reason = stop_reason
     session_record.meter_stop_wh = validated_meter_stop_wh
     _touch_session(session_record)
+    if _session_ended_hooks:
+        # The newest measurement is read only when somebody listens: it is the
+        # fallback and the cross-check of the billing figure (CE-12).
+        last_measured_wh = (
+            await charging_session_repository.find_last_measurement_value(
+                db,
+                session_record.session_id,
+                measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
+                measurement_location=MEASUREMENT_LOCATION_OUTLET,
+            )
+        )
+        await _run_session_ended_hooks(
+            db,
+            SessionEndedEvent(
+                session_id=session_record.session_id,
+                status=SessionStatus.COMPLETED,
+                started_by=session_record.started_by,
+                meter_start_wh=session_record.meter_start_wh,
+                meter_stop_wh=session_record.meter_stop_wh,
+                last_measured_wh=last_measured_wh,
+            ),
+        )
     return TransactionIngestResult(
         session_id=session_record.session_id, status=session_record.status
     )
@@ -1515,6 +1597,25 @@ async def is_start_token_valid(
     return token_count > 0
 
 
+def _build_abandoned_event(session_id: UUID) -> SessionEndedEvent:
+    """Build the session-ended event of a scan that never started.
+
+    Args:
+        session_id: The abandoned session.
+
+    Returns:
+        An ``ABANDONED`` event with no readings.
+    """
+    return SessionEndedEvent(
+        session_id=session_id,
+        status=SessionStatus.ABANDONED,
+        started_by=None,
+        meter_start_wh=None,
+        meter_stop_wh=None,
+        last_measured_wh=None,
+    )
+
+
 async def abandon_pending_session(db: AsyncSession, session_id: UUID) -> bool:
     """End a scan that will never start: the session becomes ``ABANDONED``.
 
@@ -1531,9 +1632,15 @@ async def abandon_pending_session(db: AsyncSession, session_id: UUID) -> bool:
         ``True`` when a PENDING session was abandoned.
 
     Side Effects:
-        One UPDATE in the caller's transaction.
+        One UPDATE in the caller's transaction, then the session-ended hooks
+        when a row changed (billing voids the quoted bill).
     """
-    return await charging_session_repository.abandon_pending_session(db, session_id)
+    is_abandoned = await charging_session_repository.abandon_pending_session(
+        db, session_id
+    )
+    if is_abandoned:
+        await _run_session_ended_hooks(db, _build_abandoned_event(session_id))
+    return is_abandoned
 
 
 async def abandon_expired_pending_sessions(db: AsyncSession) -> int:
@@ -1550,11 +1657,17 @@ async def abandon_expired_pending_sessions(db: AsyncSession) -> int:
         The number of sessions abandoned.
 
     Side Effects:
-        One UPDATE in the caller's transaction.
+        One UPDATE in the caller's transaction, then the session-ended hooks
+        once per abandoned session.
     """
-    return await charging_session_repository.abandon_pending_sessions_created_before(
-        db, _pending_window_start()
+    abandoned_ids = (
+        await charging_session_repository.abandon_pending_sessions_created_before(
+            db, _pending_window_start()
+        )
     )
+    for session_id in abandoned_ids:
+        await _run_session_ended_hooks(db, _build_abandoned_event(session_id))
+    return len(abandoned_ids)
 
 
 async def authorize_session_stop(

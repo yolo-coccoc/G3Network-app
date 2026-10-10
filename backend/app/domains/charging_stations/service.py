@@ -123,6 +123,7 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingResourceStatus,
     ConnectorStandard,
+    LocationOwnerReference,
     LocationViewer,
     NearestChargingStationReference,
     OcppMessageDirection,
@@ -132,6 +133,7 @@ from app.domains.charging_stations.types import (
     StationCommandReference,
     StationCommandType,
     StationListScope,
+    StationLocationReference,
 )
 from app.domains.identity.exceptions import AccessDeniedError, OrganizationNotFoundError
 from app.domains.identity.types import Principal
@@ -2872,6 +2874,67 @@ async def resolve_station_owner_organization_id(
         db, station.location_id, include_deleted=True
     )
     return location.organization_id if location is not None else None
+
+
+async def resolve_station_location_reference(
+    db: AsyncSession, station_id: UUID
+) -> StationLocationReference | None:
+    """Find a charger's location and that location's owner (public, billing).
+
+    Billing resolves the tariff in force for a charger from its location and
+    the location's owner (BL-08). A soft-deleted location still answers, so a
+    session already started keeps a price.
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        station_id: UUID of the charger.
+
+    Returns:
+        The reference, or `None` when the charger does not exist or was
+        soft-deleted.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
+    if station is None:
+        return None
+    location = await charging_stations_repository.get_location_by_id(
+        db, station.location_id, include_deleted=True
+    )
+    if location is None:
+        return None
+    return StationLocationReference(
+        station_id=station.station_id,
+        location_id=location.location_id,
+        organization_id=location.organization_id,
+    )
+
+
+async def resolve_location_owner_reference(
+    db: AsyncSession, location_id: UUID
+) -> LocationOwnerReference | None:
+    """Find a charging location and its owning organization (public, billing).
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        location_id: UUID of the location.
+
+    Returns:
+        The reference, or `None` when the location does not exist or was
+        soft-deleted.
+
+    Side Effects:
+        Read-only query; does not commit or roll back.
+    """
+    location = await charging_stations_repository.get_location_by_id(db, location_id)
+    if location is None:
+        return None
+    return LocationOwnerReference(
+        location_id=location.location_id,
+        organization_id=location.organization_id,
+        display_name=location.display_name,
+    )
 
 
 async def resolve_scan_target(

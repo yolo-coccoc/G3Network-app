@@ -309,6 +309,40 @@ class LocationViewer:
 
 
 @dataclass(frozen=True, slots=True)
+class LocationOwnerReference:
+    """A charging location and the organization that owns it (BL-08).
+
+    Billing prices a location through its owner's tariffs; it reads this to
+    check that a tariff names a location of its own owner.
+
+    Attributes:
+        location_id: The location.
+        organization_id: The owning organization (CS-10).
+        display_name: Display name of the location.
+    """
+
+    location_id: UUID
+    organization_id: UUID
+    display_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class StationLocationReference:
+    """A charger, the location it stands at and that location's owner (BL-08).
+
+    Attributes:
+        station_id: The charger.
+        location_id: The location it stands at.
+        organization_id: The organization that owns the location, and so the
+            tariff that prices the charger.
+    """
+
+    station_id: UUID
+    location_id: UUID
+    organization_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
 class ScanTargetReference:
     """The charger (and gun) a QR scan named, checked for a charge to start.
 
