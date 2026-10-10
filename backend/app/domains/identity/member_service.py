@@ -184,6 +184,38 @@ def _is_internal_admin(principal: Principal) -> bool:
     )
 
 
+async def _require_may_manage_target(
+    db_session: AsyncSession, principal: Principal, membership_record: MembershipModel
+) -> None:
+    """Refuse to manage an administrator unless the caller is a HEAD_ADMIN (ID-12).
+
+    Locking, unlocking or removing a membership that holds HEAD_ADMIN or
+    CO_ADMIN is managing an administrator: a CO_ADMIN could otherwise remove
+    every HEAD_ADMIN and take the system over (RV-ID1).
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+        membership_record: The membership about to be changed.
+
+    Raises:
+        AccessDeniedError: The target holds an administrator role and the
+            caller is not a HEAD_ADMIN.
+    """
+    if principal.has_any_role(UserRole.HEAD_ADMIN):
+        return
+    for role in (UserRole.HEAD_ADMIN, UserRole.CO_ADMIN):
+        if (
+            await identity_repository.find_active_role_assignment(
+                db_session,
+                membership_id=membership_record.membership_id,
+                role=role.value,
+            )
+            is not None
+        ):
+            raise AccessDeniedError("Only a HEAD_ADMIN may manage an administrator")
+
+
 def _require_member_manager(principal: Principal, organization_id: UUID) -> None:
     """Allow our administrators anywhere, and an ORG_ADMIN in their own organization.
 
@@ -635,7 +667,8 @@ async def remove_member(
 
     Raises:
         MembershipNotFoundError: The membership is out of reach.
-        AccessDeniedError: The caller may not manage members.
+        AccessDeniedError: The caller may not manage members, or the person
+            is an administrator and the caller is not a HEAD_ADMIN.
         OrgAdminProtectedError: The person is the ORG_ADMIN.
         MembershipConflictError: The membership already ended.
     """
@@ -643,6 +676,7 @@ async def remove_member(
         db_session, principal, membership_id
     )
     _require_member_manager(principal, membership_record.organization_id)
+    await _require_may_manage_target(db_session, principal, membership_record)
     return await _end_membership(
         db_session,
         membership_record,
@@ -770,6 +804,7 @@ async def lock_member(
         db_session, principal, membership_id
     )
     _require_member_manager(principal, membership_record.organization_id)
+    await _require_may_manage_target(db_session, principal, membership_record)
     if membership_record.user_id == principal.user_id:
         raise MembershipConflictError("You cannot lock yourself")
     if (
@@ -828,6 +863,7 @@ async def unlock_member(
         db_session, principal, membership_id
     )
     _require_member_manager(principal, membership_record.organization_id)
+    await _require_may_manage_target(db_session, principal, membership_record)
     if (
         membership_record.status != MembershipStatus.LOCKED.value
         or membership_record.left_at is not None
@@ -976,6 +1012,8 @@ async def handover_org_admin(
         OrganizationNotFoundError: The organization is out of reach.
         AccessDeniedError: The caller is neither the current ORG_ADMIN nor an
             internal administrator using `force`.
+        RoleConflictError: `force` was used while the current ORG_ADMIN is
+            active (membership and account both ACTIVE).
         MembershipNotFoundError: The target is not in this organization.
         AdminHandoverInvalidError: The target is not active, or is already
             the ORG_ADMIN.
@@ -1000,6 +1038,31 @@ async def handover_org_admin(
         raise AccessDeniedError(
             "Only the current ORG_ADMIN, or our administrator with force, may hand over"
         )
+    if not caller_is_admin and current_assignment is not None:
+        # ID-33: force replaces an ORG_ADMIN who is gone, never a working one
+        # (RV-ID4): their membership has ended or is not active, or their
+        # account is not.
+        current_membership = await identity_repository.get_membership(
+            db_session, current_assignment.membership_id
+        )
+        current_user = (
+            None
+            if current_membership is None
+            else await identity_repository.get_user(
+                db_session, current_membership.user_id
+            )
+        )
+        if (
+            current_membership is not None
+            and current_membership.left_at is None
+            and current_membership.status == MembershipStatus.ACTIVE.value
+            and current_user is not None
+            and current_user.status == UserStatus.ACTIVE.value
+            and current_user.deleted_at is None
+        ):
+            raise RoleConflictError(
+                "The ORG_ADMIN is active: only they can hand the role over"
+            )
     target_membership = await identity_repository.get_membership(
         db_session, handover_request.to_membership_id
     )

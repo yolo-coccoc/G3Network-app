@@ -34,6 +34,7 @@ from app.domains.identity.exceptions import (
     MembershipNotFoundError,
     OrgAdminProtectedError,
     OrganizationNotFoundError,
+    RoleConflictError,
     SessionInvalidError,
     UserConflictError,
 )
@@ -482,8 +483,22 @@ class IdentityStore:
         )
 
     async def count_active_role_holders(self, _db: object, role: str) -> int:
-        """Count live assignments of a role across all organizations."""
-        return sum(1 for assignment in self._live_roles() if assignment.role == role)
+        """Count live holders of a role whose membership and account are ACTIVE."""
+        count = 0
+        for assignment in self._live_roles():
+            membership = self.memberships.get(assignment.membership_id)
+            user = None if membership is None else self.users.get(membership.user_id)
+            if (
+                assignment.role == role
+                and membership is not None
+                and user is not None
+                and membership.status == MembershipStatus.ACTIVE.value
+                and membership.left_at is None
+                and user.status == UserStatus.ACTIVE.value
+                and user.deleted_at is None
+            ):
+                count += 1
+        return count
 
     async def revoke_role_assignment(
         self,
@@ -865,11 +880,6 @@ def _internal_with_head_admins(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID1: a CO_ADMIN can lock a HEAD_ADMIN's membership (ID-12)",
-)
 @pytest.mark.asyncio
 async def test_co_admin_cannot_lock_a_head_admin_membership(
     store: IdentityStore,
@@ -883,11 +893,6 @@ async def test_co_admin_cannot_lock_a_head_admin_membership(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID1: a CO_ADMIN can remove a HEAD_ADMIN (revokes HEAD_ADMIN)",
-)
 @pytest.mark.asyncio
 async def test_co_admin_cannot_remove_a_head_admin_membership(
     store: IdentityStore,
@@ -901,11 +906,6 @@ async def test_co_admin_cannot_remove_a_head_admin_membership(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID1: lock_user lets a CO_ADMIN lock another CO_ADMIN account",
-)
 @pytest.mark.asyncio
 async def test_co_admin_cannot_lock_another_co_admin_account(
     store: IdentityStore,
@@ -921,11 +921,6 @@ async def test_co_admin_cannot_lock_another_co_admin_account(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=DID_NOT_RAISE,
-    reason="RV-ID1/RV-ID4: force handover works while the ORG_ADMIN is active",
-)
 @pytest.mark.asyncio
 async def test_force_handover_is_refused_while_the_org_admin_is_active(
     store: IdentityStore,
@@ -947,6 +942,29 @@ async def test_force_handover_is_refused_while_the_org_admin_is_active(
             AdminHandoverRequest(
                 to_membership_id=target.membership_id, reason="x", force=True
             ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_last_head_admin_guard_counts_only_active_holders(
+    store: IdentityStore,
+) -> None:
+    """A locked HEAD_ADMIN is not a spare: removing the only usable one is refused (RV-ID7)."""
+    internal = store.add_organization(is_internal=True)
+    usable = store.add_membership(
+        store.add_user(), internal, roles=(UserRole.HEAD_ADMIN,)
+    )
+    store.add_membership(
+        store.add_user(),
+        internal,
+        roles=(UserRole.HEAD_ADMIN,),
+        status=MembershipStatus.LOCKED,
+    )
+    caller = principal_of(usable, internal, UserRole.HEAD_ADMIN)
+
+    with pytest.raises(RoleConflictError):
+        await member_service.revoke_role(
+            _db(), caller, usable.membership_id, UserRole.HEAD_ADMIN
         )
 
 

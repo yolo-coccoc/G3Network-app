@@ -1234,19 +1234,33 @@ async def revoke_all_roles_of_membership(
 
 
 async def count_active_role_holders(db_session: AsyncSession, role: str) -> int:
-    """Count the live assignments of a role across all organizations.
+    """Count the live holders of a role who can actually use it (RV-ID7).
+
+    A holder counts only when its membership is ACTIVE and not ended and the
+    account is ACTIVE and not deleted: a locked or invited administrator
+    cannot act, so the "last HEAD_ADMIN" guard must not count them.
 
     Args:
         db_session: Current database session.
         role: `UserRole` value.
 
     Returns:
-        How many memberships hold the role right now.
+        How many usable memberships hold the role right now.
     """
     query_result = await db_session.execute(
-        select(func.count(UserRoleAssignmentModel.user_role_assignment_id)).where(
+        select(func.count(UserRoleAssignmentModel.user_role_assignment_id))
+        .join(
+            MembershipModel,
+            MembershipModel.membership_id == UserRoleAssignmentModel.membership_id,
+        )
+        .join(UserModel, UserModel.user_id == MembershipModel.user_id)
+        .where(
             UserRoleAssignmentModel.role == role,
             UserRoleAssignmentModel.revoked_at.is_(None),
+            MembershipModel.status == "ACTIVE",
+            MembershipModel.left_at.is_(None),
+            UserModel.status == "ACTIVE",
+            UserModel.deleted_at.is_(None),
         )
     )
     return query_result.scalar() or 0

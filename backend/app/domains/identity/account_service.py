@@ -1726,7 +1726,7 @@ async def lock_user(
 
     Raises:
         AccessDeniedError: The caller is not an internal administrator, or a
-            CO_ADMIN tries to lock a HEAD_ADMIN (ID-12).
+            CO_ADMIN tries to lock a HEAD_ADMIN or another CO_ADMIN (ID-12).
         UserNotFoundError: The account does not exist.
         UserConflictError: The account is the caller's own or already locked.
     """
@@ -1738,10 +1738,7 @@ async def lock_user(
         raise UserConflictError("You cannot lock your own account")
     if user_record.status == UserStatus.LOCKED.value:
         raise UserConflictError("The account is already locked")
-    if not principal.has_any_role(UserRole.HEAD_ADMIN) and await _holds_role_anywhere(
-        db_session, user_id, UserRole.HEAD_ADMIN
-    ):
-        raise AccessDeniedError("Only a HEAD_ADMIN may lock a HEAD_ADMIN")
+    await _require_may_manage_account(db_session, principal, user_id)
     await set_change_context(
         db_session, changed_by=principal.user_id, change_reason=reason
     )
@@ -1779,6 +1776,7 @@ async def unlock_user(
         raise UserNotFoundError("The user does not exist")
     if user_record.status != UserStatus.LOCKED.value:
         raise UserConflictError("The account is not locked")
+    await _require_may_manage_account(db_session, principal, user_id)
     has_password = (
         await identity_repository.find_active_credential(db_session, user_id)
         is not None
@@ -1795,6 +1793,27 @@ async def unlock_user(
         },
     )
     return to_user_response(user_record)
+
+
+async def _require_may_manage_account(
+    db_session: AsyncSession, principal: Principal, user_id: UUID
+) -> None:
+    """Refuse to lock or unlock an administrator's account unless HEAD_ADMIN (ID-12).
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+        user_id: The account about to be locked or unlocked.
+
+    Raises:
+        AccessDeniedError: The account holds HEAD_ADMIN or CO_ADMIN anywhere
+            and the caller is not a HEAD_ADMIN (RV-ID1).
+    """
+    if principal.has_any_role(UserRole.HEAD_ADMIN):
+        return
+    for role in (UserRole.HEAD_ADMIN, UserRole.CO_ADMIN):
+        if await _holds_role_anywhere(db_session, user_id, role):
+            raise AccessDeniedError("Only a HEAD_ADMIN may manage an administrator")
 
 
 async def _holds_role_anywhere(
