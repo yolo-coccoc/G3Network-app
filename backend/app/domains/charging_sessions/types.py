@@ -221,11 +221,17 @@ class SessionCommandReference:
             QR start, CE-11); never copy it into application logs (IS-07).
         ocpp_transaction_id: The charger's transaction ID as stored, ``None``
             while the session is still waiting for the charger.
+        station_id: The charger the session belongs to; a command may only
+            name a session of its own charger (RV-CS8).
+        status: The session's status; a remote start needs ``PENDING``, a
+            remote stop ``ACTIVE``.
     """
 
     session_id: UUID
     id_token: str
     ocpp_transaction_id: str | None
+    station_id: UUID
+    status: SessionStatus
 
 
 class EnergySeriesGranularity(str, enum.Enum):

@@ -1794,6 +1794,7 @@ def upgrade() -> None:
         sa.Column("reason", sa.String(length=200), nullable=True),
         sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("ocpp_message_id", sa.String(length=36), nullable=True),
+        sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("outcome", sa.String(length=20), nullable=False),
         sa.Column("response_status", sa.String(length=30), nullable=True),
         sa.Column("answered_at", sa.DateTime(timezone=True), nullable=True),

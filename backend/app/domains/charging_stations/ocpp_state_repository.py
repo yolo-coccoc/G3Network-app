@@ -420,6 +420,7 @@ async def insert_station_command(
         requested_by=requested_by,
         reason=reason,
         ocpp_message_id=ocpp_message_id,
+        claimed_at=None if ocpp_message_id is None else utc_now(),
         outcome=StationCommandOutcome.PENDING.value,
     )
     db.add(command)
@@ -610,8 +611,10 @@ async def claim_queued_commands(
         .execution_options(populate_existing=True)
     )
     commands = list(result.scalars().all())
+    claimed_at = utc_now()
     for command in commands:
         command.ocpp_message_id = str(uuid4())
+        command.claimed_at = claimed_at
     await db.flush()
     return commands
 
@@ -649,13 +652,19 @@ async def mark_unsent_commands_not_sent(
 
 
 async def mark_stale_commands_timed_out(
-    db: AsyncSession, *, requested_before: datetime
+    db: AsyncSession, *, claimed_before: datetime
 ) -> list[UUID]:
     """Close sent commands that never got an answer (gateway restarted mid-call).
 
+    The wait is measured from the claim (``claimed_at``, the moment the gateway
+    took the command to send it), not from ``requested_at``: a command that
+    waited for a free line or for a connection is not timed out before it was
+    even sent (RV-CS6). A row without ``claimed_at`` falls back to
+    ``requested_at``.
+
     Args:
         db: Current async session.
-        requested_before: Sent-but-unanswered commands requested before this
+        claimed_before: Sent-but-unanswered commands claimed before this
             time are closed.
 
     Returns:
@@ -666,7 +675,11 @@ async def mark_stale_commands_timed_out(
         .where(
             ChargingStationCommandModel.outcome == StationCommandOutcome.PENDING.value,
             ChargingStationCommandModel.ocpp_message_id.is_not(None),
-            ChargingStationCommandModel.requested_at < requested_before,
+            func.coalesce(
+                ChargingStationCommandModel.claimed_at,
+                ChargingStationCommandModel.requested_at,
+            )
+            < claimed_before,
         )
         .values(outcome=StationCommandOutcome.TIMEOUT.value, answered_at=utc_now())
         .returning(ChargingStationCommandModel.command_id)
@@ -701,8 +714,12 @@ async def set_command_answer(
     outcome: StationCommandOutcome,
     response_status: str | None,
     answered_at: datetime,
-) -> None:
+) -> bool:
     """Write the charger's answer (or the timeout) back to a command (CS-20).
+
+    Only a command still ``PENDING`` is written: a command the sweep already
+    closed as ``TIMEOUT`` or ``NOT_SENT`` keeps that result, and a late answer
+    or a second failure changes nothing (RV-CS6).
 
     Args:
         db: Current async session.
@@ -710,10 +727,16 @@ async def set_command_answer(
         outcome: The observed result.
         response_status: The charger's answer as sent, ``None`` without one.
         answered_at: When the answer or the timeout was recorded.
+
+    Returns:
+        ``True`` when the command was PENDING and is now written.
     """
-    await db.execute(
+    result = await db.execute(
         update(ChargingStationCommandModel)
-        .where(ChargingStationCommandModel.command_id == command_id)
+        .where(
+            ChargingStationCommandModel.command_id == command_id,
+            ChargingStationCommandModel.outcome == StationCommandOutcome.PENDING.value,
+        )
         .values(
             outcome=outcome.value,
             response_status=response_status,
@@ -721,6 +744,7 @@ async def set_command_answer(
         )
     )
     await db.flush()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
 
 
 # --- Configuration snapshots (CS-19, CS-21) ---------------------------------

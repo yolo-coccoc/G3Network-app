@@ -282,10 +282,6 @@ async def test_unlock_while_a_charge_runs_on_that_gun_is_refused(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS8: a command accepts a session_id of another charger",
-)
 @pytest.mark.parametrize(
     ("command_type", "session_status"),
     [
@@ -326,10 +322,6 @@ async def test_command_refuses_a_session_of_another_charger(
 # --- RV-CS11: the manual remote start token ---------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS11: REMOTE_START id_token allows 36 chars, 1.6J idTag max 20",
-)
 def test_manual_remote_start_token_longer_than_a_1_6_id_tag_is_refused() -> None:
     """A token the 1.6J schema would reject is refused when the command is queued."""
     with pytest.raises(ChargingStationCommandInputError):
@@ -344,20 +336,12 @@ def test_manual_remote_start_token_longer_than_a_1_6_id_tag_is_refused() -> None
 # --- RV-CS12: unbounded integers into Integer columns -----------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS12: ocpp_evse_id above int32 passes validation (500)",
-)
 def test_evse_number_beyond_the_integer_column_is_refused_by_the_schema() -> None:
     """An EVSE number the Integer column cannot hold is a 422, not a 500."""
     with pytest.raises(ValidationError):
         ChargingEvseCreateRequest(ocpp_evse_id=2**31, emi3_evse_id="VN*G3N*E0001")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS12: connector numbers and ratings above int32 pass validation",
-)
 @pytest.mark.parametrize(
     "field_name", ["ocpp_connector_id", "max_voltage_v", "max_current_a"]
 )

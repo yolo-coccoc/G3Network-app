@@ -33,6 +33,7 @@ from app.domains.charging_stations.types import (
     StationCommandType,
 )
 from app.libs.common.config import settings
+from app.libs.common.payload_guard import INT32_MAX
 
 
 def _strip_required_text(value: str) -> str:
@@ -517,7 +518,7 @@ class ChargingEvseCreateRequest(BaseModel):
         emi3_evse_id: Public eMI3 ID, e.g. ``VN*G3N*E0001A`` (CS-16).
     """
 
-    ocpp_evse_id: int = Field(..., gt=0)
+    ocpp_evse_id: int = Field(..., gt=0, le=INT32_MAX)
     emi3_evse_id: str = Field(..., min_length=1, max_length=48)
 
     @field_validator("emi3_evse_id")
@@ -544,7 +545,7 @@ class ChargingEvseUpdateRequest(BaseModel):
         status_reason: Why; required when the status becomes ``INACTIVE``.
     """
 
-    ocpp_evse_id: int | None = Field(None, gt=0)
+    ocpp_evse_id: int | None = Field(None, gt=0, le=INT32_MAX)
     emi3_evse_id: str | None = Field(None, min_length=1, max_length=48)
     status: ChargingResourceStatus | None = None
     status_reason: str | None = Field(None, min_length=1, max_length=200)
@@ -632,11 +633,11 @@ class ChargingConnectorCreateRequest(BaseModel):
         max_current_a: Highest output current, in amperes.
     """
 
-    ocpp_connector_id: int = Field(..., gt=0)
+    ocpp_connector_id: int = Field(..., gt=0, le=INT32_MAX)
     standard: ConnectorStandard
     max_power_kw: float = Field(..., gt=0, le=9999.99)
-    max_voltage_v: int = Field(..., gt=0)
-    max_current_a: int = Field(..., gt=0)
+    max_voltage_v: int = Field(..., gt=0, le=INT32_MAX)
+    max_current_a: int = Field(..., gt=0, le=INT32_MAX)
 
 
 class ChargingConnectorUpdateRequest(BaseModel):
@@ -650,11 +651,11 @@ class ChargingConnectorUpdateRequest(BaseModel):
         max_current_a: New highest current, in amperes.
     """
 
-    ocpp_connector_id: int | None = Field(None, gt=0)
+    ocpp_connector_id: int | None = Field(None, gt=0, le=INT32_MAX)
     standard: ConnectorStandard | None = None
     max_power_kw: float | None = Field(None, gt=0, le=9999.99)
-    max_voltage_v: int | None = Field(None, gt=0)
-    max_current_a: int | None = Field(None, gt=0)
+    max_voltage_v: int | None = Field(None, gt=0, le=INT32_MAX)
+    max_current_a: int | None = Field(None, gt=0, le=INT32_MAX)
 
 
 class ChargingConnectorResponse(BaseModel):
@@ -766,7 +767,7 @@ class RemoteStartCommandParameters(_StationCommandParameters):
         remote_start_id: The 2.0.1 ``remoteStartId``; filled in when queued.
     """
 
-    id_token: str | None = Field(None, min_length=1, max_length=36)
+    id_token: str | None = Field(None, min_length=1, max_length=20)
     remote_start_id: int | None = Field(None, ge=0, le=2**31 - 1)
 
 

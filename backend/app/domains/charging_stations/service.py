@@ -53,6 +53,7 @@ import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.identity.service as identity_service
+from app.domains.charging_sessions.types import SessionStatus
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
@@ -2533,7 +2534,8 @@ async def create_charging_station_command(
         ChargingStationNotFoundError: If the charger is not active or is out
             of the caller's reach.
         ChargingStationCommandInputError: The parameters do not fit the type, a
-            link is missing, or the type needs the operator's reason.
+            link is missing, the session belongs to another charger or has the
+            wrong status, or the type needs the operator's reason.
         ChargingStationOfflineError: The charger is not connected now (the
             gateway could only answer ``NOT_SENT``).
         ChargingStationCommandConflictError: An unlock was asked while a charge
@@ -2545,6 +2547,27 @@ async def create_charging_station_command(
         raise ChargingStationCommandInputError(
             f"{command_type.value} needs a reason typed by the operator"
         )
+    if command_create_request.session_id is not None:
+        # A command may only name a session of this very charger, in the status
+        # the command needs: otherwise one tenant's token could be sent to
+        # another tenant's charger, or a stranger's session abandoned (RV-CS8).
+        session_reference = (
+            await charging_sessions_service.resolve_session_command_reference(
+                db, command_create_request.session_id
+            )
+        )
+        needed_status = {
+            StationCommandType.REMOTE_START: SessionStatus.PENDING,
+            StationCommandType.REMOTE_STOP: SessionStatus.ACTIVE,
+        }.get(command_type)
+        if session_reference.station_id != station_id:
+            raise ChargingStationCommandInputError(
+                "The session does not belong to this charger"
+            )
+        if needed_status is not None and session_reference.status != needed_status:
+            raise ChargingStationCommandInputError(
+                f"{command_type.value} needs a {needed_status.value} session"
+            )
     state = await charging_stations_repository.get_station_state(db, station_id)
     if not _is_station_online(state, utc_now()):
         raise ChargingStationOfflineError(

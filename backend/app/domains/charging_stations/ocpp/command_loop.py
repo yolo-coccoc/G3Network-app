@@ -44,6 +44,8 @@ import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
+from app.domains.charging_sessions.exceptions import ChargingSessionNotFoundError
+from app.domains.charging_stations.exceptions import ChargingEvseNotFoundError
 from app.domains.charging_stations.models import ChargingStationCommandModel
 from app.domains.charging_stations.ocpp.command_types import (
     RESPONSE_STATUS_MAX_LENGTH,
@@ -105,6 +107,22 @@ async def abandon_session_of_failed_start(
         and command.command_type == StationCommandType.REMOTE_START.value
         and command.session_id is not None
     ):
+        try:
+            reference = (
+                await charging_sessions_service.resolve_session_command_reference(
+                    db, command.session_id
+                )
+            )
+        except ChargingSessionNotFoundError:
+            return
+        if reference.station_id != command.station_id:
+            # A start that named another charger's session must not end it
+            # (RV-CS8).
+            logger.warning(
+                "Failed start names a session of another charger, not abandoned",
+                extra={"command_id": str(command_id)},
+            )
+            return
         await charging_sessions_service.abandon_pending_session(db, command.session_id)
 
 
@@ -174,6 +192,9 @@ async def _build_outbound_command(
 
     Raises:
         ChargingSessionNotFoundError: If the command's session is missing.
+        ChargingEvseNotFoundError: If the targeted EVSE no longer exists:
+            the command is failed, never widened to the whole charger
+            (RV-CS10).
     """
     assert command.ocpp_message_id is not None, "a claimed command has a message ID"
     parameters: dict[str, Any] = dict(command.parameters or {})
@@ -181,13 +202,16 @@ async def _build_outbound_command(
     ocpp_connector_id: int | None = None
     if command.evse_id is not None:
         evse = await charging_stations_repository.get_evse_by_id(db, command.evse_id)
-        if evse is not None:
-            ocpp_evse_id = evse.ocpp_evse_id
-            connectors = await charging_stations_repository.list_charging_connectors(
-                db, evse_id=evse.evse_id, offset=0, limit=1
+        if evse is None:
+            raise ChargingEvseNotFoundError(
+                "The EVSE the command targets no longer exists"
             )
-            if connectors:
-                ocpp_connector_id = connectors[0].ocpp_connector_id
+        ocpp_evse_id = evse.ocpp_evse_id
+        connectors = await charging_stations_repository.list_charging_connectors(
+            db, evse_id=evse.evse_id, offset=0, limit=1
+        )
+        if connectors:
+            ocpp_connector_id = connectors[0].ocpp_connector_id
     id_token: str | None = (
         str(parameters["id_token"]) if "id_token" in parameters else None
     )
@@ -268,7 +292,25 @@ async def run_command(
             )
             if command is None:
                 return
-            outbound = await _build_outbound_command(db, command)
+            if command.outcome != StationCommandOutcome.PENDING.value:
+                # Something closed the command while it waited its turn (the
+                # sweep timed it out, or it was cancelled): it is not sent
+                # now, and nothing is written over its result (RV-CS6).
+                return
+            try:
+                outbound = await _build_outbound_command(db, command)
+            except ChargingEvseNotFoundError:
+                is_evse_missing = True
+            else:
+                is_evse_missing = False
+        if is_evse_missing:
+            await _record_failure(
+                session_factory,
+                command_id,
+                StationCommandOutcome.ERROR,
+                "EvseNotFound",
+            )
+            return
         try:
             result = await sender.send_command(outbound)
         except TimeoutError:
@@ -359,7 +401,7 @@ async def process_queued_commands(
         )
         timed_out_ids = await ocpp_state_repository.mark_stale_commands_timed_out(
             db,
-            requested_before=now
+            claimed_before=now
             - timedelta(
                 seconds=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS
                 * _STALE_SENT_FACTOR

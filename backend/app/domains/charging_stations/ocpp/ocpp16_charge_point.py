@@ -93,6 +93,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         identity: str,
         connection: RecordingConnection,
         session_factory: async_sessionmaker[AsyncSession],
+        station_id: UUID | None = None,
     ) -> None:
         """Initialize the OCPP 1.6J adapter for an already validated connection.
 
@@ -102,6 +103,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 completed the handshake.
             session_factory: Shared factory owning the transaction for each
                 action handler.
+            station_id: The charger resolved at the handshake, if known.
 
         Side Effects:
             Initializes the ``python-ocpp`` base class state, attaches the
@@ -115,7 +117,30 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             logger=OCPP_LIBRARY_LOGGER,
         )
         self.session_factory = session_factory
+        # The charger the gateway resolved at the handshake. Every message of
+        # this connection addresses it by ID, so renaming the identity string
+        # cannot redirect an open connection (RV-CS9). ``None`` (tests, tools)
+        # means: resolve it by identity on first use.
+        self._station_id = station_id
         self._configuration_task: asyncio.Task[None] | None = None
+
+    async def _station_id_for(self, db: AsyncSession) -> UUID:
+        """Return the charger's internal ID, resolving it by identity once if unset.
+
+        Args:
+            db: The handler's open session.
+
+        Returns:
+            The station ID fixed at the handshake (or resolved on first use).
+
+        Raises:
+            ChargingStationNotFoundError: If the station is unknown or deleted.
+        """
+        if self._station_id is None:
+            self._station_id = await ocpp_state_service.resolve_station_id_by_identity(
+                db, self.id
+            )
+        return self._station_id
 
     @on(Action.boot_notification)  # type: ignore[untyped-decorator]
     async def on_boot_notification(
@@ -156,7 +181,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
-                ocpp_identity=self.id,
+                station_id=await self._station_id_for(db),
                 vendor=charge_point_vendor,
                 model=charge_point_model,
                 serial_number=charge_point_serial_number or charge_box_serial_number,
@@ -240,7 +265,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             if connector_id == 0:
                 await ocpp_state_service.update_charger_status(
                     db,
-                    ocpp_identity=self.id,
+                    station_id=await self._station_id_for(db),
                     status=reported_status,
                     status_updated_at=reported_at,
                     error_code=error_code,
@@ -252,7 +277,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     _evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, self.id, connector_id
+                    db, await self._station_id_for(db), connector_id
                 )
                 await ocpp_state_service.update_connector_status(
                     db,
@@ -285,9 +310,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingStationNotFoundError: If the station is not provisioned.
         """
         async with self.session_factory.begin() as db:
-            station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, self.id
-            )
+            station_id = await self._station_id_for(db)
             is_valid = await charging_sessions_service.is_start_token_valid(
                 db, station_id=station_id, id_token=id_tag
             )
@@ -366,7 +389,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, self.id, connector_id
+                    db, await self._station_id_for(db), connector_id
                 )
                 if await charging_sessions_service.has_active_session_on_connector(
                     db, connector_uuid
@@ -500,9 +523,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         transaction_key = str(int(transaction_id))
         extraction = extract_v16_measurements(transaction_data or [])
         async with self.session_factory.begin() as db:
-            station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, self.id
-            )
+            station_id = await self._station_id_for(db)
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=transaction_key
             )
@@ -585,9 +606,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             )
             return call_result.MeterValues()
         async with self.session_factory.begin() as db:
-            station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, self.id
-            )
+            station_id = await self._station_id_for(db)
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=str(int(transaction_id))
             )
@@ -686,7 +705,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             async with self.session_factory.begin() as db:
                 command_id = await ocpp_state_service.start_boot_configuration_command(
                     db,
-                    ocpp_identity=self.id,
+                    station_id=await self._station_id_for(db),
                     ocpp_protocol_version=self.protocol_version,
                     ocpp_message_id=ocpp_message_id,
                 )

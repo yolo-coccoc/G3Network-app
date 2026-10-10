@@ -575,7 +575,12 @@ async def test_a_failed_remote_start_abandons_its_pending_session(
     abandoned: list[UUID] = []
 
     async def get_command(db: object, command_id: UUID) -> Any:
-        return SimpleNamespace(command_type=command_type, session_id=session_id)
+        return SimpleNamespace(
+            command_type=command_type, session_id=session_id, station_id=STATION_ID
+        )
+
+    async def reference(db: object, the_session_id: UUID) -> Any:
+        return SimpleNamespace(station_id=STATION_ID)
 
     async def abandon(db: object, the_session_id: UUID) -> bool:
         abandoned.append(the_session_id)
@@ -583,6 +588,9 @@ async def test_a_failed_remote_start_abandons_its_pending_session(
 
     monkeypatch.setattr(ocpp_state_repository, "get_station_command_by_id", get_command)
     monkeypatch.setattr(charging_repository, "abandon_pending_session", abandon)
+    monkeypatch.setattr(
+        charging_service, "resolve_session_command_reference", reference
+    )
 
     await command_loop.abandon_session_of_failed_start(
         fake_db_session(), uuid4(), outcome

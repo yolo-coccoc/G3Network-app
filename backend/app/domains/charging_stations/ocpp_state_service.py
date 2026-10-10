@@ -122,6 +122,31 @@ async def _get_active_station_by_identity(
     return station
 
 
+async def _get_active_station_by_id(
+    db: AsyncSession, station_id: UUID
+) -> ChargingStationModel:
+    """Load the active (not soft-deleted) station of a connection.
+
+    The gateway resolves the station once, at the handshake, and hands its ID
+    to the adapter: later messages of that connection address it by ID, so a
+    rename of the identity string cannot redirect them (RV-CS9).
+
+    Args:
+        db: Async session owned by the OCPP entry boundary.
+        station_id: The station fixed at the handshake.
+
+    Returns:
+        The station record.
+
+    Raises:
+        ChargingStationNotFoundError: If the station was soft-deleted meanwhile.
+    """
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
+    if station is None:
+        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    return station
+
+
 async def resolve_station_id_by_identity(db: AsyncSession, ocpp_identity: str) -> UUID:
     """Resolve an OCPP identity into the station's internal ID.
 
@@ -142,7 +167,7 @@ async def resolve_station_id_by_identity(db: AsyncSession, ocpp_identity: str) -
 
 async def resolve_ocpp_topology(
     db: AsyncSession,
-    ocpp_identity: str,
+    station_id: UUID,
     ocpp_evse_id: int,
     ocpp_connector_id: int | None,
 ) -> tuple[UUID, UUID, UUID]:
@@ -150,7 +175,7 @@ async def resolve_ocpp_topology(
 
     Args:
         db: Async session owned by the OCPP entry boundary.
-        ocpp_identity: Station identity from the WebSocket path.
+        station_id: The station of the connection, fixed at the handshake.
         ocpp_evse_id: EVSE ID in the OCPP message.
         ocpp_connector_id: Connector ID in the OCPP message; ``None`` when the
             message omitted it (``EVSEType.connectorId`` is optional in
@@ -168,7 +193,7 @@ async def resolve_ocpp_topology(
         ChargingConnectorNotFoundError: If the connector does not belong to
             an active EVSE.
     """
-    station = await _get_active_station_by_identity(db, ocpp_identity)
+    station = await _get_active_station_by_id(db, station_id)
     evse = await charging_stations_repository.get_evse_by_identity(
         db, station.station_id, ocpp_evse_id, include_deleted=False
     )
@@ -196,7 +221,7 @@ async def resolve_ocpp_topology(
 
 
 async def resolve_ocpp16_topology(
-    db: AsyncSession, ocpp_identity: str, ocpp_connector_id: int
+    db: AsyncSession, station_id: UUID, ocpp_connector_id: int
 ) -> tuple[UUID, UUID, UUID]:
     """Resolve an OCPP 1.6J connector number into internal topology IDs.
 
@@ -208,7 +233,7 @@ async def resolve_ocpp16_topology(
 
     Args:
         db: Async session owned by the OCPP entry boundary.
-        ocpp_identity: Station identity from the WebSocket path.
+        station_id: The station of the connection, fixed at the handshake.
         ocpp_connector_id: Connector number in the 1.6J message; must be
             positive.
 
@@ -225,7 +250,7 @@ async def resolve_ocpp16_topology(
         raise ChargingOcppMessageInputError(
             "OCPP 1.6J connector 0 is the whole charger and has no topology row"
         )
-    return await resolve_ocpp_topology(db, ocpp_identity, ocpp_connector_id, 1)
+    return await resolve_ocpp_topology(db, station_id, ocpp_connector_id, 1)
 
 
 async def record_ocpp_message(
@@ -297,7 +322,7 @@ async def record_ocpp_message(
 async def record_charger_boot(
     db: AsyncSession,
     *,
-    ocpp_identity: str,
+    station_id: UUID,
     vendor: str,
     model: str,
     serial_number: str | None,
@@ -316,7 +341,7 @@ async def record_charger_boot(
 
     Args:
         db: Async session owned by the OCPP gateway's action transaction.
-        ocpp_identity: Identity of the station that booted.
+        station_id: The station that booted (fixed at the handshake).
         vendor: ``chargePointVendor`` from the message.
         model: ``chargePointModel`` from the message.
         serial_number: Charger serial number, or ``None``.
@@ -336,7 +361,8 @@ async def record_charger_boot(
         as a ``WARNING`` too (CS-14).
     """
     booted_at_utc = _to_utc(booted_at, "booted_at")
-    station = await _get_active_station_by_identity(db, ocpp_identity)
+    station = await _get_active_station_by_id(db, station_id)
+    ocpp_identity = station.ocpp_identity
     state = await ocpp_state_repository.get_station_state_for_update(
         db, station.station_id
     )
@@ -383,7 +409,7 @@ async def record_charger_boot(
 async def update_charger_status(
     db: AsyncSession,
     *,
-    ocpp_identity: str,
+    station_id: UUID,
     status: ChargingConnectorStatus,
     status_updated_at: datetime,
     error_code: str | None,
@@ -393,7 +419,7 @@ async def update_charger_status(
 
     Args:
         db: Async session owned by the OCPP entry boundary.
-        ocpp_identity: Identity of the station that reported.
+        station_id: The station that reported (fixed at the handshake).
         status: Reported status of the whole charger.
         status_updated_at: Timestamp of the report, timezone-aware.
         error_code: Reported ``errorCode``, stored as sent.
@@ -411,7 +437,6 @@ async def update_charger_status(
         ``WARNING`` and otherwise ignored, like ``record_charger_boot``.
     """
     status_updated_at_utc = _to_utc(status_updated_at, "status_updated_at")
-    station_id = await resolve_station_id_by_identity(db, ocpp_identity)
     is_updated = await ocpp_state_repository.update_station_charger_status(
         db,
         station_id,
@@ -423,7 +448,7 @@ async def update_charger_status(
     if not is_updated:
         logger.warning(
             "Charger status matched no active station",
-            extra={"ocpp_identity": ocpp_identity},
+            extra={"station_id": str(station_id)},
         )
 
 
@@ -503,7 +528,7 @@ async def open_configuration_capture(
 async def start_boot_configuration_command(
     db: AsyncSession,
     *,
-    ocpp_identity: str,
+    station_id: UUID,
     ocpp_protocol_version: str,
     ocpp_message_id: str,
     ocpp_request_id: int | None = None,
@@ -516,7 +541,7 @@ async def start_boot_configuration_command(
 
     Args:
         db: Async session owned by the gateway's transaction.
-        ocpp_identity: Identity of the station that booted.
+        station_id: The station that booted (fixed at the handshake).
         ocpp_protocol_version: Protocol of the connection.
         ocpp_message_id: Message ID of the request the gateway will send.
         ocpp_request_id: OCPP 2.0.1 ``GetBaseReport`` request ID, else ``None``.
@@ -527,7 +552,6 @@ async def start_boot_configuration_command(
     Raises:
         ChargingStationNotFoundError: If the station is not provisioned.
     """
-    station_id = await resolve_station_id_by_identity(db, ocpp_identity)
     command = await ocpp_state_repository.insert_station_command(
         db,
         station_id=station_id,
@@ -619,7 +643,7 @@ async def fail_command(
     outcome: StationCommandOutcome,
     response_status: str | None,
     answered_at: datetime,
-) -> None:
+) -> bool:
     """Record a command that got no usable answer, and fail its snapshot.
 
     Args:
@@ -629,18 +653,24 @@ async def fail_command(
         response_status: The charger's answer as sent, ``None`` without one.
         answered_at: When the failure was recorded; must carry a timezone.
 
+    Returns:
+        ``True`` when the command was still PENDING and is now written;
+        ``False`` when something closed it first (nothing changes then).
+
     Side Effects:
         Writes the answer to the command; a ``GET_CONFIGURATION`` command's
         pending snapshot becomes ``FAILED``.
     """
     answered_at_utc = _to_utc(answered_at, "answered_at")
-    await ocpp_state_repository.set_command_answer(
+    is_written = await ocpp_state_repository.set_command_answer(
         db,
         command_id,
         outcome=outcome,
         response_status=response_status,
         answered_at=answered_at_utc,
     )
+    if not is_written:
+        return False
     capture = await ocpp_state_repository.get_configuration_capture_by_command_id(
         db, command_id
     )
@@ -654,12 +684,13 @@ async def fail_command(
             outcome=ConfigurationCaptureOutcome.FAILED,
             captured_at=None,
         )
+    return True
 
 
 async def store_configuration_report_part(
     db: AsyncSession,
     *,
-    ocpp_identity: str,
+    station_id: UUID,
     ocpp_request_id: int,
     entries: Sequence[ReportEntry],
     is_last_part: bool,
@@ -675,7 +706,7 @@ async def store_configuration_report_part(
 
     Args:
         db: Async session owned by the gateway's transaction.
-        ocpp_identity: Identity of the station that sent the part.
+        station_id: The station that sent the part (fixed at the handshake).
         ocpp_request_id: The ``requestId`` of the part.
         entries: The settings of this part.
         is_last_part: Whether no more parts follow.
@@ -689,7 +720,6 @@ async def store_configuration_report_part(
         ChargingStationNotFoundError: If the station is not provisioned.
     """
     received_at_utc = _to_utc(received_at, "received_at")
-    station_id = await resolve_station_id_by_identity(db, ocpp_identity)
     capture = await ocpp_state_repository.find_pending_capture_by_request_id(
         db, station_id, ocpp_request_id
     )

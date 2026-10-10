@@ -18,6 +18,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Final
 from urllib.parse import unquote, urlsplit
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from websockets.asyncio.server import Server, ServerConnection, serve
@@ -139,6 +140,7 @@ def create_charge_point(
     identity: str,
     connection: RecordingConnection,
     session_factory: async_sessionmaker[AsyncSession],
+    station_id: UUID | None = None,
 ) -> "OCPP201ChargePoint | OCPP16ChargePoint":
     """Create the adapter class that matches the negotiated subprotocol.
 
@@ -147,14 +149,16 @@ def create_charge_point(
         identity: OCPP identity already resolved in the database.
         connection: Recording wrapper around the accepted WebSocket.
         session_factory: Shared async session factory.
+        station_id: The charger resolved at the handshake; the adapter
+            addresses it by this ID for the whole connection (RV-CS9).
 
     Returns:
         An ``OCPP16ChargePoint`` for ``ocpp1.6``; otherwise an
         ``OCPP201ChargePoint`` (the default protocol of this gateway).
     """
     if ocpp_subprotocol == OCPP16_SUBPROTOCOL:
-        return OCPP16ChargePoint(identity, connection, session_factory)
-    return OCPP201ChargePoint(identity, connection, session_factory)
+        return OCPP16ChargePoint(identity, connection, session_factory, station_id)
+    return OCPP201ChargePoint(identity, connection, session_factory, station_id)
 
 
 class OCPPServer:
@@ -354,6 +358,7 @@ class OCPPServer:
             identity,
             recording_connection,
             self.session_factory,
+            station.station_id,
         )
         logger.info(
             "OCPP station connected",

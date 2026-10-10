@@ -64,6 +64,11 @@ from app.domains.charging_stations.ocpp.library_logging import OCPP_LIBRARY_LOGG
 from app.domains.charging_stations.ocpp.measurement_units import (
     KNOWN_MEASURAND_UNITS,
     convert_measurement,
+    is_outlet_total,
+    is_plain_multiplier,
+    is_storable_value,
+    pick_start_reading,
+    pick_stop_reading,
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
@@ -151,9 +156,13 @@ def normalize_sampled_value_to_wh(sampled_value: OcppPayload) -> Decimal | None:
     factor = _ENERGY_UNIT_FACTORS_WH.get(unit)
     if factor is None:
         raise ValueError(f"Unrecognized energy unit '{unit}' for {measurand}")
+    if not is_plain_multiplier(multiplier):
+        # An absurd exponent is no reading: skip the sample (RV-CS5).
+        return None
 
     raw_value = Decimal(str(sampled_value["value"]))
-    return raw_value.scaleb(multiplier) * factor
+    value_wh = raw_value.scaleb(multiplier) * factor
+    return value_wh if is_storable_value(value_wh) else None
 
 
 def extract_meter_samples(
@@ -178,6 +187,13 @@ def extract_meter_samples(
     for meter_value in meter_values:
         sampled_at = parse_ocpp_timestamp(meter_value["timestamp"])
         for sampled_value in meter_value["sampled_value"]:
+            if not is_outlet_total(
+                sampled_value.get("phase"), sampled_value.get("location")
+            ):
+                # A per-phase or Inlet register is stored as a measurement by
+                # ``extract_measurements``, never used as a start/stop reading
+                # (RV-CS4).
+                continue
             value_wh = normalize_sampled_value_to_wh(sampled_value)
             if value_wh is None:
                 continue
@@ -218,7 +234,9 @@ def extract_measurements(
         sampled_at = parse_ocpp_timestamp(meter_value["timestamp"])
         for sampled_value in meter_value["sampled_value"]:
             measurand = sampled_value.get("measurand") or ENERGY_ACTIVE_IMPORT_REGISTER
-            if measurand == ENERGY_ACTIVE_IMPORT_REGISTER:
+            if measurand == ENERGY_ACTIVE_IMPORT_REGISTER and is_outlet_total(
+                sampled_value.get("phase"), sampled_value.get("location")
+            ):
                 continue
             try:
                 raw_value = Decimal(str(sampled_value["value"]))
@@ -227,11 +245,16 @@ def extract_measurements(
             if not raw_value.is_finite():
                 continue
             unit_of_measure = sampled_value.get("unit_of_measure") or {}
+            multiplier = unit_of_measure.get("multiplier") or 0
+            if not is_plain_multiplier(multiplier):
+                continue
             value, unit = convert_measurement(
                 measurand,
-                raw_value.scaleb(unit_of_measure.get("multiplier") or 0),
+                raw_value.scaleb(multiplier),
                 unit_of_measure.get("unit") or KNOWN_MEASURAND_UNITS.get(measurand),
             )
+            if not is_storable_value(value):
+                continue
             measurements.append(
                 MeasurementInput(
                     sampled_at=sampled_at,
@@ -313,6 +336,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         identity: str,
         connection: RecordingConnection,
         session_factory: async_sessionmaker[AsyncSession],
+        station_id: UUID | None = None,
     ) -> None:
         """Initialize the OCPP 2.0.1 adapter for an already validated connection.
 
@@ -335,7 +359,30 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             logger=OCPP_LIBRARY_LOGGER,
         )
         self.session_factory = session_factory
+        # The charger the gateway resolved at the handshake. Every message of
+        # this connection addresses it by ID, so renaming the identity string
+        # cannot redirect an open connection (RV-CS9). ``None`` (tests, tools)
+        # means: resolve it by identity on first use.
+        self._station_id = station_id
         self._session_by_evse: dict[int, UUID] = {}
+
+    async def _station_id_for(self, db: AsyncSession) -> UUID:
+        """Return the charger's internal ID, resolving it by identity once if unset.
+
+        Args:
+            db: The handler's open session.
+
+        Returns:
+            The station ID fixed at the handshake (or resolved on first use).
+
+        Raises:
+            ChargingStationNotFoundError: If the station is unknown or deleted.
+        """
+        if self._station_id is None:
+            self._station_id = await ocpp_state_service.resolve_station_id_by_identity(
+                db, self.id
+            )
+        return self._station_id
 
     @on(Action.boot_notification)  # type: ignore[untyped-decorator]
     async def on_boot_notification(
@@ -379,7 +426,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
-                ocpp_identity=self.id,
+                station_id=await self._station_id_for(db),
                 vendor=str(charging_station["vendor_name"]),
                 model=str(charging_station["model"]),
                 serial_number=charging_station.get("serial_number"),
@@ -430,9 +477,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         token = str(id_token.get("id_token") or "")
         async with self.session_factory.begin() as db:
-            station_id = await ocpp_state_service.resolve_station_id_by_identity(
-                db, self.id
-            )
+            station_id = await self._station_id_for(db)
             is_valid = await charging_sessions_service.is_start_token_valid(
                 db, station_id=station_id, id_token=token
             )
@@ -525,6 +570,8 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         event_timestamp = parse_ocpp_timestamp(timestamp)
         energy_samples = extract_meter_samples(meter_value) if meter_value else []
         other_measurements = extract_measurements(meter_value) if meter_value else []
+        start_reading = pick_start_reading(energy_samples)
+        stop_reading = pick_stop_reading(energy_samples)
         transaction_id = parse_ocpp_transaction_id(transaction_info)
         is_start = event_type == TransactionEventEnumType.started
         # ``evse`` is required only on the first event of a transaction: a
@@ -544,7 +591,10 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                         evse_uuid,
                         connector_uuid,
                     ) = await ocpp_state_service.resolve_ocpp_topology(
-                        db, self.id, ocpp_evse_id, ocpp_connector_id
+                        db,
+                        await self._station_id_for(db),
+                        ocpp_evse_id,
+                        ocpp_connector_id,
                     )
                     token = (id_token or {}).get("id_token")
                     if not token:
@@ -562,8 +612,8 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                                 transaction_id=transaction_id,
                                 started_at=event_timestamp,
                                 meter_start_wh=(
-                                    energy_samples[0].value_wh
-                                    if energy_samples
+                                    start_reading.value_wh
+                                    if start_reading is not None
                                     else None
                                 ),
                             )
@@ -584,11 +634,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                             db, session_id=session_id, samples=other_measurements
                         )
                 else:
-                    station_id = (
-                        await ocpp_state_service.resolve_station_id_by_identity(
-                            db, self.id
-                        )
-                    )
+                    station_id = await self._station_id_for(db)
                     reference = (
                         await charging_sessions_service.resolve_session_by_transaction(
                             db, station_id=station_id, transaction_id=transaction_id
@@ -619,7 +665,9 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                                 else None
                             ),
                             meter_stop_wh=(
-                                energy_samples[-1].value_wh if energy_samples else None
+                                stop_reading.value_wh
+                                if stop_reading is not None
+                                else None
                             ),
                         )
         except ChargingSessionTokenError:
@@ -767,7 +815,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 _evse_id,
                 connector_uuid,
             ) = await ocpp_state_service.resolve_ocpp_topology(
-                db, self.id, evse_id, connector_id
+                db, await self._station_id_for(db), evse_id, connector_id
             )
             await ocpp_state_service.update_connector_status(
                 db,
@@ -818,7 +866,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.store_configuration_report_part(
                 db,
-                ocpp_identity=self.id,
+                station_id=await self._station_id_for(db),
                 ocpp_request_id=request_id,
                 entries=entries,
                 is_last_part=not tbc,

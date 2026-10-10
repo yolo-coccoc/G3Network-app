@@ -14,9 +14,15 @@ in its own protocol's shape (1.6J has a flat ``unit``, 2.0.1 a nested
 Pure functions, no I/O.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Final
+
+from app.domains.charging_sessions.types import (
+    DEFAULT_MEASUREMENT_LOCATION,
+    MEASUREMENT_LOCATION_OUTLET,
+    MeterSampleInput,
+)
 
 # Fixed unit of each known measurand (OCPP 1.6 and 2.0.1 names), which is also
 # the OCPP default unit used when the sample names none.
@@ -127,3 +133,95 @@ def convert_measurement(
     if conversion is None or conversion[0] != fixed_unit:
         return value, unit
     return conversion[1](value).quantize(_SIX_PLACES), fixed_unit
+
+
+# A measurement column is ``Numeric(24, 6)``: 18 digits before the point. A
+# value at or beyond this is a vendor "not available" sentinel (a uint64 maximum
+# for example), not a reading, and storing it would fail the whole message
+# (RV-CS5).
+MAX_STORABLE_MAGNITUDE: Final[Decimal] = Decimal(10) ** 18
+# A 2.0.1 ``unitOfMeasure.multiplier`` beyond this is nonsense for a unit of
+# measure and makes ``Decimal.scaleb`` overflow its context (RV-CS5).
+MAX_MULTIPLIER_EXPONENT: Final[int] = 9
+
+
+def is_storable_value(value: Decimal) -> bool:
+    """Tell whether a reading fits the measurement column.
+
+    Args:
+        value: The reading in its fixed unit.
+
+    Returns:
+        ``True`` when the value is finite and below ``10**18`` in magnitude.
+    """
+    return value.is_finite() and abs(value) < MAX_STORABLE_MAGNITUDE
+
+
+def is_plain_multiplier(multiplier: object) -> bool:
+    """Tell whether a 2.0.1 multiplier is a sane power-of-ten exponent.
+
+    Args:
+        multiplier: The ``unitOfMeasure.multiplier`` as received.
+
+    Returns:
+        ``True`` for an integer from ``-9`` to ``9``.
+    """
+    return (
+        isinstance(multiplier, int)
+        and not isinstance(multiplier, bool)
+        and -MAX_MULTIPLIER_EXPONENT <= multiplier <= MAX_MULTIPLIER_EXPONENT
+    )
+
+
+def is_outlet_total(phase: str | None, location: str | None) -> bool:
+    """Tell whether an energy-register sample is the charger's outlet total.
+
+    A per-phase reading, or one taken at the Inlet or the Body, is a different
+    quantity than the register the bill and the session's start and stop
+    readings come from (RV-BL5, RV-CS4); it is stored as an ordinary
+    measurement instead.
+
+    Args:
+        phase: The sample's ``phase``, if any.
+        location: The sample's ``location``, or ``None`` for the OCPP default.
+
+    Returns:
+        ``True`` when the sample has no phase and its location is the outlet.
+    """
+    return phase is None and (location or DEFAULT_MEASUREMENT_LOCATION) == (
+        MEASUREMENT_LOCATION_OUTLET
+    )
+
+
+def pick_start_reading(samples: Sequence[MeterSampleInput]) -> MeterSampleInput | None:
+    """Choose the session's opening energy reading from a message's samples.
+
+    Args:
+        samples: The outlet-total energy samples of the message.
+
+    Returns:
+        The ``Transaction.Begin`` sample (the oldest if there are several),
+        else the oldest sample, else ``None``. Not the first in payload order:
+        a charger may list samples in any order (RV-BL5).
+    """
+    if not samples:
+        return None
+    begin = [sample for sample in samples if sample.context == "Transaction.Begin"]
+    return min(begin or samples, key=lambda sample: sample.sampled_at)
+
+
+def pick_stop_reading(samples: Sequence[MeterSampleInput]) -> MeterSampleInput | None:
+    """Choose the session's closing energy reading from a message's samples.
+
+    Args:
+        samples: The outlet-total energy samples of the message.
+
+    Returns:
+        The ``Transaction.End`` sample (the newest if there are several), else
+        the newest sample, else ``None``; on a tie the later one in the
+        payload wins.
+    """
+    if not samples:
+        return None
+    ended = [sample for sample in samples if sample.context == "Transaction.End"]
+    return max(reversed(ended or list(samples)), key=lambda sample: sample.sampled_at)

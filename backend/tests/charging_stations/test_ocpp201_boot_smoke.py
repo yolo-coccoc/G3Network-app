@@ -19,6 +19,8 @@ from app.domains.charging_stations.types import OcppMessageDirection
 from app.libs.common.config import settings
 from tests.fakes import FakeSessionFactory
 
+STATION_ID = uuid4()
+
 
 class _SentFrames:
     """Stand-in connection that keeps every frame the adapter sends.
@@ -39,6 +41,7 @@ def _charge_point(connection: object | None = None) -> OCPP201ChargePoint:
         "CS-201",
         connection if connection is not None else object(),  # type: ignore[arg-type]
         FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -67,7 +70,7 @@ async def test_boot_notification_stores_the_station_identity_and_accepts(
     assert response.status == RegistrationStatusEnumType.accepted
     assert response.interval == settings.CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS
     assert response.current_time.endswith("Z")
-    assert captured["ocpp_identity"] == "CS-201"
+    assert captured["station_id"] == STATION_ID
     assert (captured["vendor"], captured["model"]) == ("G3Network-Sim", "SIM-201")
     assert (captured["serial_number"], captured["firmware_version"]) == (
         "SN-201",

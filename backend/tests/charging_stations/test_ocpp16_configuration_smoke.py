@@ -59,6 +59,7 @@ def _charge_point(factory: _CountingFactory | None = None) -> OCPP16ChargePoint:
         "LSC",
         object(),  # type: ignore[arg-type]
         factory or _CountingFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -153,7 +154,7 @@ async def test_capture_stores_every_reported_key_with_its_readonly_flag(
     assert seen["suppress"] is False
     # The frame carries the message ID stored on the command (CS-18, CS-21).
     assert seen["unique_id"] == recorded["start"][0]["ocpp_message_id"]
-    assert recorded["start"][0]["ocpp_identity"] == "LSC"
+    assert recorded["start"][0]["station_id"] == STATION_ID
     complete = recorded["complete"][0]
     assert complete["command_id"] == COMMAND_ID
     assert complete["captured_at"].utcoffset() == timedelta(0)
@@ -324,6 +325,7 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
             "LSC",
             connection,
             _CountingFactory(),  # type: ignore[arg-type]
+            station_id=STATION_ID,
         )
         try:
             await charge_point.start()
@@ -407,8 +409,9 @@ def _patch_capture_repository(
     async def fake_outcome(db: object, capture_id: Any, **kwargs: Any) -> None:
         written["outcome"].append({"capture_id": capture_id, **kwargs})
 
-    async def fake_answer(db: object, command_id: Any, **kwargs: Any) -> None:
+    async def fake_answer(db: object, command_id: Any, **kwargs: Any) -> bool:
         written["answer"].append({"command_id": command_id, **kwargs})
+        return True
 
     monkeypatch.setattr(
         ocpp_state_repository, "get_configuration_capture_by_command_id", fake_capture

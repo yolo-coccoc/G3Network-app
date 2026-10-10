@@ -604,6 +604,9 @@ class ChargingStationCommandModel(Base):
         DateTime(timezone=True), nullable=False, default=utc_now
     )
     ocpp_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
     response_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
     answered_at: Mapped[datetime | None] = mapped_column(

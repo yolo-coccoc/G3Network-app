@@ -243,10 +243,6 @@ async def test_claim_takes_only_the_queued_commands_of_connected_chargers(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS6: set_command_answer/fail_command overwrite a closed command",
-)
 async def test_a_command_closed_by_the_sweep_is_not_rewritten_by_a_late_answer(
     temporary_database: str,
 ) -> None:
@@ -259,7 +255,7 @@ async def test_a_command_closed_by_the_sweep_is_not_rewritten_by_a_late_answer(
         command_id = await _insert_command(factory, station_id, ocpp_message_id="m-1")
         async with factory.begin() as db:
             timed_out = await ocpp_state_repository.mark_stale_commands_timed_out(
-                db, requested_before=datetime.now(timezone.utc) + timedelta(minutes=1)
+                db, claimed_before=datetime.now(timezone.utc) + timedelta(minutes=1)
             )
         assert timed_out == [command_id]
 

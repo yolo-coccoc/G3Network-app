@@ -34,6 +34,8 @@ from app.domains.charging_stations.types import (
 )
 from tests.fakes import FakeSessionFactory
 
+STATION_ID = uuid4()
+
 COMMAND_ID = uuid4()
 
 
@@ -60,11 +62,21 @@ def _sent_by(charge_point: Any, response: Any) -> list[dict[str, Any]]:
 
 
 def _charge_point_16() -> OCPP16ChargePoint:
-    return OCPP16ChargePoint("LSC", object(), FakeSessionFactory())  # type: ignore[arg-type]
+    return OCPP16ChargePoint(
+        "LSC",
+        object(),  # type: ignore[arg-type]
+        FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
+    )
 
 
 def _charge_point_201() -> OCPP201ChargePoint:
-    return OCPP201ChargePoint("LSC", object(), FakeSessionFactory())  # type: ignore[arg-type]
+    return OCPP201ChargePoint(
+        "LSC",
+        object(),  # type: ignore[arg-type]
+        FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
+    )
 
 
 # --- outcome mapping ------------------------------------------------------------
@@ -358,16 +370,19 @@ def _patch_loop_repository(
         command_type="RESET",
         parameters={"reset_type": "Soft"},
         ocpp_message_id="msg-1",
+        outcome=StationCommandOutcome.PENDING.value,
     )
 
     async def fake_get(db: object, command_id: Any) -> Any:
         return row
 
-    async def fake_answer(db: object, command_id: Any, **kwargs: Any) -> None:
+    async def fake_answer(db: object, command_id: Any, **kwargs: Any) -> bool:
         recorded["answer"].append({"command_id": command_id, **kwargs})
+        return True
 
-    async def fake_fail(db: object, **kwargs: Any) -> None:
+    async def fake_fail(db: object, **kwargs: Any) -> bool:
         recorded["fail"].append(kwargs)
+        return True
 
     monkeypatch.setattr(ocpp_state_repository, "get_station_command_by_id", fake_get)
     monkeypatch.setattr(ocpp_state_repository, "set_command_answer", fake_answer)

@@ -43,6 +43,8 @@ from app.domains.charging_sessions.types import (
 from app.domains.charging_stations.ocpp.measurement_units import (
     KNOWN_MEASURAND_UNITS,
     convert_measurement,
+    is_outlet_total,
+    is_storable_value,
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
@@ -67,7 +69,7 @@ class V16Extraction:
         measurements: Every other measurement, in payload order.
         skipped: How many samples could not be stored, by reason
             (``signed_data``, ``non_numeric``, ``non_finite``,
-            ``field_too_long``).
+            ``out_of_range``, ``field_too_long``).
     """
 
     energy: tuple[MeterSampleInput, ...] = ()
@@ -150,21 +152,30 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
             measurand = sampled_value.get("measurand") or ENERGY_ACTIVE_IMPORT_REGISTER
             context = sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT
             location = sampled_value.get("location") or DEFAULT_MEASUREMENT_LOCATION
-            if measurand == ENERGY_ACTIVE_IMPORT_REGISTER:
+            if measurand == ENERGY_ACTIVE_IMPORT_REGISTER and is_outlet_total(
+                sampled_value.get("phase"), location
+            ):
                 if (sampled_value.get("format") or "Raw") != "Raw":
                     # A signed (SignedData) reading cannot be read as a number;
                     # the session still completes from ``meterStop`` (RV-BL4).
                     skipped["signed_data"] += 1
                     continue
+                value_wh = _energy_value_wh(sampled_value)
+                if not is_storable_value(value_wh):
+                    skipped["out_of_range"] += 1
+                    continue
                 energy.append(
                     MeterSampleInput(
                         sampled_at=sampled_at,
-                        value_wh=_energy_value_wh(sampled_value),
+                        value_wh=value_wh,
                         context=context,
                         measurement_location=location,
                     )
                 )
                 continue
+            # Any other sample, including a per-phase or Inlet energy register,
+            # is a plain measurement: it is stored with its phase and location
+            # and never becomes the session's start or stop reading (RV-BL5).
             if (sampled_value.get("format") or "Raw") != "Raw":
                 skipped["signed_data"] += 1
                 continue
@@ -181,6 +192,10 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
                 value,
                 sampled_value.get("unit") or (KNOWN_MEASURAND_UNITS.get(measurand)),
             )
+            if not is_storable_value(value):
+                # A vendor sentinel such as a uint64 maximum, not a reading.
+                skipped["out_of_range"] += 1
+                continue
             phase = sampled_value.get("phase")
             if (
                 len(measurand) > _MAX_MEASURAND

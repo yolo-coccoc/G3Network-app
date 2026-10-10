@@ -281,6 +281,7 @@ def _charge_point_16(connection: object | None = None) -> OCPP16ChargePoint:
         "LSC",
         connection or object(),  # type: ignore[arg-type]
         FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -297,6 +298,7 @@ def _charge_point_201(connection: object | None = None) -> OCPP201ChargePoint:
         "LSC",
         connection or object(),  # type: ignore[arg-type]
         FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -544,10 +546,6 @@ async def test_2_0_1_started_event_with_evse_id_only_activates_the_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS4/RV-BL5: meter_stop taken from a per-phase or Inlet register",
-)
 async def test_2_0_1_meter_stop_ignores_per_phase_and_inlet_registers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -572,10 +570,6 @@ async def test_2_0_1_meter_stop_ignores_per_phase_and_inlet_registers(
     assert completed[0]["meter_stop_wh"] == Decimal(50000)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS4/RV-BL5: a per-phase 1.6J energy register loses its phase",
-)
 def test_1_6_per_phase_energy_register_is_not_stored_as_the_total() -> None:
     """An L1 register reading either keeps its phase or stays out of the totals."""
     extraction = extract_v16_measurements(
@@ -597,10 +591,6 @@ def test_1_6_per_phase_energy_register_is_not_stored_as_the_total() -> None:
 # --- RV-CS5: values beyond the measurement column ---------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS5: a value beyond Numeric(24,6) is not skipped (overflow)",
-)
 def test_1_6_out_of_range_vendor_value_is_skipped_and_counted() -> None:
     """A uint64 'not available' sentinel is skipped, never sent to the database."""
     extraction = extract_v16_measurements(
@@ -617,10 +607,6 @@ def test_1_6_out_of_range_vendor_value_is_skipped_and_counted() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS5: a huge 2.0.1 multiplier raises decimal.InvalidOperation",
-)
 def test_2_0_1_huge_multiplier_does_not_fail_the_message() -> None:
     """An absurd multiplier drops that sample; the other readings still come through."""
     measurements = extract_measurements(
@@ -741,10 +727,6 @@ def _command_row(**overrides: Any) -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS6: a command the sweep already closed is still sent",
-)
 async def test_run_command_does_not_send_a_command_that_was_already_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -765,10 +747,6 @@ async def test_run_command_does_not_send_a_command_that_was_already_closed(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS10: a command for a deleted EVSE widens to the whole charger",
-)
 async def test_command_for_a_deleted_evse_is_not_sent_to_the_whole_charger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -800,10 +778,6 @@ async def test_command_for_a_deleted_evse_is_not_sent_to_the_whole_charger(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS8: a failed start abandons a session of another charger",
-)
 async def test_failed_start_never_abandons_a_session_of_another_charger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -883,10 +857,6 @@ class _StubChargePoint:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS9: adapters resolve the charger by identity, not station_id",
-)
 async def test_gateway_hands_the_station_fixed_at_handshake_to_the_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

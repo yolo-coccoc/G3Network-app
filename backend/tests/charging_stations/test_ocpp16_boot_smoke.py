@@ -32,6 +32,7 @@ from tests.builders import build_charging_location_record
 from tests.fakes import FakeSessionFactory
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
+STATION_ID = uuid4()
 
 
 def _charge_point() -> OCPP16ChargePoint:
@@ -39,6 +40,7 @@ def _charge_point() -> OCPP16ChargePoint:
         "LSC",
         object(),  # type: ignore[arg-type]
         FakeSessionFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -85,7 +87,7 @@ async def test_boot_notification_accepts_with_only_the_required_fields(
 
     assert response.status == RegistrationStatus.accepted
     assert response.interval == settings.CHARGING_OCPP_HEARTBEAT_INTERVAL_SECONDS
-    assert captured["ocpp_identity"] == "LSC"
+    assert captured["station_id"] == STATION_ID
     assert captured["vendor"] == "Willdigits"
     assert captured["model"] == "240kW"
     assert captured["serial_number"] is None
@@ -188,7 +190,7 @@ def _patch_boot_repository(
 ) -> list[dict[str, Any]]:
     updates: list[dict[str, Any]] = []
 
-    async def fake_get(db: object, identity: str, **_: Any) -> Any:
+    async def fake_get(db: object, station_id: Any, **_: Any) -> Any:
         return station
 
     async def fake_update(db: object, station_id: Any, **kwargs: Any) -> bool:
@@ -200,9 +202,7 @@ def _patch_boot_repository(
             firmware_version=getattr(station, "firmware_version", None)
         )
 
-    monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
-    )
+    monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_get)
     monkeypatch.setattr(ocpp_state_repository, "update_station_boot_info", fake_update)
     monkeypatch.setattr(
         ocpp_state_repository, "get_station_state_for_update", fake_state
@@ -216,14 +216,17 @@ async def test_record_charger_boot_overwrites_device_fields_without_warning_on_f
 ) -> None:
     """The very first boot stores the baseline and warns about nothing."""
     station = SimpleNamespace(
-        station_id=uuid4(), registered_serial_number="S1", firmware_version=None
+        station_id=uuid4(),
+        ocpp_identity="LSC",
+        registered_serial_number="S1",
+        firmware_version=None,
     )
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
         await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=uuid4(),
             vendor="V",
             model="M",
             serial_number="S1",
@@ -242,18 +245,19 @@ async def test_record_charger_boot_warns_but_accepts_when_the_update_matches_no_
 ) -> None:
     """A station deleted between load and update is logged, never raised."""
     station = SimpleNamespace(
-        station_id=uuid4(), registered_serial_number="S1", firmware_version=None
+        station_id=uuid4(),
+        ocpp_identity="LSC",
+        registered_serial_number="S1",
+        firmware_version=None,
     )
 
-    async def fake_get(db: object, identity: str, **_: Any) -> Any:
+    async def fake_get(db: object, station_id: Any, **_: Any) -> Any:
         return station
 
     async def no_row(db: object, station_id: Any, **kwargs: Any) -> bool:
         return False
 
-    monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
-    )
+    monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_get)
 
     async def fake_state(db: object, station_id: Any) -> None:
         return None
@@ -266,7 +270,7 @@ async def test_record_charger_boot_warns_but_accepts_when_the_update_matches_no_
     with caplog.at_level(logging.WARNING):
         await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=uuid4(),
             vendor="V",
             model="M",
             serial_number=None,
@@ -287,14 +291,17 @@ async def test_record_charger_boot_warns_when_firmware_changes(
 ) -> None:
     """A different firmware version than the stored baseline is logged as a warning."""
     station = SimpleNamespace(
-        station_id=uuid4(), registered_serial_number="S1", firmware_version="FW-1"
+        station_id=uuid4(),
+        ocpp_identity="LSC",
+        registered_serial_number="S1",
+        firmware_version="FW-1",
     )
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
         await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=uuid4(),
             vendor="V",
             model="M",
             serial_number=None,
@@ -317,7 +324,10 @@ async def test_record_charger_boot_does_not_warn_when_firmware_is_unchanged_or_u
 ) -> None:
     """Same version, or a charger that stops reporting one, is not a firmware swap."""
     station = SimpleNamespace(
-        station_id=uuid4(), registered_serial_number="S1", firmware_version="FW-1"
+        station_id=uuid4(),
+        ocpp_identity="LSC",
+        registered_serial_number="S1",
+        firmware_version="FW-1",
     )
     _patch_boot_repository(monkeypatch, station)
 
@@ -325,7 +335,7 @@ async def test_record_charger_boot_does_not_warn_when_firmware_is_unchanged_or_u
         for reported in ("FW-1", None):
             await ocpp_state_service.record_charger_boot(
                 object(),  # type: ignore[arg-type]
-                ocpp_identity="LSC",
+                station_id=uuid4(),
                 vendor="V",
                 model="M",
                 serial_number=None,
@@ -346,7 +356,7 @@ async def test_record_charger_boot_rejects_missing_station_and_naive_time(
     with pytest.raises(ChargingStationNotFoundError):
         await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=uuid4(),
             vendor="V",
             model="M",
             serial_number=None,
@@ -356,7 +366,7 @@ async def test_record_charger_boot_rejects_missing_station_and_naive_time(
     with pytest.raises(ChargingOcppMessageInputError):
         await ocpp_state_service.record_charger_boot(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=uuid4(),
             vendor="V",
             model="M",
             serial_number=None,

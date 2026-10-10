@@ -1831,7 +1831,8 @@ async def resolve_session_command_reference(
         session_id: UUID of the session.
 
     Returns:
-        A frozen reference with the session's token and transaction ID.
+        A frozen reference with the session's token, transaction ID, charger
+        and status.
 
     Raises:
         ChargingSessionNotFoundError: If the session does not exist.
@@ -1843,4 +1844,6 @@ async def resolve_session_command_reference(
         session_id=session_record.session_id,
         id_token=session_record.id_token,
         ocpp_transaction_id=session_record.ocpp_transaction_id,
+        station_id=session_record.station_id,
+        status=session_record.status,
     )

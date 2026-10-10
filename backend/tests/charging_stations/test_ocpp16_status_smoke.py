@@ -16,7 +16,6 @@ import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingOcppMessageInputError,
-    ChargingStationNotFoundError,
 )
 from app.domains.charging_stations.models import (
     ChargingConnectorModel,
@@ -59,6 +58,7 @@ def _charge_point(factory: _CountingFactory | None = None) -> OCPP16ChargePoint:
         "LSC",
         object(),  # type: ignore[arg-type]
         factory or _CountingFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -73,10 +73,10 @@ def _patch_service(
     }
 
     async def fake_resolve(
-        db: object, ocpp_identity: str, ocpp_connector_id: int
+        db: object, station_id: Any, ocpp_connector_id: int
     ) -> tuple[Any, Any, Any]:
         calls["resolve"].append(
-            {"ocpp_identity": ocpp_identity, "ocpp_connector_id": ocpp_connector_id}
+            {"station_id": station_id, "ocpp_connector_id": ocpp_connector_id}
         )
         return STATION_ID, EVSE_ID, CONNECTOR_ID
 
@@ -168,7 +168,7 @@ async def test_status_notification_maps_gun_n_to_evse_n_connector_1(
         connector_id=2, error_code="NoError", status="Available"
     )
 
-    assert calls["resolve"] == [{"ocpp_identity": "LSC", "ocpp_connector_id": 2}]
+    assert calls["resolve"] == [{"station_id": STATION_ID, "ocpp_connector_id": 2}]
     assert calls["connector"][0]["connector_id"] == CONNECTOR_ID
 
 
@@ -211,7 +211,7 @@ async def test_connector_zero_is_stored_on_the_station_and_never_touches_topolog
     assert calls["connector"] == []
     assert calls["charger"] == [
         {
-            "ocpp_identity": "LSC",
+            "station_id": STATION_ID,
             "status": ChargingConnectorStatus.FAULTED,
             "status_updated_at": NOW,
             "error_code": "PowerMeterFailure",
@@ -297,6 +297,7 @@ async def test_2_0_1_status_notification_still_stores_occupied_without_error_fie
         "LSC",
         object(),  # type: ignore[arg-type]
         _CountingFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
     await charge_point.on_status_notification(
@@ -327,10 +328,10 @@ async def test_resolve_ocpp16_topology_maps_gun_n_to_evse_n_connector_1(
     seen: dict[str, Any] = {}
 
     async def fake_resolve(
-        db: object, ocpp_identity: str, ocpp_evse_id: int, ocpp_connector_id: int
+        db: object, station_id: Any, ocpp_evse_id: int, ocpp_connector_id: int
     ) -> tuple[Any, Any, Any]:
         seen.update(
-            ocpp_identity=ocpp_identity,
+            station_id=station_id,
             ocpp_evse_id=ocpp_evse_id,
             ocpp_connector_id=ocpp_connector_id,
         )
@@ -340,13 +341,13 @@ async def test_resolve_ocpp16_topology_maps_gun_n_to_evse_n_connector_1(
 
     result = await ocpp_state_service.resolve_ocpp16_topology(
         object(),  # type: ignore[arg-type]
-        "LSC",
+        STATION_ID,
         connector,
     )
 
     assert result == (STATION_ID, EVSE_ID, CONNECTOR_ID)
     assert seen == {
-        "ocpp_identity": "LSC",
+        "station_id": STATION_ID,
         "ocpp_evse_id": connector,
         "ocpp_connector_id": 1,
     }
@@ -361,7 +362,7 @@ async def test_resolve_ocpp16_topology_rejects_connector_zero_and_negatives(
     with pytest.raises(ChargingOcppMessageInputError):
         await ocpp_state_service.resolve_ocpp16_topology(
             object(),  # type: ignore[arg-type]
-            "LSC",
+            STATION_ID,
             connector,
         )
 
@@ -374,16 +375,14 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
     written: list[dict[str, Any]] = []
     station: Any = SimpleNamespace(station_id=STATION_ID)
 
-    async def fake_get(db: object, identity: str, **_: Any) -> Any:
+    async def fake_get(db: object, station_id: Any, **_: Any) -> Any:
         return station
 
     async def fake_update(db: object, station_id: Any, **kwargs: Any) -> bool:
         written.append({"station_id": station_id, **kwargs})
         return True
 
-    monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
-    )
+    monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_get)
     monkeypatch.setattr(
         ocpp_state_repository, "update_station_charger_status", fake_update
     )
@@ -391,7 +390,7 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
 
     await ocpp_state_service.update_charger_status(
         object(),  # type: ignore[arg-type]
-        ocpp_identity="LSC",
+        station_id=STATION_ID,
         status=ChargingConnectorStatus.FAULTED,
         status_updated_at=local,
         error_code="HighTemperature",
@@ -403,19 +402,9 @@ async def test_update_charger_status_writes_utc_time_and_reports_missing_station
     with pytest.raises(ChargingOcppMessageInputError):
         await ocpp_state_service.update_charger_status(
             object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
+            station_id=STATION_ID,
             status=ChargingConnectorStatus.FAULTED,
             status_updated_at=datetime(2026, 9, 24, 10, 0),
-            error_code="NoError",
-            vendor_error_code=None,
-        )
-    station = None
-    with pytest.raises(ChargingStationNotFoundError):
-        await ocpp_state_service.update_charger_status(
-            object(),  # type: ignore[arg-type]
-            ocpp_identity="LSC",
-            status=ChargingConnectorStatus.FAULTED,
-            status_updated_at=NOW,
             error_code="NoError",
             vendor_error_code=None,
         )

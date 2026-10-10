@@ -50,6 +50,7 @@ def _charge_point(factory: _CountingFactory | None = None) -> OCPP16ChargePoint:
         "LSC",
         object(),  # type: ignore[arg-type]
         factory or _CountingFactory(),  # type: ignore[arg-type]
+        station_id=STATION_ID,
     )
 
 
@@ -64,10 +65,10 @@ def _patch_start(
     record: dict[str, Any] = {"ingest": [], "allocated": []}
 
     async def fake_resolve(
-        db: object, ocpp_identity: str, ocpp_connector_id: int
+        db: object, station_id: Any, ocpp_connector_id: int
     ) -> tuple[Any, Any, Any]:
         record["resolve"] = {
-            "ocpp_identity": ocpp_identity,
+            "station_id": station_id,
             "ocpp_connector_id": ocpp_connector_id,
         }
         return STATION_ID, EVSE_ID, CONNECTOR_ID
@@ -153,7 +154,7 @@ async def test_start_transaction_activates_the_session_and_returns_the_allocated
 
     assert response.transaction_id == 1
     assert response.id_tag_info["status"] == AuthorizationStatus.accepted
-    assert record["resolve"] == {"ocpp_identity": "LSC", "ocpp_connector_id": 2}
+    assert record["resolve"] == {"station_id": STATION_ID, "ocpp_connector_id": 2}
     ingested = record["ingest"][0]
     assert ingested["transaction_id"] == "1"
     assert ingested["started_at"] == NOW
