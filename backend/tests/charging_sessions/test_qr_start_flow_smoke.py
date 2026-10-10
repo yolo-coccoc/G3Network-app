@@ -281,6 +281,9 @@ def _patch_scan(
     async def create_bill(db: object, **kwargs: Any) -> None:
         record["bill"] = kwargs
 
+    async def lock_wallet(db: object, user_id: UUID) -> None:
+        record["wallet_locked_for"] = user_id
+
     async def queue(db: object, **kwargs: Any) -> StationCommandReference:
         record["command"] = kwargs
         return StationCommandReference(
@@ -293,6 +296,7 @@ def _patch_scan(
     monkeypatch.setattr(stations_service, "resolve_scan_target", resolve_target)
     monkeypatch.setattr(charging_service, "has_active_session_on_connector", has_active)
     monkeypatch.setattr(charging_service, "has_open_session_by_user", has_open)
+    monkeypatch.setattr(billing_service, "lock_wallet_for_charge", lock_wallet)
     monkeypatch.setattr(billing_service, "resolve_wallet_standing", standing)
     monkeypatch.setattr(billing_service, "has_minimum_balance", minimum)
     monkeypatch.setattr(
@@ -324,6 +328,7 @@ async def test_scan_creates_the_pending_session_and_queues_the_remote_start(
     # The price of the scan's hour is frozen on a QUOTED bill (PAY-10).
     assert record["quote_for"][0] == STATION_ID
     assert record["bill"]["session_id"] == response.session_id
+    assert "wallet_locked_for" in record  # the person's scans run one at a time
     assert record["bill"]["quote"].tariff_version_id == TARIFF_VERSION_ID
     assert (response.price_per_kwh, response.vat_rate_percent) == (4500, Decimal(10))
     assert record["pending"] == {

@@ -454,6 +454,7 @@ async def get_user_state_for_update(
         select(UserStateModel)
         .where(UserStateModel.user_id == user_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 
@@ -644,6 +645,7 @@ async def find_session_by_refresh_hash(
         select(UserSessionModel)
         .where(UserSessionModel.refresh_token_hash == refresh_token_hash)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 
@@ -805,6 +807,7 @@ async def find_latest_one_time_code(
         .order_by(OneTimeCodeModel.created_at.desc())
         .limit(1)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 
@@ -831,6 +834,7 @@ async def find_latest_one_time_code_for_user(
         .order_by(OneTimeCodeModel.created_at.desc())
         .limit(1)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 
@@ -1183,6 +1187,7 @@ async def find_active_org_admin_assignment(
             UserRoleAssignmentModel.revoked_at.is_(None),
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 

@@ -80,7 +80,7 @@ async def get_tariff_by_id(
     if organization_id is not None:
         query = query.where(TariffModel.organization_id == organization_id)
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(query)).scalar_one_or_none()
 
 
@@ -281,7 +281,7 @@ async def find_bill_by_session_id(
         ChargingSessionBillModel.session_id == session_id
     )
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(query)).scalar_one_or_none()
 
 
@@ -334,7 +334,9 @@ async def get_bill_by_id(
             )
         )
     if for_update:
-        query = query.with_for_update(of=ChargingSessionBillModel)
+        query = query.with_for_update(of=ChargingSessionBillModel).execution_options(
+            populate_existing=True
+        )
     return (await db.execute(query)).scalar_one_or_none()
 
 
@@ -469,7 +471,7 @@ async def find_wallet_by_user_id(
     """
     query = select(WalletModel).where(WalletModel.user_id == user_id)
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(query)).scalar_one_or_none()
 
 
@@ -602,7 +604,7 @@ async def get_payment_by_id(
     """
     query = select(PaymentModel).where(PaymentModel.payment_id == payment_id)
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(query)).scalar_one_or_none()
 
 
@@ -621,7 +623,7 @@ async def find_payment_by_transfer_code(
     """
     query = select(PaymentModel).where(PaymentModel.transfer_code == transfer_code)
     if for_update:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     return (await db.execute(query)).scalar_one_or_none()
 
 

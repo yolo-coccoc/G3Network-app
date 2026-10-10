@@ -24,6 +24,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.billing.bill_service as bill_service
+import app.domains.billing.ledger_service as ledger_service
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.tariff_service as tariff_service
 from app.domains.billing.models import ChargingSessionBillModel
@@ -36,6 +37,27 @@ from app.domains.billing.types import (
     WalletStatus,
 )
 from app.libs.common.config import settings
+
+
+async def lock_wallet_for_charge(db: AsyncSession, user_id: UUID) -> None:
+    """Lock the person's wallet until the transaction ends, creating it if needed.
+
+    The QR scan takes this lock first: "one open charge per person" is a read
+    followed by an insert, so two scans of one person would otherwise both
+    pass the check. With the wallet locked the second scan waits, then sees
+    the first one's committed session and is refused (RV-BL3).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        user_id: The person who scans.
+
+    Raises:
+        WalletNotFoundError: The user does not exist.
+
+    Side Effects:
+        May create the wallet (ACTIVE, zero balance), like any first need.
+    """
+    await ledger_service.get_or_create_wallet_for_update(db, user_id)
 
 
 async def resolve_wallet_standing(db: AsyncSession, user_id: UUID) -> WalletStanding:

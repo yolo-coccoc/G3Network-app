@@ -94,13 +94,6 @@ async def _wait_until_done_or_blocked(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RV-BL2: FOR UPDATE re-read returns the stale identity-map payment, "
-        "so get_payment marks a credited top-up FAILED"
-    ),
-)
 async def test_reading_an_expired_top_up_never_fails_a_payment_credited_meanwhile(
     temporary_database: str,
 ) -> None:
@@ -172,13 +165,6 @@ async def test_reading_an_expired_top_up_never_fails_a_payment_credited_meanwhil
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "RV-BL3: the one-open-charge check is an unlocked read with no "
-        "unique index, so two concurrent scans both create a session"
-    ),
-)
 async def test_two_concurrent_scans_by_one_person_open_only_one_charge(
     temporary_database: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

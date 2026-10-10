@@ -288,10 +288,6 @@ async def test_a_command_closed_by_the_sweep_is_not_rewritten_by_a_late_answer(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS7: activation overwrites a concurrent ABANDONED (lost update)",
-)
 async def test_a_start_and_an_abandon_of_one_scan_never_both_win(
     temporary_database: str,
 ) -> None:

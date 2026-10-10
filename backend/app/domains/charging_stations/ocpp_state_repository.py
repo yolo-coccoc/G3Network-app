@@ -607,6 +607,7 @@ async def claim_queued_commands(
         .order_by(ChargingStationCommandModel.requested_at.asc())
         .limit(limit)
         .with_for_update(skip_locked=True)
+        .execution_options(populate_existing=True)
     )
     commands = list(result.scalars().all())
     for command in commands:

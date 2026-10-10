@@ -169,6 +169,7 @@ async def scan_charging_session_endpoint(
 
     The checks run in this order, so the caller sees the first problem:
 
+    0. the person's wallet is locked, so their scans run one at a time (RV-BL3);
     1. the charger exists, its location is visible to the caller, it is in
        service and connected (``charging_stations``);
     2. no charge is running on the named gun (on every gun, when no gun is
@@ -208,6 +209,9 @@ async def scan_charging_session_endpoint(
         InsufficientBalanceError: The wallet is below the minimum (409).
         NoTariffInForceError: No tariff prices the charger now (409).
     """
+    # Serialize this person's scans first: the one-open-charge check below is
+    # an unlocked read, so two simultaneous scans would both pass it (RV-BL3).
+    await billing_service.lock_wallet_for_charge(db_session, principal.user_id)
     target = await charging_stations_service.resolve_scan_target(
         db_session,
         charger_code=scan_request.charger_code,

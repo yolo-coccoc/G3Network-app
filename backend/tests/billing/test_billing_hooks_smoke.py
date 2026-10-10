@@ -216,6 +216,11 @@ async def test_a_scan_for_a_charger_with_no_price_creates_nothing(
 
     monkeypatch.setattr(stations_service, "resolve_scan_target", resolve_target)
     monkeypatch.setattr(charging_service, "has_open_session_by_user", no_open)
+
+    async def lock_wallet(db: object, user_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(billing_service, "lock_wallet_for_charge", lock_wallet)
     monkeypatch.setattr(billing_service, "resolve_wallet_standing", standing)
     monkeypatch.setattr(billing_service, "has_minimum_balance", minimum)
     monkeypatch.setattr(billing_service, "resolve_tariff_for_station", no_price)

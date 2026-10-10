@@ -80,6 +80,13 @@ async def find_pending_session_by_token(
     Returns:
         The PENDING session of that charger holding the token (the newest if
         several), or ``None`` when no scan issued it.
+
+    Side Effects:
+        Locks the row until the transaction ends, and re-reads it fresh: a
+        start and an abandon of one scan then run one after the other, and the
+        loser sees the winner's status (RV-CS7). The abandon updates are
+        conditional on PENDING, so one waiting on this lock changes nothing
+        once the start has committed.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingSessionModel.station_id == station_id,
@@ -93,6 +100,8 @@ async def find_pending_session_by_token(
         .where(*conditions)
         .order_by(ChargingSessionModel.created_at.desc())
         .limit(1)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     return query_result.scalar_one_or_none()
 
