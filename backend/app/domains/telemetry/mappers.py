@@ -126,6 +126,8 @@ def to_vehicle_live_status_reference(
         received_at=telemetry.received_at,
         is_online=is_online,
         signal_strength_dbm=telemetry.signal_dbm,
+        odometer_km=telemetry.odometer_km,
+        soc_percent=telemetry.soc_percent,
     )
 
 

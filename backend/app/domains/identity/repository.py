@@ -1743,3 +1743,46 @@ async def find_membership_with_user(
     )
     row = query_result.one_or_none()
     return (row[0], row[1]) if row is not None else None
+
+
+async def search_membership_ids_by_person(
+    db_session: AsyncSession,
+    *,
+    search_text: str,
+    organization_id: UUID | None,
+    limit: int,
+) -> list[UUID]:
+    """Find memberships whose person's name or phone number contains a text.
+
+    Args:
+        db_session: Current database session.
+        search_text: Text matched case-insensitively against the user's full
+            name and phone number; ``%``, ``_`` and ``\\`` are literal.
+        organization_id: Only memberships of this organization; `None` means
+            every organization.
+        limit: Largest number of IDs returned.
+
+    Returns:
+        Membership IDs, newest first (a left membership is included: the
+        caller filters by the profile it joins).
+    """
+    escaped_text = (
+        search_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    pattern = f"%{escaped_text}%"
+    conditions: list[ColumnElement[bool]] = [
+        or_(
+            UserModel.full_name.ilike(pattern, escape="\\"),
+            UserModel.phone_number.ilike(pattern, escape="\\"),
+        )
+    ]
+    if organization_id is not None:
+        conditions.append(MembershipModel.organization_id == organization_id)
+    query_result = await db_session.execute(
+        select(MembershipModel.membership_id)
+        .join(UserModel, UserModel.user_id == MembershipModel.user_id)
+        .where(and_(*conditions))
+        .order_by(MembershipModel.created_at.desc())
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())

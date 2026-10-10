@@ -7,6 +7,7 @@ column holds the member's value, e.g. ``OrganizationStatus.ACTIVE.value``.
 """
 
 import enum
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -33,6 +34,28 @@ class UserStatus(str, enum.Enum):
     INVITED = "INVITED"
     ACTIVE = "ACTIVE"
     LOCKED = "LOCKED"
+
+
+class MembershipEndKind(str, enum.Enum):
+    """How a person's standing in an organization stopped (DR-10).
+
+    Attributes:
+        ENDED: The membership ended (removed, or the person left): its job
+            profiles leave the system.
+        LOCKED: The membership was locked: reversible, so a profile stays but
+            the person must not keep working on a truck.
+    """
+
+    ENDED = "ENDED"
+    LOCKED = "LOCKED"
+
+
+# A callback another part of the application registers to react, inside the
+# same transaction, when a membership ends or is locked. Called as
+# ``hook(db_session, membership_id=..., kind=..., acting_user_id=..., reason=...)``.
+# identity depends on no domain, so the drivers domain (DR-10) is wired to it
+# in ``app/api/membership_end_hooks.py`` instead of being imported here.
+MembershipEndHook = Callable[..., Awaitable[None]]
 
 
 class MembershipStatus(str, enum.Enum):

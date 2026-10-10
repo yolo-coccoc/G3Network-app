@@ -72,6 +72,7 @@ component you need in its own terminal and keep it running:
 | 3 | `make charging-ocpp-dev` | OCPP gateway on port 9000 (2.0.1 and 1.6J) |
 | 4 | `make telematics-monitor-dev` | Device-health monitor: alerts when a device stops reporting |
 | 5 | `make telematics-status-dev` | T-Box status-report ingestion (health reports into `telematic_status_reports`) |
+| 6 | `make driving-sessions-autoend-dev` | Ends driving sessions whose truck has not moved for the organization's auto-end time |
 
 Once per database (after `make db-reset`), set `IDENTITY_BOOTSTRAP_ADMIN_PHONE` and `IDENTITY_BOOTSTRAP_ADMIN_PASSWORD` in `backend/.env` and run `make identity-bootstrap`: it creates the internal organization and the first HEAD_ADMIN, because no endpoint can.
 

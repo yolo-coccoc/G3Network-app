@@ -110,6 +110,38 @@ async def find_latest_received_at(
     return query_result.scalar_one_or_none()
 
 
+async def find_latest_moving_recorded_at(
+    db: AsyncSession, vehicle_id: UUID, *, min_speed_kmh: float, since: datetime
+) -> datetime | None:
+    """Get when a vehicle last reported a speed above a threshold.
+
+    Served by ``ix_telemetry_vehicle_time`` (ordered by ``recorded_at``
+    descending, the speed filter is applied while scanning from the newest
+    row).
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        min_speed_kmh: A sample counts as moving when its speed is above this.
+        since: Only samples recorded at or after this time are looked at.
+
+    Returns:
+        The largest matching ``recorded_at``, or `None` if the vehicle did
+        not move since ``since``.
+    """
+    query_result = await db.execute(
+        select(TelemetryModel.recorded_at)
+        .where(
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= since,
+            TelemetryModel.speed_kmh > min_speed_kmh,
+        )
+        .order_by(TelemetryModel.recorded_at.desc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
 async def find_first_received_at(
     db: AsyncSession, vehicle_id: UUID, telematic_id: UUID, since: datetime
 ) -> datetime | None:

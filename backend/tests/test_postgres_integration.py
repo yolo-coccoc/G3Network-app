@@ -1,6 +1,7 @@
 """PostgreSQL integration test for the baseline migrations and telemetry repository."""
 
 import asyncio
+import dataclasses
 import json
 import os
 import socket
@@ -28,6 +29,7 @@ import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
+import app.domains.drivers.trip_service as trip_service
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
 import app.domains.identity.account_service as identity_account_service
@@ -71,9 +73,20 @@ from app.domains.charging_stations.types import (
     StationCommandOutcome,
     StationCommandType,
 )
+from app.domains.drivers.exceptions import (
+    DriverTooFarFromVehicleError,
+    TripInProgressConflictError,
+)
 from app.domains.drivers.models import DriverModel, TripModel
+from app.domains.drivers.schemas import (
+    DrivingSessionCheckInRequest,
+    PersonalTripStartRequest,
+    TripPlanRequest,
+    TripStartRequest,
+)
 from app.domains.drivers.types import (
     CheckInMethod,
+    CheckInWarning,
     DriverStatus,
     DrivingSessionEndCause,
     TripStatus,
@@ -117,6 +130,7 @@ from app.domains.identity.schemas import (
 )
 from app.domains.identity.types import (
     AccessAuditAction,
+    MembershipEndKind,
     MembershipStatus,
     OneTimeCodePurpose,
     OrganizationLegalForm,
@@ -2006,6 +2020,226 @@ async def test_driving_session_indexes_driver_history_and_trip_checks_on_postgre
                 )
             )
             await db.flush()
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
+    temporary_database: str,
+) -> None:
+    """Check-in takeover closes the running trip; trips run; idle sessions auto-end (DR-07/10/12)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            now = datetime.now(timezone.utc)
+            truck = await _seed_vehicle_readings(
+                db,
+                [
+                    {
+                        "recorded_at": now - timedelta(minutes=1),
+                        "soc_percent": 80.0,
+                        "odometer_km": 100.0,
+                        "speed_kmh": 0.0,
+                    }
+                ],
+            )
+            alice = await _integration_driver(
+                db, license_number="LIC-ALICE", organization_id=truck.organization_id
+            )
+            bob = await _integration_driver(db, license_number="LIC-BOB")
+            bob_organization_id = (
+                await identity_service.resolve_membership_person_reference(
+                    db, bob.membership_id
+                )
+            ).organization_id  # type: ignore[union-attr]
+            manager = build_principal(
+                roles=frozenset({UserRole.FLEET_MANAGER}),
+                organization_id=truck.organization_id,
+            )
+            alice_principal = dataclasses.replace(
+                build_principal(
+                    roles=frozenset({UserRole.DRIVER}),
+                    organization_id=truck.organization_id,
+                ),
+                membership_id=alice.membership_id,
+            )
+            bob_principal = dataclasses.replace(
+                build_principal(
+                    roles=frozenset({UserRole.DRIVER}),
+                    organization_id=bob_organization_id,
+                ),
+                membership_id=bob.membership_id,
+            )
+
+            # The manager plans a trip for Alice on the truck (DR-12).
+            planned = await trip_service.plan_trip(
+                db,
+                TripPlanRequest(
+                    origin_name="Depot",
+                    destination_name="Port",
+                    planned_start_at=now + timedelta(hours=1),
+                    planned_driver_id=alice.driver_id,
+                    planned_vehicle_id=truck.vehicle_id,
+                ),
+                principal=manager,
+            )
+            assert planned.status == TripStatus.PLANNED
+
+            # A phone 5 km away is refused; one next to the truck checks in by VIN.
+            with pytest.raises(DriverTooFarFromVehicleError):
+                await driver_service.check_in_driver(
+                    db,
+                    DrivingSessionCheckInRequest(
+                        vehicle_vin=truck.vin,
+                        check_in_method=CheckInMethod.QR,
+                        latitude=10.85,
+                        longitude=106.7,
+                    ),
+                    principal=alice_principal,
+                )
+            alice_session = await driver_service.check_in_driver(
+                db,
+                DrivingSessionCheckInRequest(
+                    vehicle_vin=truck.vin,
+                    check_in_method=CheckInMethod.QR,
+                    latitude=10.8001,
+                    longitude=106.7,
+                ),
+                principal=alice_principal,
+            )
+            assert alice_session.warnings == []
+            current = await driver_service.get_current_driving_session(
+                db, principal=alice_principal
+            )
+            assert current.driving_session_id == alice_session.driving_session_id
+
+            started = await trip_service.start_trip(
+                db, planned.trip_id, TripStartRequest(), principal=alice_principal
+            )
+            assert started.status == TripStatus.IN_PROGRESS
+            assert started.start_odometer_km == 100.0
+
+            # Bob, from another organization, takes the truck over by plate: Alice's
+            # session ends TAKEN_OVER and her running trip closes by itself.
+            bob_session = await driver_service.check_in_driver(
+                db,
+                DrivingSessionCheckInRequest(
+                    vehicle_code=truck.license_plate,
+                    check_in_method=CheckInMethod.QR,
+                    latitude=10.8,
+                    longitude=106.7001,
+                ),
+                principal=bob_principal,
+            )
+            assert [ended.end_cause for ended in bob_session.ended_sessions] == [
+                DrivingSessionEndCause.TAKEN_OVER
+            ]
+            assert CheckInWarning.OTHER_ORGANIZATION in bob_session.warnings
+            closed_trip = await trip_service.get_trip(
+                db, planned.trip_id, principal=manager
+            )
+            assert closed_trip.status == TripStatus.COMPLETED
+            assert closed_trip.status_reason == driver_service.TRIP_AUTO_CLOSED_REASON
+            assert closed_trip.actual_driver_id == alice.driver_id
+
+            # Bob runs a personal trip; a second one in the same shift is a conflict.
+            personal = await trip_service.start_personal_trip(
+                db,
+                PersonalTripStartRequest(origin_name="Port", destination_name="Depot"),
+                principal=bob_principal,
+            )
+            assert personal.organization_id == truck.organization_id
+            with pytest.raises(TripInProgressConflictError):
+                await trip_service.start_personal_trip(
+                    db, PersonalTripStartRequest(), principal=bob_principal
+                )
+            telematic_id = (
+                await db.execute(
+                    select(TelematicModel.telematic_id).where(
+                        TelematicModel.vehicle_id == truck.vehicle_id
+                    )
+                )
+            ).scalar_one()
+            await telemetry_repository.insert_telemetry(
+                db,
+                {
+                    "organization_id": truck.organization_id,
+                    "device_message_id": uuid4(),
+                    "telematic_id": telematic_id,
+                    "vehicle_id": truck.vehicle_id,
+                    "recorded_at": datetime.now(timezone.utc),
+                    "received_at": datetime.now(timezone.utc),
+                    "location": coordinates_to_location(10.8, 106.7),
+                    "raw_payload": {"source": "postgres-integration"},
+                    "soc_percent": 70.0,
+                    "odometer_km": 130.0,
+                    "speed_kmh": 0.0,
+                },
+            )
+            finished = await trip_service.finish_trip(
+                db, personal.trip_id, principal=bob_principal
+            )
+            assert finished.status == TripStatus.COMPLETED
+            assert finished.distance_km == 30.0
+            assert finished.energy_kwh == 20.0  # 10 % of the 200 kWh pack
+
+            my_trips = await trip_service.list_trips(
+                db, principal=bob_principal, statuses=[TripStatus.COMPLETED]
+            )
+            assert [trip.trip_id for trip in my_trips.items] == [personal.trip_id]
+            history_reasons = (
+                (
+                    await db.execute(
+                        text(
+                            "SELECT change_reason FROM trip_history "
+                            "WHERE trip_id = :trip_id ORDER BY history_id"
+                        ),
+                        {"trip_id": planned.trip_id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert history_reasons == [
+                "Trip started",
+                driver_service.TRIP_AUTO_CLOSED_REASON,
+            ]
+
+            # Hours later the truck is still standing and has reported since the
+            # check-in: the session auto-ends at the countdown start.
+            sweep = await driver_service.end_idle_driving_sessions(
+                db, now=datetime.now(timezone.utc) + timedelta(hours=3)
+            )
+            assert (sweep.checked, sweep.ended) == (1, 1)
+            ended = await driver_service.get_own_driving_summary(
+                db, principal=bob_principal
+            )
+            assert [item.end_cause for item in ended.sessions] == [
+                DrivingSessionEndCause.AUTO_ENDED
+            ]
+
+            # Ending Alice's membership removes her profile (DR-10).
+            await driver_service.handle_membership_end(
+                db,
+                membership_id=alice.membership_id,
+                kind=MembershipEndKind.ENDED,
+                acting_user_id=ACTOR_USER_ID,
+                reason="Left the company",
+            )
+            deleted = (
+                await db.execute(
+                    select(DriverModel.deleted_at, DriverModel.status_reason).where(
+                        DriverModel.driver_id == alice.driver_id
+                    )
+                )
+            ).one()
+            assert deleted.deleted_at is not None
+            assert deleted.status_reason == "Left the company"
             await db.rollback()
     finally:
         await engine.dispose()

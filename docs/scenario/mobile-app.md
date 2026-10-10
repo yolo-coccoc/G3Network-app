@@ -11,9 +11,9 @@
 ## Conventions
 
 - Base path `/api/v1`. **built** = the route exists in `backend/app/domains/*/router.py`
-  today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` and trips are planned; the old `drivers` assignment
+  today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` is planned; check-in, the driver's own summary and trips are **built** (WP5, DR-15); the old `drivers` assignment
   routes (`POST /drivers/{driver_id}/assignment`) are gone, replaced by check-in
-  (`POST /driving-sessions/` is built with `vehicle_vin` in the body and no `driver_id` for the driver's own check-in; DR-07,
+  (`POST /driving-sessions/` is built with `vehicle_code` (VIN or plate) or `vehicle_vin` in the body and no `driver_id` for the driver's own check-in; DR-07,
   [decision-log.md:339](../decisions/decision-log.md#L339)).
 - Every call except sign-up/login/OTP sends `Authorization: Bearer <access token>`
   (all other routers enforce it since WP2b, ID-50). A DRIVER-only caller sees
@@ -60,14 +60,14 @@ content is not decided** (deferred item 94,
 the app extracts from the QR, so the contract does not change when the content
 is fixed.
 
-| # | Screen / step | API call (all planned) | Main error cases |
+| # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | "Nearby trucks" list (alternative to scanning) | `GET /driving-sessions/nearby-vehicles?lat=&lon=` returns trucks whose last T-Box position is close to the phone | `404` no truck near; empty list is `200` |
-| 2 | Scan the QR on the truck | `POST /driving-sessions` `{check_in_method: "QR", vehicle_code, location: {lat, lon}}` | `404` unknown or revoked code; not an error: a truck with another driver at the wheel is taken over (old session ends TAKEN_OVER), and the driver's open session on another truck ends OTHER_TRUCK (DR-07); the response says which session ended; `400` phone too far from the truck; `403` driver profile not ACTIVE or licence expired |
-| 3 | Pick a truck from the nearby list | same call with `check_in_method: "APP"` and `vehicle_id` | same as step 2 |
-| 4 | Warning when the truck belongs to another organization | returned in the response (`warnings: ["OTHER_ORGANIZATION"]`); the app shows a notice, check-in still succeeds | none |
-| 5 | Home shows the truck, live battery and location while checked in (NT-07) | `GET /driving-sessions/current`, then `GET /telemetry/vehicles/{vehicle_id}/latest` (**built**) | `404` not checked in; `403` after check-out (the driver no longer sees the truck) |
-| 6 | Check out | `POST /driving-sessions/{driving_session_id}/check-out` | `409` already ended (for example auto-ended after the truck stayed still); `404` not the caller's session. A trip still in progress is closed automatically as COMPLETED with a reason (DR-12) |
+| 1 | "Nearby trucks" list (alternative to scanning) | `GET /driving-sessions/nearby-vehicles?lat=&lon=` (**planned**, not part of WP5) returns trucks whose last T-Box position is close to the phone | `404` no truck near; empty list is `200` |
+| 2 | Scan the QR on the truck (DRV-02, DRV-04: this also identifies who drives the shift) | `POST /driving-sessions/` `{check_in_method: "QR", vehicle_code, latitude, longitude}` (**built**; `vehicle_code` is a VIN or a plate, `vehicle_vin` also works; a QR or APP check-in needs both coordinates, `400` otherwise) | `404` unknown truck; not an error: a truck with another driver at the wheel is taken over (old session ends TAKEN_OVER), and the driver's open session on another truck ends OTHER_TRUCK (DR-07); the response lists `ended_sessions`; `400` phone farther than `DRIVERS_CHECKIN_MAX_DISTANCE_M` from the truck's last position, or driver profile not ACTIVE / licence expired / membership not active (DR-10) |
+| 3 | Pick a truck from the nearby list | same call with `check_in_method: "APP"` | same as step 2 |
+| 4 | Warnings | in the response (`warnings`): `OTHER_ORGANIZATION` (the driver belongs to another organization than the truck's owner) and `NO_RECENT_TRUCK_POSITION` (the truck has no T-Box position newer than `DRIVERS_CHECKIN_POSITION_MAX_AGE_MINUTES`, so the phone could not be compared); the app shows a notice, check-in still succeeds | none |
+| 5 | Home shows the truck, live battery and location while checked in (NT-07) | `GET /driving-sessions/current` (**built**), then `GET /telemetry/vehicles/{vehicle_id}/latest` (**built**) | `404` not checked in; `403` after check-out (the driver no longer sees the truck) |
+| 6 | Check out | `POST /driving-sessions/check-out` (**built**; the caller's own open session, no ID needed) | `404` no open session (for example auto-ended after the truck stayed still: `AUTO_ENDED`). A trip still in progress is closed automatically as COMPLETED with a reason (DR-12) |
 
 ## 3. Trips (planned jobs and their execution)
 
@@ -77,13 +77,13 @@ fleet has no plan: Start creates a personal trip. Driver confirmation of an
 assigned trip is deferred (deferred item 95): an assigned trip simply waits in
 the list until Start.
 
-| # | Screen / step | API call (all planned) | Main error cases |
+| # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | "My trips" list: assigned, in progress, done | `GET /trips?status=PLANNED,IN_PROGRESS&scope=mine&offset=&limit=` | none |
-| 2 | Open a trip: origin, destination, planned times, truck | `GET /trips/{trip_id}` | `404` not the caller's trip |
-| 3 | **Start trip** (must be checked in); optionally declare LOADED or EMPTY (MON-13) | `POST /trips/{trip_id}/start` `{declared_load_status}`; for a personal trip `POST /trips` `{origin_name, destination_name, declared_load_status}` creates and starts it. The server records time, T-Box position, odometer and battery % | `409` not checked in, or a trip already in progress in this session, or trip not PLANNED; `409` truck differs from the planned truck (allowed, flagged to the manager in the portal, not an error); offline start: the app sends its press time and the server checks it |
-| 4 | **Finish trip** | `POST /trips/{trip_id}/finish` | `409` not IN_PROGRESS; `404` not the caller's trip |
-| 5 | Reminder: truck moving with no trip started | push notification `NO_TRIP_STARTED` (inbox, section 8) | none |
+| 1 | "My trips" list: assigned, in progress, done | `GET /trips/?status=PLANNED&status=IN_PROGRESS&mine=true&page=&page_size=` (**built**; a DRIVER-only caller always gets their own trips) | none |
+| 2 | Open a trip: origin, destination, planned times, truck | `GET /trips/{trip_id}` (**built**; also distance, energy, kWh/km and cost once finished) | `404` not the caller's trip |
+| 3 | **Start trip** (must be checked in); optionally declare LOADED or EMPTY (MON-13) | `POST /trips/{trip_id}/start` `{declared_load_status}` (**built**); for a personal trip `POST /trips/start-personal` `{origin_name?, destination_name?, declared_load_status}` creates and starts it. The server records time, T-Box position, odometer and battery % (empty when the truck has no recent sample) | `409` not checked in, or a trip already in progress in this session, or trip not PLANNED; a truck or driver different from the plan is allowed and flagged (`vehicle_differs_from_plan`, `driver_differs_from_plan`); `404` a trip that names another driver; offline start (the app's press time) is not built |
+| 4 | **Finish trip** | `POST /trips/{trip_id}/finish` (**built**) | `409` not IN_PROGRESS; `404` not the caller's trip |
+| 5 | Reminder: truck moving with no trip started | push notification `NO_TRIP_STARTED` (inbox, section 8) (**planned**) | none |
 
 ## 4. Wallet
 
@@ -134,10 +134,9 @@ A driver sees only a **summary** of their own sessions: date, truck plate,
 check-in and check-out time, duration, distance, plus totals per day and week
 for the driving-time warning. Never the route, GPS trail, stops or places.
 
-| # | Screen / step | API call (planned) | Main error cases |
+| # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | "My driving" list | `GET /driving-sessions?scope=mine&from=&to=` | `422` range too large |
-| 2 | Totals per day / week | `GET /driving-sessions/summary?scope=mine&group_by=day\|week` | none |
+| 1 | "My driving" list and totals per day / week | `GET /driving-sessions/mine/summary?from=&to=` (**built**, DR-15): `sessions` (date, plate, check-in/out, duration minutes, odometer distance, end cause), `totals_per_day`, `totals_per_week` (Monday weeks, report time zone; a session counts in the day it started) | `400` range empty, over 366 days or without a time zone; without `from` / `to` the last 30 days |
 
 ## 8. Notifications inbox
 

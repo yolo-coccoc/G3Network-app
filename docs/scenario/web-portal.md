@@ -60,7 +60,7 @@ Rules: ID-26, ID-33 ([decision-log.md:218](../decisions/decision-log.md#L218)).
 | Resend or cancel an invitation | `POST /organizations/{organization_id}/members/{membership_id}/resend` | `409` already accepted |
 | Grant / revoke a role | `POST /memberships/{membership_id}/roles` `{role}`, `DELETE /memberships/{membership_id}/roles/{role}` | `409` role already held; `409` revoking the ORG_ADMIN (use handover); the revoke takes no reason (role assignments keep none) |
 | **Lock** a member in this organization (account-wide lock is for our HEAD_ADMIN / CO_ADMIN only) | `POST /memberships/{membership_id}/lock` `{reason}`; `.../unlock` | `409` the ORG_ADMIN cannot be locked before a handover |
-| Remove a member (ends membership, revokes roles; closing the driver profile and open driving session, DR-10, is still the drivers domain's job) | `DELETE /memberships/{membership_id}?reason=` (also cancels a pending invitation); `POST /memberships/{membership_id}/leave` for the person themself | `409` ORG_ADMIN; `404` |
+| Remove a member (ends membership, revokes roles, and closes the driver profile and open driving session, DR-10, through the hook of DR-15) | `DELETE /memberships/{membership_id}?reason=` (also cancels a pending invitation); `POST /memberships/{membership_id}/leave` for the person themself | `409` ORG_ADMIN; `404` |
 | **Hand over ORG_ADMIN** to another active member (one transaction: grant new, revoke old) | `POST /organizations/{organization_id}/admin-handover` `{to_membership_id, reason}` | `409` target not ACTIVE; `403` caller is not the current ORG_ADMIN. When the admin is gone, our CO_ADMIN calls the same path with `force: true` |
 | Lock / unlock a whole account (internal only); list and read accounts | `POST /users/{user_id}/lock` `{reason}`, `POST /users/{user_id}/unlock`, `GET /users`, `GET /users/{user_id}` | `403` not HEAD_ADMIN / CO_ADMIN |
 
@@ -125,22 +125,26 @@ Tables: `fleets`, `fleet_vehicle_memberships`, `fleet_user_assignments`,
 ## 6. Drivers and trip planning
 
 Tables: `drivers`, `driving_sessions`, `trips`. Rules: DR-07, DR-10, DR-12.
-The built `drivers` routes use the new profile shape (WP1 chunk 4): `POST /drivers/`
-takes an existing `membership_id`, not a phone and name (the invite flow is WP2),
-and the old `/drivers/{driver_id}/assignment(s)` routes are gone. Check-in is built
-as `POST /driving-sessions/` (and `/check-out`, `GET /driving-sessions/`) with
-`vehicle_vin` in the body; `driver_id` is optional (the caller's own profile when omitted, a manager may name another driver of the organization, WP2b).
+All routes below are **built** (WP5, DR-15) unless marked planned. `POST /drivers/`
+takes an existing `membership_id`, not a phone and name (the invite flow is flow 2),
+and the old `/drivers/{driver_id}/assignment(s)` routes are gone. Check-in is
+`POST /driving-sessions/` (and `/check-out`, `GET /driving-sessions/`) with
+`vehicle_code` (VIN or plate) or `vehicle_vin` in the body; `driver_id` is optional (the caller's own profile when omitted, a manager may name another driver of the organization, WP2b).
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Register a driver: membership, licence number/class/expiry | `POST /drivers/` `{membership_id, license_number, license_class, license_expires_on}` (**built**); the person and invite come from flow 2 | `409` person already has a driver profile in this organization; `400` licence expired |
-| Driver list and profile | `GET /drivers/`, `GET /drivers/{driver_id}`, `PATCH`, `DELETE` (**built**) | `404`; `409` |
-| Check a driver in to a truck for them | `POST /driving-sessions/` `{check_in_method: "PORTAL", driver_id, vehicle_vin}` (**built** without the caller check) | `403` driver inactive; a takeover is not an error (old session ends TAKEN_OVER) |
-| Who is driving now / session history | `GET /driving-sessions?vehicle_id=&driver_id=&from=&to=` (planned; managers see full detail, DR-08) | none |
-| **Plan a trip**: origin, destination, planned times, driver, truck | `POST /trips` `{origin_name, destination_name, planned_start_at, planned_end_at, planned_driver_id, planned_vehicle_id}` (planned) | `404` driver or truck; `409` truck not in reach; end before start `422` |
-| Dispatch board (by day, status) | `GET /trips?from=&to=&status=&fleet_id=` (planned) | none |
-| Reassign / cancel a trip | `PATCH /trips/{trip_id}` `{..., reason}`, `POST /trips/{trip_id}/cancel` `{reason}` | `409` trip already IN_PROGRESS or COMPLETED |
-| Trip result: actual times, distance, energy, kWh/km | `GET /trips/{trip_id}` (planned; differences of stored readings); a driver or truck other than planned is flagged | `404` |
+| Register a driver: membership, licence number/class/expiry | `POST /drivers/` `{membership_id, license_number, license_class, license_expires_on}`; the person and invite come from flow 2; the membership must hold the DRIVER role and not be locked or ended; the response carries `warnings: ["LICENSE_NUMBER_ON_OTHER_PERSON"]` when another person's live profile has the number (DR-09) | `409` person already has a driver profile in this organization; `400` licence expired, role missing, membership locked or ended |
+| Driver list, search and profile | `GET /drivers/?q=&status=&license_expires_within_days=` (`q` matches licence number, name or phone; the expiry filter drives the reminder, `is_license_expired` and `days_until_license_expiry` are in every response), `GET /drivers/{driver_id}`, `PATCH` (licence, status; setting INACTIVE ends the open driving session), `DELETE` | `404`; `409`; `400` new expiry in the past |
+| Ending or locking a member (DR-10) | `DELETE /memberships/{membership_id}?reason=` also soft-deletes the driver profile and ends the open session `DRIVER_REMOVED`; `POST /memberships/{membership_id}/lock` only ends the open session (the profile stays) | see flow 2 |
+| Check a driver in to a truck for them | `POST /driving-sessions/` `{check_in_method: "PORTAL", driver_id, vehicle_vin}` (only a manager may use PORTAL; no phone position needed) | `400` driver inactive or licence expired; a takeover is not an error (old session ends TAKEN_OVER) |
+| Who is driving now / session history | `GET /driving-sessions/?vehicle_vin=&driver_id=` (managers see full detail, DR-08; from/to filters are planned) | none |
+| **Plan a trip**: origin, destination, planned times, driver, truck | `POST /trips/` `{origin_name, destination_name, planned_start_at, planned_end_at, planned_driver_id, planned_vehicle_id}` | `404` driver or truck out of reach; arrival before departure `422`; `403` a driver-only caller |
+| Dispatch board (by day, status) | `GET /trips/?from=&to=&status=&driver_id=` (a fleet filter is planned) | none |
+| Reassign / cancel a trip | `PATCH /trips/{trip_id}` `{..., reason}`, `POST /trips/{trip_id}/cancel` `{reason}` (every change goes to `trip_history` with the reason) | `409` trip already IN_PROGRESS, COMPLETED or CANCELLED |
+| Trip result: actual times, distance, energy, kWh/km, cost | `GET /trips/{trip_id}`: differences of the stored readings; `driver_differs_from_plan` / `vehicle_differs_from_plan` flag a swap | `404` |
+
+The trip-assigned notification to the driver is not built (the notification
+type does not exist, NT-09).
 
 ## 7. Live map and reports
 
@@ -241,5 +245,5 @@ Our staff and each ORG_ADMIN (own organization) read it.
 ## Open points
 
 - The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings, the audit-log export, and the per-manager fleet limits (FL-10, WP6).
-- Billing (`/tariffs`, `/wallets`, bills) and trips are unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
+- Billing (`/tariffs`, `/wallets`, bills) is unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

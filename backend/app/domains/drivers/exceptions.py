@@ -47,3 +47,51 @@ class DrivingSessionConflictError(DriverError, ConflictError):
 
 class DrivingSessionNotFoundError(DriverError, NotFoundError):
     """Raised when checking out a driver that has no open driving session."""
+
+
+class DriverMembershipLockedError(DriverError, InvalidInputError):
+    """Raised when a profile is created for a membership that is locked."""
+
+
+class DriverRoleMissingError(DriverError, InvalidInputError):
+    """Raised when a profile is created for a membership without the DRIVER role."""
+
+
+class DriverTooFarFromVehicleError(DriverError, InvalidInputError):
+    """Raised when the phone is farther from the truck than allowed (DR-07)."""
+
+
+class DriverCheckInLocationRequiredError(DriverError, InvalidInputError):
+    """Raised when a QR or APP check-in carries no phone position (DR-07)."""
+
+
+class DrivingSummaryRangeError(DriverError, InvalidInputError):
+    """Raised when the summary range is empty or longer than allowed (DR-11)."""
+
+
+class TripError(DriverError):
+    """Base exception for trip business-rule failures (DR-12)."""
+
+
+class TripNotFoundError(TripError, NotFoundError):
+    """Raised when a trip does not exist or is not the caller's."""
+
+
+class TripStateConflictError(TripError, ConflictError):
+    """Raised when a trip's status does not allow the action."""
+
+
+class TripNotCheckedInError(TripError, ConflictError):
+    """Raised when a driver starts a trip without an open driving session."""
+
+
+class TripInProgressConflictError(TripError, ConflictError):
+    """Raised when the driving session already has a trip in progress."""
+
+
+class TripInvalidPlanError(TripError, InvalidInputError):
+    """Raised when a trip plan breaks a rule (end before start, ...)."""
+
+
+class TripVehicleNotFoundError(TripError, NotFoundError):
+    """Raised when the truck of a trip plan does not exist in the caller's reach."""

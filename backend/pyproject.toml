@@ -166,9 +166,12 @@ type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
     "app.domains.drivers.models",
+    "app.domains.drivers.monitoring",
     "app.domains.drivers.repository",
     "app.domains.drivers.router",
     "app.domains.drivers.schemas",
+    "app.domains.drivers.trip_router",
+    "app.domains.drivers.trip_service",
 ]
 allow_indirect_imports = true
 

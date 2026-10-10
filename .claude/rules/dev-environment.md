@@ -11,7 +11,7 @@ pieces that don't need frequent direct code changes are Dockerized.
 
 | Component | Tool |
 |---|---|
-| Backend (`api`, and the entrypoints under `telemetry/ingestion`, `telematics/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
+| Backend (`api`, and the entrypoints under `telemetry/ingestion`, `telematics/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`, `drivers/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
 | Simulators (`simulator/`) | run from `backend/` with its venv: `uv run python ../simulator/...`, or the `make charging-ocpp*` targets |
 
 ## Running in Docker (`infra/docker-compose.yml`)
@@ -46,6 +46,7 @@ Basic commands:
 - `make charging-ocpp-dev` — OCPP gateway (accepts 2.0.1 and 1.6J on port 9000)
 - `make telematics-status-dev` — T-Box status-report ingestion (`g3network/telematics/+/status`, own MQTT client id)
 - `make telematics-monitor-dev` — Device-health (silence) monitor
+- `make driving-sessions-autoend-dev` — Driving-session auto-end worker (`DRIVERS_*` settings)
 - `make identity-bootstrap` — Create the internal organization and the first HEAD_ADMIN from `IDENTITY_BOOTSTRAP_*` (idempotent; run once per database)
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)

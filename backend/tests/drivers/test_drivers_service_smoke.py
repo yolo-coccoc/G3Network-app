@@ -30,7 +30,11 @@ from app.domains.drivers.types import (
     DrivingSessionEndCause,
     LicenseClass,
 )
-from app.domains.identity.types import MembershipPersonReference, MembershipStatus
+from app.domains.identity.types import (
+    MembershipPersonReference,
+    MembershipStatus,
+    UserRole,
+)
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.clock import utc_now
 from tests.builders import (
@@ -44,12 +48,32 @@ from tests.principals import build_internal_principal
 
 @pytest.fixture(autouse=True)
 def caller_without_driver_profile(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The test principals have no driver profile of their own."""
+    """The test principals have no driver profile of their own.
+
+    Also stubs the lookups every service call makes on the fake session: no
+    running trip, no licence number on another person, the DRIVER role held.
+    """
 
     async def no_profile(db: AsyncSession, membership_id: UUID) -> None:
         return None
 
+    async def no_trip(db: AsyncSession, driving_session_id: UUID) -> None:
+        return None
+
+    async def no_other_person(
+        db: AsyncSession, license_number: str, user_id: UUID
+    ) -> bool:
+        return False
+
+    async def holds_role(db: AsyncSession, membership_id: UUID, role: UserRole) -> bool:
+        return True
+
     monkeypatch.setattr(driver_repository, "find_by_membership_id", no_profile)
+    monkeypatch.setattr(driver_repository, "find_in_progress_trip_by_session", no_trip)
+    monkeypatch.setattr(
+        driver_repository, "exists_license_on_other_person", no_other_person
+    )
+    monkeypatch.setattr(identity_service, "membership_holds_role", holds_role)
 
 
 def _create_request(*, expires_on: date | None = None) -> DriverCreateRequest:
@@ -212,6 +236,9 @@ def _patch_vehicle(monkeypatch: pytest.MonkeyPatch) -> VehicleReference:
 
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vehicle
+    )
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_code", resolve_vehicle
     )
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_vehicle

@@ -7,9 +7,10 @@ is checked here with the caller's `Principal`; an organization the caller's
 data reach excludes answers as not found (404) so IDs are not guessable.
 
 Limitations: the DRIVER role is granted without checking for a driver profile
-(the `drivers` domain depends on identity, not the reverse), and ending a
-membership does not close the person's driver profile or open driving session
-(DR-10); both belong to the drivers domain.
+(the `drivers` domain depends on identity, not the reverse). Ending or locking
+a membership calls the hooks registered with `register_membership_end_hook`
+(the drivers domain closes the person's driver profile and open driving
+session that way, DR-10; wired in ``app/api/membership_end_hooks.py``).
 """
 
 import logging
@@ -44,6 +45,8 @@ from app.domains.identity.schemas import (
 )
 from app.domains.identity.types import (
     INTERNAL_ONLY_ROLES,
+    MembershipEndHook,
+    MembershipEndKind,
     MembershipStatus,
     OneTimeCodePurpose,
     OrganizationStatus,
@@ -57,6 +60,55 @@ from app.libs.common.pagination import normalize_page_window
 from app.libs.db.history import set_change_context
 
 logger = logging.getLogger(__name__)
+
+# Callbacks run, in the caller's transaction, after a membership ended or was
+# locked (DR-10). Registered once at application start-up through
+# `register_membership_end_hook`; identity itself imports no other domain.
+_membership_end_hooks: list[MembershipEndHook] = []
+
+
+def register_membership_end_hook(hook: MembershipEndHook) -> None:
+    """Register a callback for the end or lock of a membership.
+
+    Args:
+        hook: Async callable taking the database session and the keyword
+            arguments ``membership_id``, ``kind`` (`MembershipEndKind`),
+            ``acting_user_id`` and ``reason``. It runs in the same
+            transaction; an exception rolls the whole action back.
+
+    Side Effects:
+        Appends to a module-level list; registering the same hook twice is
+        ignored.
+    """
+    if hook not in _membership_end_hooks:
+        _membership_end_hooks.append(hook)
+
+
+async def _run_membership_end_hooks(
+    db_session: AsyncSession,
+    *,
+    membership_id: UUID,
+    kind: MembershipEndKind,
+    acting_user_id: UUID,
+    reason: str,
+) -> None:
+    """Run every registered membership-end hook, in registration order.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        membership_id: The membership that ended or was locked.
+        kind: Whether it ended or was locked.
+        acting_user_id: Who did it.
+        reason: Why.
+    """
+    for hook in _membership_end_hooks:
+        await hook(
+            db_session,
+            membership_id=membership_id,
+            kind=kind,
+            acting_user_id=acting_user_id,
+            reason=reason,
+        )
 
 
 async def _require_user(db_session: AsyncSession, user_id: UUID) -> UserModel:
@@ -553,6 +605,13 @@ async def _end_membership(
         user_id=membership_record.user_id,
         organization_id=membership_record.organization_id,
     )
+    await _run_membership_end_hooks(
+        db_session,
+        membership_id=membership_record.membership_id,
+        kind=MembershipEndKind.ENDED,
+        acting_user_id=acting_user_id,
+        reason=reason,
+    )
     user_record = await _require_user(db_session, membership_record.user_id)
     return await _to_member_response(db_session, membership_record, user_record)
 
@@ -731,6 +790,13 @@ async def lock_member(
         db_session,
         user_id=membership_record.user_id,
         organization_id=membership_record.organization_id,
+    )
+    await _run_membership_end_hooks(
+        db_session,
+        membership_id=membership_record.membership_id,
+        kind=MembershipEndKind.LOCKED,
+        acting_user_id=principal.user_id,
+        reason=reason,
     )
     user_record = await _require_user(db_session, membership_record.user_id)
     return await _to_member_response(db_session, membership_record, user_record)

@@ -24,6 +24,7 @@ flowchart LR
     Ingestion["Telemetry ingestion\nMQTT consumer + worker"]
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     Monitor["telematics/monitoring\nperiodic device-health check"]
+    AutoEnd["drivers/monitoring\nauto-end of idle driving sessions"]
     API["FastAPI API"]
     Domains["identity\nvehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers\nsupport\nfleet"]
     Notifications["notifications"]
@@ -43,6 +44,7 @@ flowchart LR
 
     Monitor -->|last-seen check, F-J1/F-J3| DB
     Monitor -->|silence -> alert| Notifications
+    AutoEnd -->|idle truck -> end session, close trip| DB
 
     API --> Domains
     API --> Notifications
@@ -246,12 +248,20 @@ FastAPI registers the following domains:
   unauthenticated.
 - `drivers` (F-E4, F-A9): the driver profile (one per membership, DR-09; name and
   phone live on the user and are read through `identity`'s public service),
-  `driving_sessions` (check-in / check-out; one open session per truck and per
-  driver via partial unique indexes, DR-07) and `trips` (table only, DR-12).
-  The driver list searches the licence number (`q`) and finds the driver at the
-  wheel of a VIN (`vehicle_vin`). The old `driver_vehicle_assignments` table
-  and its routes are gone. Depends one-directionally on `vehicles`' and
-  `identity`'s public services.
+  `driving_sessions` (check-in by VIN or plate / check-out; one open session per
+  truck and per driver via partial unique indexes, DR-07) and `trips` (planned by
+  a manager, started and finished by the driver, DR-12). Check-in compares the
+  phone with the truck's last T-Box position (`DRIVERS_CHECKIN_MAX_DISTANCE_M`)
+  and returns warnings; every way a session ends also closes the trip running in
+  it; `GET /driving-sessions/current` and `/mine/summary` serve the app (DR-11).
+  The driver list searches the licence number, name and phone (`q`), finds the
+  driver at the wheel of a VIN (`vehicle_vin`) and the licences expiring soon.
+  `monitoring/` is the auto-end worker (`make driving-sessions-autoend-dev`).
+  The old `driver_vehicle_assignments` table and its routes are gone. Depends on
+  `vehicles`', `identity`'s and `telemetry`'s public services (`telemetry` calls
+  `drivers` back for the "checked in to this truck" test); ending or locking a
+  membership reaches it through a hook wired in `app/api/membership_end_hooks.py`
+  (DR-15).
    — the same shape as `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
   built here — see `deferred.md` item 67.
 - `support`: support case tickets (F-I1) and SOS intake (F-I2). One
@@ -453,6 +463,8 @@ call each other is in
 │   │   │   │
 │   │   │   ├── drivers/               # Driver profile, driving sessions, trips (F-E4, F-A9)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       trip_router.py  trip_service.py     # trips (MON-11, DR-12)
+│   │   │   │       monitoring/                          # auto_end_worker.py + entrypoint.py for "make driving-sessions-autoend-dev" (DR-07)
 │   │   │   │       # models.py has 3 tables: DriverModel, DrivingSessionModel, TripModel
 │   │   │   │
 │   │   │   ├── support/               # Support case tickets and SOS intake (F-I1, F-I2)
@@ -475,6 +487,7 @@ call each other is in
 │   │   │
 │   │   ├── api/
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
+│   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
 │   │   └── libs/

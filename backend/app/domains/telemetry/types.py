@@ -237,6 +237,10 @@ class VehicleLiveStatusReference:
             (planner D2); computed at read time, never stored.
         signal_strength_dbm: Signal strength of the newest reading in dBm,
             or ``None`` if the device didn't report it.
+        odometer_km: Odometer of the newest reading in km, or ``None`` if the
+            device didn't report it (a trip records it at Start and Finish,
+            DR-12).
+        soc_percent: Battery percentage of the newest reading.
     """
 
     vehicle_id: UUID
@@ -246,6 +250,8 @@ class VehicleLiveStatusReference:
     received_at: datetime
     is_online: bool
     signal_strength_dbm: int | None
+    odometer_km: float | None = None
+    soc_percent: float | None = None
 
 
 @dataclass(frozen=True)

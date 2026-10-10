@@ -6,6 +6,7 @@ base (`NotFoundError` -> 404, `ConflictError` -> 409, `InvalidInputError` ->
 domain, mounted at `/driving-sessions`.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -22,6 +23,7 @@ from app.domains.drivers.schemas import (
     DrivingSessionCheckOutRequest,
     DrivingSessionListResponse,
     DrivingSessionResponse,
+    DrivingSummaryResponse,
 )
 from app.domains.drivers.types import DriverStatus
 from app.domains.identity.dependencies import (
@@ -104,13 +106,22 @@ async def list_drivers_endpoint(
         alias="q",
         min_length=1,
         max_length=100,
-        description="Case-insensitive substring of the licence number",
+        description=(
+            "Case-insensitive substring of the licence number, or of the "
+            "person's name or phone number"
+        ),
     ),
     vehicle_vin: str | None = Query(
         None,
         min_length=17,
         max_length=17,
         description="Only the driver at the wheel of this vehicle now (VIN)",
+    ),
+    license_expires_within_days: int | None = Query(
+        None,
+        ge=0,
+        le=3660,
+        description="Only licences expiring within this many days (expired included)",
     ),
     principal: Principal = Depends(DRIVER_PROFILE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
@@ -121,9 +132,10 @@ async def list_drivers_endpoint(
         page: Page number.
         page_size: Number of records per page.
         status_filter: Status filter, if any.
-        search_text: Licence number substring filter (`q`), if any.
+        search_text: Licence number / name / phone substring filter (`q`), if any.
         vehicle_vin: "Who drives this vehicle now" filter, if any; an
             unknown VIN yields an empty page.
+        license_expires_within_days: Licence expiry reminder filter, if any.
         principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
@@ -137,6 +149,7 @@ async def list_drivers_endpoint(
         status_filter=status_filter,
         search_text=search_text,
         vehicle_vin=vehicle_vin,
+        license_expires_within_days=license_expires_within_days,
         principal=principal,
     )
 
@@ -257,7 +270,9 @@ async def soft_delete_driver_endpoint(
     description=(
         "Open a driving session. A truck with another driver at the wheel is "
         "taken over, and the driver's open session on another truck ends; "
-        "the response lists the sessions ended."
+        "the response lists the sessions ended and the warnings. The truck is "
+        "named by `vehicle_code` (VIN or plate); QR and APP check-ins carry "
+        "the phone position."
     ),
 )
 async def check_in_driver_endpoint(
@@ -268,7 +283,7 @@ async def check_in_driver_endpoint(
     """Check a driver in to a truck.
 
     Args:
-        check_in_request: Driver, truck VIN, method and optional position.
+        check_in_request: Driver, truck code, method and phone position.
         principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
@@ -277,8 +292,9 @@ async def check_in_driver_endpoint(
 
     Raises:
         DriverNotFoundError: 404 when the driver does not exist.
-        DriverVehicleNotFoundError: 404 when the VIN is unknown.
+        DriverVehicleNotFoundError: 404 when the truck code is unknown.
         DriverNotEligibleError: 400 when the driver may not check in.
+        DriverTooFarFromVehicleError: 400 when the phone is far from the truck.
     """
     return await driver_service.check_in_driver(
         db_session, check_in_request, principal=principal
@@ -371,3 +387,74 @@ async def list_driving_sessions_endpoint(
             details={"vehicle_vin": vehicle_vin} if vehicle_vin else None,
         )
     return session_list_response
+
+
+@driving_sessions_router.get(
+    "/current",
+    response_model=DrivingSessionResponse,
+    summary="Get the caller's open driving session",
+    description=(
+        "The truck the caller is checked in to now (the app's home, DR-07); "
+        "404 when not checked in."
+    ),
+)
+async def get_current_driving_session_endpoint(
+    principal: Principal = Depends(DRIVING_SESSION_USERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> DrivingSessionResponse:
+    """Get the caller's own open driving session.
+
+    Args:
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The open session.
+
+    Raises:
+        DriverNotFoundError: 404 when the caller has no driver profile.
+        DrivingSessionNotFoundError: 404 when the caller is not checked in.
+    """
+    return await driver_service.get_current_driving_session(
+        db_session, principal=principal
+    )
+
+
+@driving_sessions_router.get(
+    "/mine/summary",
+    response_model=DrivingSummaryResponse,
+    summary="Get the caller's own driving summary",
+    description=(
+        "Per session the date, truck plate, check-in and check-out, duration "
+        "and distance, plus totals per day and week (DR-11). Never the route, "
+        "GPS trail or places."
+    ),
+)
+async def get_own_driving_summary_endpoint(
+    from_time: datetime | None = Query(
+        None, alias="from", description="Start of the range (with a time zone)"
+    ),
+    to_time: datetime | None = Query(
+        None, alias="to", description="End of the range (with a time zone)"
+    ),
+    principal: Principal = Depends(DRIVING_SESSION_USERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> DrivingSummaryResponse:
+    """Get the caller's own driving summary.
+
+    Args:
+        from_time: Start of the range; 30 days before `to` when omitted.
+        to_time: End of the range; now when omitted.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Sessions and totals per day and week.
+
+    Raises:
+        DrivingSummaryRangeError: 400 when the range is empty, longer than a
+            year, or a time has no zone.
+    """
+    return await driver_service.get_own_driving_summary(
+        db_session, principal=principal, from_time=from_time, to_time=to_time
+    )

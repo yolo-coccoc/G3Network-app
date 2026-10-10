@@ -15,12 +15,14 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.identity.audit_service as audit_service
+import app.domains.identity.member_service as member_service
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
 from app.domains.identity.exceptions import OrganizationNotFoundError
 from app.domains.identity.types import (
     AccessAuditAction,
     ClientContext,
+    MembershipEndHook,
     MembershipPersonReference,
     OrganizationReference,
     OrganizationSettingsReference,
@@ -223,3 +225,75 @@ async def list_organization_role_holder_user_ids(
     return await identity_repository.list_user_ids_holding_roles_in_organization(
         db_session, organization_id, [role.value for role in roles]
     )
+
+
+async def membership_holds_role(
+    db_session: AsyncSession, membership_id: UUID, role: UserRole
+) -> bool:
+    """Tell whether a membership holds a role right now.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        membership_id: Internal ID of the membership.
+        role: The role asked about.
+
+    Returns:
+        True when the role is assigned to the membership and not revoked.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    return (
+        await identity_repository.find_active_role_assignment(
+            db_session, membership_id=membership_id, role=role.value
+        )
+        is not None
+    )
+
+
+async def search_membership_ids_by_person(
+    db_session: AsyncSession,
+    search_text: str,
+    *,
+    organization_id: UUID | None,
+    limit: int = 500,
+) -> list[UUID]:
+    """Find memberships whose person's name or phone number contains a text.
+
+    Used by a list that searches by person (the driver list) while the name
+    lives on the user, another domain's table.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        search_text: Case-insensitive text to look for.
+        organization_id: Only memberships of this organization; `None` means
+            every organization.
+        limit: Largest number of IDs returned.
+
+    Returns:
+        Matching membership IDs, newest first.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    return await identity_repository.search_membership_ids_by_person(
+        db_session,
+        search_text=search_text,
+        organization_id=organization_id,
+        limit=limit,
+    )
+
+
+def register_membership_end_hook(hook: MembershipEndHook) -> None:
+    """Register a callback run when a membership ends or is locked (DR-10).
+
+    Args:
+        hook: Async callable taking the database session and the keyword
+            arguments ``membership_id``, ``kind``, ``acting_user_id`` and
+            ``reason``; it runs in the same transaction as the change.
+
+    Side Effects:
+        Adds the hook to a process-wide list (done once at start-up by
+        ``app/api/membership_end_hooks.py``).
+    """
+    member_service.register_membership_end_hook(hook)

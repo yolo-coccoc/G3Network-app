@@ -137,6 +137,41 @@ async def resolve_vehicle_reference_by_vin(
     return await build_vehicle_reference(db_session, vehicle_record)
 
 
+async def resolve_vehicle_reference_by_code(
+    db_session: AsyncSession,
+    vehicle_code: str,
+) -> VehicleReference | None:
+    """Find an active vehicle by the code printed on it: its VIN or its plate.
+
+    The content of the QR code is still open (deferred.md 94), so a scanned
+    code may be either value. The VIN is tried first; a plate is matched as
+    typed, then upper-cased.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        vehicle_code: A VIN or a licence plate.
+
+    Returns:
+        `VehicleReference` if exactly such a vehicle is found; otherwise `None`.
+
+    Side Effects:
+        Performs read-only queries only; does not commit or rollback.
+    """
+    code = vehicle_code.strip()
+    vehicle_record = await vehicle_repository.find_by_vin(db_session, code)
+    if vehicle_record is None:
+        vehicle_record = await vehicle_repository.find_by_license_plate(
+            db_session, code
+        )
+    if vehicle_record is None and code != code.upper():
+        vehicle_record = await vehicle_repository.find_by_license_plate(
+            db_session, code.upper()
+        )
+    if vehicle_record is None:
+        return None
+    return await build_vehicle_reference(db_session, vehicle_record)
+
+
 async def resolve_vehicle_reference_by_id(
     db_session: AsyncSession,
     vehicle_id: UUID,

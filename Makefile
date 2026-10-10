@@ -2,7 +2,7 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev telematics-status-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
@@ -29,6 +29,7 @@ help:
 	@echo "  make charging-ocpp-dev - Run the OCPP gateway, 2.0.1 + 1.6J (port 9000)"
 	@echo "  make telematics-monitor-dev - Run the device-silence health monitor"
 	@echo "  make telematics-status-dev  - Run T-Box status-report ingestion (MQTT consumer + worker)"
+	@echo "  make driving-sessions-autoend-dev - Run the driving-session auto-end worker"
 	@echo "  make identity-bootstrap - Create the internal organization and first HEAD_ADMIN"
 	@echo ""
 	@echo "Simulators (need the API / gateway running):"
@@ -133,6 +134,10 @@ telematics-status-dev:
 telematics-monitor-dev:
 	@echo "Starting telematics device health monitor..."
 	cd backend && uv run python -m app.domains.telematics.monitoring.entrypoint
+
+driving-sessions-autoend-dev:
+	@echo "Starting driving-session auto-end worker..."
+	cd backend && uv run python -m app.domains.drivers.monitoring.entrypoint
 
 identity-bootstrap:
 	@echo "Creating the internal organization and the first HEAD_ADMIN (IDENTITY_BOOTSTRAP_* in backend/.env)..."

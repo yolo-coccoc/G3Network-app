@@ -72,6 +72,15 @@ class Settings(BaseSettings):
             instead of being stored truncated in the raw message log.
         CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: Maximum radius accepted by
             the nearby-station search (F-D1).
+        DRIVERS_CHECKIN_MAX_DISTANCE_M: Farthest the phone may be from the
+            truck's last T-Box position at check-in (DR-07).
+        DRIVERS_CHECKIN_POSITION_MAX_AGE_MINUTES: Oldest T-Box position that
+            still counts for that check; an older one is treated as "no
+            recent position" and the check-in is allowed with a warning.
+        DRIVERS_MOVING_SPEED_KMH: Speed above which a telemetry sample means
+            the truck is moving (auto-end of a driving session, DR-07).
+        DRIVERS_AUTO_END_CHECK_INTERVAL_SECONDS: How often the driving-session
+            auto-end worker sweeps the open sessions.
         TELEMATICS_HEALTH_CHECK_INTERVAL_SECONDS: How often the device
             health monitor sweeps for silent devices (F-J1/F-J3).
         TELEMATICS_SILENT_THRESHOLD_MINUTES: How long without telemetry
@@ -228,6 +237,16 @@ class Settings(BaseSettings):
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.
     CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM: float = Field(default=200.0, gt=0)
+
+    # DR-07 check-in: the phone must be near the truck's last T-Box position.
+    # A truck without a recent position (no T-Box, or silent) cannot be
+    # checked, so the check-in is allowed and flagged instead of refused.
+    DRIVERS_CHECKIN_MAX_DISTANCE_M: float = Field(default=500.0, gt=0)
+    DRIVERS_CHECKIN_POSITION_MAX_AGE_MINUTES: int = Field(default=30, ge=1)
+    # DR-07 auto-end: a sample faster than this counts as "the truck moved";
+    # the worker sweeps often enough for the shortest organization setting.
+    DRIVERS_MOVING_SPEED_KMH: float = Field(default=2.0, ge=0)
+    DRIVERS_AUTO_END_CHECK_INTERVAL_SECONDS: float = Field(default=60.0, gt=0)
 
     # F-J1/F-J3's periodic device-silence check. The interval must stay
     # materially smaller than the threshold, or a device could sit past the

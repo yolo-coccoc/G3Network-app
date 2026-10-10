@@ -53,6 +53,38 @@ class DrivingSessionEndCause(str, enum.Enum):
     OWNER_CHANGED = "OWNER_CHANGED"
 
 
+class CheckInWarning(str, enum.Enum):
+    """A notice returned with a successful check-in (DR-07, DR-10).
+
+    Attributes:
+        OTHER_ORGANIZATION: The driver belongs to another organization than
+            the truck's owner; a normal case, shown as a notice.
+        NO_RECENT_TRUCK_POSITION: The truck has no recent T-Box position, so
+            the phone could not be compared with it.
+    """
+
+    OTHER_ORGANIZATION = "OTHER_ORGANIZATION"
+    NO_RECENT_TRUCK_POSITION = "NO_RECENT_TRUCK_POSITION"
+
+
+class DriverWarning(str, enum.Enum):
+    """A notice returned with a driver profile (DR-09).
+
+    Attributes:
+        LICENSE_NUMBER_ON_OTHER_PERSON: The licence number is already on the
+            live profile of another person.
+    """
+
+    LICENSE_NUMBER_ON_OTHER_PERSON = "LICENSE_NUMBER_ON_OTHER_PERSON"
+
+
+class SummaryGroup(str, enum.Enum):
+    """How the driver's own driving summary groups its totals (DR-11)."""
+
+    DAY = "day"
+    WEEK = "week"
+
+
 class TripStatus(str, enum.Enum):
     """Lifecycle of a trip (DR-12)."""
 
@@ -86,3 +118,20 @@ class DriverReference:
 
     driver_id: UUID
     full_name: str
+
+
+@dataclass(frozen=True)
+class AutoEndSweepResult:
+    """Outcome of one sweep of the open driving sessions (DR-07).
+
+    Attributes:
+        checked: Open sessions looked at.
+        ended: Sessions ended `AUTO_ENDED` this sweep.
+        skipped: Sessions left alone because the truck has no telemetry (no
+            T-Box), or none newer than its last movement (no proof it stood
+            still).
+    """
+
+    checked: int
+    ended: int
+    skipped: int

@@ -17,7 +17,9 @@ cross-domain functions (primitives or frozen DTOs from ``types.py`` only):
 - ``resolve_last_telemetry_at`` - the ``telematics`` device-health monitor;
 - ``resolve_vehicle_live_status`` - newest position and online flag;
 - ``resolve_vehicle_operating_summary`` - additive F-A6 figures for a
-  fleet rollup.
+  fleet rollup;
+- ``resolve_last_movement_at`` and ``resolve_distance_km_in_window`` - the
+  ``drivers`` auto-end worker and driving summary (DR-07, DR-11).
 
 It orchestrates I/O and delegates the pure work to internal modules:
 
@@ -337,6 +339,72 @@ async def resolve_last_telemetry_at(
         Read-only query; does not commit or roll back.
     """
     return await telemetry_repository.find_latest_received_at(db, vehicle_id)
+
+
+async def resolve_last_movement_at(
+    db: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    since: datetime,
+    min_speed_kmh: float,
+) -> datetime | None:
+    """Get when a vehicle last moved since a time. Public entry point (DR-07).
+
+    Used by the driving-session auto-end worker: the countdown starts at the
+    last sample whose speed is above the threshold.
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+        since: Only samples recorded at or after this time are looked at
+            (the start of the driving session).
+        min_speed_kmh: A sample counts as moving above this speed.
+
+    Returns:
+        The device time of the newest moving sample, or `None` if the vehicle
+        did not move since ``since``.
+
+    Side Effects:
+        Read-only query; does not commit or roll back.
+    """
+    return await telemetry_repository.find_latest_moving_recorded_at(
+        db, vehicle_id, min_speed_kmh=min_speed_kmh, since=since
+    )
+
+
+async def resolve_distance_km_in_window(
+    db: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    start_time: datetime,
+    end_time: datetime,
+) -> float | None:
+    """Get the distance a truck drove in a window. Public entry point (DR-11).
+
+    Sums the positive odometer deltas of the window, the same fold as the
+    operating report, without checking that the vehicle still exists (the
+    caller holds a driving session that points at it) and without the report
+    range limit (a session is short).
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+        start_time: Inclusive lower bound; must carry a timezone.
+        end_time: Inclusive upper bound; must carry a timezone.
+
+    Returns:
+        The distance in km, or `None` when the window holds fewer than two
+        odometer readings (the device sent none, or only one).
+
+    Side Effects:
+        Read-only query; does not commit or roll back.
+    """
+    window_summary = await telemetry_repository.get_vehicle_window_summary(
+        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+    )
+    if window_summary.odometer_sample_count < 2:
+        return None
+    return window_summary.distance_km
 
 
 async def get_vehicle_telemetry_history_response(

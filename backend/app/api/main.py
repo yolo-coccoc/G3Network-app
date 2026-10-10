@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+import app.api.membership_end_hooks as membership_end_hooks
 from app.api.vehicle_transfer import router as vehicle_transfer_router
 from app.domains.batteries.router import battery_models_router
 from app.domains.batteries.router import router as batteries_router
@@ -19,6 +20,7 @@ from app.domains.charging_sessions.router import router as charging_sessions_rou
 from app.domains.charging_stations.router import router as charging_stations_router
 from app.domains.drivers.router import driving_sessions_router
 from app.domains.drivers.router import router as drivers_router
+from app.domains.drivers.trip_router import router as trips_router
 from app.domains.fleet.router import router as fleet_router
 from app.domains.identity.compliance_router import (
     audit_router as access_audit_router,
@@ -138,6 +140,10 @@ async def domain_error_handler(_request: Request, error: Exception) -> JSONRespo
 for _error_base in _DOMAIN_ERROR_STATUS:
     app.add_exception_handler(_error_base, domain_error_handler)
 
+# Ending or locking a membership also closes the driver profile and the open
+# driving session (DR-10); identity cannot call drivers, so it is wired here.
+membership_end_hooks.register_membership_end_hooks()
+
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
 app.include_router(vehicle_transfer_router, prefix="/api/v1/vehicles")
@@ -152,6 +158,7 @@ app.include_router(charging_sessions_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1/notifications")
 app.include_router(drivers_router, prefix="/api/v1/drivers")
 app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")
+app.include_router(trips_router, prefix="/api/v1/trips")
 app.include_router(support_router, prefix="/api/v1/support")
 app.include_router(fleet_router, prefix="/api/v1/fleets")
 app.include_router(auth_router, prefix="/api/v1/auth")

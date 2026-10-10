@@ -1,16 +1,16 @@
 """Repository querying the drivers tables; contains no business rules."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import and_, column, func, select, table
+from sqlalchemy import and_, column, func, or_, select, table
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.domains.drivers.models import DriverModel, DrivingSessionModel
+from app.domains.drivers.models import DriverModel, DrivingSessionModel, TripModel
 from app.domains.drivers.types import (
     CheckInMethod,
     DriverStatus,
@@ -27,6 +27,7 @@ _MEMBERSHIPS = table(
     "memberships",
     column("membership_id", PG_UUID(as_uuid=True)),
     column("organization_id", PG_UUID(as_uuid=True)),
+    column("user_id", PG_UUID(as_uuid=True)),
 )
 
 
@@ -74,19 +75,24 @@ async def get_by_id(
     driver_id: UUID,
     *,
     organization_id: UUID | None = None,
+    include_deleted: bool = False,
 ) -> DriverModel | None:
-    """Find a driver by ID, excluding soft-deleted records.
+    """Find a driver by ID, excluding soft-deleted records unless asked.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
         organization_id: Data scope (ACC-15): only a profile whose membership
             is in this organization is found; `None` means no restriction.
+        include_deleted: Also find a soft-deleted profile (a trip keeps
+            pointing to the driver who left).
 
     Returns:
         The driver record, or None if not found or out of scope.
     """
-    conditions = [DriverModel.driver_id == driver_id, DriverModel.deleted_at.is_(None)]
+    conditions = [DriverModel.driver_id == driver_id]
+    if not include_deleted:
+        conditions.append(DriverModel.deleted_at.is_(None))
     if organization_id is not None:
         conditions.append(_in_organization(organization_id))
     query_result = await db_session.execute(
@@ -140,16 +146,24 @@ def _driver_list_conditions(
     search_text: str | None,
     vehicle_id: UUID | None,
     organization_id: UUID | None,
+    person_membership_ids: list[UUID] | None = None,
+    license_expires_by: date | None = None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_all` and `count`.
 
     Args:
         status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the licence number, if any.
-            The name and phone number live on the user (another domain).
+            The name and phone number live on the user (another domain): the
+            service passes the memberships whose person matches the same text
+            in ``person_membership_ids``, and a profile matches on either.
         vehicle_id: Only the driver at the wheel of this vehicle now (open
             driving session), if given.
         organization_id: Data scope; `None` means every organization.
+        person_membership_ids: Memberships whose person matches the search
+            text, if the service looked them up.
+        license_expires_by: Only profiles whose licence expires on or before
+            this date (already expired ones included), if given.
 
     Returns:
         Conditions to AND together; always excludes soft-deleted drivers.
@@ -161,11 +175,16 @@ def _driver_list_conditions(
     if status_filter:
         conditions.append(DriverModel.status == status_filter)
     if search_text:
-        conditions.append(
+        text_conditions = [
             DriverModel.license_number.ilike(
                 _contains_pattern(search_text), escape="\\"
             )
-        )
+        ]
+        if person_membership_ids:
+            text_conditions.append(DriverModel.membership_id.in_(person_membership_ids))
+        conditions.append(or_(*text_conditions))
+    if license_expires_by is not None:
+        conditions.append(DriverModel.license_expires_on <= license_expires_by)
     if vehicle_id is not None:
         conditions.append(
             DriverModel.driver_id.in_(
@@ -187,6 +206,8 @@ async def list_all(
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    person_membership_ids: list[UUID] | None = None,
+    license_expires_by: date | None = None,
 ) -> list[DriverModel]:
     """Get a paginated list of drivers, excluding soft-deleted records.
 
@@ -198,6 +219,9 @@ async def list_all(
         search_text: Case-insensitive substring of the licence number, if any.
         vehicle_id: Only the driver at the wheel of this vehicle now, if given.
         organization_id: Data scope; `None` means every organization.
+        person_membership_ids: Memberships whose person matches the search
+            text (looked up by the service), if any.
+        license_expires_by: Licence expires on or before this date, if given.
 
     Returns:
         List of driver records, newest first.
@@ -207,6 +231,8 @@ async def list_all(
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        person_membership_ids=person_membership_ids,
+        license_expires_by=license_expires_by,
     )
 
     query_result = await db_session.execute(
@@ -226,6 +252,8 @@ async def count(
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    person_membership_ids: list[UUID] | None = None,
+    license_expires_by: date | None = None,
 ) -> int:
     """Count the drivers matching the same filters as `list_all`.
 
@@ -235,6 +263,9 @@ async def count(
         search_text: Case-insensitive substring of the licence number, if any.
         vehicle_id: Only the driver at the wheel of this vehicle now, if given.
         organization_id: Data scope; `None` means every organization.
+        person_membership_ids: Memberships whose person matches the search
+            text (looked up by the service), if any.
+        license_expires_by: Licence expires on or before this date, if given.
 
     Returns:
         Total number of matching drivers.
@@ -244,6 +275,8 @@ async def count(
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        person_membership_ids=person_membership_ids,
+        license_expires_by=license_expires_by,
     )
 
     query_result = await db_session.execute(
@@ -525,3 +558,360 @@ async def close_session(
     await db_session.flush()
     await db_session.refresh(session_record)
     return session_record
+
+
+async def exists_license_on_other_person(
+    db_session: AsyncSession, license_number: str, user_id: UUID
+) -> bool:
+    """Tell whether a licence number is on the live profile of another person (DR-09).
+
+    The answer is a yes/no only, so one organization learns nothing about
+    another's driver.
+
+    Args:
+        db_session: Current database session.
+        license_number: The licence number to look for (exact match).
+        user_id: The person the number is being recorded for; their own
+            profiles (in any organization) do not count.
+
+    Returns:
+        True when a not-deleted profile of a different person has the number.
+    """
+    query_result = await db_session.execute(
+        select(func.count(DriverModel.driver_id))
+        .join(
+            _MEMBERSHIPS,
+            _MEMBERSHIPS.c.membership_id == DriverModel.membership_id,
+        )
+        .where(
+            DriverModel.license_number == license_number,
+            DriverModel.deleted_at.is_(None),
+            _MEMBERSHIPS.c.user_id != user_id,
+        )
+    )
+    return (query_result.scalar() or 0) > 0
+
+
+async def list_open_sessions(db_session: AsyncSession) -> list[DrivingSessionModel]:
+    """List every open driving session, oldest first (the auto-end sweep).
+
+    Args:
+        db_session: Current database session.
+
+    Returns:
+        Sessions whose ``ended_at`` is NULL.
+    """
+    query_result = await db_session.execute(
+        select(DrivingSessionModel)
+        .where(DrivingSessionModel.ended_at.is_(None))
+        .order_by(DrivingSessionModel.started_at.asc())
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_sessions_in_range(
+    db_session: AsyncSession,
+    *,
+    driver_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    limit: int,
+) -> list[DrivingSessionModel]:
+    """List one driver's sessions that started inside a range, newest first.
+
+    Args:
+        db_session: Current database session.
+        driver_id: The driver profile.
+        start_time: Inclusive lower bound of ``started_at``.
+        end_time: Exclusive upper bound of ``started_at``.
+        limit: Largest number of sessions returned.
+
+    Returns:
+        Sessions, open ones included, ordered by ``started_at`` descending.
+    """
+    query_result = await db_session.execute(
+        select(DrivingSessionModel)
+        .where(
+            DrivingSessionModel.driver_id == driver_id,
+            DrivingSessionModel.started_at >= start_time,
+            DrivingSessionModel.started_at < end_time,
+        )
+        .order_by(DrivingSessionModel.started_at.desc())
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())
+
+
+async def get_session_by_id(
+    db_session: AsyncSession, driving_session_id: UUID
+) -> DrivingSessionModel | None:
+    """Find a driving session by ID.
+
+    Args:
+        db_session: Current database session.
+        driving_session_id: Internal ID of the session.
+
+    Returns:
+        The session, or None if it does not exist.
+    """
+    query_result = await db_session.execute(
+        select(DrivingSessionModel).where(
+            DrivingSessionModel.driving_session_id == driving_session_id
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Trips (DR-12)
+# ---------------------------------------------------------------------------
+
+TRIP_PLANNED_REASON = "Trip planned"
+TRIP_EDITED_REASON = "Trip plan edited"
+TRIP_STARTED_REASON = "Trip started"
+TRIP_FINISHED_REASON = "Trip finished"
+TRIP_CANCELLED_REASON = "Trip cancelled"
+
+
+async def insert_trip(db_session: AsyncSession, values: dict[str, Any]) -> TripModel:
+    """Insert a trip and flush it.
+
+    Args:
+        db_session: Current database session; the repository does not commit.
+        values: Fields used to initialize the ORM record.
+
+    Returns:
+        The newly created trip.
+
+    Side Effects:
+        `flush()` is where the partial unique index of a trip in progress
+        raises `IntegrityError` for a second running trip of one session.
+    """
+    trip_record = TripModel(**values)
+    db_session.add(trip_record)
+    await db_session.flush()
+    await db_session.refresh(trip_record)
+    return trip_record
+
+
+def _trip_driver_condition(driver_id: UUID) -> ColumnElement[bool]:
+    """Build the condition "this driver's trip": assigned to them or run by them.
+
+    Args:
+        driver_id: The driver profile.
+
+    Returns:
+        A condition on `trips`: the plan names the driver, or the trip was
+        started in one of the driver's driving sessions.
+    """
+    return or_(
+        TripModel.planned_driver_id == driver_id,
+        TripModel.driving_session_id.in_(
+            select(DrivingSessionModel.driving_session_id).where(
+                DrivingSessionModel.driver_id == driver_id
+            )
+        ),
+    )
+
+
+async def get_trip_by_id(
+    db_session: AsyncSession,
+    trip_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+    driver_id: UUID | None = None,
+) -> TripModel | None:
+    """Find a trip by ID inside a scope.
+
+    Args:
+        db_session: Current database session.
+        trip_id: Internal ID of the trip.
+        organization_id: Only a trip of this organization; `None` means any.
+        driver_id: Only a trip assigned to or run by this driver; `None` means
+            any.
+
+    Returns:
+        The trip, or None if it does not exist or is out of scope.
+    """
+    conditions: list[ColumnElement[bool]] = [TripModel.trip_id == trip_id]
+    if organization_id is not None:
+        conditions.append(TripModel.organization_id == organization_id)
+    if driver_id is not None:
+        conditions.append(_trip_driver_condition(driver_id))
+    query_result = await db_session.execute(select(TripModel).where(and_(*conditions)))
+    return query_result.scalar_one_or_none()
+
+
+def _trip_list_conditions(
+    *,
+    organization_id: UUID | None,
+    driver_id: UUID | None,
+    statuses: list[str] | None,
+    from_time: datetime | None,
+    to_time: datetime | None,
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by `list_trips` and `count_trips`.
+
+    Args:
+        organization_id: Only trips of this organization; `None` means any.
+        driver_id: Only trips assigned to or run by this driver, if given.
+        statuses: Only these statuses, if given.
+        from_time: Only trips planned or started at or after this time.
+        to_time: Only trips planned or started before this time.
+
+    Returns:
+        Conditions to AND together (empty when no filter is given).
+    """
+    conditions: list[ColumnElement[bool]] = []
+    # A trip is placed on the board by its plan, or by its start when it has
+    # no plan (a personal trip).
+    trip_time = func.coalesce(TripModel.planned_start_at, TripModel.started_at)
+    if organization_id is not None:
+        conditions.append(TripModel.organization_id == organization_id)
+    if driver_id is not None:
+        conditions.append(_trip_driver_condition(driver_id))
+    if statuses:
+        conditions.append(TripModel.status.in_(statuses))
+    if from_time is not None:
+        conditions.append(trip_time >= from_time)
+    if to_time is not None:
+        conditions.append(trip_time < to_time)
+    return conditions
+
+
+async def list_trips(
+    db_session: AsyncSession,
+    *,
+    offset: int,
+    limit: int,
+    organization_id: UUID | None = None,
+    driver_id: UUID | None = None,
+    statuses: list[str] | None = None,
+    from_time: datetime | None = None,
+    to_time: datetime | None = None,
+) -> list[TripModel]:
+    """Get a paginated list of trips, newest plan first.
+
+    Args:
+        db_session: Current database session.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
+        organization_id: Only trips of this organization; `None` means any.
+        driver_id: Only trips assigned to or run by this driver, if given.
+        statuses: Only these statuses, if given.
+        from_time: Lower bound of the plan (or start) time, if given.
+        to_time: Exclusive upper bound of the plan (or start) time, if given.
+
+    Returns:
+        Trips ordered by plan (or start) time descending.
+    """
+    trip_time = func.coalesce(TripModel.planned_start_at, TripModel.started_at)
+    query_result = await db_session.execute(
+        select(TripModel)
+        .where(
+            *_trip_list_conditions(
+                organization_id=organization_id,
+                driver_id=driver_id,
+                statuses=statuses,
+                from_time=from_time,
+                to_time=to_time,
+            )
+        )
+        .order_by(trip_time.desc(), TripModel.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())
+
+
+async def count_trips(
+    db_session: AsyncSession,
+    *,
+    organization_id: UUID | None = None,
+    driver_id: UUID | None = None,
+    statuses: list[str] | None = None,
+    from_time: datetime | None = None,
+    to_time: datetime | None = None,
+) -> int:
+    """Count the trips matching the same filters as `list_trips`.
+
+    Args:
+        db_session: Current database session.
+        organization_id: Only trips of this organization; `None` means any.
+        driver_id: Only trips assigned to or run by this driver, if given.
+        statuses: Only these statuses, if given.
+        from_time: Lower bound of the plan (or start) time, if given.
+        to_time: Exclusive upper bound of the plan (or start) time, if given.
+
+    Returns:
+        Total number of matching trips.
+    """
+    query_result = await db_session.execute(
+        select(func.count(TripModel.trip_id)).where(
+            *_trip_list_conditions(
+                organization_id=organization_id,
+                driver_id=driver_id,
+                statuses=statuses,
+                from_time=from_time,
+                to_time=to_time,
+            )
+        )
+    )
+    return query_result.scalar() or 0
+
+
+async def find_in_progress_trip_by_session(
+    db_session: AsyncSession, driving_session_id: UUID
+) -> TripModel | None:
+    """Find the trip running in a driving session, if any.
+
+    Args:
+        db_session: Current database session.
+        driving_session_id: Internal ID of the session.
+
+    Returns:
+        The trip whose status is IN_PROGRESS, or None.
+    """
+    query_result = await db_session.execute(
+        select(TripModel).where(
+            TripModel.driving_session_id == driving_session_id,
+            TripModel.status == "IN_PROGRESS",
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def update_trip_fields(
+    db_session: AsyncSession,
+    trip_record: TripModel,
+    values: dict[str, Any],
+    *,
+    change_reason: str,
+    changed_by: UUID | None,
+) -> TripModel:
+    """Apply new values to a trip, recording who changed it and why.
+
+    Args:
+        db_session: Current database session; the repository does not commit.
+        trip_record: The trip to change.
+        values: Column names and their new values.
+        change_reason: Reason recorded in the trip's change history.
+        changed_by: The acting user, or None for the system (the auto-close).
+
+    Returns:
+        The refreshed trip.
+
+    Side Effects:
+        Sets the change context so the history trigger records the actor and
+        the reason; `flush()` may raise `IntegrityError` (one running trip per
+        session).
+    """
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
+    for field_name, value in values.items():
+        setattr(trip_record, field_name, value)
+    trip_record.updated_at = utc_now()
+    await db_session.flush()
+    await db_session.refresh(trip_record)
+    return trip_record

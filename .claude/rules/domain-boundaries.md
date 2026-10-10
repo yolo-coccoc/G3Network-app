@@ -32,8 +32,10 @@
 | `telematics` → `identity` | `list_organization_role_holder_user_ids` (ORG_ADMIN + FLEET_MANAGER of the truck's organization receive the silence alert) | DEV-05 |
 | `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push) | F-J2 |
 | `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint); `resolve_session_command_reference` (the token and transaction ID the gateway sends in a remote start / stop) | F-B2, F-C5, F-H1 |
-| `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` (check-in: the truck and its owner) | F-E4 |
-| `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses) | F-E4 |
+| `drivers` → `vehicles` | `resolve_vehicle_reference_by_code` (VIN or plate) / `_by_vin` / `_by_id` (check-in: the truck and its owner), `resolve_vehicle_summary_by_id` (plate in the driver's summary) | F-E4, DR-11 |
+| `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses), `membership_holds_role` (a profile needs the DRIVER role), `search_membership_ids_by_person` (list search by name/phone), `resolve_organization_settings` (auto-end time) | F-E4, DRV-01 |
+| `drivers` → `telemetry` | `resolve_vehicle_live_status` (phone-to-truck check at check-in, trip start/end position, odometer, battery %), `resolve_last_telemetry_at` + `resolve_last_movement_at` (auto-end of an idle session), `resolve_distance_km_in_window` (distance in the driver's summary) | DR-07, DR-11, DR-12 |
+| `app/api/membership_end_hooks.py` → `identity`, `drivers` | `register_membership_end_hook`, `handle_membership_end` (ending or locking a membership closes the driver profile and the open driving session, DR-10) | DR-10 (DR-15) |
 | `support` → `vehicles` | `resolve_vehicle_reference_by_vin` | F-I1/F-I2 |
 | `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`), `resolve_own_driver_reference` (the caller's profile), `is_membership_checked_in_to_vehicle` (an SOS on a borrowed truck) | F-I1/F-I2 |
 | `support` → `notifications` | `create_notification` (`SOS_ALERT` when an SOS is created) | F-I2 |
@@ -45,8 +47,10 @@
 | `app/api/vehicle_transfer.py` → `vehicles`, `fleet`, `drivers`, `batteries` | `transfer_vehicle_ownership`, `close_membership_of_sold_vehicle`, `end_open_session_on_ownership_change`, `transfer_installed_battery_with_vehicle` | VEH-02 (VH-12) |
 | `telemetry` → `drivers` | `is_membership_checked_in_to_vehicle` (a driver reads the live data of the truck they are checked in to) | MON-02, DR-11 |
 
-**Only exception — `telematics ↔ telemetry` is bidirectional** (ingestion one
-way, device-health monitoring the other). The current `forbidden` contracts
+**Exceptions — `telematics ↔ telemetry` and `drivers ↔ telemetry` are
+bidirectional** (telematics/telemetry: ingestion one way, device-health
+monitoring the other; drivers/telemetry: `telemetry` asks whether a person is
+checked in to a truck, `drivers` reads the truck's T-Box data, DR-15). The current `forbidden` contracts
 don't check cycles; if an acyclic/layers contract is ever added, this pair needs
 an explicit exception rather than being treated as a violation.
 
@@ -56,7 +60,10 @@ that must change data in domains that depend on each other the wrong way round
 `batteries`) is orchestrated in the HTTP layer, in a module under `app/api/`
 that calls each owner's public service inside the request's one transaction.
 Such a module is not a domain, holds no business rule of its own and is
-listed in the table above.
+listed in the table above. When `identity` (which depends on no domain) must
+trigger work elsewhere (ending or locking a membership, DR-10), it exposes a
+hook (`register_membership_end_hook`) that `app/api/membership_end_hooks.py`
+fills with the other domain's public function at start-up (DR-15).
 
 ## Domain roles worth knowing
 
