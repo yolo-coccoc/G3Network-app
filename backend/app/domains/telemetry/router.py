@@ -27,6 +27,7 @@ from app.domains.identity.types import (
     AccessAuditAction,
     ClientContext,
     Principal,
+    UserRole,
     roles_for,
 )
 from app.domains.telemetry.schemas import (
@@ -61,7 +62,11 @@ BATTERY_HEALTH_READERS = require_roles(*roles_for("MON-07", "MON-08"))
 REPORT_READERS = require_roles(*roles_for("MON-14"))
 ACTIVATION_READERS = require_roles(*roles_for("VEH-05"))
 FLEET_LIVE_READERS = require_roles(*roles_for("FLT-04"))
-FLEET_REPORT_READERS = require_roles(*roles_for("FLT-06", "MON-14"))
+# MON-14 includes the DRIVER (their own truck); the organization-wide fleet
+# report is a manager's view, so the DRIVER is left out (RV-OP10).
+FLEET_REPORT_READERS = require_roles(
+    *(roles_for("FLT-06", "MON-14") - {UserRole.DRIVER})
+)
 
 
 @router.get(

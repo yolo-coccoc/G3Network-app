@@ -195,10 +195,6 @@ async def test_repeated_reading_from_one_device_is_skipped_not_fatal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP6: auto-end reads movement by device recorded_at",
-)
 async def test_auto_end_keeps_a_moving_truck_whose_device_clock_runs_slow(
     temporary_database: str,  # noqa: F811
 ) -> None:
@@ -247,10 +243,6 @@ async def test_auto_end_keeps_a_moving_truck_whose_device_clock_runs_slow(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP7: the auto-end sweep overwrites a session closed meanwhile",
-)
 async def test_auto_end_sweep_keeps_a_check_out_committed_during_the_sweep(
     temporary_database: str,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -373,10 +365,6 @@ async def _two_checked_in_drivers(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP7: two drivers can both start one unassigned planned trip",
-)
 async def test_a_trip_started_meanwhile_by_another_driver_cannot_be_started_again(
     temporary_database: str,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -488,10 +476,6 @@ async def _window_distance_km(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP8: lag() over a reading without odometer drops the distance",
-)
 async def test_distance_bridges_a_reading_without_odometer(
     temporary_database: str,  # noqa: F811
 ) -> None:
@@ -506,10 +490,6 @@ async def test_distance_bridges_a_reading_without_odometer(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP8: a single forward odometer glitch is counted as distance",
-)
 async def test_distance_ignores_a_single_odometer_glitch(
     temporary_database: str,  # noqa: F811
 ) -> None:

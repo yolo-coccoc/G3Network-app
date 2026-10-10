@@ -640,14 +640,18 @@ async def update_trip(
     )
     previous_driver_id = trip_record.planned_driver_id
     if update_values:
-        trip_record = await driver_repository.update_trip_fields(
+        updated_trip = await driver_repository.update_trip_fields(
             db_session,
             trip_record,
             update_values,
             change_reason=trip_update_request.reason
             or driver_repository.TRIP_EDITED_REASON,
             changed_by=principal.user_id,
+            expected_status=TripStatus.PLANNED.value,
         )
+        if updated_trip is None:
+            raise TripStateConflictError("Only a planned trip can be changed")
+        trip_record = updated_trip
     new_driver_id = update_values.get("planned_driver_id")
     if new_driver_id is not None and new_driver_id != previous_driver_id:
         await _notify_trip_assigned(db_session, trip_record, new_driver_id)
@@ -681,14 +685,17 @@ async def cancel_trip(
     trip_record = await _load_visible_trip(db_session, trip_id, principal)
     if trip_record.status != TripStatus.PLANNED.value:
         raise TripStateConflictError("Only a planned trip can be cancelled")
-    trip_record = await driver_repository.update_trip_fields(
+    cancelled_trip = await driver_repository.update_trip_fields(
         db_session,
         trip_record,
         {"status": TripStatus.CANCELLED.value, "status_reason": reason},
         change_reason=reason,
         changed_by=principal.user_id,
+        expected_status=TripStatus.PLANNED.value,
     )
-    return await build_trip_response(db_session, trip_record)
+    if cancelled_trip is None:
+        raise TripStateConflictError("Only a planned trip can be cancelled")
+    return await build_trip_response(db_session, cancelled_trip)
 
 
 async def _require_open_session(
@@ -784,16 +791,20 @@ async def start_trip(
         **_reading_values("start", reading),
     }
     try:
-        trip_record = await driver_repository.update_trip_fields(
+        started_trip = await driver_repository.update_trip_fields(
             db_session,
             trip_record,
             values,
             change_reason=driver_repository.TRIP_STARTED_REASON,
             changed_by=principal.user_id,
+            expected_status=TripStatus.PLANNED.value,
         )
     except IntegrityError as error:
         raise TripInProgressConflictError("A trip is already in progress") from error
-    return await build_trip_response(db_session, trip_record)
+    if started_trip is None:
+        # Another driver started it between the check above and this write.
+        raise TripStateConflictError("Only a planned trip can be started")
+    return await build_trip_response(db_session, started_trip)
 
 
 async def start_personal_trip(
@@ -887,7 +898,7 @@ async def finish_trip(
     reading = await driver_service.read_recent_truck_reading(
         db_session, session_record.vehicle_id, now=now
     )
-    trip_record = await driver_repository.update_trip_fields(
+    finished_trip = await driver_repository.update_trip_fields(
         db_session,
         trip_record,
         {
@@ -897,5 +908,8 @@ async def finish_trip(
         },
         change_reason=driver_repository.TRIP_FINISHED_REASON,
         changed_by=principal.user_id,
+        expected_status=TripStatus.IN_PROGRESS.value,
     )
-    return await build_trip_response(db_session, trip_record)
+    if finished_trip is None:
+        raise TripStateConflictError("Only a trip in progress can be finished")
+    return await build_trip_response(db_session, finished_trip)

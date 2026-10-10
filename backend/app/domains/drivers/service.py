@@ -122,10 +122,12 @@ def _is_license_expired(license_expires_on: date) -> bool:
         license_expires_on: Expiry date printed on the licence.
 
     Returns:
-        True when the date is before today (UTC); the expiry day itself is
+        True when the date is before today in ``APP_REPORT_TIMEZONE`` (the
+        printed expiry is a local calendar date); the expiry day itself is
         still valid.
     """
-    return license_expires_on < utc_now().date()
+    local_today = utc_now().astimezone(ZoneInfo(settings.APP_REPORT_TIMEZONE)).date()
+    return license_expires_on < local_today
 
 
 def to_driver_reference(
@@ -726,12 +728,14 @@ async def _auto_close_trip(
             values["end_odometer_km"] = Decimal(str(round(reading.odometer_km, 1)))
         if reading.soc_percent is not None:
             values["end_soc_percent"] = Decimal(str(round(reading.soc_percent, 2)))
+    # Conditional: a trip the driver finished meanwhile stays as they left it.
     await driver_repository.update_trip_fields(
         db_session,
         trip_record,
         values,
         change_reason=TRIP_AUTO_CLOSED_REASON,
         changed_by=changed_by,
+        expected_status=TripStatus.IN_PROGRESS.value,
     )
 
 
@@ -757,10 +761,15 @@ async def _end_session(
 
     Returns:
         The closed session.
+
+    Raises:
+        DrivingSessionConflictError: Another transaction already ended it.
     """
     closed_session = await driver_repository.close_session(
         db_session, session_record, ended_at=ended_at, end_cause=end_cause
     )
+    if closed_session is None:
+        raise DrivingSessionConflictError("The driving session has already ended")
     await _auto_close_trip(
         db_session, closed_session, ended_at=ended_at, changed_by=changed_by
     )
@@ -1473,13 +1482,18 @@ async def end_idle_driving_sessions(
         if last_telemetry_at <= countdown_start:
             skipped_count += 1
             continue
-        await _end_session(
-            db_session,
-            session_record,
-            ended_at=countdown_start,
-            end_cause=DrivingSessionEndCause.AUTO_ENDED,
-            changed_by=None,
-        )
+        try:
+            await _end_session(
+                db_session,
+                session_record,
+                ended_at=countdown_start,
+                end_cause=DrivingSessionEndCause.AUTO_ENDED,
+                changed_by=None,
+            )
+        except DrivingSessionConflictError:
+            # The driver checked out while the sweep ran: their end stands.
+            skipped_count += 1
+            continue
         ended_count += 1
     return AutoEndSweepResult(
         checked=len(open_sessions), ended=ended_count, skipped=skipped_count

@@ -377,7 +377,6 @@ async def test_far_future_recorded_at_is_never_stored(
 
 
 @pytest.mark.asyncio
-@_xfail("RV-OP10", "MON-14 lets a DRIVER-only caller through the fleet report gate")
 async def test_driver_only_caller_cannot_open_the_fleet_operating_report() -> None:
     """A DRIVER sees their own truck, never every truck's figures in a fleet."""
     driver = build_principal(roles=frozenset({UserRole.DRIVER}))

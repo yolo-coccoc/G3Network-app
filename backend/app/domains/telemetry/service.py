@@ -358,23 +358,24 @@ async def resolve_last_movement_at(
     """Get when a vehicle last moved since a time. Public entry point (DR-07).
 
     Used by the driving-session auto-end worker: the countdown starts at the
-    last sample whose speed is above the threshold.
+    last sample whose speed is above the threshold, read by the time the
+    server received it (the device clock may be wrong, RV-OP6).
 
     Args:
         db: Async session owned by the caller's entry boundary.
         vehicle_id: Internal ID of the vehicle.
-        since: Only samples recorded at or after this time are looked at
+        since: Only samples received at or after this time are looked at
             (the start of the driving session).
         min_speed_kmh: A sample counts as moving above this speed.
 
     Returns:
-        The device time of the newest moving sample, or `None` if the vehicle
-        did not move since ``since``.
+        The server receive time of the newest moving sample, or `None` if the
+        vehicle did not move since ``since``.
 
     Side Effects:
         Read-only query; does not commit or roll back.
     """
-    return await telemetry_repository.find_latest_moving_recorded_at(
+    return await telemetry_repository.find_latest_moving_received_at(
         db, vehicle_id, min_speed_kmh=min_speed_kmh, since=since
     )
 

@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import and_, column, func, or_, select, table
+from sqlalchemy import and_, column, func, or_, select, table, update
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -554,8 +554,11 @@ async def close_session(
     *,
     ended_at: datetime,
     end_cause: DrivingSessionEndCause,
-) -> DrivingSessionModel:
+) -> DrivingSessionModel | None:
     """Close an open driving session.
+
+    One conditional UPDATE (``WHERE ended_at IS NULL``): a session another
+    transaction closed meanwhile is left as that transaction wrote it (RV-OP7).
 
     Args:
         db_session: Current database session; the repository does not commit.
@@ -564,12 +567,19 @@ async def close_session(
         end_cause: Why it ends.
 
     Returns:
-        The closed session.
+        The closed session, or `None` when it was already closed.
     """
-    session_record.ended_at = ended_at
-    session_record.end_cause = end_cause.value
-    session_record.updated_at = utc_now()
-    await db_session.flush()
+    update_result = await db_session.execute(
+        update(DrivingSessionModel)
+        .where(
+            DrivingSessionModel.driving_session_id == session_record.driving_session_id,
+            DrivingSessionModel.ended_at.is_(None),
+        )
+        .values(ended_at=ended_at, end_cause=end_cause.value, updated_at=utc_now())
+        .execution_options(synchronize_session=False)
+    )
+    if update_result.rowcount == 0:  # type: ignore[attr-defined]
+        return None
     await db_session.refresh(session_record)
     return session_record
 
@@ -923,8 +933,13 @@ async def update_trip_fields(
     *,
     change_reason: str,
     changed_by: UUID | None,
-) -> TripModel:
+    expected_status: str | None = None,
+) -> TripModel | None:
     """Apply new values to a trip, recording who changed it and why.
+
+    The write is one conditional UPDATE: with ``expected_status`` it only
+    matches while the trip still has that status, so two requests that both
+    read PLANNED cannot both win (RV-OP7).
 
     Args:
         db_session: Current database session; the repository does not commit.
@@ -932,9 +947,11 @@ async def update_trip_fields(
         values: Column names and their new values.
         change_reason: Reason recorded in the trip's change history.
         changed_by: The acting user, or None for the system (the auto-close).
+        expected_status: The status the trip must still have, if any.
 
     Returns:
-        The refreshed trip.
+        The refreshed trip, or `None` when its status is no longer
+        ``expected_status`` (nothing was written).
 
     Side Effects:
         Sets the change context so the history trigger records the actor and
@@ -944,9 +961,15 @@ async def update_trip_fields(
     await set_change_context(
         db_session, changed_by=changed_by, change_reason=change_reason
     )
-    for field_name, value in values.items():
-        setattr(trip_record, field_name, value)
-    trip_record.updated_at = utc_now()
-    await db_session.flush()
+    statement = update(TripModel).where(TripModel.trip_id == trip_record.trip_id)
+    if expected_status is not None:
+        statement = statement.where(TripModel.status == expected_status)
+    update_result = await db_session.execute(
+        statement.values(**values, updated_at=utc_now()).execution_options(
+            synchronize_session=False
+        )
+    )
+    if update_result.rowcount == 0:  # type: ignore[attr-defined]
+        return None
     await db_session.refresh(trip_record)
     return trip_record

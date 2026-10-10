@@ -108,10 +108,6 @@ def _sos_request(driver_id: UUID | None) -> SupportSosCreateRequest:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP13: a DRIVER-only caller can file a case as any colleague",
-)
 async def test_driver_only_caller_cannot_file_an_sos_in_a_colleagues_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

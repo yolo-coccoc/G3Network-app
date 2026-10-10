@@ -161,7 +161,9 @@ async def _resolve_case_context(
         db_session: Database session owned by the entry boundary.
         vehicle_vin: VIN supplied by the caller, if any.
         driver_id: Driver ID supplied by the caller, if any; without one, a
-            caller who has a driver profile is recorded as the driver.
+            caller who has a driver profile is recorded as the driver. A
+            caller without a support-staff role may name only their own
+            profile.
         principal: The caller (data scope).
 
     Returns:
@@ -197,6 +199,14 @@ async def _resolve_case_context(
         resolved_vin = vehicle_reference.vin
         vehicle_organization_id = vehicle_reference.organization_id
 
+    if driver_id is not None and not principal.has_any_role(*SUPPORT_STAFF_ROLES):
+        # Without a staff role a caller reports for themselves only: a case
+        # in a colleague's name would put a stranger's name on an SOS (RV-OP13).
+        own_driver = await driver_service.resolve_own_driver_reference(
+            db_session, principal.membership_id
+        )
+        if own_driver is None or own_driver.driver_id != driver_id:
+            raise SupportDriverNotFoundError(f"Driver with id '{driver_id}' not found")
     if driver_id is not None:
         driver_reference = await driver_service.resolve_driver_reference_by_id(
             db_session, driver_id, organization_id=principal.data_scope

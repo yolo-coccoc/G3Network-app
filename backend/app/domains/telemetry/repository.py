@@ -17,10 +17,12 @@ from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import DateTime, Float, Integer, func, select
+from sqlalchemy import DateTime, Float, Integer, and_, case, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import Subquery
 
 from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.types import (
@@ -151,34 +153,31 @@ async def find_latest_received_at(
     return query_result.scalar_one_or_none()
 
 
-async def find_latest_moving_recorded_at(
+async def find_latest_moving_received_at(
     db: AsyncSession, vehicle_id: UUID, *, min_speed_kmh: float, since: datetime
 ) -> datetime | None:
-    """Get when a vehicle last reported a speed above a threshold.
+    """Get when the server last received a speed above a threshold.
 
-    Served by ``ix_telemetry_vehicle_time`` (ordered by ``recorded_at``
-    descending, the speed filter is applied while scanning from the newest
-    row).
+    Read by ``received_at`` (the server clock), not ``recorded_at`` (the
+    device clock): a device whose clock runs slow stamps every sample before
+    the shift started, and would look as if it never moved (RV-OP6).
 
     Args:
         db: Current database session.
         vehicle_id: Internal ID of the vehicle.
         min_speed_kmh: A sample counts as moving when its speed is above this.
-        since: Only samples recorded at or after this time are looked at.
+        since: Only samples received at or after this time are looked at.
 
     Returns:
-        The largest matching ``recorded_at``, or `None` if the vehicle did
+        The largest matching ``received_at``, or `None` if the vehicle did
         not move since ``since``.
     """
     query_result = await db.execute(
-        select(TelemetryModel.recorded_at)
-        .where(
+        select(func.max(TelemetryModel.received_at)).where(
             TelemetryModel.vehicle_id == vehicle_id,
-            TelemetryModel.recorded_at >= since,
+            TelemetryModel.received_at >= since,
             TelemetryModel.speed_kmh > min_speed_kmh,
         )
-        .order_by(TelemetryModel.recorded_at.desc())
-        .limit(1)
     )
     return query_result.scalar_one_or_none()
 
@@ -256,6 +255,97 @@ async def get_vehicle_telemetry_history(
     return list(query_result.scalars().all())
 
 
+# Odometer steps larger than a truck can plausibly drive are glitches, not
+# distance (RV-OP8): a step counts only up to this speed over the time between
+# the two readings, with that time counted as at least the minimum below, so
+# readings seconds apart do not make a normal step look impossible.
+MAX_PLAUSIBLE_SPEED_KMH = 200.0
+MIN_ODOMETER_STEP_SECONDS = 300.0
+
+
+def _plausible_odometer_distance(
+    vehicle_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+    *,
+    granularity: ReportGranularity | None = None,
+    time_zone: str | None = None,
+) -> Subquery:
+    """Build the per-reading distance steps of a window from the odometer.
+
+    Only readings that carry an odometer are compared with each other, so a
+    reading without one (or with a glitch in between) neither hides the
+    distance driven nor adds a fake one. A step counts when it is positive and
+    no larger than ``MAX_PLAUSIBLE_SPEED_KMH`` allows over the time between the
+    two readings (at least ``MIN_ODOMETER_STEP_SECONDS``); a backwards step
+    (device reset) or an impossible forward one contributes 0.
+
+    Args:
+        vehicle_id: The vehicle.
+        start_time: Inclusive lower bound.
+        end_time: Inclusive upper bound.
+        granularity: When given, also label each step with its calendar
+            period (``period_start``), cut like the period summaries do.
+        time_zone: IANA zone of the periods; required with ``granularity``.
+
+    Returns:
+        A subquery with ``distance_km`` and, with ``granularity``,
+        ``period_start``.
+    """
+    previous_odometer = func.lag(TelemetryModel.odometer_km).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
+    )
+    previous_recorded_at = func.lag(TelemetryModel.recorded_at).over(
+        partition_by=TelemetryModel.vehicle_id,
+        order_by=TelemetryModel.recorded_at.asc(),
+    )
+    columns: list[ColumnElement[Any]] = [
+        (TelemetryModel.odometer_km - previous_odometer).label("step_km"),
+        func.extract("epoch", TelemetryModel.recorded_at - previous_recorded_at).label(
+            "elapsed_seconds"
+        ),
+    ]
+    if granularity is not None:
+        columns.append(
+            func.date_trunc(
+                granularity.value,
+                func.least(
+                    TelemetryModel.recorded_at, end_time - timedelta(microseconds=1)
+                ),
+                time_zone,
+                type_=DateTime(timezone=True),
+            ).label("period_start")
+        )
+    steps = (
+        select(*columns)
+        .where(
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.recorded_at >= start_time,
+            TelemetryModel.recorded_at <= end_time,
+            TelemetryModel.odometer_km.is_not(None),
+        )
+        .subquery()
+    )
+    plausible_km = (
+        MAX_PLAUSIBLE_SPEED_KMH
+        * func.greatest(steps.c.elapsed_seconds, MIN_ODOMETER_STEP_SECONDS)
+        / 3600.0
+    )
+    selected: list[ColumnElement[Any]] = [
+        case(
+            (
+                and_(steps.c.step_km > 0, steps.c.step_km <= plausible_km),
+                steps.c.step_km,
+            ),
+            else_=0.0,
+        ).label("distance_km")
+    ]
+    if granularity is not None:
+        selected.append(steps.c.period_start)
+    return select(*selected).subquery()
+
+
 async def get_vehicle_window_summary(
     db: AsyncSession,
     *,
@@ -289,7 +379,8 @@ async def get_vehicle_window_summary(
         ``coalesce`` below.
 
     Side Effects:
-        Read-only. Single SQL round trip; no I/O beyond the query.
+        Read-only. Two queries: the SOC fold, and the distance from the
+        odometer readings only (``_plausible_odometer_distance``, RV-OP8).
     """
     # lag() must be computed in an inner SELECT: SQL forbids a window
     # function inside an aggregate in the same select list.
@@ -302,10 +393,6 @@ async def get_vehicle_window_summary(
         partition_by=TelemetryModel.vehicle_id,
         order_by=TelemetryModel.recorded_at.asc(),
     )
-    previous_odometer = func.lag(TelemetryModel.odometer_km).over(
-        partition_by=TelemetryModel.vehicle_id,
-        order_by=TelemetryModel.recorded_at.asc(),
-    )
 
     deltas = (
         select(
@@ -313,7 +400,6 @@ async def get_vehicle_window_summary(
             TelemetryModel.odometer_km.label("odometer"),
             (previous_soc - TelemetryModel.soc_percent).label("soc_drop"),
             (TelemetryModel.soc_percent - previous_soc).label("soc_rise"),
-            (TelemetryModel.odometer_km - previous_odometer).label("odometer_delta"),
         )
         .where(
             TelemetryModel.vehicle_id == vehicle_id,
@@ -334,13 +420,11 @@ async def get_vehicle_window_summary(
     # The outer coalesce covers the empty window, where sum() is NULL.
     clamped_drop = func.greatest(func.coalesce(deltas.c.soc_drop, 0.0), 0.0)
     clamped_rise = func.greatest(func.coalesce(deltas.c.soc_rise, 0.0), 0.0)
-    clamped_distance = func.greatest(func.coalesce(deltas.c.odometer_delta, 0.0), 0.0)
 
     query_result = await db.execute(
         select(
             func.coalesce(func.sum(clamped_drop), 0.0),
             func.coalesce(func.sum(clamped_rise), 0.0),
-            func.coalesce(func.sum(clamped_distance), 0.0),
             func.count(),
             func.count(deltas.c.odometer),
             func.min(deltas.c.recorded_at),
@@ -350,12 +434,17 @@ async def get_vehicle_window_summary(
     (
         soc_discharge_percent,
         soc_charge_percent,
-        distance_km,
         sample_count,
         odometer_sample_count,
         first_recorded_at,
         last_recorded_at,
     ) = query_result.one()
+    distance_steps = _plausible_odometer_distance(vehicle_id, start_time, end_time)
+    distance_km = (
+        await db.execute(
+            select(func.coalesce(func.sum(distance_steps.c.distance_km), 0.0))
+        )
+    ).scalar_one()
     return VehicleTelemetryWindowSummary(
         soc_discharge_percent=float(soc_discharge_percent),
         soc_charge_percent=float(soc_charge_percent),
@@ -403,13 +492,10 @@ async def list_vehicle_period_summaries(
         Periods without readings are absent.
 
     Side Effects:
-        Read-only. Single SQL round trip.
+        Read-only. Two queries: the SOC fold, and the distance steps from the
+        odometer readings only (``_plausible_odometer_distance``, RV-OP8).
     """
     previous_soc = func.lag(TelemetryModel.soc_percent).over(
-        partition_by=TelemetryModel.vehicle_id,
-        order_by=TelemetryModel.recorded_at.asc(),
-    )
-    previous_odometer = func.lag(TelemetryModel.odometer_km).over(
         partition_by=TelemetryModel.vehicle_id,
         order_by=TelemetryModel.recorded_at.asc(),
     )
@@ -435,7 +521,6 @@ async def list_vehicle_period_summaries(
             TelemetryModel.odometer_km.label("odometer"),
             (previous_soc - TelemetryModel.soc_percent).label("soc_drop"),
             (TelemetryModel.soc_percent - previous_soc).label("soc_rise"),
-            (TelemetryModel.odometer_km - previous_odometer).label("odometer_delta"),
         )
         .where(
             TelemetryModel.vehicle_id == vehicle_id,
@@ -450,14 +535,12 @@ async def list_vehicle_period_summaries(
     # a non-empty group is never NULL).
     clamped_drop = func.greatest(func.coalesce(deltas.c.soc_drop, 0.0), 0.0)
     clamped_rise = func.greatest(func.coalesce(deltas.c.soc_rise, 0.0), 0.0)
-    clamped_distance = func.greatest(func.coalesce(deltas.c.odometer_delta, 0.0), 0.0)
 
     query_result = await db.execute(
         select(
             deltas.c.period_start,
             func.sum(clamped_drop),
             func.sum(clamped_rise),
-            func.sum(clamped_distance),
             func.count(),
             func.count(deltas.c.odometer),
             func.min(deltas.c.recorded_at),
@@ -467,11 +550,29 @@ async def list_vehicle_period_summaries(
         .group_by(deltas.c.period_start)
         .order_by(deltas.c.period_start)
     )
+    distance_steps = _plausible_odometer_distance(
+        vehicle_id,
+        start_time,
+        end_time,
+        granularity=granularity,
+        time_zone=time_zone,
+    )
+    distance_by_period = {
+        distance_period_start: float(period_distance_km)
+        for distance_period_start, period_distance_km in (
+            await db.execute(
+                select(
+                    distance_steps.c.period_start,
+                    func.sum(distance_steps.c.distance_km),
+                ).group_by(distance_steps.c.period_start)
+            )
+        ).all()
+    }
     return {
         row_period_start: VehicleTelemetryWindowSummary(
             soc_discharge_percent=float(soc_discharge_percent),
             soc_charge_percent=float(soc_charge_percent),
-            distance_km=float(distance_km),
+            distance_km=distance_by_period.get(row_period_start, 0.0),
             sample_count=int(sample_count),
             odometer_sample_count=int(odometer_sample_count),
             first_recorded_at=first_recorded_at,
@@ -481,7 +582,6 @@ async def list_vehicle_period_summaries(
             row_period_start,
             soc_discharge_percent,
             soc_charge_percent,
-            distance_km,
             sample_count,
             odometer_sample_count,
             first_recorded_at,
@@ -520,7 +620,7 @@ async def list_vehicle_battery_health_days(
         oldest first; days without such data are omitted.
 
     Side Effects:
-        Read-only. Single SQL round trip.
+        Read-only. Two queries, as `get_vehicle_window_summary`.
     """
     day_start = func.date_trunc(
         "day",

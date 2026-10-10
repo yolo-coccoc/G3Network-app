@@ -42,10 +42,6 @@ def _freeze_driver_clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None
     monkeypatch.setattr(driver_service, "utc_now", lambda: now)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP12: licence expiry is compared with the UTC date",
-)
 def test_licence_expired_yesterday_in_vietnam_is_expired_before_7am_local(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
