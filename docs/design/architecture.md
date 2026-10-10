@@ -179,7 +179,7 @@ FastAPI registers the following domains:
   `service.py`/`repository.py` keep topology CRUD, the directory and geo
   searches, the configuration read and the command channel (`charging_station_commands`
   queued by the API or another domain; the gateway's `command_loop.py` claims the
-  queued rows of the chargers connected to its process, sends the OCPP call per
+  queued rows of the chargers connected to its process (stamping `claimed_at`), sends the OCPP call per
   protocol and writes the answer back; CS-24, PR-16).
   A `RecordingConnection` wrapper stores every frame, both directions,
   verbatim in `charging_ocpp_messages` before it is parsed, and every
@@ -524,6 +524,8 @@ call each other is in
 │   │   │   │       ├── ocpp201_charge_point.py # OCPP 2.0.1 adapter (OCPP201ChargePoint): Boot/Heartbeat/TransactionEvent/MeterValues/StatusNotification + payload helpers
 │   │   │   │       ├── ocpp16_charge_point.py  # OCPP 1.6J adapter (OCPP16ChargePoint): Boot/Heartbeat/Status/Authorize/Start/Stop/MeterValues + post-boot GetConfiguration
 │   │   │   │       ├── ocpp16_measurements.py  # pure 1.6J MeterValues -> energy samples + measurements (never shares code with the 2.0.1 normalizer)
+│   │   │   │       ├── measurement_units.py # fixed-unit conversion of measurements, shared by both adapters (CE-14)
+│   │   │   │       ├── library_logging.py   # dedicated logger for the python-ocpp library: drops its frame logs so QR tokens never reach a log (IS-07)
 │   │   │   │       ├── parsing.py           # protocol-neutral helpers shared by both adapters (OcppPayload, timestamp parsing/formatting)
 │   │   │   │       ├── raw_log.py           # RecordingConnection: verbatim, append-only log of every OCPP frame
 │   │   │   │       └── entrypoint.py  # entrypoint for "make charging-ocpp-dev" (runs on the host, not a container)
@@ -577,7 +579,8 @@ call each other is in
 │   │   │
 │   │   └── libs/
 │   │       ├── common/                 # shared, NO business logic: config, logging, errors (domain-exception bases),
-│   │       │                           # clock (utc_now), pagination (normalize_page_window), geo
+│   │       │                           # clock (utc_now), pagination (normalize_page_window), geo,
+│   │       │                           # reason (non-blank free-text reason type), payload_guard (refuses NaN/NUL in device JSON)
 │   │       └── db/                     # SQLAlchemy base, session, enums (enum_values), Alembic migrations
 │   │
 │   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py) plus tests/libs/;
