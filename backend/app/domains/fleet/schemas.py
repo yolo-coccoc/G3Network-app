@@ -34,9 +34,6 @@ class _FleetInputFields(BaseModel):
     ``ck_fleets_name_or_code`` check constraint.
     """
 
-    organization_id: UUID = Field(
-        ..., description="Organization that owns the fleet (FL-08)"
-    )
     fleet_code: str | None = Field(
         default=None,
         min_length=1,
@@ -55,9 +52,17 @@ class _FleetInputFields(BaseModel):
 class FleetCreateRequest(_FleetInputFields):
     """HTTP request data for creating a new fleet.
 
-    ``organization_id`` is a required field until authentication (WP2) lets
-    the API take the caller's organization from the login instead.
+    ``organization_id`` is only for internal staff creating a fleet for a
+    customer; everyone else creates it in their own organization.
     """
+
+    organization_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Organization that owns the fleet (FL-08); internal staff only, "
+            "defaults to the caller's organization"
+        ),
+    )
 
     @model_validator(mode="after")
     def _require_name_or_code(self) -> "FleetCreateRequest":
@@ -103,6 +108,10 @@ class FleetResponse(_FleetInputFields):
         created_at: Creation time.
         updated_at: Last update time.
     """
+
+    organization_id: UUID = Field(
+        ..., description="Organization that owns the fleet (FL-08)"
+    )
 
     fleet_id: UUID = Field(..., description="Fleet ID (internal)")
     vehicle_count: int = Field(..., ge=0, description="Number of member vehicles")

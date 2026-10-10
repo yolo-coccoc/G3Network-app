@@ -22,6 +22,7 @@ from app.domains.vehicles.types import (
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 from tests.builders import build_telemetry_record, fake_db_session
+from tests.principals import build_internal_principal
 
 
 def test_telemetry_latest_response_decodes_location_to_lat_lon() -> None:
@@ -118,7 +119,11 @@ async def test_get_vehicle_telemetry_history_response_returns_ordered_points(
     monkeypatch.setattr(telemetry_repository, "get_vehicle_telemetry_history", history)
 
     response = await telemetry_service.get_vehicle_telemetry_history_response(
-        fake_db_session(), vehicle_id=vehicle_id, start_time=start, end_time=end
+        fake_db_session(),
+        vehicle_id=vehicle_id,
+        start_time=start,
+        end_time=end,
+        principal=build_internal_principal(),
     )
 
     assert response.vehicle_id == vehicle_id
@@ -148,6 +153,7 @@ async def test_get_vehicle_telemetry_history_response_raises_not_found_for_unkno
             vehicle_id=uuid4(),
             start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            principal=build_internal_principal(),
         )
 
 
@@ -162,6 +168,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_naive_start_time()
             vehicle_id=uuid4(),
             start_time=datetime(2026, 9, 1),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            principal=build_internal_principal(),
         )
 
 
@@ -174,6 +181,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_naive_end_time() -
             vehicle_id=uuid4(),
             start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 9, 2),
+            principal=build_internal_principal(),
         )
 
 
@@ -190,6 +198,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_non_positive_range
             vehicle_id=uuid4(),
             start_time=same_instant,
             end_time=same_instant,
+            principal=build_internal_principal(),
         )
 
 
@@ -203,7 +212,11 @@ async def test_get_vehicle_telemetry_history_response_rejects_range_exceeding_ma
 
     with pytest.raises(TelemetryInvalidRangeError):
         await telemetry_service.get_vehicle_telemetry_history_response(
-            fake_db_session(), vehicle_id=uuid4(), start_time=start, end_time=too_far
+            fake_db_session(),
+            vehicle_id=uuid4(),
+            start_time=start,
+            end_time=too_far,
+            principal=build_internal_principal(),
         )
 
 
@@ -241,6 +254,7 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
         start_time=start,
         end_time=end,
         limit=settings.TELEMETRY_HISTORY_MAX_LIMIT + 1000,
+        principal=build_internal_principal(),
     )
 
     assert captured_limit["limit"] == settings.TELEMETRY_HISTORY_MAX_LIMIT

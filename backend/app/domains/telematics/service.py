@@ -18,17 +18,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.service as fleet_service
+import app.domains.identity.service as identity_service
 import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
+from app.domains.identity.types import Principal
 from app.domains.telematics.commands import mqtt_publisher
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
     TelematicConflictError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
-    TelematicOrganizationNotFoundError,
     TelematicVehicleNotFoundError,
 )
 from app.domains.telematics.models import TelematicModel
@@ -53,24 +54,9 @@ from app.libs.common.pagination import normalize_page_window
 
 logger = logging.getLogger(__name__)
 
-# Fixed history reasons of routine actions (no acting user until WP2).
+# Fixed history reasons of routine actions; the acting user is the caller.
 TELEMATIC_EDITED_REASON = "Device details edited"
 TELEMATIC_DELETED_REASON = "Device deleted"
-
-
-def _is_foreign_key_violation(error: IntegrityError) -> bool:
-    """Tell a foreign-key violation (SQLSTATE 23503) from other integrity errors.
-
-    Args:
-        error: The integrity error raised by a flush.
-
-    Returns:
-        True when the driver reports a foreign-key violation.
-    """
-    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(
-        error.orig, "pgcode", None
-    )
-    return sqlstate == "23503"
 
 
 async def resolve_mapping_by_serial(
@@ -141,20 +127,23 @@ async def resolve_serial_by_id(
 
 
 async def _resolve_vehicle_id_by_vin(
-    db_session: AsyncSession, vehicle_vin: str
+    db_session: AsyncSession, vehicle_vin: str, principal: Principal
 ) -> UUID:
     """Resolve the VIN sent on a device create/update into a live vehicle ID.
 
     Args:
         db_session: Current database session.
         vehicle_vin: VIN of the vehicle the device should be assigned to.
+        principal: The caller; a vehicle of an organization out of the
+            caller's reach does not exist for them.
 
     Returns:
         Internal ID of the live vehicle carrying that VIN.
 
     Raises:
         TelematicVehicleNotFoundError: No live (non-soft-deleted) vehicle
-            has that VIN (D10, deferred.md item 83).
+            has that VIN, or it belongs to an organization out of reach
+            (D10, deferred.md item 83).
 
     Side Effects:
         One read-only query through the vehicles public service.
@@ -162,7 +151,9 @@ async def _resolve_vehicle_id_by_vin(
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, vehicle_vin
     )
-    if vehicle_reference is None:
+    if vehicle_reference is None or not principal.can_access_organization(
+        vehicle_reference.organization_id
+    ):
         raise TelematicVehicleNotFoundError(
             f"Vehicle with VIN '{vehicle_vin}' not found"
         )
@@ -309,7 +300,10 @@ async def build_telematic_response(
 
 
 async def create_telematic(
-    db_session: AsyncSession, telematic_create_request: TelematicCreateRequest
+    db_session: AsyncSession,
+    telematic_create_request: TelematicCreateRequest,
+    *,
+    principal: Principal,
 ) -> TelematicResponse:
     """Create a device, optionally assigning it to the vehicle named by VIN.
 
@@ -322,15 +316,17 @@ async def create_telematic(
     Args:
         db_session: Current database session.
         telematic_create_request: Validated create request.
+        principal: The caller; the device is owned by the caller's
+            organization unless internal staff name another one.
 
     Returns:
         The HTTP response for the new device.
 
     Raises:
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
-            vehicle.
-        TelematicOrganizationNotFoundError: ``organization_id`` matches no
-            organization.
+            vehicle in the caller's reach.
+        OrganizationNotFoundError: ``organization_id`` matches no
+            organization in the caller's reach.
         TelematicConflictError: The serial or IMEI is already used by a
             device still in the system, or the vehicle is already assigned
             to another live device.
@@ -348,12 +344,15 @@ async def create_telematic(
     vehicle_id = None
     if telematic_create_request.vehicle_vin is not None:
         vehicle_id = await _resolve_vehicle_id_by_vin(
-            db_session, telematic_create_request.vehicle_vin
+            db_session, telematic_create_request.vehicle_vin, principal
         )
         if await telematics_repository.find_by_vehicle_id(db_session, vehicle_id):
             raise TelematicConflictError(
                 "Vehicle is already assigned to another telematic"
             )
+    organization_id = await identity_service.resolve_organization_for_new_record(
+        db_session, principal, telematic_create_request.organization_id
+    )
     now = utc_now()
     try:
         telematic_record = await telematics_repository.insert(
@@ -361,7 +360,7 @@ async def create_telematic(
             {
                 "telematic_serial": telematic_create_request.telematic_serial,
                 "imei": telematic_create_request.imei,
-                "organization_id": telematic_create_request.organization_id,
+                "organization_id": organization_id,
                 "acquired_at": telematic_create_request.acquired_at or now,
                 "vehicle_id": vehicle_id,
                 "installed_at": now if vehicle_id is not None else None,
@@ -370,12 +369,6 @@ async def create_telematic(
             },
         )
     except IntegrityError as error:
-        # The vehicle was resolved above, so a foreign-key failure is the
-        # organization (identity has no service to ask yet, WP2).
-        if _is_foreign_key_violation(error):
-            raise TelematicOrganizationNotFoundError(
-                f"Organization '{telematic_create_request.organization_id}' not found"
-            ) from error
         raise TelematicConflictError(
             "Telematic serial, IMEI or vehicle already exists"
         ) from error
@@ -385,12 +378,16 @@ async def create_telematic(
 async def get_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
+    *,
+    principal: Principal,
 ) -> TelematicResponse:
-    """Get the details of a device.
+    """Get the details of a device inside the caller's data reach.
 
     Args:
         db_session: Current database session.
         telematic_id: Internal ID of the device.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
 
     Returns:
         The HTTP response for the device.
@@ -398,7 +395,9 @@ async def get_telematic(
     Raises:
         TelematicNotFoundError: The device does not exist or is soft-deleted.
     """
-    telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
     if not telematic_record:
         raise TelematicNotFoundError("Telematic not found")
     return await build_telematic_response(db_session, telematic_record)
@@ -407,6 +406,7 @@ async def get_telematic(
 async def list_telematics(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int,
     page_size: int,
     status_filter: TelematicStatus | None = None,
@@ -415,6 +415,8 @@ async def list_telematics(
 
     Args:
         db_session: Current database session.
+        principal: The caller; only devices of the caller's organization are
+            listed unless the caller is internal.
         page: Page number, starting from 1; clamped by
             ``normalize_page_window``.
         page_size: Maximum number of devices per page; clamped to
@@ -436,13 +438,16 @@ async def list_telematics(
         offset=page_window.offset,
         limit=page_window.page_size,
         status_filter=status_filter,
+        organization_id=principal.data_scope,
     )
     return TelematicListResponse(
         items=[
             await build_telematic_response(db_session, telematic_record)
             for telematic_record in telematic_records
         ],
-        total=await telematics_repository.count(db_session, status_filter),
+        total=await telematics_repository.count(
+            db_session, status_filter, organization_id=principal.data_scope
+        ),
         page=page_window.page,
         page_size=page_window.page_size,
     )
@@ -452,6 +457,8 @@ async def update_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
     telematic_update_request: TelematicUpdateRequest,
+    *,
+    principal: Principal,
 ) -> TelematicResponse:
     """Partially update a device, re-resolving its vehicle when a VIN is sent.
 
@@ -466,6 +473,8 @@ async def update_telematic(
         db_session: Current database session.
         telematic_id: Internal ID of the device.
         telematic_update_request: Validated partial update.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
 
     Returns:
         The HTTP response for the updated device.
@@ -480,11 +489,14 @@ async def update_telematic(
 
     Side Effects:
         Flushes the update and records it in the device's history with the
+        caller as actor and the request's ``status_reason`` or else the
         fixed reason ``TELEMATIC_EDITED_REASON``. ``installed_at`` is set to
         now when the device is mounted on a different vehicle and cleared
         when it is unmounted. Does not commit.
     """
-    telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
     if not telematic_record:
         raise TelematicNotFoundError("Telematic not found")
     requested_values = telematic_update_request.model_dump(exclude_unset=True)
@@ -501,7 +513,7 @@ async def update_telematic(
         # with None means "unassign"; absent means "leave unchanged".
         vehicle_vin = requested_values.pop("vehicle_vin")
         vehicle_id = (
-            await _resolve_vehicle_id_by_vin(db_session, vehicle_vin)
+            await _resolve_vehicle_id_by_vin(db_session, vehicle_vin, principal)
             if vehicle_vin is not None
             else None
         )
@@ -532,7 +544,8 @@ async def update_telematic(
             db_session,
             telematic_record,
             update_values,
-            change_reason=TELEMATIC_EDITED_REASON,
+            change_reason=update_values.get("status_reason") or TELEMATIC_EDITED_REASON,
+            changed_by=principal.user_id,
         )
     except IntegrityError as error:
         raise TelematicConflictError(
@@ -544,6 +557,9 @@ async def update_telematic(
 async def soft_delete_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
+    *,
+    principal: Principal,
+    reason: str | None = None,
 ) -> None:
     """Soft-delete a device: it leaves the system (DM-25).
 
@@ -555,6 +571,10 @@ async def soft_delete_telematic(
     Args:
         db_session: Current database session.
         telematic_id: Internal ID of the device.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
+        reason: Why the device leaves; defaults to
+            ``TELEMATIC_DELETED_REASON``.
 
     Raises:
         TelematicNotFoundError: The device does not exist or is already
@@ -565,11 +585,16 @@ async def soft_delete_telematic(
         and flushes (history reason ``TELEMATIC_DELETED_REASON``); does not
         commit.
     """
-    telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
     if not telematic_record:
         raise TelematicNotFoundError("Telematic not found")
     await telematics_repository.soft_delete(
-        db_session, telematic_record, change_reason=TELEMATIC_DELETED_REASON
+        db_session,
+        telematic_record,
+        change_reason=reason or TELEMATIC_DELETED_REASON,
+        changed_by=principal.user_id,
     )
 
 
@@ -577,6 +602,8 @@ async def push_telematic_config(
     db_session: AsyncSession,
     telematic_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
+    *,
+    principal: Principal,
 ) -> TelematicConfigResponse:
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
 
@@ -591,6 +618,8 @@ async def push_telematic_config(
         db_session: Session whose transaction is owned by the caller.
         telematic_id: Internal ID of the device to configure.
         telematic_config_push_request: Desired telemetry publish interval.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
 
     Returns:
         The pushed configuration, echoing the exact command topic so an
@@ -607,7 +636,9 @@ async def push_telematic_config(
     Side Effects:
         Publishes one MQTT message. Writes nothing.
     """
-    telematic_record = await telematics_repository.get_by_id(db_session, telematic_id)
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
     if telematic_record is None:
         raise TelematicNotFoundError("Telematic not found")
     if telematic_record.status is TelematicStatus.INACTIVE:
@@ -690,6 +721,8 @@ async def push_fleet_config(
     db_session: AsyncSession,
     fleet_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
+    *,
+    principal: Principal,
 ) -> TelematicFleetConfigPushResponse:
     """Push one telemetry publish-interval config to a whole fleet (F-J2, D9).
 
@@ -712,6 +745,8 @@ async def push_fleet_config(
         db_session: Session whose transaction is owned by the caller.
         fleet_id: Internal ID of the fleet.
         telematic_config_push_request: Desired telemetry publish interval.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
 
     Returns:
         The fleet ID, the count per outcome and one result per member.
@@ -728,7 +763,7 @@ async def push_fleet_config(
         Writes nothing.
     """
     vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db_session, fleet_id
+        db_session, fleet_id, organization_id=principal.data_scope
     )
     fleet_config_push_results = [
         await _push_config_to_fleet_vehicle(

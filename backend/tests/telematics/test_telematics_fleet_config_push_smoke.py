@@ -22,6 +22,7 @@ from app.domains.telematics.types import TelematicConfigPushOutcome, TelematicSt
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
+from tests.principals import build_internal_principal
 
 
 @pytest.mark.asyncio
@@ -51,7 +52,7 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
     published_serials: list[str] = []
 
     async def member_vehicle_ids_of(
-        db_session: AsyncSession, value: UUID
+        db_session: AsyncSession, value: UUID, **_scope: object
     ) -> list[UUID]:
         assert value == fleet_id
         return member_vehicle_ids
@@ -91,6 +92,7 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
         fake_db_session(),
         fleet_id,
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        principal=build_internal_principal(),
     )
 
     assert fleet_config_push_response.fleet_id == fleet_id
@@ -126,7 +128,9 @@ async def test_push_fleet_config_with_no_members_reports_nothing(
 ) -> None:
     """An empty fleet answers zero counts and no results."""
 
-    async def no_members(db_session: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    async def no_members(
+        db_session: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> list[UUID]:
         return []
 
     monkeypatch.setattr(
@@ -137,6 +141,7 @@ async def test_push_fleet_config_with_no_members_reports_nothing(
         fake_db_session(),
         uuid4(),
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        principal=build_internal_principal(),
     )
 
     assert fleet_config_push_response.published_count == 0
@@ -151,7 +156,9 @@ async def test_push_fleet_config_unknown_fleet_raises_not_found(
 ) -> None:
     """An unknown fleet propagates the fleet service's 404-class error."""
 
-    async def unknown_fleet(db_session: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    async def unknown_fleet(
+        db_session: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> list[UUID]:
         raise FleetNotFoundError("Fleet not found")
 
     async def fail_if_called(serial: str, payload: dict[str, object]) -> None:
@@ -169,6 +176,7 @@ async def test_push_fleet_config_unknown_fleet_raises_not_found(
             fake_db_session(),
             uuid4(),
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
+            principal=build_internal_principal(),
         )
 
     assert isinstance(error_info.value, NotFoundError)

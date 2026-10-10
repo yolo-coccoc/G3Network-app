@@ -31,8 +31,12 @@ It orchestrates I/O and delegates the pure work to internal modules:
 
 Cross-domain edges owned by this module: ``vehicles`` (existence, battery
 capacity, display data, F-F2 activation), ``telematics`` (serial ->
-vehicle mapping) and ``fleet`` (a fleet's current member vehicles for the
-fleet-wide views, planner D7).
+vehicle mapping), ``fleet`` (a fleet's current member vehicles for the
+fleet-wide views, planner D7) and ``drivers`` (a driver reads the live data
+of the truck they are checked in to).
+
+Every HTTP-facing read takes the caller's `Principal`: a vehicle or fleet of
+an organization out of the caller's data reach is "not found" (ACC-15).
 
 "Online" (planner D2) is derived at read time from the newest
 ``received_at`` and ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS``; it is
@@ -52,6 +56,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.service as driver_service
 import app.domains.fleet.service as fleet_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.alerting as telemetry_alerting
@@ -61,6 +66,8 @@ import app.domains.telemetry.reports as telemetry_reports
 import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.time_windows as telemetry_time_windows
 import app.domains.vehicles.service as vehicle_service
+from app.domains.identity.exceptions import AccessDeniedError
+from app.domains.identity.types import Principal, UserRole, roles_for
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import (
@@ -86,6 +93,10 @@ from app.libs.common.pagination import normalize_page_window
 
 logger = logging.getLogger(__name__)
 
+# Roles that read any vehicle of their organization live (MON-02, DEV-04).
+# A caller holding only DRIVER reads just the truck they are checked in to.
+LIVE_VIEW_STAFF_ROLES = roles_for("MON-02", "DEV-04") - {UserRole.DRIVER}
+
 # Fold of a period without any reading: the repository omits such periods,
 # and the report still lists them with zero sums.
 _EMPTY_WINDOW_SUMMARY = VehicleTelemetryWindowSummary(
@@ -100,25 +111,31 @@ _EMPTY_WINDOW_SUMMARY = VehicleTelemetryWindowSummary(
 
 
 async def _get_vehicle_reference(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, principal: Principal | None = None
 ) -> VehicleReference:
     """Resolve a vehicle that must exist for a telemetry read to make sense.
 
     Args:
         db: Database session owned by the HTTP boundary.
         vehicle_id: Internal ID of the vehicle to resolve.
+        principal: The HTTP caller, whose data reach limits the vehicle to
+            its organization (internal staff: all); `None` for a system
+            caller inside the backend.
 
     Returns:
         The vehicle's cross-domain reference (id, VIN, battery capacity).
 
     Raises:
-        TelemetryNotFoundError: If the vehicle does not exist or was
-            soft-deleted.
+        TelemetryNotFoundError: If the vehicle does not exist, was
+            soft-deleted or is out of the caller's data reach.
     """
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
         db, vehicle_id
     )
-    if vehicle_reference is None:
+    if vehicle_reference is None or (
+        principal is not None
+        and not principal.can_access_organization(vehicle_reference.organization_id)
+    ):
         raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
     return vehicle_reference
 
@@ -172,23 +189,35 @@ async def _find_latest_telemetry_with_online_flag(
 
 
 async def get_latest_vehicle_telemetry_response(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, *, principal: Principal
 ) -> VehicleTelemetryLatestResponse:
     """Get the latest telemetry after confirming the vehicle is still active.
 
     Args:
         db: Database session owned by the HTTP boundary.
         vehicle_id: Internal ID of the vehicle to query.
+        principal: The caller. Staff roles read any vehicle in their data
+            reach; a caller who is only a DRIVER reads the truck they are
+            checked in to, whichever organization owns it.
 
     Returns:
         Response schema containing the latest telemetry record, its
         ``received_at`` and the read-time ``is_online`` flag.
 
     Raises:
-        TelemetryNotFoundError: When the vehicle does not exist or has no
-            telemetry yet.
+        TelemetryNotFoundError: When the vehicle does not exist, is out of
+            the caller's reach or has no telemetry yet.
+        AccessDeniedError: A DRIVER-only caller is not checked in to this
+            truck (403, also right after a check-out).
     """
-    await _get_vehicle_reference(db, vehicle_id)
+    if principal.has_any_role(*LIVE_VIEW_STAFF_ROLES):
+        await _get_vehicle_reference(db, vehicle_id, principal)
+    else:
+        await _get_vehicle_reference(db, vehicle_id)
+        if not await driver_service.is_membership_checked_in_to_vehicle(
+            db, principal.membership_id, vehicle_id
+        ):
+            raise AccessDeniedError("You are not checked in to this truck")
 
     latest = await _find_latest_telemetry_with_online_flag(db, vehicle_id)
     if latest is None:
@@ -271,6 +300,7 @@ async def get_vehicle_telemetry_history_response(
     start_time: datetime,
     end_time: datetime,
     limit: int | None = None,
+    principal: Principal,
 ) -> VehicleTelemetryHistoryResponse:
     """Get a vehicle's telemetry history within a bounded time range (F-A5).
 
@@ -288,6 +318,7 @@ async def get_vehicle_telemetry_history_response(
         limit: Maximum number of points to return, or ``None`` to use
             ``settings.TELEMETRY_HISTORY_DEFAULT_LIMIT``. Clamped to
             ``[1, settings.TELEMETRY_HISTORY_MAX_LIMIT]``.
+        principal: The caller; a vehicle out of their data reach is not found.
 
     Returns:
         Response with points ordered chronologically (oldest first).
@@ -308,7 +339,7 @@ async def get_vehicle_telemetry_history_response(
     )
     resolved_limit = min(max(resolved_limit, 1), settings.TELEMETRY_HISTORY_MAX_LIMIT)
 
-    await _get_vehicle_reference(db, vehicle_id)
+    await _get_vehicle_reference(db, vehicle_id, principal)
 
     records = await telemetry_repository.get_vehicle_telemetry_history(
         db,
@@ -332,6 +363,7 @@ async def get_vehicle_battery_health_response(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    principal: Principal,
 ) -> VehicleBatteryHealthResponse:
     """Get a vehicle's daily battery-health trend over a window (F-A3).
 
@@ -346,6 +378,7 @@ async def get_vehicle_battery_health_response(
         vehicle_id: Internal ID of the vehicle.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        principal: The caller; a vehicle out of their data reach is not found.
 
     Returns:
         The daily trend over the normalized window.
@@ -360,7 +393,7 @@ async def get_vehicle_battery_health_response(
     normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
         start_time, end_time, settings.TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS
     )
-    vehicle_reference = await _get_vehicle_reference(db, vehicle_id)
+    vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
     health_days = await telemetry_repository.list_vehicle_battery_health_days(
         db,
         vehicle_id=vehicle_id,
@@ -383,6 +416,7 @@ async def _resolve_report_context(
     start_time: datetime,
     end_time: datetime,
     granularity: ReportGranularity | None = None,
+    principal: Principal | None = None,
 ) -> telemetry_reports.VehicleReportContext:
     """Validate a report window, resolve the vehicle, and fold its telemetry.
 
@@ -400,6 +434,8 @@ async def _resolve_report_context(
         end_time: Inclusive upper bound; must carry a timezone.
         granularity: Period breakdown to add, or ``None`` for the
             whole-window aggregate only.
+        principal: The HTTP caller (data reach), or `None` for a system
+            caller inside the backend.
 
     Returns:
         The validated window, the vehicle reference, the folded summary
@@ -420,7 +456,7 @@ async def _resolve_report_context(
     normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
         start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
     )
-    vehicle_reference = await _get_vehicle_reference(db, vehicle_id)
+    vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
     window_summary = await telemetry_repository.get_vehicle_window_summary(
         db,
         vehicle_id=vehicle_id,
@@ -471,6 +507,7 @@ async def get_vehicle_operating_report(
     start_time: datetime,
     end_time: datetime,
     granularity: ReportGranularity | None = None,
+    principal: Principal,
 ) -> VehicleOperatingReportResponse:
     """Get a vehicle's operating performance over a time window (F-A6).
 
@@ -493,6 +530,7 @@ async def get_vehicle_operating_report(
         end_time: Inclusive upper bound; must carry a timezone.
         granularity: Optional day/week/month breakdown; ``None`` keeps the
             single whole-window aggregate (``periods`` is then ``None``).
+        principal: The caller; a vehicle out of their data reach is not found.
 
     Returns:
         The operating report over the normalized window.
@@ -507,6 +545,7 @@ async def get_vehicle_operating_report(
         start_time=start_time,
         end_time=end_time,
         granularity=granularity,
+        principal=principal,
     )
     return telemetry_reports.build_operating_report(report_context)
 
@@ -570,6 +609,7 @@ async def get_vehicle_energy_usage_report(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    principal: Principal,
 ) -> VehicleEnergyUsageResponse:
     """Get the energy that entered one vehicle's pack over a time window (F-C6).
 
@@ -585,6 +625,7 @@ async def get_vehicle_energy_usage_report(
         vehicle_id: Internal ID of the vehicle to report on.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        principal: The caller; a vehicle out of their data reach is not found.
 
     Returns:
         The energy-usage report over the normalized window.
@@ -594,7 +635,11 @@ async def get_vehicle_energy_usage_report(
         TelemetryNotFoundError: See ``_resolve_report_context``.
     """
     report_context = await _resolve_report_context(
-        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        principal=principal,
     )
     return telemetry_reports.build_energy_usage_report(report_context)
 
@@ -603,6 +648,7 @@ async def list_fleet_vehicle_live_statuses(
     db: AsyncSession,
     fleet_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> FleetVehicleLiveStatusListResponse:
@@ -620,6 +666,8 @@ async def list_fleet_vehicle_live_statuses(
     Args:
         db: Database session owned by the HTTP boundary.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
         page: Requested page (1-based), clamped by ``normalize_page_window``.
         page_size: Requested page size, clamped the same way.
 
@@ -634,7 +682,7 @@ async def list_fleet_vehicle_live_statuses(
         Read-only queries; does not commit or roll back.
     """
     member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db, fleet_id
+        db, fleet_id, organization_id=principal.data_scope
     )
     page_window = normalize_page_window(page, page_size)
     page_vehicle_ids = member_vehicle_ids[
@@ -666,6 +714,7 @@ async def get_fleet_operating_report(
     *,
     start_time: datetime,
     end_time: datetime,
+    principal: Principal,
 ) -> FleetOperatingReportResponse:
     """Get the operating performance of a fleet's current members (F-A6 rollup).
 
@@ -682,6 +731,8 @@ async def get_fleet_operating_report(
         fleet_id: Internal ID of the fleet.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
 
     Returns:
         One row per included vehicle (oldest member first) and the totals.
@@ -700,7 +751,7 @@ async def get_fleet_operating_report(
         start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
     )
     member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db, fleet_id
+        db, fleet_id, organization_id=principal.data_scope
     )
 
     report_vehicles: list[telemetry_reports.FleetReportVehicle] = []

@@ -34,23 +34,36 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> SupportCas
     return case_record
 
 
-async def get_by_id(db_session: AsyncSession, case_id: UUID) -> SupportCaseModel | None:
+async def get_by_id(
+    db_session: AsyncSession,
+    case_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+    driver_id: UUID | None = None,
+) -> SupportCaseModel | None:
     """Find a support case by ID, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
         case_id: Internal ID of the support case.
+        organization_id: Data scope: only a case of this organization is
+            found; `None` means no restriction.
+        driver_id: Only a case raised by this driver is found; `None` means
+            no restriction.
 
     Returns:
-        The support case record, or None if not found.
+        The support case record, or None if not found or out of scope.
     """
+    conditions: list[ColumnElement[bool]] = [
+        SupportCaseModel.case_id == case_id,
+        SupportCaseModel.deleted_at.is_(None),
+    ]
+    if organization_id is not None:
+        conditions.append(SupportCaseModel.organization_id == organization_id)
+    if driver_id is not None:
+        conditions.append(SupportCaseModel.driver_id == driver_id)
     query_result = await db_session.execute(
-        select(SupportCaseModel).where(
-            and_(
-                SupportCaseModel.case_id == case_id,
-                SupportCaseModel.deleted_at.is_(None),
-            )
-        )
+        select(SupportCaseModel).where(and_(*conditions))
     )
     return query_result.scalar_one_or_none()
 
@@ -87,6 +100,10 @@ def _case_list_conditions(
         conditions.append(SupportCaseModel.channel == case_list_filter.channel)
     if case_list_filter.driver_id:
         conditions.append(SupportCaseModel.driver_id == case_list_filter.driver_id)
+    if case_list_filter.organization_id:
+        conditions.append(
+            SupportCaseModel.organization_id == case_list_filter.organization_id
+        )
 
     if case_list_filter.is_awaiting_response is not None:
         terminal_statuses = [

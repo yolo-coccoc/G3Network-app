@@ -15,8 +15,9 @@ class TelematicCreateRequest(BaseModel):
     Attributes:
         telematic_serial: Unique serial printed on the device.
         imei: IMEI of the device modem, if known.
-        organization_id: The organization that owns the device (TX-07); an
-            unknown organization is rejected (404).
+        organization_id: The organization that owns the device (TX-07);
+            internal staff only, defaults to the caller's organization; an
+            unknown or out-of-reach organization is rejected (404).
         acquired_at: When the owner took the device; defaults to now.
         vehicle_vin: VIN of the vehicle to assign, if any; a VIN matching
             no live vehicle is rejected (404).
@@ -27,7 +28,7 @@ class TelematicCreateRequest(BaseModel):
 
     telematic_serial: str = Field(..., min_length=1, max_length=50)
     imei: str | None = Field(default=None, min_length=15, max_length=15)
-    organization_id: UUID
+    organization_id: UUID | None = None
     acquired_at: datetime | None = None
     vehicle_vin: str | None = Field(default=None, min_length=17, max_length=17)
     status: TelematicStatus = TelematicStatus.ACTIVE

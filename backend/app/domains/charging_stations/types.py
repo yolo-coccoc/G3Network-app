@@ -274,3 +274,21 @@ class StationCommandReference:
     station_id: UUID
     command_type: StationCommandType
     outcome: StationCommandOutcome
+
+
+@dataclass(frozen=True)
+class LocationViewer:
+    """Who is looking at locations, for the visibility rule (CS-10, CS-13).
+
+    A public location is visible to everyone; a private one only to its owner
+    organization and to organizations with a live grant on it. Internal staff
+    see every location.
+
+    Attributes:
+        organization_id: The viewer's organization, or `None` for a system
+            caller with no organization (then only public locations show).
+        sees_all: Internal staff: every location is visible.
+    """
+
+    organization_id: UUID | None = None
+    sees_all: bool = False

@@ -39,6 +39,17 @@ from tests.builders import (
     build_person_reference,
     fake_db_session,
 )
+from tests.principals import build_internal_principal
+
+
+@pytest.fixture(autouse=True)
+def caller_without_driver_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The test principals have no driver profile of their own."""
+
+    async def no_profile(db: AsyncSession, membership_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(driver_repository, "find_by_membership_id", no_profile)
 
 
 def _create_request(*, expires_on: date | None = None) -> DriverCreateRequest:
@@ -94,7 +105,9 @@ async def test_create_driver_returns_response_with_the_person(
     monkeypatch.setattr(driver_repository, "find_by_membership_id", no_profile)
     monkeypatch.setattr(driver_repository, "insert", insert_driver)
 
-    response = await driver_service.create_driver(fake_db_session(), _create_request())
+    response = await driver_service.create_driver(
+        fake_db_session(), _create_request(), principal=build_internal_principal()
+    )
 
     assert response.driver_id == record.driver_id
     assert response.full_name == "Test Driver"
@@ -116,16 +129,21 @@ async def test_create_driver_rejects_second_profile_unknown_membership_and_expir
 
     _patch_person(monkeypatch, None)
     with pytest.raises(DriverMembershipNotFoundError):
-        await driver_service.create_driver(fake_db_session(), _create_request())
+        await driver_service.create_driver(
+            fake_db_session(), _create_request(), principal=build_internal_principal()
+        )
 
     _patch_person(monkeypatch, build_person_reference())
     with pytest.raises(DriverLicenseExpiredError):
         await driver_service.create_driver(
             fake_db_session(),
             _create_request(expires_on=utc_now().date() - timedelta(days=1)),
+            principal=build_internal_principal(),
         )
     with pytest.raises(DriverConflictError):
-        await driver_service.create_driver(fake_db_session(), _create_request())
+        await driver_service.create_driver(
+            fake_db_session(), _create_request(), principal=build_internal_principal()
+        )
 
 
 @pytest.mark.asyncio
@@ -149,16 +167,22 @@ async def test_soft_delete_driver_ends_the_open_session_first(
         return session_record
 
     async def soft_delete(
-        db: AsyncSession, driver_id: UUID, *, status_reason: str
+        db: AsyncSession, driver_id: UUID, *, status_reason: str, **_scope: object
     ) -> DriverModel:
         return record
 
+    async def get_driver(
+        db: AsyncSession, driver_id: UUID, **_scope: object
+    ) -> DriverModel:
+        return record
+
+    monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
     monkeypatch.setattr(driver_repository, "find_open_session_by_driver", find_open)
     monkeypatch.setattr(driver_repository, "close_session", close_session)
     monkeypatch.setattr(driver_repository, "soft_delete", soft_delete)
 
     deletion_response = await driver_service.soft_delete_driver(
-        fake_db_session(), record.driver_id
+        fake_db_session(), record.driver_id, principal=build_internal_principal()
     )
 
     assert deletion_response == {"message": "Driver deleted successfully"}
@@ -211,7 +235,9 @@ async def test_check_in_takes_over_a_truck_and_ends_the_drivers_other_session(
     )
     causes: dict[UUID, DrivingSessionEndCause] = {}
 
-    async def get_driver(db: AsyncSession, driver_id: UUID) -> DriverModel:
+    async def get_driver(
+        db: AsyncSession, driver_id: UUID, **_scope: object
+    ) -> DriverModel:
         return driver
 
     async def find_by_driver(db: AsyncSession, driver_id: UUID) -> DrivingSessionModel:
@@ -247,7 +273,9 @@ async def test_check_in_takes_over_a_truck_and_ends_the_drivers_other_session(
     monkeypatch.setattr(driver_repository, "insert_session", insert_session)
 
     response = await driver_service.check_in_driver(
-        fake_db_session(), _check_in_request(driver.driver_id)
+        fake_db_session(),
+        _check_in_request(driver.driver_id),
+        principal=build_internal_principal(),
     )
 
     assert response.ended_at is None
@@ -266,7 +294,9 @@ async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
     driver = build_driver_record()
     _patch_vehicle(monkeypatch)
 
-    async def get_driver(db: AsyncSession, driver_id: UUID) -> DriverModel:
+    async def get_driver(
+        db: AsyncSession, driver_id: UUID, **_scope: object
+    ) -> DriverModel:
         return driver
 
     monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
@@ -275,7 +305,9 @@ async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
     driver.status = DriverStatus.INACTIVE
     with pytest.raises(DriverNotEligibleError):
         await driver_service.check_in_driver(
-            fake_db_session(), _check_in_request(driver.driver_id)
+            fake_db_session(),
+            _check_in_request(driver.driver_id),
+            principal=build_internal_principal(),
         )
 
     driver.status = DriverStatus.ACTIVE
@@ -284,7 +316,9 @@ async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
     )
     with pytest.raises(DriverNotEligibleError):
         await driver_service.check_in_driver(
-            fake_db_session(), _check_in_request(driver.driver_id)
+            fake_db_session(),
+            _check_in_request(driver.driver_id),
+            principal=build_internal_principal(),
         )
 
 
@@ -294,11 +328,19 @@ async def test_check_out_closes_the_session_and_rejects_a_driver_not_checked_in(
 ) -> None:
     """check_out_driver() ends CHECKED_OUT; without an open session it is a 404."""
     _patch_vehicle(monkeypatch)
-    driver_id = uuid4()
+    driver = build_driver_record()
+    driver_id = driver.driver_id
+
+    async def get_driver(db: AsyncSession, key: UUID, **_scope: object) -> DriverModel:
+        return driver
+
+    monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
     _patch_no_open_session(monkeypatch)
     with pytest.raises(DrivingSessionNotFoundError):
         await driver_service.check_out_driver(
-            fake_db_session(), DrivingSessionCheckOutRequest(driver_id=driver_id)
+            fake_db_session(),
+            DrivingSessionCheckOutRequest(driver_id=driver_id),
+            principal=build_internal_principal(),
         )
 
     open_session = build_driving_session_record(driver_id=driver_id, vehicle_id=uuid4())
@@ -317,7 +359,9 @@ async def test_check_out_closes_the_session_and_rejects_a_driver_not_checked_in(
     monkeypatch.setattr(driver_repository, "close_session", close_session)
 
     response = await driver_service.check_out_driver(
-        fake_db_session(), DrivingSessionCheckOutRequest(driver_id=driver_id)
+        fake_db_session(),
+        DrivingSessionCheckOutRequest(driver_id=driver_id),
+        principal=build_internal_principal(),
     )
 
     assert response.end_cause == DrivingSessionEndCause.CHECKED_OUT

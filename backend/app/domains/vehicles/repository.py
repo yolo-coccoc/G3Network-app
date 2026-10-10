@@ -39,23 +39,32 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> VehicleMod
     return vehicle_record
 
 
-async def get_by_id(db_session: AsyncSession, vehicle_id: UUID) -> VehicleModel | None:
+async def get_by_id(
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+) -> VehicleModel | None:
     """Find a vehicle by ID, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
+        organization_id: Data scope (ACC-15): only a vehicle owned by this
+            organization is found; `None` means no restriction (internal
+            staff and cross-domain system lookups).
 
     Returns:
-        The vehicle record, or None if not found.
+        The vehicle record, or None if not found or out of scope.
     """
+    conditions = [
+        VehicleModel.vehicle_id == vehicle_id,
+        VehicleModel.deleted_at.is_(None),
+    ]
+    if organization_id is not None:
+        conditions.append(VehicleModel.organization_id == organization_id)
     query_result = await db_session.execute(
-        select(VehicleModel).where(
-            and_(
-                VehicleModel.vehicle_id == vehicle_id,
-                VehicleModel.deleted_at.is_(None),
-            )
-        )
+        select(VehicleModel).where(and_(*conditions))
     )
     return query_result.scalar_one_or_none()
 
@@ -103,17 +112,21 @@ async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None
 
 def _build_list_conditions(
     status_filter: VehicleStatus | None,
+    organization_id: UUID | None = None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by ``list_all`` and ``count``.
 
     Args:
         status_filter: Service status filter, if any.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Conditions to AND together: always "not soft-deleted", plus the
-        status filter when given.
+        status filter and the organization scope when given.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(VehicleModel.organization_id == organization_id)
     if status_filter is not None:
         conditions.append(VehicleModel.status == status_filter)
     return conditions
@@ -125,6 +138,7 @@ async def list_all(
     offset: int,
     limit: int,
     status_filter: VehicleStatus | None = None,
+    organization_id: UUID | None = None,
 ) -> list[VehicleModel]:
     """Get a page of vehicles, newest first, excluding soft-deleted records.
 
@@ -133,11 +147,12 @@ async def list_all(
         offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Service status filter, if any.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         List of vehicle records.
     """
-    conditions = _build_list_conditions(status_filter)
+    conditions = _build_list_conditions(status_filter, organization_id)
 
     query_result = await db_session.execute(
         select(VehicleModel)
@@ -153,17 +168,19 @@ async def count(
     db_session: AsyncSession,
     *,
     status_filter: VehicleStatus | None = None,
+    organization_id: UUID | None = None,
 ) -> int:
     """Count the total number of vehicles, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
         status_filter: Service status filter, if any.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Total number of vehicles matching the filter.
     """
-    conditions = _build_list_conditions(status_filter)
+    conditions = _build_list_conditions(status_filter, organization_id)
 
     query_result = await db_session.execute(
         select(func.count(VehicleModel.vehicle_id)).where(and_(*conditions))
@@ -177,6 +194,8 @@ async def update_fields(
     values: dict[str, Any],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> VehicleModel | None:
     """Update the specified fields of a live vehicle.
 
@@ -189,8 +208,10 @@ async def update_fields(
         values: Fields to update, keyed by ORM attribute name. A key that is
             not an attribute of ``VehicleModel`` is ignored.
         change_reason: Why the row changes; recorded in ``vehicle_history``
-            (vehicles are change-tracked). The actor is unknown until
-            authentication exists, so ``changed_by`` is ``None`` (DM-29).
+            (vehicles are change-tracked).
+        changed_by: The acting user, recorded as ``changed_by``.
+        organization_id: Data scope; a vehicle of another organization is not
+            found. `None` means no restriction.
 
     Returns:
         The updated vehicle record, or None if not found or soft-deleted.
@@ -203,11 +224,15 @@ async def update_fields(
         Flushes the UPDATE and reloads the record. ``updated_at`` is set by
         the column's ``onupdate`` hook as part of that flushed UPDATE.
     """
-    vehicle_record = await get_by_id(db_session, vehicle_id)
+    vehicle_record = await get_by_id(
+        db_session, vehicle_id, organization_id=organization_id
+    )
     if not vehicle_record:
         return None
 
-    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
     for field_name, value in values.items():
         if hasattr(vehicle_record, field_name):
             setattr(vehicle_record, field_name, value)

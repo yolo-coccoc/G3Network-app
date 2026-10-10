@@ -5,6 +5,12 @@ model catalog. Other domains may only call the `resolve_*` functions (which
 return internal DTOs); they never receive the ORM model or HTTP response schema
 of the vehicles domain. None of the functions commit or roll back - the
 caller's entry boundary owns the transaction.
+
+Access (ACC-15): the router-facing functions take the caller's `Principal`
+and pass `principal.data_scope` to the repository, so a vehicle of another
+organization is "not found" unless the caller is internal staff; a new vehicle
+is owned by the caller's organization unless staff name another one. The
+cross-domain `resolve_*` functions are unscoped system lookups.
 """
 
 from decimal import Decimal
@@ -13,13 +19,14 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.identity.service as identity_service
 import app.domains.vehicles.repository as vehicle_repository
+from app.domains.identity.types import Principal
 from app.domains.vehicles.exceptions import (
     VehicleConflictError,
     VehicleModelConflictError,
     VehicleModelNotFoundError,
     VehicleNotFoundError,
-    VehicleOrganizationNotFoundError,
 )
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.schemas import (
@@ -40,24 +47,9 @@ from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.pagination import normalize_page_window
 
-# Fixed history reasons of routine actions (no acting user until WP2).
+# Fixed history reasons of routine actions; the acting user is the caller.
 VEHICLE_EDITED_REASON = "Vehicle details edited"
 VEHICLE_DELETED_REASON = "Vehicle deleted"
-
-
-def _is_foreign_key_violation(error: IntegrityError) -> bool:
-    """Tell a foreign-key violation (SQLSTATE 23503) from other integrity errors.
-
-    Args:
-        error: The integrity error raised by a flush.
-
-    Returns:
-        True when the driver reports a foreign-key violation.
-    """
-    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(
-        error.orig, "pgcode", None
-    )
-    return sqlstate == "23503"
 
 
 def to_vehicle_response(vehicle_record: VehicleModel) -> VehicleResponse:
@@ -154,26 +146,6 @@ async def resolve_vehicle_reference_by_id(
     return await build_vehicle_reference(db_session, vehicle_record)
 
 
-async def resolve_vehicle_organization_id(
-    db_session: AsyncSession,
-    vehicle_id: UUID,
-) -> UUID | None:
-    """Find the organization that owns an active vehicle now.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        vehicle_id: Internal ID of the vehicle.
-
-    Returns:
-        The owning organization's ID, or `None` if the vehicle is not found.
-
-    Side Effects:
-        Performs a read-only query only; does not commit or rollback.
-    """
-    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
-    return vehicle_record.organization_id if vehicle_record else None
-
-
 def to_vehicle_summary(vehicle_record: VehicleModel) -> VehicleSummary:
     """Convert an ORM record into a display-oriented DTO for other domains.
 
@@ -215,12 +187,16 @@ async def resolve_vehicle_summary_by_id(
 async def create_vehicle(
     db_session: AsyncSession,
     vehicle_create_request: VehicleCreateRequest,
+    *,
+    principal: Principal,
 ) -> VehicleResponse:
     """Create a new vehicle after verifying its model and unique fields.
 
     Args:
         db_session: Database session owned by the entry boundary.
         vehicle_create_request: Request data that has passed Pydantic validation.
+        principal: The caller; the truck is owned by the caller's organization
+            unless internal staff name another one in the request.
 
     Returns:
         Response for the newly created vehicle.
@@ -229,7 +205,8 @@ async def create_vehicle(
         VehicleModelNotFoundError: When the vehicle model is not in the catalog.
         VehicleConflictError: When the VIN or license plate is already used by
             a vehicle still in the system.
-        VehicleOrganizationNotFoundError: When the organization does not exist.
+        OrganizationNotFoundError: The named organization does not exist or is
+            out of the caller's reach.
 
     Side Effects:
         Inserts and flushes the vehicle; does not commit. ``acquired_at``
@@ -266,17 +243,16 @@ async def create_vehicle(
         )
 
     insert_values = vehicle_create_request.model_dump()
+    insert_values[
+        "organization_id"
+    ] = await identity_service.resolve_organization_for_new_record(
+        db_session, principal, vehicle_create_request.organization_id
+    )
     if insert_values["acquired_at"] is None:
         insert_values["acquired_at"] = utc_now()
     try:
         vehicle_record = await vehicle_repository.insert(db_session, insert_values)
     except IntegrityError as error:
-        # The model was checked above, so a foreign-key failure is the
-        # organization (identity has no service to ask yet, WP2).
-        if _is_foreign_key_violation(error):
-            raise VehicleOrganizationNotFoundError(
-                f"Organization '{vehicle_create_request.organization_id}' not found"
-            ) from error
         raise VehicleConflictError(
             "Vehicle license plate or VIN already exists"
         ) from error
@@ -287,12 +263,16 @@ async def create_vehicle(
 async def get_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
+    *,
+    principal: Principal,
 ) -> VehicleResponse:
-    """Get an active vehicle by ID.
+    """Get an active vehicle by ID inside the caller's data reach.
 
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
+        principal: The caller; a vehicle of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the vehicle.
@@ -300,7 +280,9 @@ async def get_vehicle(
     Raises:
         VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
     """
-    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
+    vehicle_record = await vehicle_repository.get_by_id(
+        db_session, vehicle_id, organization_id=principal.data_scope
+    )
     if not vehicle_record:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
@@ -310,6 +292,7 @@ async def get_vehicle(
 async def list_vehicles(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
@@ -318,6 +301,8 @@ async def list_vehicles(
 
     Args:
         db_session: Current database session.
+        principal: The caller; only vehicles of the caller's organization are
+            listed unless the caller is internal.
         page: Page number, starting from 1; clamped by
             `normalize_page_window`.
         page_size: Maximum number of vehicles per page; clamped to
@@ -337,8 +322,13 @@ async def list_vehicles(
         offset=page_window.offset,
         limit=page_window.page_size,
         status_filter=status_filter,
+        organization_id=principal.data_scope,
     )
-    total = await vehicle_repository.count(db_session, status_filter=status_filter)
+    total = await vehicle_repository.count(
+        db_session,
+        status_filter=status_filter,
+        organization_id=principal.data_scope,
+    )
 
     return VehicleListResponse(
         items=[
@@ -354,6 +344,8 @@ async def update_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
+    *,
+    principal: Principal,
 ) -> VehicleResponse:
     """Partially update a vehicle after checking the unique fields.
 
@@ -361,6 +353,8 @@ async def update_vehicle(
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
         vehicle_update_request: Field data to update.
+        principal: The caller; a vehicle of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the updated vehicle.
@@ -371,10 +365,13 @@ async def update_vehicle(
         VehicleConflictError: When the new VIN or license plate is already in use.
 
     Side Effects:
-        The change is recorded in the vehicle's history with the fixed reason
-        ``VEHICLE_EDITED_REASON``. Does not commit.
+        The change is recorded in the vehicle's history with the caller as
+        actor and the request's ``status_reason`` (a typed reason for a
+        status decision) or else ``VEHICLE_EDITED_REASON``. Does not commit.
     """
-    vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
+    vehicle_record = await vehicle_repository.get_by_id(
+        db_session, vehicle_id, organization_id=principal.data_scope
+    )
     if not vehicle_record:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
@@ -429,7 +426,9 @@ async def update_vehicle(
             db_session,
             vehicle_id,
             update_values,
-            change_reason=VEHICLE_EDITED_REASON,
+            change_reason=update_values.get("status_reason", VEHICLE_EDITED_REASON),
+            changed_by=principal.user_id,
+            organization_id=principal.data_scope,
         )
     except IntegrityError as error:
         raise VehicleConflictError(
@@ -445,6 +444,9 @@ async def update_vehicle(
 async def soft_delete_vehicle(
     db_session: AsyncSession,
     vehicle_id: UUID,
+    *,
+    principal: Principal,
+    reason: str | None = None,
 ) -> None:
     """Soft-delete a vehicle: it leaves the system and becomes INACTIVE.
 
@@ -456,23 +458,31 @@ async def soft_delete_vehicle(
     Args:
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
+        principal: The caller; a vehicle of another organization is not found
+            unless the caller is internal.
+        reason: Why the vehicle leaves the system; defaults to
+            ``VEHICLE_DELETED_REASON``.
 
     Raises:
         VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
 
     Side Effects:
         Writes ``deleted_at``, ``status`` and ``status_reason`` in one flushed
-        UPDATE (history reason ``VEHICLE_DELETED_REASON``); does not commit.
+        UPDATE (history reason = the reason, actor = the caller); does not
+        commit.
     """
+    delete_reason = reason or VEHICLE_DELETED_REASON
     vehicle_record = await vehicle_repository.update_fields(
         db_session,
         vehicle_id,
         {
             "status": VehicleStatus.INACTIVE,
-            "status_reason": VEHICLE_DELETED_REASON,
+            "status_reason": delete_reason,
             "deleted_at": utc_now(),
         },
-        change_reason=VEHICLE_DELETED_REASON,
+        change_reason=delete_reason,
+        changed_by=principal.user_id,
+        organization_id=principal.data_scope,
     )
     if not vehicle_record:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")

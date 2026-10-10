@@ -28,10 +28,22 @@ from app.domains.charging_sessions.types import (
     EnergySeriesGranularity,
     SessionStatus,
 )
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-sessions"])
+
+# Who may call what (features.yaml `users`, via `roles_for`): CHG-01 scan (the
+# driver), CHG-02..05 session reads (a DRIVER-only caller sees just their own
+# sessions, enforced by the service). The per-station energy figures cannot be
+# limited to a charger's owner here (`charging_sessions` may not ask
+# `charging_stations`), so they are for our own staff only (STN-14); an owner
+# reads their chargers' totals through `GET /charging-sessions/stations/energy`.
+SESSION_SCANNERS = require_roles(*roles_for("CHG-01"))
+SESSION_READERS = require_roles(*roles_for("CHG-02", "CHG-03", "CHG-04", "CHG-05"))
+STATION_ENERGY_STAFF = require_roles(*roles_for("STN-14", "CHG-05"), internal_only=True)
 
 
 @dataclass(frozen=True)
@@ -75,6 +87,7 @@ def _page_query(
 )
 async def scan_charging_session_endpoint(
     scan_request: ChargingSessionScanRequest,
+    principal: Principal = Depends(SESSION_SCANNERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionScanResponse:
     """Create the PENDING session of a scan and return its single-use token (CE-10).
@@ -84,26 +97,17 @@ async def scan_charging_session_endpoint(
     this token.
 
     Args:
-        scan_request: The charger, paying organization, scanning user and
-            optional truck.
+        scan_request: The charger and optional truck; the payer is the
+            caller's organization and the scanning user is the caller.
+        principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
     Returns:
         The new session's ID, status ``PENDING`` and token.
     """
-    pending_session = await charging_session_service.create_pending_session(
-        db,
-        station_id=scan_request.station_id,
-        organization_id=scan_request.organization_id,
-        started_by=scan_request.started_by,
-        vehicle_id=scan_request.vehicle_id,
-    )
-    return ChargingSessionScanResponse(
-        session_id=pending_session.session_id,
-        station_id=pending_session.station_id,
-        status=SessionStatus.PENDING,
-        id_token=pending_session.id_token,
+    return await charging_session_service.scan_charging_session(
+        db, scan_request, principal=principal
     )
 
 
@@ -124,6 +128,7 @@ async def list_charging_sessions_endpoint(
         None, description="Exclusive upper bound on started_at, with a timezone."
     ),
     page_query: _PageQuery = Depends(_page_query),
+    principal: Principal = Depends(SESSION_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionListResponse:
     """List sessions newest first, optionally filtered (F-B2).
@@ -137,6 +142,7 @@ async def list_charging_sessions_endpoint(
         started_to: Exclusive upper bound on ``started_at``.
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
+        principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -158,6 +164,7 @@ async def list_charging_sessions_endpoint(
         status=status,
         started_from=started_from,
         started_to=started_to,
+        principal=principal,
     )
 
 
@@ -167,12 +174,15 @@ async def list_charging_sessions_endpoint(
     summary="View a charging session",
 )
 async def get_charging_session_endpoint(
-    session_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    session_id: UUID,
+    principal: Principal = Depends(SESSION_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionDetailResponse:
     """Get the session aggregate and its read-time summary by internal UUID.
 
     Args:
         session_id: UUID of the session to view.
+        principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -183,7 +193,9 @@ async def get_charging_session_endpoint(
     Raises:
         ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    return await charging_session_service.get_charging_session(db, session_id)
+    return await charging_session_service.get_charging_session(
+        db, session_id, principal=principal
+    )
 
 
 @router.get(
@@ -194,6 +206,7 @@ async def get_charging_session_endpoint(
 async def list_charging_session_meter_values_endpoint(
     session_id: UUID,
     page_query: _PageQuery = Depends(_page_query),
+    principal: Principal = Depends(SESSION_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeterValueListResponse:
     """Get the session's canonical Wh meter samples in ascending time order.
@@ -202,6 +215,7 @@ async def list_charging_session_meter_values_endpoint(
         session_id: UUID of the session whose meter to view.
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
+        principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -216,6 +230,7 @@ async def list_charging_session_meter_values_endpoint(
         session_id,
         page=page_query.page,
         page_size=page_query.page_size,
+        principal=principal,
     )
 
 
@@ -233,6 +248,7 @@ async def list_charging_session_measurements_endpoint(
         description="Return only this measurand, for example SoC.",
     ),
     page_query: _PageQuery = Depends(_page_query),
+    principal: Principal = Depends(SESSION_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeasurementListResponse:
     """Get the session's measurements of every measurand, in ascending time order.
@@ -244,6 +260,7 @@ async def list_charging_session_measurements_endpoint(
         measurand: Optional filter on the measurand name.
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
+        principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -259,6 +276,7 @@ async def list_charging_session_measurements_endpoint(
         measurand=measurand,
         page=page_query.page,
         page_size=page_query.page_size,
+        principal=principal,
     )
 
 
@@ -266,6 +284,7 @@ async def list_charging_session_measurements_endpoint(
     "/charging-sessions/stations/{station_id}/energy",
     response_model=StationEnergySummaryResponse,
     summary="Get total energy sold at a station within a time window",
+    dependencies=[Depends(STATION_ENERGY_STAFF)],
 )
 async def get_station_energy_summary_endpoint(
     station_id: UUID,
@@ -303,6 +322,7 @@ async def get_station_energy_summary_endpoint(
     "/charging-sessions/stations/{station_id}/energy/series",
     response_model=StationEnergySeriesResponse,
     summary="Get a station's energy per hour or day within a time window",
+    dependencies=[Depends(STATION_ENERGY_STAFF)],
 )
 async def get_station_energy_series_endpoint(
     station_id: UUID,

@@ -19,7 +19,10 @@ class SupportTicketCreateRequest(BaseModel):
 
     organization_id: UUID | None = Field(
         None,
-        description="Organization the ticket belongs to; the vehicle's owner if omitted",
+        description=(
+            "Organization the ticket belongs to; internal staff only. Default: "
+            "the vehicle's owner, else the caller's organization"
+        ),
     )
     vehicle_vin: str | None = Field(
         None, min_length=17, max_length=17, description="VIN of the vehicle context"
@@ -67,8 +70,8 @@ class SupportSosCreateRequest(BaseModel):
     organization_id: UUID | None = Field(
         None,
         description=(
-            "Organization the SOS belongs to; the vehicle's owner if omitted. "
-            "An SOS needs one of the two"
+            "Organization the SOS belongs to; internal staff only. Default: "
+            "the vehicle's owner, else the caller's organization"
         ),
     )
     vehicle_vin: str | None = Field(

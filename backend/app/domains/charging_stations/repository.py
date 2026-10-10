@@ -24,7 +24,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import exists, func, select, update
+from sqlalchemy import exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -40,6 +40,7 @@ from app.domains.charging_stations.models import (
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingResourceStatus,
+    LocationViewer,
 )
 from app.libs.common.clock import utc_now
 from app.libs.db.history import set_change_context
@@ -115,7 +116,11 @@ async def get_location_by_id(
 
 
 async def list_charging_locations(
-    db: AsyncSession, *, offset: int, limit: int
+    db: AsyncSession,
+    *,
+    offset: int,
+    limit: int,
+    organization_id: UUID | None = None,
 ) -> list[ChargingLocationModel]:
     """Get non-soft-deleted locations in a stable order.
 
@@ -123,13 +128,18 @@ async def list_charging_locations(
         db: Current async session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
+        organization_id: Data scope: only locations owned by this
+            organization; `None` means every organization.
 
     Returns:
         Active locations ordered by creation time descending.
     """
+    conditions: list[ColumnElement[bool]] = [ChargingLocationModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(ChargingLocationModel.organization_id == organization_id)
     result = await db.execute(
         select(ChargingLocationModel)
-        .where(ChargingLocationModel.deleted_at.is_(None))
+        .where(*conditions)
         .order_by(
             ChargingLocationModel.created_at.desc(),
             ChargingLocationModel.location_id.desc(),
@@ -140,19 +150,23 @@ async def list_charging_locations(
     return list(result.scalars().all())
 
 
-async def count_locations(db: AsyncSession) -> int:
+async def count_locations(
+    db: AsyncSession, *, organization_id: UUID | None = None
+) -> int:
     """Count active locations.
 
     Args:
         db: Current async session.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Number of non-soft-deleted locations.
     """
+    conditions: list[ColumnElement[bool]] = [ChargingLocationModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(ChargingLocationModel.organization_id == organization_id)
     result = await db.execute(
-        select(func.count(ChargingLocationModel.location_id)).where(
-            ChargingLocationModel.deleted_at.is_(None)
-        )
+        select(func.count(ChargingLocationModel.location_id)).where(*conditions)
     )
     return int(result.scalar() or 0)
 
@@ -163,6 +177,7 @@ async def update_charging_location(
     update_data: Mapping[str, object],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> ChargingLocationModel | None:
     """Update an active location using fields already filtered by the service.
 
@@ -171,6 +186,7 @@ async def update_charging_location(
         location_id: UUID of the location to update.
         update_data: Mapping containing only fields allowed to be updated.
         change_reason: Why the row changes, recorded in the change history.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         The updated location, or ``None`` if it is no longer active.
@@ -181,7 +197,7 @@ async def update_charging_location(
     location = await get_location_by_id(db, location_id)
     if location is None:
         return None
-    await set_change_context(db, changed_by=None, change_reason=change_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
     for field_name, value in update_data.items():
         setattr(location, field_name, value)
     await db.flush()
@@ -190,7 +206,11 @@ async def update_charging_location(
 
 
 async def soft_delete_location(
-    db: AsyncSession, location_id: UUID, *, status_reason: str
+    db: AsyncSession,
+    location_id: UUID,
+    *,
+    status_reason: str,
+    changed_by: UUID | None = None,
 ) -> bool:
     """Soft-delete a location with its chargers, EVSEs, connectors and grants.
 
@@ -201,6 +221,7 @@ async def soft_delete_location(
         db: Current async session.
         location_id: UUID of the location to soft-delete.
         status_reason: Why the location left the system.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         ``True`` if an active location existed and was marked.
@@ -212,7 +233,7 @@ async def soft_delete_location(
     if location is None:
         return False
     now = utc_now()
-    await set_change_context(db, changed_by=None, change_reason=status_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=status_reason)
     station_ids = list(
         (
             await db.execute(
@@ -233,7 +254,11 @@ async def soft_delete_location(
             ChargingLocationAccessModel.location_id == location_id,
             ChargingLocationAccessModel.revoked_at.is_(None),
         )
-        .values(revoked_at=now, revoke_reason="Location left the system")
+        .values(
+            revoked_at=now,
+            revoked_by=changed_by,
+            revoke_reason="Location left the system",
+        )
     )
     location.status = _INACTIVE
     location.status_reason = status_reason
@@ -506,11 +531,31 @@ async def get_station_state(
     return await db.get(ChargingStationStateModel, station_id)
 
 
+def _station_owner_condition(organization_id: UUID) -> ColumnElement[bool]:
+    """Build "the charger stands at a location owned by this organization".
+
+    A charger has no owner column; it reads its owner through its location
+    (CS-10, DM-24).
+
+    Args:
+        organization_id: The owner organization.
+
+    Returns:
+        A condition on ``ChargingStationModel.location_id``.
+    """
+    return ChargingStationModel.location_id.in_(
+        select(ChargingLocationModel.location_id).where(
+            ChargingLocationModel.organization_id == organization_id
+        )
+    )
+
+
 async def list_charging_stations(
     db: AsyncSession,
     *,
     offset: int,
     limit: int,
+    organization_id: UUID | None = None,
 ) -> list[ChargingStationModel]:
     """Get non-soft-deleted stations in a stable order.
 
@@ -518,13 +563,18 @@ async def list_charging_stations(
         db: Current async session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
+        organization_id: Data scope: only chargers at locations owned by this
+            organization; `None` means every organization.
 
     Returns:
         List of active stations ordered by creation time descending.
     """
+    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(_station_owner_condition(organization_id))
     result = await db.execute(
         select(ChargingStationModel)
-        .where(ChargingStationModel.deleted_at.is_(None))
+        .where(*conditions)
         .order_by(
             ChargingStationModel.created_at.desc(),
             ChargingStationModel.station_id.desc(),
@@ -536,20 +586,22 @@ async def list_charging_stations(
 
 
 async def count_stations(
-    db: AsyncSession,
+    db: AsyncSession, *, organization_id: UUID | None = None
 ) -> int:
     """Count active stations.
 
     Args:
         db: Current async session.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Number of non-soft-deleted stations.
     """
+    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(_station_owner_condition(organization_id))
     result = await db.execute(
-        select(func.count(ChargingStationModel.station_id)).where(
-            ChargingStationModel.deleted_at.is_(None)
-        )
+        select(func.count(ChargingStationModel.station_id)).where(*conditions)
     )
     return int(result.scalar() or 0)
 
@@ -626,21 +678,42 @@ def _has_available_connector() -> ColumnElement[bool]:
     )
 
 
-def _public_active_location_conditions() -> list[ColumnElement[bool]]:
-    """Build the conditions of a location that a driver may be shown.
+def _visible_active_location_conditions(
+    viewer: LocationViewer | None = None,
+) -> list[ColumnElement[bool]]:
+    """Build the conditions of a location that a viewer may be shown (CS-10).
 
-    Until authentication exists (WP2) a search cannot tell who asks, so only
-    public locations are returned (CS-10); the location must be ``ACTIVE``
-    and not deleted.
+    The location must be ``ACTIVE`` and not deleted. A public one is visible
+    to everyone; a private one to its owner organization and to organizations
+    with a live grant on it (CS-13); internal staff see every location.
+
+    Args:
+        viewer: Who looks; `None` is a system caller with no organization
+            (only public locations, as before authentication existed).
 
     Returns:
         Conditions on ``ChargingLocationModel``.
     """
-    return [
+    conditions: list[ColumnElement[bool]] = [
         ChargingLocationModel.deleted_at.is_(None),
         ChargingLocationModel.status == _ACTIVE,
-        ChargingLocationModel.is_public.is_(True),
     ]
+    if viewer is not None and viewer.sees_all:
+        return conditions
+    visible: list[ColumnElement[bool]] = [ChargingLocationModel.is_public.is_(True)]
+    if viewer is not None and viewer.organization_id is not None:
+        visible.append(ChargingLocationModel.organization_id == viewer.organization_id)
+        visible.append(
+            exists().where(
+                ChargingLocationAccessModel.location_id
+                == ChargingLocationModel.location_id,
+                ChargingLocationAccessModel.allowed_organization_id
+                == viewer.organization_id,
+                ChargingLocationAccessModel.revoked_at.is_(None),
+            )
+        )
+    conditions.append(or_(*visible))
+    return conditions
 
 
 async def find_nearest_station_by_location(
@@ -675,7 +748,7 @@ async def find_nearest_station_by_location(
         .where(
             ChargingStationModel.deleted_at.is_(None),
             ChargingStationModel.status == _ACTIVE,
-            *_public_active_location_conditions(),
+            *_visible_active_location_conditions(),
             _has_available_connector(),
         )
         .order_by(ChargingLocationModel.coordinates.distance_centroid(point))
@@ -699,6 +772,7 @@ async def list_nearby_stations(
     is_available_only: bool,
     offset: int,
     limit: int,
+    viewer: LocationViewer | None = None,
 ) -> list[tuple[ChargingStationModel, ChargingLocationModel, float]]:
     """Find stations within a radius of a point, nearest first (F-D1).
 
@@ -714,6 +788,8 @@ async def list_nearby_stations(
             at least one ``Available`` connector (the F-A2 rule).
         offset: Number of records to skip.
         limit: Maximum number of records to return.
+        viewer: Who searches (visibility of private locations); `None` shows
+            public locations only.
 
     Returns:
         ``(station, location, distance in meters)`` ordered nearest first.
@@ -730,6 +806,7 @@ async def list_nearby_stations(
         min_power_kw=min_power_kw,
         is_operational_only=is_operational_only,
         is_available_only=is_available_only,
+        viewer=viewer,
     )
     distance_meters = func.ST_Distance(ChargingLocationModel.coordinates, point)
     result = await db.execute(
@@ -758,6 +835,7 @@ async def count_nearby_stations(
     min_power_kw: Decimal | None,
     is_operational_only: bool,
     is_available_only: bool,
+    viewer: LocationViewer | None = None,
 ) -> int:
     """Count stations within a radius of a point, with the same filters as
     ``list_nearby_stations``.
@@ -771,6 +849,7 @@ async def count_nearby_stations(
         is_operational_only: Whether to only count ``ACTIVE`` chargers.
         is_available_only: Whether to only count operational chargers with
             at least one ``Available`` connector.
+        viewer: Who searches; `None` counts public locations only.
 
     Returns:
         Number of matching stations.
@@ -782,6 +861,7 @@ async def count_nearby_stations(
         min_power_kw=min_power_kw,
         is_operational_only=is_operational_only,
         is_available_only=is_available_only,
+        viewer=viewer,
     )
     result = await db.execute(
         select(func.count(ChargingStationModel.station_id))
@@ -802,6 +882,7 @@ def _nearby_station_conditions(
     min_power_kw: Decimal | None,
     is_operational_only: bool,
     is_available_only: bool,
+    viewer: LocationViewer | None,
 ) -> list[ColumnElement[bool]]:
     """Build the shared WHERE conditions for a nearby-station query (F-D1).
 
@@ -813,15 +894,16 @@ def _nearby_station_conditions(
         is_operational_only: Whether to require an ``ACTIVE`` charger.
         is_available_only: Whether to require an ``ACTIVE`` charger and at
             least one ``Available`` connector; implies ``is_operational_only``.
+        viewer: Who searches (see `_visible_active_location_conditions`).
 
     Returns:
         Conditions shared by ``list_nearby_stations`` and
         ``count_nearby_stations``, so the two queries can never drift apart.
-        They require a not-deleted, public, ``ACTIVE`` location.
+        They require a not-deleted, ``ACTIVE`` location visible to the viewer.
     """
     conditions: list[ColumnElement[bool]] = [
         ChargingStationModel.deleted_at.is_(None),
-        *_public_active_location_conditions(),
+        *_visible_active_location_conditions(viewer),
         func.ST_DWithin(ChargingLocationModel.coordinates, point, radius_meters),
     ]
     if is_operational_only or is_available_only:
@@ -954,6 +1036,7 @@ async def update_charging_station(
     update_data: Mapping[str, object],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> ChargingStationModel | None:
     """Update an active station using fields already filtered by the service.
 
@@ -962,6 +1045,7 @@ async def update_charging_station(
         station_id: UUID of the station to update.
         update_data: Mapping containing only fields allowed to be updated.
         change_reason: Why the row changes, recorded in the change history.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         The updated station, or None if it is no longer active.
@@ -973,7 +1057,7 @@ async def update_charging_station(
     station = await get_station_by_id(db, station_id)
     if station is None:
         return None
-    await set_change_context(db, changed_by=None, change_reason=change_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
     for field_name, value in update_data.items():
         setattr(station, field_name, value)
     await db.flush()
@@ -1035,7 +1119,11 @@ async def _soft_delete_station_rows(
 
 
 async def soft_delete_station(
-    db: AsyncSession, station_id: UUID, *, status_reason: str
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    status_reason: str,
+    changed_by: UUID | None = None,
 ) -> bool:
     """Soft-delete a station and all active EVSEs/connectors that belong to it.
 
@@ -1048,6 +1136,7 @@ async def soft_delete_station(
         db: Current async session.
         station_id: UUID of the station to soft-delete.
         status_reason: Why the charger left the system.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         True if an active station existed and was marked; False otherwise.
@@ -1055,7 +1144,7 @@ async def soft_delete_station(
     station = await get_station_by_id(db, station_id)
     if station is None:
         return False
-    await set_change_context(db, changed_by=None, change_reason=status_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=status_reason)
     await _soft_delete_station_rows(db, station_id, status_reason, utc_now())
     await db.flush()
     return True
@@ -1223,6 +1312,7 @@ async def update_charging_evse(
     update_data: Mapping[str, object],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> ChargingEvseModel | None:
     """Update an active EVSE using fields already validated by the service.
 
@@ -1231,6 +1321,7 @@ async def update_charging_evse(
         evse_id: UUID of the EVSE to update.
         update_data: Mapping of fields that passed business validation.
         change_reason: Why the row changes, recorded in the change history.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         The updated EVSE, or ``None`` if it is no longer active.
@@ -1242,7 +1333,7 @@ async def update_charging_evse(
     evse = await get_evse_by_id(db, evse_id)
     if evse is None:
         return None
-    await set_change_context(db, changed_by=None, change_reason=change_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
     for field_name, value in update_data.items():
         setattr(evse, field_name, value)
     await db.flush()
@@ -1251,7 +1342,11 @@ async def update_charging_evse(
 
 
 async def soft_delete_evse(
-    db: AsyncSession, evse_id: UUID, *, status_reason: str
+    db: AsyncSession,
+    evse_id: UUID,
+    *,
+    status_reason: str,
+    changed_by: UUID | None = None,
 ) -> bool:
     """Soft-delete an EVSE and its active connectors.
 
@@ -1259,6 +1354,7 @@ async def soft_delete_evse(
         db: Current async session.
         evse_id: UUID of the EVSE to soft-delete.
         status_reason: Why the EVSE left the system.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         ``True`` if an active EVSE existed; ``False`` if not found.
@@ -1271,7 +1367,7 @@ async def soft_delete_evse(
     if evse is None:
         return False
     now = utc_now()
-    await set_change_context(db, changed_by=None, change_reason=status_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=status_reason)
     await db.execute(
         update(ChargingConnectorModel)
         .where(
@@ -1454,6 +1550,7 @@ async def update_charging_connector(
     update_data: Mapping[str, object],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> ChargingConnectorModel | None:
     """Update an active connector using fields already validated by the service.
 
@@ -1462,6 +1559,7 @@ async def update_charging_connector(
         connector_id: UUID of the connector to update.
         update_data: Mapping of fields that passed business validation.
         change_reason: Why the row changes, recorded in the change history.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         The updated connector, or ``None`` if it is no longer active.
@@ -1473,7 +1571,7 @@ async def update_charging_connector(
     connector = await get_connector_by_id(db, connector_id)
     if connector is None:
         return None
-    await set_change_context(db, changed_by=None, change_reason=change_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
     for field_name, value in update_data.items():
         setattr(connector, field_name, value)
     await db.flush()
@@ -1482,7 +1580,11 @@ async def update_charging_connector(
 
 
 async def soft_delete_connector(
-    db: AsyncSession, connector_id: UUID, *, change_reason: str
+    db: AsyncSession,
+    connector_id: UUID,
+    *,
+    change_reason: str,
+    changed_by: UUID | None = None,
 ) -> bool:
     """Mark a connector as soft-deleted without physically deleting the record.
 
@@ -1490,6 +1592,7 @@ async def soft_delete_connector(
         db: Current async session.
         connector_id: UUID of the connector to soft-delete.
         change_reason: Why the gun left the system, recorded in the history.
+        changed_by: The acting user, recorded in the change history.
 
     Returns:
         ``True`` if an active connector existed; ``False`` if not found.
@@ -1503,7 +1606,7 @@ async def soft_delete_connector(
     if connector is None:
         return False
     now = utc_now()
-    await set_change_context(db, changed_by=None, change_reason=change_reason)
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
     connector.deleted_at = now
     connector.updated_at = now
     await db.flush()

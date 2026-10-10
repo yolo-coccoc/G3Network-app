@@ -21,22 +21,28 @@ from app.libs.db.history import set_change_context
 async def get_by_id(
     db_session: AsyncSession,
     telematic_id: UUID,
+    *,
+    organization_id: UUID | None = None,
 ) -> TelematicModel | None:
     """Get a device that has not been soft-deleted, by internal ID.
 
     Args:
         db_session: Current database session.
         telematic_id: Internal ID of the device.
+        organization_id: Data scope (ACC-15): only a device owned by this
+            organization is found; `None` means no restriction.
 
     Returns:
-        The device record, or ``None`` if not found or soft-deleted.
+        The device record, or ``None`` if not found, soft-deleted or out of
+        scope.
     """
-    query_result = await db_session.execute(
-        select(TelematicModel).where(
-            TelematicModel.telematic_id == telematic_id,
-            TelematicModel.deleted_at.is_(None),
-        )
+    statement = select(TelematicModel).where(
+        TelematicModel.telematic_id == telematic_id,
+        TelematicModel.deleted_at.is_(None),
     )
+    if organization_id is not None:
+        statement = statement.where(TelematicModel.organization_id == organization_id)
+    query_result = await db_session.execute(statement)
     return query_result.scalar_one_or_none()
 
 
@@ -175,6 +181,7 @@ async def list_all(
     offset: int,
     limit: int,
     status_filter: TelematicStatus | None = None,
+    organization_id: UUID | None = None,
 ) -> list[TelematicModel]:
     """Get a page of devices, newest first, excluding soft-deleted ones.
 
@@ -183,6 +190,7 @@ async def list_all(
         offset: Number of records to skip.
         limit: Maximum number of records to return.
         status_filter: Only return devices in this status, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         List of device records.
@@ -196,6 +204,8 @@ async def list_all(
     )
     if status_filter is not None:
         statement = statement.where(TelematicModel.status == status_filter)
+    if organization_id is not None:
+        statement = statement.where(TelematicModel.organization_id == organization_id)
     query_result = await db_session.execute(statement)
     return list(query_result.scalars().all())
 
@@ -203,12 +213,14 @@ async def list_all(
 async def count(
     db_session: AsyncSession,
     status_filter: TelematicStatus | None = None,
+    organization_id: UUID | None = None,
 ) -> int:
     """Count devices that have not been soft-deleted.
 
     Args:
         db_session: Current database session.
         status_filter: Only count devices in this status, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Number of matching devices.
@@ -220,6 +232,8 @@ async def count(
     )
     if status_filter is not None:
         statement = statement.where(TelematicModel.status == status_filter)
+    if organization_id is not None:
+        statement = statement.where(TelematicModel.organization_id == organization_id)
     query_result = await db_session.execute(statement)
     return int(query_result.scalar_one())
 
@@ -253,6 +267,7 @@ async def update_fields(
     values: dict[str, object],
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> TelematicModel:
     """Write the fields the service has already validated onto a device.
 
@@ -261,8 +276,8 @@ async def update_fields(
         telematic_record: Device record loaded in this session.
         values: Fields to set, keyed by ORM attribute name.
         change_reason: Why the row changes; recorded in ``telematic_history``
-            (devices are change-tracked). The actor is unknown until
-            authentication exists, so ``changed_by`` is ``None`` (DM-29).
+            (devices are change-tracked).
+        changed_by: The acting user, recorded as ``changed_by``.
 
     Returns:
         The same record, after the flush.
@@ -276,7 +291,9 @@ async def update_fields(
         Sets the change context and flushes the UPDATE; ``updated_at`` is set
         by the column's ``onupdate`` hook.
     """
-    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
     for field_name, value in values.items():
         setattr(telematic_record, field_name, value)
     await db_session.flush()
@@ -288,6 +305,7 @@ async def soft_delete(
     telematic_record: TelematicModel,
     *,
     change_reason: str,
+    changed_by: UUID | None = None,
 ) -> None:
     """Soft-delete a device: it leaves the system (DM-25).
 
@@ -295,6 +313,7 @@ async def soft_delete(
         db_session: Current database session.
         telematic_record: Device record loaded in this session.
         change_reason: Why the device left; also stored as ``status_reason``.
+        changed_by: The acting user, recorded as ``changed_by``.
 
     Side Effects:
         Sets ``deleted_at``, status ``INACTIVE`` and no vehicle (the table's
@@ -304,7 +323,9 @@ async def soft_delete(
         deleted, so a replacement can reuse them or the truck (deferred.md
         item 82).
     """
-    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
     telematic_record.deleted_at = utc_now()
     telematic_record.status = TelematicStatus.INACTIVE
     telematic_record.status_reason = change_reason

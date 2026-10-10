@@ -12,11 +12,17 @@ from app.libs.common.config import settings
 class VehicleCreateRequest(BaseModel):
     """HTTP request data for creating a new vehicle.
 
-    ``organization_id`` is a body field until authentication exists (WP2):
-    then it comes from the caller's organization.
+    ``organization_id`` is only for internal staff creating a truck for a
+    customer; everyone else owns the truck through their own organization.
     """
 
-    organization_id: UUID = Field(..., description="Organization that owns the truck")
+    organization_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Organization that owns the truck; internal staff only, defaults "
+            "to the caller's organization"
+        ),
+    )
     acquired_at: AwareDatetime | None = Field(
         default=None,
         description=(

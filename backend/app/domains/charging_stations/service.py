@@ -14,10 +14,16 @@ import; the OCPP gateway's own writes live in the internal
 ``ocpp_state_service.py``.
 
 "Available" means: the charger is ``ACTIVE`` and not deleted, stands at an
-``ACTIVE`` public location and has at least one connector whose last reported
-status is ``Available``; ``is_online`` is not required. Until authentication
-exists (WP2) the searches cannot tell who asks, so they only return public
-locations.
+``ACTIVE`` location the caller may see and has at least one connector whose
+last reported status is ``Available``; ``is_online`` is not required.
+
+Access (ACC-15, CS-10, CS-13): every HTTP-facing function takes the caller's
+`Principal`. A location, and the chargers, EVSEs and guns below it, can be
+*managed* (changed, commanded, granted) only by the owner organization and by
+internal staff, and *viewed* also when the location is public or the caller's
+organization holds a live grant on it. Anything else answers "not found". The
+system callers (`find_nearest_operational_station` for an alert) see public
+locations only.
 
 Pre-provisioning invariants are enforced here: a location must exist before a
 charger, a charger before an EVSE, an EVSE before a connector, and topology
@@ -38,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
+import app.domains.identity.service as identity_service
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
@@ -97,15 +104,181 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingResourceStatus,
     ConnectorStandard,
+    LocationViewer,
     NearestChargingStationReference,
     StationCommandOutcome,
     StationCommandReference,
     StationCommandType,
 )
+from app.domains.identity.exceptions import OrganizationNotFoundError
+from app.domains.identity.types import Principal
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 from app.libs.common.pagination import normalize_page_window
+
+
+def _viewer_of(principal: Principal) -> LocationViewer:
+    """Build the location visibility rule of a caller (CS-10, CS-13).
+
+    Args:
+        principal: The caller.
+
+    Returns:
+        The caller's organization, and whether they see every location.
+    """
+    return LocationViewer(
+        organization_id=principal.organization_id, sees_all=principal.is_internal
+    )
+
+
+async def _can_reach_location(
+    db: AsyncSession,
+    location: ChargingLocationModel,
+    principal: Principal,
+    *,
+    view: bool,
+) -> bool:
+    """Apply the access rule to one location.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        location: The location.
+        principal: The caller.
+        view: `True` for a read a driver may do (a public location, or one the
+            caller's organization has a live grant on, also counts); `False`
+            for managing it (owner organization and internal staff only).
+
+    Returns:
+        Whether the caller may act on the location.
+    """
+    if principal.can_access_organization(location.organization_id):
+        return True
+    if not view:
+        return False
+    if location.is_public:
+        return True
+    grant = await charging_stations_repository.get_live_location_access(
+        db, location.location_id, principal.organization_id
+    )
+    return grant is not None
+
+
+async def _get_location_in_reach(
+    db: AsyncSession, location_id: UUID, principal: Principal, *, view: bool = False
+) -> ChargingLocationModel:
+    """Load an active location the caller may act on, or raise "not found".
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        location_id: UUID of the location.
+        principal: The caller.
+        view: See `_can_reach_location`.
+
+    Returns:
+        The location.
+
+    Raises:
+        ChargingLocationNotFoundError: It does not exist, was deleted or is out
+            of the caller's reach.
+    """
+    location = await charging_stations_repository.get_location_by_id(db, location_id)
+    if location is None or not await _can_reach_location(
+        db, location, principal, view=view
+    ):
+        raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
+    return location
+
+
+async def _get_station_in_reach(
+    db: AsyncSession, station_id: UUID, principal: Principal, *, view: bool = False
+) -> ChargingStationModel:
+    """Load an active charger the caller may act on, or raise "not found".
+
+    A charger reads its owner through its location (CS-10).
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the charger.
+        principal: The caller.
+        view: See `_can_reach_location`.
+
+    Returns:
+        The charger.
+
+    Raises:
+        ChargingStationNotFoundError: It does not exist, was deleted or is out
+            of the caller's reach.
+    """
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
+    if station is not None:
+        location = await charging_stations_repository.get_location_by_id(
+            db, station.location_id, include_deleted=True
+        )
+        if location is not None and await _can_reach_location(
+            db, location, principal, view=view
+        ):
+            return station
+    raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+
+
+async def _get_evse_in_reach(
+    db: AsyncSession, evse_id: UUID, principal: Principal, *, view: bool = False
+) -> ChargingEvseModel:
+    """Load an active EVSE whose charger the caller may act on, or raise.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        evse_id: UUID of the EVSE.
+        principal: The caller.
+        view: See `_can_reach_location`.
+
+    Returns:
+        The EVSE.
+
+    Raises:
+        ChargingEvseNotFoundError: It does not exist, was deleted or is out of
+            the caller's reach.
+    """
+    evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
+    if evse is not None:
+        try:
+            await _get_station_in_reach(db, evse.station_id, principal, view=view)
+        except ChargingStationNotFoundError:
+            pass
+        else:
+            return evse
+    raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+
+
+async def _get_connector_in_reach(
+    db: AsyncSession, connector_id: UUID, principal: Principal, *, view: bool = False
+) -> ChargingConnectorModel:
+    """Load an active gun whose charger the caller may act on, or raise.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        connector_id: UUID of the gun.
+        principal: The caller.
+        view: See `_can_reach_location`.
+
+    Returns:
+        The connector.
+
+    Raises:
+        ChargingConnectorNotFoundError: It does not exist, was deleted or is
+            out of the caller's reach.
+    """
+    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
+    if connector is not None:
+        try:
+            await _get_evse_in_reach(db, connector.evse_id, principal, view=view)
+        except ChargingEvseNotFoundError:
+            pass
+        else:
+            return connector
+    raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
+
 
 # Short names a driver app or portal may send for a plug standard (CS-17); the
 # stored value is always the OCPI name.
@@ -431,23 +604,30 @@ def _status_update_values(update_data: dict[str, object], default_reason: str) -
 
 
 async def create_charging_location(
-    db: AsyncSession, location_create_request: ChargingLocationCreateRequest
+    db: AsyncSession,
+    location_create_request: ChargingLocationCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingLocationResponse:
-    """Create a location (an unknown owner organization is a 404-style conflict).
+    """Create a location owned by the caller's organization (CS-10).
 
     Args:
         db: Async session owned by the HTTP boundary.
         location_create_request: Location data, already Pydantic-validated.
+        principal: The caller; internal staff may name another owner
+            organization in the request.
 
     Returns:
         The newly created location.
 
     Raises:
-        ChargingLocationNotFoundError: Never; see below.
-        ChargingTopologyConflictError: If the owner organization does not
-            exist (foreign-key violation; the identity domain has no service
-            to ask yet, WP2).
+        OrganizationNotFoundError: The named owner organization does not exist
+            or is out of the caller's reach.
+        ChargingTopologyConflictError: On a database integrity failure.
     """
+    owner_organization_id = await identity_service.resolve_organization_for_new_record(
+        db, principal, location_create_request.organization_id
+    )
     coordinates = coordinates_to_location(
         location_create_request.latitude, location_create_request.longitude
     )
@@ -455,29 +635,29 @@ async def create_charging_location(
     try:
         location = await charging_stations_repository.create_charging_location(
             db,
-            organization_id=location_create_request.organization_id,
+            organization_id=owner_organization_id,
             display_name=location_create_request.display_name,
             address=location_create_request.address,
             coordinates=coordinates,
             is_public=location_create_request.is_public,
         )
     except IntegrityError as error:
-        raise ChargingTopologyConflictError(
-            "Owner organization does not exist"
-        ) from error
+        raise ChargingTopologyConflictError("Location could not be created") from error
     return to_charging_location_response(location)
 
 
 async def list_charging_locations(
     db: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingLocationListResponse:
-    """List active locations with pagination bounded by settings.
+    """List the active locations the caller owns (all of them for internal staff).
 
     Args:
         db: Async session owned by the HTTP boundary.
+        principal: The caller (data scope).
         page: Page number starting at one.
         page_size: Page size, clamped according to settings.
 
@@ -486,9 +666,14 @@ async def list_charging_locations(
     """
     page_window = normalize_page_window(page, page_size)
     locations = await charging_stations_repository.list_charging_locations(
-        db, offset=page_window.offset, limit=page_window.page_size
+        db,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        organization_id=principal.data_scope,
     )
-    total = await charging_stations_repository.count_locations(db)
+    total = await charging_stations_repository.count_locations(
+        db, organization_id=principal.data_scope
+    )
     return ChargingLocationListResponse(
         items=[to_charging_location_response(location) for location in locations],
         total=total,
@@ -498,13 +683,15 @@ async def list_charging_locations(
 
 
 async def get_charging_location(
-    db: AsyncSession, location_id: UUID
+    db: AsyncSession, location_id: UUID, *, principal: Principal
 ) -> ChargingLocationResponse:
-    """Get an active location by internal UUID.
+    """Get an active location the caller may see by internal UUID.
 
     Args:
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location.
+        principal: The caller; a private location is visible to its owner,
+            to organizations with a live grant and to internal staff.
 
     Returns:
         The active location.
@@ -512,9 +699,7 @@ async def get_charging_location(
     Raises:
         ChargingLocationNotFoundError: If it does not exist or was deleted.
     """
-    location = await charging_stations_repository.get_location_by_id(db, location_id)
-    if location is None:
-        raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
+    location = await _get_location_in_reach(db, location_id, principal, view=True)
     return to_charging_location_response(location)
 
 
@@ -522,6 +707,8 @@ async def update_charging_location(
     db: AsyncSession,
     location_id: UUID,
     location_update_request: ChargingLocationUpdateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingLocationResponse:
     """PATCH a location.
 
@@ -529,6 +716,8 @@ async def update_charging_location(
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location to update.
         location_update_request: PATCH fields, already Pydantic-validated.
+        principal: The caller; only the owner organization and internal staff
+            may change a location.
 
     Returns:
         The updated location.
@@ -536,9 +725,7 @@ async def update_charging_location(
     Raises:
         ChargingLocationNotFoundError: If it does not exist or was deleted.
     """
-    location = await charging_stations_repository.get_location_by_id(db, location_id)
-    if location is None:
-        raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
+    location = await _get_location_in_reach(db, location_id, principal)
     update_data = _clean_update_values(
         location_update_request.model_dump(
             exclude_unset=True, exclude={"latitude", "longitude"}
@@ -552,7 +739,11 @@ async def update_charging_location(
     if not update_data:
         return to_charging_location_response(location)
     updated = await charging_stations_repository.update_charging_location(
-        db, location_id, update_data, change_reason=change_reason
+        db,
+        location_id,
+        update_data,
+        change_reason=change_reason,
+        changed_by=principal.user_id,
     )
     if updated is None:
         raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
@@ -563,6 +754,7 @@ async def soft_delete_charging_location(
     db: AsyncSession,
     location_id: UUID,
     *,
+    principal: Principal,
     status_reason: str = "Charging location removed",
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a location with its chargers, EVSEs, connectors and grants.
@@ -570,6 +762,8 @@ async def soft_delete_charging_location(
     Args:
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location to soft-delete.
+        principal: The caller; only the owner organization and internal staff
+            may delete a location.
         status_reason: Why the location left the system.
 
     Returns:
@@ -578,8 +772,9 @@ async def soft_delete_charging_location(
     Raises:
         ChargingLocationNotFoundError: If it does not exist or was deleted.
     """
+    await _get_location_in_reach(db, location_id, principal)
     if not await charging_stations_repository.soft_delete_location(
-        db, location_id, status_reason=status_reason
+        db, location_id, status_reason=status_reason, changed_by=principal.user_id
     ):
         raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
     return ChargingResourceDeleteResponse(message="Charging location soft-deleted")
@@ -592,6 +787,8 @@ async def grant_charging_location_access(
     db: AsyncSession,
     location_id: UUID,
     access_create_request: ChargingLocationAccessCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingLocationAccessResponse:
     """Let another organization charge at a location (CS-10, CS-13).
 
@@ -603,22 +800,33 @@ async def grant_charging_location_access(
     Args:
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location.
-        access_create_request: The grantee, the granting user and the end date.
+        access_create_request: The grantee and the end date.
+        principal: The caller, recorded as ``granted_by``; only the owner
+            organization and internal staff may grant access.
 
     Returns:
         The new grant.
 
     Raises:
-        ChargingLocationNotFoundError: If the location is not active.
-        ChargingLocationAccessConflictError: If the grantee is the owner, a
-            live grant exists, or the grantee/user does not exist.
+        ChargingLocationNotFoundError: If the location is not active or is
+            out of the caller's reach.
+        OrganizationNotFoundError: If the grantee organization does not exist.
+        ChargingLocationAccessConflictError: If the grantee is the owner or a
+            live grant exists.
     """
-    location = await charging_stations_repository.get_location_by_id(db, location_id)
-    if location is None:
-        raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
+    location = await _get_location_in_reach(db, location_id, principal)
     if access_create_request.allowed_organization_id == location.organization_id:
         raise ChargingLocationAccessConflictError(
             "The owner organization already may charge at its own location"
+        )
+    if (
+        await identity_service.find_organization_reference(
+            db, access_create_request.allowed_organization_id
+        )
+        is None
+    ):
+        raise OrganizationNotFoundError(
+            f"Organization '{access_create_request.allowed_organization_id}' not found"
         )
     if await charging_stations_repository.get_live_location_access(
         db, location_id, access_create_request.allowed_organization_id
@@ -631,25 +839,26 @@ async def grant_charging_location_access(
             db,
             location_id=location_id,
             allowed_organization_id=access_create_request.allowed_organization_id,
-            granted_by=access_create_request.granted_by,
+            granted_by=principal.user_id,
             valid_until=access_create_request.valid_until,
         )
     except IntegrityError as error:
         raise ChargingLocationAccessConflictError(
-            "The organization or the granting user does not exist, or the "
-            "access already exists"
+            "The access already exists"
         ) from error
     return ChargingLocationAccessResponse.model_validate(access)
 
 
 async def list_charging_location_access(
-    db: AsyncSession, location_id: UUID
+    db: AsyncSession, location_id: UUID, *, principal: Principal
 ) -> ChargingLocationAccessListResponse:
     """List the live grants of a location.
 
     Args:
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location.
+        principal: The caller; only the owner organization and internal staff
+            see who was granted access.
 
     Returns:
         The grants that are not revoked.
@@ -657,8 +866,7 @@ async def list_charging_location_access(
     Raises:
         ChargingLocationNotFoundError: If the location is not active.
     """
-    if await charging_stations_repository.get_location_by_id(db, location_id) is None:
-        raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
+    await _get_location_in_reach(db, location_id, principal)
     grants = await charging_stations_repository.list_live_location_access(
         db, location_id
     )
@@ -672,6 +880,8 @@ async def revoke_charging_location_access(
     location_id: UUID,
     access_id: UUID,
     access_revoke_request: ChargingLocationAccessRevokeRequest,
+    *,
+    principal: Principal,
 ) -> ChargingLocationAccessResponse:
     """Close a grant (the row is kept, so a new grant is possible, CS-13).
 
@@ -679,15 +889,19 @@ async def revoke_charging_location_access(
         db: Async session owned by the HTTP boundary.
         location_id: UUID of the location.
         access_id: UUID of the grant.
-        access_revoke_request: Who revokes it and why.
+        access_revoke_request: Why the access ends.
+        principal: The caller, recorded as ``revoked_by``; only the owner
+            organization and internal staff may revoke.
 
     Returns:
         The closed grant.
 
     Raises:
+        ChargingLocationNotFoundError: If the location is out of reach.
         ChargingLocationAccessNotFoundError: If the location has no such grant.
         ChargingLocationAccessConflictError: If the grant is already closed.
     """
+    await _get_location_in_reach(db, location_id, principal)
     access: (
         ChargingLocationAccessModel | None
     ) = await charging_stations_repository.get_location_access_by_id(
@@ -700,7 +914,7 @@ async def revoke_charging_location_access(
     revoked = await charging_stations_repository.revoke_location_access(
         db,
         access,
-        revoked_by=access_revoke_request.revoked_by,
+        revoked_by=principal.user_id,
         revoke_reason=access_revoke_request.revoke_reason,
     )
     return ChargingLocationAccessResponse.model_validate(revoked)
@@ -710,32 +924,29 @@ async def revoke_charging_location_access(
 
 
 async def create_charging_station(
-    db: AsyncSession, station_create_request: ChargingStationCreateRequest
+    db: AsyncSession,
+    station_create_request: ChargingStationCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingStationResponse:
     """Create a new charger at a location after checking its unique values.
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_create_request: Station data, already Pydantic-validated.
+        principal: The caller; the location must be one they may manage.
 
     Returns:
         The newly created station response.
 
     Raises:
-        ChargingLocationNotFoundError: If the location is not active.
+        ChargingLocationNotFoundError: If the location is not active or is
+            out of the caller's reach.
         ChargingTopologyConflictError: If the identity already exists, even
             if soft-deleted, or the registered serial is used by a charger
             not deleted.
     """
-    if (
-        await charging_stations_repository.get_location_by_id(
-            db, station_create_request.location_id
-        )
-        is None
-    ):
-        raise ChargingLocationNotFoundError(
-            f"Location '{station_create_request.location_id}' not found"
-        )
+    await _get_location_in_reach(db, station_create_request.location_id, principal)
     if await charging_stations_repository.get_station_by_identity(
         db, station_create_request.ocpp_identity
     ):
@@ -781,13 +992,15 @@ async def create_charging_station(
 async def list_charging_stations(
     db: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingStationListResponse:
-    """List active stations with pagination bounded by settings.
+    """List the active stations at the caller's locations (all for internal staff).
 
     Args:
         db: Async session owned by the HTTP boundary.
+        principal: The caller (data scope, through the chargers' locations).
         page: Page number starting at one; lower values are clamped to the
             default.
         page_size: Page size, clamped according to settings.
@@ -806,8 +1019,11 @@ async def list_charging_stations(
         db,
         offset=page_window.offset,
         limit=page_window.page_size,
+        organization_id=principal.data_scope,
     )
-    total = await charging_stations_repository.count_stations(db)
+    total = await charging_stations_repository.count_stations(
+        db, organization_id=principal.data_scope
+    )
     items = [
         await _build_charging_station_response(db, station) for station in stations
     ]
@@ -820,13 +1036,16 @@ async def list_charging_stations(
 
 
 async def get_charging_station(
-    db: AsyncSession, station_id: UUID
+    db: AsyncSession, station_id: UUID, *, principal: Principal
 ) -> ChargingStationResponse:
-    """Get an active station by internal UUID.
+    """Get an active station the caller may see by internal UUID.
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station to query.
+        principal: The caller; a charger at a private location is visible to
+            its owner, to organizations with a live grant and to internal
+            staff.
 
     Returns:
         The active station response.
@@ -835,20 +1054,19 @@ async def get_charging_station(
         ChargingStationNotFoundError: If the station does not exist or was
             soft-deleted.
     """
-    station = await charging_stations_repository.get_station_by_id(db, station_id)
-    if station is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    station = await _get_station_in_reach(db, station_id, principal, view=True)
     return await _build_charging_station_response(db, station)
 
 
 async def get_charging_station_status(
-    db: AsyncSession, station_id: UUID
+    db: AsyncSession, station_id: UUID, *, principal: Principal
 ) -> ChargingStationStatusResponse:
     """Get the whole charger's status and every gun's status of a station (F-C2).
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station.
+        principal: The caller (view access, see the module docstring).
 
     Returns:
         The whole-charger status fields of the station and one entry per
@@ -863,9 +1081,7 @@ async def get_charging_station_status(
     Side Effects:
         Performs three read queries; does not commit or roll back.
     """
-    station = await charging_stations_repository.get_station_by_id(db, station_id)
-    if station is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    station = await _get_station_in_reach(db, station_id, principal, view=True)
     state = await charging_stations_repository.get_station_state(db, station_id)
     connectors = await charging_stations_repository.list_connectors_by_station_id(
         db, station_id
@@ -1001,6 +1217,7 @@ def to_nearby_charging_station_response(
 async def list_nearby_charging_stations(
     db: AsyncSession,
     *,
+    principal: Principal,
     latitude: float,
     longitude: float,
     radius_km: float,
@@ -1015,10 +1232,13 @@ async def list_nearby_charging_stations(
 
     Generalizes ``find_nearest_operational_station`` (F-A2) from "1
     nearest" to "N within a radius, filtered by plug standard/power,
-    nearest first". Only chargers at public, ``ACTIVE`` locations are found.
+    nearest first". Only chargers at ``ACTIVE`` locations the caller may see
+    are found: public ones, the caller's organization's own, those it holds
+    a live grant on, and every location for internal staff (CS-10, CS-13).
 
     Args:
         db: Async session owned by the HTTP boundary.
+        principal: The caller (decides which private locations show).
         latitude: GPS latitude in decimal degrees of the query point.
         longitude: GPS longitude in decimal degrees of the query point.
         radius_km: Search radius in km; clamped to
@@ -1074,6 +1294,7 @@ async def list_nearby_charging_stations(
         is_available_only=is_available_only,
         offset=page_window.offset,
         limit=page_window.page_size,
+        viewer=_viewer_of(principal),
     )
     total = await charging_stations_repository.count_nearby_stations(
         db,
@@ -1083,6 +1304,7 @@ async def list_nearby_charging_stations(
         min_power_kw=min_power_decimal,
         is_operational_only=is_operational_only,
         is_available_only=is_available_only,
+        viewer=_viewer_of(principal),
     )
     items = []
     for station, location, distance_meters in matches:
@@ -1121,6 +1343,8 @@ async def update_charging_station(
     db: AsyncSession,
     station_id: UUID,
     station_update_request: ChargingStationUpdateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingStationResponse:
     """PATCH a station and check for identity conflicts before flushing.
 
@@ -1128,6 +1352,8 @@ async def update_charging_station(
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station to update.
         station_update_request: PATCH fields, already Pydantic-validated.
+        principal: The caller; only the owner organization and internal staff
+            may change a charger, and a new location must be one they manage.
 
     Returns:
         The updated station response.
@@ -1139,9 +1365,7 @@ async def update_charging_station(
         ChargingTopologyConflictError: If the new identity or serial is
             already in use.
     """
-    station = await charging_stations_repository.get_station_by_id(db, station_id)
-    if station is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    station = await _get_station_in_reach(db, station_id, principal)
     if (
         station_update_request.ocpp_identity is not None
         and station_update_request.ocpp_identity != station.ocpp_identity
@@ -1164,16 +1388,8 @@ async def update_charging_station(
             "Registered serial number "
             f"'{station_update_request.registered_serial_number}' already exists"
         )
-    if (
-        station_update_request.location_id is not None
-        and await charging_stations_repository.get_location_by_id(
-            db, station_update_request.location_id
-        )
-        is None
-    ):
-        raise ChargingLocationNotFoundError(
-            f"Location '{station_update_request.location_id}' not found"
-        )
+    if station_update_request.location_id is not None:
+        await _get_location_in_reach(db, station_update_request.location_id, principal)
 
     update_data = _clean_update_values(
         station_update_request.model_dump(exclude_unset=True, exclude={"max_power_kw"})
@@ -1187,7 +1403,11 @@ async def update_charging_station(
         return await _build_charging_station_response(db, station)
     try:
         updated = await charging_stations_repository.update_charging_station(
-            db, station_id, update_data, change_reason=change_reason
+            db,
+            station_id,
+            update_data,
+            change_reason=change_reason,
+            changed_by=principal.user_id,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -1202,6 +1422,7 @@ async def soft_delete_charging_station(
     db: AsyncSession,
     station_id: UUID,
     *,
+    principal: Principal,
     status_reason: str = "Charging station removed",
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a station and its child topology within the same transaction.
@@ -1209,6 +1430,7 @@ async def soft_delete_charging_station(
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station to soft-delete.
+        principal: The caller; only the owner organization and internal staff.
         status_reason: Why the charger left the system.
 
     Returns:
@@ -1223,8 +1445,9 @@ async def soft_delete_charging_station(
         ``deleted_at`` on them and on its connectors; does not physically
         delete records and does not commit on its own.
     """
+    await _get_station_in_reach(db, station_id, principal)
     if not await charging_stations_repository.soft_delete_station(
-        db, station_id, status_reason=status_reason
+        db, station_id, status_reason=status_reason, changed_by=principal.user_id
     ):
         raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
     return ChargingResourceDeleteResponse(message="Charging station soft-deleted")
@@ -1234,7 +1457,11 @@ async def soft_delete_charging_station(
 
 
 async def create_charging_evse(
-    db: AsyncSession, station_id: UUID, evse_create_request: ChargingEvseCreateRequest
+    db: AsyncSession,
+    station_id: UUID,
+    evse_create_request: ChargingEvseCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingEvseResponse:
     """Create an EVSE only if the parent station is active and the identities are unused.
 
@@ -1242,6 +1469,7 @@ async def create_charging_evse(
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the parent station.
         evse_create_request: EVSE identity, already validated.
+        principal: The caller; only the owner organization and internal staff.
 
     Returns:
         The newly created EVSE response.
@@ -1251,8 +1479,7 @@ async def create_charging_evse(
         ChargingTopologyConflictError: If the EVSE identity or public ID
             already exists.
     """
-    if await charging_stations_repository.get_station_by_id(db, station_id) is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    await _get_station_in_reach(db, station_id, principal)
     if await charging_stations_repository.get_evse_by_identity(
         db, station_id, evse_create_request.ocpp_evse_id
     ):
@@ -1283,6 +1510,7 @@ async def list_charging_evses(
     db: AsyncSession,
     station_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingEvseListResponse:
@@ -1291,6 +1519,7 @@ async def list_charging_evses(
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the parent station.
+        principal: The caller (view access, see the module docstring).
         page: Page number starting at one.
         page_size: Page size, bounded by settings.
 
@@ -1300,8 +1529,7 @@ async def list_charging_evses(
     Raises:
         ChargingStationNotFoundError: If the parent station is not active.
     """
-    if await charging_stations_repository.get_station_by_id(db, station_id) is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    await _get_station_in_reach(db, station_id, principal, view=True)
     page_window = normalize_page_window(page, page_size)
     evses = await charging_stations_repository.list_charging_evses(
         db,
@@ -1318,12 +1546,15 @@ async def list_charging_evses(
     )
 
 
-async def get_charging_evse(db: AsyncSession, evse_id: UUID) -> ChargingEvseResponse:
+async def get_charging_evse(
+    db: AsyncSession, evse_id: UUID, *, principal: Principal
+) -> ChargingEvseResponse:
     """Get an active EVSE by internal UUID.
 
     Args:
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the EVSE to query.
+        principal: The caller (view access, see the module docstring).
 
     Returns:
         The active EVSE response.
@@ -1332,14 +1563,16 @@ async def get_charging_evse(db: AsyncSession, evse_id: UUID) -> ChargingEvseResp
         ChargingEvseNotFoundError: If the EVSE does not exist or was
             deleted.
     """
-    evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
-    if evse is None:
-        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+    evse = await _get_evse_in_reach(db, evse_id, principal, view=True)
     return to_charging_evse_response(evse)
 
 
 async def update_charging_evse(
-    db: AsyncSession, evse_id: UUID, evse_update_request: ChargingEvseUpdateRequest
+    db: AsyncSession,
+    evse_id: UUID,
+    evse_update_request: ChargingEvseUpdateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingEvseResponse:
     """PATCH an EVSE while keeping its identities unique.
 
@@ -1347,6 +1580,7 @@ async def update_charging_evse(
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the EVSE to update.
         evse_update_request: PATCH fields, already validated.
+        principal: The caller; only the owner organization and internal staff.
 
     Returns:
         The updated EVSE response.
@@ -1356,9 +1590,7 @@ async def update_charging_evse(
         ChargingTopologyConflictError: If the new identity conflicts within
             the station, or the public ID is in use.
     """
-    evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
-    if evse is None:
-        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+    evse = await _get_evse_in_reach(db, evse_id, principal)
     if (
         evse_update_request.ocpp_evse_id is not None
         and evse_update_request.ocpp_evse_id != evse.ocpp_evse_id
@@ -1387,7 +1619,11 @@ async def update_charging_evse(
         return to_charging_evse_response(evse)
     try:
         updated = await charging_stations_repository.update_charging_evse(
-            db, evse_id, update_data, change_reason=change_reason
+            db,
+            evse_id,
+            update_data,
+            change_reason=change_reason,
+            changed_by=principal.user_id,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -1399,13 +1635,18 @@ async def update_charging_evse(
 
 
 async def soft_delete_charging_evse(
-    db: AsyncSession, evse_id: UUID, *, status_reason: str = "Charging EVSE removed"
+    db: AsyncSession,
+    evse_id: UUID,
+    *,
+    principal: Principal,
+    status_reason: str = "Charging EVSE removed",
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete an EVSE and its child connectors.
 
     Args:
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the EVSE to soft-delete.
+        principal: The caller; only the owner organization and internal staff.
         status_reason: Why the EVSE left the system.
 
     Returns:
@@ -1418,8 +1659,9 @@ async def soft_delete_charging_evse(
         Marks the EVSE and its child connectors; does not physically delete
         and does not commit.
     """
+    await _get_evse_in_reach(db, evse_id, principal)
     if not await charging_stations_repository.soft_delete_evse(
-        db, evse_id, status_reason=status_reason
+        db, evse_id, status_reason=status_reason, changed_by=principal.user_id
     ):
         raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
     return ChargingResourceDeleteResponse(message="EVSE soft-deleted")
@@ -1432,6 +1674,8 @@ async def create_charging_connector(
     db: AsyncSession,
     evse_id: UUID,
     connector_create_request: ChargingConnectorCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingConnectorResponse:
     """Create a connector only if the parent EVSE is active and the identity is unused.
 
@@ -1439,6 +1683,7 @@ async def create_charging_connector(
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the parent EVSE.
         connector_create_request: Connector identity, plug and power, validated.
+        principal: The caller; only the owner organization and internal staff.
 
     Returns:
         The newly created connector response.
@@ -1448,8 +1693,7 @@ async def create_charging_connector(
         ChargingTopologyConflictError: If the connector identity already
             exists.
     """
-    if await charging_stations_repository.get_evse_by_id(db, evse_id) is None:
-        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+    await _get_evse_in_reach(db, evse_id, principal)
     if await charging_stations_repository.get_connector_by_identity(
         db, evse_id, connector_create_request.ocpp_connector_id
     ):
@@ -1478,6 +1722,7 @@ async def list_charging_connectors(
     db: AsyncSession,
     evse_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingConnectorListResponse:
@@ -1486,6 +1731,7 @@ async def list_charging_connectors(
     Args:
         db: Async session owned by the HTTP boundary.
         evse_id: UUID of the parent EVSE.
+        principal: The caller (view access, see the module docstring).
         page: Page number starting at one.
         page_size: Page size, bounded by settings.
 
@@ -1495,8 +1741,7 @@ async def list_charging_connectors(
     Raises:
         ChargingEvseNotFoundError: If the parent EVSE is not active.
     """
-    if await charging_stations_repository.get_evse_by_id(db, evse_id) is None:
-        raise ChargingEvseNotFoundError(f"EVSE '{evse_id}' not found")
+    await _get_evse_in_reach(db, evse_id, principal, view=True)
     page_window = normalize_page_window(page, page_size)
     connectors = await charging_stations_repository.list_charging_connectors(
         db,
@@ -1517,13 +1762,14 @@ async def list_charging_connectors(
 
 
 async def get_charging_connector(
-    db: AsyncSession, connector_id: UUID
+    db: AsyncSession, connector_id: UUID, *, principal: Principal
 ) -> ChargingConnectorResponse:
     """Get an active connector by internal UUID.
 
     Args:
         db: Async session owned by the HTTP boundary.
         connector_id: UUID of the connector to query.
+        principal: The caller (view access, see the module docstring).
 
     Returns:
         The active connector response.
@@ -1532,9 +1778,7 @@ async def get_charging_connector(
         ChargingConnectorNotFoundError: If the connector does not exist or
             was deleted.
     """
-    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
-    if connector is None:
-        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
+    connector = await _get_connector_in_reach(db, connector_id, principal, view=True)
     return await _build_charging_connector_response(db, connector)
 
 
@@ -1542,6 +1786,8 @@ async def update_charging_connector(
     db: AsyncSession,
     connector_id: UUID,
     connector_update_request: ChargingConnectorUpdateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingConnectorResponse:
     """PATCH a connector while keeping its identity unique within the parent EVSE.
 
@@ -1549,6 +1795,7 @@ async def update_charging_connector(
         db: Async session owned by the HTTP boundary.
         connector_id: UUID of the connector to update.
         connector_update_request: PATCH fields, already validated.
+        principal: The caller; only the owner organization and internal staff.
 
     Returns:
         The updated connector response.
@@ -1558,9 +1805,7 @@ async def update_charging_connector(
         ChargingTopologyConflictError: If the new identity conflicts within
             the EVSE.
     """
-    connector = await charging_stations_repository.get_connector_by_id(db, connector_id)
-    if connector is None:
-        raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
+    connector = await _get_connector_in_reach(db, connector_id, principal)
     if (
         connector_update_request.ocpp_connector_id is not None
         and connector_update_request.ocpp_connector_id != connector.ocpp_connector_id
@@ -1587,7 +1832,11 @@ async def update_charging_connector(
         return await _build_charging_connector_response(db, connector)
     try:
         updated = await charging_stations_repository.update_charging_connector(
-            db, connector_id, update_data, change_reason="Charging connector edited"
+            db,
+            connector_id,
+            update_data,
+            change_reason="Charging connector edited",
+            changed_by=principal.user_id,
         )
     except IntegrityError as error:
         raise ChargingTopologyConflictError(
@@ -1599,13 +1848,14 @@ async def update_charging_connector(
 
 
 async def soft_delete_charging_connector(
-    db: AsyncSession, connector_id: UUID
+    db: AsyncSession, connector_id: UUID, *, principal: Principal
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a connector.
 
     Args:
         db: Async session owned by the HTTP boundary.
         connector_id: UUID of the connector to soft-delete.
+        principal: The caller; only the owner organization and internal staff.
 
     Returns:
         Confirmation message for the soft-delete.
@@ -1617,8 +1867,12 @@ async def soft_delete_charging_connector(
         Marks ``deleted_at`` within the current transaction; does not commit
         on its own.
     """
+    await _get_connector_in_reach(db, connector_id, principal)
     if not await charging_stations_repository.soft_delete_connector(
-        db, connector_id, change_reason="Charging connector removed"
+        db,
+        connector_id,
+        change_reason="Charging connector removed",
+        changed_by=principal.user_id,
     ):
         raise ChargingConnectorNotFoundError(f"Connector '{connector_id}' not found")
     return ChargingResourceDeleteResponse(message="Connector soft-deleted")
@@ -1761,6 +2015,8 @@ async def create_charging_station_command(
     db: AsyncSession,
     station_id: UUID,
     command_create_request: ChargingStationCommandCreateRequest,
+    *,
+    principal: Principal,
 ) -> ChargingStationCommandResponse:
     """Queue a command for a charger from the API and return it.
 
@@ -1768,14 +2024,18 @@ async def create_charging_station_command(
         db: Async session owned by the HTTP boundary.
         station_id: The charger the command goes to.
         command_create_request: The command, already Pydantic-validated.
+        principal: The caller, recorded as ``requested_by``; only the owner
+            organization and internal staff may command a charger.
 
     Returns:
         The queued command (``PENDING``, no message ID yet).
 
     Raises:
-        ChargingStationNotFoundError: If the charger is not active.
+        ChargingStationNotFoundError: If the charger is not active or is out
+            of the caller's reach.
         ChargingStationCommandInputError: See ``queue_station_command``.
     """
+    await _get_station_in_reach(db, station_id, principal)
     reference = await queue_station_command(
         db,
         station_id=station_id,
@@ -1783,7 +2043,7 @@ async def create_charging_station_command(
         evse_id=command_create_request.evse_id,
         session_id=command_create_request.session_id,
         parameters=command_create_request.parameters,
-        requested_by=command_create_request.requested_by,
+        requested_by=principal.user_id,
         reason=command_create_request.reason,
     )
     command = await ocpp_state_repository.get_station_command_by_id(
@@ -1808,7 +2068,7 @@ def to_charging_station_command_response(
 
 
 async def get_charging_station_command(
-    db: AsyncSession, station_id: UUID, command_id: UUID
+    db: AsyncSession, station_id: UUID, command_id: UUID, *, principal: Principal
 ) -> ChargingStationCommandResponse:
     """Get one command of a charger (the answer is polled here, PR-16).
 
@@ -1816,14 +2076,16 @@ async def get_charging_station_command(
         db: Async session owned by the HTTP boundary.
         station_id: The charger.
         command_id: The command.
+        principal: The caller (manage access to the charger).
 
     Returns:
         The command with its current outcome.
 
     Raises:
-        ChargingStationNotFoundError: If the command does not exist or belongs
-            to another charger.
+        ChargingStationNotFoundError: If the command does not exist, belongs
+            to another charger or the charger is out of the caller's reach.
     """
+    await _get_station_in_reach(db, station_id, principal)
     command = await ocpp_state_repository.get_station_command_by_id(db, command_id)
     if command is None or command.station_id != station_id:
         raise ChargingStationNotFoundError(
@@ -1836,6 +2098,7 @@ async def list_charging_station_commands(
     db: AsyncSession,
     station_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingStationCommandListResponse:
@@ -1844,6 +2107,7 @@ async def list_charging_station_commands(
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: The charger.
+        principal: The caller (manage access to the charger).
         page: Page number starting at one.
         page_size: Page size, bounded by settings.
 
@@ -1853,8 +2117,7 @@ async def list_charging_station_commands(
     Raises:
         ChargingStationNotFoundError: If the charger is not active.
     """
-    if await charging_stations_repository.get_station_by_id(db, station_id) is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    await _get_station_in_reach(db, station_id, principal)
     page_window = normalize_page_window(page, page_size)
     commands = await ocpp_state_repository.list_station_commands(
         db,
@@ -1872,13 +2135,14 @@ async def list_charging_station_commands(
 
 
 async def get_latest_station_configuration(
-    db: AsyncSession, station_id: UUID
+    db: AsyncSession, station_id: UUID, *, principal: Principal
 ) -> ChargingStationConfigurationResponse:
     """Get the latest configuration a charger reported.
 
     Args:
         db: Async session owned by the HTTP boundary.
         station_id: UUID of the station.
+        principal: The caller (manage access to the charger).
 
     Returns:
         The newest complete snapshot's settings sorted by name, or an empty
@@ -1892,9 +2156,7 @@ async def get_latest_station_configuration(
     Side Effects:
         Performs up to three read queries; does not commit.
     """
-    station = await charging_stations_repository.get_station_by_id(db, station_id)
-    if station is None:
-        raise ChargingStationNotFoundError(f"Station '{station_id}' not found")
+    await _get_station_in_reach(db, station_id, principal)
     latest = await ocpp_state_repository.get_latest_configuration_capture(
         db, station_id
     )
@@ -1936,7 +2198,7 @@ def _normalize_report_bound(value: datetime, field_name: str) -> datetime:
 
 
 async def list_station_energy_totals(
-    db: AsyncSession, *, start_time: datetime, end_time: datetime
+    db: AsyncSession, *, principal: Principal, start_time: datetime, end_time: datetime
 ) -> ChargingStationEnergyTotalListResponse:
     """Energy sold per station within a window, for every active station (F-C5).
 
@@ -1951,6 +2213,8 @@ async def list_station_energy_totals(
 
     Args:
         db: Async session owned by the HTTP boundary.
+        principal: The caller; only chargers at the caller's own locations are
+            listed unless the caller is internal.
         start_time: Inclusive lower bound on ``ended_at``; must carry a
             timezone.
         end_time: Inclusive upper bound on ``ended_at``; must carry a
@@ -1975,6 +2239,8 @@ async def list_station_energy_totals(
     stations = await charging_stations_repository.list_active_stations_with_location(db)
     items: list[ChargingStationEnergyTotalResponse] = []
     for station, location in stations:
+        if not principal.can_access_organization(location.organization_id):
+            continue
         energy_total = await charging_sessions_service.resolve_station_energy_total(
             db,
             station_id=station.station_id,

@@ -87,6 +87,7 @@ class SupportCaseListFilter:
         category: Only cases in this category.
         channel: Only cases from this channel.
         driver_id: Only cases raised by this driver.
+        organization_id: Only cases of this organization (the data scope).
         is_awaiting_response: ``True``: only cases nobody has responded to
             yet that are not terminal; ``False``: only the others.
         is_sla_breached: ``True``: only cases whose response SLA is breached
@@ -100,5 +101,6 @@ class SupportCaseListFilter:
     category: SupportCaseCategory | None = None
     channel: SupportCaseChannel | None = None
     driver_id: UUID | None = None
+    organization_id: UUID | None = None
     is_awaiting_response: bool | None = None
     is_sla_breached: bool | None = None

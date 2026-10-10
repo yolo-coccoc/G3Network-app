@@ -25,6 +25,7 @@ from app.domains.charging_sessions.types import (
     SessionStatus,
 )
 from tests.builders import build_charging_session
+from tests.principals import build_internal_principal
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 
@@ -241,7 +242,7 @@ async def test_list_measurements_passes_the_measurand_filter_and_paginates(
         )
     ]
 
-    async def get_by_id(db: object, session_id: Any) -> Any:
+    async def get_by_id(db: object, session_id: Any, **_scope: object) -> Any:
         return session
 
     async def list_rows(db: object, session_id: Any, **kwargs: Any) -> Any:
@@ -262,6 +263,7 @@ async def test_list_measurements_passes_the_measurand_filter_and_paginates(
         measurand="SoC",
         page=1,
         page_size=10,
+        principal=build_internal_principal(),
     )
 
     assert seen["list"]["measurand"] == seen["count"]["measurand"] == "SoC"
@@ -284,7 +286,7 @@ async def test_list_measurements_for_an_unknown_session_raises_not_found(
 ) -> None:
     """The endpoint's 404 comes from this domain error."""
 
-    async def get_by_id(db: object, session_id: Any) -> None:
+    async def get_by_id(db: object, session_id: Any, **_scope: object) -> None:
         return None
 
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
@@ -296,4 +298,5 @@ async def test_list_measurements_for_an_unknown_session_raises_not_found(
             measurand=None,
             page=1,
             page_size=10,
+            principal=build_internal_principal(),
         )

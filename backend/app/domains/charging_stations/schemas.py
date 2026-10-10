@@ -74,8 +74,8 @@ class ChargingLocationCreateRequest(BaseModel):
     """Data for creating a location (CS-09, CS-12).
 
     Attributes:
-        organization_id: The owning organization (required until
-            authentication supplies it, WP2).
+        organization_id: The owning organization; internal staff only,
+            defaults to the caller's organization.
         display_name: Name shown to drivers; not unique.
         address: Address as one free-text line.
         latitude: GPS latitude in decimal degrees of the map pin.
@@ -84,7 +84,7 @@ class ChargingLocationCreateRequest(BaseModel):
             members and the organizations with a grant.
     """
 
-    organization_id: UUID
+    organization_id: UUID | None = None
     display_name: str = Field(..., min_length=1, max_length=200)
     address: str = Field(..., min_length=1, max_length=500)
     latitude: float = Field(..., ge=-90, le=90)
@@ -210,13 +210,10 @@ class ChargingLocationAccessCreateRequest(BaseModel):
 
     Attributes:
         allowed_organization_id: The grantee organization (not the owner).
-        granted_by: User who grants the access (required until authentication
-            supplies it, WP2).
         valid_until: Last valid day, inclusive, Vietnam time; ``None`` for no end.
     """
 
     allowed_organization_id: UUID
-    granted_by: UUID
     valid_until: date | None = None
 
 
@@ -224,11 +221,9 @@ class ChargingLocationAccessRevokeRequest(BaseModel):
     """Data for revoking a grant.
 
     Attributes:
-        revoked_by: User who revokes it (``None`` until authentication, WP2).
         revoke_reason: Why the access ends.
     """
 
-    revoked_by: UUID | None = None
     revoke_reason: str = Field(..., min_length=1, max_length=200)
 
     @field_validator("revoke_reason")
@@ -745,7 +740,6 @@ class ChargingStationCommandCreateRequest(BaseModel):
             ``{"requested_message": "StatusNotification"}``,
             ``{"availability": "Inoperative"}``, ``{"id_token": "..."}`` for a
             manual remote start without a session.
-        requested_by: User who asks (required until authentication, WP2).
         reason: Why, typed by the operator.
     """
 
@@ -753,7 +747,6 @@ class ChargingStationCommandCreateRequest(BaseModel):
     evse_id: UUID | None = None
     session_id: UUID | None = None
     parameters: dict[str, Any] | None = None
-    requested_by: UUID | None = None
     reason: str | None = Field(None, min_length=1, max_length=200)
 
 

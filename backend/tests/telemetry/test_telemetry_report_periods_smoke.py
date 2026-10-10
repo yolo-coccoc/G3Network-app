@@ -20,6 +20,7 @@ from app.domains.telemetry.types import (
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal
 
 _HCM = "Asia/Ho_Chi_Minh"  # UTC+7, no DST
 
@@ -194,6 +195,7 @@ async def test_operating_report_without_granularity_keeps_single_aggregate(
         vehicle_id=report_vehicle,
         start_time=_utc(2026, 9, 1),
         end_time=_utc(2026, 9, 3),
+        principal=build_internal_principal(),
     )
 
     assert report.granularity is None
@@ -235,6 +237,7 @@ async def test_operating_report_lists_every_day_with_zero_for_empty_ones(
         start_time=_utc(2026, 9, 1),
         end_time=_utc(2026, 9, 3),
         granularity=ReportGranularity.DAY,
+        principal=build_internal_principal(),
     )
 
     assert captured_kwargs["granularity"] is ReportGranularity.DAY
@@ -330,6 +333,7 @@ async def test_operating_report_csv_has_header_and_one_row_per_period(
         start_time=_utc(2026, 9, 1),
         end_time=_utc(2026, 9, 3),
         granularity=ReportGranularity.DAY,
+        principal=build_internal_principal(),
     )
     csv_rows = list(
         csv.DictReader(
@@ -365,6 +369,7 @@ async def test_operating_report_csv_without_granularity_is_one_window_row(
         vehicle_id=report_vehicle,
         start_time=_utc(2026, 9, 1),
         end_time=_utc(2026, 9, 3),
+        principal=build_internal_principal(),
     )
     csv_rows = list(
         csv.DictReader(

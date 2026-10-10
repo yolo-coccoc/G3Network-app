@@ -3,7 +3,6 @@
 from app.libs.common.errors import (
     ConflictError,
     DomainError,
-    InvalidInputError,
     NotFoundError,
 )
 
@@ -26,10 +25,3 @@ class SupportDriverNotFoundError(SupportError, NotFoundError):
 
 class SupportCaseStateError(SupportError, ConflictError):
     """Raised when a status change is attempted on a terminal support case."""
-
-
-class SupportOrganizationRequiredError(SupportError, InvalidInputError):
-    """Raised when an SOS names neither a known vehicle nor an organization.
-
-    An SOS raises an alert that must belong to an organization (NT-09).
-    """

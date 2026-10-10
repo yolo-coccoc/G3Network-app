@@ -50,10 +50,22 @@ from app.domains.charging_stations.schemas import (
     ChargingStationUpdateRequest,
     NearbyChargingStationListResponse,
 )
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-stations"])
+
+# Who may call what (features.yaml `users`, via `roles_for`). Data reach is
+# applied by the service: an owner organization manages its own locations and
+# chargers, internal staff all; a public (or granted) location may be *viewed*
+# by any signed-in caller of the roles below.
+STATION_VIEWERS = require_roles(*roles_for("STN-01", "STN-02", "STN-04", "STN-06"))
+STATION_SEARCHERS = require_roles(*roles_for("STN-06"))
+STATION_ADMINS = require_roles(*roles_for("STN-01", "STN-02", "STN-12"))
+STATION_OPERATORS = require_roles(*roles_for("STN-10"))
+STATION_ENERGY_READERS = require_roles(*roles_for("STN-14", "CHG-05"))
 
 
 @router.post(
@@ -64,12 +76,14 @@ router = APIRouter(tags=["charging-stations"])
 )
 async def create_charging_station_endpoint(
     station_create_request: ChargingStationCreateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationResponse:
     """Create a pre-provisioned station.
 
     Args:
         station_create_request: Station creation payload, already Pydantic-validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -80,7 +94,7 @@ async def create_charging_station_endpoint(
             exists, even on a soft-deleted station.
     """
     return await charging_stations_service.create_charging_station(
-        db, station_create_request
+        db, station_create_request, principal=principal
     )
 
 
@@ -96,6 +110,7 @@ async def list_charging_stations_endpoint(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationListResponse:
     """List active stations with pagination.
@@ -103,6 +118,7 @@ async def list_charging_stations_endpoint(
     Args:
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -116,6 +132,7 @@ async def list_charging_stations_endpoint(
         db,
         page=page,
         page_size=page_size,
+        principal=principal,
     )
 
 
@@ -140,6 +157,7 @@ async def list_nearby_charging_stations_endpoint(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
+    principal: Principal = Depends(STATION_SEARCHERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NearbyChargingStationListResponse:
     """Find stations within a radius of a point, nearest first (F-D1).
@@ -159,6 +177,7 @@ async def list_nearby_charging_stations_endpoint(
             ``Available``.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -179,6 +198,7 @@ async def list_nearby_charging_stations_endpoint(
         is_available_only=is_available_only,
         page=page,
         page_size=page_size,
+        principal=principal,
     )
 
 
@@ -191,6 +211,7 @@ async def list_nearby_charging_stations_endpoint(
 async def list_station_energy_totals_endpoint(
     start_time: datetime,
     end_time: datetime,
+    principal: Principal = Depends(STATION_ENERGY_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationEnergyTotalListResponse:
     """Energy sold per active station within a window, highest first (F-C5).
@@ -205,6 +226,7 @@ async def list_station_energy_totals_endpoint(
             timezone.
         end_time: Inclusive upper bound on ``ended_at``; must carry a
             timezone.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -215,7 +237,7 @@ async def list_station_energy_totals_endpoint(
             ``end_time`` is not after ``start_time``.
     """
     return await charging_stations_service.list_station_energy_totals(
-        db, start_time=start_time, end_time=end_time
+        db, start_time=start_time, end_time=end_time, principal=principal
     )
 
 
@@ -225,12 +247,15 @@ async def list_station_energy_totals_endpoint(
     summary="Get the status of a station's charger and every connector",
 )
 async def get_charging_station_status_endpoint(
-    station_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    station_id: UUID,
+    principal: Principal = Depends(STATION_VIEWERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationStatusResponse:
     """Get the whole charger's status and every gun's status (F-C2).
 
     Args:
         station_id: UUID of the station.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -241,7 +266,9 @@ async def get_charging_station_status_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.get_charging_station_status(db, station_id)
+    return await charging_stations_service.get_charging_station_status(
+        db, station_id, principal=principal
+    )
 
 
 @router.post(
@@ -253,6 +280,7 @@ async def get_charging_station_status_endpoint(
 async def create_charging_evse_endpoint(
     station_id: UUID,
     evse_create_request: ChargingEvseCreateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingEvseResponse:
     """Create an EVSE belonging to an active station.
@@ -260,6 +288,7 @@ async def create_charging_evse_endpoint(
     Args:
         station_id: UUID of the parent station.
         evse_create_request: EVSE identity payload.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -272,7 +301,7 @@ async def create_charging_evse_endpoint(
             exists in the station.
     """
     return await charging_stations_service.create_charging_evse(
-        db, station_id, evse_create_request
+        db, station_id, evse_create_request, principal=principal
     )
 
 
@@ -289,6 +318,7 @@ async def list_charging_evses_endpoint(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
+    principal: Principal = Depends(STATION_VIEWERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingEvseListResponse:
     """List active EVSEs belonging to a station.
@@ -297,6 +327,7 @@ async def list_charging_evses_endpoint(
         station_id: UUID of the parent station.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -307,7 +338,7 @@ async def list_charging_evses_endpoint(
             active.
     """
     return await charging_stations_service.list_charging_evses(
-        db, station_id, page=page, page_size=page_size
+        db, station_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -320,6 +351,7 @@ async def list_charging_evses_endpoint(
 async def create_charging_connector_endpoint(
     evse_id: UUID,
     connector_create_request: ChargingConnectorCreateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingConnectorResponse:
     """Create a connector belonging to an active EVSE.
@@ -327,6 +359,7 @@ async def create_charging_connector_endpoint(
     Args:
         evse_id: UUID of the parent EVSE.
         connector_create_request: Connector identity payload.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -338,7 +371,7 @@ async def create_charging_connector_endpoint(
             already exists in the EVSE.
     """
     return await charging_stations_service.create_charging_connector(
-        db, evse_id, connector_create_request
+        db, evse_id, connector_create_request, principal=principal
     )
 
 
@@ -355,6 +388,7 @@ async def list_charging_connectors_endpoint(
         ge=1,
         le=settings.API_MAX_PAGE_SIZE,
     ),
+    principal: Principal = Depends(STATION_VIEWERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingConnectorListResponse:
     """List active connectors belonging to an EVSE.
@@ -363,6 +397,7 @@ async def list_charging_connectors_endpoint(
         evse_id: UUID of the parent EVSE.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -372,7 +407,7 @@ async def list_charging_connectors_endpoint(
         ChargingEvseNotFoundError: 404 if the parent EVSE is not active.
     """
     return await charging_stations_service.list_charging_connectors(
-        db, evse_id, page=page, page_size=page_size
+        db, evse_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -382,12 +417,15 @@ async def list_charging_connectors_endpoint(
     summary="Get a charging station",
 )
 async def get_charging_station_endpoint(
-    station_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    station_id: UUID,
+    principal: Principal = Depends(STATION_VIEWERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationResponse:
     """Get an active station by UUID.
 
     Args:
         station_id: UUID of the station to fetch.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -397,7 +435,9 @@ async def get_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.get_charging_station(db, station_id)
+    return await charging_stations_service.get_charging_station(
+        db, station_id, principal=principal
+    )
 
 
 @router.get(
@@ -406,7 +446,9 @@ async def get_charging_station_endpoint(
     summary="Get the latest configuration a charger reported",
 )
 async def get_charging_station_configuration_endpoint(
-    station_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    station_id: UUID,
+    principal: Principal = Depends(STATION_OPERATORS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationConfigurationResponse:
     """Get the charger's latest ``GetConfiguration`` capture.
 
@@ -416,6 +458,7 @@ async def get_charging_station_configuration_endpoint(
 
     Args:
         station_id: UUID of the station.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -426,7 +469,7 @@ async def get_charging_station_configuration_endpoint(
             was soft-deleted.
     """
     return await charging_stations_service.get_latest_station_configuration(
-        db, station_id
+        db, station_id, principal=principal
     )
 
 
@@ -438,6 +481,7 @@ async def get_charging_station_configuration_endpoint(
 async def update_charging_station_endpoint(
     station_id: UUID,
     station_update_request: ChargingStationUpdateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationResponse:
     """PATCH a station with the fields sent in the request.
@@ -445,6 +489,7 @@ async def update_charging_station_endpoint(
     Args:
         station_id: UUID of the station to update.
         station_update_request: PATCH payload, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -457,7 +502,7 @@ async def update_charging_station_endpoint(
             already in use.
     """
     return await charging_stations_service.update_charging_station(
-        db, station_id, station_update_request
+        db, station_id, station_update_request, principal=principal
     )
 
 
@@ -467,12 +512,15 @@ async def update_charging_station_endpoint(
     summary="Soft-delete a charging station",
 )
 async def soft_delete_charging_station_endpoint(
-    station_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    station_id: UUID,
+    principal: Principal = Depends(STATION_ADMINS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a station and its child topology.
 
     Args:
         station_id: UUID of the station to soft-delete.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -482,7 +530,9 @@ async def soft_delete_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.soft_delete_charging_station(db, station_id)
+    return await charging_stations_service.soft_delete_charging_station(
+        db, station_id, principal=principal
+    )
 
 
 @router.get(
@@ -491,12 +541,15 @@ async def soft_delete_charging_station_endpoint(
     summary="Get an EVSE",
 )
 async def get_charging_evse_endpoint(
-    evse_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    evse_id: UUID,
+    principal: Principal = Depends(STATION_VIEWERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingEvseResponse:
     """Get an active EVSE by UUID.
 
     Args:
         evse_id: UUID of the EVSE to fetch.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -506,7 +559,9 @@ async def get_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_stations_service.get_charging_evse(db, evse_id)
+    return await charging_stations_service.get_charging_evse(
+        db, evse_id, principal=principal
+    )
 
 
 @router.patch(
@@ -517,6 +572,7 @@ async def get_charging_evse_endpoint(
 async def update_charging_evse_endpoint(
     evse_id: UUID,
     evse_update_request: ChargingEvseUpdateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingEvseResponse:
     """PATCH an EVSE with the fields sent in the request.
@@ -524,6 +580,7 @@ async def update_charging_evse_endpoint(
     Args:
         evse_id: UUID of the EVSE to update.
         evse_update_request: PATCH payload, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -536,7 +593,7 @@ async def update_charging_evse_endpoint(
             exists in the station.
     """
     return await charging_stations_service.update_charging_evse(
-        db, evse_id, evse_update_request
+        db, evse_id, evse_update_request, principal=principal
     )
 
 
@@ -546,12 +603,15 @@ async def update_charging_evse_endpoint(
     summary="Soft-delete an EVSE",
 )
 async def soft_delete_charging_evse_endpoint(
-    evse_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    evse_id: UUID,
+    principal: Principal = Depends(STATION_ADMINS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete an EVSE and its child connectors.
 
     Args:
         evse_id: UUID of the EVSE to soft-delete.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -561,7 +621,9 @@ async def soft_delete_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_stations_service.soft_delete_charging_evse(db, evse_id)
+    return await charging_stations_service.soft_delete_charging_evse(
+        db, evse_id, principal=principal
+    )
 
 
 @router.get(
@@ -570,12 +632,15 @@ async def soft_delete_charging_evse_endpoint(
     summary="Get a connector",
 )
 async def get_charging_connector_endpoint(
-    connector_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    connector_id: UUID,
+    principal: Principal = Depends(STATION_VIEWERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingConnectorResponse:
     """Get an active connector by UUID.
 
     Args:
         connector_id: UUID of the connector to fetch.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -585,7 +650,9 @@ async def get_charging_connector_endpoint(
         ChargingConnectorNotFoundError: 404 if the connector does not exist
             or was soft-deleted.
     """
-    return await charging_stations_service.get_charging_connector(db, connector_id)
+    return await charging_stations_service.get_charging_connector(
+        db, connector_id, principal=principal
+    )
 
 
 @router.patch(
@@ -596,6 +663,7 @@ async def get_charging_connector_endpoint(
 async def update_charging_connector_endpoint(
     connector_id: UUID,
     connector_update_request: ChargingConnectorUpdateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingConnectorResponse:
     """PATCH a connector with the fields sent in the request.
@@ -603,6 +671,7 @@ async def update_charging_connector_endpoint(
     Args:
         connector_id: UUID of the connector to update.
         connector_update_request: PATCH payload, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -615,7 +684,7 @@ async def update_charging_connector_endpoint(
             exists in the EVSE.
     """
     return await charging_stations_service.update_charging_connector(
-        db, connector_id, connector_update_request
+        db, connector_id, connector_update_request, principal=principal
     )
 
 
@@ -625,12 +694,15 @@ async def update_charging_connector_endpoint(
     summary="Soft-delete a connector",
 )
 async def soft_delete_charging_connector_endpoint(
-    connector_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    connector_id: UUID,
+    principal: Principal = Depends(STATION_ADMINS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a connector.
 
     Args:
         connector_id: UUID of the connector to soft-delete.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -641,7 +713,7 @@ async def soft_delete_charging_connector_endpoint(
             or was soft-deleted.
     """
     return await charging_stations_service.soft_delete_charging_connector(
-        db, connector_id
+        db, connector_id, principal=principal
     )
 
 
@@ -653,12 +725,14 @@ async def soft_delete_charging_connector_endpoint(
 )
 async def create_charging_location_endpoint(
     location_create_request: ChargingLocationCreateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationResponse:
     """Create a location (the place drivers go to charge).
 
     Args:
         location_create_request: Location creation payload, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -669,7 +743,7 @@ async def create_charging_location_endpoint(
             exist.
     """
     return await charging_stations_service.create_charging_location(
-        db, location_create_request
+        db, location_create_request, principal=principal
     )
 
 
@@ -683,6 +757,7 @@ async def list_charging_locations_endpoint(
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationListResponse:
     """List active locations with pagination.
@@ -690,13 +765,14 @@ async def list_charging_locations_endpoint(
     Args:
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
         HTTP response with the list of locations.
     """
     return await charging_stations_service.list_charging_locations(
-        db, page=page, page_size=page_size
+        db, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -707,12 +783,14 @@ async def list_charging_locations_endpoint(
 )
 async def get_charging_location_endpoint(
     location_id: UUID,
+    principal: Principal = Depends(STATION_VIEWERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationResponse:
     """Get an active location.
 
     Args:
         location_id: UUID of the location.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -721,7 +799,9 @@ async def get_charging_location_endpoint(
     Raises:
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
-    return await charging_stations_service.get_charging_location(db, location_id)
+    return await charging_stations_service.get_charging_location(
+        db, location_id, principal=principal
+    )
 
 
 @router.patch(
@@ -732,6 +812,7 @@ async def get_charging_location_endpoint(
 async def update_charging_location_endpoint(
     location_id: UUID,
     location_update_request: ChargingLocationUpdateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationResponse:
     """Partially update a location.
@@ -739,6 +820,7 @@ async def update_charging_location_endpoint(
     Args:
         location_id: UUID of the location.
         location_update_request: PATCH fields, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -748,7 +830,7 @@ async def update_charging_location_endpoint(
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
     return await charging_stations_service.update_charging_location(
-        db, location_id, location_update_request
+        db, location_id, location_update_request, principal=principal
     )
 
 
@@ -762,6 +844,7 @@ async def soft_delete_charging_location_endpoint(
     status_reason: str = Query(
         "Charging location removed", min_length=1, max_length=200
     ),
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingResourceDeleteResponse:
     """Soft-delete a location with its chargers, EVSEs, connectors and grants.
@@ -769,6 +852,7 @@ async def soft_delete_charging_location_endpoint(
     Args:
         location_id: UUID of the location.
         status_reason: Why the location leaves the system.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -778,7 +862,7 @@ async def soft_delete_charging_location_endpoint(
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
     return await charging_stations_service.soft_delete_charging_location(
-        db, location_id, status_reason=status_reason
+        db, location_id, status_reason=status_reason, principal=principal
     )
 
 
@@ -791,6 +875,7 @@ async def soft_delete_charging_location_endpoint(
 async def grant_charging_location_access_endpoint(
     location_id: UUID,
     access_create_request: ChargingLocationAccessCreateRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationAccessResponse:
     """Grant an organization access to a location.
@@ -798,6 +883,7 @@ async def grant_charging_location_access_endpoint(
     Args:
         location_id: UUID of the location.
         access_create_request: The grantee, the granting user and the end date.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -809,7 +895,7 @@ async def grant_charging_location_access_endpoint(
             duplicate live grant, or an unknown organization or user.
     """
     return await charging_stations_service.grant_charging_location_access(
-        db, location_id, access_create_request
+        db, location_id, access_create_request, principal=principal
     )
 
 
@@ -820,12 +906,14 @@ async def grant_charging_location_access_endpoint(
 )
 async def list_charging_location_access_endpoint(
     location_id: UUID,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationAccessListResponse:
     """List the grants that are not revoked.
 
     Args:
         location_id: UUID of the location.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -835,7 +923,7 @@ async def list_charging_location_access_endpoint(
         ChargingLocationNotFoundError: 404 if the location is not active.
     """
     return await charging_stations_service.list_charging_location_access(
-        db, location_id
+        db, location_id, principal=principal
     )
 
 
@@ -848,6 +936,7 @@ async def revoke_charging_location_access_endpoint(
     location_id: UUID,
     access_id: UUID,
     access_revoke_request: ChargingLocationAccessRevokeRequest,
+    principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationAccessResponse:
     """Close an access grant.
@@ -856,6 +945,7 @@ async def revoke_charging_location_access_endpoint(
         location_id: UUID of the location.
         access_id: UUID of the grant.
         access_revoke_request: Who revokes it and why.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -867,7 +957,7 @@ async def revoke_charging_location_access_endpoint(
         ChargingLocationAccessConflictError: 409 if it is already revoked.
     """
     return await charging_stations_service.revoke_charging_location_access(
-        db, location_id, access_id, access_revoke_request
+        db, location_id, access_id, access_revoke_request, principal=principal
     )
 
 
@@ -880,6 +970,7 @@ async def revoke_charging_location_access_endpoint(
 async def create_charging_station_command_endpoint(
     station_id: UUID,
     command_create_request: ChargingStationCommandCreateRequest,
+    principal: Principal = Depends(STATION_OPERATORS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationCommandResponse:
     """Queue a command; the OCPP gateway sends it and records the answer.
@@ -887,6 +978,7 @@ async def create_charging_station_command_endpoint(
     Args:
         station_id: UUID of the charger.
         command_create_request: The command, already validated.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -898,7 +990,7 @@ async def create_charging_station_command_endpoint(
             command type needs is missing.
     """
     return await charging_stations_service.create_charging_station_command(
-        db, station_id, command_create_request
+        db, station_id, command_create_request, principal=principal
     )
 
 
@@ -913,6 +1005,7 @@ async def list_charging_station_commands_endpoint(
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
+    principal: Principal = Depends(STATION_OPERATORS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationCommandListResponse:
     """List a charger's commands, newest first.
@@ -921,6 +1014,7 @@ async def list_charging_station_commands_endpoint(
         station_id: UUID of the charger.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -930,7 +1024,7 @@ async def list_charging_station_commands_endpoint(
         ChargingStationNotFoundError: 404 if the charger is not active.
     """
     return await charging_stations_service.list_charging_station_commands(
-        db, station_id, page=page, page_size=page_size
+        db, station_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -942,6 +1036,7 @@ async def list_charging_station_commands_endpoint(
 async def get_charging_station_command_endpoint(
     station_id: UUID,
     command_id: UUID,
+    principal: Principal = Depends(STATION_OPERATORS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationCommandResponse:
     """Get one command with its current outcome.
@@ -949,6 +1044,7 @@ async def get_charging_station_command_endpoint(
     Args:
         station_id: UUID of the charger.
         command_id: UUID of the command.
+        principal: The authenticated caller.
         db: Async session owned by the ``get_db`` dependency.
 
     Returns:
@@ -958,5 +1054,5 @@ async def get_charging_station_command_endpoint(
         ChargingStationNotFoundError: 404 if the command is not the charger's.
     """
     return await charging_stations_service.get_charging_station_command(
-        db, station_id, command_id
+        db, station_id, command_id, principal=principal
     )

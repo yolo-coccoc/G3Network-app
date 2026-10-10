@@ -97,7 +97,13 @@ class DriverListResponse(BaseModel):
 class DrivingSessionCheckInRequest(BaseModel):
     """HTTP request data for checking a driver in to a truck."""
 
-    driver_id: UUID = Field(..., description="Driver profile checking in")
+    driver_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Driver profile checking in; omitted means the caller's own "
+            "profile, a manager may name another driver of the organization"
+        ),
+    )
     vehicle_vin: str = Field(
         ..., min_length=17, max_length=17, description="VIN of the truck"
     )
@@ -113,7 +119,13 @@ class DrivingSessionCheckInRequest(BaseModel):
 class DrivingSessionCheckOutRequest(BaseModel):
     """HTTP request data for ending a driver's open driving session."""
 
-    driver_id: UUID = Field(..., description="Driver profile checking out")
+    driver_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Driver profile checking out; omitted means the caller's own "
+            "profile, a manager may name another driver of the organization"
+        ),
+    )
 
 
 class DrivingSessionResponse(BaseModel):

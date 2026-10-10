@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.repository as fleet_repository
+import app.domains.identity.service as identity_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.fleet.exceptions import (
     FleetConflictError,
@@ -29,7 +30,6 @@ from app.domains.fleet.exceptions import (
     FleetMembershipConflictError,
     FleetMembershipNotFoundError,
     FleetNotFoundError,
-    FleetOrganizationNotFoundError,
     FleetParentNotFoundError,
     FleetParentOrganizationMismatchError,
     FleetVehicleNotFoundError,
@@ -58,6 +58,7 @@ from app.domains.fleet.schemas import (
     GeofenceUpdateRequest,
 )
 from app.domains.fleet.types import GeofenceReference
+from app.domains.identity.types import Principal
 from app.domains.vehicles.types import VehicleStatus, VehicleSummary
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -122,21 +123,6 @@ async def build_fleet_response(
         created_at=fleet_record.created_at,
         updated_at=fleet_record.updated_at,
     )
-
-
-def _is_foreign_key_violation(error: IntegrityError) -> bool:
-    """Tell a foreign-key violation (SQLSTATE 23503) from other integrity errors.
-
-    Args:
-        error: The integrity error raised by a flush.
-
-    Returns:
-        True when the driver reports a foreign-key violation.
-    """
-    sqlstate = getattr(error.orig, "sqlstate", None) or getattr(
-        error.orig, "pgcode", None
-    )
-    return sqlstate == "23503"
 
 
 async def _ensure_valid_parent_fleet(
@@ -212,6 +198,8 @@ async def _ensure_valid_parent_fleet(
 async def create_fleet(
     db_session: AsyncSession,
     fleet_create_request: FleetCreateRequest,
+    *,
+    principal: Principal,
 ) -> FleetResponse:
     """Create a new fleet, optionally under a parent fleet.
 
@@ -223,6 +211,8 @@ async def create_fleet(
     Args:
         db_session: Database session owned by the entry boundary.
         fleet_create_request: Request data that has passed Pydantic validation.
+        principal: The caller; the fleet belongs to the caller's organization
+            unless internal staff name another one in the request.
 
     Returns:
         Response for the newly created fleet.
@@ -232,14 +222,16 @@ async def create_fleet(
         FleetParentNotFoundError: When the parent fleet does not exist.
         FleetParentOrganizationMismatchError: When the parent belongs to
             another organization.
-        FleetOrganizationNotFoundError: When the organization does not exist
-            (reported by the database foreign key until the identity service
-            can resolve it).
+        OrganizationNotFoundError: When the named organization does not exist
+            or is out of the caller's reach.
     """
+    organization_id = await identity_service.resolve_organization_for_new_record(
+        db_session, principal, fleet_create_request.organization_id
+    )
     if fleet_create_request.fleet_code is not None:
         existing_fleet = await fleet_repository.find_by_fleet_code(
             db_session,
-            fleet_create_request.organization_id,
+            organization_id,
             fleet_create_request.fleet_code,
         )
         if existing_fleet:
@@ -250,20 +242,19 @@ async def create_fleet(
         await _ensure_valid_parent_fleet(
             db_session,
             fleet_create_request.parent_fleet_id,
-            organization_id=fleet_create_request.organization_id,
+            organization_id=organization_id,
             moved_fleet_id=None,
         )
 
     try:
         fleet_record = await fleet_repository.insert(
             db_session,
-            fleet_create_request.model_dump(),
+            {
+                **fleet_create_request.model_dump(exclude={"organization_id"}),
+                "organization_id": organization_id,
+            },
         )
     except IntegrityError as error:
-        if _is_foreign_key_violation(error):
-            raise FleetOrganizationNotFoundError(
-                f"Organization '{fleet_create_request.organization_id}' not found"
-            ) from error
         raise FleetConflictError("Fleet code already exists") from error
 
     return await build_fleet_response(db_session, fleet_record)
@@ -272,12 +263,16 @@ async def create_fleet(
 async def get_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
+    *,
+    principal: Principal,
 ) -> FleetResponse:
-    """Get an active fleet by ID.
+    """Get an active fleet by ID inside the caller's data reach.
 
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the fleet.
@@ -285,16 +280,14 @@ async def get_fleet(
     Raises:
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if not fleet_record:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
-
+    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
     return await build_fleet_response(db_session, fleet_record)
 
 
 async def list_fleets(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     search_text: str | None = None,
@@ -304,6 +297,8 @@ async def list_fleets(
 
     Args:
         db_session: Current database session.
+        principal: The caller; only fleets of the caller's organization are
+            listed unless the caller is internal.
         page: Page number, starting from 1.
         page_size: Maximum number of fleets per page.
         search_text: Case-insensitive substring of the fleet name or fleet
@@ -342,11 +337,13 @@ async def list_fleets(
         limit=page_window.page_size,
         search_text=search_text,
         vehicle_id=vehicle_id,
+        organization_id=principal.data_scope,
     )
     total = await fleet_repository.count(
         db_session,
         search_text=search_text,
         vehicle_id=vehicle_id,
+        organization_id=principal.data_scope,
     )
 
     return FleetListResponse(
@@ -364,6 +361,8 @@ async def update_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
     fleet_update_request: FleetUpdateRequest,
+    *,
+    principal: Principal,
 ) -> FleetResponse:
     """Partially update a fleet: rename it, change its code, or move it.
 
@@ -376,6 +375,8 @@ async def update_fleet(
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
         fleet_update_request: Field data to update.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the updated fleet.
@@ -389,9 +390,7 @@ async def update_fleet(
         FleetHierarchyLoopError: When the new parent is this fleet or one of
             its sub-fleets.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if not fleet_record:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
 
     if (
         fleet_update_request.fleet_code
@@ -428,7 +427,7 @@ async def update_fleet(
 
     try:
         updated_fleet_record = await fleet_repository.update_fields(
-            db_session, fleet_id, update_values
+            db_session, fleet_id, update_values, changed_by=principal.user_id
         )
     except IntegrityError as error:
         raise FleetConflictError("Fleet code already exists") from error
@@ -442,6 +441,9 @@ async def update_fleet(
 async def soft_delete_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
+    *,
+    principal: Principal,
+    reason: str | None = None,
 ) -> dict[str, str]:
     """Soft-delete a fleet, closing any active memberships first.
 
@@ -451,6 +453,10 @@ async def soft_delete_fleet(
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
+        reason: Why the fleet is deleted, kept in the fleet's history; a fixed
+            text when omitted.
 
     Returns:
         Success deletion message.
@@ -466,7 +472,7 @@ async def soft_delete_fleet(
         One `close_membership` call per member vehicle - no batching, per
         this repo's no-premature-batching convention.
     """
-    await _get_fleet_record(db_session, fleet_id)
+    await _get_fleet_record(db_session, fleet_id, principal)
     if await fleet_repository.count_child_fleets(db_session, fleet_id) > 0:
         raise FleetHasSubFleetsError(
             f"Fleet '{fleet_id}' still has sub-fleets; move or delete them first"
@@ -477,10 +483,18 @@ async def soft_delete_fleet(
     )
     for membership_record in active_memberships:
         await fleet_repository.close_membership(
-            db_session, membership_record, removed_at=utc_now()
+            db_session,
+            membership_record,
+            removed_at=utc_now(),
+            removed_by=principal.user_id,
         )
 
-    fleet_record = await fleet_repository.soft_delete(db_session, fleet_id)
+    fleet_record = await fleet_repository.soft_delete(
+        db_session,
+        fleet_id,
+        changed_by=principal.user_id,
+        change_reason=reason or fleet_repository.FLEET_DELETED_REASON,
+    )
     if not fleet_record:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
@@ -491,6 +505,8 @@ async def add_vehicle_to_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
     fleet_vehicle_add_request: FleetVehicleAddRequest,
+    *,
+    principal: Principal,
 ) -> FleetMembershipResponse:
     """Add a vehicle to a fleet by VIN.
 
@@ -504,6 +520,8 @@ async def add_vehicle_to_fleet(
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
         fleet_vehicle_add_request: The vehicle to add, by VIN.
+        principal: The caller, recorded as ``added_by``; a fleet or vehicle of
+            another organization is not found unless the caller is internal.
 
     Returns:
         The resulting open membership.
@@ -519,23 +537,20 @@ async def add_vehicle_to_fleet(
     Side Effects:
         Inserts a new membership row; does not commit or rollback on its own.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
 
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, fleet_vehicle_add_request.vehicle_vin
     )
-    if vehicle_reference is None:
+    if vehicle_reference is None or not principal.can_access_organization(
+        vehicle_reference.organization_id
+    ):
         raise FleetVehicleNotFoundError(
             f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
         )
 
     # A fleet holds only its own organization's vehicles (FL-09).
-    vehicle_organization_id = await vehicle_service.resolve_vehicle_organization_id(
-        db_session, vehicle_reference.vehicle_id
-    )
-    if vehicle_organization_id != fleet_record.organization_id:
+    if vehicle_reference.organization_id != fleet_record.organization_id:
         raise FleetVehicleOrganizationMismatchError(
             f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' belongs "
             "to another organization than the fleet"
@@ -558,6 +573,7 @@ async def add_vehicle_to_fleet(
             fleet_id=fleet_id,
             vehicle_id=vehicle_reference.vehicle_id,
             added_at=utc_now(),
+            added_by=principal.user_id,
         )
     except IntegrityError as error:
         raise FleetMembershipConflictError(
@@ -571,6 +587,8 @@ async def remove_vehicle_from_fleet(
     db_session: AsyncSession,
     fleet_id: UUID,
     vehicle_vin: str,
+    *,
+    principal: Principal,
 ) -> None:
     """Close a vehicle's active membership in a fleet, by VIN.
 
@@ -580,6 +598,8 @@ async def remove_vehicle_from_fleet(
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
         vehicle_vin: VIN of the vehicle to remove.
+        principal: The caller, recorded as ``removed_by``; a fleet of another
+            organization is not found unless the caller is internal.
 
     Raises:
         FleetNotFoundError: When the fleet does not exist.
@@ -590,9 +610,7 @@ async def remove_vehicle_from_fleet(
     Side Effects:
         Calls the vehicles domain's public service to resolve the VIN.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    await _get_fleet_record(db_session, fleet_id, principal)
 
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, vehicle_vin
@@ -610,7 +628,10 @@ async def remove_vehicle_from_fleet(
         )
 
     await fleet_repository.close_membership(
-        db_session, active_membership, removed_at=utc_now()
+        db_session,
+        active_membership,
+        removed_at=utc_now(),
+        removed_by=principal.user_id,
     )
 
 
@@ -618,6 +639,8 @@ async def close_fleet_membership(
     db_session: AsyncSession,
     fleet_id: UUID,
     fleet_vehicle_membership_id: UUID,
+    *,
+    principal: Principal,
 ) -> None:
     """Close an open membership of a fleet by its ID (D8, #84).
 
@@ -630,6 +653,8 @@ async def close_fleet_membership(
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
         fleet_vehicle_membership_id: Internal ID of the membership to close.
+        principal: The caller, recorded as ``removed_by``; a fleet of another
+            organization is not found unless the caller is internal.
 
     Raises:
         FleetNotFoundError: When the fleet does not exist.
@@ -639,9 +664,7 @@ async def close_fleet_membership(
     Side Effects:
         Stamps the membership's ``removed_at``; does not commit or rollback.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    await _get_fleet_record(db_session, fleet_id, principal)
 
     membership_record = await fleet_repository.get_membership_by_id(
         db_session, fleet_vehicle_membership_id
@@ -657,7 +680,10 @@ async def close_fleet_membership(
         )
 
     await fleet_repository.close_membership(
-        db_session, membership_record, removed_at=utc_now()
+        db_session,
+        membership_record,
+        removed_at=utc_now(),
+        removed_by=principal.user_id,
     )
 
 
@@ -720,6 +746,7 @@ async def list_fleet_vehicles(
     db_session: AsyncSession,
     fleet_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
@@ -730,6 +757,8 @@ async def list_fleet_vehicles(
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
         page: Page number, starting from 1.
         page_size: Maximum number of vehicles per page.
         status_filter: Only vehicles in this lifecycle status, if given.
@@ -754,9 +783,7 @@ async def list_fleet_vehicles(
         resolved, filtered and then paged in memory; an unresolvable
         vehicle can match no filter and is left out.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    await _get_fleet_record(db_session, fleet_id, principal)
 
     page_window = normalize_page_window(page, page_size)
 
@@ -820,6 +847,7 @@ async def list_fleet_membership_history(
     db_session: AsyncSession,
     fleet_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> FleetMembershipHistoryResponse:
@@ -828,6 +856,8 @@ async def list_fleet_membership_history(
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization is not found
+            unless the caller is internal.
         page: Page number, starting from 1.
         page_size: Maximum number of memberships per page.
 
@@ -842,9 +872,7 @@ async def list_fleet_membership_history(
         the vehicles domain's public service - no batching, per this
         repo's no-premature-batching convention.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    await _get_fleet_record(db_session, fleet_id, principal)
 
     page_window = normalize_page_window(page, page_size)
 
@@ -935,12 +963,16 @@ def to_geofence_response(geofence_record: GeofenceModel) -> GeofenceResponse:
     )
 
 
-async def _get_fleet_record(db_session: AsyncSession, fleet_id: UUID) -> FleetModel:
-    """Load a live fleet, or raise if it doesn't exist.
+async def _get_fleet_record(
+    db_session: AsyncSession, fleet_id: UUID, principal: Principal
+) -> FleetModel:
+    """Load a live fleet inside the caller's data reach, or raise.
 
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller; a fleet of another organization does not exist
+            for them unless they are internal.
 
     Returns:
         The fleet record.
@@ -948,14 +980,19 @@ async def _get_fleet_record(db_session: AsyncSession, fleet_id: UUID) -> FleetMo
     Raises:
         FleetNotFoundError: When the fleet does not exist or was soft-deleted.
     """
-    fleet_record = await fleet_repository.get_by_id(db_session, fleet_id)
+    fleet_record = await fleet_repository.get_by_id(
+        db_session, fleet_id, organization_id=principal.data_scope
+    )
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
     return fleet_record
 
 
 async def _get_fleet_geofence_record(
-    db_session: AsyncSession, fleet_id: UUID, geofence_id: UUID
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    geofence_id: UUID,
+    principal: Principal,
 ) -> GeofenceModel:
     """Load a live geofence of a live fleet, or raise.
 
@@ -963,6 +1000,7 @@ async def _get_fleet_geofence_record(
         db_session: Current database session.
         fleet_id: Internal ID of the fleet the geofence must belong to.
         geofence_id: Internal ID of the geofence.
+        principal: The caller (data scope).
 
     Returns:
         The geofence record.
@@ -972,7 +1010,7 @@ async def _get_fleet_geofence_record(
         GeofenceNotFoundError: When the geofence does not exist, was
             soft-deleted, or belongs to another fleet.
     """
-    await _get_fleet_record(db_session, fleet_id)
+    await _get_fleet_record(db_session, fleet_id, principal)
     geofence_record = await fleet_repository.get_geofence_by_id(db_session, geofence_id)
     if geofence_record is None or geofence_record.fleet_id != fleet_id:
         raise GeofenceNotFoundError(
@@ -985,6 +1023,8 @@ async def create_geofence(
     db_session: AsyncSession,
     fleet_id: UUID,
     geofence_create_request: GeofenceCreateRequest,
+    *,
+    principal: Principal,
 ) -> GeofenceResponse:
     """Create a geofence for a fleet (F-A5, D6).
 
@@ -995,6 +1035,7 @@ async def create_geofence(
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the owning fleet.
         geofence_create_request: Name and boundary, already validated.
+        principal: The caller (data scope).
 
     Returns:
         Response for the new geofence.
@@ -1005,7 +1046,7 @@ async def create_geofence(
     Side Effects:
         Inserts one ``geofences`` row (flushed, not committed).
     """
-    await _get_fleet_record(db_session, fleet_id)
+    await _get_fleet_record(db_session, fleet_id, principal)
     geofence_record = await fleet_repository.insert_geofence(
         db_session,
         fleet_id=fleet_id,
@@ -1019,6 +1060,7 @@ async def list_geofences(
     db_session: AsyncSession,
     fleet_id: UUID,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> GeofenceListResponse:
@@ -1027,6 +1069,7 @@ async def list_geofences(
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        principal: The caller (data scope).
         page: Page number, starting from 1.
         page_size: Maximum number of geofences per page.
 
@@ -1036,7 +1079,7 @@ async def list_geofences(
     Raises:
         FleetNotFoundError: When the fleet does not exist.
     """
-    await _get_fleet_record(db_session, fleet_id)
+    await _get_fleet_record(db_session, fleet_id, principal)
     page_window = normalize_page_window(page, page_size)
 
     geofence_records = await fleet_repository.list_geofences_by_fleet(
@@ -1056,7 +1099,11 @@ async def list_geofences(
 
 
 async def get_geofence(
-    db_session: AsyncSession, fleet_id: UUID, geofence_id: UUID
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    geofence_id: UUID,
+    *,
+    principal: Principal,
 ) -> GeofenceResponse:
     """Get one live geofence of a fleet (F-A5).
 
@@ -1064,6 +1111,7 @@ async def get_geofence(
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
+        principal: The caller (data scope).
 
     Returns:
         Response for the geofence.
@@ -1074,7 +1122,7 @@ async def get_geofence(
             this fleet.
     """
     geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id
+        db_session, fleet_id, geofence_id, principal
     )
     return to_geofence_response(geofence_record)
 
@@ -1084,6 +1132,8 @@ async def update_geofence(
     fleet_id: UUID,
     geofence_id: UUID,
     geofence_update_request: GeofenceUpdateRequest,
+    *,
+    principal: Principal,
 ) -> GeofenceResponse:
     """Partially update a geofence's name and/or boundary (F-A5).
 
@@ -1095,6 +1145,7 @@ async def update_geofence(
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
         geofence_update_request: Fields to change, already validated.
+        principal: The caller (data scope).
 
     Returns:
         Response for the geofence after the update.
@@ -1108,7 +1159,7 @@ async def update_geofence(
         Updates the row and flushes; does not commit.
     """
     geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id
+        db_session, fleet_id, geofence_id, principal
     )
     update_values: dict[str, object] = {}
     if geofence_update_request.name is not None:
@@ -1127,7 +1178,11 @@ async def update_geofence(
 
 
 async def soft_delete_geofence(
-    db_session: AsyncSession, fleet_id: UUID, geofence_id: UUID
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    geofence_id: UUID,
+    *,
+    principal: Principal,
 ) -> dict[str, str]:
     """Soft-delete a geofence of a fleet (F-A5).
 
@@ -1135,6 +1190,7 @@ async def soft_delete_geofence(
         db_session: Database session owned by the entry boundary.
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
+        principal: The caller (data scope).
 
     Returns:
         Success deletion message.
@@ -1149,14 +1205,14 @@ async def soft_delete_geofence(
         longer returned by ``list_geofences_containing``.
     """
     geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id
+        db_session, fleet_id, geofence_id, principal
     )
     await fleet_repository.soft_delete_geofence(db_session, geofence_record)
     return {"message": "Geofence deleted successfully"}
 
 
 async def list_active_member_vehicle_ids(
-    db: AsyncSession, fleet_id: UUID
+    db: AsyncSession, fleet_id: UUID, *, organization_id: UUID | None = None
 ) -> list[UUID]:
     """List the vehicles currently in a fleet. Public cross-domain entry point.
 
@@ -1166,6 +1222,9 @@ async def list_active_member_vehicle_ids(
     Args:
         db: Session owned by the caller's entry boundary.
         fleet_id: Internal ID of the fleet.
+        organization_id: Data scope of an HTTP caller: a fleet of another
+            organization is then not found. `None` (internal staff, system
+            callers) means no restriction.
 
     Returns:
         IDs of the vehicles with an open membership, oldest member first.
@@ -1180,7 +1239,11 @@ async def list_active_member_vehicle_ids(
     Side Effects:
         Read-only; does not commit or rollback.
     """
-    await _get_fleet_record(db, fleet_id)
+    fleet_record = await fleet_repository.get_by_id(
+        db, fleet_id, organization_id=organization_id
+    )
+    if fleet_record is None:
+        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
     membership_records = await fleet_repository.list_all_active_memberships_by_fleet(
         db, fleet_id
     )

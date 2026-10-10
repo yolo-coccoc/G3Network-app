@@ -12,6 +12,13 @@
 
 ## Conventions
 
+- **Access since WP2b (ID-50):** every endpoint below needs `Authorization: Bearer`
+  (`401` otherwise) and a role from the `users` list of its feature (`403`
+  otherwise; HEAD_ADMIN, CO_ADMIN and ORG_ADMIN always pass). The roles per
+  endpoint family are in `FEATURE_ROLES` (`identity/types.py`) and in the
+  router constants of each domain; query and body fields that named the actor
+  (`granted_by`, `requested_by`, `user_id`, ...) are gone, the caller is the
+  actor.
 - Data reach is decided by the organization, not the role (ID-44,
   [decision-log.md:229](../decisions/decision-log.md#L229)): internal users see
   every organization, everyone else only their own; a fleet manager or
@@ -112,7 +119,7 @@ The built `drivers` routes use the new profile shape (WP1 chunk 4): `POST /drive
 takes an existing `membership_id`, not a phone and name (the invite flow is WP2),
 and the old `/drivers/{driver_id}/assignment(s)` routes are gone. Check-in is built
 as `POST /driving-sessions/` (and `/check-out`, `GET /driving-sessions/`) with
-`driver_id` and `vehicle_vin` in the body until authentication exists.
+`vehicle_vin` in the body; `driver_id` is optional (the caller's own profile when omitted, a manager may name another driver of the organization, WP2b).
 
 | Step | API call | Main error cases |
 |---|---|---|
@@ -147,12 +154,12 @@ owner and to organizations in `charging_location_access`.
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Locations: create with pin, address, public or private | `POST/GET/PATCH/DELETE /charging-locations[/{location_id}]` (**built**; `organization_id` in the body until login exists) | `400` coordinates required; `409` |
+| Locations: create with pin, address, public or private | `POST/GET/PATCH/DELETE /charging-locations[/{location_id}]` (**built**; the owner is the caller's organization, internal staff may name another in `organization_id`) | `400` coordinates required; `409` |
 | Stations (chargers): register at a location by OCPP identity | `POST /charging-stations` `{location_id, ocpp_identity, registered_serial_number, physical_reference, max_power_kw}` (**built**) | `409` identity or serial exists; `404` location |
 | List, open, edit, retire | `GET /charging-stations`, `GET/PATCH/DELETE /charging-stations/{station_id}` (**built**) | `404` |
 | EVSEs and connectors | `POST/GET /charging-stations/{station_id}/evses`, `GET/PATCH/DELETE /charging-evses/{evse_id}`, `POST/GET /charging-evses/{evse_id}/connectors`, `GET/PATCH/DELETE /charging-connectors/{connector_id}`, `GET /charging-stations/{station_id}/connectors` (**built**) | `409` topology conflict (duplicate OCPP id, active session on the connector) |
-| **Access** for a private location: allow an organization, optional `valid_until`, revoke | `POST /charging-locations/{location_id}/access` `{allowed_organization_id, granted_by, valid_until}`, `GET` the live grants, `POST .../access/{access_id}/revoke` `{revoked_by, revoke_reason}` (**built**; the nearby search shows public locations only until login exists) | `409` already granted; `404` |
-| **Configuration**: read what the charger reports | `GET /charging-stations/{station_id}/configuration` (**built**); request a fresh capture and change a key: `POST /charging-stations/{station_id}/commands` `{command_type: "GET_CONFIGURATION" \| "CHANGE_CONFIGURATION", parameters, requested_by, reason}` answers `202`; poll `GET /charging-stations/{station_id}/commands/{command_id}` (**built**; every command type of the DBML is accepted) | `409` charger offline; command outcome `REJECTED`, `ERROR`, `TIMEOUT` or `NOT_SENT` is shown with the charger's own status |
+| **Access** for a private location: allow an organization, optional `valid_until`, revoke | `POST /charging-locations/{location_id}/access` `{allowed_organization_id, valid_until}`, `GET` the live grants, `POST .../access/{access_id}/revoke` `{revoke_reason}` (**built**; `granted_by` / `revoked_by` are the caller; the nearby search shows public locations, the caller's own and granted ones) | `409` already granted; `404` |
+| **Configuration**: read what the charger reports | `GET /charging-stations/{station_id}/configuration` (**built**); request a fresh capture and change a key: `POST /charging-stations/{station_id}/commands` `{command_type: "GET_CONFIGURATION" \| "CHANGE_CONFIGURATION", parameters, reason}` answers `202`; poll `GET /charging-stations/{station_id}/commands/{command_id}` (**built**; every command type of the DBML is accepted) | `409` charger offline; command outcome `REJECTED`, `ERROR`, `TIMEOUT` or `NOT_SENT` is shown with the charger's own status |
 | **Commands**: reset, unlock connector, availability, trigger message | same `POST .../commands` and `GET /charging-stations/{station_id}/commands?outcome=` for the log (planned; rows of `charging_station_commands`) | `400` operator reason required; `409` unlock during a live session |
 | Raw OCPP message viewer (STN-15) | `GET /charging-stations/{station_id}/ocpp-messages` (planned; raw frames hold RFID tokens, so a `VIEW` is audited) | `403` |
 | Sessions and energy | `GET /charging-sessions`, `.../{session_id}`, `.../measurements`, `GET /charging-sessions/stations/{station_id}/energy[/series]`, `GET /charging-sessions/stations/energy` (**built**) | `404` |
@@ -223,6 +230,6 @@ Our staff and each ORG_ADMIN (own organization) read it.
 
 ## Open points
 
-- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a). Still planned: flow 11's notification settings, the audit-log export, and the other flows' use of the login (WP2b wires `get_current_principal` into their routers).
+- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings, the audit-log export, and the per-manager fleet limits (FL-10, WP6).
 - Billing (`/tariffs`, `/wallets`, bills) and trips are unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

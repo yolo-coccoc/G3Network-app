@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.identity.audit_service as audit_service
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
+from app.domains.identity.exceptions import OrganizationNotFoundError
 from app.domains.identity.types import (
     AccessAuditAction,
     ClientContext,
@@ -148,3 +149,47 @@ async def record_data_access(
         client_context=client_context,
         organization_id=organization_id,
     )
+
+
+async def resolve_organization_for_new_record(
+    db_session: AsyncSession,
+    principal: Principal,
+    requested_organization_id: UUID | None,
+) -> UUID:
+    """Decide which organization owns a record the caller is creating (DM-24).
+
+    The owner is the caller's own organization. Internal staff may name
+    another organization (a truck sold to a customer, a station of a
+    customer); that organization must exist.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        principal: The caller.
+        requested_organization_id: The ``organization_id`` of the request, if
+            the request carries one.
+
+    Returns:
+        The organization to write on the new record.
+
+    Raises:
+        OrganizationNotFoundError: The named organization does not exist, or a
+            non-internal caller named an organization other than their own
+            (out of reach looks like missing, 404).
+
+    Side Effects:
+        One read-only query when another organization is named.
+    """
+    if (
+        requested_organization_id is None
+        or requested_organization_id == principal.organization_id
+    ):
+        return principal.organization_id
+    if not principal.can_access_organization(requested_organization_id):
+        raise OrganizationNotFoundError(
+            f"Organization '{requested_organization_id}' not found"
+        )
+    if await find_organization_reference(db_session, requested_organization_id) is None:
+        raise OrganizationNotFoundError(
+            f"Organization '{requested_organization_id}' not found"
+        )
+    return requested_organization_id

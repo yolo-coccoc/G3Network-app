@@ -32,6 +32,7 @@ from app.domains.telemetry.types import (
 from app.domains.vehicles.types import VehicleReference, VehicleStatus, VehicleSummary
 from app.libs.common.config import settings
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal
 
 _WINDOW_START = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _WINDOW_END = datetime(2026, 9, 2, tzinfo=timezone.utc)
@@ -47,7 +48,9 @@ def _patch_member_vehicle_ids(
         member_vehicle_ids: Member vehicle IDs to return, oldest first.
     """
 
-    async def list_member_ids(db: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    async def list_member_ids(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> list[UUID]:
         return member_vehicle_ids
 
     monkeypatch.setattr(
@@ -62,7 +65,9 @@ def _patch_unknown_fleet(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch: Pytest monkeypatch fixture.
     """
 
-    async def unknown_fleet(db: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    async def unknown_fleet(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> list[UUID]:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
     monkeypatch.setattr(fleet_service, "list_active_member_vehicle_ids", unknown_fleet)
@@ -112,10 +117,18 @@ async def test_fleet_live_statuses_page_the_member_list(
     )
 
     first_page = await telemetry_service.list_fleet_vehicle_live_statuses(
-        fake_db_session(), uuid4(), page=1, page_size=2
+        fake_db_session(),
+        uuid4(),
+        page=1,
+        page_size=2,
+        principal=build_internal_principal(),
     )
     second_page = await telemetry_service.list_fleet_vehicle_live_statuses(
-        fake_db_session(), uuid4(), page=2, page_size=2
+        fake_db_session(),
+        uuid4(),
+        page=2,
+        page_size=2,
+        principal=build_internal_principal(),
     )
 
     assert first_page.total == 3
@@ -149,7 +162,7 @@ async def test_fleet_live_statuses_reject_unknown_fleet(
 
     with pytest.raises(FleetNotFoundError):
         await telemetry_service.list_fleet_vehicle_live_statuses(
-            fake_db_session(), uuid4()
+            fake_db_session(), uuid4(), principal=build_internal_principal()
         )
 
 
@@ -248,7 +261,11 @@ async def test_fleet_operating_report_sums_before_deriving_rates(
     )
 
     report = await telemetry_service.get_fleet_operating_report(
-        fake_db_session(), uuid4(), start_time=_WINDOW_START, end_time=_WINDOW_END
+        fake_db_session(),
+        uuid4(),
+        start_time=_WINDOW_START,
+        end_time=_WINDOW_END,
+        principal=build_internal_principal(),
     )
 
     assert [row.vehicle_id for row in report.vehicles] == [busy_id, short_id]
@@ -297,7 +314,11 @@ async def test_fleet_operating_report_leaves_rates_undefined_without_distance(
     )
 
     report = await telemetry_service.get_fleet_operating_report(
-        fake_db_session(), uuid4(), start_time=_WINDOW_START, end_time=_WINDOW_END
+        fake_db_session(),
+        uuid4(),
+        start_time=_WINDOW_START,
+        end_time=_WINDOW_END,
+        principal=build_internal_principal(),
     )
 
     assert report.vehicles[0].energy_per_100km_kwh is None
@@ -319,7 +340,11 @@ async def test_fleet_operating_report_validates_window_before_fleet_lookup(
 
     with pytest.raises(TelemetryInvalidRangeError):
         await telemetry_service.get_fleet_operating_report(
-            fake_db_session(), uuid4(), start_time=_WINDOW_START, end_time=too_long_end
+            fake_db_session(),
+            uuid4(),
+            start_time=_WINDOW_START,
+            end_time=too_long_end,
+            principal=build_internal_principal(),
         )
 
 
@@ -332,7 +357,11 @@ async def test_fleet_operating_report_rejects_unknown_fleet(
 
     with pytest.raises(FleetNotFoundError):
         await telemetry_service.get_fleet_operating_report(
-            fake_db_session(), uuid4(), start_time=_WINDOW_START, end_time=_WINDOW_END
+            fake_db_session(),
+            uuid4(),
+            start_time=_WINDOW_START,
+            end_time=_WINDOW_END,
+            principal=build_internal_principal(),
         )
 
 

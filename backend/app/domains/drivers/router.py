@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
+import app.domains.identity.service as identity_service
 from app.domains.drivers.schemas import (
     DriverCreateRequest,
     DriverListResponse,
@@ -23,11 +24,29 @@ from app.domains.drivers.schemas import (
     DrivingSessionResponse,
 )
 from app.domains.drivers.types import DriverStatus
+from app.domains.identity.dependencies import (
+    get_client_context,
+    require_roles,
+)
+from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
+    Principal,
+    roles_for,
+)
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["drivers"])
 driving_sessions_router = APIRouter(tags=["driving-sessions"])
+
+# Who may call what (features.yaml `users`, via `roles_for`): DRV-01 driver
+# profiles; DRV-02 check-in (the driver themselves, or a manager/dispatcher
+# for a driver of the organization). A DRIVER-only caller never reads other
+# people's profiles and sees only their own sessions (DR-11).
+DRIVER_PROFILE_WRITERS = require_roles(*roles_for("DRV-01"))
+DRIVER_PROFILE_READERS = require_roles(*driver_service.DRIVER_MANAGER_ROLES)
+DRIVING_SESSION_USERS = require_roles(*roles_for("DRV-02"))
 
 
 @router.post(
@@ -39,12 +58,14 @@ driving_sessions_router = APIRouter(tags=["driving-sessions"])
 )
 async def create_driver_endpoint(
     driver_create_request: DriverCreateRequest,
+    principal: Principal = Depends(DRIVER_PROFILE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Create a new driver.
 
     Args:
         driver_create_request: Request data for creating the driver.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -56,7 +77,9 @@ async def create_driver_endpoint(
         DriverLicenseExpiredError: 400 when the licence is expired.
         DriverConflictError: 409 when the membership already has a profile.
     """
-    return await driver_service.create_driver(db_session, driver_create_request)
+    return await driver_service.create_driver(
+        db_session, driver_create_request, principal=principal
+    )
 
 
 @router.get(
@@ -89,6 +112,7 @@ async def list_drivers_endpoint(
         max_length=17,
         description="Only the driver at the wheel of this vehicle now (VIN)",
     ),
+    principal: Principal = Depends(DRIVER_PROFILE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverListResponse:
     """Get a paginated list of drivers.
@@ -100,6 +124,7 @@ async def list_drivers_endpoint(
         search_text: Licence number substring filter (`q`), if any.
         vehicle_vin: "Who drives this vehicle now" filter, if any; an
             unknown VIN yields an empty page.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -112,6 +137,7 @@ async def list_drivers_endpoint(
         status_filter=status_filter,
         search_text=search_text,
         vehicle_vin=vehicle_vin,
+        principal=principal,
     )
 
 
@@ -123,12 +149,16 @@ async def list_drivers_endpoint(
 )
 async def get_driver_endpoint(
     driver_id: UUID,
+    client_context: ClientContext = Depends(get_client_context),
+    principal: Principal = Depends(DRIVER_PROFILE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Get the details of a driver by ID.
 
     Args:
         driver_id: Internal ID of the driver.
+        client_context: IP address and user agent, for the audit row.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -138,7 +168,20 @@ async def get_driver_endpoint(
         DriverNotFoundError: 404 when the driver does not exist or was
             soft-deleted.
     """
-    return await driver_service.get_driver(db_session, driver_id)
+    driver_response = await driver_service.get_driver(
+        db_session, driver_id, principal=principal
+    )
+    # Name, phone and licence of a person: one VIEW row per profile opened.
+    await identity_service.record_data_access(
+        db_session,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="DRIVER_PROFILE",
+        resource_id=str(driver_id),
+        client_context=client_context,
+        organization_id=driver_response.organization_id,
+    )
+    return driver_response
 
 
 @router.patch(
@@ -150,6 +193,7 @@ async def get_driver_endpoint(
 async def update_driver_endpoint(
     driver_id: UUID,
     driver_update_request: DriverUpdateRequest,
+    principal: Principal = Depends(DRIVER_PROFILE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DriverResponse:
     """Partially update a driver.
@@ -157,6 +201,7 @@ async def update_driver_endpoint(
     Args:
         driver_id: Internal ID of the driver.
         driver_update_request: Request data for updating the driver.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -167,7 +212,7 @@ async def update_driver_endpoint(
             soft-deleted.
     """
     return await driver_service.update_driver(
-        db_session, driver_id, driver_update_request
+        db_session, driver_id, driver_update_request, principal=principal
     )
 
 
@@ -179,12 +224,17 @@ async def update_driver_endpoint(
 )
 async def soft_delete_driver_endpoint(
     driver_id: UUID,
+    reason: str | None = Query(
+        None, min_length=1, max_length=200, description="Why the profile is removed"
+    ),
+    principal: Principal = Depends(DRIVER_PROFILE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a driver.
 
     Args:
         driver_id: Internal ID of the driver.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -194,7 +244,9 @@ async def soft_delete_driver_endpoint(
         DriverNotFoundError: 404 when the driver does not exist or was
             already soft-deleted.
     """
-    return await driver_service.soft_delete_driver(db_session, driver_id)
+    return await driver_service.soft_delete_driver(
+        db_session, driver_id, principal=principal, reason=reason
+    )
 
 
 @driving_sessions_router.post(
@@ -210,12 +262,14 @@ async def soft_delete_driver_endpoint(
 )
 async def check_in_driver_endpoint(
     check_in_request: DrivingSessionCheckInRequest,
+    principal: Principal = Depends(DRIVING_SESSION_USERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionResponse:
     """Check a driver in to a truck.
 
     Args:
         check_in_request: Driver, truck VIN, method and optional position.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -226,7 +280,9 @@ async def check_in_driver_endpoint(
         DriverVehicleNotFoundError: 404 when the VIN is unknown.
         DriverNotEligibleError: 400 when the driver may not check in.
     """
-    return await driver_service.check_in_driver(db_session, check_in_request)
+    return await driver_service.check_in_driver(
+        db_session, check_in_request, principal=principal
+    )
 
 
 @driving_sessions_router.post(
@@ -237,12 +293,14 @@ async def check_in_driver_endpoint(
 )
 async def check_out_driver_endpoint(
     check_out_request: DrivingSessionCheckOutRequest,
+    principal: Principal = Depends(DRIVING_SESSION_USERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionResponse:
     """End a driver's open driving session.
 
     Args:
         check_out_request: The driver checking out.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -251,7 +309,9 @@ async def check_out_driver_endpoint(
     Raises:
         DrivingSessionNotFoundError: 404 when the driver has no open session.
     """
-    return await driver_service.check_out_driver(db_session, check_out_request)
+    return await driver_service.check_out_driver(
+        db_session, check_out_request, principal=principal
+    )
 
 
 @driving_sessions_router.get(
@@ -272,6 +332,8 @@ async def list_driving_sessions_endpoint(
     vehicle_vin: str | None = Query(
         None, min_length=17, max_length=17, description="Only this truck's sessions"
     ),
+    client_context: ClientContext = Depends(get_client_context),
+    principal: Principal = Depends(DRIVING_SESSION_USERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionListResponse:
     """Get a paginated list of driving sessions.
@@ -281,15 +343,31 @@ async def list_driving_sessions_endpoint(
         page_size: Number of records per page.
         driver_id: Driver filter, if any.
         vehicle_vin: Truck filter (VIN), if any.
+        client_context: IP address and user agent, for the audit row.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
         Paginated driving sessions.
     """
-    return await driver_service.list_driving_sessions(
+    session_list_response = await driver_service.list_driving_sessions(
         db_session,
         page=page,
         page_size=page_size,
         driver_id=driver_id,
         vehicle_vin=vehicle_vin,
+        principal=principal,
     )
+    if principal.has_any_role(*driver_service.DRIVER_MANAGER_ROLES):
+        # A manager sees who drove where (personal data, DR-08): one VIEW row
+        # per screen. A driver reading their own summary needs none.
+        await identity_service.record_data_access(
+            db_session,
+            principal=principal,
+            action=AccessAuditAction.VIEW,
+            resource_type="DRIVING_SESSIONS",
+            resource_id=None if driver_id is None else str(driver_id),
+            client_context=client_context,
+            details={"vehicle_vin": vehicle_vin} if vehicle_vin else None,
+        )
+    return session_list_response

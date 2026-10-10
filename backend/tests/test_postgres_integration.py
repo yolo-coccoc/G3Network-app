@@ -27,6 +27,7 @@ import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
+import app.domains.drivers.service as driver_service
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
 import app.domains.identity.account_service as identity_account_service
@@ -78,7 +79,6 @@ from app.domains.fleet.exceptions import (
     FleetConflictError,
     FleetHasSubFleetsError,
     FleetHierarchyLoopError,
-    FleetOrganizationNotFoundError,
     FleetParentNotFoundError,
     FleetParentOrganizationMismatchError,
 )
@@ -151,6 +151,7 @@ from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 from app.libs.db.history import UNSPECIFIED_CHANGE_REASON, set_change_context
 from tests.builders import build_organization_record
+from tests.principals import ACTOR_USER_ID, build_internal_principal, build_principal
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_DB_INTEGRATION") != "1",
@@ -236,6 +237,27 @@ def _run_alembic(database_url: str, *arguments: str) -> None:
         )
 
 
+async def _insert_test_actor(database_url: str) -> None:
+    """Insert the user every test principal acts as (history and audit FKs).
+
+    Args:
+        database_url: URL of the temporary database, migrated to head.
+    """
+    engine = create_async_engine(database_url, poolclass=NullPool)
+    try:
+        async with AsyncSession(engine, expire_on_commit=False) as db, db.begin():
+            db.add(
+                UserModel(
+                    user_id=ACTOR_USER_ID,
+                    phone_number="+84900000000",
+                    full_name="Test actor",
+                    status=UserStatus.ACTIVE.value,
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
 @pytest_asyncio.fixture
 async def temporary_database() -> AsyncIterator[str]:
     """Spin up a temporary database, verify upgrade/downgrade/upgrade, then clean up."""
@@ -256,6 +278,7 @@ async def temporary_database() -> AsyncIterator[str]:
         _run_alembic(database_url, "upgrade", "head")
         _run_alembic(database_url, "downgrade", "base")
         _run_alembic(database_url, "upgrade", "head")
+        await _insert_test_actor(database_url)
         yield database_url
     finally:
         await _drop_database(database)
@@ -1036,16 +1059,22 @@ async def test_notification_insert_and_mark_read_need_no_refresh(
 
         async with session_factory.begin() as db:
             first_read = await notifications_service.mark_notification_read(
-                db, notification_record.notification_id, user_id
+                db,
+                notification_record.notification_id,
+                principal=build_principal(user_id=user_id),
             )
         async with session_factory.begin() as db:
             second_read = await notifications_service.mark_notification_read(
-                db, notification_record.notification_id, user_id
+                db,
+                notification_record.notification_id,
+                principal=build_principal(user_id=user_id),
             )
             again = await notifications_service.add_notification_recipients(
                 db, notification_record.notification_id, [user_id]
             )
-            unread = await notifications_service.count_unread_notifications(db, user_id)
+            unread = await notifications_service.count_unread_notifications(
+                db, principal=build_principal(user_id=user_id)
+            )
 
         async with session_factory() as db:
             stored = (
@@ -1108,10 +1137,11 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                     organization_id=organization_id,
                     vehicle_vin=vin,
                 ),
+                principal=build_internal_principal(),
             )
         async with session_factory.begin() as db:
             await telematics_service.soft_delete_telematic(
-                db, first_device.telematic_id
+                db, first_device.telematic_id, principal=build_internal_principal()
             )
         async with session_factory() as db:
             # DM-25: the deleted device is INACTIVE and unmounted, and the
@@ -1143,6 +1173,7 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                     organization_id=organization_id,
                     vehicle_vin=vin,
                 ),
+                principal=build_internal_principal(),
             )
         assert replacement_device.vehicle_id == vehicle_id
 
@@ -1156,6 +1187,7 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                         organization_id=organization_id,
                         vehicle_vin=vin,
                     ),
+                    principal=build_internal_principal(),
                 )
 
         # Flush-time path: with the pre-check blinded, the partial unique
@@ -1175,6 +1207,7 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
                         organization_id=organization_id,
                         vehicle_vin=vin,
                     ),
+                    principal=build_internal_principal(),
                 )
         monkeypatch.undo()
 
@@ -1182,7 +1215,9 @@ async def test_vehicle_takes_replacement_device_after_soft_delete(
             live_mapping = await telematics_service.resolve_mapping_by_serial(
                 db, f"{serial_prefix}-B"
             )
-            await vehicle_service.soft_delete_vehicle(db, vehicle_id)
+            await vehicle_service.soft_delete_vehicle(
+                db, vehicle_id, principal=build_internal_principal()
+            )
             deleted_vehicle_mapping = (
                 await telematics_service.resolve_mapping_by_serial(
                     db, f"{serial_prefix}-B"
@@ -1309,6 +1344,7 @@ async def test_battery_health_buckets_by_report_timezone_day(
                 vehicle_id=vehicle.vehicle_id,
                 start_time=datetime(2026, 8, 31, tzinfo=timezone.utc),
                 end_time=datetime(2026, 9, 4, tzinfo=timezone.utc),
+                principal=build_internal_principal(),
             )
             await session.rollback()
 
@@ -1384,6 +1420,7 @@ async def test_operating_report_periods_sum_to_the_whole_window(
                 start_time=start_time,
                 end_time=end_time,
                 granularity=ReportGranularity.DAY,
+                principal=build_internal_principal(),
             )
             monthly_report = await telemetry_service.get_vehicle_operating_report(
                 session,
@@ -1391,6 +1428,7 @@ async def test_operating_report_periods_sum_to_the_whole_window(
                 start_time=start_time,
                 end_time=end_time,
                 granularity=ReportGranularity.MONTH,
+                principal=build_internal_principal(),
             )
             await session.rollback()
 
@@ -1496,6 +1534,8 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
                 {"c": deleted_connectors[0]},
             )
 
+        # A caller of some other organization sees public locations only.
+        outsider = build_principal(organization_id=uuid4())
         async with session_factory() as db:
             nearest = await charging_stations_service.find_nearest_operational_station(
                 db, latitude=10.0, longitude=106.002
@@ -1507,19 +1547,24 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
                     longitude=106.002,
                     radius_km=5,
                     is_available_only=True,
+                    principal=outsider,
                 )
             )
             operational = await charging_stations_service.list_nearby_charging_stations(
-                db, latitude=10.0, longitude=106.002, radius_km=5
+                db,
+                latitude=10.0,
+                longitude=106.002,
+                radius_km=5,
+                principal=outsider,
             )
             free_detail = await charging_stations_service.get_charging_station(
-                db, free_id
+                db, free_id, principal=build_internal_principal()
             )
             maintenance_detail = await charging_stations_service.get_charging_station(
-                db, maintenance_id
+                db, maintenance_id, principal=build_internal_principal()
             )
             free_status = await charging_stations_service.get_charging_station_status(
-                db, free_id
+                db, free_id, principal=build_internal_principal()
             )
 
         assert nearest is not None and nearest.station_id == free_id
@@ -1624,7 +1669,10 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 granularity=EnergySeriesGranularity.DAY,
             )
             totals = await charging_stations_service.list_station_energy_totals(
-                db, start_time=t0, end_time=t0 + timedelta(days=1)
+                db,
+                start_time=t0,
+                end_time=t0 + timedelta(days=1),
+                principal=build_internal_principal(),
             )
             completed = await charging_sessions_service.list_charging_sessions(
                 db,
@@ -1632,6 +1680,7 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 page_size=10,
                 station_id=station_id,
                 status=SessionStatus.COMPLETED,
+                principal=build_internal_principal(),
             )
             active = await charging_sessions_service.list_charging_sessions(
                 db,
@@ -1639,6 +1688,7 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 page_size=10,
                 station_id=station_id,
                 status=SessionStatus.ACTIVE,
+                principal=build_internal_principal(),
             )
 
         assert [(item.bucket_start, item.energy_kwh) for item in hourly.items] == [
@@ -2033,6 +2083,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                     name="Depot",
                     boundary=GeofencePolygonGeoJson(coordinates=[square_ring]),
                 ),
+                principal=build_internal_principal(),
             )
             assert geofence.boundary.coordinates == [square_ring]
 
@@ -2061,6 +2112,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 GeofenceUpdateRequest(
                     name=None, boundary=GeofencePolygonGeoJson(coordinates=[moved_ring])
                 ),
+                principal=build_internal_principal(),
             )
             assert moved.name == "Depot"
             assert moved.boundary.coordinates == [moved_ring]
@@ -2071,7 +2123,10 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 == []
             )
             await fleet_service.soft_delete_geofence(
-                db, hanoi.fleet_id, geofence.geofence_id
+                db,
+                hanoi.fleet_id,
+                geofence.geofence_id,
+                principal=build_internal_principal(),
             )
             assert (
                 await fleet_service.list_geofences_containing(
@@ -2079,12 +2134,17 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 )
                 == []
             )
-            listed = await fleet_service.list_geofences(db, hanoi.fleet_id)
+            listed = await fleet_service.list_geofences(
+                db, hanoi.fleet_id, principal=build_internal_principal()
+            )
             assert listed.total == 0
 
             # #84: close the membership by ID; a second close is a 404.
             await fleet_service.close_fleet_membership(
-                db, hanoi.fleet_id, membership.fleet_vehicle_membership_id
+                db,
+                hanoi.fleet_id,
+                membership.fleet_vehicle_membership_id,
+                principal=build_internal_principal(),
             )
             assert (
                 await fleet_service.find_current_fleet_id_by_vehicle(
@@ -2112,7 +2172,9 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
         async with session_factory() as db:
             organization_id = await _integration_organization(db)
             region = await fleet_service.create_fleet(
-                db, FleetCreateRequest(organization_id=organization_id, name="South")
+                db,
+                FleetCreateRequest(organization_id=organization_id, name="South"),
+                principal=build_internal_principal(),
             )
             depot = await fleet_service.create_fleet(
                 db,
@@ -2121,6 +2183,7 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
                     fleet_code="SG-D1",
                     parent_fleet_id=region.fleet_id,
                 ),
+                principal=build_internal_principal(),
             )
             assert depot.parent_fleet_id == region.fleet_id
             assert (depot.name, region.fleet_code) == (None, None)
@@ -2130,12 +2193,19 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
                     db,
                     region.fleet_id,
                     FleetUpdateRequest(parent_fleet_id=depot.fleet_id),
+                    principal=build_internal_principal(),
                 )
             with pytest.raises(FleetHasSubFleetsError):
-                await fleet_service.soft_delete_fleet(db, region.fleet_id)
+                await fleet_service.soft_delete_fleet(
+                    db, region.fleet_id, principal=build_internal_principal()
+                )
 
-            await fleet_service.soft_delete_fleet(db, depot.fleet_id)
-            await fleet_service.soft_delete_fleet(db, region.fleet_id)
+            await fleet_service.soft_delete_fleet(
+                db, depot.fleet_id, principal=build_internal_principal()
+            )
+            await fleet_service.soft_delete_fleet(
+                db, region.fleet_id, principal=build_internal_principal()
+            )
             with pytest.raises(FleetParentNotFoundError):
                 await fleet_service.create_fleet(
                     db,
@@ -2144,6 +2214,7 @@ async def test_fleet_tree_and_name_or_code_rule_on_postgres(
                         name="Orphan",
                         parent_fleet_id=region.fleet_id,
                     ),
+                    principal=build_internal_principal(),
                 )
 
             # The database itself refuses a fleet with neither name nor code.
@@ -2177,6 +2248,7 @@ async def test_fleet_code_is_unique_per_organization_and_parent_shares_it(
                 FleetCreateRequest(
                     organization_id=first_organization_id, fleet_code="HQ"
                 ),
+                principal=build_internal_principal(),
             )
             # The same code in another organization is fine.
             await fleet_service.create_fleet(
@@ -2184,6 +2256,7 @@ async def test_fleet_code_is_unique_per_organization_and_parent_shares_it(
                 FleetCreateRequest(
                     organization_id=second_organization_id, fleet_code="HQ"
                 ),
+                principal=build_internal_principal(),
             )
             with pytest.raises(FleetConflictError):
                 await fleet_service.create_fleet(
@@ -2191,6 +2264,7 @@ async def test_fleet_code_is_unique_per_organization_and_parent_shares_it(
                     FleetCreateRequest(
                         organization_id=first_organization_id, fleet_code="HQ"
                     ),
+                    principal=build_internal_principal(),
                 )
             with pytest.raises(FleetParentOrganizationMismatchError):
                 await fleet_service.create_fleet(
@@ -2200,13 +2274,16 @@ async def test_fleet_code_is_unique_per_organization_and_parent_shares_it(
                         name="Wrong tree",
                         parent_fleet_id=first.fleet_id,
                     ),
+                    principal=build_internal_principal(),
                 )
             await db.rollback()
 
         async with session_factory() as db:
-            with pytest.raises(FleetOrganizationNotFoundError):
+            with pytest.raises(OrganizationNotFoundError):
                 await fleet_service.create_fleet(
-                    db, FleetCreateRequest(organization_id=uuid4(), name="Ghost")
+                    db,
+                    FleetCreateRequest(organization_id=uuid4(), name="Ghost"),
+                    principal=build_internal_principal(),
                 )
             await db.rollback()
     finally:
@@ -2547,6 +2624,7 @@ async def test_support_filters_and_sos_alert_on_postgres(
             async def labels(**filters: object) -> set[str]:
                 case_list = await support_service.list_support_cases(
                     db,
+                    principal=build_internal_principal(),
                     page_size=100,
                     **filters,  # type: ignore[arg-type]
                 )
@@ -2593,6 +2671,7 @@ async def test_support_filters_and_sos_alert_on_postgres(
                         "error_code": "E-042",
                     }
                 ),
+                principal=build_internal_principal(),
             )
             assert sos.channel is SupportCaseChannel.IN_APP
 
@@ -2611,6 +2690,7 @@ async def test_support_filters_and_sos_alert_on_postgres(
                 notification_type=NotificationType.SOS_ALERT,
                 severity=NotificationSeverity.CRITICAL,
                 order=NotificationListOrder.DESC,
+                principal=build_internal_principal(),
             )
             assert sos_alerts.count == 1
             sos_alert = sos_alerts.notifications[0]
@@ -2628,19 +2708,20 @@ async def test_support_filters_and_sos_alert_on_postgres(
                 db, sos_alert.notification_id, [recipient.user_id]
             )
             unread = await notifications_service.count_unread_notifications(
-                db, recipient.user_id
+                db, principal=build_principal(user_id=recipient.user_id)
             )
             first_mark = await notifications_service.mark_all_notifications_read(
-                db, recipient.user_id
+                db, principal=build_principal(user_id=recipient.user_id)
             )
             second_mark = await notifications_service.mark_all_notifications_read(
-                db, recipient.user_id
+                db, principal=build_principal(user_id=recipient.user_id)
             )
             still_unread = await notifications_service.list_notifications(
                 db,
+                principal=build_principal(user_id=recipient.user_id),
                 after_id=0,
                 limit=10,
-                user_id=recipient.user_id,
+                mine_only=True,
                 unread_only=True,
             )
             assert unread.unread_count == 1
@@ -2714,13 +2795,15 @@ async def test_device_health_fields_follow_real_telemetry_on_postgres(
                 )
 
             online = await telematics_service.get_telematic(
-                db, devices["online"].telematic_id
+                db, devices["online"].telematic_id, principal=build_internal_principal()
             )
             silent = await telematics_service.get_telematic(
-                db, devices["silent"].telematic_id
+                db, devices["silent"].telematic_id, principal=build_internal_principal()
             )
             unmounted = await telematics_service.get_telematic(
-                db, devices["unmounted"].telematic_id
+                db,
+                devices["unmounted"].telematic_id,
+                principal=build_internal_principal(),
             )
 
             assert online.last_seen_at is not None
@@ -2816,6 +2899,7 @@ async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
                     name="Depot",
                     boundary=GeofencePolygonGeoJson(coordinates=[square_ring]),
                 ),
+                principal=build_internal_principal(),
             )
 
             entered = await telemetry_service.process_message(
@@ -2940,6 +3024,7 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
                 fleet.fleet_id,
                 start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
                 end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+                principal=build_internal_principal(),
             )
             await db.rollback()
 
@@ -3008,6 +3093,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     longitude=106.0,
                     is_public=False,
                 ),
+                principal=build_internal_principal(),
             )
             station = await charging_stations_service.create_charging_station(
                 db,
@@ -3018,6 +3104,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     physical_reference="Tru 1",
                     max_power_kw=240,
                 ),
+                principal=build_internal_principal(),
             )
             evse = await charging_stations_service.create_charging_evse(
                 db,
@@ -3025,6 +3112,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 ChargingEvseCreateRequest(
                     ocpp_evse_id=1, emi3_evse_id="VN*G3N*E-CRUD-1"
                 ),
+                principal=build_internal_principal(),
             )
             connector = await charging_stations_service.create_charging_connector(
                 db,
@@ -3036,22 +3124,36 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     max_voltage_v=1000,
                     max_current_a=250,
                 ),
+                principal=build_internal_principal(),
             )
         assert station.organization_id == owner_id
         assert station.is_online is False and station.charger_status is None
         assert connector.status is None and connector.standard.value.startswith("IEC")
 
-        async with session_factory() as db:
-            hidden = await charging_stations_service.list_nearby_charging_stations(
-                db, latitude=10.0, longitude=106.0, radius_km=5
-            )
-        assert hidden.total == 0
+        async def nearby_total(principal: Principal) -> int:
+            """Count the chargers around the pin that the caller may see."""
+            async with session_factory() as db:
+                found = await charging_stations_service.list_nearby_charging_stations(
+                    db,
+                    latitude=10.0,
+                    longitude=106.0,
+                    radius_km=5,
+                    principal=principal,
+                )
+            return found.total
+
+        # A private location is visible to its owner and to internal staff,
+        # not to an unrelated organization (CS-10).
+        assert await nearby_total(build_principal(organization_id=uuid4())) == 0
+        assert await nearby_total(build_principal(organization_id=owner_id)) == 1
+        assert await nearby_total(build_internal_principal()) == 1
 
         async with session_factory.begin() as db:
             await charging_stations_service.update_charging_location(
                 db,
                 location.location_id,
                 ChargingLocationUpdateRequest.model_validate({"is_public": True}),
+                principal=build_internal_principal(),
             )
             await charging_stations_service.update_charging_station(
                 db,
@@ -3059,6 +3161,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 ChargingStationUpdateRequest.model_validate(
                     {"status": "INACTIVE", "status_reason": "Power module broken"}
                 ),
+                principal=build_internal_principal(),
             )
         async with session_factory() as db:
             shown = await charging_stations_service.list_nearby_charging_stations(
@@ -3068,10 +3171,15 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 radius_km=5,
                 connector_standard="CCS2",
                 is_operational_only=False,
+                principal=build_internal_principal(),
             )
             operational_only = (
                 await charging_stations_service.list_nearby_charging_stations(
-                    db, latitude=10.0, longitude=106.0, radius_km=5
+                    db,
+                    latitude=10.0,
+                    longitude=106.0,
+                    radius_km=5,
+                    principal=build_internal_principal(),
                 )
             )
         # An INACTIVE charger is found only when operational filtering is off.
@@ -3109,38 +3217,37 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     db,
                     location.location_id,
                     ChargingLocationAccessCreateRequest(
-                        allowed_organization_id=owner_id, granted_by=actor_id
+                        allowed_organization_id=owner_id
                     ),
+                    principal=build_internal_principal(),
                 )
             grant = await charging_stations_service.grant_charging_location_access(
                 db,
                 location.location_id,
-                ChargingLocationAccessCreateRequest(
-                    allowed_organization_id=partner_id, granted_by=actor_id
-                ),
+                ChargingLocationAccessCreateRequest(allowed_organization_id=partner_id),
+                principal=build_internal_principal(),
             )
             with pytest.raises(ChargingLocationAccessConflictError):
                 await charging_stations_service.grant_charging_location_access(
                     db,
                     location.location_id,
                     ChargingLocationAccessCreateRequest(
-                        allowed_organization_id=partner_id, granted_by=actor_id
+                        allowed_organization_id=partner_id
                     ),
+                    principal=build_internal_principal(),
                 )
             await charging_stations_service.revoke_charging_location_access(
                 db,
                 location.location_id,
                 grant.access_id,
-                ChargingLocationAccessRevokeRequest(
-                    revoked_by=actor_id, revoke_reason="Contract ended"
-                ),
+                ChargingLocationAccessRevokeRequest(revoke_reason="Contract ended"),
+                principal=build_internal_principal(),
             )
             regrant = await charging_stations_service.grant_charging_location_access(
                 db,
                 location.location_id,
-                ChargingLocationAccessCreateRequest(
-                    allowed_organization_id=partner_id, granted_by=actor_id
-                ),
+                ChargingLocationAccessCreateRequest(allowed_organization_id=partner_id),
+                principal=build_internal_principal(),
             )
         assert regrant.access_id != grant.access_id
 
@@ -3162,7 +3269,10 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
 
         async with session_factory.begin() as db:
             await charging_stations_service.soft_delete_charging_location(
-                db, location.location_id, status_reason="Site closed"
+                db,
+                location.location_id,
+                status_reason="Site closed",
+                principal=build_internal_principal(),
             )
         async with engine.connect() as connection:
             rows = (
@@ -3618,5 +3728,95 @@ async def test_identity_login_flow_roles_lockout_and_handover(
                 .all()
             )
         assert "Contract ended" in history_reasons
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_data_scope_hides_another_organizations_records_on_postgres(
+    temporary_database: str,
+) -> None:
+    """ACC-15 on real rows: vehicle, fleet and driver of organization A answer 404
+    to organization B, are found by A and by internal staff, and a list of B
+    stays empty."""
+    from app.domains.drivers.exceptions import DriverNotFoundError
+    from app.domains.fleet.exceptions import FleetNotFoundError
+    from app.domains.vehicles.exceptions import VehicleNotFoundError
+    from app.domains.vehicles.schemas import VehicleCreateRequest
+
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory.begin() as db:
+            organization_a, vehicle_model_id = await _insert_vehicle_parents(db)
+            organization_b = await _integration_organization(db)
+            driver = await _integration_driver(
+                db, license_number="SCOPE-1", organization_id=organization_a
+            )
+        principal_a = build_principal(organization_id=organization_a)
+        principal_b = build_principal(organization_id=organization_b)
+        staff = build_internal_principal()
+
+        async with session_factory.begin() as db:
+            vehicle = await vehicle_service.create_vehicle(
+                db,
+                VehicleCreateRequest(
+                    license_plate="SCOPE-001",
+                    vin=f"SC{uuid4().hex[:15]}".upper(),
+                    vehicle_model_id=vehicle_model_id,
+                    year=2026,
+                ),
+                principal=principal_a,
+            )
+            fleet = await fleet_service.create_fleet(
+                db, FleetCreateRequest(name="Scope fleet"), principal=principal_a
+            )
+        assert vehicle.organization_id == organization_a
+        assert fleet.organization_id == organization_a
+
+        async with session_factory() as db:
+            for principal in (principal_a, staff):
+                assert (
+                    await vehicle_service.get_vehicle(
+                        db, vehicle.vehicle_id, principal=principal
+                    )
+                ).vehicle_id == vehicle.vehicle_id
+                assert (
+                    await fleet_service.get_fleet(
+                        db, fleet.fleet_id, principal=principal
+                    )
+                ).fleet_id == fleet.fleet_id
+                assert (
+                    await driver_service.get_driver(
+                        db, driver.driver_id, principal=principal
+                    )
+                ).driver_id == driver.driver_id
+            with pytest.raises(VehicleNotFoundError):
+                await vehicle_service.get_vehicle(
+                    db, vehicle.vehicle_id, principal=principal_b
+                )
+            with pytest.raises(FleetNotFoundError):
+                await fleet_service.get_fleet(db, fleet.fleet_id, principal=principal_b)
+            with pytest.raises(DriverNotFoundError):
+                await driver_service.get_driver(
+                    db, driver.driver_id, principal=principal_b
+                )
+            assert (
+                await vehicle_service.list_vehicles(db, principal=principal_b)
+            ).total == 0
+            assert (
+                await vehicle_service.list_vehicles(db, principal=principal_a)
+            ).total == 1
+            assert (
+                await fleet_service.list_fleets(db, principal=principal_b)
+            ).total == 0
+            assert (
+                await driver_service.list_drivers(db, principal=principal_b)
+            ).total == 0
+            assert (
+                await driver_service.list_drivers(db, principal=principal_a)
+            ).total == 1
     finally:
         await engine.dispose()

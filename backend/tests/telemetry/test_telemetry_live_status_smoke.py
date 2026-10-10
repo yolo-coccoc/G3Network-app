@@ -15,6 +15,7 @@ from app.domains.telemetry.types import VehicleLiveStatusReference
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import build_telemetry_record, fake_db_session
+from tests.principals import build_internal_principal
 
 
 def _patch_latest_reading(
@@ -179,7 +180,7 @@ async def test_latest_response_exposes_received_at_and_online_flag(
     _patch_latest_reading(monkeypatch, telemetry=telemetry, last_received_at=now)
 
     response = await telemetry_service.get_latest_vehicle_telemetry_response(
-        fake_db_session(), vehicle_id
+        fake_db_session(), vehicle_id, principal=build_internal_principal()
     )
 
     assert response.received_at == telemetry.received_at

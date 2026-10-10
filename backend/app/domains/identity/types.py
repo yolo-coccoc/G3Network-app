@@ -192,6 +192,169 @@ ROLE_FEATURES: dict[UserRole, frozenset[str]] = {
 }
 
 
+# Roles per feature of the other domains, copied from the `users` lists of
+# `docs/product/features/features.yaml` (SYSTEM and EXTERNAL dropped: they are
+# no logged-in caller). Routers never write role names inline; they ask
+# `roles_for(<feature codes>)` so the catalog stays the one source (WP2b).
+FEATURE_ROLES: dict[str, frozenset[UserRole]] = {
+    "VEH-01": frozenset(
+        {UserRole.OPERATIONS, UserRole.FLEET_MANAGER, UserRole.ORG_ADMIN}
+    ),
+    "VEH-02": frozenset({UserRole.OPERATIONS, UserRole.SALES}),
+    "VEH-03": frozenset({UserRole.OPERATIONS}),
+    "VEH-05": frozenset({UserRole.OPERATIONS}),
+    "VEH-06": frozenset(
+        {UserRole.OPERATIONS, UserRole.CUSTOMER_CARE, UserRole.WARRANTY}
+    ),
+    "BAT-01": frozenset({UserRole.OPERATIONS, UserRole.MAINTENANCE, UserRole.WARRANTY}),
+    "WAR-01": frozenset(
+        {UserRole.WARRANTY, UserRole.OPERATIONS, UserRole.FLEET_MANAGER}
+    ),
+    "DEV-01": frozenset({UserRole.OPERATIONS}),
+    "DEV-02": frozenset({UserRole.OPERATIONS}),
+    "DEV-03": frozenset(),
+    "DEV-04": frozenset({UserRole.OPERATIONS}),
+    "DEV-05": frozenset({UserRole.OPERATIONS}),
+    "DEV-06": frozenset({UserRole.OPERATIONS}),
+    "DEV-07": frozenset({UserRole.OPERATIONS}),
+    "DEV-08": frozenset({UserRole.OPERATIONS}),
+    "MON-01": frozenset(),
+    "MON-02": frozenset(
+        {
+            UserRole.DRIVER,
+            UserRole.FLEET_MANAGER,
+            UserRole.DISPATCHER,
+            UserRole.CUSTOMER_CARE,
+        }
+    ),
+    "MON-03": frozenset({UserRole.DRIVER}),
+    "MON-04": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER}),
+    "MON-05": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.OPERATIONS}),
+    "MON-06": frozenset(
+        {UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.MAINTENANCE}
+    ),
+    "MON-07": frozenset(
+        {UserRole.FLEET_MANAGER, UserRole.WARRANTY, UserRole.MAINTENANCE}
+    ),
+    "MON-08": frozenset(
+        {UserRole.FLEET_MANAGER, UserRole.MAINTENANCE, UserRole.WARRANTY}
+    ),
+    "MON-09": frozenset({UserRole.FLEET_MANAGER, UserRole.DISPATCHER}),
+    "MON-10": frozenset(
+        {UserRole.FLEET_MANAGER, UserRole.DISPATCHER, UserRole.CUSTOMER_CARE}
+    ),
+    "MON-11": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER}),
+    "MON-12": frozenset({UserRole.FLEET_MANAGER}),
+    "MON-13": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER}),
+    "MON-14": frozenset({UserRole.FLEET_MANAGER, UserRole.DRIVER, UserRole.ACCOUNTANT}),
+    "MON-15": frozenset({UserRole.FLEET_MANAGER}),
+    "MON-16": frozenset({UserRole.FLEET_MANAGER}),
+    "MON-17": frozenset({UserRole.OPERATIONS}),
+    "MON-18": frozenset({UserRole.DRIVER}),
+    "MON-19": frozenset({UserRole.FLEET_MANAGER}),
+    "DRV-01": frozenset({UserRole.FLEET_MANAGER, UserRole.ORG_ADMIN}),
+    "DRV-02": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.DISPATCHER}),
+    "DRV-03": frozenset({UserRole.DISPATCHER, UserRole.FLEET_MANAGER, UserRole.DRIVER}),
+    "DRV-04": frozenset({UserRole.DRIVER}),
+    "DRV-05": frozenset({UserRole.DRIVER}),
+    "DRV-06": frozenset({UserRole.FLEET_MANAGER}),
+    "DRV-07": frozenset({UserRole.FLEET_MANAGER, UserRole.DRIVER}),
+    "FLT-01": frozenset({UserRole.FLEET_MANAGER, UserRole.ORG_ADMIN}),
+    "FLT-02": frozenset({UserRole.FLEET_MANAGER}),
+    "FLT-03": frozenset({UserRole.ORG_ADMIN}),
+    "FLT-04": frozenset({UserRole.FLEET_MANAGER, UserRole.DISPATCHER}),
+    "FLT-05": frozenset({UserRole.FLEET_MANAGER, UserRole.DISPATCHER}),
+    "FLT-06": frozenset({UserRole.FLEET_MANAGER, UserRole.ORG_ADMIN}),
+    "FLT-07": frozenset({UserRole.FLEET_MANAGER, UserRole.ACCOUNTANT}),
+    "FLT-08": frozenset({UserRole.FLEET_MANAGER, UserRole.WARRANTY}),
+    "STN-01": frozenset({UserRole.OPERATIONS}),
+    "STN-02": frozenset({UserRole.OPERATIONS}),
+    "STN-03": frozenset(),
+    "STN-04": frozenset({UserRole.OPERATIONS, UserRole.DRIVER}),
+    "STN-05": frozenset({UserRole.OPERATIONS}),
+    "STN-06": frozenset({UserRole.DRIVER, UserRole.DISPATCHER}),
+    "STN-07": frozenset({UserRole.DRIVER}),
+    "STN-08": frozenset({UserRole.DRIVER, UserRole.OPERATIONS}),
+    "STN-09": frozenset({UserRole.DRIVER, UserRole.DISPATCHER}),
+    "STN-10": frozenset({UserRole.OPERATIONS}),
+    "STN-11": frozenset({UserRole.OPERATIONS}),
+    "STN-12": frozenset({UserRole.OPERATIONS, UserRole.SALES}),
+    "STN-13": frozenset({UserRole.OPERATIONS}),
+    "STN-14": frozenset({UserRole.OPERATIONS, UserRole.HEAD_ADMIN}),
+    "STN-15": frozenset({UserRole.OPERATIONS}),
+    "CHG-01": frozenset({UserRole.DRIVER}),
+    "CHG-02": frozenset({UserRole.OPERATIONS, UserRole.CUSTOMER_CARE}),
+    "CHG-03": frozenset({UserRole.DRIVER, UserRole.ACCOUNTANT}),
+    "CHG-04": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.ACCOUNTANT}),
+    "CHG-05": frozenset({UserRole.ACCOUNTANT, UserRole.OPERATIONS}),
+    "CHG-06": frozenset({UserRole.ACCOUNTANT, UserRole.OPERATIONS}),
+    "CHG-07": frozenset(),
+    "CHG-08": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER}),
+    "PAY-01": frozenset({UserRole.SALES, UserRole.HEAD_ADMIN}),
+    "PAY-02": frozenset({UserRole.SALES, UserRole.HEAD_ADMIN}),
+    "PAY-03": frozenset({UserRole.SALES, UserRole.ACCOUNTANT, UserRole.ORG_ADMIN}),
+    "PAY-04": frozenset({UserRole.SALES, UserRole.ORG_ADMIN}),
+    "PAY-05": frozenset({UserRole.DRIVER, UserRole.ORG_ADMIN}),
+    "PAY-06": frozenset({UserRole.DRIVER}),
+    "PAY-07": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.ACCOUNTANT}),
+    "PAY-08": frozenset({UserRole.ACCOUNTANT, UserRole.FLEET_MANAGER}),
+    "PAY-09": frozenset({UserRole.OPERATIONS, UserRole.DRIVER}),
+    "PAY-10": frozenset({UserRole.ACCOUNTANT}),
+    "PAY-11": frozenset({UserRole.ACCOUNTANT, UserRole.DRIVER}),
+    "PAY-12": frozenset({UserRole.SALES, UserRole.DRIVER}),
+    "PAY-13": frozenset({UserRole.HEAD_ADMIN, UserRole.ACCOUNTANT}),
+    "NTF-01": frozenset(
+        {
+            UserRole.DRIVER,
+            UserRole.FLEET_MANAGER,
+            UserRole.OPERATIONS,
+            UserRole.CUSTOMER_CARE,
+        }
+    ),
+    "NTF-02": frozenset({UserRole.DRIVER, UserRole.FLEET_MANAGER}),
+    "NTF-03": frozenset({UserRole.DRIVER}),
+    "NTF-04": frozenset({UserRole.FLEET_MANAGER, UserRole.ACCOUNTANT}),
+    "NTF-05": frozenset({UserRole.ORG_ADMIN}),
+    "NTF-06": frozenset(),
+    "NTF-07": frozenset({UserRole.CUSTOMER_CARE}),
+    "NTF-08": frozenset({UserRole.FLEET_MANAGER, UserRole.OPERATIONS}),
+    "SUP-01": frozenset(
+        {UserRole.DRIVER, UserRole.FLEET_MANAGER, UserRole.CUSTOMER_CARE}
+    ),
+    "SUP-02": frozenset({UserRole.DRIVER, UserRole.CUSTOMER_CARE}),
+    "SUP-03": frozenset({UserRole.CUSTOMER_CARE}),
+    "SUP-04": frozenset({UserRole.CUSTOMER_CARE, UserRole.OPERATIONS}),
+    "SUP-05": frozenset({UserRole.CUSTOMER_CARE, UserRole.TECHNICIAN}),
+    "SUP-06": frozenset({UserRole.TECHNICIAN}),
+    "SUP-07": frozenset({UserRole.DRIVER}),
+}
+
+# Roles added to every feature: our two administrators (the whole role set of
+# an internal user, ID-44) and the organization administrator, who manages
+# everything of their own organization (data scope still limits the reach).
+ALWAYS_ALLOWED_ROLES = frozenset(
+    {UserRole.HEAD_ADMIN, UserRole.CO_ADMIN, UserRole.ORG_ADMIN}
+)
+
+
+def roles_for(*feature_codes: str) -> frozenset[UserRole]:
+    """Return the roles allowed to call an endpoint serving the given features.
+
+    Args:
+        *feature_codes: Feature codes of the catalog, e.g. ``"VEH-01"``.
+
+    Returns:
+        The union of the features' roles plus `ALWAYS_ALLOWED_ROLES`.
+
+    Raises:
+        KeyError: A code is not in `FEATURE_ROLES` (a typo fails at import).
+    """
+    roles: set[UserRole] = set(ALWAYS_ALLOWED_ROLES)
+    for feature_code in feature_codes:
+        roles |= FEATURE_ROLES[feature_code]
+    return frozenset(roles)
+
+
 def features_of_roles(roles: frozenset[UserRole]) -> frozenset[str]:
     """Return the feature codes a set of roles grants (ACC-14).
 
@@ -253,6 +416,15 @@ class Principal:
             `True` if the caller may read data owned by that organization.
         """
         return self.is_internal or organization_id == self.organization_id
+
+    @property
+    def data_scope(self) -> UUID | None:
+        """Organization filter for queries: `None` for internal staff (all).
+
+        Services pass it as ``organization_id`` to repositories; a record of
+        another organization then does not exist for the caller (404).
+        """
+        return None if self.is_internal else self.organization_id
 
     @property
     def features(self) -> frozenset[str]:

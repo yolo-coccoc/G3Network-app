@@ -5,7 +5,8 @@ from typing import Any
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, column, func, select, table
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -17,6 +18,33 @@ from app.domains.drivers.types import (
 )
 from app.libs.common.clock import utc_now
 from app.libs.db.history import set_change_context
+
+# A driver profile has no organization column (DM-24): its organization is its
+# membership's. The scope filter reads that one column through a lightweight
+# table definition instead of importing the identity models (another domain's
+# internals); the foreign key `drivers.membership_id` guarantees the row.
+_MEMBERSHIPS = table(
+    "memberships",
+    column("membership_id", PG_UUID(as_uuid=True)),
+    column("organization_id", PG_UUID(as_uuid=True)),
+)
+
+
+def _in_organization(organization_id: UUID) -> ColumnElement[bool]:
+    """Build the condition "the profile's membership is in this organization".
+
+    Args:
+        organization_id: The organization the caller may reach.
+
+    Returns:
+        A condition on `drivers.membership_id`.
+    """
+    return DriverModel.membership_id.in_(
+        select(_MEMBERSHIPS.c.membership_id).where(
+            _MEMBERSHIPS.c.organization_id == organization_id
+        )
+    )
+
 
 # Reasons recorded in `driver_history` for a routine change (the person's
 # typed `status_reason` replaces them when the change carries one).
@@ -41,23 +69,28 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> DriverMode
     return driver_record
 
 
-async def get_by_id(db_session: AsyncSession, driver_id: UUID) -> DriverModel | None:
+async def get_by_id(
+    db_session: AsyncSession,
+    driver_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+) -> DriverModel | None:
     """Find a driver by ID, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
+        organization_id: Data scope (ACC-15): only a profile whose membership
+            is in this organization is found; `None` means no restriction.
 
     Returns:
-        The driver record, or None if not found.
+        The driver record, or None if not found or out of scope.
     """
+    conditions = [DriverModel.driver_id == driver_id, DriverModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(_in_organization(organization_id))
     query_result = await db_session.execute(
-        select(DriverModel).where(
-            and_(
-                DriverModel.driver_id == driver_id,
-                DriverModel.deleted_at.is_(None),
-            )
-        )
+        select(DriverModel).where(and_(*conditions))
     )
     return query_result.scalar_one_or_none()
 
@@ -106,6 +139,7 @@ def _driver_list_conditions(
     status_filter: DriverStatus | None,
     search_text: str | None,
     vehicle_id: UUID | None,
+    organization_id: UUID | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_all` and `count`.
 
@@ -115,11 +149,14 @@ def _driver_list_conditions(
             The name and phone number live on the user (another domain).
         vehicle_id: Only the driver at the wheel of this vehicle now (open
             driving session), if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Conditions to AND together; always excludes soft-deleted drivers.
     """
     conditions: list[ColumnElement[bool]] = [DriverModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(_in_organization(organization_id))
 
     if status_filter:
         conditions.append(DriverModel.status == status_filter)
@@ -149,6 +186,7 @@ async def list_all(
     status_filter: DriverStatus | None = None,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> list[DriverModel]:
     """Get a paginated list of drivers, excluding soft-deleted records.
 
@@ -159,12 +197,16 @@ async def list_all(
         status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the licence number, if any.
         vehicle_id: Only the driver at the wheel of this vehicle now, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         List of driver records, newest first.
     """
     conditions = _driver_list_conditions(
-        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
+        status_filter=status_filter,
+        search_text=search_text,
+        vehicle_id=vehicle_id,
+        organization_id=organization_id,
     )
 
     query_result = await db_session.execute(
@@ -183,6 +225,7 @@ async def count(
     status_filter: DriverStatus | None = None,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> int:
     """Count the drivers matching the same filters as `list_all`.
 
@@ -191,12 +234,16 @@ async def count(
         status_filter: Status filter, if any.
         search_text: Case-insensitive substring of the licence number, if any.
         vehicle_id: Only the driver at the wheel of this vehicle now, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Total number of matching drivers.
     """
     conditions = _driver_list_conditions(
-        status_filter=status_filter, search_text=search_text, vehicle_id=vehicle_id
+        status_filter=status_filter,
+        search_text=search_text,
+        vehicle_id=vehicle_id,
+        organization_id=organization_id,
     )
 
     query_result = await db_session.execute(
@@ -211,6 +258,8 @@ async def update_fields(
     values: dict[str, Any],
     *,
     change_reason: str = DRIVER_EDITED_REASON,
+    changed_by: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> DriverModel | None:
     """Update the specified fields of a driver.
 
@@ -219,17 +268,23 @@ async def update_fields(
         driver_id: Internal ID of the driver.
         values: Fields to update.
         change_reason: Reason recorded in the driver's change history.
+        changed_by: The acting user, recorded in the history.
+        organization_id: Data scope; `None` means no restriction.
 
     Returns:
-        The updated driver record, or None if not found.
+        The updated driver record, or None if not found or out of scope.
     """
-    driver_record = await get_by_id(db_session, driver_id)
+    driver_record = await get_by_id(
+        db_session, driver_id, organization_id=organization_id
+    )
     if not driver_record:
         return None
 
-    # Drivers are change-tracked: the trigger needs the reason in this
-    # transaction (no acting user yet, DM-29).
-    await set_change_context(db_session, changed_by=None, change_reason=change_reason)
+    # Drivers are change-tracked: the trigger needs the actor and the reason
+    # in this transaction.
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
     for field_name, value in values.items():
         if hasattr(driver_record, field_name):
             setattr(driver_record, field_name, value)
@@ -241,7 +296,12 @@ async def update_fields(
 
 
 async def soft_delete(
-    db_session: AsyncSession, driver_id: UUID, *, status_reason: str
+    db_session: AsyncSession,
+    driver_id: UUID,
+    *,
+    status_reason: str,
+    changed_by: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> DriverModel | None:
     """Soft-delete a driver: INACTIVE, `deleted_at` set and the reason stored (DM-25).
 
@@ -249,16 +309,21 @@ async def soft_delete(
         db_session: Current database session.
         driver_id: Internal ID of the driver.
         status_reason: Why the profile left the system.
+        changed_by: The acting user, recorded in the history.
+        organization_id: Data scope; `None` means no restriction.
 
     Returns:
-        The driver record after soft delete, or None if not found.
+        The driver record after soft delete, or None if not found or out of
+        scope.
     """
-    driver_record = await get_by_id(db_session, driver_id)
+    driver_record = await get_by_id(
+        db_session, driver_id, organization_id=organization_id
+    )
     if not driver_record:
         return None
 
     await set_change_context(
-        db_session, changed_by=None, change_reason=DRIVER_DELETED_REASON
+        db_session, changed_by=changed_by, change_reason=DRIVER_DELETED_REASON
     )
     driver_record.deleted_at = utc_now()
     driver_record.status = DriverStatus.INACTIVE
@@ -317,6 +382,7 @@ async def list_sessions(
     limit: int,
     driver_id: UUID | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> list[DrivingSessionModel]:
     """Get a paginated list of driving sessions, newest first.
 
@@ -326,13 +392,14 @@ async def list_sessions(
         limit: Maximum number of records to return.
         driver_id: Only this driver's sessions, if given.
         vehicle_id: Only this truck's sessions, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Session records ordered by `started_at` descending.
     """
     query_result = await db_session.execute(
         select(DrivingSessionModel)
-        .where(*_session_conditions(driver_id, vehicle_id))
+        .where(*_session_conditions(driver_id, vehicle_id, organization_id))
         .order_by(DrivingSessionModel.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -345,6 +412,7 @@ async def count_sessions(
     *,
     driver_id: UUID | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> int:
     """Count the driving sessions matching the same filters as `list_sessions`.
 
@@ -352,31 +420,37 @@ async def count_sessions(
         db_session: Current database session.
         driver_id: Only this driver's sessions, if given.
         vehicle_id: Only this truck's sessions, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Total number of matching sessions, open and closed.
     """
     query_result = await db_session.execute(
         select(func.count(DrivingSessionModel.driving_session_id)).where(
-            *_session_conditions(driver_id, vehicle_id)
+            *_session_conditions(driver_id, vehicle_id, organization_id)
         )
     )
     return query_result.scalar() or 0
 
 
 def _session_conditions(
-    driver_id: UUID | None, vehicle_id: UUID | None
+    driver_id: UUID | None, vehicle_id: UUID | None, organization_id: UUID | None
 ) -> list[ColumnElement[bool]]:
     """Build the optional driver/truck conditions of a session query.
 
     Args:
         driver_id: Only this driver's sessions, if given.
         vehicle_id: Only this truck's sessions, if given.
+        organization_id: Data scope: only sessions recorded for this owner
+            organization (the truck's owner at check-in, DM-24 C); `None`
+            means every organization.
 
     Returns:
         Conditions to AND together (empty when no filter is given).
     """
     conditions: list[ColumnElement[bool]] = []
+    if organization_id is not None:
+        conditions.append(DrivingSessionModel.organization_id == organization_id)
     if driver_id is not None:
         conditions.append(DrivingSessionModel.driver_id == driver_id)
     if vehicle_id is not None:

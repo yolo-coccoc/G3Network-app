@@ -8,9 +8,15 @@ the `vehicles` domain's public service (VIN to vehicle, VIN for a response)
 and on the `identity` domain's public service (the person behind a membership:
 name, phone number, status); both edges are one-directional.
 
+Every router-facing function takes the authenticated `Principal`: a profile
+is read through its membership's organization, a driving session through the
+truck owner's organization recorded on it (DM-24), and both answer "not
+found" outside the caller's data reach. A driver who is only a DRIVER acts on
+their own profile and sees only their own sessions (DR-11).
+
 Not built yet: trips (plan / start / finish, DR-12), the check-in location
 check against the truck's last T-Box position and the auto-end of an idle
-session. They need the authenticated caller or telemetry and come with WP5.
+session. They need telemetry and come with WP5.
 """
 
 from datetime import date
@@ -50,10 +56,14 @@ from app.domains.drivers.types import (
     DriverStatus,
     DrivingSessionEndCause,
 )
+from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import (
     MembershipPersonReference,
     MembershipStatus,
+    Principal,
+    UserRole,
     UserStatus,
+    roles_for,
 )
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -61,6 +71,11 @@ from app.libs.common.geo import coordinates_to_location
 from app.libs.common.pagination import normalize_page_window
 
 DRIVER_DELETED_STATUS_REASON = "Driver profile deleted"
+
+# Roles that may act for another driver (check a driver in or out): the
+# users of DRV-02 except the driver themselves; a DRIVER-only caller acts on
+# their own profile.
+DRIVER_MANAGER_ROLES = roles_for("DRV-02") - {UserRole.DRIVER}
 
 
 def _is_license_expired(license_expires_on: date) -> bool:
@@ -98,12 +113,17 @@ def to_driver_reference(
 async def resolve_driver_reference_by_id(
     db_session: AsyncSession,
     driver_id: UUID,
+    *,
+    organization_id: UUID | None = None,
 ) -> DriverReference | None:
     """Find an active driver by ID and return its internal DTO.
 
     Args:
         db_session: Database session owned by the entry boundary.
         driver_id: Internal ID of the driver.
+        organization_id: Data scope of an HTTP caller: a profile whose
+            membership is in another organization is not found. `None`
+            means no restriction.
 
     Returns:
         `DriverReference` if the driver is found; otherwise `None`.
@@ -112,11 +132,41 @@ async def resolve_driver_reference_by_id(
         Performs read-only queries only (the driver, then its person through
         the identity service); does not commit or rollback.
     """
-    driver_record = await driver_repository.get_by_id(db_session, driver_id)
+    driver_record = await driver_repository.get_by_id(
+        db_session, driver_id, organization_id=organization_id
+    )
     if driver_record is None:
         return None
     person = await identity_service.resolve_membership_person_reference(
         db_session, driver_record.membership_id
+    )
+    return to_driver_reference(driver_record, person)
+
+
+async def resolve_own_driver_reference(
+    db_session: AsyncSession,
+    membership_id: UUID,
+) -> DriverReference | None:
+    """Find the live driver profile of a membership. Cross-domain entry point.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        membership_id: Internal ID of the person's membership.
+
+    Returns:
+        `DriverReference` of the membership's live profile; `None` if the
+        membership has none (or it was deleted).
+
+    Side Effects:
+        Read-only queries; does not commit or rollback.
+    """
+    driver_record = await driver_repository.find_by_membership_id(
+        db_session, membership_id
+    )
+    if driver_record is None or driver_record.deleted_at is not None:
+        return None
+    person = await identity_service.resolve_membership_person_reference(
+        db_session, membership_id
     )
     return to_driver_reference(driver_record, person)
 
@@ -176,18 +226,23 @@ async def build_driver_response(
 async def create_driver(
     db_session: AsyncSession,
     driver_create_request: DriverCreateRequest,
+    *,
+    principal: Principal,
 ) -> DriverResponse:
     """Create the driver profile of a membership (DR-09).
 
     Args:
         db_session: Database session owned by the entry boundary.
         driver_create_request: Request data that has passed Pydantic validation.
+        principal: The caller; the membership must be in the caller's data
+            reach.
 
     Returns:
         Response for the newly created driver.
 
     Raises:
-        DriverMembershipNotFoundError: When the membership does not exist.
+        DriverMembershipNotFoundError: When the membership does not exist or
+            is in an organization out of the caller's reach.
         DriverMembershipEndedError: When the person already left the
             organization.
         DriverLicenseExpiredError: When the licence is already expired.
@@ -197,7 +252,7 @@ async def create_driver(
     person = await identity_service.resolve_membership_person_reference(
         db_session, driver_create_request.membership_id
     )
-    if person is None:
+    if person is None or not principal.can_access_organization(person.organization_id):
         raise DriverMembershipNotFoundError(
             f"Membership with id '{driver_create_request.membership_id}' not found"
         )
@@ -239,12 +294,16 @@ async def create_driver(
 async def get_driver(
     db_session: AsyncSession,
     driver_id: UUID,
+    *,
+    principal: Principal,
 ) -> DriverResponse:
-    """Get an active driver by ID.
+    """Get an active driver by ID inside the caller's data reach.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
+        principal: The caller; a profile of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the driver.
@@ -252,7 +311,9 @@ async def get_driver(
     Raises:
         DriverNotFoundError: When the driver does not exist or has been soft-deleted.
     """
-    driver_record = await driver_repository.get_by_id(db_session, driver_id)
+    driver_record = await driver_repository.get_by_id(
+        db_session, driver_id, organization_id=principal.data_scope
+    )
     if not driver_record:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
@@ -262,6 +323,7 @@ async def get_driver(
 async def list_drivers(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: DriverStatus | None = None,
@@ -272,6 +334,8 @@ async def list_drivers(
 
     Args:
         db_session: Current database session.
+        principal: The caller; only profiles of the caller's organization are
+            listed unless the caller is internal.
         page: Page number, starting from 1.
         page_size: Maximum number of drivers per page.
         status_filter: Status filter, if any.
@@ -310,12 +374,14 @@ async def list_drivers(
         status_filter=status_filter,
         search_text=search_text,
         vehicle_id=vehicle_id,
+        organization_id=principal.data_scope,
     )
     total = await driver_repository.count(
         db_session,
         status_filter=status_filter,
         search_text=search_text,
         vehicle_id=vehicle_id,
+        organization_id=principal.data_scope,
     )
 
     return DriverListResponse(
@@ -333,6 +399,8 @@ async def update_driver(
     db_session: AsyncSession,
     driver_id: UUID,
     driver_update_request: DriverUpdateRequest,
+    *,
+    principal: Principal,
 ) -> DriverResponse:
     """Partially update a driver profile.
 
@@ -340,6 +408,8 @@ async def update_driver(
         db_session: Current database session.
         driver_id: Internal ID of the driver.
         driver_update_request: Field data to update.
+        principal: The caller; a profile of another organization is not found
+            unless the caller is internal.
 
     Returns:
         Response for the updated driver.
@@ -348,10 +418,13 @@ async def update_driver(
         DriverNotFoundError: When the driver does not exist or has been soft-deleted.
 
     Side Effects:
-        The change is written to `driver_history`; a `status_reason` typed in
-        the request becomes the change reason, otherwise a fixed text.
+        The change is written to `driver_history` with the caller as actor; a
+        `status_reason` typed in the request becomes the change reason,
+        otherwise a fixed text.
     """
-    driver_record = await driver_repository.get_by_id(db_session, driver_id)
+    driver_record = await driver_repository.get_by_id(
+        db_session, driver_id, organization_id=principal.data_scope
+    )
     if not driver_record:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
@@ -373,6 +446,8 @@ async def update_driver(
         driver_id,
         update_values,
         change_reason=reason or driver_repository.DRIVER_EDITED_REASON,
+        changed_by=principal.user_id,
+        organization_id=principal.data_scope,
     )
     if updated_driver_record is None:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
@@ -383,12 +458,19 @@ async def update_driver(
 async def soft_delete_driver(
     db_session: AsyncSession,
     driver_id: UUID,
+    *,
+    principal: Principal,
+    reason: str | None = None,
 ) -> dict[str, str]:
     """Soft-delete a driver, ending the open driving session first.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
+        principal: The caller; a profile of another organization is not found
+            unless the caller is internal.
+        reason: Why the profile leaves the system, stored as its status
+            reason; a fixed text when omitted.
 
     Returns:
         Success deletion message.
@@ -401,6 +483,13 @@ async def soft_delete_driver(
         transaction, so a deleted driver never holds a truck against the
         open-session unique index.
     """
+    if (
+        await driver_repository.get_by_id(
+            db_session, driver_id, organization_id=principal.data_scope
+        )
+        is None
+    ):
+        raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
     open_session = await driver_repository.find_open_session_by_driver(
         db_session, driver_id
     )
@@ -413,7 +502,11 @@ async def soft_delete_driver(
         )
 
     driver_record = await driver_repository.soft_delete(
-        db_session, driver_id, status_reason=DRIVER_DELETED_STATUS_REASON
+        db_session,
+        driver_id,
+        status_reason=reason or DRIVER_DELETED_STATUS_REASON,
+        changed_by=principal.user_id,
+        organization_id=principal.data_scope,
     )
     if not driver_record:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
@@ -464,9 +557,52 @@ async def build_driving_session_response(
     )
 
 
+async def _resolve_acting_driver(
+    db_session: AsyncSession, requested_driver_id: UUID | None, principal: Principal
+) -> DriverModel:
+    """Find the driver profile a check-in or check-out acts for.
+
+    Args:
+        db_session: Current database session.
+        requested_driver_id: The driver named in the request, if any.
+        principal: The caller.
+
+    Returns:
+        The caller's own live profile when no driver is named (or the caller
+        names themselves); otherwise the named profile, which only a manager
+        may name and only inside their data reach.
+
+    Raises:
+        DriverNotFoundError: The caller has no live profile, or the named
+            driver does not exist in the caller's reach.
+        AccessDeniedError: A caller who is not a manager named another driver.
+    """
+    own_record = await driver_repository.find_by_membership_id(
+        db_session, principal.membership_id
+    )
+    if own_record is not None and own_record.deleted_at is not None:
+        own_record = None
+    if requested_driver_id is None:
+        if own_record is None:
+            raise DriverNotFoundError("The caller has no driver profile")
+        return own_record
+    if own_record is not None and own_record.driver_id == requested_driver_id:
+        return own_record
+    if not principal.has_any_role(*DRIVER_MANAGER_ROLES):
+        raise AccessDeniedError("Only a manager can act for another driver")
+    named_record = await driver_repository.get_by_id(
+        db_session, requested_driver_id, organization_id=principal.data_scope
+    )
+    if named_record is None:
+        raise DriverNotFoundError(f"Driver with id '{requested_driver_id}' not found")
+    return named_record
+
+
 async def check_in_driver(
     db_session: AsyncSession,
     check_in_request: DrivingSessionCheckInRequest,
+    *,
+    principal: Principal,
 ) -> DrivingSessionResponse:
     """Check a driver in to a truck (DR-07, DR-10).
 
@@ -482,12 +618,19 @@ async def check_in_driver(
     Args:
         db_session: Database session owned by the entry boundary.
         check_in_request: Driver, truck VIN, method and optional phone position.
+        principal: The caller. Without a driver in the request the caller's
+            own profile checks in (the truck may belong to another
+            organization: a driver scans any truck, DR-07); a manager may
+            check in another driver of their organization, then the truck
+            must be in the manager's reach too.
 
     Returns:
         The open session; `ended_sessions` lists the ones this check-in ended.
 
     Raises:
-        DriverNotFoundError: When the driver does not exist.
+        DriverNotFoundError: When the driver does not exist in the caller's
+            reach.
+        AccessDeniedError: A non-manager named another driver.
         DriverVehicleNotFoundError: When the VIN does not resolve to a vehicle.
         DriverNotEligibleError: When the driver may not check in.
         DrivingSessionConflictError: When a concurrent check-in won the race.
@@ -496,17 +639,17 @@ async def check_in_driver(
         May close up to two sessions and inserts one, in the caller's
         transaction; does not commit or rollback.
     """
-    driver_record = await driver_repository.get_by_id(
-        db_session, check_in_request.driver_id
+    driver_record = await _resolve_acting_driver(
+        db_session, check_in_request.driver_id, principal
     )
-    if driver_record is None:
-        raise DriverNotFoundError(
-            f"Driver with id '{check_in_request.driver_id}' not found"
-        )
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, check_in_request.vehicle_vin
     )
-    if vehicle_reference is None:
+    acts_for_another = driver_record.membership_id != principal.membership_id
+    if vehicle_reference is None or (
+        acts_for_another
+        and not principal.can_access_organization(vehicle_reference.organization_id)
+    ):
         raise DriverVehicleNotFoundError(
             f"Vehicle with VIN '{check_in_request.vehicle_vin}' not found"
         )
@@ -584,25 +727,36 @@ async def check_in_driver(
 async def check_out_driver(
     db_session: AsyncSession,
     check_out_request: DrivingSessionCheckOutRequest,
+    *,
+    principal: Principal,
 ) -> DrivingSessionResponse:
     """End a driver's open driving session (`CHECKED_OUT`).
 
     Args:
         db_session: Database session owned by the entry boundary.
         check_out_request: The driver checking out.
+        principal: The caller; without a driver in the request the caller's
+            own profile checks out, a manager may check out another driver of
+            their organization.
 
     Returns:
         The closed session.
 
     Raises:
+        DriverNotFoundError: When the driver does not exist in the caller's
+            reach.
+        AccessDeniedError: A non-manager named another driver.
         DrivingSessionNotFoundError: When the driver has no open session.
     """
+    driver_record = await _resolve_acting_driver(
+        db_session, check_out_request.driver_id, principal
+    )
     open_session = await driver_repository.find_open_session_by_driver(
-        db_session, check_out_request.driver_id
+        db_session, driver_record.driver_id
     )
     if open_session is None:
         raise DrivingSessionNotFoundError(
-            f"Driver with id '{check_out_request.driver_id}' has no open session"
+            f"Driver with id '{driver_record.driver_id}' has no open session"
         )
     closed_session = await driver_repository.close_session(
         db_session,
@@ -616,6 +770,7 @@ async def check_out_driver(
 async def list_driving_sessions(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     driver_id: UUID | None = None,
@@ -625,6 +780,9 @@ async def list_driving_sessions(
 
     Args:
         db_session: Current database session.
+        principal: The caller. Sessions are read through the truck owner's
+            organization recorded on them; a caller who is only a DRIVER sees
+            their own sessions, whatever the filters say (DR-11).
         page: Page number, starting from 1.
         page_size: Maximum number of sessions per page.
         driver_id: Only this driver's sessions, if given.
@@ -635,6 +793,21 @@ async def list_driving_sessions(
         Paginated session list, open and closed sessions.
     """
     page_window = normalize_page_window(page, page_size)
+    organization_id = principal.data_scope
+    if not principal.has_any_role(*DRIVER_MANAGER_ROLES):
+        # A DRIVER-only caller: own sessions only, on any owner's trucks.
+        own_record = await driver_repository.find_by_membership_id(
+            db_session, principal.membership_id
+        )
+        if own_record is None:
+            return DrivingSessionListResponse(
+                items=[],
+                total=0,
+                page=page_window.page,
+                page_size=page_window.page_size,
+            )
+        driver_id = own_record.driver_id
+        organization_id = None
     vehicle_id: UUID | None = None
     if vehicle_vin is not None:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
@@ -655,9 +828,13 @@ async def list_driving_sessions(
         limit=page_window.page_size,
         driver_id=driver_id,
         vehicle_id=vehicle_id,
+        organization_id=organization_id,
     )
     total = await driver_repository.count_sessions(
-        db_session, driver_id=driver_id, vehicle_id=vehicle_id
+        db_session,
+        driver_id=driver_id,
+        vehicle_id=vehicle_id,
+        organization_id=organization_id,
     )
     return DrivingSessionListResponse(
         items=[
@@ -668,3 +845,34 @@ async def list_driving_sessions(
         page=page_window.page,
         page_size=page_window.page_size,
     )
+
+
+async def is_membership_checked_in_to_vehicle(
+    db_session: AsyncSession, membership_id: UUID, vehicle_id: UUID
+) -> bool:
+    """Tell whether a person is at the wheel of a truck right now. Cross-domain.
+
+    Used by telemetry to let a driver read the live data of the truck they
+    are checked in to, whichever organization owns it (mobile scenario 2).
+
+    Args:
+        db_session: Session owned by the caller's entry boundary.
+        membership_id: The person's membership (their driver profile's owner).
+        vehicle_id: Internal ID of the truck.
+
+    Returns:
+        True when the membership has a live driver profile with an open
+        driving session on that truck.
+
+    Side Effects:
+        Read-only queries; does not commit or rollback.
+    """
+    driver_record = await driver_repository.find_by_membership_id(
+        db_session, membership_id
+    )
+    if driver_record is None or driver_record.deleted_at is not None:
+        return False
+    open_session = await driver_repository.find_open_session_by_driver(
+        db_session, driver_record.driver_id
+    )
+    return open_session is not None and open_session.vehicle_id == vehicle_id

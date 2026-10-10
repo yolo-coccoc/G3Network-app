@@ -89,22 +89,34 @@ async def find_pending_session_by_token(
 
 
 async def get_session_by_id(
-    db: AsyncSession, session_id: UUID
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+    started_by: UUID | None = None,
 ) -> ChargingSessionModel | None:
     """Find the aggregate by internal UUID.
 
     Args:
         db: The async session owned by the entry boundary.
         session_id: UUID of the aggregate to query.
+        organization_id: Data scope: only a session paid by this organization
+            is found; `None` means no restriction.
+        started_by: Only a session started by this user is found; `None`
+            means no restriction (a driver sees only their own scans).
 
     Returns:
-        The matching aggregate, or ``None`` if it does not exist.
+        The matching aggregate, or ``None`` if it does not exist or is out of
+        scope.
     """
-    query_result = await db.execute(
-        select(ChargingSessionModel).where(
-            ChargingSessionModel.session_id == session_id
-        )
-    )
+    conditions: list[ColumnElement[bool]] = [
+        ChargingSessionModel.session_id == session_id
+    ]
+    if organization_id is not None:
+        conditions.append(ChargingSessionModel.organization_id == organization_id)
+    if started_by is not None:
+        conditions.append(ChargingSessionModel.started_by == started_by)
+    query_result = await db.execute(select(ChargingSessionModel).where(*conditions))
     return query_result.scalar_one_or_none()
 
 
@@ -129,6 +141,8 @@ def _session_list_conditions(
         conditions.append(
             ChargingSessionModel.organization_id == filters.organization_id
         )
+    if filters.started_by is not None:
+        conditions.append(ChargingSessionModel.started_by == filters.started_by)
     if filters.status is not None:
         conditions.append(ChargingSessionModel.status == filters.status)
     if filters.started_from is not None:

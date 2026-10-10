@@ -121,7 +121,8 @@ FastAPI registers the following domains:
   split (`charging_station_state`, `charging_connector_state`: what the
   charger reports, written by the gateway; read-time `is_online` and
   `available_connector_count`), a nearby-station radius search (public
-  locations only until authentication) with an `is_available_only` filter
+  locations, the caller's own and those granted to the caller's organization;
+  internal staff see all, CS-28) with an `is_available_only` filter
   (F-D1),
   a per-station status view (`GET /charging-stations/{id}/connectors`:
   the whole charger plus every gun), the all-stations energy ranking
@@ -207,8 +208,15 @@ FastAPI registers the following domains:
   (`get_current_principal`, `require_roles`) and apply the data rule with
   `principal.can_access_organization`. SMS and e-mail go behind
   `providers.py`, whose only implementation logs the message. The first
-  administrator is created by `make identity-bootstrap`. Wiring `Principal`
-  into the other domains' routers is WP2b.
+  administrator is created by `make identity-bootstrap`. Since WP2b every
+  other router requires a login (ID-50): each endpoint family names its roles
+  through `roles_for(<feature codes>)` (the table `FEATURE_ROLES` in
+  `identity/types.py`, copied from `features.yaml`), services take the
+  `Principal`, repositories filter by `principal.data_scope` (the
+  organization, `None` for internal staff) and an out-of-reach record answers
+  404. Only health, the sign-in family and the public legal texts are open;
+  MQTT ingestion, the OCPP gateway and the monitors are not HTTP and stay
+  unauthenticated.
 - `drivers` (F-E4, F-A9): the driver profile (one per membership, DR-09; name and
   phone live on the user and are read through `identity`'s public service),
   `driving_sessions` (check-in / check-out; one open session per truck and per
@@ -242,8 +250,8 @@ FastAPI registers the following domains:
   has no status (it exists or is soft-deleted) and needs a `name`, a
   `fleet_code` or both (`ck_fleets_name_or_code`; the code is unique per
   organization among fleets not deleted, FL-08). A fleet is owned by an
-  organization (`organization_id`, required until authentication lets the
-  API take it from the caller); a parent must belong to the same one. Fleets
+  organization (`organization_id`, taken from the caller, or named by internal
+  staff); a parent must belong to the same one. Fleets
   keep a change history (`fleet_history`).
   Fleets nest through `parent_fleet_id` (FL-02): a parent must be a live
   fleet, a move under the fleet itself or one of its sub-fleets is refused
@@ -500,19 +508,16 @@ convention will be written once the first task for that part starts.
 
 ## Not yet in the MVP
 
-- Authentication on the other domains' endpoints: `identity` has login,
-  sessions and the access rule (`get_current_principal`), but only its own
-  routers use it; wiring the rest is WP2b. `drivers` has a profile-CRUD and check-in/check-out slice (F-E4),
-  but no empty-trip detection (F-A9,
-  suspended — no trip concept exists in this backend).
+- Per-manager fleet limits (`fleet_user_assignments`, FL-10) and the
+  permission-granting step (ID-44) are not applied: every role sees every
+  record of its organization within its feature list. `drivers` has a
+  profile-CRUD and check-in/check-out slice (F-E4), but no empty-trip
+  detection (F-A9, suspended — no trip concept exists in this backend).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query
   (`GET /telemetry/vehicles/{id}/history`). Geofences are owned by a fleet,
   not yet by a customer account or a single vehicle (`deferred.md` item 86).
-- Fleet audit: the acting user is not passed yet to `added_by`/`removed_by`
-  on memberships or as the change reason of fleet edits (waits for
-  authentication, WP2 of the refactor plan);
-  `PATCH /fleets/{fleet_id}` cannot clear a name or code, nor move a fleet
+- `PATCH /fleets/{fleet_id}` cannot clear a name or code, nor move a fleet
   back to the top level (`deferred.md` item 98).
 - Technical status history and stale-status handling for chargers: an
   offline charger keeps its last connector statuses, and "available" does

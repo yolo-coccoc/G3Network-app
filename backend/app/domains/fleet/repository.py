@@ -18,6 +18,10 @@ from app.domains.fleet.models import (
 from app.libs.common.clock import utc_now
 from app.libs.db.history import set_change_context
 
+# Fixed history reasons of routine fleet actions (a typed reason overrides).
+FLEET_EDITED_REASON = "Fleet details edited"
+FLEET_DELETED_REASON = "Fleet deleted"
+
 
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> FleetModel:
     """Insert a fleet record into the database.
@@ -36,24 +40,27 @@ async def insert(db_session: AsyncSession, values: dict[str, Any]) -> FleetModel
     return fleet_record
 
 
-async def get_by_id(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | None:
+async def get_by_id(
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+) -> FleetModel | None:
     """Find a fleet by ID, excluding soft-deleted records.
 
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        organization_id: Data scope (ACC-15): only a fleet owned by this
+            organization is found; `None` means no restriction.
 
     Returns:
-        The fleet record, or None if not found.
+        The fleet record, or None if not found or out of scope.
     """
-    query_result = await db_session.execute(
-        select(FleetModel).where(
-            and_(
-                FleetModel.fleet_id == fleet_id,
-                FleetModel.deleted_at.is_(None),
-            )
-        )
-    )
+    conditions = [FleetModel.fleet_id == fleet_id, FleetModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(FleetModel.organization_id == organization_id)
+    query_result = await db_session.execute(select(FleetModel).where(and_(*conditions)))
     return query_result.scalar_one_or_none()
 
 
@@ -105,6 +112,7 @@ def _fleet_list_conditions(
     *,
     search_text: str | None,
     vehicle_id: UUID | None,
+    organization_id: UUID | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_all` and `count`.
 
@@ -113,11 +121,14 @@ def _fleet_list_conditions(
             if any.
         vehicle_id: Only the fleet this vehicle is currently (open
             membership) a member of, if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Conditions to AND together; always excludes soft-deleted fleets.
     """
     conditions: list[ColumnElement[bool]] = [FleetModel.deleted_at.is_(None)]
+    if organization_id is not None:
+        conditions.append(FleetModel.organization_id == organization_id)
 
     if search_text:
         pattern = _contains_pattern(search_text)
@@ -146,6 +157,7 @@ async def list_all(
     limit: int,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> list[FleetModel]:
     """Get a paginated list of fleets, excluding soft-deleted records.
 
@@ -157,11 +169,16 @@ async def list_all(
             if any.
         vehicle_id: Only the fleet this vehicle is currently a member of,
             if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         List of fleet records, newest first.
     """
-    conditions = _fleet_list_conditions(search_text=search_text, vehicle_id=vehicle_id)
+    conditions = _fleet_list_conditions(
+        search_text=search_text,
+        vehicle_id=vehicle_id,
+        organization_id=organization_id,
+    )
     query_result = await db_session.execute(
         select(FleetModel)
         .where(and_(*conditions))
@@ -177,6 +194,7 @@ async def count(
     *,
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
+    organization_id: UUID | None = None,
 ) -> int:
     """Count the fleets matching the same filters as `list_all`.
 
@@ -186,11 +204,16 @@ async def count(
             if any.
         vehicle_id: Only the fleet this vehicle is currently a member of,
             if given.
+        organization_id: Data scope; `None` means every organization.
 
     Returns:
         Total number of matching fleets.
     """
-    conditions = _fleet_list_conditions(search_text=search_text, vehicle_id=vehicle_id)
+    conditions = _fleet_list_conditions(
+        search_text=search_text,
+        vehicle_id=vehicle_id,
+        organization_id=organization_id,
+    )
     query_result = await db_session.execute(
         select(func.count(FleetModel.fleet_id)).where(and_(*conditions))
     )
@@ -198,7 +221,12 @@ async def count(
 
 
 async def update_fields(
-    db_session: AsyncSession, fleet_id: UUID, values: dict[str, Any]
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    values: dict[str, Any],
+    *,
+    changed_by: UUID | None = None,
+    change_reason: str = FLEET_EDITED_REASON,
 ) -> FleetModel | None:
     """Update the specified fields of a fleet.
 
@@ -206,6 +234,8 @@ async def update_fields(
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
         values: Fields to update.
+        changed_by: The acting user, recorded in the fleet history.
+        change_reason: Why the fleet changes; a fixed text for a routine edit.
 
     Returns:
         The updated fleet record, or None if not found.
@@ -214,9 +244,9 @@ async def update_fields(
     if not fleet_record:
         return None
 
-    # Fleets are change-tracked: record the fixed reason of a routine edit.
+    # Fleets are change-tracked: record who changed them and why.
     await set_change_context(
-        db_session, changed_by=None, change_reason="Fleet details edited"
+        db_session, changed_by=changed_by, change_reason=change_reason
     )
     for field_name, value in values.items():
         if hasattr(fleet_record, field_name):
@@ -228,12 +258,20 @@ async def update_fields(
     return fleet_record
 
 
-async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | None:
+async def soft_delete(
+    db_session: AsyncSession,
+    fleet_id: UUID,
+    *,
+    changed_by: UUID | None = None,
+    change_reason: str = FLEET_DELETED_REASON,
+) -> FleetModel | None:
     """Soft-delete a fleet by stamping deleted_at.
 
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
+        changed_by: The acting user, recorded in the fleet history.
+        change_reason: Why the fleet is deleted.
 
     Returns:
         The fleet record after soft delete, or None if not found.
@@ -242,7 +280,9 @@ async def soft_delete(db_session: AsyncSession, fleet_id: UUID) -> FleetModel | 
     if not fleet_record:
         return None
 
-    await set_change_context(db_session, changed_by=None, change_reason="Fleet deleted")
+    await set_change_context(
+        db_session, changed_by=changed_by, change_reason=change_reason
+    )
     fleet_record.deleted_at = utc_now()
     await db_session.flush()
     await db_session.refresh(fleet_record)
@@ -441,8 +481,7 @@ async def insert_membership(
         fleet_id: Internal ID of the fleet.
         vehicle_id: Internal ID of the vehicle.
         added_at: When the vehicle is added to the fleet.
-        added_by: User who added the vehicle; ``None`` until the API knows
-            the caller (WP2).
+        added_by: User who added the vehicle.
 
     Returns:
         The newly created membership record.
@@ -479,7 +518,7 @@ async def close_membership(
         membership_record: The open membership to close.
         removed_at: When the vehicle is removed from the fleet.
         removed_by: User who removed it; ``None`` when the system closes the
-            period or the caller is not known yet (WP2).
+            period.
 
     Returns:
         The closed membership record.

@@ -15,8 +15,9 @@ from app.domains.vehicles.types import VehicleStatus
 
 def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
     """Vehicle and telematic requests accept valid data and reject an invalid VIN."""
+    organization_id = uuid4()
     vehicle = VehicleCreateRequest(
-        organization_id=uuid4(),
+        organization_id=organization_id,
         license_plate="TEST-001",
         vin="1HGBH41JXMN109186",
         vehicle_model_id=uuid4(),
@@ -25,7 +26,7 @@ def test_vehicle_and_telematic_requests_validate_core_contract() -> None:
     )
     telematic = TelematicCreateRequest(
         telematic_serial="TBOX-TEST-001",
-        organization_id=vehicle.organization_id,
+        organization_id=organization_id,
         vehicle_vin=vehicle.vin,
         status=TelematicStatus.ACTIVE,
     )

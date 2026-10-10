@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.router as vehicle_router
 import app.domains.vehicles.service as vehicle_service
+from app.domains.identity.types import Principal
 from app.domains.vehicles.exceptions import (
     VehicleModelConflictError,
     VehicleModelNotFoundError,
@@ -28,6 +29,7 @@ from tests.builders import (
     build_vehicle_record,
     fake_db_session,
 )
+from tests.principals import build_internal_principal, build_principal
 
 
 @pytest.mark.asyncio
@@ -69,6 +71,7 @@ async def test_vehicle_service_creates_vehicle_response(
             year=record.year,
             status=record.status,
         ),
+        principal=build_principal(organization_id=record.organization_id),
     )
 
     assert response.vehicle_id == record.vehicle_id
@@ -93,13 +96,17 @@ async def test_vehicle_service_soft_delete_returns_success(
         values: dict[str, object],
         *,
         change_reason: str,
+        changed_by: UUID | None = None,
+        organization_id: UUID | None = None,
     ) -> VehicleModel:
         updated_values.update(values)
         return record
 
     monkeypatch.setattr(vehicle_repository, "update_fields", update_fields)
 
-    await vehicle_service.soft_delete_vehicle(fake_db_session(), record.vehicle_id)
+    await vehicle_service.soft_delete_vehicle(
+        fake_db_session(), record.vehicle_id, principal=build_principal()
+    )
 
     assert updated_values["status"] is VehicleStatus.INACTIVE
     assert updated_values["status_reason"]
@@ -120,13 +127,17 @@ async def test_vehicle_service_soft_delete_rejects_missing_vehicle(
         values: dict[str, object],
         *,
         change_reason: str,
+        changed_by: UUID | None = None,
+        organization_id: UUID | None = None,
     ) -> None:
         return None
 
     monkeypatch.setattr(vehicle_repository, "update_fields", update_fields)
 
     with pytest.raises(VehicleNotFoundError):
-        await vehicle_service.soft_delete_vehicle(fake_db_session(), uuid4())
+        await vehicle_service.soft_delete_vehicle(
+            fake_db_session(), uuid4(), principal=build_principal()
+        )
 
 
 @pytest.mark.asyncio
@@ -135,13 +146,19 @@ async def test_soft_delete_vehicle_endpoint_keeps_confirmation_body(
 ) -> None:
     """DELETE /vehicles/{id} still answers with the same confirmation message."""
 
-    async def soft_delete_vehicle(db_session: AsyncSession, vehicle_id: UUID) -> None:
+    async def soft_delete_vehicle(
+        db_session: AsyncSession,
+        vehicle_id: UUID,
+        *,
+        principal: Principal,
+        reason: str | None = None,
+    ) -> None:
         return None
 
     monkeypatch.setattr(vehicle_service, "soft_delete_vehicle", soft_delete_vehicle)
 
     response_body = await vehicle_router.soft_delete_vehicle_endpoint(
-        uuid4(), fake_db_session()
+        uuid4(), None, build_principal(), fake_db_session()
     )
 
     assert response_body == {"message": "Vehicle deleted successfully"}
@@ -160,22 +177,31 @@ async def test_list_vehicles_normalizes_page_window(
         offset: int,
         limit: int,
         status_filter: VehicleStatus | None = None,
+        organization_id: UUID | None = None,
     ) -> list[VehicleModel]:
-        list_arguments.update(offset=offset, limit=limit, status_filter=status_filter)
+        list_arguments.update(
+            offset=offset,
+            limit=limit,
+            status_filter=status_filter,
+            organization_id=organization_id,
+        )
         return [build_vehicle_record()]
 
     async def count(
         db_session: AsyncSession,
         *,
         status_filter: VehicleStatus | None = None,
+        organization_id: UUID | None = None,
     ) -> int:
         return 1
 
     monkeypatch.setattr(vehicle_repository, "list_all", list_all)
     monkeypatch.setattr(vehicle_repository, "count", count)
 
+    principal = build_principal()
     vehicle_list_response = await vehicle_service.list_vehicles(
         fake_db_session(),
+        principal=principal,
         page=3,
         page_size=settings.API_MAX_PAGE_SIZE + 1,
         status_filter=VehicleStatus.ACTIVE,
@@ -185,6 +211,7 @@ async def test_list_vehicles_normalizes_page_window(
         "offset": 2 * settings.API_MAX_PAGE_SIZE,
         "limit": settings.API_MAX_PAGE_SIZE,
         "status_filter": VehicleStatus.ACTIVE,
+        "organization_id": principal.organization_id,
     }
     assert vehicle_list_response.page == 3
     assert vehicle_list_response.page_size == settings.API_MAX_PAGE_SIZE
@@ -215,6 +242,7 @@ async def test_create_vehicle_rejects_unknown_vehicle_model(
                 vehicle_model_id=record.vehicle_model_id,
                 year=record.year,
             ),
+            principal=build_principal(organization_id=record.organization_id),
         )
 
 
@@ -227,7 +255,9 @@ async def test_resolve_vehicle_reference_uses_model_battery_capacity(
     vehicle_model_record = build_vehicle_model_record()
     vehicle_model_record.nominal_battery_capacity_kwh = Decimal("282.0")
 
-    async def get_by_id(db: AsyncSession, vehicle_id: UUID) -> VehicleModel:
+    async def get_by_id(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> VehicleModel:
         return record
 
     async def get_vehicle_model_by_id(
@@ -269,3 +299,33 @@ async def test_create_vehicle_model_rejects_duplicate_make_and_name(
             fake_db_session(),
             VehicleModelCreateRequest(make="Tri-Ring", model_name="EVT-400"),
         )
+
+
+@pytest.mark.asyncio
+async def test_get_vehicle_of_another_organization_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A customer principal's lookup is scoped to its organization (404)."""
+    scopes: list[UUID | None] = []
+
+    async def get_by_id(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> None:
+        scopes.append(organization_id)
+        return None
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    principal = build_principal()
+
+    with pytest.raises(VehicleNotFoundError):
+        await vehicle_service.get_vehicle(
+            fake_db_session(), uuid4(), principal=principal
+        )
+
+    with pytest.raises(VehicleNotFoundError):
+        await vehicle_service.get_vehicle(
+            fake_db_session(), uuid4(), principal=build_internal_principal()
+        )
+
+    # Customers are scoped to their organization; internal staff see all.
+    assert scopes == [principal.organization_id, None]

@@ -39,6 +39,9 @@ from app.domains.vehicles.types import (
     VehicleSummary,
 )
 from tests.builders import build_fleet_record, build_membership_record, fake_db_session
+from tests.principals import build_internal_principal
+
+pytestmark = pytest.mark.usefixtures("own_organization_for_new_records")
 
 
 @pytest.mark.asyncio
@@ -72,6 +75,7 @@ async def test_create_fleet_creates_fleet_with_zero_vehicle_count(
             fleet_code=inserted.fleet_code,
             name=inserted.name,
         ),
+        principal=build_internal_principal(),
     )
 
     assert response.fleet_id == inserted.fleet_id
@@ -100,30 +104,17 @@ async def test_create_fleet_rejects_duplicate_code(
                 fleet_code=existing.fleet_code,
                 name="Another Name",
             ),
+            principal=build_internal_principal(),
         )
-
-
-def _vehicle_owned_by(monkeypatch: pytest.MonkeyPatch, organization_id: UUID) -> None:
-    """Make the vehicles service report the given organization as the owner."""
-
-    async def resolve_organization_id(db: AsyncSession, vehicle_id: UUID) -> UUID:
-        return organization_id
-
-    monkeypatch.setattr(
-        vehicles_public_service,
-        "resolve_vehicle_organization_id",
-        resolve_organization_id,
-    )
 
 
 @pytest.mark.asyncio
 async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     """add_vehicle_to_fleet() opens a new membership and enriches the VIN (F-E1)."""
     fleet_record = build_fleet_record()
-    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
+        organization_id=fleet_record.organization_id,
         vehicle_id=vehicle_id,
         vin="1HGBH41JXMN109186",
         battery_capacity_kwh=None,
@@ -132,7 +123,9 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
         fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
     )
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
@@ -159,6 +152,7 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
         fake_db_session(),
         fleet_record.fleet_id,
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+        principal=build_internal_principal(),
     )
 
     assert response.fleet_vehicle_membership_id == inserted.fleet_vehicle_membership_id
@@ -172,9 +166,10 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_of_another_organization(
 ) -> None:
     """add_vehicle_to_fleet() refuses a vehicle owned by another organization (FL-09)."""
     fleet_record = build_fleet_record()
-    _vehicle_owned_by(monkeypatch, uuid4())
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
@@ -195,6 +190,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_of_another_organization(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
+            principal=build_internal_principal(),
         )
 
 
@@ -205,7 +201,9 @@ async def test_add_vehicle_to_fleet_rejects_unknown_vin(
     """add_vehicle_to_fleet() raises when the VIN doesn't resolve to a vehicle (F-E1)."""
     fleet_record = build_fleet_record()
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def no_vehicle(db: AsyncSession, vin: str) -> None:
@@ -221,6 +219,7 @@ async def test_add_vehicle_to_fleet_rejects_unknown_vin(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
+            principal=build_internal_principal(),
         )
 
 
@@ -230,11 +229,10 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
 ) -> None:
     """add_vehicle_to_fleet() never silently steals a vehicle from another fleet (F-E1)."""
     fleet_record = build_fleet_record()
-    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     other_fleet_id = uuid4()
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
+        organization_id=fleet_record.organization_id,
         vehicle_id=vehicle_id,
         vin="1HGBH41JXMN109186",
         battery_capacity_kwh=None,
@@ -243,7 +241,9 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
         fleet_id=other_fleet_id, vehicle_id=vehicle_id
     )
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
@@ -271,6 +271,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+            principal=build_internal_principal(),
         )
 
 
@@ -280,10 +281,9 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
 ) -> None:
     """Adding a vehicle already in this fleet is a no-op returning the existing row (F-E1)."""
     fleet_record = build_fleet_record()
-    _vehicle_owned_by(monkeypatch, fleet_record.organization_id)
     vehicle_id = uuid4()
     vehicle_reference = VehicleReference(
-        organization_id=uuid4(),
+        organization_id=fleet_record.organization_id,
         vehicle_id=vehicle_id,
         vin="1HGBH41JXMN109186",
         battery_capacity_kwh=None,
@@ -292,7 +292,9 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
         fleet_id=fleet_record.fleet_id, vehicle_id=vehicle_id
     )
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
@@ -319,6 +321,7 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
         fake_db_session(),
         fleet_record.fleet_id,
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+        principal=build_internal_principal(),
     )
 
     assert (
@@ -339,7 +342,9 @@ async def test_remove_vehicle_from_fleet_closes_membership(
     )
     closed: list[FleetVehicleMembershipModel] = []
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def find_active(
@@ -374,7 +379,10 @@ async def test_remove_vehicle_from_fleet_closes_membership(
     )
 
     await fleet_service.remove_vehicle_from_fleet(
-        fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
+        fake_db_session(),
+        fleet_record.fleet_id,
+        "1HGBH41JXMN109186",
+        principal=build_internal_principal(),
     )
 
     assert closed == [active_membership]
@@ -387,7 +395,9 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
     """remove_vehicle_from_fleet() raises when the vehicle has no active membership (F-E1)."""
     fleet_record = build_fleet_record()
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def no_active(db: AsyncSession, vehicle_id: UUID) -> None:
@@ -412,7 +422,10 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
 
     with pytest.raises(FleetMembershipNotFoundError):
         await fleet_service.remove_vehicle_from_fleet(
-            fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
+            fake_db_session(),
+            fleet_record.fleet_id,
+            "1HGBH41JXMN109186",
+            principal=build_internal_principal(),
         )
 
 
@@ -423,7 +436,9 @@ async def test_remove_vehicle_from_fleet_rejects_unknown_vin(
     """remove_vehicle_from_fleet() raises when the VIN resolves to no vehicle (F-E1)."""
     fleet_record = build_fleet_record()
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def no_vehicle(db: AsyncSession, vin: str) -> None:
@@ -436,7 +451,10 @@ async def test_remove_vehicle_from_fleet_rejects_unknown_vin(
 
     with pytest.raises(FleetVehicleNotFoundError):
         await fleet_service.remove_vehicle_from_fleet(
-            fake_db_session(), fleet_record.fleet_id, "1HGBH41JXMN109186"
+            fake_db_session(),
+            fleet_record.fleet_id,
+            "1HGBH41JXMN109186",
+            principal=build_internal_principal(),
         )
 
 
@@ -457,7 +475,9 @@ async def test_list_fleet_vehicles_enriches_each_row(
         status=VehicleStatus.ACTIVE,
     )
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def list_active(
@@ -483,7 +503,7 @@ async def test_list_fleet_vehicles_enriches_each_row(
     )
 
     response = await fleet_service.list_fleet_vehicles(
-        fake_db_session(), fleet_record.fleet_id
+        fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
     assert response.total == 1
@@ -512,6 +532,7 @@ async def test_create_fleet_rejects_unknown_parent(
             FleetCreateRequest(
                 organization_id=uuid4(), name="Depot 1", parent_fleet_id=uuid4()
             ),
+            principal=build_internal_principal(),
         )
 
 
@@ -527,7 +548,9 @@ async def test_update_fleet_refuses_a_move_under_its_own_sub_fleet(
     depot.parent_fleet_id = branch.fleet_id
     fleets_by_id = {fleet.fleet_id: fleet for fleet in (region, branch, depot)}
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel | None:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel | None:
         return fleets_by_id.get(fleet_id)
 
     async def fail_if_called(*args: object, **kwargs: object) -> None:
@@ -542,6 +565,7 @@ async def test_update_fleet_refuses_a_move_under_its_own_sub_fleet(
                 fake_db_session(),
                 region.fleet_id,
                 FleetUpdateRequest(parent_fleet_id=new_parent.fleet_id),
+                principal=build_internal_principal(),
             )
 
 
@@ -552,7 +576,9 @@ async def test_soft_delete_fleet_refuses_a_fleet_with_sub_fleets(
     """A fleet with live sub-fleets stays, and its members stay too (FL-08)."""
     fleet_record = build_fleet_record()
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def count_child_fleets(db: AsyncSession, fleet_id: UUID) -> int:
@@ -569,7 +595,11 @@ async def test_soft_delete_fleet_refuses_a_fleet_with_sub_fleets(
     monkeypatch.setattr(fleet_repository, "soft_delete", fail_if_called)
 
     with pytest.raises(FleetHasSubFleetsError):
-        await fleet_service.soft_delete_fleet(fake_db_session(), fleet_record.fleet_id)
+        await fleet_service.soft_delete_fleet(
+            fake_db_session(),
+            fleet_record.fleet_id,
+            principal=build_internal_principal(),
+        )
 
 
 @pytest.mark.asyncio
@@ -597,10 +627,14 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
         closed.append(membership_record)
         return membership_record
 
-    async def soft_delete(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def soft_delete(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def count_child_fleets(db: AsyncSession, fleet_id: UUID) -> int:
@@ -615,7 +649,7 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
     monkeypatch.setattr(fleet_repository, "soft_delete", soft_delete)
 
     deletion_response = await fleet_service.soft_delete_fleet(
-        fake_db_session(), fleet_record.fleet_id
+        fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
     assert len(closed) == 2
@@ -626,13 +660,15 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
 async def test_get_fleet_raises_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_fleet() raises for an unknown fleet ID (F-E1)."""
 
-    async def no_fleet(db: AsyncSession, fleet_id: UUID) -> None:
+    async def no_fleet(db: AsyncSession, fleet_id: UUID, **_scope: object) -> None:
         return None
 
     monkeypatch.setattr(fleet_repository, "get_by_id", no_fleet)
 
     with pytest.raises(FleetNotFoundError):
-        await fleet_service.get_fleet(fake_db_session(), uuid4())
+        await fleet_service.get_fleet(
+            fake_db_session(), uuid4(), principal=build_internal_principal()
+        )
 
 
 @pytest.mark.asyncio
@@ -651,7 +687,9 @@ async def test_list_fleet_vehicles_keeps_member_whose_vehicle_was_deleted(
     ]
     deleted_vehicle_id = memberships[1].vehicle_id
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def list_active(
@@ -686,7 +724,7 @@ async def test_list_fleet_vehicles_keeps_member_whose_vehicle_was_deleted(
     )
 
     response = await fleet_service.list_fleet_vehicles(
-        fake_db_session(), fleet_record.fleet_id
+        fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
     assert response.total == len(response.items) == 2
@@ -714,7 +752,9 @@ async def test_list_fleets_by_unknown_vehicle_vin_returns_an_empty_page(
     monkeypatch.setattr(fleet_repository, "count", unexpected_query)
 
     response = await fleet_service.list_fleets(
-        fake_db_session(), vehicle_vin="1HGBH41JXMN109186"
+        fake_db_session(),
+        vehicle_vin="1HGBH41JXMN109186",
+        principal=build_internal_principal(),
     )
 
     assert response.items == []
@@ -752,7 +792,10 @@ async def test_list_fleets_passes_search_and_vehicle_filters_to_both_queries(
     monkeypatch.setattr(fleet_repository, "count", count)
 
     await fleet_service.list_fleets(
-        fake_db_session(), search_text="hanoi", vehicle_vin="1HGBH41JXMN109186"
+        fake_db_session(),
+        search_text="hanoi",
+        vehicle_vin="1HGBH41JXMN109186",
+        principal=build_internal_principal(),
     )
 
     for query_kwargs in (seen["list"], seen["count"]):
@@ -777,7 +820,9 @@ async def test_list_fleet_vehicles_filters_by_status_and_text_then_pages(
         for vehicle_id in summaries
     ]
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def list_all_active(
@@ -809,6 +854,7 @@ async def test_list_fleet_vehicles_filters_by_status_and_text_then_pages(
         page_size=1,
         status_filter=VehicleStatus.ACTIVE,
         search_text="51c",
+        principal=build_internal_principal(),
     )
 
     # ACTIVE and plate containing "51c" (case-insensitive): vehicles 1 and 4.
@@ -828,7 +874,9 @@ async def test_close_fleet_membership_closes_an_open_membership(
     )
     closed: list[FleetVehicleMembershipModel] = []
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def get_membership(
@@ -849,7 +897,10 @@ async def test_close_fleet_membership_closes_an_open_membership(
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
 
     await fleet_service.close_fleet_membership(
-        fake_db_session(), fleet_record.fleet_id, membership.fleet_vehicle_membership_id
+        fake_db_session(),
+        fleet_record.fleet_id,
+        membership.fleet_vehicle_membership_id,
+        principal=build_internal_principal(),
     )
 
     assert closed == [membership]
@@ -870,7 +921,9 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
     if problem == "unknown":
         membership = None
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def get_membership(
@@ -883,7 +936,10 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
 
     with pytest.raises(FleetMembershipNotFoundError):
         await fleet_service.close_fleet_membership(
-            fake_db_session(), fleet_record.fleet_id, uuid4()
+            fake_db_session(),
+            fleet_record.fleet_id,
+            uuid4(),
+            principal=build_internal_principal(),
         )
 
 
@@ -919,7 +975,9 @@ async def test_get_geofence_rejects_a_geofence_of_another_fleet(
         boundary=None,
     )
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def get_geofence(db: AsyncSession, geofence_id: UUID) -> GeofenceModel:
@@ -930,7 +988,10 @@ async def test_get_geofence_rejects_a_geofence_of_another_fleet(
 
     with pytest.raises(GeofenceNotFoundError):
         await fleet_service.get_geofence(
-            fake_db_session(), fleet_record.fleet_id, other_fleet_geofence.geofence_id
+            fake_db_session(),
+            fleet_record.fleet_id,
+            other_fleet_geofence.geofence_id,
+            principal=build_internal_principal(),
         )
 
 
@@ -940,7 +1001,7 @@ async def test_list_active_member_vehicle_ids_rejects_unknown_fleet(
 ) -> None:
     """The public member-ID lookup raises for an unknown fleet (F-E1)."""
 
-    async def no_fleet(db: AsyncSession, fleet_id: UUID) -> None:
+    async def no_fleet(db: AsyncSession, fleet_id: UUID, **_scope: object) -> None:
         return None
 
     monkeypatch.setattr(fleet_repository, "get_by_id", no_fleet)
@@ -959,7 +1020,9 @@ async def test_list_active_member_vehicle_ids_returns_oldest_member_first(
     newer = build_membership_record(fleet_id=fleet_record.fleet_id, vehicle_id=uuid4())
     older.added_at = newer.added_at - timedelta(days=1)
 
-    async def get_by_id(db: AsyncSession, fleet_id: UUID) -> FleetModel:
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
         return fleet_record
 
     async def list_all_active(
@@ -1031,4 +1094,5 @@ async def test_create_fleet_rejects_parent_of_another_organization(
             FleetCreateRequest(
                 organization_id=uuid4(), name="Depot", parent_fleet_id=parent.fleet_id
             ),
+            principal=build_internal_principal(),
         )

@@ -25,15 +25,13 @@ class ChargingSessionScanRequest(BaseModel):
 
     Attributes:
         station_id: UUID of the charger the QR code names.
-        organization_id: UUID of the organization that pays.
-        started_by: UUID of the user who scanned the code (until the API
-            authenticates callers, the body names them).
+        organization_id: UUID of the organization that pays; internal staff
+            only, defaults to the organization the caller acts for.
         vehicle_id: UUID of the truck being charged, if known (CE-13).
     """
 
     station_id: UUID
-    organization_id: UUID
-    started_by: UUID
+    organization_id: UUID | None = None
     vehicle_id: UUID | None = None
 
 

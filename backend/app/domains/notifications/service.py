@@ -11,6 +11,13 @@ list/read/count/mark-read endpoints, or a producer's own transaction (the
 telemetry ingestion worker, the telematics device-health monitor, the
 support SOS intake request). This module never commits or rolls back on its
 own.
+
+Access (ACC-15): the inbox is per person across their organizations (NT-09),
+so "my notifications" are those delivered to the caller whatever organization
+they are acting for. A caller with a staff role (fleet manager, operations,
+customer care, our administrators) may also read the notifications of their
+organization (internal staff: all); a caller who is only a DRIVER reads just
+their own inbox. Opening one notification needs either.
 """
 
 from collections.abc import Sequence
@@ -20,6 +27,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.notifications.repository as notification_repository
+from app.domains.identity.types import Principal, UserRole, roles_for
 from app.domains.notifications.exceptions import (
     NotificationFilterError,
     NotificationNotFoundError,
@@ -40,6 +48,10 @@ from app.domains.notifications.types import (
     NotificationType,
 )
 from app.libs.common.clock import utc_now
+
+# Roles that read the notifications of a whole organization (NTF-01); a
+# DRIVER-only caller reads only what was delivered to them.
+NOTIFICATION_STAFF_ROLES = roles_for("NTF-01") - {UserRole.DRIVER}
 
 
 def to_notification_response(
@@ -159,13 +171,14 @@ async def resolve_last_notified_at(
 async def list_notifications(
     db: AsyncSession,
     *,
+    principal: Principal,
     after_id: int,
     limit: int,
     organization_id: UUID | None = None,
     vehicle_id: UUID | None = None,
     notification_type: NotificationType | None = None,
     severity: NotificationSeverity | None = None,
-    user_id: UUID | None = None,
+    mine_only: bool = False,
     unread_only: bool = False,
     order: NotificationListOrder = NotificationListOrder.ASC,
 ) -> NotificationListResponse:
@@ -173,16 +186,22 @@ async def list_notifications(
 
     Args:
         db: Async session owned by the HTTP boundary.
+        principal: The caller. Staff roles list their organization's
+            notifications (internal staff: all) or, with ``mine_only``, their
+            own inbox; a DRIVER-only caller always gets their own inbox.
         after_id: With ``order=ASC``, only return notifications with a
             larger ID than this cursor (``0`` returns from the beginning);
             ignored with ``order=DESC``.
         limit: Maximum number of records to return.
-        organization_id: Only notifications of this organization, if given.
+        organization_id: Only notifications of this organization, if given;
+            for a caller restricted to their organization any other value
+            gives an empty list.
         vehicle_id: Only notifications about this vehicle, if given.
         notification_type: Only notifications of this type, if given.
         severity: Only notifications of this severity, if given.
-        user_id: Only notifications delivered to this person, if given.
-        unread_only: Only those the person (``user_id``) has not read.
+        mine_only: Only the notifications delivered to the caller (their
+            inbox across organizations).
+        unread_only: Only the caller's inbox entries they have not read.
         order: ``ASC`` (default, the polling contract): oldest first after
             the cursor. ``DESC``: the newest ``limit`` notifications, newest
             first.
@@ -192,13 +211,22 @@ async def list_notifications(
         returned, or ``after_id`` when nothing was returned.
 
     Raises:
-        NotificationFilterError: If ``unread_only`` is set without ``user_id``
-            (read state is per person, NT-10).
+        NotificationFilterError: If ``unread_only`` is set without
+            ``mine_only`` (read state is per person, NT-10).
     """
-    if unread_only and user_id is None:
+    is_inbox = mine_only or not principal.has_any_role(*NOTIFICATION_STAFF_ROLES)
+    if unread_only and not is_inbox:
         raise NotificationFilterError(
-            "unread_only needs a user_id: read state is per person"
+            "unread_only needs mine_only: read state is per person"
         )
+    user_id = principal.user_id if is_inbox else None
+    if not is_inbox:
+        scope = principal.data_scope
+        if scope is not None and organization_id not in (None, scope):
+            return NotificationListResponse(
+                notifications=[], count=0, latest_notification_id=after_id
+            )
+        organization_id = scope if scope is not None else organization_id
     if order is NotificationListOrder.DESC:
         notifications = await notification_repository.list_newest(
             db,
@@ -236,7 +264,7 @@ async def list_notifications(
 
 
 async def mark_notification_read(
-    db: AsyncSession, notification_id: int, user_id: UUID
+    db: AsyncSession, notification_id: int, *, principal: Principal
 ) -> NotificationReadResponse:
     """Mark an alert read for one person, keeping the first read time.
 
@@ -248,7 +276,7 @@ async def mark_notification_read(
     Args:
         db: Async session owned by the HTTP boundary.
         notification_id: Internal ID of the alert to mark read.
-        user_id: The person who opened it.
+        principal: The caller, the person who opened it.
 
     Returns:
         The person's inbox state for the alert.
@@ -262,11 +290,11 @@ async def mark_notification_read(
         commit.
     """
     recipient_record = await notification_repository.find_recipient(
-        db, notification_id, user_id
+        db, notification_id, principal.user_id
     )
     if recipient_record is None:
         raise NotificationRecipientNotFoundError(
-            f"Notification '{notification_id}' never reached user '{user_id}'"
+            f"Notification '{notification_id}' not found in your inbox"
         )
     if recipient_record.read_at is None:
         await notification_repository.set_recipient_read(
@@ -281,44 +309,62 @@ async def mark_notification_read(
 
 
 async def get_notification(
-    db: AsyncSession, notification_id: int
+    db: AsyncSession, notification_id: int, *, principal: Principal
 ) -> NotificationResponse:
-    """Get one notification by ID.
+    """Get one notification by ID if it is in the caller's reach.
 
     Args:
         db: Async session owned by the HTTP boundary.
         notification_id: Internal ID of the notification.
+        principal: The caller. Allowed when the notification was delivered to
+            them, or when they hold a staff role and the notification belongs
+            to their organization (internal staff: any).
 
     Returns:
         The notification response.
 
     Raises:
-        NotificationNotFoundError: If the notification does not exist.
+        NotificationNotFoundError: If the notification does not exist or is
+            out of the caller's reach.
     """
     notification_record = await notification_repository.get_by_id(db, notification_id)
     if notification_record is None:
+        raise NotificationNotFoundError(f"Notification '{notification_id}' not found")
+    in_organization_reach = principal.has_any_role(*NOTIFICATION_STAFF_ROLES) and (
+        principal.is_internal
+        or (
+            notification_record.organization_id is not None
+            and principal.can_access_organization(notification_record.organization_id)
+        )
+    )
+    if not in_organization_reach and (
+        await notification_repository.find_recipient(
+            db, notification_id, principal.user_id
+        )
+        is None
+    ):
         raise NotificationNotFoundError(f"Notification '{notification_id}' not found")
     return to_notification_response(notification_record)
 
 
 async def count_unread_notifications(
-    db: AsyncSession, user_id: UUID
+    db: AsyncSession, *, principal: Principal
 ) -> NotificationUnreadCountResponse:
-    """Count the alerts a person has not read (their badge count).
+    """Count the alerts the caller has not read (their badge count).
 
     Args:
         db: Async session owned by the HTTP boundary.
-        user_id: The person.
+        principal: The caller, the person whose badge is read.
 
     Returns:
         The unread count.
     """
-    unread_count = await notification_repository.count_unread(db, user_id)
+    unread_count = await notification_repository.count_unread(db, principal.user_id)
     return NotificationUnreadCountResponse(unread_count=unread_count)
 
 
 async def mark_all_notifications_read(
-    db: AsyncSession, user_id: UUID
+    db: AsyncSession, *, principal: Principal
 ) -> NotificationMarkAllReadResponse:
     """Mark every unread alert of a person seen and read (NT-04).
 
@@ -329,7 +375,7 @@ async def mark_all_notifications_read(
 
     Args:
         db: Async session owned by the HTTP boundary.
-        user_id: The person.
+        principal: The caller, the person whose inbox is marked.
 
     Returns:
         How many alerts were marked read.
@@ -338,6 +384,6 @@ async def mark_all_notifications_read(
         One ``UPDATE`` of the unread rows; does not commit.
     """
     marked_count = await notification_repository.set_all_recipient_read(
-        db, user_id=user_id, read_at=utc_now()
+        db, user_id=principal.user_id, read_at=utc_now()
     )
     return NotificationMarkAllReadResponse(marked_count=marked_count)

@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.notifications.service as notification_service
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.domains.notifications.schemas import (
     NotificationListResponse,
     NotificationMarkAllReadResponse,
@@ -30,6 +32,11 @@ from app.libs.db.session import get_db
 
 router = APIRouter(tags=["notifications"])
 
+# Who may call what (features.yaml `users`, via `roles_for`): NTF-01 the
+# notification centre. What a caller sees inside it (own inbox, or the whole
+# organization for staff roles) is decided by the service.
+NOTIFICATION_USERS = require_roles(*roles_for("NTF-01"))
+
 
 @router.get(
     "",
@@ -44,11 +51,15 @@ async def list_notifications_endpoint(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
     organization_id: UUID | None = Query(None, description="Filter by organization"),
-    user_id: UUID | None = Query(
-        None, description="Only alerts delivered to this person"
+    mine_only: bool = Query(
+        False,
+        description=(
+            "Only the alerts delivered to me (my inbox across organizations); "
+            "always on for a caller who is only a driver"
+        ),
     ),
     unread_only: bool = Query(
-        False, description="With user_id: only alerts the person has not read"
+        False, description="With mine_only: only alerts I have not read"
     ),
     vehicle_id: UUID | None = Query(None, description="Filter by vehicle ID"),
     notification_type: NotificationType | None = Query(
@@ -64,6 +75,7 @@ async def list_notifications_endpoint(
             "desc: the newest notifications first, after_id ignored"
         ),
     ),
+    principal: Principal = Depends(NOTIFICATION_USERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationListResponse:
     """Return notifications for a polling client or a notification centre.
@@ -75,12 +87,13 @@ async def list_notifications_endpoint(
         limit: Maximum number of records to return (1 to
             ``API_MAX_PAGE_SIZE``, like every other list endpoint).
         organization_id: Organization filter, if any.
-        user_id: Only alerts delivered to this person, if given.
-        unread_only: With ``user_id``, only the alerts the person has not read.
+        mine_only: Only the alerts delivered to the caller.
+        unread_only: With ``mine_only``, only the alerts the caller has not read.
         vehicle_id: Vehicle filter, if any.
         notification_type: Type filter, if any.
         severity: Severity filter, if any.
         order: ``asc`` (polling) or ``desc`` (newest first).
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -91,12 +104,13 @@ async def list_notifications_endpoint(
         after_id=after_id,
         limit=limit,
         organization_id=organization_id,
-        user_id=user_id,
+        mine_only=mine_only,
         unread_only=unread_only,
         vehicle_id=vehicle_id,
         notification_type=notification_type,
         severity=severity,
         order=order,
+        principal=principal,
     )
 
 
@@ -106,19 +120,21 @@ async def list_notifications_endpoint(
     summary="Count the alerts a person has not read",
 )
 async def count_unread_notifications_endpoint(
-    user_id: UUID = Query(..., description="The person whose badge count to read"),
+    principal: Principal = Depends(NOTIFICATION_USERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationUnreadCountResponse:
     """Return the number of alerts a person has not read.
 
     Args:
-        user_id: The person (until the API authenticates callers).
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
         The unread count.
     """
-    return await notification_service.count_unread_notifications(db, user_id)
+    return await notification_service.count_unread_notifications(
+        db, principal=principal
+    )
 
 
 @router.post(
@@ -127,19 +143,21 @@ async def count_unread_notifications_endpoint(
     summary="Mark every unread alert of a person as read",
 )
 async def mark_all_notifications_read_endpoint(
-    user_id: UUID = Query(..., description="The person whose inbox to mark"),
+    principal: Principal = Depends(NOTIFICATION_USERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationMarkAllReadResponse:
     """Mark every unread alert of a person read; read ones keep their ``read_at``.
 
     Args:
-        user_id: The person (until the API authenticates callers).
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
         How many alerts were marked read.
     """
-    return await notification_service.mark_all_notifications_read(db, user_id)
+    return await notification_service.mark_all_notifications_read(
+        db, principal=principal
+    )
 
 
 @router.get(
@@ -148,12 +166,15 @@ async def mark_all_notifications_read_endpoint(
     summary="Get a notification",
 )
 async def get_notification_endpoint(
-    notification_id: int, db: AsyncSession = Depends(get_db, scope="function")
+    notification_id: int,
+    principal: Principal = Depends(NOTIFICATION_USERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationResponse:
     """Return one notification by ID.
 
     Args:
         notification_id: Internal ID of the notification.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -162,7 +183,9 @@ async def get_notification_endpoint(
     Raises:
         NotificationNotFoundError: The notification does not exist (HTTP 404).
     """
-    return await notification_service.get_notification(db, notification_id)
+    return await notification_service.get_notification(
+        db, notification_id, principal=principal
+    )
 
 
 @router.patch(
@@ -172,14 +195,14 @@ async def get_notification_endpoint(
 )
 async def mark_notification_read_endpoint(
     notification_id: int,
-    user_id: UUID = Query(..., description="The person who opened the alert"),
+    principal: Principal = Depends(NOTIFICATION_USERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationReadResponse:
     """Mark an alert read for a person; marking it again keeps the first ``read_at``.
 
     Args:
         notification_id: Internal ID of the alert to mark read.
-        user_id: The person (until the API authenticates callers).
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -190,5 +213,5 @@ async def mark_notification_read_endpoint(
             person (HTTP 404).
     """
     return await notification_service.mark_notification_read(
-        db, notification_id, user_id
+        db, notification_id, principal=principal
     )

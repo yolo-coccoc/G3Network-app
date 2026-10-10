@@ -46,6 +46,7 @@ from tests.builders import (
     build_charging_station_state_record,
     fake_db_session,
 )
+from tests.principals import build_internal_principal
 
 
 def test_to_nearby_charging_station_response_decodes_location_and_distance() -> None:
@@ -159,6 +160,7 @@ async def test_list_nearby_charging_stations_clamps_radius_and_paginates(
         radius_km=settings.CHARGING_STATIONS_NEARBY_MAX_RADIUS_KM + 100,
         page=0,
         page_size=0,
+        principal=build_internal_principal(),
     )
 
     assert captured["radius_meters"] == pytest.approx(
@@ -199,6 +201,7 @@ def test_available_only_nearby_filter_requires_operational_and_a_free_connector(
         min_power_kw=None,
         is_operational_only=False,
         is_available_only=False,
+        viewer=None,
     )
     available = charging_stations_repository._nearby_station_conditions(
         point,
@@ -207,6 +210,7 @@ def test_available_only_nearby_filter_requires_operational_and_a_free_connector(
         min_power_kw=None,
         is_operational_only=False,
         is_available_only=True,
+        viewer=None,
     )
 
     plain_sql = _compile(select(ChargingStationModel).where(*plain))
@@ -310,7 +314,7 @@ async def test_station_response_carries_both_connector_counts(
     )
 
     response = await charging_stations_service.get_charging_station(
-        fake_db_session(), station.station_id
+        fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 
     assert (response.connector_count, response.available_connector_count) == (3, 2)
@@ -389,6 +393,11 @@ async def test_station_status_lists_the_charger_and_every_gun(
     async def get_station(db: AsyncSession, station_id: UUID) -> ChargingStationModel:
         return station
 
+    async def get_location(
+        db: AsyncSession, location_id: UUID, **_scope: object
+    ) -> ChargingLocationModel:
+        return build_charging_location_record(location_id=station.location_id)
+
     async def get_state(
         db: AsyncSession, station_id: UUID
     ) -> ChargingStationStateModel | None:
@@ -400,13 +409,16 @@ async def test_station_status_lists_the_charger_and_every_gun(
         return [(gun_one, 1, gun_one_state), (gun_two, 2, gun_two_state)]
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", get_station)
+    monkeypatch.setattr(
+        charging_stations_repository, "get_location_by_id", get_location
+    )
     monkeypatch.setattr(charging_stations_repository, "get_station_state", get_state)
     monkeypatch.setattr(
         charging_stations_repository, "list_connectors_by_station_id", list_connectors
     )
 
     response = await charging_stations_service.get_charging_station_status(
-        fake_db_session(), station.station_id
+        fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 
     assert response.charger_status is ChargingConnectorStatus.AVAILABLE
@@ -435,7 +447,7 @@ async def test_station_status_of_an_unknown_station_is_not_found(
 
     with pytest.raises(ChargingStationNotFoundError):
         await charging_stations_service.get_charging_station_status(
-            fake_db_session(), uuid4()
+            fake_db_session(), uuid4(), principal=build_internal_principal()
         )
 
 
@@ -488,7 +500,10 @@ async def test_station_energy_totals_rank_every_station_highest_first(
     )
 
     response = await charging_stations_service.list_station_energy_totals(
-        fake_db_session(), start_time=start, end_time=end
+        fake_db_session(),
+        start_time=start,
+        end_time=end,
+        principal=build_internal_principal(),
     )
 
     assert [item.display_name for item in response.items] == [
@@ -508,11 +523,17 @@ async def test_station_energy_totals_reject_a_naive_or_backward_window() -> None
 
     with pytest.raises(ChargingStationReportRangeError, match="start_time"):
         await charging_stations_service.list_station_energy_totals(
-            fake_db_session(), start_time=datetime(2026, 9, 1), end_time=aware
+            fake_db_session(),
+            start_time=datetime(2026, 9, 1),
+            end_time=aware,
+            principal=build_internal_principal(),
         )
     with pytest.raises(ChargingStationReportRangeError):
         await charging_stations_service.list_station_energy_totals(
-            fake_db_session(), start_time=aware, end_time=aware
+            fake_db_session(),
+            start_time=aware,
+            end_time=aware,
+            principal=build_internal_principal(),
         )
 
 

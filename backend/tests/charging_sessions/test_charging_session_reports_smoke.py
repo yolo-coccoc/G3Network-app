@@ -19,6 +19,7 @@ from app.domains.charging_sessions.types import (
 )
 from app.libs.common.config import settings
 from tests.builders import build_charging_session, fake_db_session
+from tests.principals import build_internal_principal
 
 HO_CHI_MINH = ZoneInfo("Asia/Ho_Chi_Minh")
 T0 = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
@@ -66,7 +67,9 @@ async def test_session_detail_adds_the_read_time_summary(
     session.ended_at = T0 + timedelta(minutes=30)
     queried_measurands: list[str] = []
 
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
+    async def get_by_id(
+        db: AsyncSession, session_id: UUID, **_scope: object
+    ) -> ChargingSessionModel:
         return session
 
     async def first_value(
@@ -102,7 +105,7 @@ async def test_session_detail_adds_the_read_time_summary(
     monkeypatch.setattr(charging_repository, "find_max_measurement_value", max_value)
 
     detail = await charging_service.get_charging_session(
-        fake_db_session(), session.session_id
+        fake_db_session(), session.session_id, principal=build_internal_principal()
     )
 
     assert detail.session_id == session.session_id
@@ -120,7 +123,9 @@ async def test_session_detail_without_measurements_has_null_summary_fields(
     """A session with no SoC or power sample has null summary fields."""
     session = build_charging_session()
 
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
+    async def get_by_id(
+        db: AsyncSession, session_id: UUID, **_scope: object
+    ) -> ChargingSessionModel:
         return session
 
     async def no_value(
@@ -134,7 +139,7 @@ async def test_session_detail_without_measurements_has_null_summary_fields(
     monkeypatch.setattr(charging_repository, "find_max_measurement_value", no_value)
 
     detail = await charging_service.get_charging_session(
-        fake_db_session(), session.session_id
+        fake_db_session(), session.session_id, principal=build_internal_principal()
     )
 
     assert (detail.soc_start_percent, detail.soc_end_percent) == (None, None)
@@ -182,6 +187,7 @@ async def test_list_filters_reach_both_queries_normalized_to_utc(
         status=SessionStatus.COMPLETED,
         started_from=started_from,
         started_to=started_from + timedelta(days=1),
+        principal=build_internal_principal(),
     )
 
     expected = ChargingSessionListFilter(
@@ -201,11 +207,20 @@ async def test_list_filters_reject_naive_or_backward_time_bounds() -> None:
     """A naive bound or started_to <= started_from is a 400, before any query."""
     with pytest.raises(ChargingSessionInputError, match="started_from"):
         await charging_service.list_charging_sessions(
-            fake_db_session(), page=1, page_size=10, started_from=datetime(2026, 10, 1)
+            fake_db_session(),
+            page=1,
+            page_size=10,
+            started_from=datetime(2026, 10, 1),
+            principal=build_internal_principal(),
         )
     with pytest.raises(ChargingSessionInputError, match="started_to"):
         await charging_service.list_charging_sessions(
-            fake_db_session(), page=1, page_size=10, started_from=T0, started_to=T0
+            fake_db_session(),
+            page=1,
+            page_size=10,
+            started_from=T0,
+            started_to=T0,
+            principal=build_internal_principal(),
         )
 
 

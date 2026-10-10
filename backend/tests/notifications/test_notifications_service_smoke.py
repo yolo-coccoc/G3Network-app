@@ -22,6 +22,7 @@ from app.domains.notifications.types import (
     NotificationType,
 )
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal, build_principal
 
 ORGANIZATION_ID = uuid4()
 
@@ -110,7 +111,7 @@ async def test_mark_notification_read_stamps_an_unread_inbox_row(
     monkeypatch.setattr(notifications_service, "utc_now", lambda: read_at)
 
     response = await notifications_service.mark_notification_read(
-        fake_db_session(), 7, recipient.user_id
+        fake_db_session(), 7, principal=build_principal(user_id=recipient.user_id)
     )
 
     assert (response.seen_at, response.read_at) == (read_at, read_at)
@@ -138,7 +139,7 @@ async def test_mark_notification_read_keeps_the_first_read_at(
     )
 
     response = await notifications_service.mark_notification_read(
-        fake_db_session(), 7, recipient.user_id
+        fake_db_session(), 7, principal=build_principal(user_id=recipient.user_id)
     )
 
     assert response.read_at == first_read_at
@@ -157,7 +158,7 @@ async def test_mark_notification_read_raises_when_the_alert_never_reached_the_pe
 
     with pytest.raises(NotificationRecipientNotFoundError):
         await notifications_service.mark_notification_read(
-            fake_db_session(), 404, uuid4()
+            fake_db_session(), 404, principal=build_principal()
         )
 
 
@@ -182,9 +183,10 @@ async def test_list_notifications_desc_ignores_the_cursor_and_passes_filters(
 
     response = await notifications_service.list_notifications(
         fake_db_session(),
+        principal=build_principal(user_id=user_id),
         after_id=100,
         limit=2,
-        user_id=user_id,
+        mine_only=True,
         unread_only=True,
         vehicle_id=vehicle_id,
         notification_type=NotificationType.SOS_ALERT,
@@ -219,7 +221,7 @@ async def test_list_notifications_asc_keeps_the_cursor_contract(
     monkeypatch.setattr(notification_repository, "list_after_id", list_after_id)
 
     response = await notifications_service.list_notifications(
-        fake_db_session(), after_id=42, limit=10
+        fake_db_session(), after_id=42, limit=10, principal=build_internal_principal()
     )
 
     assert seen["after_id"] == 42
@@ -232,7 +234,11 @@ async def test_list_notifications_unread_only_needs_a_person() -> None:
     """Read state is per person, so unread_only without a user_id is refused."""
     with pytest.raises(NotificationFilterError):
         await notifications_service.list_notifications(
-            fake_db_session(), after_id=0, limit=10, unread_only=True
+            fake_db_session(),
+            after_id=0,
+            limit=10,
+            unread_only=True,
+            principal=build_internal_principal(),
         )
 
 
@@ -248,7 +254,9 @@ async def test_get_notification_raises_not_found_for_an_unknown_id(
     monkeypatch.setattr(notification_repository, "get_by_id", get_by_id)
 
     with pytest.raises(NotificationNotFoundError):
-        await notifications_service.get_notification(fake_db_session(), 404)
+        await notifications_service.get_notification(
+            fake_db_session(), 404, principal=build_internal_principal()
+        )
 
 
 @pytest.mark.asyncio
@@ -270,7 +278,7 @@ async def test_mark_all_notifications_read_returns_the_marked_count(
     monkeypatch.setattr(notifications_service, "utc_now", lambda: read_at)
 
     response = await notifications_service.mark_all_notifications_read(
-        fake_db_session(), user_id
+        fake_db_session(), principal=build_principal(user_id=user_id)
     )
 
     assert response.marked_count == 3

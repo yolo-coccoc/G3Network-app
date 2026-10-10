@@ -13,9 +13,12 @@
 - Base path `/api/v1`. **built** = the route exists in `backend/app/domains/*/router.py`
   today; **planned** = proposed path, nothing written yet. The `identity` part (section 1) is **built** (WP2a); `billing` and trips are planned; the old `drivers` assignment
   routes (`POST /drivers/{driver_id}/assignment`) are gone, replaced by check-in
-  (`POST /driving-sessions/` is built with `driver_id` and `vehicle_vin` in the body; DR-07,
+  (`POST /driving-sessions/` is built with `vehicle_vin` in the body and no `driver_id` for the driver's own check-in; DR-07,
   [decision-log.md:339](../decisions/decision-log.md#L339)).
-- Every call except sign-up/login/OTP sends `Authorization: Bearer <access token>`.
+- Every call except sign-up/login/OTP sends `Authorization: Bearer <access token>`
+  (all other routers enforce it since WP2b, ID-50). A DRIVER-only caller sees
+  their own data: their sessions, scans, notifications and support cases, and
+  the live data of the truck they are checked in to (`403` after check-out).
   The token names the person and the organization the app is acting for
   (`user_sessions.organization_id`); every query filters by it.
 - Common errors on every authenticated call: `401` token missing or expired
@@ -110,7 +113,7 @@ Only a token we issued starts a session (CE-11).
 
 | # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | Map of charging locations near me, with free connectors | `GET /charging-stations/nearby?lat=&lon=` (**built**; public locations only until login exists, then private ones for the owner's members and allowed organizations) | `422` bad coordinates |
+| 1 | Map of charging locations near me, with free connectors | `GET /charging-stations/nearby?lat=&lon=` (**built**; public locations plus the caller's own organization's and those granted to it, CS-28) | `422` bad coordinates |
 | 2 | Open a station: price, connectors | `GET /charging-stations/{station_id}` and `GET /charging-stations/{station_id}/connectors` (**built**) | `404` unknown or deleted station |
 | 3 | Tap "Scan to charge", scan the QR on the charger screen | `POST /charging-sessions/scan` `{qr_payload}` (planned). The backend: finds the charger, checks the wallet minimum balance (BL-14), checks access to a private location, freezes tariff price and VAT in a bill (QUOTED), creates the session PENDING with a single-use token (`id_token`), writes a `REMOTE_START` row in `charging_station_commands`; the gateway sends `RemoteStartTransaction` (1.6J) or `RequestStartTransaction` (2.0.1). Returns `session_id`, price per kWh | `404` QR unknown; `403` private location not allowed for this organization; `409` with code `INSUFFICIENT_BALANCE`: wallet below the minimum, with the amount to top up; `409` charger offline, or a session already active on the connector; `403` wallet BLOCKED |
 | 4 | Progress screen: kWh, power, cost so far, battery % | poll `GET /charging-sessions/{session_id}` (**built**) and `GET /charging-sessions/{session_id}/measurements` (**built**), every few seconds; session is PENDING until the charger confirms | `404` not the caller's session; PENDING too long becomes ABANDONED (the app says "charger did not start") and the bill is VOID |
@@ -147,8 +150,8 @@ Push and e-mail are the only extra channels at launch (SMS deferred, item 96).
 
 | # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | Badge on the app icon | `GET /notifications/unread-count` (**built**; today counts `read_at`, to be moved to the per-person recipients table; the "seen" count is planned) | none |
-| 2 | Open the list | `GET /notifications?offset=&limit=` (**built**); planned `POST /notifications/mark-seen` sets `seen_at` | none |
+| 1 | Badge on the app icon | `GET /notifications/unread-count` (**built**, for the caller; today counts `read_at`, to be moved to the per-person recipients table; the "seen" count is planned) | none |
+| 2 | Open the list | `GET /notifications?mine_only=true&limit=` (**built**; a driver always gets their own inbox, the caller is the person); planned `POST /notifications/mark-seen` sets `seen_at` | none |
 | 3 | Tap one item | `PATCH /notifications/{notification_id}/read` (**built**), then the app opens the linked screen | `404` not the caller's notification |
 | 4 | "Mark all as read" | `POST /notifications/mark-all-read` (**built**; idempotent, sets seen and read) | none |
 | 5 | Open an alert's detail | `GET /notifications/{notification_id}` (**built**) | `404` |

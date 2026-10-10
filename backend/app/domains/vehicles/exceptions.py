@@ -21,8 +21,3 @@ class VehicleModelNotFoundError(VehicleError, NotFoundError):
 
 class VehicleModelConflictError(VehicleError, ConflictError):
     """Raised when a vehicle model with the same make and model name exists."""
-
-
-class VehicleOrganizationNotFoundError(VehicleError, NotFoundError):
-    """Raised when the organization given for a new vehicle does not exist
-    (VH-07)."""

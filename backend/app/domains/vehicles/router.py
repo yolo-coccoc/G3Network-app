@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.vehicles.service as vehicle_service
+from app.domains.identity.dependencies import get_current_principal, require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.domains.vehicles.schemas import (
     VehicleCreateRequest,
     VehicleListResponse,
@@ -30,6 +32,16 @@ router = APIRouter(tags=["vehicles"])
 # Mounted separately (``/vehicle-models``): the shared truck-model catalog.
 vehicle_models_router = APIRouter(tags=["vehicle models"])
 
+# Who may call what (features.yaml `users`, via `roles_for`): VEH-01 registry,
+# VEH-02 ownership (sales), MON-02/BAT-01/WAR-01 read the registry too.
+# The model catalog is shared reference data: any signed-in caller reads it,
+# only internal staff (VEH-03) change it.
+VEHICLE_READERS = require_roles(
+    *roles_for("VEH-01", "VEH-02", "MON-02", "BAT-01", "WAR-01")
+)
+VEHICLE_WRITERS = require_roles(*roles_for("VEH-01", "VEH-02"))
+VEHICLE_MODEL_WRITERS = require_roles(*roles_for("VEH-03"), internal_only=True)
+
 # Body of a successful DELETE /vehicles/{vehicle_id}: part of the HTTP
 # contract, so it lives in the router rather than in the service.
 VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
@@ -46,12 +58,14 @@ VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
 )
 async def create_vehicle_endpoint(
     vehicle_create_request: VehicleCreateRequest,
+    principal: Principal = Depends(VEHICLE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Create a new vehicle.
 
     Args:
         vehicle_create_request: Request data for creating the vehicle.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -59,12 +73,14 @@ async def create_vehicle_endpoint(
 
     Raises:
         VehicleModelNotFoundError: The vehicle model does not exist (404).
-        VehicleOrganizationNotFoundError: The organization does not exist (404).
+        OrganizationNotFoundError: The organization does not exist or is out of
+            the caller's reach (404).
         VehicleConflictError: The license plate or VIN already exists (409).
     """
     return await vehicle_service.create_vehicle(
         db_session,
         vehicle_create_request,
+        principal=principal,
     )
 
 
@@ -85,6 +101,7 @@ async def list_vehicles_endpoint(
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Filter by status"
     ),
+    principal: Principal = Depends(VEHICLE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles.
@@ -94,6 +111,7 @@ async def list_vehicles_endpoint(
         page_size: Number of records per page.
         status_filter: Service status filter (query parameter ``status``),
             if any.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -104,6 +122,7 @@ async def list_vehicles_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
+        principal=principal,
     )
 
 
@@ -115,12 +134,14 @@ async def list_vehicles_endpoint(
 )
 async def get_vehicle_endpoint(
     vehicle_id: UUID,
+    principal: Principal = Depends(VEHICLE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Get the details of a vehicle by ID.
 
     Args:
         vehicle_id: Internal ID of the vehicle.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -129,7 +150,9 @@ async def get_vehicle_endpoint(
     Raises:
         VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
-    return await vehicle_service.get_vehicle(db_session, vehicle_id)
+    return await vehicle_service.get_vehicle(
+        db_session, vehicle_id, principal=principal
+    )
 
 
 @router.patch(
@@ -141,6 +164,7 @@ async def get_vehicle_endpoint(
 async def update_vehicle_endpoint(
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
+    principal: Principal = Depends(VEHICLE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Partially update a vehicle.
@@ -148,6 +172,7 @@ async def update_vehicle_endpoint(
     Args:
         vehicle_id: Internal ID of the vehicle.
         vehicle_update_request: Request data for updating the vehicle.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -161,6 +186,7 @@ async def update_vehicle_endpoint(
         db_session,
         vehicle_id,
         vehicle_update_request,
+        principal=principal,
     )
 
 
@@ -172,12 +198,18 @@ async def update_vehicle_endpoint(
 )
 async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
+    reason: str | None = Query(
+        None, min_length=1, max_length=200, description="Why the vehicle is removed"
+    ),
+    principal: Principal = Depends(VEHICLE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a vehicle (it leaves the system and becomes INACTIVE).
 
     Args:
         vehicle_id: Internal ID of the vehicle.
+        reason: Why the vehicle is removed (kept as the status reason).
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -186,7 +218,9 @@ async def soft_delete_vehicle_endpoint(
     Raises:
         VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
-    await vehicle_service.soft_delete_vehicle(db_session, vehicle_id)
+    await vehicle_service.soft_delete_vehicle(
+        db_session, vehicle_id, principal=principal, reason=reason
+    )
     return {"message": VEHICLE_DELETED_MESSAGE}
 
 
@@ -200,12 +234,14 @@ async def soft_delete_vehicle_endpoint(
 )
 async def create_vehicle_model_endpoint(
     vehicle_model_create_request: VehicleModelCreateRequest,
+    principal: Principal = Depends(VEHICLE_MODEL_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleModelResponse:
     """Add a truck model to the catalog.
 
     Args:
         vehicle_model_create_request: Request data for the new model.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -233,6 +269,7 @@ async def list_vehicle_models_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    principal: Principal = Depends(get_current_principal),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleModelListResponse:
     """Get a paginated list of vehicle models.
@@ -240,6 +277,7 @@ async def list_vehicle_models_endpoint(
     Args:
         page: Page number.
         page_size: Number of records per page.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -258,12 +296,14 @@ async def list_vehicle_models_endpoint(
 )
 async def get_vehicle_model_endpoint(
     vehicle_model_id: UUID,
+    principal: Principal = Depends(get_current_principal),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleModelResponse:
     """Get a vehicle model by ID.
 
     Args:
         vehicle_model_id: Internal ID of the vehicle model.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:

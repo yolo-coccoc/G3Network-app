@@ -32,6 +32,7 @@ from app.domains.charging_stations.types import (
     StationCommandOutcome,
 )
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 STATION_ID = uuid4()
@@ -536,7 +537,10 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
     state: dict[str, Any] = {"latest": None}
 
     async def fake_station(db: object, station_id: Any, **_: Any) -> Any:
-        return SimpleNamespace(station_id=STATION_ID)
+        return SimpleNamespace(station_id=STATION_ID, location_id=uuid4())
+
+    async def fake_location(db: object, location_id: Any, **_: Any) -> Any:
+        return SimpleNamespace(organization_id=uuid4(), is_public=True)
 
     async def fake_latest(db: object, station_id: Any) -> Any:
         return state["latest"]
@@ -550,6 +554,9 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_station)
     monkeypatch.setattr(
+        charging_stations_repository, "get_location_by_id", fake_location
+    )
+    monkeypatch.setattr(
         ocpp_state_repository, "get_latest_configuration_capture", fake_latest
     )
     monkeypatch.setattr(
@@ -561,11 +568,13 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
     empty = await charging_stations_service.get_latest_station_configuration(
         fake_db_session(),
         STATION_ID,
+        principal=build_internal_principal(),
     )
     state["latest"] = (capture_id, NOW)
     latest = await charging_stations_service.get_latest_station_configuration(
         fake_db_session(),
         STATION_ID,
+        principal=build_internal_principal(),
     )
 
     assert (empty.capture_id, empty.captured_at, empty.items) == (None, None, [])
@@ -591,4 +600,5 @@ async def test_latest_configuration_of_an_unknown_station_raises_not_found(
         await charging_stations_service.get_latest_station_configuration(
             fake_db_session(),
             uuid4(),
+            principal=build_internal_principal(),
         )

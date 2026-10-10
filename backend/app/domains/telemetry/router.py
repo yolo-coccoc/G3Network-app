@@ -17,7 +17,18 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.identity.service as identity_service
 import app.domains.telemetry.service as telemetry_service
+from app.domains.identity.dependencies import (
+    get_client_context,
+    require_roles,
+)
+from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
+    Principal,
+    roles_for,
+)
 from app.domains.telemetry.schemas import (
     FleetOperatingReportResponse,
     FleetVehicleLiveStatusListResponse,
@@ -33,6 +44,17 @@ from app.libs.db.session import get_db
 
 router = APIRouter(tags=["telemetry"])
 
+# Who may call what (features.yaml `users`, via `roles_for`): MON-02 live
+# status (a DRIVER reads only the truck they are checked in to, enforced in the
+# service), MON-10 location history, MON-07 battery health, MON-14 reports,
+# FLT-04/FLT-06 fleet views.
+LIVE_STATUS_READERS = require_roles(*roles_for("MON-02", "DEV-04"))
+LOCATION_HISTORY_READERS = require_roles(*roles_for("MON-10"))
+BATTERY_HEALTH_READERS = require_roles(*roles_for("MON-07", "MON-08"))
+REPORT_READERS = require_roles(*roles_for("MON-14"))
+FLEET_LIVE_READERS = require_roles(*roles_for("FLT-04"))
+FLEET_REPORT_READERS = require_roles(*roles_for("FLT-06", "MON-14"))
+
 
 @router.get(
     "/vehicles/{vehicle_id}/latest",
@@ -40,12 +62,17 @@ router = APIRouter(tags=["telemetry"])
     summary="Get the latest telemetry for a vehicle",
 )
 async def get_latest_vehicle_telemetry_endpoint(
-    vehicle_id: UUID, db: AsyncSession = Depends(get_db, scope="function")
+    vehicle_id: UUID,
+    client_context: ClientContext = Depends(get_client_context),
+    principal: Principal = Depends(LIVE_STATUS_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleTelemetryLatestResponse:
     """Return the latest telemetry record for a vehicle.
 
     Args:
         vehicle_id: Internal ID of the vehicle.
+        client_context: IP address and user agent, for the audit row.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -53,9 +80,24 @@ async def get_latest_vehicle_telemetry_endpoint(
 
     Raises:
         TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
-            soft-deleted, or has no telemetry yet.
+            soft-deleted, is out of the caller's reach, or has no telemetry
+            yet.
+        AccessDeniedError: HTTP 403 - a driver who is not checked in to this
+            truck.
     """
-    return await telemetry_service.get_latest_vehicle_telemetry_response(db, vehicle_id)
+    latest_response = await telemetry_service.get_latest_vehicle_telemetry_response(
+        db, vehicle_id, principal=principal
+    )
+    # The position of a truck is personal data of its driver (ACC-18).
+    await identity_service.record_data_access(
+        db,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="VEHICLE_LOCATION",
+        resource_id=str(vehicle_id),
+        client_context=client_context,
+    )
+    return latest_response
 
 
 @router.get(
@@ -72,6 +114,8 @@ async def get_vehicle_telemetry_history_endpoint(
         ge=1,
         le=settings.TELEMETRY_HISTORY_MAX_LIMIT,
     ),
+    client_context: ClientContext = Depends(get_client_context),
+    principal: Principal = Depends(LOCATION_HISTORY_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleTelemetryHistoryResponse:
     """Return a vehicle's telemetry history within a bounded time range (F-A5).
@@ -86,6 +130,8 @@ async def get_vehicle_telemetry_history_endpoint(
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
         limit: Maximum number of points to return.
+        client_context: IP address and user agent, for the audit row.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -98,13 +144,28 @@ async def get_vehicle_telemetry_history_endpoint(
         TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
             was soft-deleted.
     """
-    return await telemetry_service.get_vehicle_telemetry_history_response(
+    history_response = await telemetry_service.get_vehicle_telemetry_history_response(
         db,
         vehicle_id=vehicle_id,
         start_time=start_time,
         end_time=end_time,
         limit=limit,
+        principal=principal,
     )
+    # A location trail is personal data of the driver (ACC-18, ID-41).
+    await identity_service.record_data_access(
+        db,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="VEHICLE_LOCATION_HISTORY",
+        resource_id=str(vehicle_id),
+        client_context=client_context,
+        details={
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+        },
+    )
+    return history_response
 
 
 @router.get(
@@ -119,6 +180,7 @@ async def get_vehicle_operating_report_endpoint(
     end_time: datetime,
     granularity: ReportGranularity | None = None,
     report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
+    principal: Principal = Depends(REPORT_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleOperatingReportResponse | Response:
     """Return distance, energy consumed, and cost for a vehicle over a window (F-A6).
@@ -137,6 +199,7 @@ async def get_vehicle_operating_report_endpoint(
         report_format: ``json`` (default) or ``csv`` (query parameter
             ``format``) - CSV has one row per period, or one row for the
             whole window.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -156,6 +219,7 @@ async def get_vehicle_operating_report_endpoint(
         start_time=start_time,
         end_time=end_time,
         granularity=granularity,
+        principal=principal,
     )
     if report_format is ReportFormat.CSV:
         return Response(
@@ -181,6 +245,7 @@ async def get_vehicle_battery_health_endpoint(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    principal: Principal = Depends(BATTERY_HEALTH_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleBatteryHealthResponse:
     """Return one SOH/cycle-count point per day over a window (F-A3).
@@ -192,6 +257,7 @@ async def get_vehicle_battery_health_endpoint(
         vehicle_id: Internal ID of the vehicle.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -205,7 +271,11 @@ async def get_vehicle_battery_health_endpoint(
             was soft-deleted.
     """
     return await telemetry_service.get_vehicle_battery_health_response(
-        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        principal=principal,
     )
 
 
@@ -218,6 +288,7 @@ async def get_vehicle_energy_usage_endpoint(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    principal: Principal = Depends(REPORT_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleEnergyUsageResponse:
     """Return energy charged into a vehicle's pack over a window (F-C6).
@@ -231,6 +302,7 @@ async def get_vehicle_energy_usage_endpoint(
         vehicle_id: Internal ID of the vehicle (customer).
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -244,7 +316,11 @@ async def get_vehicle_energy_usage_endpoint(
             was soft-deleted.
     """
     return await telemetry_service.get_vehicle_energy_usage_report(
-        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        principal=principal,
     )
 
 
@@ -262,6 +338,7 @@ async def list_fleet_vehicle_live_statuses_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    principal: Principal = Depends(FLEET_LIVE_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetVehicleLiveStatusListResponse:
     """Return a fleet's current member vehicles with their live status (F-E1).
@@ -270,6 +347,7 @@ async def list_fleet_vehicle_live_statuses_endpoint(
         fleet_id: Internal ID of the fleet.
         page: Page number.
         page_size: Number of records per page.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -281,7 +359,7 @@ async def list_fleet_vehicle_live_statuses_endpoint(
             soft-deleted.
     """
     return await telemetry_service.list_fleet_vehicle_live_statuses(
-        db, fleet_id, page=page, page_size=page_size
+        db, fleet_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -296,6 +374,7 @@ async def get_fleet_operating_report_endpoint(
     start_time: datetime,
     end_time: datetime,
     report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
+    principal: Principal = Depends(FLEET_REPORT_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetOperatingReportResponse | Response:
     """Return per-vehicle and total distance, energy and cost of a fleet (F-A6).
@@ -311,6 +390,7 @@ async def get_fleet_operating_report_endpoint(
         report_format: ``json`` (default) or ``csv`` (query parameter
             ``format``) - CSV has one row per vehicle plus a final
             ``TOTAL`` row.
+        principal: The authenticated caller.
         db: Database session managed by the dependency.
 
     Returns:
@@ -325,7 +405,7 @@ async def get_fleet_operating_report_endpoint(
             soft-deleted.
     """
     fleet_report = await telemetry_service.get_fleet_operating_report(
-        db, fleet_id, start_time=start_time, end_time=end_time
+        db, fleet_id, start_time=start_time, end_time=end_time, principal=principal
     )
     if report_format is ReportFormat.CSV:
         return Response(

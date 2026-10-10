@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.support.service as support_service
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.domains.support.schemas import (
     SupportCaseListResponse,
     SupportCaseResponse,
@@ -28,6 +30,14 @@ from app.libs.db.session import get_db
 
 router = APIRouter(tags=["support"])
 
+# Who may call what (features.yaml `users`, via `roles_for`): SUP-01 tickets,
+# SUP-02 SOS, SUP-03 the queue (customer care works the cases). What a
+# DRIVER-only caller sees (only their own cases) is decided by the service.
+TICKET_CREATORS = require_roles(*roles_for("SUP-01"))
+SOS_CREATORS = require_roles(*roles_for("SUP-02"))
+CASE_READERS = require_roles(*roles_for("SUP-01", "SUP-02", "SUP-03"))
+CASE_HANDLERS = require_roles(*roles_for("SUP-03"))
+
 
 @router.post(
     "/cases",
@@ -38,12 +48,14 @@ router = APIRouter(tags=["support"])
 )
 async def create_support_ticket_endpoint(
     support_ticket_create_request: SupportTicketCreateRequest,
+    principal: Principal = Depends(TICKET_CREATORS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Create a new support ticket.
 
     Args:
         support_ticket_create_request: Request data for creating the ticket.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -56,7 +68,7 @@ async def create_support_ticket_endpoint(
             does not resolve to a driver.
     """
     return await support_service.create_support_ticket(
-        db_session, support_ticket_create_request
+        db_session, support_ticket_create_request, principal=principal
     )
 
 
@@ -74,12 +86,14 @@ async def create_support_ticket_endpoint(
 )
 async def create_support_sos_endpoint(
     support_sos_create_request: SupportSosCreateRequest,
+    principal: Principal = Depends(SOS_CREATORS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Create a new SOS case.
 
     Args:
         support_sos_create_request: Request data for creating the SOS case.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -92,7 +106,7 @@ async def create_support_sos_endpoint(
             does not resolve to a driver.
     """
     return await support_service.create_support_sos(
-        db_session, support_sos_create_request
+        db_session, support_sos_create_request, principal=principal
     )
 
 
@@ -138,6 +152,7 @@ async def list_support_cases_endpoint(
             "the deadline, or a late one); false: only the others"
         ),
     ),
+    principal: Principal = Depends(CASE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseListResponse:
     """Get a paginated list of support cases.
@@ -153,6 +168,7 @@ async def list_support_cases_endpoint(
         driver_id: Driver ID filter, if any.
         awaiting_response: Awaiting-first-response filter, if any.
         sla_breached: SLA-breach filter, if any.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -170,6 +186,7 @@ async def list_support_cases_endpoint(
         driver_id_filter=driver_id,
         awaiting_response_filter=awaiting_response,
         sla_breached_filter=sla_breached,
+        principal=principal,
     )
 
 
@@ -181,12 +198,14 @@ async def list_support_cases_endpoint(
 )
 async def get_support_case_endpoint(
     case_id: UUID,
+    principal: Principal = Depends(CASE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Get the details of a support case by ID.
 
     Args:
         case_id: Internal ID of the support case.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -196,7 +215,9 @@ async def get_support_case_endpoint(
         SupportCaseNotFoundError: 404 when the case does not exist or was
             soft-deleted.
     """
-    return await support_service.get_support_case(db_session, case_id)
+    return await support_service.get_support_case(
+        db_session, case_id, principal=principal
+    )
 
 
 @router.patch(
@@ -208,6 +229,7 @@ async def get_support_case_endpoint(
 async def update_support_case_endpoint(
     case_id: UUID,
     support_case_update_request: SupportCaseUpdateRequest,
+    principal: Principal = Depends(CASE_HANDLERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SupportCaseResponse:
     """Partially update a support case.
@@ -215,6 +237,7 @@ async def update_support_case_endpoint(
     Args:
         case_id: Internal ID of the support case.
         support_case_update_request: Request data for updating the case.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -227,7 +250,7 @@ async def update_support_case_endpoint(
             CANCELLED.
     """
     return await support_service.update_support_case(
-        db_session, case_id, support_case_update_request
+        db_session, case_id, support_case_update_request, principal=principal
     )
 
 
@@ -239,12 +262,14 @@ async def update_support_case_endpoint(
 )
 async def soft_delete_support_case_endpoint(
     case_id: UUID,
+    principal: Principal = Depends(CASE_HANDLERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a support case.
 
     Args:
         case_id: Internal ID of the support case.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -254,4 +279,6 @@ async def soft_delete_support_case_endpoint(
         SupportCaseNotFoundError: 404 when the case does not exist or was
             already soft-deleted.
     """
-    return await support_service.soft_delete_support_case(db_session, case_id)
+    return await support_service.soft_delete_support_case(
+        db_session, case_id, principal=principal
+    )

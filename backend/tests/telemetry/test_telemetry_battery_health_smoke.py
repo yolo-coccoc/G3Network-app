@@ -18,6 +18,7 @@ from app.domains.telemetry.types import VehicleBatteryHealthDay
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal
 
 _START = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _END = datetime(2026, 9, 8, tzinfo=timezone.utc)
@@ -87,7 +88,11 @@ async def test_battery_health_builds_one_point_per_reported_day(
     )
 
     response = await telemetry_service.get_vehicle_battery_health_response(
-        fake_db_session(), vehicle_id=vehicle_id, start_time=_START, end_time=_END
+        fake_db_session(),
+        vehicle_id=vehicle_id,
+        start_time=_START,
+        end_time=_END,
+        principal=build_internal_principal(),
     )
 
     assert captured_kwargs["time_zone"] == settings.APP_REPORT_TIMEZONE
@@ -118,7 +123,11 @@ async def test_battery_health_raises_not_found_for_unknown_vehicle(
 
     with pytest.raises(TelemetryNotFoundError):
         await telemetry_service.get_vehicle_battery_health_response(
-            fake_db_session(), vehicle_id=uuid4(), start_time=_START, end_time=_END
+            fake_db_session(),
+            vehicle_id=uuid4(),
+            start_time=_START,
+            end_time=_END,
+            principal=build_internal_principal(),
         )
 
 
@@ -145,4 +154,5 @@ async def test_battery_health_rejects_invalid_window(
             vehicle_id=uuid4(),
             start_time=start_time,
             end_time=end_time,
+            principal=build_internal_principal(),
         )

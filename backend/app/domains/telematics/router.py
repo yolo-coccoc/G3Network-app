@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telematics.service as telematics_service
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicConfigResponse,
@@ -30,16 +32,25 @@ from app.libs.db.session import get_db
 
 router = APIRouter(tags=["telematics"])
 
+# Who may call what (features.yaml `users`, via `roles_for`): DEV-01 device
+# registry, DEV-02 device-to-vehicle assignment, DEV-04 health dashboard,
+# DEV-07 remote configuration.
+DEVICE_READERS = require_roles(*roles_for("DEV-01", "DEV-02", "DEV-04"))
+DEVICE_WRITERS = require_roles(*roles_for("DEV-01", "DEV-02"))
+DEVICE_CONFIGURERS = require_roles(*roles_for("DEV-07"))
+
 
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
 async def create_telematic_endpoint(
     telematic_create_request: TelematicCreateRequest,
+    principal: Principal = Depends(DEVICE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Create a Telematic device, optionally assigned to a vehicle by VIN.
 
     Args:
         telematic_create_request: Request data for creating the device.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -54,6 +65,7 @@ async def create_telematic_endpoint(
     return await telematics_service.create_telematic(
         db_session,
         telematic_create_request,
+        principal=principal,
     )
 
 
@@ -64,6 +76,7 @@ async def list_telematics_endpoint(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
     ),
     status_filter: TelematicStatus | None = Query(None, alias="status"),
+    principal: Principal = Depends(DEVICE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicListResponse:
     """List devices that have not been soft-deleted.
@@ -72,6 +85,7 @@ async def list_telematics_endpoint(
         page: Page number, starting from 1.
         page_size: Number of records per page.
         status_filter: Status filter (query parameter ``status``), if any.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -82,18 +96,21 @@ async def list_telematics_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
+        principal=principal,
     )
 
 
 @router.get("/{telematic_id}", response_model=TelematicResponse)
 async def get_telematic_endpoint(
     telematic_id: UUID,
+    principal: Principal = Depends(DEVICE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Get the details of a device.
 
     Args:
         telematic_id: Internal ID of the device.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -103,13 +120,16 @@ async def get_telematic_endpoint(
         TelematicNotFoundError: The device does not exist or is
             soft-deleted (404).
     """
-    return await telematics_service.get_telematic(db_session, telematic_id)
+    return await telematics_service.get_telematic(
+        db_session, telematic_id, principal=principal
+    )
 
 
 @router.patch("/{telematic_id}", response_model=TelematicResponse)
 async def update_telematic_endpoint(
     telematic_id: UUID,
     telematic_update_request: TelematicUpdateRequest,
+    principal: Principal = Depends(DEVICE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Partially update a device.
@@ -117,6 +137,7 @@ async def update_telematic_endpoint(
     Args:
         telematic_id: Internal ID of the device.
         telematic_update_request: Request data for updating the device.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -134,25 +155,34 @@ async def update_telematic_endpoint(
         db_session,
         telematic_id,
         telematic_update_request,
+        principal=principal,
     )
 
 
 @router.delete("/{telematic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def soft_delete_telematic_endpoint(
     telematic_id: UUID,
+    reason: str | None = Query(
+        None, min_length=1, max_length=200, description="Why the device is removed"
+    ),
+    principal: Principal = Depends(DEVICE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Soft-delete a device.
 
     Args:
         telematic_id: Internal ID of the device.
+        reason: Why the device is removed (kept as the status reason).
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Raises:
         TelematicNotFoundError: The device does not exist or is already
             soft-deleted (404).
     """
-    await telematics_service.soft_delete_telematic(db_session, telematic_id)
+    await telematics_service.soft_delete_telematic(
+        db_session, telematic_id, principal=principal, reason=reason
+    )
 
 
 @router.post(
@@ -161,6 +191,7 @@ async def soft_delete_telematic_endpoint(
 async def push_fleet_config_endpoint(
     fleet_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
+    principal: Principal = Depends(DEVICE_CONFIGURERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicFleetConfigPushResponse:
     """Push a telemetry publish-interval config to every device of a fleet (F-J2).
@@ -171,6 +202,7 @@ async def push_fleet_config_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         telematic_config_push_request: Desired telemetry publish interval.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -184,6 +216,7 @@ async def push_fleet_config_endpoint(
         db_session,
         fleet_id,
         telematic_config_push_request,
+        principal=principal,
     )
 
 
@@ -191,6 +224,7 @@ async def push_fleet_config_endpoint(
 async def push_telematic_config_endpoint(
     telematic_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
+    principal: Principal = Depends(DEVICE_CONFIGURERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicConfigResponse:
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
@@ -198,6 +232,7 @@ async def push_telematic_config_endpoint(
     Args:
         telematic_id: Internal ID of the device.
         telematic_config_push_request: Desired telemetry publish interval.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -213,4 +248,5 @@ async def push_telematic_config_endpoint(
         db_session,
         telematic_id,
         telematic_config_push_request,
+        principal=principal,
     )

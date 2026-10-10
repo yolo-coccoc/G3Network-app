@@ -24,6 +24,7 @@ from app.domains.vehicles.types import (
 )
 from app.libs.common.config import settings
 from tests.builders import fake_db_session
+from tests.principals import build_internal_principal
 
 
 def test_calculate_energy_kwh_converts_soc_percent_with_capacity() -> None:
@@ -68,6 +69,7 @@ async def test_operating_report_rejects_naive_start_time(
             vehicle_id=uuid4(),
             start_time=datetime(2026, 9, 1),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            principal=build_internal_principal(),
         )
 
 
@@ -77,7 +79,11 @@ async def test_operating_report_rejects_end_time_at_or_before_start_time() -> No
     start = datetime(2026, 9, 2, tzinfo=timezone.utc)
     with pytest.raises(TelemetryInvalidRangeError):
         await telemetry_service.get_vehicle_operating_report(
-            fake_db_session(), vehicle_id=uuid4(), start_time=start, end_time=start
+            fake_db_session(),
+            vehicle_id=uuid4(),
+            start_time=start,
+            end_time=start,
+            principal=build_internal_principal(),
         )
 
 
@@ -88,7 +94,11 @@ async def test_operating_report_rejects_range_beyond_configured_maximum() -> Non
     end = start + timedelta(days=settings.TELEMETRY_REPORT_MAX_RANGE_DAYS + 1)
     with pytest.raises(TelemetryInvalidRangeError):
         await telemetry_service.get_vehicle_operating_report(
-            fake_db_session(), vehicle_id=uuid4(), start_time=start, end_time=end
+            fake_db_session(),
+            vehicle_id=uuid4(),
+            start_time=start,
+            end_time=end,
+            principal=build_internal_principal(),
         )
 
 
@@ -111,6 +121,7 @@ async def test_operating_report_raises_not_found_for_unknown_vehicle(
             vehicle_id=uuid4(),
             start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+            principal=build_internal_principal(),
         )
 
 
@@ -154,6 +165,7 @@ async def test_operating_report_falls_back_to_default_battery_capacity(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.is_default_battery_capacity is True
@@ -203,6 +215,7 @@ async def test_operating_report_uses_recorded_battery_capacity(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.is_default_battery_capacity is False
@@ -249,6 +262,7 @@ async def test_operating_report_returns_none_rates_for_empty_window(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.distance_km == 0.0
@@ -298,6 +312,7 @@ async def test_operating_report_returns_none_rates_for_single_sample(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.distance_per_day_km is None
@@ -345,6 +360,7 @@ async def test_operating_report_reports_energy_without_distance(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.energy_consumed_kwh > 0
@@ -393,6 +409,7 @@ async def test_operating_report_echoes_normalized_utc_window(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, 7, 0, tzinfo=tz_plus_7),
         end_time=datetime(2026, 9, 2, 7, 0, tzinfo=tz_plus_7),
+        principal=build_internal_principal(),
     )
 
     assert report.start_time == datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
@@ -439,6 +456,7 @@ async def test_energy_usage_report_reports_soc_rises(
         vehicle_id=vehicle_id,
         start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
         end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
+        principal=build_internal_principal(),
     )
 
     assert report.energy_charged_kwh == pytest.approx(40.0 / 100.0 * 75.0)

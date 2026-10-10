@@ -25,10 +25,8 @@ def test_fleet_create_request_validates_core_contract() -> None:
         FleetCreateRequest(
             organization_id=organization_id, fleet_code="", name="Hanoi Fleet"
         )
-    with pytest.raises(ValidationError):
-        FleetCreateRequest(  # type: ignore[call-arg]
-            fleet_code="FLEET-001", name="No Organization"
-        )
+    # The owner is the caller's organization unless internal staff name one.
+    assert FleetCreateRequest(fleet_code="FLEET-001").organization_id is None
 
 
 def test_fleet_create_request_needs_a_name_or_a_code() -> None:

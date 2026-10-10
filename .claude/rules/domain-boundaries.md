@@ -34,9 +34,10 @@
 | `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` (check-in: the truck and its owner) | F-E4 |
 | `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses) | F-E4 |
 | `support` → `vehicles` | `resolve_vehicle_reference_by_vin` | F-I1/F-I2 |
-| `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`) | F-I1/F-I2 |
+| `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`), `resolve_own_driver_reference` (the caller's profile), `is_membership_checked_in_to_vehicle` (an SOS on a borrowed truck) | F-I1/F-I2 |
 | `support` → `notifications` | `create_notification` (`SOS_ALERT` when an SOS is created) | F-I2 |
 | `fleet` → `vehicles` | `resolve_vehicle_reference_by_vin`, `resolve_vehicle_summary_by_id` | F-E1 |
+| `telemetry` → `drivers` | `is_membership_checked_in_to_vehicle` (a driver reads the live data of the truck they are checked in to) | MON-02, DR-11 |
 
 **Only exception — `telematics ↔ telemetry` is bidirectional** (ingestion one
 way, device-health monitoring the other). The current `forbidden` contracts
@@ -50,4 +51,4 @@ an explicit exception rather than being treated as a violation.
 - **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.
 - **`fleet`** calls only `vehicles`; `telemetry` and `telematics` call `fleet`. Fleet-wide telemetry views (live positions, the operating rollup) and geofence detection therefore live in `telemetry` (`/telemetry/fleets/{fleet_id}/...`, `telemetry/geofencing.py`) — never add a `fleet → telemetry` call, it would close a cycle.
 - **`support`** is deliberately **not** wired to `telemetry`: vehicle context (VIN, location, error code) is client-supplied at case creation.
-- **`identity`** (auth & RBAC, built in WP2) is the foundational domain: every domain may depend on it, it depends on none. A router authenticates with `identity.dependencies` (`Depends(get_current_principal)`), then applies the data rule with `principal.can_access_organization(organization_id)`; a service that writes personal-data access rows calls `identity.service.record_data_access`. The edge `X → identity` is allowed for every X without a table row.
+- **`identity`** (auth & RBAC, built in WP2) is the foundational domain: every domain may depend on it, it depends on none. A router authenticates with `identity.dependencies` (`Depends(require_roles(*roles_for(<feature codes>)))`, the roles per feature are `FEATURE_ROLES` in `identity/types.py`); the service takes the `Principal` and passes `principal.data_scope` (the organization, `None` for internal staff) to its repository, which filters by it, so another organization's record is a 404 (ID-50); a service that writes personal-data access rows calls `identity.service.record_data_access`. The edge `X → identity` is allowed for every X without a table row.

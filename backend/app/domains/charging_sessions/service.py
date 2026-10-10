@@ -12,6 +12,13 @@ not silently applied), and the session keeps only the readings the charger
 declares (``meter_start_wh``, ``meter_stop_wh``, CE-12). The caller at the
 entry boundary owns commit/rollback of the transaction.
 
+Access (ACC-15): a session belongs to the organization that paid for it
+(DM-24 C) and was started by the user who scanned. An HTTP caller sees the
+sessions of their organization (internal staff all); a caller who is only a
+DRIVER sees just the sessions they started. The owner of the charger does not
+see other organizations' sessions at their chargers through this module
+(`charging_sessions` cannot ask `charging_stations` who owns a charger).
+
 The module also serves the read-only monitoring endpoints (session detail with
 its read-time summary, the filtered session list, energy samples,
 measurements, the station energy summary and the station energy time series).
@@ -37,6 +44,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_session_repository
+import app.domains.identity.service as identity_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
@@ -55,6 +63,8 @@ from app.domains.charging_sessions.schemas import (
     ChargingSessionMeterValueListResponse,
     ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
+    ChargingSessionScanRequest,
+    ChargingSessionScanResponse,
     StationEnergySeriesBucketResponse,
     StationEnergySeriesResponse,
     StationEnergySummaryResponse,
@@ -79,11 +89,16 @@ from app.domains.charging_sessions.types import (
     TransactionIngestResult,
     TransactionSessionReference,
 )
+from app.domains.identity.types import Principal, UserRole, roles_for
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.pagination import PageWindow, normalize_page_window
 
 logger = logging.getLogger(__name__)
+
+# Roles that read every session of their organization (CHG-02/04/05); a
+# caller holding only DRIVER sees the sessions they started themselves.
+SESSION_STAFF_ROLES = roles_for("CHG-02", "CHG-04", "CHG-05") - {UserRole.DRIVER}
 
 # Measurands read by the session summary (F-B2). Names as OCPP defines them.
 # Values are stored in one fixed unit per measurand (CE-14): power in W, SoC in
@@ -210,8 +225,23 @@ def _touch_session(session_record: ChargingSessionModel) -> None:
     session_record.updated_at = utc_now()
 
 
+def _session_started_by_scope(principal: Principal) -> UUID | None:
+    """Tell whose sessions a caller may read inside their organization.
+
+    Args:
+        principal: The HTTP caller.
+
+    Returns:
+        `None` for staff roles (every session of the organization); the
+        caller's own user ID for a DRIVER-only caller.
+    """
+    if principal.has_any_role(*SESSION_STAFF_ROLES):
+        return None
+    return principal.user_id
+
+
 async def _get_charging_session_record(
-    db: AsyncSession, session_id: UUID
+    db: AsyncSession, session_id: UUID, principal: Principal | None = None
 ) -> ChargingSessionModel:
     """Load a session aggregate that must exist.
 
@@ -221,6 +251,8 @@ async def _get_charging_session_record(
     Args:
         db: The current async session.
         session_id: UUID of the session to load.
+        principal: The HTTP caller whose data reach limits the lookup; `None`
+            for a system caller (OCPP adapters).
 
     Returns:
         The existing session aggregate.
@@ -228,7 +260,17 @@ async def _get_charging_session_record(
     Raises:
         ChargingSessionNotFoundError: If the session is not found.
     """
-    session_record = await charging_session_repository.get_session_by_id(db, session_id)
+    if principal is None:
+        session_record = await charging_session_repository.get_session_by_id(
+            db, session_id
+        )
+    else:
+        session_record = await charging_session_repository.get_session_by_id(
+            db,
+            session_id,
+            organization_id=principal.data_scope,
+            started_by=_session_started_by_scope(principal),
+        )
     if session_record is None:
         raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
     return session_record
@@ -448,13 +490,14 @@ async def _build_charging_session_detail_response(
 
 
 async def get_charging_session(
-    db: AsyncSession, session_id: UUID
+    db: AsyncSession, session_id: UUID, *, principal: Principal
 ) -> ChargingSessionDetailResponse:
     """Get the session aggregate and its read-time summary (F-B2).
 
     Args:
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the aggregate to view.
+        principal: The caller; a session out of their reach is not found.
 
     Returns:
         The session response plus ``duration_seconds``,
@@ -468,13 +511,14 @@ async def get_charging_session(
         Performs one aggregate query and three measurement queries; does not
         commit or roll back.
     """
-    session_record = await _get_charging_session_record(db, session_id)
+    session_record = await _get_charging_session_record(db, session_id, principal)
     return await _build_charging_session_detail_response(db, session_record)
 
 
 async def list_charging_sessions(
     db: AsyncSession,
     *,
+    principal: Principal,
     page: int,
     page_size: int,
     station_id: UUID | None = None,
@@ -488,11 +532,15 @@ async def list_charging_sessions(
 
     Args:
         db: The async session owned by the HTTP boundary.
+        principal: The caller; only sessions of their organization are listed
+            (internal staff: all), and a DRIVER-only caller sees just the
+            sessions they started.
         page: The page, starting at one.
         page_size: The page size.
         station_id: Only sessions of this station, if given.
         connector_id: Only sessions on this connector, if given.
-        organization_id: Only sessions paid by this organization, if given.
+        organization_id: Only sessions paid by this organization, if given; a
+            caller who cannot reach that organization gets an empty page.
         status: Only sessions in this status, if given.
         started_from: Only sessions with ``started_at >= started_from``;
             must carry a timezone.
@@ -525,10 +573,18 @@ async def list_charging_sessions(
         and normalized_to <= normalized_from
     ):
         raise ChargingSessionInputError("started_to must be after started_from")
+    scope = principal.data_scope
+    if scope is not None and organization_id not in (None, scope):
+        # Another organization's sessions do not exist for this caller.
+        page_window = normalize_page_window(page, page_size)
+        return ChargingSessionListResponse(
+            items=[], total=0, page=page_window.page, page_size=page_window.page_size
+        )
     filters = ChargingSessionListFilter(
         station_id=station_id,
         connector_id=connector_id,
-        organization_id=organization_id,
+        organization_id=scope if scope is not None else organization_id,
+        started_by=_session_started_by_scope(principal),
         status=status,
         started_from=normalized_from,
         started_to=normalized_to,
@@ -552,6 +608,7 @@ async def list_charging_session_meter_values(
     db: AsyncSession,
     session_id: UUID,
     *,
+    principal: Principal,
     page: int,
     page_size: int,
 ) -> ChargingSessionMeterValueListResponse:
@@ -560,6 +617,7 @@ async def list_charging_session_meter_values(
     Args:
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the session whose meter to view.
+        principal: The caller; a session out of their reach is not found.
         page: The page, starting at one.
         page_size: The page size.
 
@@ -573,7 +631,7 @@ async def list_charging_session_meter_values(
         Performs one session lookup and two measurement queries
         (items/count).
     """
-    await _get_charging_session_record(db, session_id)
+    await _get_charging_session_record(db, session_id, principal)
     return await _build_page_response(
         ChargingSessionMeterValueListResponse,
         page=page,
@@ -594,6 +652,7 @@ async def list_charging_session_measurements(
     db: AsyncSession,
     session_id: UUID,
     *,
+    principal: Principal,
     measurand: str | None,
     page: int,
     page_size: int,
@@ -603,6 +662,7 @@ async def list_charging_session_measurements(
     Args:
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the session whose measurements to view.
+        principal: The caller; a session out of their reach is not found.
         measurand: Return only this measurand, or all of them if ``None``.
         page: The page, starting at one.
         page_size: The page size.
@@ -617,7 +677,7 @@ async def list_charging_session_measurements(
         Performs one session lookup and two measurement queries (items and
         count).
     """
-    await _get_charging_session_record(db, session_id)
+    await _get_charging_session_record(db, session_id, principal)
     return await _build_page_response(
         ChargingSessionMeasurementListResponse,
         page=page,
@@ -705,6 +765,50 @@ async def create_pending_session(
         session_id=session_record.session_id,
         station_id=station_id,
         id_token=id_token,
+    )
+
+
+async def scan_charging_session(
+    db: AsyncSession,
+    scan_request: ChargingSessionScanRequest,
+    *,
+    principal: Principal,
+) -> ChargingSessionScanResponse:
+    """Create the PENDING session of a scan made by the authenticated caller.
+
+    The payer is the organization the caller acts for (internal staff may name
+    another one) and the scanning user is the caller (CE-10).
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        scan_request: The charger and optional truck / paying organization.
+        principal: The caller.
+
+    Returns:
+        The new session's ID, status ``PENDING`` and single-use token.
+
+    Raises:
+        OrganizationNotFoundError: The named paying organization does not
+            exist or is out of the caller's reach.
+
+    Side Effects:
+        One insert (see ``create_pending_session``).
+    """
+    paying_organization_id = await identity_service.resolve_organization_for_new_record(
+        db, principal, scan_request.organization_id
+    )
+    pending_session = await create_pending_session(
+        db,
+        station_id=scan_request.station_id,
+        organization_id=paying_organization_id,
+        started_by=principal.user_id,
+        vehicle_id=scan_request.vehicle_id,
+    )
+    return ChargingSessionScanResponse(
+        session_id=pending_session.session_id,
+        station_id=pending_session.station_id,
+        status=SessionStatus.PENDING,
+        id_token=pending_session.id_token,
     )
 
 

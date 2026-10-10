@@ -8,7 +8,16 @@ schema of the support domain. This domain depends on the
 into an internal reference, and on the `notifications` domain's public
 service to raise an `SOS_ALERT` for every new SOS (F-I2) - all
 one-directional edges, the same shape as the existing `telematics ->
-vehicles` and `telemetry -> notifications` edges.
+vehicles` and `telemetry -> notifications` edges, and on `identity` for the
+caller and the owning organization.
+
+Access (ACC-15): a case belongs to an organization - the owner of the truck it
+names, else the organization the caller acts for. An HTTP caller sees the
+cases of their organization (internal staff: all); a caller who is only a
+DRIVER sees just the cases raised by their own driver profile, which every
+case they create carries. A truck of another organization can be named only
+by internal staff, by someone with that organization's reach, or by the driver
+checked in to it (an SOS must work on a borrowed truck).
 """
 
 from datetime import timedelta
@@ -17,15 +26,16 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
+import app.domains.identity.service as identity_service
 import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
 import app.domains.vehicles.service as vehicle_service
+from app.domains.identity.types import Principal, UserRole, roles_for
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
     SupportDriverNotFoundError,
-    SupportOrganizationRequiredError,
     SupportVehicleNotFoundError,
 )
 from app.domains.support.models import SupportCaseModel
@@ -48,6 +58,10 @@ from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 from app.libs.common.pagination import normalize_page_window
+
+# Roles that read every case of their organization (SUP-01..03); a caller
+# holding only DRIVER sees the cases their own driver profile raised.
+SUPPORT_STAFF_ROLES = roles_for("SUP-01", "SUP-02", "SUP-03") - {UserRole.DRIVER}
 
 
 def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
@@ -139,19 +153,23 @@ async def _resolve_case_context(
     *,
     vehicle_vin: str | None,
     driver_id: UUID | None,
+    principal: Principal,
 ) -> tuple[UUID | None, str | None, UUID | None, UUID | None]:
     """Resolve an optional VIN/driver ID into internal IDs, validating both.
 
     Args:
         db_session: Database session owned by the entry boundary.
         vehicle_vin: VIN supplied by the caller, if any.
-        driver_id: Driver ID supplied by the caller, if any.
+        driver_id: Driver ID supplied by the caller, if any; without one, a
+            caller who has a driver profile is recorded as the driver.
+        principal: The caller (data scope).
 
     Returns:
         A tuple of `(vehicle_id, vin, driver_id, vehicle_organization_id)`.
         `vehicle_organization_id` is the resolved vehicle's owner now. `vehicle_id`/`vin` are
-        both `None` if no VIN was supplied; `driver_id` is echoed back
-        unchanged (only its existence is checked).
+        both `None` if no VIN was supplied; `driver_id` is the one supplied
+        (only its existence in the caller's reach is checked) or the
+        caller's own profile.
 
     Raises:
         SupportVehicleNotFoundError: When a VIN was supplied but doesn't
@@ -166,7 +184,12 @@ async def _resolve_case_context(
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
             db_session, vehicle_vin
         )
-        if vehicle_reference is None:
+        if vehicle_reference is None or not (
+            principal.can_access_organization(vehicle_reference.organization_id)
+            or await driver_service.is_membership_checked_in_to_vehicle(
+                db_session, principal.membership_id, vehicle_reference.vehicle_id
+            )
+        ):
             raise SupportVehicleNotFoundError(
                 f"Vehicle with VIN '{vehicle_vin}' not found"
             )
@@ -176,10 +199,15 @@ async def _resolve_case_context(
 
     if driver_id is not None:
         driver_reference = await driver_service.resolve_driver_reference_by_id(
-            db_session, driver_id
+            db_session, driver_id, organization_id=principal.data_scope
         )
         if driver_reference is None:
             raise SupportDriverNotFoundError(f"Driver with id '{driver_id}' not found")
+    else:
+        own_driver = await driver_service.resolve_own_driver_reference(
+            db_session, principal.membership_id
+        )
+        driver_id = own_driver.driver_id if own_driver is not None else None
 
     return resolved_vehicle_id, resolved_vin, driver_id, vehicle_organization_id
 
@@ -192,7 +220,7 @@ async def _insert_case(
     channel: SupportCaseChannel,
     subject: str,
     sla_response_minutes: int,
-    is_organization_required: bool = False,
+    principal: Principal,
 ) -> SupportCaseResponse:
     """Validate a new case's context, insert it as OPEN and build its response.
 
@@ -209,8 +237,8 @@ async def _insert_case(
         subject: Short subject line to store.
         sla_response_minutes: Response SLA for this case type; the deadline
             `response_due_at` is now plus this many minutes.
-        is_organization_required: Whether the case must end up with an
-            organization (an SOS, whose alert belongs to one).
+        principal: The caller; the case belongs to the named truck's owner,
+            else to the caller's organization (internal staff may name one).
 
     Returns:
         Response for the newly created case.
@@ -220,8 +248,8 @@ async def _insert_case(
             resolve to a vehicle.
         SupportDriverNotFoundError: When a driver ID was supplied but
             doesn't resolve to a driver.
-        SupportOrganizationRequiredError: When an organization is required
-            and neither the request nor the vehicle gives one.
+        OrganizationNotFoundError: When internal staff name an organization
+            that does not exist.
 
     Side Effects:
         Inserts one `support_cases` row (flushed, not committed).
@@ -230,14 +258,16 @@ async def _insert_case(
         db_session,
         vehicle_vin=case_create_request.vehicle_vin,
         driver_id=case_create_request.driver_id,
+        principal=principal,
     )
     # The vehicle's owner wins over a caller-supplied organization: the case
-    # belongs to whoever owns the truck now.
-    organization_id = vehicle_organization_id or case_create_request.organization_id
-    if organization_id is None and is_organization_required:
-        raise SupportOrganizationRequiredError(
-            "An SOS needs a known vehicle or an organization_id"
+    # belongs to whoever owns the truck now. Without a truck it belongs to the
+    # organization the caller acts for.
+    organization_id = vehicle_organization_id or (
+        await identity_service.resolve_organization_for_new_record(
+            db_session, principal, case_create_request.organization_id
         )
+    )
 
     created_at = utc_now()
     case_record = await support_repository.insert(
@@ -269,6 +299,8 @@ async def _insert_case(
 async def create_support_ticket(
     db_session: AsyncSession,
     support_ticket_create_request: SupportTicketCreateRequest,
+    *,
+    principal: Principal,
 ) -> SupportCaseResponse:
     """Create a new support ticket (F-I1) with the ticket response SLA.
 
@@ -276,6 +308,7 @@ async def create_support_ticket(
         db_session: Database session owned by the entry boundary.
         support_ticket_create_request: Request data that has passed
             Pydantic validation.
+        principal: The caller.
 
     Returns:
         Response for the newly created ticket.
@@ -293,6 +326,7 @@ async def create_support_ticket(
         channel=support_ticket_create_request.channel,
         subject=support_ticket_create_request.subject,
         sla_response_minutes=settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES,
+        principal=principal,
     )
 
 
@@ -338,6 +372,8 @@ def build_sos_alert_payload(
 async def create_support_sos(
     db_session: AsyncSession,
     support_sos_create_request: SupportSosCreateRequest,
+    *,
+    principal: Principal,
 ) -> SupportCaseResponse:
     """Create a new SOS report (F-I2) and raise its ``SOS_ALERT``.
 
@@ -345,6 +381,7 @@ async def create_support_sos(
         db_session: Database session owned by the entry boundary.
         support_sos_create_request: Request data that has passed Pydantic
             validation (an ``IN_APP`` SOS always carries a location).
+        principal: The caller.
 
     Returns:
         Response for the newly created SOS case.
@@ -373,11 +410,11 @@ async def create_support_sos(
         channel=support_sos_create_request.channel,
         subject=f"SOS - {support_sos_create_request.category.value}",
         sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
-        is_organization_required=True,
+        principal=principal,
     )
 
     vehicle_label = support_case_response.vehicle_vin or "unknown vehicle"
-    # _insert_case refused an SOS without an organization, so it is set here.
+    # _insert_case always resolves an organization, so it is set here.
     assert support_case_response.organization_id is not None
     await notifications_service.create_notification(
         db_session,
@@ -397,15 +434,83 @@ async def create_support_sos(
     return support_case_response
 
 
-async def get_support_case(
-    db_session: AsyncSession,
-    case_id: UUID,
-) -> SupportCaseResponse:
-    """Get an active support case by ID.
+def _driver_scope(principal: Principal, own_driver_id: UUID | None) -> UUID | None:
+    """Tell whose cases a caller may read inside their organization.
+
+    Args:
+        principal: The caller.
+        own_driver_id: The caller's own driver profile, if they have one.
+
+    Returns:
+        `None` for staff roles (every case of the organization); the
+        caller's own driver profile for a DRIVER-only caller (a nil UUID when
+        they have none, so nothing matches).
+    """
+    if principal.has_any_role(*SUPPORT_STAFF_ROLES):
+        return None
+    return own_driver_id if own_driver_id is not None else UUID(int=0)
+
+
+async def _own_driver_id(db_session: AsyncSession, principal: Principal) -> UUID | None:
+    """Look up the caller's own live driver profile.
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+
+    Returns:
+        The profile ID, or `None` when the caller is not a driver (or the
+        caller holds a staff role, which needs no lookup).
+    """
+    if principal.has_any_role(*SUPPORT_STAFF_ROLES):
+        return None
+    own_driver = await driver_service.resolve_own_driver_reference(
+        db_session, principal.membership_id
+    )
+    return own_driver.driver_id if own_driver is not None else None
+
+
+async def _get_case_in_reach(
+    db_session: AsyncSession, case_id: UUID, principal: Principal
+) -> SupportCaseModel:
+    """Load a live case the caller may act on, or raise "not found".
 
     Args:
         db_session: Current database session.
         case_id: Internal ID of the support case.
+        principal: The caller (data scope).
+
+    Returns:
+        The case record.
+
+    Raises:
+        SupportCaseNotFoundError: The case does not exist, was deleted or is
+            out of the caller's reach.
+    """
+    case_record = await support_repository.get_by_id(
+        db_session,
+        case_id,
+        organization_id=principal.data_scope,
+        driver_id=_driver_scope(principal, await _own_driver_id(db_session, principal)),
+    )
+    if not case_record:
+        raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")
+    return case_record
+
+
+async def get_support_case(
+    db_session: AsyncSession,
+    case_id: UUID,
+    *,
+    principal: Principal,
+) -> SupportCaseResponse:
+    """Get an active support case by ID inside the caller's data reach.
+
+    Args:
+        db_session: Current database session.
+        case_id: Internal ID of the support case.
+        principal: The caller; a case of another organization (or, for a
+            DRIVER-only caller, of another driver) is not found.
 
     Returns:
         Response for the support case.
@@ -414,16 +519,14 @@ async def get_support_case(
         SupportCaseNotFoundError: When the case does not exist or has been
             soft-deleted.
     """
-    case_record = await support_repository.get_by_id(db_session, case_id)
-    if not case_record:
-        raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")
-
+    case_record = await _get_case_in_reach(db_session, case_id, principal)
     return await build_support_case_response(db_session, case_record)
 
 
 async def list_support_cases(
     db_session: AsyncSession,
     *,
+    principal: Principal,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: SupportCaseStatus | None = None,
@@ -439,6 +542,9 @@ async def list_support_cases(
 
     Args:
         db_session: Current database session.
+        principal: The caller; only cases of their organization are listed
+            (internal staff: all), and a DRIVER-only caller sees just the
+            cases their own profile raised.
         page: Page number, starting from 1.
         page_size: Maximum number of cases per page.
         status_filter: Status filter, if any.
@@ -457,13 +563,15 @@ async def list_support_cases(
         Paginated support case list response.
     """
     page_window = normalize_page_window(page, page_size)
+    driver_scope = _driver_scope(principal, await _own_driver_id(db_session, principal))
     case_list_filter = SupportCaseListFilter(
         status=status_filter,
         case_type=case_type_filter,
         vehicle_id=vehicle_id_filter,
         category=category_filter,
         channel=channel_filter,
-        driver_id=driver_id_filter,
+        driver_id=driver_scope or driver_id_filter,
+        organization_id=principal.data_scope,
         is_awaiting_response=awaiting_response_filter,
         is_sla_breached=sla_breached_filter,
     )
@@ -537,6 +645,8 @@ async def update_support_case(
     db_session: AsyncSession,
     case_id: UUID,
     support_case_update_request: SupportCaseUpdateRequest,
+    *,
+    principal: Principal,
 ) -> SupportCaseResponse:
     """Partially update a support case.
 
@@ -544,6 +654,7 @@ async def update_support_case(
         db_session: Current database session.
         case_id: Internal ID of the support case.
         support_case_update_request: Field data to update.
+        principal: The caller (data scope).
 
     Returns:
         Response for the updated support case.
@@ -554,9 +665,7 @@ async def update_support_case(
         SupportCaseStateError: When the case is already CLOSED or
             CANCELLED - a terminal case accepts no further update.
     """
-    case_record = await support_repository.get_by_id(db_session, case_id)
-    if not case_record:
-        raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")
+    case_record = await _get_case_in_reach(db_session, case_id, principal)
 
     if is_terminal_status(case_record.status):
         raise SupportCaseStateError(
@@ -590,12 +699,15 @@ async def update_support_case(
 async def soft_delete_support_case(
     db_session: AsyncSession,
     case_id: UUID,
+    *,
+    principal: Principal,
 ) -> dict[str, str]:
     """Soft-delete a support case.
 
     Args:
         db_session: Current database session.
         case_id: Internal ID of the support case.
+        principal: The caller (data scope).
 
     Returns:
         Success deletion message.
@@ -604,6 +716,7 @@ async def soft_delete_support_case(
         SupportCaseNotFoundError: When the case does not exist or has been
             soft-deleted.
     """
+    await _get_case_in_reach(db_session, case_id, principal)
     case_record = await support_repository.soft_delete(db_session, case_id)
     if not case_record:
         raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")

@@ -25,11 +25,21 @@ from app.domains.fleet.schemas import (
     GeofenceResponse,
     GeofenceUpdateRequest,
 )
+from app.domains.identity.dependencies import require_roles
+from app.domains.identity.types import Principal, roles_for
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["fleet"])
+
+# Who may call what (features.yaml `users`, via `roles_for`): FLT-01 fleets,
+# FLT-02 membership, FLT-04 list/map, FLT-05 geofences. Per-manager fleet
+# limits (FL-10, `fleet_user_assignments`) are not applied yet (WP6).
+FLEET_READERS = require_roles(*roles_for("FLT-01", "FLT-02", "FLT-04", "FLT-05"))
+FLEET_WRITERS = require_roles(*roles_for("FLT-01"))
+FLEET_MEMBERSHIP_WRITERS = require_roles(*roles_for("FLT-02"))
+GEOFENCE_WRITERS = require_roles(*roles_for("FLT-05"))
 
 
 @router.post(
@@ -44,12 +54,14 @@ router = APIRouter(tags=["fleet"])
 )
 async def create_fleet_endpoint(
     fleet_create_request: FleetCreateRequest,
+    principal: Principal = Depends(FLEET_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Create a new fleet.
 
     Args:
         fleet_create_request: Request data for creating the fleet.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -59,7 +71,9 @@ async def create_fleet_endpoint(
         FleetConflictError: 409 when the fleet code is already used.
         FleetParentNotFoundError: 404 when the parent fleet does not exist.
     """
-    return await fleet_service.create_fleet(db_session, fleet_create_request)
+    return await fleet_service.create_fleet(
+        db_session, fleet_create_request, principal=principal
+    )
 
 
 @router.get(
@@ -89,6 +103,7 @@ async def list_fleets_endpoint(
         max_length=17,
         description="Only the fleet this vehicle (VIN) is currently a member of",
     ),
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetListResponse:
     """Get a paginated list of fleets.
@@ -99,6 +114,7 @@ async def list_fleets_endpoint(
         search_text: Name/fleet-code substring filter (`q`), if any.
         vehicle_vin: "Which fleet is this vehicle in" filter, if any; an
             unknown VIN yields an empty page.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -110,6 +126,7 @@ async def list_fleets_endpoint(
         page_size=page_size,
         search_text=search_text,
         vehicle_vin=vehicle_vin,
+        principal=principal,
     )
 
 
@@ -121,12 +138,14 @@ async def list_fleets_endpoint(
 )
 async def get_fleet_endpoint(
     fleet_id: UUID,
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Get the details of a fleet by ID.
 
     Args:
         fleet_id: Internal ID of the fleet.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -136,7 +155,7 @@ async def get_fleet_endpoint(
         FleetNotFoundError: 404 when the fleet does not exist or was
             soft-deleted.
     """
-    return await fleet_service.get_fleet(db_session, fleet_id)
+    return await fleet_service.get_fleet(db_session, fleet_id, principal=principal)
 
 
 @router.patch(
@@ -151,6 +170,7 @@ async def get_fleet_endpoint(
 async def update_fleet_endpoint(
     fleet_id: UUID,
     fleet_update_request: FleetUpdateRequest,
+    principal: Principal = Depends(FLEET_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetResponse:
     """Partially update a fleet.
@@ -158,6 +178,7 @@ async def update_fleet_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         fleet_update_request: Request data for updating the fleet.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -172,7 +193,9 @@ async def update_fleet_endpoint(
         FleetHierarchyLoopError: 400 when the new parent is the fleet itself
             or one of its sub-fleets.
     """
-    return await fleet_service.update_fleet(db_session, fleet_id, fleet_update_request)
+    return await fleet_service.update_fleet(
+        db_session, fleet_id, fleet_update_request, principal=principal
+    )
 
 
 @router.delete(
@@ -186,12 +209,18 @@ async def update_fleet_endpoint(
 )
 async def soft_delete_fleet_endpoint(
     fleet_id: UUID,
+    reason: str | None = Query(
+        None, min_length=1, max_length=200, description="Why the fleet is deleted"
+    ),
+    principal: Principal = Depends(FLEET_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a fleet.
 
     Args:
         fleet_id: Internal ID of the fleet.
+        reason: Why the fleet is deleted (kept in the fleet's history).
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -202,7 +231,9 @@ async def soft_delete_fleet_endpoint(
             soft-deleted.
         FleetHasSubFleetsError: 409 when live fleets still sit under it.
     """
-    return await fleet_service.soft_delete_fleet(db_session, fleet_id)
+    return await fleet_service.soft_delete_fleet(
+        db_session, fleet_id, principal=principal, reason=reason
+    )
 
 
 @router.post(
@@ -215,6 +246,7 @@ async def soft_delete_fleet_endpoint(
 async def add_vehicle_to_fleet_endpoint(
     fleet_id: UUID,
     fleet_vehicle_add_request: FleetVehicleAddRequest,
+    principal: Principal = Depends(FLEET_MEMBERSHIP_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetMembershipResponse:
     """Add a vehicle to a fleet.
@@ -222,6 +254,7 @@ async def add_vehicle_to_fleet_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         fleet_vehicle_add_request: The vehicle to add, by VIN.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -235,7 +268,7 @@ async def add_vehicle_to_fleet_endpoint(
             actively in a different fleet.
     """
     return await fleet_service.add_vehicle_to_fleet(
-        db_session, fleet_id, fleet_vehicle_add_request
+        db_session, fleet_id, fleet_vehicle_add_request, principal=principal
     )
 
 
@@ -251,6 +284,7 @@ async def add_vehicle_to_fleet_endpoint(
 async def remove_vehicle_from_fleet_endpoint(
     fleet_id: UUID,
     vehicle_vin: str = Path(..., min_length=17, max_length=17),
+    principal: Principal = Depends(FLEET_MEMBERSHIP_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Remove a vehicle from a fleet.
@@ -258,6 +292,7 @@ async def remove_vehicle_from_fleet_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         vehicle_vin: VIN of the vehicle to remove.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Raises:
@@ -266,7 +301,9 @@ async def remove_vehicle_from_fleet_endpoint(
         FleetMembershipNotFoundError: 404 when the vehicle has no active
             membership in this fleet.
     """
-    await fleet_service.remove_vehicle_from_fleet(db_session, fleet_id, vehicle_vin)
+    await fleet_service.remove_vehicle_from_fleet(
+        db_session, fleet_id, vehicle_vin, principal=principal
+    )
 
 
 @router.get(
@@ -297,6 +334,7 @@ async def list_fleet_vehicles_endpoint(
         max_length=20,
         description="Case-insensitive substring of the VIN or license plate",
     ),
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetVehicleListResponse:
     """Get a fleet's current vehicle list.
@@ -307,6 +345,7 @@ async def list_fleet_vehicles_endpoint(
         page_size: Number of records per page.
         status_filter: Vehicle lifecycle status filter, if any.
         search_text: VIN/license-plate substring filter (`q`), if any.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -322,6 +361,7 @@ async def list_fleet_vehicles_endpoint(
         page_size=page_size,
         status_filter=status_filter,
         search_text=search_text,
+        principal=principal,
     )
 
 
@@ -340,6 +380,7 @@ async def list_fleet_membership_history_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetMembershipHistoryResponse:
     """Get a fleet's vehicle membership history.
@@ -348,6 +389,7 @@ async def list_fleet_membership_history_endpoint(
         fleet_id: Internal ID of the fleet.
         page: Page number.
         page_size: Number of records per page.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -357,7 +399,7 @@ async def list_fleet_membership_history_endpoint(
         FleetNotFoundError: 404 when the fleet does not exist.
     """
     return await fleet_service.list_fleet_membership_history(
-        db_session, fleet_id, page=page, page_size=page_size
+        db_session, fleet_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -373,6 +415,7 @@ async def list_fleet_membership_history_endpoint(
 async def close_fleet_membership_endpoint(
     fleet_id: UUID,
     fleet_vehicle_membership_id: UUID,
+    principal: Principal = Depends(FLEET_MEMBERSHIP_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Close an open membership of a fleet.
@@ -380,6 +423,7 @@ async def close_fleet_membership_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         fleet_vehicle_membership_id: Internal ID of the membership to close.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Raises:
@@ -388,7 +432,7 @@ async def close_fleet_membership_endpoint(
             belongs to another fleet, or is already closed.
     """
     await fleet_service.close_fleet_membership(
-        db_session, fleet_id, fleet_vehicle_membership_id
+        db_session, fleet_id, fleet_vehicle_membership_id, principal=principal
     )
 
 
@@ -406,6 +450,7 @@ async def close_fleet_membership_endpoint(
 async def create_geofence_endpoint(
     fleet_id: UUID,
     geofence_create_request: GeofenceCreateRequest,
+    principal: Principal = Depends(GEOFENCE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Create a geofence for a fleet.
@@ -413,6 +458,7 @@ async def create_geofence_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         geofence_create_request: Name and boundary of the geofence.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -422,7 +468,7 @@ async def create_geofence_endpoint(
         FleetNotFoundError: 404 when the fleet does not exist.
     """
     return await fleet_service.create_geofence(
-        db_session, fleet_id, geofence_create_request
+        db_session, fleet_id, geofence_create_request, principal=principal
     )
 
 
@@ -441,6 +487,7 @@ async def list_geofences_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceListResponse:
     """Get a fleet's geofences.
@@ -449,6 +496,7 @@ async def list_geofences_endpoint(
         fleet_id: Internal ID of the fleet.
         page: Page number.
         page_size: Number of records per page.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -458,7 +506,7 @@ async def list_geofences_endpoint(
         FleetNotFoundError: 404 when the fleet does not exist.
     """
     return await fleet_service.list_geofences(
-        db_session, fleet_id, page=page, page_size=page_size
+        db_session, fleet_id, page=page, page_size=page_size, principal=principal
     )
 
 
@@ -471,6 +519,7 @@ async def list_geofences_endpoint(
 async def get_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
+    principal: Principal = Depends(FLEET_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Get one geofence of a fleet.
@@ -478,6 +527,7 @@ async def get_geofence_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -488,7 +538,9 @@ async def get_geofence_endpoint(
         GeofenceNotFoundError: 404 when the geofence is not a live geofence
             of this fleet.
     """
-    return await fleet_service.get_geofence(db_session, fleet_id, geofence_id)
+    return await fleet_service.get_geofence(
+        db_session, fleet_id, geofence_id, principal=principal
+    )
 
 
 @router.patch(
@@ -501,6 +553,7 @@ async def update_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
     geofence_update_request: GeofenceUpdateRequest,
+    principal: Principal = Depends(GEOFENCE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> GeofenceResponse:
     """Partially update a geofence.
@@ -509,6 +562,7 @@ async def update_geofence_endpoint(
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
         geofence_update_request: Fields to change.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -520,7 +574,7 @@ async def update_geofence_endpoint(
             of this fleet.
     """
     return await fleet_service.update_geofence(
-        db_session, fleet_id, geofence_id, geofence_update_request
+        db_session, fleet_id, geofence_id, geofence_update_request, principal=principal
     )
 
 
@@ -533,6 +587,7 @@ async def update_geofence_endpoint(
 async def soft_delete_geofence_endpoint(
     fleet_id: UUID,
     geofence_id: UUID,
+    principal: Principal = Depends(GEOFENCE_WRITERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a geofence.
@@ -540,6 +595,7 @@ async def soft_delete_geofence_endpoint(
     Args:
         fleet_id: Internal ID of the fleet.
         geofence_id: Internal ID of the geofence.
+        principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -550,4 +606,6 @@ async def soft_delete_geofence_endpoint(
         GeofenceNotFoundError: 404 when the geofence is not a live geofence
             of this fleet.
     """
-    return await fleet_service.soft_delete_geofence(db_session, fleet_id, geofence_id)
+    return await fleet_service.soft_delete_geofence(
+        db_session, fleet_id, geofence_id, principal=principal
+    )

@@ -32,8 +32,11 @@ from app.domains.vehicles.types import (
 )
 from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
+from tests.principals import build_internal_principal
 
 UNKNOWN_VIN = "1HGBH41JXMN999999"
+
+pytestmark = pytest.mark.usefixtures("own_organization_for_new_records")
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +111,7 @@ async def test_telematic_service_resolves_vehicle_vin(
             vehicle_vin=reference.vin,
             status=record.status,
         ),
+        principal=build_internal_principal(),
     )
 
     assert response.vehicle_id == vehicle_id
@@ -155,6 +159,7 @@ async def test_create_telematic_rejects_vehicle_already_assigned(
                 organization_id=uuid4(),
                 vehicle_vin=reference.vin,
             ),
+            principal=build_internal_principal(),
         )
 
 
@@ -203,12 +208,15 @@ async def test_list_telematics_normalizes_page_window(
         offset: int,
         limit: int,
         status_filter: TelematicStatus | None = None,
+        **_scope: object,
     ) -> list[TelematicModel]:
         list_arguments.update(offset=offset, limit=limit, status_filter=status_filter)
         return []
 
     async def count(
-        db_session: AsyncSession, status_filter: TelematicStatus | None = None
+        db_session: AsyncSession,
+        status_filter: TelematicStatus | None = None,
+        **_scope: object,
     ) -> int:
         return 0
 
@@ -220,6 +228,7 @@ async def test_list_telematics_normalizes_page_window(
         page=0,
         page_size=0,
         status_filter=TelematicStatus.INACTIVE,
+        principal=build_internal_principal(),
     )
 
     assert list_arguments == {
@@ -262,7 +271,9 @@ async def test_push_telematic_config_publishes_and_records_interval(
     record = build_telematic_record(vehicle_id)
     published: dict[str, object] = {}
 
-    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+    async def get_by_id(
+        db: AsyncSession, telematic_id: UUID, **_scope: object
+    ) -> TelematicModel:
         return record
 
     async def publish(serial: str, payload: dict[str, object]) -> None:
@@ -286,6 +297,7 @@ async def test_push_telematic_config_publishes_and_records_interval(
         fake_db_session(),
         record.telematic_id,
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
+        principal=build_internal_principal(),
     )
 
     assert published["serial"] == record.telematic_serial
@@ -305,7 +317,7 @@ async def test_push_telematic_config_rejects_unknown_device(
 ) -> None:
     """An unknown or soft-deleted device 404s before any publish is attempted."""
 
-    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> None:
+    async def get_by_id(db: AsyncSession, telematic_id: UUID, **_scope: object) -> None:
         return None
 
     async def fail_if_called(serial: str, payload: dict[str, object]) -> None:
@@ -321,6 +333,7 @@ async def test_push_telematic_config_rejects_unknown_device(
             fake_db_session(),
             uuid4(),
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
+            principal=build_internal_principal(),
         )
 
 
@@ -332,7 +345,9 @@ async def test_push_telematic_config_rejects_inactive_device(
     record = build_telematic_record(uuid4())
     record.status = TelematicStatus.INACTIVE
 
-    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+    async def get_by_id(
+        db: AsyncSession, telematic_id: UUID, **_scope: object
+    ) -> TelematicModel:
         return record
 
     async def fail_if_called(serial: str, payload: dict[str, object]) -> None:
@@ -348,6 +363,7 @@ async def test_push_telematic_config_rejects_inactive_device(
             fake_db_session(),
             record.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
+            principal=build_internal_principal(),
         )
 
 
@@ -358,7 +374,9 @@ async def test_push_telematic_config_does_not_record_when_publish_fails(
     """A failed publish leaves the database untouched (fail-closed)."""
     record = build_telematic_record(uuid4())
 
-    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+    async def get_by_id(
+        db: AsyncSession, telematic_id: UUID, **_scope: object
+    ) -> TelematicModel:
         return record
 
     async def raise_mqtt_error(serial: str, payload: dict[str, object]) -> None:
@@ -380,6 +398,7 @@ async def test_push_telematic_config_does_not_record_when_publish_fails(
             fake_db_session(),
             record.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
+            principal=build_internal_principal(),
         )
 
 
@@ -412,6 +431,7 @@ async def test_create_telematic_rejects_unknown_vehicle_vin(
                 organization_id=uuid4(),
                 vehicle_vin=UNKNOWN_VIN,
             ),
+            principal=build_internal_principal(),
         )
 
     assert isinstance(error_info.value, NotFoundError)
@@ -430,7 +450,9 @@ def _patch_update_dependencies(
         updated_values: Collects the values passed to ``update_fields``.
     """
 
-    async def get_by_id(db: AsyncSession, telematic_id: UUID) -> TelematicModel:
+    async def get_by_id(
+        db: AsyncSession, telematic_id: UUID, **_scope: object
+    ) -> TelematicModel:
         return telematic_record
 
     async def update_fields(
@@ -439,6 +461,7 @@ def _patch_update_dependencies(
         values: dict[str, object],
         *,
         change_reason: str,
+        **_scope: object,
     ) -> TelematicModel:
         updated_values.update(values)
         return record
@@ -474,6 +497,7 @@ async def test_update_telematic_rejects_unknown_vehicle_vin(
             fake_db_session(),
             telematic_record.telematic_id,
             TelematicUpdateRequest.model_validate({"vehicle_vin": UNKNOWN_VIN}),
+            principal=build_internal_principal(),
         )
 
     assert updated_values == {}
@@ -492,6 +516,7 @@ async def test_update_telematic_explicit_null_vin_unassigns_device(
         fake_db_session(),
         telematic_record.telematic_id,
         TelematicUpdateRequest.model_validate({"vehicle_vin": None}),
+        principal=build_internal_principal(),
     )
 
     assert updated_values == {"vehicle_id": None, "installed_at": None}
@@ -510,6 +535,7 @@ async def test_update_telematic_without_vin_keeps_assignment(
         fake_db_session(),
         telematic_record.telematic_id,
         TelematicUpdateRequest.model_validate({"imei": "356938035643809"}),
+        principal=build_internal_principal(),
     )
 
     assert updated_values == {"imei": "356938035643809"}
@@ -547,6 +573,7 @@ async def test_update_telematic_rejects_vehicle_with_another_live_device(
             fake_db_session(),
             telematic_record.telematic_id,
             TelematicUpdateRequest.model_validate({"vehicle_vin": UNKNOWN_VIN}),
+            principal=build_internal_principal(),
         )
 
     assert updated_values == {}

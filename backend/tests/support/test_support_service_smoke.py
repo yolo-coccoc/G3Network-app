@@ -21,7 +21,6 @@ from app.domains.support.exceptions import (
     SupportCaseNotFoundError,
     SupportCaseStateError,
     SupportDriverNotFoundError,
-    SupportOrganizationRequiredError,
     SupportVehicleNotFoundError,
 )
 from app.domains.support.models import SupportCaseModel
@@ -40,6 +39,19 @@ from app.domains.support.types import (
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import build_support_case_record, fake_db_session
+from tests.principals import build_internal_principal, build_principal
+
+pytestmark = pytest.mark.usefixtures("own_organization_for_new_records")
+
+
+@pytest.fixture(autouse=True)
+def caller_without_driver_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The test principals have no driver profile (a DRIVER-only case is separate)."""
+
+    async def no_own_driver(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(driver_service, "resolve_own_driver_reference", no_own_driver)
 
 
 @pytest.mark.asyncio
@@ -75,6 +87,7 @@ async def test_create_support_ticket_creates_open_case(
             latitude=None,
             longitude=None,
         ),
+        principal=build_internal_principal(),
     )
 
     assert response.case_id == inserted.case_id
@@ -109,6 +122,7 @@ async def test_create_support_ticket_rejects_unknown_vin(
                 latitude=None,
                 longitude=None,
             ),
+            principal=build_internal_principal(),
         )
 
 
@@ -118,7 +132,7 @@ async def test_create_support_ticket_rejects_unknown_driver(
 ) -> None:
     """create_support_ticket() raises when the driver ID doesn't resolve (F-I1)."""
 
-    async def no_driver(db: AsyncSession, driver_id: UUID) -> None:
+    async def no_driver(db: AsyncSession, driver_id: UUID, **_scope: object) -> None:
         return None
 
     monkeypatch.setattr(driver_service, "resolve_driver_reference_by_id", no_driver)
@@ -137,6 +151,7 @@ async def test_create_support_ticket_rejects_unknown_driver(
                 latitude=None,
                 longitude=None,
             ),
+            principal=build_internal_principal(),
         )
 
 
@@ -177,6 +192,7 @@ async def test_create_support_sos_uses_sos_sla_and_autofills_subject(
             latitude=10.8,
             longitude=106.7,
         ),
+        principal=build_internal_principal(),
     )
 
     assert captured["case_type"] == SupportCaseType.SOS
@@ -238,6 +254,7 @@ async def test_create_support_sos_from_hotline_keeps_channel_and_raises_alert(
         SupportSosCreateRequest.model_validate(
             {"vehicle_vin": vin, "channel": "HOTLINE", "error_code": "E-042"}
         ),
+        principal=build_internal_principal(),
     )
 
     assert captured_values["channel"] == SupportCaseChannel.HOTLINE
@@ -298,6 +315,7 @@ async def test_list_support_cases_applies_the_same_filters_to_page_and_total(
         driver_id_filter=driver_id,
         awaiting_response_filter=True,
         sla_breached_filter=False,
+        principal=build_internal_principal(),
     )
 
     assert response.total == 0
@@ -322,7 +340,9 @@ async def test_update_support_case_sets_first_responded_at_on_acknowledge(
     )
     captured: dict[str, object] = {}
 
-    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+    async def get_by_id(
+        db: AsyncSession, case_id: UUID, **_scope: object
+    ) -> SupportCaseModel:
         return case_record
 
     async def update_fields(
@@ -343,6 +363,7 @@ async def test_update_support_case_sets_first_responded_at_on_acknowledge(
             subject=None,
             description=None,
         ),
+        principal=build_internal_principal(),
     )
 
     assert captured["status"] == SupportCaseStatus.ACKNOWLEDGED
@@ -366,7 +387,9 @@ async def _capture_support_case_update(
     """
     captured: dict[str, object] = {}
 
-    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+    async def get_by_id(
+        db: AsyncSession, case_id: UUID, **_scope: object
+    ) -> SupportCaseModel:
         return case_record
 
     async def update_fields(
@@ -383,6 +406,7 @@ async def _capture_support_case_update(
         SupportCaseUpdateRequest(
             status=new_status, category=None, subject=None, description=None
         ),
+        principal=build_internal_principal(),
     )
     return captured
 
@@ -452,7 +476,9 @@ async def test_update_support_case_rejects_when_terminal(
     """A CLOSED support case refuses any further update (F-I1)."""
     case_record = build_support_case_record(status=SupportCaseStatus.CLOSED)
 
-    async def get_by_id(db: AsyncSession, case_id: UUID) -> SupportCaseModel:
+    async def get_by_id(
+        db: AsyncSession, case_id: UUID, **_scope: object
+    ) -> SupportCaseModel:
         return case_record
 
     monkeypatch.setattr(support_repository, "get_by_id", get_by_id)
@@ -467,6 +493,7 @@ async def test_update_support_case_rejects_when_terminal(
                 subject=None,
                 description=None,
             ),
+            principal=build_internal_principal(),
         )
 
 
@@ -495,13 +522,15 @@ async def test_get_support_case_raises_not_found(
 ) -> None:
     """get_support_case() raises for an unknown case ID (F-I1/F-I2)."""
 
-    async def no_case(db: AsyncSession, case_id: UUID) -> None:
+    async def no_case(db: AsyncSession, case_id: UUID, **_scope: object) -> None:
         return None
 
     monkeypatch.setattr(support_repository, "get_by_id", no_case)
 
     with pytest.raises(SupportCaseNotFoundError):
-        await support_service.get_support_case(fake_db_session(), uuid4())
+        await support_service.get_support_case(
+            fake_db_session(), uuid4(), principal=build_internal_principal()
+        )
 
 
 def test_calculate_is_sla_breached_false_for_case_cancelled_before_due() -> None:
@@ -529,19 +558,52 @@ def test_calculate_is_sla_breached_true_for_case_cancelled_after_due() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_support_sos_without_any_organization_is_refused() -> None:
-    """An SOS alert belongs to an organization, so a request with no vehicle and no organization fails."""
-    with pytest.raises(SupportOrganizationRequiredError):
-        await support_service.create_support_sos(
-            fake_db_session(),
-            SupportSosCreateRequest(
-                organization_id=None,
-                vehicle_vin=None,
-                driver_id=None,
-                category=SupportCaseCategory.BREAKDOWN,
-                description=None,
-                error_code=None,
-                latitude=10.8,
-                longitude=106.7,
-            ),
+async def test_create_support_sos_without_a_vehicle_belongs_to_the_callers_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An SOS naming no truck is owned by the organization the caller acts for."""
+    inserted: dict[str, object] = {}
+
+    async def no_own_driver(db: object, membership_id: object) -> None:
+        return None
+
+    async def insert(db: object, values: dict[str, object]) -> SupportCaseModel:
+        inserted.update(values)
+        organization_id = values["organization_id"]
+        assert isinstance(organization_id, UUID)
+        return build_support_case_record(
+            organization_id=organization_id, case_type=SupportCaseType.SOS
         )
+
+    async def no_driver_name(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def create_notification(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    monkeypatch.setattr(driver_service, "resolve_own_driver_reference", no_own_driver)
+    monkeypatch.setattr(support_repository, "insert", insert)
+    monkeypatch.setattr(
+        driver_service, "resolve_driver_reference_by_id", no_driver_name
+    )
+    monkeypatch.setattr(
+        notifications_service, "create_notification", create_notification
+    )
+    principal = build_principal()
+
+    await support_service.create_support_sos(
+        fake_db_session(),
+        SupportSosCreateRequest(
+            organization_id=None,
+            vehicle_vin=None,
+            driver_id=None,
+            category=SupportCaseCategory.BREAKDOWN,
+            description=None,
+            error_code=None,
+            latitude=10.8,
+            longitude=106.7,
+        ),
+        principal=principal,
+    )
+
+    assert inserted["organization_id"] == principal.organization_id

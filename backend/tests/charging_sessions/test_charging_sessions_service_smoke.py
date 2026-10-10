@@ -23,6 +23,7 @@ from app.domains.charging_sessions.types import (
     SessionStatus,
 )
 from tests.builders import build_charging_session, fake_db_session
+from tests.principals import build_internal_principal
 
 NOW = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
@@ -359,7 +360,7 @@ async def test_list_charging_sessions_keeps_a_page_size_below_the_default(
     monkeypatch.setattr(charging_repository, "count_sessions", count_sessions)
 
     response = await charging_service.list_charging_sessions(
-        fake_db_session(), page=2, page_size=3
+        fake_db_session(), page=2, page_size=3, principal=build_internal_principal()
     )
 
     assert seen == {"offset": 3, "limit": 3}
