@@ -362,11 +362,11 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-AS3 | M | `vehicles/service.py` transfer, `batteries/service.py` install | No row lock: concurrent transfers give negative ownership periods; a pack can sit in two trucks (PG). **Fixed 2026-10-10.** |
 | RV-AS4 | M | `batteries/service.py` install, vehicle/battery create | `installed_at` has no lower bound, `acquired_at` may be in the future (PG for the install half). **Fixed 2026-10-10.** |
 | RV-AS5 | M | `vehicles/service.py`, `fleet/service.py` | VIN/plate 409 echoes the value across tenants; the fleet remove path distinguishes unknown from elsewhere. **Fixed 2026-10-10.** |
-| RV-OP6 | M | `drivers/service.py` auto-end, `telemetry/repository.py` | Movement read by device clock vs. server-clock `started_at`: a slow device clock auto-ends a moving truck (PG). |
-| RV-OP7 | M | `drivers/repository.py`, `trip_service.py` | Blind updates: the sweep overwrites a committed check-out; two drivers both start one planned trip (PG). |
-| RV-OP8 | M | `telemetry/repository.py` distance fold | `lag()` over rows without odometer gives 0 km; one glitch adds ~1,000,000 km (PG). |
+| RV-OP6 | M | `drivers/service.py` auto-end, `telemetry/repository.py` | Movement read by device clock vs. server-clock `started_at`: a slow device clock auto-ends a moving truck (PG). **Fixed 2026-10-10.** |
+| RV-OP7 | M | `drivers/repository.py`, `trip_service.py` | Blind updates: the sweep overwrites a committed check-out; two drivers both start one planned trip (PG). **Fixed 2026-10-10.** |
+| RV-OP8 | M | `telemetry/repository.py` distance fold | `lag()` over rows without odometer gives 0 km; one glitch adds ~1,000,000 km (PG). **Fixed 2026-10-10.** |
 | RV-OP9 | M | `drivers/service.py` check-in | Check-in to another organization's silent truck relies on phone-sent coordinates only; takeover then exposes the truck. Owner decision needed; no test. |
-| RV-OP10 | M | `telemetry/router.py` `FLEET_REPORT_READERS` | DRIVER can open the organization's fleet operating report. |
+| RV-OP10 | M | `telemetry/router.py` `FLEET_REPORT_READERS` | DRIVER can open the organization's fleet operating report. **Fixed 2026-10-10.** |
 | RV-AS7 | L | `batteries/service.py` `transfer_installed_battery_with_vehicle` | The pack's `acquired_at` can move backwards on a backdated truck sale. **Fixed 2026-10-10.** |
 | RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. **Fixed 2026-10-10.** |
 | RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). **Fixed 2026-10-10.** |
@@ -381,8 +381,8 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). **Fixed 2026-10-10.** |
 | RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. **Fixed 2026-10-10.** |
 | RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. **Fixed 2026-10-10.** |
-| RV-OP12 | L | `drivers/service.py` | Licence expiry compared with the UTC date, not the Vietnam date. |
-| RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. |
+| RV-OP12 | L | `drivers/service.py` | Licence expiry compared with the UTC date, not the Vietnam date. **Fixed 2026-10-10.** |
+| RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. **Fixed 2026-10-10.** |
 
 Not tested (repository SQL or concurrency a fake cannot show): RV-ID7 (the
 last-HEAD_ADMIN count includes INVITED/LOCKED holders and is not locked; **the count now ignores holders who are not ACTIVE, fixed 2026-10-10 (ID-51); the missing lock is still open**),
