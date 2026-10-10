@@ -18,7 +18,10 @@ import app.domains.identity.audit_service as audit_service
 import app.domains.identity.member_service as member_service
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
-from app.domains.identity.exceptions import OrganizationNotFoundError
+from app.domains.identity.exceptions import (
+    OrganizationConflictError,
+    OrganizationNotFoundError,
+)
 from app.domains.identity.types import (
     AccessAuditAction,
     ClientContext,
@@ -27,6 +30,7 @@ from app.domains.identity.types import (
     MembershipPersonReference,
     OrganizationReference,
     OrganizationSettingsReference,
+    OrganizationStatus,
     Principal,
     PushTargetReference,
     RoleHolderReference,
@@ -183,6 +187,8 @@ async def resolve_organization_for_new_record(
         OrganizationNotFoundError: The named organization does not exist, or a
             non-internal caller named an organization other than their own
             (out of reach looks like missing, 404).
+        OrganizationConflictError: The named organization is suspended or
+            closed (409).
 
     Side Effects:
         One read-only query when another organization is named.
@@ -196,9 +202,18 @@ async def resolve_organization_for_new_record(
         raise OrganizationNotFoundError(
             f"Organization '{requested_organization_id}' not found"
         )
-    if await find_organization_reference(db_session, requested_organization_id) is None:
+    organization_reference = await find_organization_reference(
+        db_session, requested_organization_id
+    )
+    if organization_reference is None:
         raise OrganizationNotFoundError(
             f"Organization '{requested_organization_id}' not found"
+        )
+    if organization_reference.status != OrganizationStatus.ACTIVE.value:
+        # A closed or suspended organization cannot take on a new truck, pack
+        # or fleet; it would own data nobody can reach (RV-AS2).
+        raise OrganizationConflictError(
+            "The organization is suspended or closed and cannot own new records"
         )
     return requested_organization_id
 

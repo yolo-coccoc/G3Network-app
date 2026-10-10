@@ -276,7 +276,11 @@ async def test_resolve_vehicle_reference_uses_model_battery_capacity(
     vehicle_model_record.nominal_battery_capacity_kwh = Decimal("282.0")
 
     async def get_by_id(
-        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        vehicle_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> VehicleModel:
         return record
 
@@ -329,7 +333,11 @@ async def test_get_vehicle_of_another_organization_is_not_found(
     scopes: list[UUID | None] = []
 
     async def get_by_id(
-        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        vehicle_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> None:
         scopes.append(organization_id)
         return None
@@ -363,7 +371,11 @@ async def test_transfer_vehicle_ownership_changes_owner_and_date_with_reason(
     written: dict[str, object] = {}
 
     async def get_by_id(
-        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        vehicle_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> VehicleModel:
         return record
 
@@ -412,7 +424,11 @@ async def test_transfer_rejects_same_owner_and_bad_dates(
     record.acquired_at = datetime.now(timezone.utc) - timedelta(days=30)
 
     async def get_by_id(
-        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        vehicle_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> VehicleModel:
         return record
 

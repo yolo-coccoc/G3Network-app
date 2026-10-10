@@ -92,8 +92,8 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 **Indexes**
 
-- `uq_vehicles_live_vin` (vin) unique - WHERE deleted_at IS NULL
-- `uq_vehicles_live_license_plate` (license_plate) unique - WHERE deleted_at IS NULL
+- `uq_vehicles_live_vin` (upper(vin)) unique - WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas
+- `uq_vehicles_live_license_plate` (upper(license_plate)) unique - WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas
 - `ix_vehicles_status` (status)
 - `ix_vehicles_organization_id` (organization_id) - Vehicles of one organization
 

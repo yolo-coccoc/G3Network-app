@@ -111,6 +111,11 @@ def _to_decimal_fields(values: dict[str, object]) -> None:
 # --- cross-domain contract --------------------------------------------------
 
 
+# One text for every duplicate serial: the value would tell a customer about
+# another organization's pack (RV-AS5).
+_DUPLICATE_SERIAL_MESSAGE = "A battery with this serial number already exists"
+
+
 async def resolve_installed_battery_capacity_kwh(
     db_session: AsyncSession, vehicle_id: UUID
 ) -> float | None:
@@ -178,7 +183,12 @@ async def transfer_installed_battery_with_vehicle(
     await battery_repository.update_fields(
         db_session,
         battery_record.battery_id,
-        {"organization_id": to_organization_id, "acquired_at": acquired_at},
+        {
+            "organization_id": to_organization_id,
+            # A sale dated before the seller took the pack must not give the
+            # seller a negative ownership period (DM-22, RV-AS7).
+            "acquired_at": max(acquired_at, battery_record.acquired_at),
+        },
         change_reason=BATTERY_SOLD_WITH_VEHICLE_REASON,
         changed_by=changed_by,
     )
@@ -441,10 +451,7 @@ async def create_battery(
     if await battery_repository.find_by_serial_number(
         db_session, battery_create_request.serial_number
     ):
-        raise BatteryConflictError(
-            f"Battery with serial number '{battery_create_request.serial_number}' "
-            "already exists"
-        )
+        raise BatteryConflictError(_DUPLICATE_SERIAL_MESSAGE)
     insert_values: dict[str, object] = battery_create_request.model_dump()
     insert_values["status"] = battery_create_request.status.value
     insert_values[
@@ -454,15 +461,23 @@ async def create_battery(
     )
     if insert_values["acquired_at"] is None:
         insert_values["acquired_at"] = utc_now()
+    elif battery_create_request.acquired_at is not None and (
+        battery_create_request.acquired_at > utc_now() + DATE_CLOCK_SKEW
+    ):
+        raise BatteryDateInvalidError("acquired_at cannot be in the future")
     try:
         battery_record = await battery_repository.insert(db_session, insert_values)
     except IntegrityError as error:
-        raise BatteryConflictError("Battery serial number already exists") from error
+        raise BatteryConflictError(_DUPLICATE_SERIAL_MESSAGE) from error
     return to_battery_response(battery_record)
 
 
 async def _get_battery_record(
-    db_session: AsyncSession, battery_id: UUID, principal: Principal
+    db_session: AsyncSession,
+    battery_id: UUID,
+    principal: Principal,
+    *,
+    for_update: bool = False,
 ) -> BatteryModel:
     """Load a live battery inside the caller's data reach.
 
@@ -470,6 +485,8 @@ async def _get_battery_record(
         db_session: Current database session.
         battery_id: Internal ID of the battery.
         principal: The caller.
+        for_update: Lock the row until the transaction ends (fitting and
+            removing queue up on one pack, RV-AS3).
 
     Returns:
         The battery record.
@@ -478,7 +495,10 @@ async def _get_battery_record(
         BatteryNotFoundError: Missing, removed or owned by another organization.
     """
     battery_record = await battery_repository.get_by_id(
-        db_session, battery_id, organization_id=principal.data_scope
+        db_session,
+        battery_id,
+        organization_id=principal.data_scope,
+        for_update=for_update,
     )
     if battery_record is None:
         raise BatteryNotFoundError(f"Battery with id '{battery_id}' not found")
@@ -621,10 +641,7 @@ async def update_battery(
             db_session, battery_update_request.serial_number
         )
     ):
-        raise BatteryConflictError(
-            f"Battery with serial number '{battery_update_request.serial_number}' "
-            "already exists"
-        )
+        raise BatteryConflictError(_DUPLICATE_SERIAL_MESSAGE)
 
     update_values: dict[str, object] = {
         field_name: value
@@ -653,7 +670,7 @@ async def update_battery(
             organization_id=principal.data_scope,
         )
     except IntegrityError as error:
-        raise BatteryConflictError("Battery serial number already exists") from error
+        raise BatteryConflictError(_DUPLICATE_SERIAL_MESSAGE) from error
     if updated_record is None:
         raise BatteryNotFoundError(f"Battery with id '{battery_id}' not found")
     return to_battery_response(updated_record)
@@ -731,13 +748,16 @@ async def install_battery(
         BatteryVehicleNotFoundError: The truck does not exist.
         BatteryConflictError: The battery is INACTIVE or already fitted, or the
             truck already holds a pack.
-        BatteryDateInvalidError: ``installed_at`` is in the future.
+        BatteryDateInvalidError: ``installed_at`` is in the future or before
+            the battery's last removal.
 
     Side Effects:
-        Flushes one UPDATE; the history keeps the earlier state, which closes
+        Locks the battery row. Flushes one UPDATE; the history keeps the earlier state, which closes
         the previous installation period in the view.
     """
-    battery_record = await _get_battery_record(db_session, battery_id, principal)
+    battery_record = await _get_battery_record(
+        db_session, battery_id, principal, for_update=True
+    )
     if battery_record.vehicle_id is not None:
         raise BatteryConflictError(
             f"Battery '{battery_id}' is already fitted to vehicle "
@@ -762,6 +782,24 @@ async def install_battery(
     installed_at = battery_install_request.installed_at or now
     if installed_at > now + DATE_CLOCK_SKEW:
         raise BatteryDateInvalidError("The installation time cannot be in the future")
+    # One pack is in one truck at a time: the new stay cannot start before the
+    # last one ended (DM-22, RV-AS4).
+    last_removed_at = max(
+        (
+            installed_until
+            for _vehicle_id, _installed_from, installed_until in (
+                await battery_repository.list_installation_periods(
+                    db_session, battery_id
+                )
+            )
+            if installed_until is not None
+        ),
+        default=None,
+    )
+    if last_removed_at is not None and installed_at < last_removed_at:
+        raise BatteryDateInvalidError(
+            "The installation time cannot be before the battery's last removal"
+        )
     try:
         updated_record = await battery_repository.update_fields(
             db_session,
@@ -809,7 +847,9 @@ async def remove_battery_from_vehicle(
         Flushes one UPDATE that clears ``vehicle_id`` and ``installed_at``;
         the installation period ends at the time of the change.
     """
-    battery_record = await _get_battery_record(db_session, battery_id, principal)
+    battery_record = await _get_battery_record(
+        db_session, battery_id, principal, for_update=True
+    )
     if battery_record.vehicle_id is None:
         raise BatteryConflictError(f"Battery '{battery_id}' is not fitted to a vehicle")
     updated_record = await battery_repository.update_fields(

@@ -506,8 +506,8 @@ Table vehicles {
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: bản ghi không còn thuộc hệ thống, do đã rời đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    vin [unique, name: 'uq_vehicles_live_vin', note: 'WHERE deleted_at IS NULL']
-    license_plate [unique, name: 'uq_vehicles_live_license_plate', note: 'WHERE deleted_at IS NULL']
+    `upper(vin)` [unique, name: 'uq_vehicles_live_vin', note: 'WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas']
+    `upper(license_plate)` [unique, name: 'uq_vehicles_live_license_plate', note: 'WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas']
     status [name: 'ix_vehicles_status']
     organization_id [name: 'ix_vehicles_organization_id', note: 'Vehicles of one organization']
   }
@@ -609,7 +609,7 @@ Table batteries {
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the row is no longer part of the system, because it left or was entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: bản ghi không còn thuộc hệ thống, do đã rời đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    serial_number [unique, name: 'uq_batteries_live_serial_number', note: 'WHERE deleted_at IS NULL']
+    `upper(serial_number)` [unique, name: 'uq_batteries_live_serial_number', note: 'WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas']
     vehicle_id [unique, name: 'uq_batteries_installed_vehicle', note: 'WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL: one battery per truck']
   }
   Note: '''@status built @owner customer @features F-F2 @tracked * @history built

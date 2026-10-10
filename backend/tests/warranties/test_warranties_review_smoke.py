@@ -193,11 +193,6 @@ async def test_internal_staff_reach_any_organizations_warranty(
     await operation(warranty_record.warranty_id, build_internal_principal())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS9: NaN / Infinity limits pass validation (JSONB 500)",
-)
 @pytest.mark.parametrize("raw_reading", ["NaN", "Infinity", "1e400"])
 def test_warranty_limits_reject_non_finite_readings(raw_reading: str) -> None:
     """A limit reading that is not a finite number is refused, by the request
@@ -222,11 +217,6 @@ def test_warranty_limits_reject_non_finite_readings(raw_reading: str) -> None:
     raise AssertionError(f"limit reading {raw_reading} was accepted")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS9: an infinite kwh_per_km passes gt=0 (JSONB 500)",
-)
 def test_vehicle_model_consumption_curve_rejects_infinite_figures() -> None:
     """An infinite consumption figure is refused by the request schema before
     it reaches the JSONB ``consumption_curve`` column."""

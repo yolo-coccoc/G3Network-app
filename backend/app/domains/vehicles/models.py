@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    func,
     text,
 )
 from sqlalchemy import Enum as SQLEnum
@@ -161,13 +162,13 @@ class VehicleModel(Base):
         # the plate of a truck that left can move to another truck (VH-07).
         Index(
             "uq_vehicles_live_vin",
-            "vin",
+            func.upper(vin),
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
         Index(
             "uq_vehicles_live_license_plate",
-            "license_plate",
+            func.upper(license_plate),
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),

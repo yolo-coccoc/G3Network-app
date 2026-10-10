@@ -250,6 +250,7 @@ async def get_by_id(
     battery_id: UUID,
     *,
     organization_id: UUID | None = None,
+    for_update: bool = False,
 ) -> BatteryModel | None:
     """Find a live battery by ID.
 
@@ -258,6 +259,8 @@ async def get_by_id(
         battery_id: Internal ID of the battery.
         organization_id: Data scope: only a battery owned by this
             organization is found; `None` means no restriction.
+        for_update: Lock the row until the transaction ends, so concurrent
+            installs and transfers queue up (RV-AS3).
 
     Returns:
         The record, or None if not found, removed or out of scope.
@@ -268,9 +271,14 @@ async def get_by_id(
     ]
     if organization_id is not None:
         conditions.append(BatteryModel.organization_id == organization_id)
-    query_result = await db_session.execute(
-        select(BatteryModel).where(and_(*conditions))
-    )
+    statement = select(BatteryModel).where(and_(*conditions))
+    if for_update:
+        # populate_existing: a row already loaded in this session must show
+        # what the lock holder committed, not the stale copy (RV-AS3).
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    query_result = await db_session.execute(statement)
     return query_result.scalar_one_or_none()
 
 
@@ -289,7 +297,7 @@ async def find_by_serial_number(
     query_result = await db_session.execute(
         select(BatteryModel).where(
             and_(
-                BatteryModel.serial_number == serial_number,
+                func.upper(BatteryModel.serial_number) == serial_number.upper(),
                 BatteryModel.deleted_at.is_(None),
             )
         )

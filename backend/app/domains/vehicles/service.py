@@ -52,10 +52,18 @@ from app.domains.vehicles.types import (
 )
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
+from app.libs.common.errors import InvalidInputError
 from app.libs.common.pagination import normalize_page_window
 
 # Fixed history reasons of routine actions; the acting user is the caller.
 VEHICLE_EDITED_REASON = "Vehicle details edited"
+
+# One text for every duplicate VIN or plate: the caller may be a customer, and
+# the value (or which of the two clashed) would tell them about another
+# organization's truck (RV-AS5).
+_DUPLICATE_IDENTIFIER_MESSAGE = (
+    "A vehicle with this license plate or VIN already exists"
+)
 VEHICLE_DELETED_REASON = "Vehicle deleted"
 VEHICLE_MODEL_EDITED_REASON = "Vehicle model edited"
 VEHICLE_MODEL_DELETED_REASON = "Vehicle model removed from the catalog"
@@ -332,19 +340,14 @@ async def create_vehicle(
         vehicle_create_request.license_plate,
     )
     if existing_vehicle_by_plate:
-        raise VehicleConflictError(
-            f"Vehicle with license plate "
-            f"'{vehicle_create_request.license_plate}' already exists"
-        )
+        raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE)
 
     existing_vehicle_by_vin = await vehicle_repository.find_by_vin(
         db_session,
         vehicle_create_request.vin,
     )
     if existing_vehicle_by_vin:
-        raise VehicleConflictError(
-            f"Vehicle with VIN '{vehicle_create_request.vin}' already exists"
-        )
+        raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE)
 
     insert_values = vehicle_create_request.model_dump()
     insert_values[
@@ -354,12 +357,14 @@ async def create_vehicle(
     )
     if insert_values["acquired_at"] is None:
         insert_values["acquired_at"] = utc_now()
+    elif insert_values["acquired_at"] > utc_now() + TRANSFER_CLOCK_SKEW:
+        # A future handover date would make the truck untransferable until
+        # then: a transfer cannot predate the owner's start (RV-AS4).
+        raise InvalidInputError("acquired_at cannot be in the future")
     try:
         vehicle_record = await vehicle_repository.insert(db_session, insert_values)
     except IntegrityError as error:
-        raise VehicleConflictError(
-            "Vehicle license plate or VIN already exists"
-        ) from error
+        raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE) from error
 
     return to_vehicle_response(vehicle_record)
 
@@ -523,10 +528,7 @@ async def update_vehicle(
             vehicle_update_request.license_plate,
         )
         if existing_vehicle:
-            raise VehicleConflictError(
-                f"Vehicle with license plate "
-                f"'{vehicle_update_request.license_plate}' already exists"
-            )
+            raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE)
 
     if vehicle_update_request.vin and vehicle_update_request.vin != vehicle_record.vin:
         existing_vehicle = await vehicle_repository.find_by_vin(
@@ -534,9 +536,7 @@ async def update_vehicle(
             vehicle_update_request.vin,
         )
         if existing_vehicle:
-            raise VehicleConflictError(
-                f"Vehicle with VIN '{vehicle_update_request.vin}' already exists"
-            )
+            raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE)
 
     update_values = {
         field_name: value
@@ -547,20 +547,25 @@ async def update_vehicle(
     }
     if not update_values:
         return to_vehicle_response(vehicle_record)
+    if (
+        update_values.get("status") == VehicleStatus.ACTIVE
+        and "status_reason" not in update_values
+    ):
+        # The reason explained the old status; an ACTIVE truck has none
+        # (NULL when ACTIVE, DM-25), RV-AS10.
+        update_values["status_reason"] = None
 
     try:
         updated_vehicle_record = await vehicle_repository.update_fields(
             db_session,
             vehicle_id,
             update_values,
-            change_reason=update_values.get("status_reason", VEHICLE_EDITED_REASON),
+            change_reason=update_values.get("status_reason") or VEHICLE_EDITED_REASON,
             changed_by=principal.user_id,
             organization_id=principal.data_scope,
         )
     except IntegrityError as error:
-        raise VehicleConflictError(
-            "Vehicle license plate or VIN already exists"
-        ) from error
+        raise VehicleConflictError(_DUPLICATE_IDENTIFIER_MESSAGE) from error
 
     if updated_vehicle_record is None:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
@@ -658,8 +663,10 @@ async def transfer_vehicle_ownership(
     Side Effects:
         Flushes one UPDATE of the vehicle; does not commit.
     """
+    # Locked: two transfers of one truck must run one after the other, or both
+    # would validate against the same old owner (RV-AS3).
     vehicle_record = await vehicle_repository.get_by_id(
-        db_session, vehicle_id, organization_id=principal.data_scope
+        db_session, vehicle_id, organization_id=principal.data_scope, for_update=True
     )
     if vehicle_record is None:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")

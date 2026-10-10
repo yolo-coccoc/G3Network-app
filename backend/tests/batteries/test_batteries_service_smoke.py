@@ -63,7 +63,11 @@ async def test_install_battery_sets_truck_and_time(
     written: dict[str, Any] = {}
 
     async def get_by_id(
-        db: AsyncSession, battery_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        battery_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> BatteryModel:
         return record
 
@@ -86,6 +90,13 @@ async def test_install_battery_sets_truck_and_time(
         return record
 
     monkeypatch.setattr(battery_repository, "get_by_id", get_by_id)
+
+    async def no_earlier_stays(db: AsyncSession, requested_id: UUID) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(
+        battery_repository, "list_installation_periods", no_earlier_stays
+    )
     monkeypatch.setattr(battery_repository, "find_by_vehicle_id", no_battery_in_truck)
     monkeypatch.setattr(battery_repository, "update_fields", update_fields)
     monkeypatch.setattr(vehicle_service, "resolve_vehicle_reference_by_id", resolve)
@@ -112,7 +123,11 @@ async def test_install_battery_refuses_a_second_pack_a_fitted_pack_and_an_unknow
     records = {"current": free_record}
 
     async def get_by_id(
-        db: AsyncSession, battery_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        battery_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> BatteryModel:
         return records["current"]
 

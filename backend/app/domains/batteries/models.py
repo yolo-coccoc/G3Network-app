@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -150,7 +151,7 @@ class BatteryModel(Base):
     __table_args__ = (
         Index(
             "uq_batteries_live_serial_number",
-            "serial_number",
+            func.upper(serial_number),
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),

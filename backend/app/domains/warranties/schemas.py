@@ -4,7 +4,7 @@ from datetime import date, datetime
 from typing import Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
 from app.domains.warranties.types import WarrantyType
 from app.libs.common.config import settings
@@ -31,7 +31,7 @@ class WarrantyCreateRequest(BaseModel):
     )
     starts_on: date = Field(..., description="First day of coverage")
     ends_on: date = Field(..., description="Last day of coverage")
-    limits: dict[str, float] | None = Field(
+    limits: dict[str, FiniteFloat] | None = Field(
         default=None,
         description=(
             "Counter readings at which coverage ends; keys depend on the "
@@ -85,7 +85,7 @@ class WarrantyUpdateRequest(BaseModel):
     )
     starts_on: date | None = Field(default=None, description="First day of coverage")
     ends_on: date | None = Field(default=None, description="Last day of coverage")
-    limits: dict[str, float] | None = Field(
+    limits: dict[str, FiniteFloat] | None = Field(
         default=None, description="Counter readings at which coverage ends"
     )
 

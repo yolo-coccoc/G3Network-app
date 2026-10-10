@@ -311,11 +311,6 @@ async def test_customer_gets_not_found_for_another_organizations_vehicle_on_post
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS3: concurrent transfers overwrite each other (no row lock)",
-)
 async def test_concurrent_transfers_leave_consistent_owner_periods_and_battery(
     temporary_database: str,  # noqa: F811
 ) -> None:
@@ -422,10 +417,6 @@ async def test_concurrent_transfers_leave_consistent_owner_periods_and_battery(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-AS4: installed_at may predate the pack's previous removal",
-)
 async def test_battery_install_dated_before_its_previous_removal_is_refused(
     temporary_database: str,  # noqa: F811
 ) -> None:
@@ -495,10 +486,6 @@ async def test_battery_install_dated_before_its_previous_removal_is_refused(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-AS6: a VIN differing only in letter case is a second truck",
-)
 async def test_vin_differing_only_in_letter_case_is_a_conflict(
     temporary_database: str,  # noqa: F811
 ) -> None:

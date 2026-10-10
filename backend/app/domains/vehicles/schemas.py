@@ -1,13 +1,30 @@
 """Pydantic schemas for the vehicles domain HTTP API."""
 
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.common.reason import Reason
+
+# The plate and the VIN are stored trimmed and upper-case, so "51c-123 " and
+# "51C-123" are one truck and the unique indexes cannot be dodged by letter
+# case or spaces (RV-AS6).
+LicensePlate = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, to_upper=True, min_length=1, max_length=20
+    ),
+]
+Vin = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, to_upper=True, min_length=17, max_length=17
+    ),
+]
 
 
 class VehicleCreateRequest(BaseModel):
@@ -31,15 +48,8 @@ class VehicleCreateRequest(BaseModel):
             "time of the request. Must carry a timezone."
         ),
     )
-    license_plate: str = Field(
-        ..., min_length=1, max_length=20, description="License plate"
-    )
-    vin: str = Field(
-        ...,
-        min_length=17,
-        max_length=17,
-        description="VIN (Vehicle Identification Number)",
-    )
+    license_plate: LicensePlate = Field(..., description="License plate")
+    vin: Vin = Field(..., description="VIN (Vehicle Identification Number)")
     vehicle_model_id: UUID = Field(
         ..., description="The truck's model, from the vehicle model catalog"
     )
@@ -58,12 +68,10 @@ class VehicleUpdateRequest(BaseModel):
     Ownership transfer is not an edit: it is a separate action (VH-12).
     """
 
-    license_plate: str | None = Field(
-        default=None, min_length=1, max_length=20, description="License plate"
+    license_plate: LicensePlate | None = Field(
+        default=None, description="License plate"
     )
-    vin: str | None = Field(
-        default=None, min_length=17, max_length=17, description="VIN (chassis number)"
-    )
+    vin: Vin | None = Field(default=None, description="VIN (chassis number)")
     vehicle_model_id: UUID | None = Field(default=None, description="The truck's model")
     year: int | None = Field(
         default=None, ge=1900, le=2100, description="Manufacturing year"
@@ -143,8 +151,12 @@ class VehicleListResponse(BaseModel):
 class ConsumptionCurvePoint(BaseModel):
     """One point of a model's reference energy consumption by load."""
 
-    load_percent: float = Field(..., ge=0, le=100, description="Load, % of max payload")
-    kwh_per_km: float = Field(..., gt=0, description="Energy use at that load")
+    load_percent: float = Field(
+        ..., ge=0, le=100, allow_inf_nan=False, description="Load, % of max payload"
+    )
+    kwh_per_km: float = Field(
+        ..., gt=0, allow_inf_nan=False, description="Energy use at that load"
+    )
 
 
 class VehicleModelCreateRequest(BaseModel):

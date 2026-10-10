@@ -781,6 +781,19 @@ async def add_vehicle_to_fleet(
             f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
         )
 
+    # A manager limited to some fleets sees only the trucks in them: adding any
+    # other truck (one in no fleet) would widen their own reach (FL-10, RV-AS1).
+    visible_vehicle_ids = await resolve_principal_visible_vehicle_ids(
+        db_session, principal
+    )
+    if (
+        visible_vehicle_ids is not None
+        and vehicle_reference.vehicle_id not in visible_vehicle_ids
+    ):
+        raise FleetVehicleNotFoundError(
+            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
+        )
+
     # A fleet holds only its own organization's vehicles (FL-09).
     if vehicle_reference.organization_id != fleet_record.organization_id:
         raise FleetVehicleOrganizationMismatchError(
@@ -847,7 +860,10 @@ async def remove_vehicle_from_fleet(
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, vehicle_vin
     )
-    if vehicle_reference is None:
+    if vehicle_reference is None or not principal.can_access_organization(
+        vehicle_reference.organization_id
+    ):
+        # A truck of another organization looks like a missing one (RV-AS5).
         raise FleetVehicleNotFoundError(f"Vehicle with VIN '{vehicle_vin}' not found")
 
     active_membership = await fleet_repository.find_active_membership_by_vehicle(

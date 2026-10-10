@@ -1,13 +1,23 @@
 """Pydantic schemas for the batteries domain HTTP API."""
 
 from datetime import date, datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
 
 from app.domains.batteries.types import BatteryChemistry, BatteryStatus
 from app.libs.common.config import settings
 from app.libs.common.reason import Reason
+
+# Stored trimmed and upper-case, so a serial typed in another case is the same
+# pack and the live-unique index cannot be dodged (RV-AS6).
+SerialNumber = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, to_upper=True, min_length=1, max_length=50
+    ),
+]
 
 
 class BatteryModelCreateRequest(BaseModel):
@@ -86,9 +96,7 @@ class BatteryCreateRequest(BaseModel):
     owns the pack. Fitting it to a truck is a separate call.
     """
 
-    serial_number: str = Field(
-        ..., min_length=1, max_length=50, description="Manufacturer's serial number"
-    )
+    serial_number: SerialNumber = Field(..., description="Manufacturer's serial number")
     battery_model_id: UUID = Field(..., description="The battery's model")
     organization_id: UUID | None = Field(
         default=None, description="Owning organization; defaults to the caller's"
@@ -114,8 +122,8 @@ class BatteryUpdateRequest(BaseModel):
     installation are separate actions.
     """
 
-    serial_number: str | None = Field(
-        default=None, min_length=1, max_length=50, description="Serial number"
+    serial_number: SerialNumber | None = Field(
+        default=None, description="Serial number"
     )
     battery_model_id: UUID | None = Field(default=None, description="The model")
     manufactured_on: date | None = Field(default=None, description="Manufacturing date")

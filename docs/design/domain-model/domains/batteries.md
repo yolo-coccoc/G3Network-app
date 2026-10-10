@@ -143,7 +143,7 @@ Check constraint: deleted_at IS NULL OR status = 'INACTIVE' (DM-25).
 
 **Indexes**
 
-- `uq_batteries_live_serial_number` (serial_number) unique - WHERE deleted_at IS NULL
+- `uq_batteries_live_serial_number` (upper(serial_number)) unique - WHERE deleted_at IS NULL; case-insensitive (RV-AS6): the value is also stored trimmed and upper-case by the request schemas
 - `uq_batteries_installed_vehicle` (vehicle_id) unique - WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL: one battery per truck
 
 **Referenced by**

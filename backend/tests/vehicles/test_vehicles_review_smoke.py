@@ -77,6 +77,7 @@ def _install_scoped_vehicle_repository(
         vehicle_id: UUID,
         *,
         organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> VehicleModel | None:
         """Return the row when it is in scope."""
         return vehicle_record if _visible(vehicle_id, organization_id) else None
@@ -184,10 +185,6 @@ async def test_internal_staff_reach_any_organizations_vehicle(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-AS2: a CLOSED organization is accepted as a truck's new owner",
-)
 async def test_transfer_vehicle_to_closed_organization_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,10 +268,6 @@ def _install_free_unique_fields(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-AS4: a truck can be created with acquired_at in the future",
-)
 async def test_create_vehicle_rejects_acquired_at_in_the_future(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -297,11 +290,6 @@ async def test_create_vehicle_rejects_acquired_at_in_the_future(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS5: the VIN conflict message reveals another tenant's VIN",
-)
 async def test_vin_conflict_with_another_tenant_does_not_echo_the_vin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -324,11 +312,6 @@ async def test_vin_conflict_with_another_tenant_does_not_echo_the_vin(
     assert other_vehicle.vin not in str(conflict.value)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS6: VIN and plate are stored as typed (case, spaces)",
-)
 def test_vehicle_create_request_normalizes_vin_and_plate() -> None:
     """VIN and plate are trimmed and upper-cased, so the live-unique indexes
     cannot be bypassed by letter case or spaces."""
@@ -382,11 +365,6 @@ async def test_update_vehicle_with_blank_status_reason_is_invalid_input(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS10: back to ACTIVE keeps the old status_reason",
-)
 async def test_vehicle_back_to_active_clears_status_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -346,14 +346,14 @@ def upgrade() -> None:
     op.create_index(
         "uq_vehicles_live_license_plate",
         "vehicles",
-        ["license_plate"],
+        [sa.literal_column("upper(license_plate)")],
         unique=True,
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_index(
         "uq_vehicles_live_vin",
         "vehicles",
-        ["vin"],
+        [sa.literal_column("upper(vin)")],
         unique=True,
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
@@ -621,7 +621,7 @@ def upgrade() -> None:
     op.create_index(
         "uq_batteries_live_serial_number",
         "batteries",
-        ["serial_number"],
+        [sa.literal_column("upper(serial_number)")],
         unique=True,
         postgresql_where=sa.text("deleted_at IS NULL"),
     )

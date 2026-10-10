@@ -45,6 +45,7 @@ async def get_by_id(
     vehicle_id: UUID,
     *,
     organization_id: UUID | None = None,
+    for_update: bool = False,
 ) -> VehicleModel | None:
     """Find a vehicle by ID, excluding soft-deleted records.
 
@@ -54,6 +55,8 @@ async def get_by_id(
         organization_id: Data scope (ACC-15): only a vehicle owned by this
             organization is found; `None` means no restriction (internal
             staff and cross-domain system lookups).
+        for_update: Lock the row until the transaction ends, so concurrent
+            transfers queue up (RV-AS3).
 
     Returns:
         The vehicle record, or None if not found or out of scope.
@@ -64,9 +67,14 @@ async def get_by_id(
     ]
     if organization_id is not None:
         conditions.append(VehicleModel.organization_id == organization_id)
-    query_result = await db_session.execute(
-        select(VehicleModel).where(and_(*conditions))
-    )
+    statement = select(VehicleModel).where(and_(*conditions))
+    if for_update:
+        # populate_existing: a row already loaded in this session must show
+        # what the lock holder committed, not the stale copy (RV-AS3).
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    query_result = await db_session.execute(statement)
     return query_result.scalar_one_or_none()
 
 
@@ -85,7 +93,7 @@ async def find_by_license_plate(
     query_result = await db_session.execute(
         select(VehicleModel).where(
             and_(
-                VehicleModel.license_plate == license_plate,
+                func.upper(VehicleModel.license_plate) == license_plate.upper(),
                 VehicleModel.deleted_at.is_(None),
             )
         )
@@ -105,7 +113,10 @@ async def find_by_vin(db_session: AsyncSession, vin: str) -> VehicleModel | None
     """
     query_result = await db_session.execute(
         select(VehicleModel).where(
-            and_(VehicleModel.vin == vin, VehicleModel.deleted_at.is_(None))
+            and_(
+                func.upper(VehicleModel.vin) == vin.upper(),
+                VehicleModel.deleted_at.is_(None),
+            )
         )
     )
     return query_result.scalar_one_or_none()

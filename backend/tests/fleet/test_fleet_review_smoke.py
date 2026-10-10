@@ -218,10 +218,6 @@ async def test_customer_cannot_move_a_fleet_under_its_own_great_grandchild(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-AS1: a fleet-limited manager pulls an unassigned truck in",
-)
 async def test_limited_manager_cannot_add_a_truck_outside_their_visible_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

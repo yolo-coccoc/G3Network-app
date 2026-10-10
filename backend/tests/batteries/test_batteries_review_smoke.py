@@ -96,6 +96,7 @@ def _install_scoped_battery_repository(
         battery_id: UUID,
         *,
         organization_id: UUID | None = None,
+        for_update: bool = False,
     ) -> BatteryModel | None:
         """Return the row when it is in scope."""
         return battery_record if _visible(battery_id, organization_id) else None
@@ -201,11 +202,6 @@ async def test_internal_staff_reach_any_organizations_battery(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="RV-AS7: a backdated sale moves the pack's acquired_at backwards",
-)
 async def test_sold_vehicle_battery_acquired_at_never_moves_backwards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
