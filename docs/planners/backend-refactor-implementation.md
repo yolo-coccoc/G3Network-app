@@ -306,7 +306,7 @@ fleet rest, charging, billing, notifications.
 | `backend/app/domains/charging_sessions` | `GET /charging-sessions/mine` and the receipt do not write `VIEW` audit rows; the fleet limit (FL-10) is still not applied to the organization list. | Not in the package (see the FL-10 issue above). |
 | `backend/app/domains/charging_stations/ocpp/command_loop.py` | The sweep runs only while the gateway runs, with the same single-process assumption as the commands; a PENDING row stays PENDING in the database until then (reads and token checks already treat it as expired). | Simplest home; a second gateway would sweep too (harmless, the UPDATE is idempotent). |
 | `simulator/` | The 2.0.1 simulator still starts without an `idToken` and the seed scripts still post the old API shapes; the 1.6J simulator's `--id-tag` must be the token returned by `POST /charging-sessions/scan`. | `simulator/` is out of scope; fix with the e2e run. |
-| `backend/app/domains/charging_sessions/service.py`, `backend/app/api/billing_hooks.py` | A session-ended hook that fails is logged and rolled back to its savepoint; the session still ends and its bill stays QUOTED (a COMPLETED session with a QUOTED bill). Nothing sweeps such bills, and no staff action settles one (`settle_session_bill` is idempotent, so a sweep or an endpoint is a few lines). A process that completes sessions without calling `app.api.startup.register_session_hooks` bills nothing. | Keeps a billing fault from failing the charger's stop message (BL-19); no scheduler (`deferred.md` 99). |
+| `backend/app/domains/charging_sessions/service.py`, `backend/app/api/billing_hooks.py` | A session-ended hook that fails is logged and rolled back to its savepoint; the session still ends and its bill stays QUOTED (a COMPLETED session with a QUOTED bill). Nothing sweeps such bills, and no staff action settles one (`settle_session_bill` is idempotent, so a sweep or an endpoint is a few lines). Every process registers the hook through `app.api.startup.register_all_hooks` (CV-21). | Keeps a billing fault from failing the charger's stop message (BL-19); no scheduler (`deferred.md` 99). |
 | `backend/app/domains/billing` (payments) | An unmatched bank transfer, or a second transfer for a paid code, is only logged; there is no review list, manual match, refund, payment list or notification to the payer (`TOP_UP_RECEIVED` has a type and a routing rule since WP10, but `billing` does not raise it: a payment has no organization to put on the alert). A PENDING payment past its expiry becomes FAILED only when it is read. A late transfer for a FAILED payment is credited. The webhook has no replay window or IP allow-list (shared secret only) and the fake provider is the only one. | `payments` has no row to hold them (BL-23); no real bank integration (PR-15). |
 | `backend/app/domains/billing` (bills) | The mismatch check compares the stop reading with the newest measurement without allowing for the sampling lag (large chargers may exceed the 1 kWh floor and 5 % tolerance on short charges and be held); a held bill with no computed figures can only be voided, not repaired; no refund or credit note for a BILLED bill; `ON_HOLD` and `VOID` bills raise no notification; the fleet limit (FL-10) is not applied to the bill list; there is no PDF receipt. | Tolerance is a guess until real charger data (`deferred.md` 75); not in the package. |
 | `backend/app/domains/billing` (tariffs) | One tariff per location or owner default only: no per-charger or per-customer price, no "cheapest window" computed by the server (the periods are returned), no tariff for generation source (PAY-09 mentions grid / solar / wind), and no deletion. A tariff cannot be rewritten into the past; a wrong version is corrected by publishing the next one. Time-of-use periods are held in Vietnam time with day-of-start semantics, which no catalog text confirms. | BL-08 lists those as later; PAY-09 source types have no column. |
@@ -316,9 +316,79 @@ fleet rest, charging, billing, notifications.
 | `simulator/` | The OCPP simulators and seed scripts do not create a tariff, so a scan against a fresh database answers `409 NO_TARIFF` until one is created through `POST /tariffs` and `POST /tariffs/{id}/versions`; the 1.6J simulator's `--id-tag` must still be the token returned by the scan. | `simulator/` is out of scope; fix with the e2e run. |
 | `backend/app/domains/notifications/delivery.py` | Push and e-mail are sent inside the producer's transaction (two savepoints). With a real provider an alert whose transaction rolls back would already have been sent, and a slow provider would hold the transaction. Nothing records that a message was sent or failed (log only); a dead push token is cleared but a person whose only token died is not told otherwise. | Both providers are logging fakes; the outbox belongs with NTF-07 and SMS (`deferred.md` 96, 100). |
 | `backend/app/domains/notifications/routing.py` | The recipient roles are the brief's and the decision log's (NT-15), not derived from the catalog's `users` lists; the NTF-02/NTF-04 role lists (DRIVER, FLEET_MANAGER / FLEET_MANAGER, ACCOUNTANT) are not applied, so e.g. a DISPATCHER also gets pushes for geofence alerts and an ACCOUNTANT gets nothing. There is no plan check (BL-16). The `NO_DRIVER_CHECK_IN_ALERT`, `OUTSIDE_DRIVER_CHECK_IN`, `NO_TRIP_STARTED`, `LOW_WALLET_BALANCE`, `TOP_UP_RECEIVED` and `CHARGING_RECEIPT` kinds have rules but no producer. | Roles only until plans exist; those features are not part of this run. |
-| `backend/app/domains/notifications/recipient_service.py` | Fleet scoping asks `fleet` once per limited manager (and `identity` once per role holder for the full role set): no batching (MVP rule). A process that did not call `register_notification_hooks` (a script, a test app) skips the checked-in driver and does not narrow limited managers. | `backend-runtime-conventions.md` forbids batching before a benchmark; hooks are registered by the API, the telemetry ingestion and the device-health monitor. |
+| `backend/app/domains/notifications/recipient_service.py` | Fleet scoping asks `fleet` once per limited manager (and `identity` once per role holder for the full role set): no batching (MVP rule). A process that did not call `register_all_hooks` (a script, a test app) skips the checked-in driver and does not narrow limited managers (every process calls it, CV-21). | `backend-runtime-conventions.md` forbids batching before a benchmark; every process registers the hooks (CV-21). |
 | `backend/app/domains/notifications` (inbox) | There is no delete or archive of an inbox entry (the DBML has none), the unseen count includes alerts of every organization the person belongs to, and opening the centre stamps `seen_at` as a side effect of a `GET`; a polling client must use `order=asc`. | Append-only design (NT-09/NT-10); NT-16 documents the choice. |
 | `backend/app/domains/notifications/settings_service.py` | Switching is per kind of alert (the DBML column), not per service; a save always stores the row even when it equals the default; an organization with no row for a kind never shows a `updated_at`. | `organization_notification_settings` is keyed by kind (NT-12); "only exceptions" is not enforced on save. |
+
+## Review findings (2026-10-10)
+
+An independent review after the run, not part of the Known issues above. Each
+finding has a test that states the correct behaviour and is marked
+`xfail(strict=True, reason="RV-…")` in a `*_review*` test file: the fix makes
+it pass, strict mode then fails the suite, and the marker comes off with the
+fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
+`RUN_DB_INTEGRATION=1`.
+
+| Code | Sev | Where | Defect |
+|---|---|---|---|
+| RV-OP1 | C | `telemetry/ingestion/mqtt_consumer.py`, `telematics/ingestion/mqtt_consumer.py` | A deeply nested JSON, an integer over 4300 digits, or a year-1/9999 timestamp with an offset raises an exception the handler does not catch: one MQTT message stops ingestion for every truck. |
+| RV-OP2 | C | `telemetry/repository.py` `insert_telemetry` | Plain INSERT against `uq_telemetry_telematic_recorded_at`: a repeated reading (offline-buffer replay, 1 Hz with second timestamps) raises IntegrityError and stops the worker (PG). |
+| RV-OP3 | H | `telemetry/schemas.py`, `telematics/schemas.py` | NaN/Infinity, `\u0000`, and integers beyond the column pass validation and fail in PostgreSQL, which stops the worker. |
+| RV-OP4 | H | `telemetry/ingestion/mqtt_consumer.py` | The payload's `telematic_serial` is trusted over the topic: one device's credentials can write positions and alerts for any truck. |
+| RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. |
+| RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). |
+| RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. |
+| RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). |
+| RV-CS2 | H | `ocpp201_charge_point.py` `on_transaction_event` | `evse` / `connectorId` required on every TransactionEvent (optional in 2.0.1): an `Ended` without `evse` is refused, the session never completes. |
+| RV-CS3 | H | both adapters' start handlers, `charging_sessions/service.py` | A retried StartTransaction / `Started` is answered `Invalid` (transactionId 0): the session stays ACTIVE forever (PG). |
+| RV-BL1 | H | `billing/service.py` `has_minimum_balance` | With the default minimum 0 the check is off: a negative wallet keeps starting charges (BL-14). The existing `test_has_minimum_balance_follows_the_setting` asserts the old rule and changes with the fix. |
+| RV-BL2 | H | `billing/repository.py` (every `for_update=True`), `identity/repository.py`, `ocpp_state_repository.py` | The locking re-read returns the stale object from the session's identity map (no `populate_existing`): a poll can overwrite a credited payment to FAILED (PG). |
+| RV-AS6 | M | `vehicles/schemas.py`, `uq_vehicles_live_*` | VIN, plate and battery serial are not normalized and the unique indexes are case-sensitive: duplicate VINs, and the QR scan can bind the wrong truck (PG). |
+| RV-BL3 | M | `api/charging_session_flow.py` | "One open charge per person" is an unlocked read: two simultaneous scans open two charges (PG). |
+| RV-BL4 | M | `ocpp/ocpp16_measurements.py` `_energy_value_wh` | A SignedData energy sample makes StopTransaction fail: the session is never completed or billed. |
+| RV-BL5 / RV-CS4 | M | both adapters' meter extraction | Energy register ignores `phase` and `location`: a per-phase or Inlet value becomes the start/stop reading (wrong bill or ON_HOLD). |
+| RV-CS5 | M | both adapters' meter extraction | Vendor sentinel values and huge 2.0.1 multipliers overflow `Numeric(24,6)` or raise, failing the whole stop message. |
+| RV-CS6 | M | `ocpp_state_repository.py`, `ocpp/command_loop.py` | TIMEOUT measured from `requested_at` while commands wait on the call lock; a late answer overwrites TIMEOUT (no `outcome='PENDING'` guard) (PG). |
+| RV-CS7 | M | `charging_sessions/repository.py` `find_pending_session_by_token` | Activation is read-then-write without a lock: it can revive an ABANDONED session whose bill was voided (free energy) (PG). |
+| RV-CS8 | M | `charging_stations/service.py` command creation, `command_loop.py` | A command's `session_id` is not checked against the charger or the organization: another tenant's token can be sent to your charger and its session abandoned. |
+| RV-BL6 | M | `billing/router.py` simulate-transfer | The development transfer simulation is always on: an admin can credit any amount with no trace. |
+| RV-ID3 | M | `identity/member_service.py`, `account_service.py` | An invitation to an unregistered phone creates a user row that blocks the real owner's sign-up and claims them into the inviter's organization. |
+| RV-ID4 | M | `identity/member_service.py` handover `force` | Internal staff can replace a working customer ORG_ADMIN at will (ID-33 allows force only when the admin is gone). |
+| RV-ID5 | M | `identity/security.py` `normalize_phone_number` | `+84 0901…` keeps the trunk zero: one SIM can hold several accounts and OTP limits multiply. |
+| RV-ID6 | M | `identity/account_service.py` phone/e-mail/password change | Changing the login phone needs no password and ends no session; wrong current passwords are not counted. |
+| RV-AS1 | M | `fleet/service.py` `add_vehicle_to_fleet` | A fleet-limited manager can add an unassigned truck to their fleet and widen their own reach (FL-10). |
+| RV-AS2 | M | `identity/service.py` `resolve_organization_for_new_record` | A CLOSED (or SUSPENDED) organization is accepted as owner of a new or transferred vehicle, battery or fleet. |
+| RV-AS3 | M | `vehicles/service.py` transfer, `batteries/service.py` install | No row lock: concurrent transfers give negative ownership periods; a pack can sit in two trucks (PG). |
+| RV-AS4 | M | `batteries/service.py` install, vehicle/battery create | `installed_at` has no lower bound, `acquired_at` may be in the future (PG for the install half). |
+| RV-AS5 | M | `vehicles/service.py`, `fleet/service.py` | VIN/plate 409 echoes the value across tenants; the fleet remove path distinguishes unknown from elsewhere. |
+| RV-OP6 | M | `drivers/service.py` auto-end, `telemetry/repository.py` | Movement read by device clock vs. server-clock `started_at`: a slow device clock auto-ends a moving truck (PG). |
+| RV-OP7 | M | `drivers/repository.py`, `trip_service.py` | Blind updates: the sweep overwrites a committed check-out; two drivers both start one planned trip (PG). |
+| RV-OP8 | M | `telemetry/repository.py` distance fold | `lag()` over rows without odometer gives 0 km; one glitch adds ~1,000,000 km (PG). |
+| RV-OP9 | M | `drivers/service.py` check-in | Check-in to another organization's silent truck relies on phone-sent coordinates only; takeover then exposes the truck. Owner decision needed; no test. |
+| RV-OP10 | M | `telemetry/router.py` `FLEET_REPORT_READERS` | DRIVER can open the organization's fleet operating report. |
+| RV-AS7 | L | `batteries/service.py` `transfer_installed_battery_with_vehicle` | The pack's `acquired_at` can move backwards on a backdated truck sale. |
+| RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. |
+| RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). |
+| RV-AS10 | L | `vehicles/service.py` `update_vehicle` | Back to ACTIVE keeps the old `status_reason`. |
+| RV-BL7 | L | `billing/schemas.py`, `providers.py` | Money and VAT values beyond their columns give 500 (VAT 100 overflows `numeric(4,2)`). |
+| RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. |
+| RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. |
+| RV-CS9 | L | both adapters | Station resolved by identity on every message: renaming `ocpp_identity` breaks the open connection. |
+| RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. |
+| RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. |
+| RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. |
+| RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). |
+| RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. |
+| RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. |
+| RV-OP12 | L | `drivers/service.py` | Licence expiry compared with the UTC date, not the Vietnam date. |
+| RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. |
+
+Not tested (repository SQL or concurrency a fake cannot show): RV-ID7 (the
+last-HEAD_ADMIN count includes INVITED/LOCKED holders and is not locked),
+RV-ID9 (double grant/invite/consent gives 500, no IntegrityError mapping),
+RV-ID10 (session lifetime follows the current organization; `platform` is
+client-chosen). CS-13 of the review (missing `idTokenInfo`) was dropped: the
+spec does not require it.
 
 ## Next steps (debugging phase)
 
