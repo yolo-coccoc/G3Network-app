@@ -99,7 +99,10 @@ class VehicleModel(Base):
 
 Every table must have an internal ID. Don't use a business key like `vin`,
 `license_plate`, or `telematic_serial` as the primary key. Foreign keys must
-also reference the internal ID.
+also reference the internal ID. The key is `<singular>_id` (§8.4): a UUID
+(`default=uuid4`) for entity tables, so IDs can later be generated outside
+one database; a `BIGINT` identity for append-only, high-volume rows
+(`access_audit_log_id`, `telematic_status_report_id`).
 
 ## 4. Pydantic schema
 
@@ -374,6 +377,36 @@ soft_delete_vehicle_endpoint()
 
 Service and router names should be distinguishable when searching code or
 reading a stack trace.
+
+### 7.4 Where service code lives (owner decision, 2026-10-10, CV-20)
+
+`service.py` is the domain's **public surface**: the only module other
+domains call (`domain-boundaries.md`). How much logic sits inside it depends
+on the domain's size:
+
+- **Small domain**: all the business logic stays in `service.py`, called by
+  the domain's own router and by other domains (`vehicles`, `warranties`).
+- **Large domain** (`service.py` past ~1,000 lines): move each sub-area into
+  its own `<area>_service.py` (`tariff_service.py`, `command_service.py`)
+  holding that area's logic; the domain's routers import the area modules
+  directly. `service.py` keeps only what other domains call: its own small
+  lookups, plus a thin wrapper (full docstring, one forwarding call) for an
+  area function another domain needs (`billing/service.py`'s
+  `resolve_tariff_for_station`). An area module never imports `service.py`,
+  so there is no import cycle.
+- **Shared internal helpers** used by several area modules (access checks,
+  response mappers) go in a module named for what they do (`access.py`,
+  `mappers.py`), never in `service.py` and never in a generic `utils.py` /
+  `helpers.py`. A helper shared across modules is public (no leading `_`).
+- Every new internal module is added to its domain's import-linter
+  `forbidden_modules` (`backend/pyproject.toml`) in the same change.
+- A domain's files stay **flat** at its root: no folders by layer
+  (`services/`, `helpers/`). A subpackage is only for a sub-area with its own
+  entrypoint or process (`charging_stations/ocpp/`, `telemetry/ingestion/`).
+
+Domains are moved from the first shape to the second when a task touches
+them, or in a dedicated `refactor:` commit with no behaviour change; never
+mixed into a feature commit.
 
 ## 8. Variables, parameters, collections, and booleans
 

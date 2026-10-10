@@ -16,7 +16,7 @@
 - Type checking: type hints are required on function signatures. **mypy** (strict, configured in `backend/pyproject.toml`) is the gate: `uv run mypy app tests`, run by `make lint`/`make check`. Pyright (the editor or the Claude Code Pyright plugin) is advisory only — when the two disagree, mypy wins.
 - Each domain under `backend/app/domains/<domain_name>/` uses the following modules as needed; don't create an empty file as a placeholder:
   - `router.py` — defines endpoints (FastAPI `APIRouter`), contains no business logic.
-  - `service.py` — pure Python business logic; this is the **only public interface** other domains call into.
+  - `service.py` — pure Python business logic; this is the **only public interface** other domains call into (when a domain outgrows one file, see `backend-coding-conventions.md` §7.4).
   - `repository.py` — DB queries (SQLAlchemy), contains no business logic.
   - `schemas.py` — Pydantic models for requests/responses.
   - `models.py` — SQLAlchemy models.
@@ -142,39 +142,3 @@
 6. Review migrations for timezone handling, FK, index, constraint, PostGIS/TimescaleDB, upgrade, and downgrade correctness.
 7. No batched/bulk query written preemptively — see "Query batching / premature optimization" above.
 8. If new code needs a different convention, update the relevant convention document (this file, `backend-coding-conventions.md`, or `CLAUDE.md`) or get confirmation before implementing.
-
-## SQLAlchemy Models — Primary Key Convention
-
-- **Every table MUST have an internal ID** (never use a business key like license_plate, VIN as the PK):
-  ```python
-  # ✅ CORRECT: Internal ID (UUID or auto-increment, depending on the case)
-  class VehicleModel(Base):
-      __tablename__ = "vehicles"
-      
-      # Option 1: UUID (fits distributed systems)
-      vehicle_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-      
-      # Option 2: Auto-increment (fits a single database)
-      # vehicle_id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
-      
-      license_plate: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, index=True)
-      vin: Mapped[str] = mapped_column(String(17), unique=True, nullable=False, index=True)
-  
-  # ❌ WRONG: using a business key as the PK
-  class VehicleModel(Base):
-      __tablename__ = "vehicles"
-      
-      license_plate: Mapped[str] = mapped_column(String(20), primary_key=True)  # NEVER
-  ```
-- **Choosing UUID vs. Auto-increment:**
-  - **UUID**: fits distributed systems; telematic devices may generate IDs from multiple sources without central coordination.
-  - **Auto-increment**: fits a single database; higher performance, easier to debug.
-  - **Decision**: use UUID for the main tables (vehicles, telematics) since the system may scale into a distributed architecture.
-- **Foreign keys** always reference the internal ID:
-  ```python
-  # ✅ CORRECT
-  charging_session.vehicle_id  # → VehicleModel.vehicle_id (UUID or int)
-  
-  # ❌ WRONG
-  charging_session.vehicle_license_plate  # → VehicleModel.license_plate (business key)
-  ```

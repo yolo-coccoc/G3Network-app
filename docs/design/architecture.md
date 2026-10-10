@@ -215,8 +215,8 @@ FastAPI registers the following domains:
   the gateway. The end of a session (the charger's stop message, or an
   abandoned scan) reaches billing through a hook list in
   `charging_sessions.service` (`register_session_ended_hook`), filled by
-  `app/api/billing_hooks.py` in the API **and** in the OCPP gateway process
-  (`app/api/startup.py`, BL-19): a completed session is billed and the wallet
+  `app/api/billing_hooks.py` in every process, the OCPP gateway included
+  (`app/api/startup.register_all_hooks`, BL-19, CV-21): a completed session is billed and the wallet
   debited in the stop message's transaction, an abandoned one voids its bill. A PENDING row ends
   `ABANDONED` when its remote start is refused / times out / is not sent (the
   gateway's command loop, in the same step as the command's outcome) or when
@@ -571,7 +571,7 @@ call each other is in
 │   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
 │   │   │   ├── billing_hooks.py       # Wires the end of a charging session to billing (BL-19)
 │   │   │   ├── notification_hooks.py  # Wires alert routing to the drivers (driver at the wheel) and fleet (FL-10 visibility) domains (NT-15)
-│   │   │   ├── startup.py             # register_api_hooks / register_session_hooks / register_notification_hooks: shared by the API, the OCPP gateway, the telemetry ingestion and the device-health monitor
+│   │   │   ├── startup.py             # register_all_hooks: every cross-domain hook, called at start-up by the API, every entrypoint and the identity bootstrap (CV-21)
 │   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt, bill across charging_stations, billing, drivers, charging_sessions (CE-20)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │

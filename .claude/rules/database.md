@@ -45,10 +45,10 @@ General Alembic rules: the revision ID must stay ≤32 characters (the
 `alembic_version.version_num` width); the migration is formatted by ruff like
 any other file; every model module must be listed in
 `app/libs/db/model_registry.py` (imported by `migrations/env.py`, so autogenerate
-sees it) - a new model module is added there. A process that writes rows with
-foreign keys to another domain's tables (the OCPP gateway) imports the registry
-at its entrypoint, because SQLAlchemy resolves a foreign key only to a model
-loaded in the same process (CS-27).
+sees it) - a new model module is added there. Every process loads the full
+registry through `app/api/startup.py`, which each process imports to register
+its hooks (CV-21), because SQLAlchemy resolves a foreign key only to a model
+loaded in the same process (CS-27); an entrypoint does not import it again.
 
 ## Platform
 

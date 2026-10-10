@@ -33,6 +33,11 @@ file before writing its counterpart.
 4. **Wire it up**
    - Router: import and `app.include_router(...)` in `backend/app/api/main.py`.
    - Models: import the model module in `backend/app/libs/db/model_registry.py` (imported by `migrations/env.py`).
+   - Processes and hooks: a new `entrypoint.py` calls
+     `app.api.startup.register_all_hooks()` at start-up, and a new
+     cross-domain hook is registered inside that function (CV-21,
+     `.claude/rules/domain-boundaries.md`);
+     `tests/test_startup_hooks_smoke.py` fails otherwise.
    - Schema: hand the change to the `schema-change` agent (or follow
      `.claude/rules/database.md`): models + `.dbml` (`@status built`) +
      `0001_baseline_schema.py` + `make db-reset`.

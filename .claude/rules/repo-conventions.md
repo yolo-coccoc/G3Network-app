@@ -8,9 +8,9 @@
 
 - Commit messages follow **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`.
   - Example: `feat(policy): add charging violation reconciliation endpoint (F-B3)`
-- **Work directly on `master`** — solo project, no feature branches, no PR-before-merge step. Commit straight to `master` (still following the commit-message convention above; split unrelated changes into separate commits, e.g. a `feat` commit and its companion `docs` commit). This replaces the earlier feature-branch/PR convention — if a branch from that period still exists locally, merge it into `master` and delete it.
+- **Work directly on `master`** — solo project, no feature branches, no PR-before-merge step. Commit straight to `master` (still following the commit-message convention above; split unrelated changes into separate commits, e.g. a `feat` commit and its companion `docs` commit).
 - Never commit secrets — all sensitive config goes through `.env` (an `.env.example` template already exists and contains no real values).
-- When adding a new feature, cross-check the corresponding feature code in `docs/product/feature-list.md` (e.g. `F-C1`, `F-B2`) to keep code and spec consistent.
+- When adding a new feature, cross-check its code in the feature catalog (`docs/product/features/features.yaml`, e.g. `VEH-05`, `CHG-01`) to keep code and spec consistent. The old `docs/product/feature-list.md` (`F-A1`...) is superseded; a catalog feature's `old_codes` maps to it.
 - **`__init__.py` files contain NO code**: every `__init__.py` in the repo only contains a module docstring — it must NEVER import or export anything. Files that need to import from each other must import directly from the module (e.g. `from app.domains.telematics.models import TelematicModel` instead of `from app.domains.telematics import TelematicModel`).
 - **Do NOT add a new component on your own initiative** (middleware, library, config, infrastructure...) — **ask first**. Only implement what's explicitly requested in a planner or prompt.
 - **When skipping/removing a component** for the reason "not needed right now, but definitely needed later" (e.g. middleware between frontend and backend, a caching layer, rate limiting...):

@@ -3,10 +3,10 @@
 > Read this file before adding a new domain, calling across two domains, or
 > when unsure whether an import violates a bounded context. Directory
 > structure in [architecture.md](../../docs/design/architecture.md#directory-structure). Which
-> product features a domain serves is mapped in
-> [`docs/product/feature-list.md`](../../docs/product/feature-list.md)
-> (each feature carries a **Backend domain:** field); per-feature dependencies
-> are in that file's "Dependencies" column, not repeated here.
+> product features a domain serves, and the other domains each one
+> `touches`, are in the
+> [feature catalog](../../docs/product/features/README.md)
+> (`features.yaml`), not repeated here.
 
 ## Rules
 
@@ -14,7 +14,7 @@
   - This applies only **between** domains. Inside one domain, files call each other directly (e.g. `telemetry/service.py` → `telemetry/detection.py`/`telemetry/repository.py`, or the OCPP adapters → `charging_stations/ocpp_state_service.py`). A domain may keep such internal modules beside its public `service.py`; other domains never import them.
 - Cross-domain calls take and return primitives or frozen dataclass DTOs (`VehicleReference`, `TransactionSessionReference`...), never an ORM model or an HTTP schema.
 - Every edge is **one-directional** unless listed as an exception below. Adding a new edge (or a new domain) means adding a row to the table below in the same change.
-- A new domain must reference its feature code in `feature-list.md` (e.g. `F-C1`, `F-B2`).
+- A new domain must reference its feature codes in the feature catalog (`docs/product/features/features.yaml`, e.g. `CHG-01`).
 - **Enforced by `import-linter`**: one `forbidden` contract per domain in `backend/pyproject.toml` (`[tool.importlinter]`), run by `make lint` / `make check` and the pre-commit hook. Each contract forbids every module of the domain except `service`, `types` and `exceptions` (the public surface), so a new internal module or subpackage must be added to its domain's `forbidden_modules`. A new domain needs its own contract (copy an existing one) and must appear in the other contracts' `source_modules`. Only direct imports are checked (`allow_indirect_imports = true`).
 
 ## Current dependency edges
@@ -50,7 +50,7 @@
 | `warranties` → `vehicles` / `batteries` / `telematics` / `charging_stations` | the owner of the covered object (`resolve_vehicle_reference_by_id`, `resolve_battery_owner_organization_id`, `resolve_telematic_owner_organization_id`, `resolve_station_owner_organization_id`) | WAR-01 |
 | `app/api/vehicle_transfer.py` → `vehicles`, `fleet`, `drivers`, `batteries` | `transfer_vehicle_ownership`, `close_membership_of_sold_vehicle`, `end_open_session_on_ownership_change`, `transfer_installed_battery_with_vehicle` | VEH-02 (VH-12) |
 | `app/api/charging_session_flow.py` → `charging_stations`, `charging_sessions`, `billing`, `drivers` | scan: `resolve_scan_target`, `has_active_session_on_connector`, `has_open_session_by_user`, `resolve_wallet_standing`, `has_minimum_balance`, `resolve_tariff_for_station`, `find_open_vehicle_id_by_membership`, `create_pending_session`, `create_quoted_bill`, `queue_station_command`; stop: `authorize_session_stop`, `queue_station_command`; receipt and bill: `get_charging_session`, `resolve_session_place_reference`, `find_session_bill_reference`, `get_session_bill_response` | CHG-01, CHG-03, PAY-10 (CE-20) |
-| `app/api/billing_hooks.py` → `charging_sessions`, `billing` | `register_session_ended_hook`; the hook calls `settle_session_bill` (a completed session) or `void_session_bill` (an abandoned scan); registered by `app/api/startup.py` in the API **and** in the OCPP gateway process | PAY-10 (BL-19) |
+| `app/api/billing_hooks.py` → `charging_sessions`, `billing` | `register_session_ended_hook`; the hook calls `settle_session_bill` (a completed session) or `void_session_bill` (an abandoned scan); registered in every process by `app/api/startup.register_all_hooks` (CV-21) | PAY-10 (BL-19) |
 | `billing` → `charging_stations` | `resolve_station_location_reference` (a charger's location and that location's owner: which tariff prices it), `resolve_location_owner_reference` (a tariff's location belongs to its owner), `get_charging_station` (the price endpoint checks the caller may see the charger) | PAY-09 (BL-08) |
 | `billing` → `identity` | `resolve_organization_for_new_record` (owner of a new tariff) | PAY-09 |
 | `telemetry` → `drivers` | `is_membership_checked_in_to_vehicle` (a driver reads the live data of the truck they are checked in to) | MON-02, DR-11 |
@@ -72,7 +72,7 @@ listed in the table above. The QR charge is the second case (CE-20):
 `charging_stations` already calls `charging_sessions`, so the scan, stop and
 receipt, which need both plus `billing` and `drivers`, sit in
 `app/api/charging_session_flow.py` instead of adding the reverse edge
-`charging_sessions` → `charging_stations`. The same goes for billing (BL-19): `charging_sessions` may not call `billing`, so it exposes a hook list (`register_session_ended_hook`) and `app/api/billing_hooks.py` registers the billing function in every process that ends sessions (`app/api/startup.py`; the OCPP gateway calls it too). When `identity` (which depends on no domain) must
+`charging_sessions` → `charging_stations`. The same goes for billing (BL-19): `charging_sessions` may not call `billing`, so it exposes a hook list (`register_session_ended_hook`) and `app/api/billing_hooks.py` registers the billing function. When `identity` (which depends on no domain) must
 trigger work elsewhere (ending or locking a membership, DR-10), it exposes a
 hook (`register_membership_end_hook`) that `app/api/membership_end_hooks.py`
 fills with the other domain's public function at start-up (DR-15); the same
@@ -80,10 +80,17 @@ pattern gives the vehicle endpoints the caller's fleet limit
 (`register_visible_vehicle_resolver`, filled by `app/api/fleet_visibility.py`,
 FL-13).
 
+**Every process registers every hook (CV-21).** A hook slot is a module-level
+variable, empty in each new process, and an empty slot is skipped silently. So
+`app/api/startup.register_all_hooks` fills all of them, and the API, every
+`entrypoint.py` and the identity bootstrap call it at start-up; no process
+picks only the hooks it thinks it needs. A new hook is added to that function;
+a new process calls it. `tests/test_startup_hooks_smoke.py` checks both.
+
 ## Domain roles worth knowing
 
 - **`billing`** calls only `charging_stations` (a charger's location and owner, for the tariff) and `identity`; no other domain. `charging_sessions` reaches it through the session-ended hook, never directly.
-- **`notifications`** depends only on `identity` (the foundational domain): `create_notification` stores the alert, derives its recipients from the routing table (`routing.py`, NTF-06), puts it in their inboxes and sends the push / e-mail the organization has on (`delivery.py`, fake providers, NT-15). The two truck-related answers it cannot get itself - the driver checked in to a truck (`drivers`) and the trucks a fleet-limited manager may see (`fleet`) - are registered at start-up by `app/api/notification_hooks.py` (`register_vehicle_audience_hooks`), the same pattern as `fleet_visibility.py`; every process that raises alerts (API, telemetry ingestion, device-health monitor) calls `app.api.startup.register_notification_hooks`, and a process that does not still routes by role. Its settings routes are mounted under `/organizations/{id}/notification-settings`.
+- **`notifications`** depends only on `identity` (the foundational domain): `create_notification` stores the alert, derives its recipients from the routing table (`routing.py`, NTF-06), puts it in their inboxes and sends the push / e-mail the organization has on (`delivery.py`, fake providers, NT-15). The two truck-related answers it cannot get itself - the driver checked in to a truck (`drivers`) and the trucks a fleet-limited manager may see (`fleet`) - are registered at start-up by `app/api/notification_hooks.py` (`register_vehicle_audience_hooks`), the same pattern as `fleet_visibility.py`; every process registers them through `app.api.startup.register_all_hooks` (CV-21). Its settings routes are mounted under `/organizations/{id}/notification-settings`.
 - **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `deferred.md` before reopening.
 - **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.
 - **`fleet`** calls only `vehicles`; `telemetry` and `telematics` call `fleet`. Fleet-wide telemetry views (live positions, the operating rollup) and geofence detection therefore live in `telemetry` (`/telemetry/fleets/{fleet_id}/...`, `telemetry/geofencing.py`) — never add a `fleet → telemetry` call, it would close a cycle.
