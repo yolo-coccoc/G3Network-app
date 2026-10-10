@@ -8,20 +8,25 @@ boundary owns the transaction.
 
 from datetime import datetime
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Select, and_, func, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.notifications.models import (
     NotificationModel,
     NotificationRecipientModel,
+    OrganizationNotificationSettingModel,
 )
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.libs.common.clock import utc_now
+from app.libs.db.history import set_change_context
+
+# One list row: the alert plus the asking person's seen and read times
+# (both ``None`` when the list is the organization view, not an inbox).
+NotificationRow = tuple[NotificationModel, datetime | None, datetime | None]
 
 
 async def insert(
@@ -97,7 +102,7 @@ async def get_by_id(db: AsyncSession, notification_id: int) -> NotificationModel
     return query_result.scalar_one_or_none()
 
 
-def _list_conditions(
+def _list_query(
     *,
     organization_id: UUID | None,
     vehicle_id: UUID | None,
@@ -105,8 +110,12 @@ def _list_conditions(
     severity: NotificationSeverity | None,
     user_id: UUID | None,
     unread_only: bool,
-) -> list[ColumnElement[bool]]:
-    """Build the filter conditions shared by the list queries.
+) -> Select[Any]:
+    """Build the select shared by the list queries.
+
+    With ``user_id`` the alerts are joined to that person's inbox rows (only
+    alerts that reached them), and each row carries their seen and read times;
+    without it the select is the organization view and the two times are NULL.
 
     Args:
         organization_id: Only notifications of this organization, if given.
@@ -117,27 +126,40 @@ def _list_conditions(
         unread_only: With ``user_id``, only those the person has not read.
 
     Returns:
-        Conditions to AND together (possibly none).
+        A select of ``(notification, seen_at, read_at)`` with the filters
+        applied and no order or limit.
     """
-    conditions: list[ColumnElement[bool]] = []
-    if organization_id is not None:
-        conditions.append(NotificationModel.organization_id == organization_id)
-    if vehicle_id is not None:
-        conditions.append(NotificationModel.vehicle_id == vehicle_id)
-    if notification_type is not None:
-        conditions.append(NotificationModel.notification_type == notification_type)
-    if severity is not None:
-        conditions.append(NotificationModel.severity == severity)
-    if user_id is not None:
-        recipient_conditions = [
-            NotificationRecipientModel.notification_id
-            == NotificationModel.notification_id,
-            NotificationRecipientModel.user_id == user_id,
-        ]
+    query: Select[Any]
+    if user_id is None:
+        query = select(
+            NotificationModel,
+            null().label("seen_at"),
+            null().label("read_at"),
+        )
+    else:
+        query = select(
+            NotificationModel,
+            NotificationRecipientModel.seen_at,
+            NotificationRecipientModel.read_at,
+        ).join(
+            NotificationRecipientModel,
+            and_(
+                NotificationRecipientModel.notification_id
+                == NotificationModel.notification_id,
+                NotificationRecipientModel.user_id == user_id,
+            ),
+        )
         if unread_only:
-            recipient_conditions.append(NotificationRecipientModel.read_at.is_(None))
-        conditions.append(select(1).where(*recipient_conditions).exists())
-    return conditions
+            query = query.where(NotificationRecipientModel.read_at.is_(None))
+    if organization_id is not None:
+        query = query.where(NotificationModel.organization_id == organization_id)
+    if vehicle_id is not None:
+        query = query.where(NotificationModel.vehicle_id == vehicle_id)
+    if notification_type is not None:
+        query = query.where(NotificationModel.notification_type == notification_type)
+    if severity is not None:
+        query = query.where(NotificationModel.severity == severity)
+    return query
 
 
 async def list_after_id(
@@ -151,7 +173,7 @@ async def list_after_id(
     severity: NotificationSeverity | None = None,
     user_id: UUID | None = None,
     unread_only: bool = False,
-) -> list[NotificationModel]:
+) -> list[NotificationRow]:
     """List notifications newer than a cursor, oldest first.
 
     Args:
@@ -167,57 +189,10 @@ async def list_after_id(
         unread_only: With ``user_id``, only those the person has not read.
 
     Returns:
-        Notifications ordered by ``notification_id`` ascending, so the
-        caller's next cursor is the last item's ID.
+        ``(notification, seen_at, read_at)`` ordered by ``notification_id``
+        ascending, so the caller's next cursor is the last item's ID.
     """
-    conditions = [
-        NotificationModel.notification_id > after_id,
-        *_list_conditions(
-            organization_id=organization_id,
-            vehicle_id=vehicle_id,
-            notification_type=notification_type,
-            severity=severity,
-            user_id=user_id,
-            unread_only=unread_only,
-        ),
-    ]
-    query_result = await db.execute(
-        select(NotificationModel)
-        .where(*conditions)
-        .order_by(NotificationModel.notification_id.asc())
-        .limit(limit)
-    )
-    return list(query_result.scalars().all())
-
-
-async def list_newest(
-    db: AsyncSession,
-    *,
-    limit: int,
-    organization_id: UUID | None = None,
-    vehicle_id: UUID | None = None,
-    notification_type: NotificationType | None = None,
-    severity: NotificationSeverity | None = None,
-    user_id: UUID | None = None,
-    unread_only: bool = False,
-) -> list[NotificationModel]:
-    """List the newest notifications, newest first.
-
-    Args:
-        db: Current async session.
-        limit: Maximum number of records to return.
-        organization_id: Only notifications of this organization, if given.
-        vehicle_id: Only notifications about this vehicle, if given.
-        notification_type: Only notifications of this type, if given.
-        severity: Only notifications of this severity, if given.
-        user_id: Only notifications delivered to this person, if given.
-        unread_only: With ``user_id``, only those the person has not read.
-
-    Returns:
-        Notifications ordered by ``notification_id`` descending (the
-        domain's monotonic order, so ties on ``created_at`` cannot reorder).
-    """
-    conditions = _list_conditions(
+    query = _list_query(
         organization_id=organization_id,
         vehicle_id=vehicle_id,
         notification_type=notification_type,
@@ -226,12 +201,58 @@ async def list_newest(
         unread_only=unread_only,
     )
     query_result = await db.execute(
-        select(NotificationModel)
-        .where(*conditions)
-        .order_by(NotificationModel.notification_id.desc())
+        query.where(NotificationModel.notification_id > after_id)
+        .order_by(NotificationModel.notification_id.asc())
         .limit(limit)
     )
-    return list(query_result.scalars().all())
+    return [(row[0], row[1], row[2]) for row in query_result.all()]
+
+
+async def list_newest(
+    db: AsyncSession,
+    *,
+    limit: int,
+    before_id: int | None = None,
+    organization_id: UUID | None = None,
+    vehicle_id: UUID | None = None,
+    notification_type: NotificationType | None = None,
+    severity: NotificationSeverity | None = None,
+    user_id: UUID | None = None,
+    unread_only: bool = False,
+) -> list[NotificationRow]:
+    """List the newest notifications, newest first.
+
+    Args:
+        db: Current async session.
+        limit: Maximum number of records to return.
+        before_id: Only notifications with a smaller ID than this (the next
+            page of a notification centre), if given.
+        organization_id: Only notifications of this organization, if given.
+        vehicle_id: Only notifications about this vehicle, if given.
+        notification_type: Only notifications of this type, if given.
+        severity: Only notifications of this severity, if given.
+        user_id: Only notifications delivered to this person, if given.
+        unread_only: With ``user_id``, only those the person has not read.
+
+    Returns:
+        ``(notification, seen_at, read_at)`` ordered by ``notification_id``
+        descending (the domain's monotonic order, so ties on ``created_at``
+        cannot reorder).
+    """
+    query = _list_query(
+        organization_id=organization_id,
+        vehicle_id=vehicle_id,
+        notification_type=notification_type,
+        severity=severity,
+        user_id=user_id,
+        unread_only=unread_only,
+    )
+    if before_id is not None:
+        query = query.where(NotificationModel.notification_id < before_id)
+    query_result = await db.execute(
+        query.order_by(NotificationModel.notification_id.desc()).limit(limit)
+    )
+    return [(row[0], row[1], row[2]) for row in query_result.all()]
 
 
 async def find_latest_by_vehicle_and_type(
@@ -399,3 +420,161 @@ async def set_all_recipient_read(
     # An UPDATE's result is a CursorResult (the session's execute() is only
     # typed as Result); its rowcount is the number of rows matched.
     return cast(CursorResult[Any], update_result).rowcount
+
+
+async def count_unseen(db: AsyncSession, user_id: UUID) -> int:
+    """Count the alerts a person has not seen (the badge count).
+
+    Args:
+        db: Current async session.
+        user_id: The person.
+
+    Returns:
+        Number of inbox rows with ``seen_at`` empty.
+    """
+    query_result = await db.execute(
+        select(func.count(NotificationRecipientModel.notification_recipient_id)).where(
+            NotificationRecipientModel.user_id == user_id,
+            NotificationRecipientModel.seen_at.is_(None),
+        )
+    )
+    return query_result.scalar() or 0
+
+
+async def set_recipients_seen(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    seen_at: datetime,
+    notification_ids: list[int] | None = None,
+) -> int:
+    """Stamp the unseen inbox rows of a person as seen, keeping earlier times.
+
+    Args:
+        db: Current async session.
+        user_id: The person.
+        seen_at: Timezone-aware UTC time to store.
+        notification_ids: Only these alerts (the page just shown), or every
+            unseen row of the person when ``None``.
+
+    Returns:
+        Number of rows stamped.
+
+    Side Effects:
+        One ``UPDATE`` of the unseen rows; does not commit.
+    """
+    statement = (
+        update(NotificationRecipientModel)
+        .where(
+            NotificationRecipientModel.user_id == user_id,
+            NotificationRecipientModel.seen_at.is_(None),
+        )
+        .values(seen_at=seen_at)
+    )
+    if notification_ids is not None:
+        if not notification_ids:
+            return 0
+        statement = statement.where(
+            NotificationRecipientModel.notification_id.in_(notification_ids)
+        )
+    update_result = await db.execute(statement)
+    return cast(CursorResult[Any], update_result).rowcount
+
+
+async def find_setting(
+    db: AsyncSession, organization_id: UUID, notification_type: str
+) -> OrganizationNotificationSettingModel | None:
+    """Find an organization's setting row for one kind of alert.
+
+    Args:
+        db: Current async session.
+        organization_id: The organization.
+        notification_type: A ``NotificationType`` value.
+
+    Returns:
+        The row, or ``None`` when the organization uses the default.
+    """
+    query_result = await db.execute(
+        select(OrganizationNotificationSettingModel).where(
+            OrganizationNotificationSettingModel.organization_id == organization_id,
+            OrganizationNotificationSettingModel.notification_type == notification_type,
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def list_settings_by_organization(
+    db: AsyncSession, organization_id: UUID
+) -> list[OrganizationNotificationSettingModel]:
+    """List every setting row of an organization.
+
+    Args:
+        db: Current async session.
+        organization_id: The organization.
+
+    Returns:
+        Its rows (only the exceptions to the defaults plus those it saved).
+    """
+    query_result = await db.execute(
+        select(OrganizationNotificationSettingModel).where(
+            OrganizationNotificationSettingModel.organization_id == organization_id
+        )
+    )
+    return list(query_result.scalars().all())
+
+
+async def upsert_setting(
+    db: AsyncSession,
+    *,
+    organization_id: UUID,
+    notification_type: str,
+    push_enabled: bool,
+    email_enabled: bool,
+    changed_by: UUID | None,
+    change_reason: str,
+) -> OrganizationNotificationSettingModel:
+    """Create an organization's setting row, or change it (lazy creation).
+
+    One ``INSERT ... ON CONFLICT DO UPDATE``, so two simultaneous first saves
+    cannot clash on the unique index. The table is change-tracked, so the
+    actor and the reason are recorded first; the history trigger writes the
+    old row only when the update really changes a switch.
+
+    Args:
+        db: Current async session.
+        organization_id: The organization.
+        notification_type: A ``NotificationType`` value.
+        push_enabled: New push switch.
+        email_enabled: New e-mail switch.
+        changed_by: The acting user, or ``None`` for the system.
+        change_reason: Why (a typed reason or a fixed text).
+
+    Returns:
+        The saved row.
+
+    Side Effects:
+        Sets the change context and runs the upsert; does not commit.
+    """
+    await set_change_context(db, changed_by=changed_by, change_reason=change_reason)
+    now = utc_now()
+    insert_statement = pg_insert(OrganizationNotificationSettingModel).values(
+        organization_notification_setting_id=uuid4(),
+        organization_id=organization_id,
+        notification_type=notification_type,
+        push_enabled=push_enabled,
+        email_enabled=email_enabled,
+        created_at=now,
+        updated_at=now,
+    )
+    upsert_result = await db.execute(
+        insert_statement.on_conflict_do_update(
+            index_elements=["organization_id", "notification_type"],
+            set_={
+                "push_enabled": push_enabled,
+                "email_enabled": email_enabled,
+                "updated_at": now,
+            },
+        ).returning(OrganizationNotificationSettingModel),
+        execution_options={"populate_existing": True},
+    )
+    return upsert_result.scalar_one()

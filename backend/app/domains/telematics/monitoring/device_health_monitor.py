@@ -6,8 +6,8 @@ WebSocket frame; "has this device stopped sending anything?" has no message
 to react to, so it needs a timer instead.
 
 Scope (DEV-05): a silent-device notification, once per silence episode,
-written for the organization that owns the truck and delivered to its
-administrators and fleet managers. The device-health dashboard (DEV-04) is
+written for the organization that owns the truck; the notifications domain
+routes it to the administrators and fleet managers (NTF-06, its routing table). The device-health dashboard (DEV-04) is
 read-time and lives in ``telematics.service``. Not delivered (DEV-06): telling
 a sudden power loss from an ordinary signal loss - the device contract
 (mqtt-spec.md 2.2) has no power-loss or tamper signal, so there is nothing
@@ -21,13 +21,11 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.identity.service as identity_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
-from app.domains.identity.types import UserRole
 from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telematics.models import TelematicModel
 from app.libs.common.clock import utc_now
@@ -35,11 +33,6 @@ from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
 
 logger = logging.getLogger(__name__)
-
-# Who receives a silent-device alert (DEV-05): the people who run the
-# organization that owns the truck. Internal operations staff read the alerts
-# of every organization from the notification list instead of an inbox.
-DEVICE_ALERT_RECIPIENT_ROLES = (UserRole.ORG_ADMIN, UserRole.FLEET_MANAGER)
 
 
 async def run_monitor(stop_event: asyncio.Event) -> None:
@@ -200,9 +193,10 @@ async def _raise_device_offline_alert(
         now: The tick's current time, for computing silence duration.
 
     Side Effects:
-        Writes one notification row and its recipients (the organization's
-        ORG_ADMIN and FLEET_MANAGER members) into the session; does not
-        commit.
+        Writes one notification row into the session; the notifications
+        service adds its recipients (the organization's ORG_ADMIN and
+        FLEET_MANAGER members who may see the truck) and sends the push and
+        e-mail; does not commit.
     """
     silent_minutes = int((now - last_seen_at).total_seconds() // 60)
     payload: dict[str, object] = {
@@ -228,18 +222,12 @@ async def _raise_device_offline_alert(
         subject_type="TELEMATIC",
         subject_id=device.telematic_id,
     )
-    recipient_user_ids = await identity_service.list_organization_role_holder_user_ids(
-        db_session, organization_id, DEVICE_ALERT_RECIPIENT_ROLES
-    )
-    recipient_count = await notifications_service.add_notification_recipients(
-        db_session, notification_reference.notification_id, recipient_user_ids
-    )
     logger.info(
         "device offline alert raised",
         extra={
             "vehicle_id": str(vehicle_id),
             "telematic_id": str(device.telematic_id),
             "silent_minutes": silent_minutes,
-            "recipients": recipient_count,
+            "notification_id": notification_reference.notification_id,
         },
     )

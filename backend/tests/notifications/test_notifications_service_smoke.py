@@ -170,16 +170,26 @@ async def test_list_notifications_desc_ignores_the_cursor_and_passes_filters(
     vehicle_id, user_id = uuid4(), uuid4()
     newest, older = _notification(9), _notification(8)
     seen: dict[str, object] = {}
+    stamped: dict[str, object] = {}
 
-    async def list_newest(db: object, **kwargs: object) -> list[NotificationModel]:
+    async def list_newest(
+        db: object, **kwargs: object
+    ) -> list[notification_repository.NotificationRow]:
         seen.update(kwargs)
-        return [newest, older]
+        return [(newest, None, None), (older, None, None)]
+
+    async def set_recipients_seen(db: object, **kwargs: object) -> int:
+        stamped.update(kwargs)
+        return 2
 
     async def list_after_id(*args: object, **kwargs: object) -> None:
         raise AssertionError("order=desc must not use the poll cursor query")
 
     monkeypatch.setattr(notification_repository, "list_newest", list_newest)
     monkeypatch.setattr(notification_repository, "list_after_id", list_after_id)
+    monkeypatch.setattr(
+        notification_repository, "set_recipients_seen", set_recipients_seen
+    )
 
     response = await notifications_service.list_notifications(
         fake_db_session(),
@@ -196,8 +206,14 @@ async def test_list_notifications_desc_ignores_the_cursor_and_passes_filters(
 
     assert [item.notification_id for item in response.notifications] == [9, 8]
     assert response.latest_notification_id == 9
+    # Opening the notification centre marks the shown page seen (NT-10).
+    assert stamped["user_id"] == user_id
+    assert stamped["notification_ids"] == [9, 8]
+    assert all(item.seen_at is not None for item in response.notifications)
+    assert all(item.read_at is None for item in response.notifications)
     assert seen == {
         "limit": 2,
+        "before_id": None,
         "organization_id": None,
         "user_id": user_id,
         "unread_only": True,
@@ -214,7 +230,9 @@ async def test_list_notifications_asc_keeps_the_cursor_contract(
     """The default order still polls after the cursor and echoes it when empty."""
     seen: dict[str, object] = {}
 
-    async def list_after_id(db: object, **kwargs: object) -> list[NotificationModel]:
+    async def list_after_id(
+        db: object, **kwargs: object
+    ) -> list[notification_repository.NotificationRow]:
         seen.update(kwargs)
         return []
 

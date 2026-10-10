@@ -8,13 +8,11 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.identity.service as identity_service
 import app.domains.notifications.service as notifications_service
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicles_public_service
-from app.domains.identity.types import UserRole
 from app.domains.notifications.types import (
     NotificationReference,
     NotificationSeverity,
@@ -51,28 +49,6 @@ def live_assigned_vehicle(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-@pytest.fixture(autouse=True)
-def no_alert_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Resolve no recipients and accept any delivery unless a test overrides it."""
-
-    async def list_no_holders(
-        db_session: AsyncSession, organization_id: UUID, roles: object
-    ) -> list[UUID]:
-        return []
-
-    async def add_no_recipients(
-        db: AsyncSession, notification_id: int, user_ids: object
-    ) -> int:
-        return 0
-
-    monkeypatch.setattr(
-        identity_service, "list_organization_role_holder_user_ids", list_no_holders
-    )
-    monkeypatch.setattr(
-        notifications_service, "add_notification_recipients", add_no_recipients
-    )
-
-
 @pytest.mark.asyncio
 async def test_check_devices_for_silence_raises_alert_for_newly_silent_device(
     monkeypatch: pytest.MonkeyPatch,
@@ -102,30 +78,6 @@ async def test_check_devices_for_silence_raises_alert_for_newly_silent_device(
         created_notifications.append(kwargs)
         return NotificationReference(notification_id=7)
 
-    organization_ids: list[UUID] = []
-    delivered: list[tuple[int, list[UUID]]] = []
-    recipient_user_id = uuid4()
-
-    async def list_holders(
-        db_session: AsyncSession, organization_id: UUID, roles: object
-    ) -> list[UUID]:
-        organization_ids.append(organization_id)
-        assert roles == (UserRole.ORG_ADMIN, UserRole.FLEET_MANAGER)
-        return [recipient_user_id]
-
-    async def add_recipients(
-        db: AsyncSession, notification_id: int, user_ids: object
-    ) -> int:
-        delivered.append((notification_id, list(cast(list[UUID], user_ids))))
-        return 1
-
-    monkeypatch.setattr(
-        identity_service, "list_organization_role_holder_user_ids", list_holders
-    )
-    monkeypatch.setattr(
-        notifications_service, "add_notification_recipients", add_recipients
-    )
-
     monkeypatch.setattr(
         telematics_repository, "list_active_with_vehicle", active_devices
     )
@@ -151,10 +103,9 @@ async def test_check_devices_for_silence_raises_alert_for_newly_silent_device(
     assert cast(int, payload["silent_minutes"]) >= (
         settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 30
     )
-    # The alert belongs to the truck's owner and reaches that organization's
-    # administrators and fleet managers (DEV-05).
-    assert organization_ids == [call["organization_id"]]
-    assert delivered == [(7, [recipient_user_id])]
+    # The alert belongs to the truck's owner; the notifications service routes
+    # it to that organization's administrators and fleet managers (NTF-06).
+    assert "recipient_user_ids" not in call
     assert call["subject_id"] == device.telematic_id
 
 

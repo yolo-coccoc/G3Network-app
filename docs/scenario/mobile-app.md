@@ -83,7 +83,7 @@ the list until Start.
 | 2 | Open a trip: origin, destination, planned times, truck | `GET /trips/{trip_id}` (**built**; also distance, energy, kWh/km and cost once finished) | `404` not the caller's trip |
 | 3 | **Start trip** (must be checked in); optionally declare LOADED or EMPTY (MON-13) | `POST /trips/{trip_id}/start` `{declared_load_status}` (**built**); for a personal trip `POST /trips/start-personal` `{origin_name?, destination_name?, declared_load_status}` creates and starts it. The server records time, T-Box position, odometer and battery % (empty when the truck has no recent sample) | `409` not checked in, or a trip already in progress in this session, or trip not PLANNED; a truck or driver different from the plan is allowed and flagged (`vehicle_differs_from_plan`, `driver_differs_from_plan`); `404` a trip that names another driver; offline start (the app's press time) is not built |
 | 4 | **Finish trip** | `POST /trips/{trip_id}/finish` (**built**) | `409` not IN_PROGRESS; `404` not the caller's trip |
-| 5 | Reminder: truck moving with no trip started | push notification `NO_TRIP_STARTED` (inbox, section 8) (**planned**) | none |
+| 5 | Reminder: truck moving with no trip started | push notification `NO_TRIP_STARTED` (inbox, section 8) (**planned**; the type and its routing rule exist, nothing raises it yet). A trip a manager assigns arrives as `TRIP_ASSIGNED` (**built**, NT-15) | none |
 
 ## 4. Wallet
 
@@ -151,11 +151,18 @@ Push and e-mail are the only extra channels at launch (SMS deferred, item 96).
 
 | # | Screen / step | API call | Main error cases |
 |---|---|---|---|
-| 1 | Badge on the app icon | `GET /notifications/unread-count` (**built**, for the caller; today counts `read_at`, to be moved to the per-person recipients table; the "seen" count is planned) | none |
-| 2 | Open the list | `GET /notifications?mine_only=true&limit=` (**built**; a driver always gets their own inbox, the caller is the person); planned `POST /notifications/mark-seen` sets `seen_at` | none |
-| 3 | Tap one item | `PATCH /notifications/{notification_id}/read` (**built**), then the app opens the linked screen | `404` not the caller's notification |
+| 1 | Badge on the app icon | `GET /notifications/unread-count` (**built**, WP10): `unread_count` (no `read_at`) and `unseen_count` (no `seen_at`, the badge) | none |
+| 2 | Open the list | `GET /notifications?mine_only=true&order=desc&limit=&before_id=&notification_type=&unread_only=` (**built**; a driver always gets their own inbox; each entry carries the caller's `seen_at` / `read_at`; opening the list marks the page it returns seen; `before_id` is the next page); `POST /notifications/mark-seen` (**built**) clears the badge without opening anything | none |
+| 3 | Tap one item | `PATCH /notifications/{notification_id}/read` (**built**; sets `read_at` and, if empty, `seen_at`), then the app opens the screen named by `subject_type` + `subject_id` | `404` not the caller's notification |
 | 4 | "Mark all as read" | `POST /notifications/mark-all-read` (**built**; idempotent, sets seen and read) | none |
 | 5 | Open an alert's detail | `GET /notifications/{notification_id}` (**built**) | `404` |
+| 6 | Register the phone for push | `POST /auth/session/push-token` (**built**, ACC-16); the push the phone gets is the one in `notifications.delivery` (WP10, NT-17): the title and text of the alert plus `notification_id`, `notification_type`, `subject_type`, `subject_id`, `vehicle_id` as data. The provider is a logging fake until a real Firebase one is chosen | none |
+
+Who receives what (NT-15): a driver gets the battery alerts of the truck they are
+checked in to (even from another organization, NT-07), a trip a manager plans or
+reassigns to them (`TRIP_ASSIGNED`), and, once built, `NO_TRIP_STARTED`. The
+organization's push / e-mail switches (web portal flow 11) apply to every alert of
+that organization; the inbox is always on.
 
 ## 9. Other driver-facing calls already built
 

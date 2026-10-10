@@ -1948,6 +1948,28 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   For (2) the check can use `user_state.last_active_at` and refuse the reset with a message to
   contact support until an approval exists.
 
+### 100. After-commit delivery of push and e-mail notifications
+
+- **Short description**: Today `notifications.delivery` sends the push and the e-mail inside the
+  producer's database transaction (two savepoints, a failure is logged and skipped). With a real
+  provider, a message could be sent for an alert whose transaction later rolls back (for example
+  the telemetry row of the same message fails), and a slow provider would hold the producer's
+  transaction open. Delivery should instead run after the commit: an outbox of pending deliveries
+  read by a small worker, or a hook the entry boundary runs after `commit()`.
+- **Purpose/role in the system**: Guarantees a person is only messaged about an alert that really
+  exists, and keeps provider latency and outages out of ingestion, the OCPP gateway and the API.
+- **Reason for deferral**: Both providers are logging fakes (PR-15), so a rolled-back send costs
+  nothing; the outbox needs a delivery table that NTF-07 (delivery status, P1.1) will design with
+  SMS (item 96), and a worker process or an after-commit hook at every entry boundary is a new
+  component (ask first, `repo-conventions.md`).
+- **Related planner/feature**: NTF-02, NTF-04, NTF-07 (`docs/product/features/features.yaml`),
+  NT-17 (`docs/decisions/decision-log.md`), WP10 of
+  `docs/planners/backend-refactor-implementation.md`.
+- **Date recorded**: 2026-10-10
+- **Additional notes**: Build it together with the first real push or e-mail provider and the
+  deliveries table of item 96: `deliver_notification` already takes the alert context and the
+  recipients, so only its caller changes.
+
 ---
 
 ## Update rules

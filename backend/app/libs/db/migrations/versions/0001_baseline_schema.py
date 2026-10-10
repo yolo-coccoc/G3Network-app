@@ -390,6 +390,7 @@ def upgrade() -> None:
                 "NO_DRIVER_CHECK_IN_ALERT",
                 "OUTSIDE_DRIVER_CHECK_IN",
                 "NO_TRIP_STARTED",
+                "TRIP_ASSIGNED",
                 "LOW_WALLET_BALANCE",
                 "TOP_UP_RECEIVED",
                 "CHARGING_RECEIPT",

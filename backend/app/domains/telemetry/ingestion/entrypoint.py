@@ -13,6 +13,10 @@ import asyncio
 import logging
 import signal
 
+# An alert is routed to people and devices (identity tables), so every model
+# must be registered in this process (NT-15).
+import app.libs.db.model_registry  # noqa: F401
+from app.api.startup import register_notification_hooks
 from app.domains.telemetry.ingestion.message_worker import MessageWorker
 from app.domains.telemetry.ingestion.mqtt_consumer import MQTTConsumer
 from app.domains.telemetry.schemas import TelemetryEnvelope
@@ -68,6 +72,8 @@ async def run() -> None:
             it stopped without one), so `main()` exits with code 1.
     """
     configure_logging()
+    # Alerts raised here are routed with the drivers and fleet answers (NT-15).
+    register_notification_hooks()
 
     queue: asyncio.Queue[TelemetryEnvelope] = asyncio.Queue(
         maxsize=settings.TELEMETRY_QUEUE_SIZE

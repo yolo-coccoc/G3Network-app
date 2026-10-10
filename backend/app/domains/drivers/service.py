@@ -1263,6 +1263,61 @@ async def find_open_vehicle_id_by_membership(
     return None if open_session is None else open_session.vehicle_id
 
 
+async def find_checked_in_user_id_by_vehicle(
+    db_session: AsyncSession, vehicle_id: UUID
+) -> UUID | None:
+    """Find the person at the wheel of a truck right now. Cross-domain.
+
+    Used by notification routing: an alert meant for a truck's driver goes to
+    the driver checked in to it, even from another organization (NT-07).
+
+    Args:
+        db_session: Session owned by the caller's entry boundary.
+        vehicle_id: Internal ID of the truck.
+
+    Returns:
+        The checked-in driver's user ID, or `None` when nobody is checked in
+        (or the profile was deleted).
+
+    Side Effects:
+        Read-only queries; does not commit or rollback.
+    """
+    open_session = await driver_repository.find_open_session_by_vehicle(
+        db_session, vehicle_id
+    )
+    if open_session is None:
+        return None
+    return await find_user_id_by_driver_id(db_session, open_session.driver_id)
+
+
+async def find_user_id_by_driver_id(
+    db_session: AsyncSession, driver_id: UUID
+) -> UUID | None:
+    """Find the person behind a driver profile. Cross-domain.
+
+    Used to address a notification to a driver (a trip assigned to them,
+    NT-15).
+
+    Args:
+        db_session: Session owned by the caller's entry boundary.
+        driver_id: Internal ID of the driver profile.
+
+    Returns:
+        The user ID, or `None` when the profile does not exist, was deleted
+        or its membership does not resolve.
+
+    Side Effects:
+        Read-only queries; does not commit or rollback.
+    """
+    driver_record = await driver_repository.get_by_id(db_session, driver_id)
+    if driver_record is None or driver_record.deleted_at is not None:
+        return None
+    person = await identity_service.resolve_membership_person_reference(
+        db_session, driver_record.membership_id
+    )
+    return None if person is None else person.user_id
+
+
 async def end_open_session_on_ownership_change(
     db_session: AsyncSession, vehicle_id: UUID, *, ended_at: datetime
 ) -> UUID | None:

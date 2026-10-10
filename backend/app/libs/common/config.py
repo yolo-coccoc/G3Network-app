@@ -156,6 +156,11 @@ class Settings(BaseSettings):
             start a temporary login lockout (ID-23).
         IDENTITY_LOGIN_LOCKOUT_MINUTES: Length of that lockout.
         IDENTITY_PASSWORD_MIN_LENGTH: Shortest accepted new password.
+        NOTIFICATIONS_PUSH_PROVIDER: Which push service delivers alerts to
+            devices (NTF-02); only ``log`` (a fake that writes the push to the
+            log) exists.
+        NOTIFICATIONS_EMAIL_PROVIDER: Which e-mail service delivers alerts
+            (NTF-04); only ``log`` exists.
         IDENTITY_SMS_PROVIDER: SMS gateway for one-time codes and alerts;
             only ``log`` (a fake that writes the message to the log) exists.
         IDENTITY_EMAIL_PROVIDER: E-mail gateway; only ``log`` exists.
@@ -380,6 +385,11 @@ class Settings(BaseSettings):
     IDENTITY_LOGIN_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=1)
     IDENTITY_LOGIN_LOCKOUT_MINUTES: int = Field(default=15, ge=1)
     IDENTITY_PASSWORD_MIN_LENGTH: int = Field(default=8, ge=6)
+    # Notification delivery (NTF-02, NTF-04) sits behind provider interfaces
+    # (PR-15); only fakes that log exist, so a real push or e-mail service is a
+    # new value here and a new class in `notifications/providers.py`.
+    NOTIFICATIONS_PUSH_PROVIDER: Literal["log"] = "log"
+    NOTIFICATIONS_EMAIL_PROVIDER: Literal["log"] = "log"
     # External providers sit behind an interface (PR-15); only a fake that
     # logs the message exists, so a real gateway is a new value here.
     IDENTITY_SMS_PROVIDER: Literal["log"] = "log"

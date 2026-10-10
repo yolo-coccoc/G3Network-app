@@ -102,7 +102,7 @@ Tables: `telematics`, `telematic_status_reports`. One live device per truck
 | Health trend of one device | `GET /telematics/{telematic_id}/status-reports?since=&limit=` (**built**; newest first) | `404` |
 | Push configuration to one device or a whole fleet (F-J2) | `POST /telematics/{telematic_id}/config`, `POST /telematics/fleets/{fleet_id}/config` (**built**; MQTT publish; only a mounted, ACTIVE device receives it, TX-08) | `404`; `409` not mounted or INACTIVE; `502` broker unreachable |
 | Truck activation (VEH-05) | `GET /telemetry/vehicles/{vehicle_id}/activation`, `GET /telemetry/vehicles/activation?activation_status=&organization_id=&page=` (**built**; computed from the device mounted now and its data since the handover; the list carries the success rate and, with `activation_status=AWAITING_DATA`, the trucks still waiting) | `404` |
-| Device-offline alert | system raises it into `notifications` for the truck's organization (once per silence episode) and delivers it to its ORG_ADMIN and FLEET_MANAGER members; shown in the inbox (flow 12) | not a call |
+| Device-offline alert | system raises it into `notifications` for the truck's organization (once per silence episode); the notifications routing table (NT-15) delivers it to its ORG_ADMIN and FLEET_MANAGER members, a limited manager only for trucks in their fleets; shown in the inbox (flow 12), push / e-mail by the organization's switches (flow 11) | not a call |
 | T-Box status reports | the device publishes to `g3network/telematics/{serial}/status`; `make telematics-status-dev` stores them (mqtt-spec.md 2.2) | not a call |
 
 ## 5. Fleets (tree, trucks, user limits)
@@ -144,8 +144,8 @@ and the old `/drivers/{driver_id}/assignment(s)` routes are gone. Check-in is
 | Reassign / cancel a trip | `PATCH /trips/{trip_id}` `{..., reason}`, `POST /trips/{trip_id}/cancel` `{reason}` (every change goes to `trip_history` with the reason) | `409` trip already IN_PROGRESS, COMPLETED or CANCELLED |
 | Trip result: actual times, distance, energy, kWh/km, cost | `GET /trips/{trip_id}`: differences of the stored readings; `driver_differs_from_plan` / `vehicle_differs_from_plan` flag a swap | `404` |
 
-The trip-assigned notification to the driver is not built (the notification
-type does not exist, NT-09).
+Planning a trip for a driver, or moving a planned trip to another driver, sends
+that driver a `TRIP_ASSIGNED` notification (**built**, NT-15).
 
 ## 7. Live map and reports
 
@@ -222,21 +222,29 @@ billing endpoint.
 
 ## 11. Notification settings
 
-Table: `organization_notification_settings` (NT-12). Only exceptions are
-stored; a missing row uses the default from code. The inbox always shows
-every alert; the switch controls push and e-mail only. No per-person choice.
+Table: `organization_notification_settings` (NT-12, NT-17). Only exceptions are
+stored; a missing row uses the default from code (push on for every kind,
+e-mail on for `SOS_ALERT`). The inbox always shows every alert; the switch
+controls push and e-mail only. No per-person choice.
 
-| Step | API call (planned) | Main error cases |
+| Step | API call | Main error cases |
 |---|---|---|
-| List kinds with their effective push / e-mail state | `GET /organizations/{organization_id}/notification-settings` | none |
-| Switch a kind | `PUT /organizations/{organization_id}/notification-settings/{notification_type}` `{push_enabled, email_enabled, reason}` | `404` unknown kind; `403` ORG_ADMIN only |
+| List kinds with their effective push / e-mail state | `GET /organizations/{organization_id}/notification-settings` (**built**; one entry per kind with `is_default` and `updated_at`) | `404` organization out of reach; `403` not an ORG_ADMIN or our administrator |
+| Switch a kind | `PUT /organizations/{organization_id}/notification-settings/{notification_type}` `{push_enabled, email_enabled, reason?}` (**built**; the row is created at the first save, later saves write `organization_notification_setting_history` with the actor and the reason) | `422` unknown kind; `404` organization out of reach; `403` |
 
 ## 12. Notifications inbox in the portal
 
-Same routes as the app: `GET /notifications`, `GET /notifications/unread-count`,
-`PATCH /notifications/{notification_id}/read`, `POST /notifications/mark-all-read`
-(all **built**). Alerts for a truck go to the portal as well as to the driver
-checked in (NT-07); a truck moving with nobody checked in alerts only the portal.
+Same routes as the app (all **built**): `GET /notifications` (the portal polls it
+with `after_id=` and the returned `latest_notification_id`, about every 10 s;
+`mine_only=true&order=desc` is the notification centre with `before_id` paging,
+`unread_only` and the type / severity / vehicle filters), `GET
+/notifications/unread-count`, `POST /notifications/mark-seen`, `PATCH
+/notifications/{notification_id}/read`, `POST /notifications/mark-all-read`.
+Staff roles (fleet manager, operations, customer care, administrators) also read
+the organization view (`GET /notifications` without `mine_only`; internal staff
+see every organization). Who receives each kind is the routing table (NT-15):
+alerts for a truck go to the managers who may see it, and the driver checked in
+(NT-07); our customer care also receives every `SOS_ALERT`.
 
 ## 13. Support and rescue
 
@@ -258,6 +266,6 @@ Our staff and each ORG_ADMIN (own organization) read it.
 
 ## Open points
 
-- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings and the audit-log export. The per-manager fleet limits (FL-10) are built (WP6, FL-13).
+- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: the audit-log export. Notification settings (flow 11) and the routing / push / e-mail delivery are built (WP10, NT-15..NT-17). The per-manager fleet limits (FL-10) are built (WP6, FL-13).
 - Billing (`/tariffs`, `/wallets`, `/payments`, bills) is built (WP9, BL-19..BL-24); what is not: unmatched-transfer review, refunds, payment lists, the wallet lookup by phone. The charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

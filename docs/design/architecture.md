@@ -259,8 +259,24 @@ FastAPI registers the following domains:
   (F-A3), an anomaly is detected (F-A4) or a vehicle enters/leaves a fleet
   geofence (F-A5); the device-health monitor raises one when a vehicle goes
   silent (F-J1/F-J3); `support` raises a `CRITICAL` `SOS_ALERT` for every
-  new SOS (F-I2). No push and no recipient scoping yet — nothing derives
-  recipients from `identity`'s roles (WP10).
+  new SOS (F-I2); `drivers` raises `TRIP_ASSIGNED` for a driver a manager
+  plans a trip for (NT-15). `create_notification` is the whole producer flow
+  (WP10): it stores the alert, derives the recipients from the routing table
+  (`routing.py`: roles per kind, the driver at the wheel, our customer care,
+  fleet-limited managers narrowed to their trucks through a hook registered by
+  `app/api/notification_hooks.py`), writes their inbox rows and sends the push
+  and e-mail the organization has on (`delivery.py`, logging fake providers
+  chosen by `NOTIFICATIONS_PUSH_PROVIDER` / `NOTIFICATIONS_EMAIL_PROVIDER`)
+  inside two savepoints that never fail the producer. Per person the inbox has
+  seen and read times: `GET /notifications?mine_only=true&order=desc` (the
+  notification centre; `before_id` pages, opening it marks the page seen),
+  `GET /notifications/unread-count` (unread and unseen), `POST
+  /notifications/mark-seen`, `PATCH /notifications/{id}/read`, `POST
+  /notifications/mark-all-read`; staff read the organization view. An
+  organization's push / e-mail switches are `GET|PUT
+  /organizations/{id}/notification-settings[/{type}]` (ORG_ADMIN, change
+  history on, defaults from code). No SMS (NT-11), no delivery-status table
+  (NTF-07).
 - `identity` (F-F1, WP2a): organizations (create by our staff with the first
   ORG_ADMIN, status SUSPENDED/CLOSED with DM-25 soft delete, account manager,
   per-organization settings), users and credentials (self sign-up, invitation
@@ -518,6 +534,9 @@ call each other is in
 │   │   │   │
 │   │   │   ├── notifications/         # Alerts per organization, per-person inbox state, channel switches (F-A2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       routing.py  recipient_service.py     # who receives which kind of alert (NTF-06)
+│   │   │   │       delivery.py  providers.py            # push + e-mail behind interfaces with logging fakes (NTF-02, 04)
+│   │   │   │       settings_service.py                  # organization channel switches (NTF-05)
 │   │   │   │
 │   │   │   ├── drivers/               # Driver profile, driving sessions, trips (F-E4, F-A9)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -548,7 +567,8 @@ call each other is in
 │   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the vehicle, driving-session and trip lists (FL-13)
 │   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
 │   │   │   ├── billing_hooks.py       # Wires the end of a charging session to billing (BL-19)
-│   │   │   ├── startup.py             # register_api_hooks / register_session_hooks: shared by the API and the OCPP gateway
+│   │   │   ├── notification_hooks.py  # Wires alert routing to the drivers (driver at the wheel) and fleet (FL-10 visibility) domains (NT-15)
+│   │   │   ├── startup.py             # register_api_hooks / register_session_hooks / register_notification_hooks: shared by the API, the OCPP gateway, the telemetry ingestion and the device-health monitor
 │   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt, bill across charging_stations, billing, drivers, charging_sessions (CE-20)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
@@ -604,8 +624,8 @@ create empty directories/files for them before a concrete task exists; when
 creating one, apply [domain-boundaries.md](../../.claude/rules/domain-boundaries.md) and
 reference the correct feature code.
 
-Some built domains are intentionally partial — `notifications` (no push, no
-automatic recipients: callers add them), `support` (no partner directory/dispatch), `fleet` (no KPI
+Some built domains are intentionally partial — `notifications` (fake push and
+e-mail providers only, no SMS, no delivery-status table), `support` (no partner directory/dispatch), `fleet` (no KPI
 dashboard; its live-position and operating-rollup views live in `telemetry`,
 which depends on `fleet`, not the reverse). Their planners in
 `docs/planners/done/` record what was left out.
@@ -630,8 +650,8 @@ convention will be written once the first task for that part starts.
 - Technical status history and stale-status handling for chargers: an
   offline charger keeps its last connector statuses, and "available" does
   not require `is_online` (`deferred.md` item 76).
-- Push/multi-channel notification delivery (F-F3) and recipient scoping —
-  `notifications` today is backend-storage-plus-portal-polling only.
+- Real push and e-mail services, SMS (NT-11) and delivery status tracking
+  (NTF-07): `notifications` delivers through logging fakes only.
 - A device error-code catalog (cell/module vs. motor fault classification),
   vendor-validated F-A4 anomaly thresholds, re-alert/escalation for a
   persisting anomaly, and a motor-temperature anomaly detector.

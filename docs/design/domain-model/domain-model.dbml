@@ -90,6 +90,7 @@ Enum notificationtype {
   NO_DRIVER_CHECK_IN_ALERT
   OUTSIDE_DRIVER_CHECK_IN
   NO_TRIP_STARTED
+  TRIP_ASSIGNED
   LOW_WALLET_BALANCE
   TOP_UP_RECEIVED
   CHARGING_RECEIPT
@@ -1579,7 +1580,7 @@ What happened during each charge: the session itself and the readings the charge
 Table notifications {
   notification_id bigint [pk, increment, note: 'Auto-increasing ID; also the polling cursor (after_id). @vi Mã tự tăng; cũng là con trỏ khi truy vấn thông báo mới (after_id). @example 5821']
   organization_id uuid [not null, note: 'Organization the alert belongs to, written once: the truck\'s owner at that moment (DM-24 case C). @vi Tổ chức sở hữu cảnh báo, ghi một lần: chủ xe tại thời điểm đó (DM-24 trường hợp C). @example 3f6c2a1e-8b4d-4e2a-9c1f-0a7d5b2e4c11']
-  notification_type notificationtype [not null, note: 'Kind of event that raised it. @vi Loại sự kiện đã phát sinh thông báo. @example BATTERY_ALERT']
+  notification_type notificationtype [not null, note: 'Kind of event that raised it (TRIP_ASSIGNED, NT-15: a manager planned a trip for the driver). @vi Loại sự kiện đã phát sinh thông báo (TRIP_ASSIGNED, NT-15: quản lý đã lên chuyến cho tài xế). @example BATTERY_ALERT']
   severity notificationseverity [not null, note: 'How urgent it is, independent of type. @vi Mức độ khẩn cấp, độc lập với loại thông báo. @example WARNING']
   vehicle_id uuid [note: 'The truck it concerns, for filtering by truck (NTF-01); NULL when no truck is concerned. @vi Xe mà thông báo nói tới; NULL với thông báo không liên quan xe. @example 7a4c1e9b-3d2f-4b8a-a6c5-1e0d9f8b7a44']
   subject_type varchar(30) [note: 'What the alert is about, and so which screen the app opens (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... A new kind adds a value, not a column. No foreign key (it points to different tables); the target always exists since rows are never hard-deleted (DM-25). Opening it applies that screen\'s own access check. @vi Cảnh báo nói về đối tượng nào, và do đó ứng dụng mở màn hình nào (NTF-02): VEHICLE, TELEMATIC, CHARGING_SESSION, SUPPORT_CASE, TRIP, GEOFENCE, WALLET... Loại mới chỉ thêm giá trị, không thêm cột. Không có khóa ngoại (trỏ tới nhiều bảng khác nhau); đối tượng luôn tồn tại vì không bao giờ xóa hẳn (DM-25). Khi mở vẫn áp dụng kiểm tra quyền của màn hình đó. @example TRIP']

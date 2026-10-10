@@ -22,13 +22,17 @@ from app.domains.identity.exceptions import OrganizationNotFoundError
 from app.domains.identity.types import (
     AccessAuditAction,
     ClientContext,
+    EmailTargetReference,
     MembershipEndHook,
     MembershipPersonReference,
     OrganizationReference,
     OrganizationSettingsReference,
     Principal,
+    PushTargetReference,
+    RoleHolderReference,
     UserRole,
 )
+from app.libs.common.clock import utc_now
 
 
 async def resolve_membership_person_reference(
@@ -225,6 +229,134 @@ async def list_organization_role_holder_user_ids(
     return await identity_repository.list_user_ids_holding_roles_in_organization(
         db_session, organization_id, [role.value for role in roles]
     )
+
+
+async def list_organization_role_holders(
+    db_session: AsyncSession,
+    organization_id: UUID,
+    roles: Sequence[UserRole],
+) -> list[RoleHolderReference]:
+    """List the people of one organization who hold one of the given roles.
+
+    Like `list_organization_role_holder_user_ids`, but each person comes with
+    the membership and every role they hold, so a caller can tell a
+    fleet-limited manager from an unlimited one (notification routing,
+    NTF-06).
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        organization_id: The organization whose members are searched.
+        roles: Roles that qualify; a person holding any of them is returned.
+
+    Returns:
+        One reference per qualifying active membership; empty when nobody
+        qualifies.
+
+    Side Effects:
+        Read-only queries (one per person for the full role set); does not
+        commit or rollback.
+    """
+    if not roles:
+        return []
+    holders = await identity_repository.list_role_holders_in_organization(
+        db_session, organization_id, [role.value for role in roles]
+    )
+    references: list[RoleHolderReference] = []
+    for user_id, membership_id in holders:
+        held_roles = await identity_repository.list_roles_by_membership_id(
+            db_session, membership_id
+        )
+        references.append(
+            RoleHolderReference(
+                user_id=user_id,
+                membership_id=membership_id,
+                roles=frozenset(UserRole(role) for role in held_roles),
+            )
+        )
+    return references
+
+
+async def list_internal_role_holder_user_ids(
+    db_session: AsyncSession, roles: Sequence[UserRole]
+) -> list[UUID]:
+    """List the people of our own organizations who hold one of the roles.
+
+    Used to reach our staff (e.g. customer care for an SOS) whichever customer
+    the alert belongs to.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        roles: Roles that qualify.
+
+    Returns:
+        User IDs of active members of internal organizations holding a role
+        right now (each once); empty when nobody does.
+
+    Side Effects:
+        Read-only query; does not commit or rollback.
+    """
+    if not roles:
+        return []
+    return (
+        await identity_repository.list_user_ids_holding_roles_in_internal_organizations(
+            db_session, [role.value for role in roles]
+        )
+    )
+
+
+async def list_push_targets_by_user_ids(
+    db_session: AsyncSession, user_ids: Sequence[UUID]
+) -> list[PushTargetReference]:
+    """List the devices of the people that can receive a push (NTF-02).
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        user_ids: The people.
+
+    Returns:
+        One entry per unexpired login session with a registered push token
+        (ACC-16); a person logged in on two phones has two entries.
+
+    Side Effects:
+        Read-only query; does not commit or rollback.
+    """
+    rows = await identity_repository.list_active_push_targets(
+        db_session, list(user_ids), utc_now()
+    )
+    return [PushTargetReference(user_id=u, push_token=t) for u, t in rows]
+
+
+async def list_email_targets_by_user_ids(
+    db_session: AsyncSession, user_ids: Sequence[UUID]
+) -> list[EmailTargetReference]:
+    """List the e-mail addresses on file of the people (NTF-04).
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        user_ids: The people.
+
+    Returns:
+        One entry per active person with an address; people without one are
+        left out.
+
+    Side Effects:
+        Read-only query; does not commit or rollback.
+    """
+    rows = await identity_repository.list_email_targets(db_session, list(user_ids))
+    return [EmailTargetReference(user_id=u, email=e, full_name=n) for u, e, n in rows]
+
+
+async def remove_push_token(db_session: AsyncSession, push_token: str) -> None:
+    """Forget a push token the push service reported as dead (NT-12).
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        push_token: The dead Firebase token.
+
+    Side Effects:
+        Clears the token on whichever login session holds it; does not commit.
+    """
+    await identity_repository.clear_push_token(db_session, push_token)
 
 
 async def membership_holds_role(

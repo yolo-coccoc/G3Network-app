@@ -24,6 +24,11 @@ class NotificationResponse(BaseModel):
         body: Longer human-readable description.
         payload: Type-specific structured data.
         created_at: Time the notification was raised.
+        seen_at: In an inbox list: when the caller first saw it; ``None``
+            when unseen, and always ``None`` in the organization view.
+        read_at: In an inbox list: when the caller first opened it
+            (unread is ``None``, NT-04); always ``None`` in the organization
+            view.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -39,6 +44,8 @@ class NotificationResponse(BaseModel):
     body: str
     payload: dict[str, object]
     created_at: datetime
+    seen_at: datetime | None = None
+    read_at: datetime | None = None
 
 
 class NotificationListResponse(BaseModel):
@@ -63,9 +70,22 @@ class NotificationUnreadCountResponse(BaseModel):
 
     Attributes:
         unread_count: Inbox rows of the person with no read time.
+        unseen_count: Inbox rows with no seen time: the badge on the bell,
+            cleared when the person opens the list (NT-10).
     """
 
     unread_count: int = Field(..., ge=0)
+    unseen_count: int = Field(..., ge=0)
+
+
+class NotificationMarkSeenResponse(BaseModel):
+    """Outcome of marking every unseen alert of a person seen.
+
+    Attributes:
+        marked_count: Alerts that were unseen and are now seen.
+    """
+
+    marked_count: int = Field(..., ge=0)
 
 
 class NotificationMarkAllReadResponse(BaseModel):
@@ -93,3 +113,53 @@ class NotificationReadResponse(BaseModel):
     user_id: UUID
     seen_at: datetime | None
     read_at: datetime | None
+
+
+class NotificationSettingResponse(BaseModel):
+    """One organization's push and e-mail switches for one kind of alert.
+
+    Attributes:
+        notification_type: The kind of alert.
+        push_enabled: Whether it is sent as a push to the organization's
+            recipients.
+        email_enabled: Whether it is sent by e-mail to recipients with an
+            address on file.
+        is_default: True when the organization has not saved this kind and
+            the default from code applies.
+        updated_at: When the organization last saved it; ``None`` for a
+            default.
+    """
+
+    notification_type: NotificationType
+    push_enabled: bool
+    email_enabled: bool
+    is_default: bool
+    updated_at: datetime | None
+
+
+class NotificationSettingListResponse(BaseModel):
+    """Every kind of alert with an organization's effective switches.
+
+    Attributes:
+        organization_id: The organization the switches belong to.
+        settings: One entry per kind of alert; the in-app inbox is always on
+            and not listed (NT-03).
+    """
+
+    organization_id: UUID
+    settings: list[NotificationSettingResponse]
+
+
+class NotificationSettingUpdateRequest(BaseModel):
+    """New switches for one kind of alert.
+
+    Attributes:
+        push_enabled: Send this kind as a push.
+        email_enabled: Send it by e-mail to recipients with an address.
+        reason: Why the switches change, recorded in the change history; a
+            fixed text is used when omitted.
+    """
+
+    push_enabled: bool
+    email_enabled: bool
+    reason: str | None = Field(default=None, min_length=1, max_length=200)

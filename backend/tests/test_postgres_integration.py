@@ -44,8 +44,11 @@ import app.domains.identity.member_service as identity_member_service
 import app.domains.identity.organization_service as identity_organization_service
 import app.domains.identity.repository as identity_repository
 import app.domains.identity.service as identity_service
+import app.domains.notifications.delivery as notification_delivery
+import app.domains.notifications.providers as notification_providers
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
+import app.domains.notifications.settings_service as notification_settings_service
 import app.domains.support.repository as support_repository
 import app.domains.support.service as support_service
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
@@ -148,7 +151,12 @@ from app.domains.identity.exceptions import (
     OrganizationNotFoundError,
     SessionInvalidError,
 )
-from app.domains.identity.models import MembershipModel, OrganizationModel, UserModel
+from app.domains.identity.models import (
+    MembershipModel,
+    OrganizationModel,
+    UserModel,
+    UserSessionModel,
+)
 from app.domains.identity.schemas import (
     AdminHandoverRequest,
     InvitationAcceptRequest,
@@ -174,6 +182,7 @@ from app.domains.identity.types import (
     UserStatus,
 )
 from app.domains.notifications.models import NotificationModel
+from app.domains.notifications.schemas import NotificationSettingUpdateRequest
 from app.domains.notifications.types import (
     NotificationListOrder,
     NotificationSeverity,
@@ -5774,5 +5783,260 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
                 outcome=StationCommandOutcome.NOT_SENT,
             )
         assert (pending.total, not_sent.total) == (0, 1)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sos_routing_channel_switches_and_inbox_seen_read_on_postgres(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NTF-06 / NTF-05 / NTF-01 on real rows: an SOS reaches the owner's
+    ORG_ADMIN and FLEET_MANAGER and our customer care (not a driver), the
+    default sends push and e-mail, an organization switch-off suppresses the
+    push but not the inbox, the setting's history records the reason, and the
+    inbox keeps seen and read apart (NT-10, NT-12, NT-15)."""
+    from app.api.startup import register_notification_hooks
+
+    register_notification_hooks()
+    pushed: list[str] = []
+    emailed: list[str] = []
+
+    class RecordingPush:
+        async def send_push(
+            self, push_token: str, message: notification_providers.PushMessage
+        ) -> notification_providers.PushOutcome:
+            pushed.append(push_token)
+            return notification_providers.PushOutcome.SENT
+
+    class RecordingEmail:
+        async def send_email(self, email: str, subject: str, body: str) -> None:
+            emailed.append(email)
+
+    monkeypatch.setattr(notification_delivery, "get_push_sender", RecordingPush)
+    monkeypatch.setattr(notification_delivery, "get_email_sender", RecordingEmail)
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            vehicle = await _integration_vehicle(db, license_plate="IT-NTF-001")
+            db.add(vehicle)
+            internal_organization = build_organization_record()
+            internal_organization.is_internal = True
+            db.add(internal_organization)
+            await db.flush()
+
+            async def add_person(
+                label: str,
+                organization_id: UUID,
+                role: UserRole,
+                *,
+                push_token: str | None = None,
+            ) -> UUID:
+                user = UserModel(
+                    phone_number=f"+84{uuid4().hex[:9]}",
+                    full_name=label,
+                    email=f"{label}-{uuid4().hex[:6]}@example.com",
+                    status=UserStatus.ACTIVE.value,
+                )
+                db.add(user)
+                await db.flush()
+                membership = MembershipModel(
+                    organization_id=organization_id,
+                    user_id=user.user_id,
+                    status=MembershipStatus.ACTIVE.value,
+                )
+                db.add(membership)
+                await db.flush()
+                await identity_repository.insert_role_assignment(
+                    db, membership_record=membership, role=role.value, granted_by=None
+                )
+                if push_token is not None:
+                    db.add(
+                        UserSessionModel(
+                            user_id=user.user_id,
+                            platform="ANDROID",
+                            refresh_token_hash=uuid4().hex,
+                            push_token=push_token,
+                            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+                        )
+                    )
+                    await db.flush()
+                return user.user_id
+
+            owner_id = vehicle.organization_id
+            admin_id = await add_person(
+                "admin", owner_id, UserRole.ORG_ADMIN, push_token="push-admin"
+            )
+            manager_id = await add_person(
+                "manager", owner_id, UserRole.FLEET_MANAGER, push_token="push-manager"
+            )
+            driver_id = await add_person(
+                "driver", owner_id, UserRole.DRIVER, push_token="push-driver"
+            )
+            care_id = await add_person(
+                "care",
+                internal_organization.organization_id,
+                UserRole.CUSTOMER_CARE,
+                push_token="push-care",
+            )
+            owner_admin = build_principal(user_id=admin_id, organization_id=owner_id)
+
+            async def raise_sos() -> int:
+                case = await support_service.create_support_sos(
+                    db,
+                    SupportSosCreateRequest.model_validate(
+                        {
+                            "vehicle_vin": vehicle.vin,
+                            "latitude": 10.8,
+                            "longitude": 106.7,
+                        }
+                    ),
+                    principal=build_internal_principal(),
+                )
+                alerts = await notifications_service.list_notifications(
+                    db,
+                    principal=build_internal_principal(),
+                    after_id=0,
+                    limit=1,
+                    notification_type=NotificationType.SOS_ALERT,
+                    order=NotificationListOrder.DESC,
+                )
+                assert alerts.notifications[0].subject_id == case.case_id
+                return alerts.notifications[0].notification_id
+
+            async def recipient_ids(notification_id: int) -> set[UUID]:
+                rows = await db.execute(
+                    text(
+                        "SELECT user_id FROM notification_recipients "
+                        "WHERE notification_id = :id"
+                    ),
+                    {"id": notification_id},
+                )
+                return {row.user_id for row in rows}
+
+            # Defaults: push on, e-mail on for an SOS.
+            first_sos = await raise_sos()
+            assert await recipient_ids(first_sos) == {admin_id, manager_id, care_id}
+            assert set(pushed) == {"push-admin", "push-manager", "push-care"}
+            assert len(emailed) == 3
+
+            # The ORG_ADMIN switches the push off, then the e-mail off too.
+            pushed.clear()
+            emailed.clear()
+            await (
+                notification_settings_service.update_organization_notification_setting(
+                    db,
+                    NotificationType.SOS_ALERT,
+                    NotificationSettingUpdateRequest(
+                        push_enabled=False, email_enabled=True
+                    ),
+                    principal=owner_admin,
+                )
+            )
+            second_sos = await raise_sos()
+            assert await recipient_ids(second_sos) == {admin_id, manager_id, care_id}
+            assert pushed == []
+            assert len(emailed) == 3
+            await (
+                notification_settings_service.update_organization_notification_setting(
+                    db,
+                    NotificationType.SOS_ALERT,
+                    NotificationSettingUpdateRequest(
+                        push_enabled=False, email_enabled=False, reason="Daytime desk"
+                    ),
+                    principal=owner_admin,
+                )
+            )
+            history = (
+                await db.execute(
+                    text(
+                        "SELECT push_enabled, email_enabled, changed_by, change_reason "
+                        "FROM organization_notification_setting_history"
+                    )
+                )
+            ).all()
+            # The first save created the row (no history); the second one
+            # copied the old row with the actor and the typed reason.
+            assert [tuple(row) for row in history] == [
+                (False, True, admin_id, "Daytime desk")
+            ]
+            listing = await notification_settings_service.list_organization_notification_settings(
+                db, principal=owner_admin
+            )
+            sos_setting = next(
+                entry
+                for entry in listing.settings
+                if entry.notification_type is NotificationType.SOS_ALERT
+            )
+            assert (sos_setting.push_enabled, sos_setting.email_enabled) == (
+                False,
+                False,
+            )
+            assert sos_setting.is_default is False
+
+            # Inbox: both alerts are unseen and unread; opening the centre
+            # sees them, opening one reads it.
+            admin_principal = build_principal(
+                user_id=admin_id, organization_id=owner_id
+            )
+            counts = await notifications_service.count_unread_notifications(
+                db, principal=admin_principal
+            )
+            assert (counts.unread_count, counts.unseen_count) == (2, 2)
+            centre = await notifications_service.list_notifications(
+                db,
+                principal=admin_principal,
+                after_id=0,
+                limit=10,
+                mine_only=True,
+                order=NotificationListOrder.DESC,
+            )
+            assert [item.notification_id for item in centre.notifications] == [
+                second_sos,
+                first_sos,
+            ]
+            assert all(item.seen_at is not None for item in centre.notifications)
+            assert all(item.read_at is None for item in centre.notifications)
+            counts = await notifications_service.count_unread_notifications(
+                db, principal=admin_principal
+            )
+            assert (counts.unread_count, counts.unseen_count) == (2, 0)
+            opened = await notifications_service.mark_notification_read(
+                db, first_sos, principal=admin_principal
+            )
+            assert opened.read_at is not None and opened.seen_at is not None
+            unread_page = await notifications_service.list_notifications(
+                db,
+                principal=admin_principal,
+                after_id=0,
+                limit=10,
+                mine_only=True,
+                unread_only=True,
+                order=NotificationListOrder.DESC,
+            )
+            assert [item.notification_id for item in unread_page.notifications] == [
+                second_sos
+            ]
+            older_page = await notifications_service.list_notifications(
+                db,
+                principal=admin_principal,
+                after_id=0,
+                limit=10,
+                before_id=second_sos,
+                mine_only=True,
+                order=NotificationListOrder.DESC,
+            )
+            assert [item.notification_id for item in older_page.notifications] == [
+                first_sos
+            ]
+            # The driver was not a recipient.
+            driver_counts = await notifications_service.count_unread_notifications(
+                db, principal=build_principal(user_id=driver_id)
+            )
+            assert driver_counts.unread_count == 0
+            await db.rollback()
     finally:
         await engine.dispose()

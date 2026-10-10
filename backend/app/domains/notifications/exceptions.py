@@ -13,3 +13,8 @@ class NotificationRecipientNotFoundError(NotFoundError):
 
 class NotificationFilterError(InvalidInputError):
     """Raised when list filters contradict each other (unread without a person)."""
+
+
+class NotificationSettingOrganizationNotFoundError(NotFoundError):
+    """Raised when the organization whose channel settings are asked for is
+    unknown or out of the caller's reach."""

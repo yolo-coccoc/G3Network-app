@@ -15,9 +15,9 @@ when its session ends is closed automatically by ``service._end_session``
 the response. Every change of a trip writes ``trip_history`` with the actor and
 a reason.
 
-Not built: the notification to the driver when a trip is assigned (the
-notification type does not exist yet, NT-09) and the `NO_TRIP_STARTED`
-reminder.
+A manager who plans a trip for a driver, or moves a planned trip to another
+driver, notifies that driver (`TRIP_ASSIGNED`, NT-15). Not built: the
+`NO_TRIP_STARTED` reminder.
 """
 
 from datetime import datetime
@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.identity.service as identity_service
+import app.domains.notifications.service as notification_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.drivers.exceptions import (
     DriverNotFoundError,
@@ -52,6 +53,7 @@ from app.domains.drivers.schemas import (
 from app.domains.drivers.types import DeclaredLoadStatus, TripStatus
 from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import Principal, UserRole, roles_for
+from app.domains.notifications.types import NotificationSeverity, NotificationType
 from app.domains.telemetry.types import VehicleLiveStatusReference
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -333,6 +335,63 @@ async def _check_plan_targets(
     return vehicle_reference.organization_id
 
 
+async def _notify_trip_assigned(
+    db_session: AsyncSession, trip_record: TripModel, driver_id: UUID
+) -> None:
+    """Tell a driver that a manager planned a trip for them (NT-15).
+
+    The alert belongs to the trip's organization and is addressed to the
+    driver's person explicitly (no role audience); a driver whose profile no
+    longer resolves is skipped. The notifications service never fails the
+    caller, so a delivery fault cannot undo the plan.
+
+    Args:
+        db_session: The planning transaction.
+        trip_record: The planned trip, already stored.
+        driver_id: The driver profile the trip was given to.
+
+    Side Effects:
+        Writes one `TRIP_ASSIGNED` notification and the driver's inbox row.
+    """
+    driver_user_id = await driver_service.find_user_id_by_driver_id(
+        db_session, driver_id
+    )
+    if driver_user_id is None:
+        return
+    planned_start = (
+        f" starting {trip_record.planned_start_at.isoformat()}"
+        if trip_record.planned_start_at is not None
+        else ""
+    )
+    await notification_service.create_notification(
+        db_session,
+        organization_id=trip_record.organization_id,
+        notification_type=NotificationType.TRIP_ASSIGNED,
+        severity=NotificationSeverity.INFO,
+        vehicle_id=trip_record.planned_vehicle_id,
+        title="New trip assigned",
+        body=(
+            f"Trip from {trip_record.origin_name or 'an unspecified place'} to "
+            f"{trip_record.destination_name or 'an unspecified place'}"
+            f"{planned_start}."
+        )[:500],
+        payload={
+            "trip_id": str(trip_record.trip_id),
+            "origin_name": trip_record.origin_name,
+            "destination_name": trip_record.destination_name,
+            "planned_start_at": (
+                trip_record.planned_start_at.isoformat()
+                if trip_record.planned_start_at is not None
+                else None
+            ),
+            "planned_driver_id": str(driver_id),
+        },
+        subject_type="TRIP",
+        subject_id=trip_record.trip_id,
+        recipient_user_ids=[driver_user_id],
+    )
+
+
 async def plan_trip(
     db_session: AsyncSession,
     trip_plan_request: TripPlanRequest,
@@ -382,6 +441,10 @@ async def plan_trip(
             "planned_end_at": trip_plan_request.planned_end_at,
         },
     )
+    if trip_plan_request.planned_driver_id is not None:
+        await _notify_trip_assigned(
+            db_session, trip_record, trip_plan_request.planned_driver_id
+        )
     return await build_trip_response(db_session, trip_record)
 
 
@@ -575,6 +638,7 @@ async def update_trip(
         planned_driver_id=update_values.get("planned_driver_id"),
         planned_vehicle_id=update_values.get("planned_vehicle_id"),
     )
+    previous_driver_id = trip_record.planned_driver_id
     if update_values:
         trip_record = await driver_repository.update_trip_fields(
             db_session,
@@ -584,6 +648,9 @@ async def update_trip(
             or driver_repository.TRIP_EDITED_REASON,
             changed_by=principal.user_id,
         )
+    new_driver_id = update_values.get("planned_driver_id")
+    if new_driver_id is not None and new_driver_id != previous_driver_id:
+        await _notify_trip_assigned(db_session, trip_record, new_driver_id)
     return await build_trip_response(db_session, trip_record)
 
 

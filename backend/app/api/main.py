@@ -36,6 +36,9 @@ from app.domains.identity.membership_router import router as memberships_router
 from app.domains.identity.organization_router import router as organizations_router
 from app.domains.identity.router import auth_router, users_router
 from app.domains.notifications.router import router as notifications_router
+from app.domains.notifications.router import (
+    settings_router as notification_settings_router,
+)
 from app.domains.support.router import router as support_router
 from app.domains.telematics.router import router as telematics_router
 from app.domains.telemetry.router import router as telemetry_router
@@ -162,6 +165,10 @@ app.include_router(charging_sessions_router, prefix="/api/v1")
 app.include_router(charging_session_flow_router, prefix="/api/v1")
 app.include_router(billing_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1/notifications")
+app.include_router(
+    notification_settings_router,
+    prefix="/api/v1/organizations",
+)
 app.include_router(drivers_router, prefix="/api/v1/drivers")
 app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")
 app.include_router(trips_router, prefix="/api/v1/trips")

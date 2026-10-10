@@ -159,6 +159,67 @@ class MembershipPersonReference:
     left_at: datetime | None
 
 
+@dataclass(frozen=True)
+class RoleHolderReference:
+    """A person holding roles in one organization, for other domains.
+
+    Returned by `list_organization_role_holders`; the notifications domain
+    uses it to route an alert to the right people (NTF-06) and to tell a
+    fleet-limited manager (whose reach the fleet domain narrows, FL-10) from
+    an unlimited one.
+
+    Attributes:
+        user_id: The person.
+        membership_id: The person's membership in the organization.
+        roles: Every role the membership holds right now (not only the ones
+            asked for).
+    """
+
+    user_id: UUID
+    membership_id: UUID
+    roles: frozenset[UserRole]
+
+    @property
+    def is_fleet_limited(self) -> bool:
+        """Tell whether the fleet limit may apply to this person (FL-10).
+
+        Same rule as `Principal.is_fleet_limited` for a customer user:
+        a fleet manager or dispatcher who is not the organization's
+        administrator.
+        """
+        return UserRole.ORG_ADMIN not in self.roles and bool(
+            self.roles & {UserRole.FLEET_MANAGER, UserRole.DISPATCHER}
+        )
+
+
+@dataclass(frozen=True)
+class PushTargetReference:
+    """One device that can receive a push message.
+
+    Attributes:
+        user_id: The person who is logged in on the device.
+        push_token: The device's Firebase token (unique, ACC-16).
+    """
+
+    user_id: UUID
+    push_token: str
+
+
+@dataclass(frozen=True)
+class EmailTargetReference:
+    """One person's e-mail address on file.
+
+    Attributes:
+        user_id: The person.
+        email: The address.
+        full_name: The person's name, for the greeting.
+    """
+
+    user_id: UUID
+    email: str
+    full_name: str
+
+
 # ---------------------------------------------------------------------------
 # Role groups and the role -> feature table (ACC-14, BL-16)
 # ---------------------------------------------------------------------------

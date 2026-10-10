@@ -1320,6 +1320,160 @@ async def list_user_ids_holding_roles_in_organization(
     return list(query_result.scalars().all())
 
 
+async def list_role_holders_in_organization(
+    db_session: AsyncSession, organization_id: UUID, roles: list[str]
+) -> list[tuple[UUID, UUID]]:
+    """List the active people holding one of the roles in one organization.
+
+    Args:
+        db_session: Current database session.
+        organization_id: The organization whose members are searched.
+        roles: `UserRole` values; a person holding any of them is returned.
+
+    Returns:
+        One ``(user_id, membership_id)`` pair per qualifying active
+        membership (ACTIVE, not left, account active and not deleted).
+    """
+    query_result = await db_session.execute(
+        select(UserModel.user_id, MembershipModel.membership_id)
+        .join(MembershipModel, MembershipModel.user_id == UserModel.user_id)
+        .join(
+            UserRoleAssignmentModel,
+            UserRoleAssignmentModel.membership_id == MembershipModel.membership_id,
+        )
+        .where(
+            MembershipModel.organization_id == organization_id,
+            UserRoleAssignmentModel.role.in_(roles),
+            UserRoleAssignmentModel.revoked_at.is_(None),
+            MembershipModel.status == MembershipStatus.ACTIVE.value,
+            MembershipModel.left_at.is_(None),
+            UserModel.deleted_at.is_(None),
+            UserModel.status == UserStatus.ACTIVE.value,
+        )
+        .distinct()
+    )
+    return [(row.user_id, row.membership_id) for row in query_result.all()]
+
+
+async def list_roles_by_membership_id(
+    db_session: AsyncSession, membership_id: UUID
+) -> list[str]:
+    """List the roles a membership holds right now.
+
+    Args:
+        db_session: Current database session.
+        membership_id: Internal ID of the membership.
+
+    Returns:
+        `UserRole` values of its open role assignments.
+    """
+    query_result = await db_session.execute(
+        select(UserRoleAssignmentModel.role).where(
+            UserRoleAssignmentModel.membership_id == membership_id,
+            UserRoleAssignmentModel.revoked_at.is_(None),
+        )
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_user_ids_holding_roles_in_internal_organizations(
+    db_session: AsyncSession, roles: list[str]
+) -> list[UUID]:
+    """List the active people of our own organizations holding one of the roles.
+
+    Args:
+        db_session: Current database session.
+        roles: `UserRole` values; a person holding any of them is returned.
+
+    Returns:
+        User IDs of ACTIVE, not-left memberships in organizations flagged
+        ``is_internal`` that hold a role right now; each person once.
+    """
+    query_result = await db_session.execute(
+        select(UserModel.user_id)
+        .join(MembershipModel, MembershipModel.user_id == UserModel.user_id)
+        .join(
+            OrganizationModel,
+            OrganizationModel.organization_id == MembershipModel.organization_id,
+        )
+        .join(
+            UserRoleAssignmentModel,
+            UserRoleAssignmentModel.membership_id == MembershipModel.membership_id,
+        )
+        .where(
+            OrganizationModel.is_internal.is_(True),
+            OrganizationModel.deleted_at.is_(None),
+            UserRoleAssignmentModel.role.in_(roles),
+            UserRoleAssignmentModel.revoked_at.is_(None),
+            MembershipModel.status == MembershipStatus.ACTIVE.value,
+            MembershipModel.left_at.is_(None),
+            UserModel.deleted_at.is_(None),
+            UserModel.status == UserStatus.ACTIVE.value,
+        )
+        .distinct()
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_active_push_targets(
+    db_session: AsyncSession, user_ids: list[UUID], now: datetime
+) -> list[tuple[UUID, str]]:
+    """List the push tokens of the people's unexpired login sessions.
+
+    Args:
+        db_session: Current database session.
+        user_ids: The people.
+        now: Sessions that expire at or before this time are ignored.
+
+    Returns:
+        ``(user_id, push_token)`` per session that registered a token.
+    """
+    if not user_ids:
+        return []
+    query_result = await db_session.execute(
+        select(UserSessionModel.user_id, UserSessionModel.push_token).where(
+            UserSessionModel.user_id.in_(user_ids),
+            UserSessionModel.push_token.is_not(None),
+            UserSessionModel.expires_at > now,
+        )
+    )
+    return [
+        (row.user_id, row.push_token)
+        for row in query_result.all()
+        if row.push_token is not None
+    ]
+
+
+async def list_email_targets(
+    db_session: AsyncSession, user_ids: list[UUID]
+) -> list[tuple[UUID, str, str]]:
+    """List the e-mail addresses on file of active people.
+
+    Args:
+        db_session: Current database session.
+        user_ids: The people.
+
+    Returns:
+        ``(user_id, email, full_name)`` for each active, not-deleted account
+        with an address.
+    """
+    if not user_ids:
+        return []
+    query_result = await db_session.execute(
+        select(UserModel.user_id, UserModel.email, UserModel.full_name).where(
+            UserModel.user_id.in_(user_ids),
+            UserModel.email.is_not(None),
+            UserModel.deleted_at.is_(None),
+            UserModel.status == UserStatus.ACTIVE.value,
+        )
+    )
+    return [
+        (row.user_id, row.email, row.full_name)
+        for row in query_result.all()
+        if row.email is not None
+    ]
+
+
 async def is_active_internal_sales_user(
     db_session: AsyncSession, user_id: UUID
 ) -> bool:
