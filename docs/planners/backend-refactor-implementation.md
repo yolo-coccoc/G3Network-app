@@ -374,9 +374,9 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. |
 | RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. |
 | RV-CS9 | L | both adapters | Station resolved by identity on every message: renaming `ocpp_identity` breaks the open connection. |
-| RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. **Fixed 2026-10-10.** |
-| RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. **Fixed 2026-10-10.** |
-| RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. **Fixed 2026-10-10.** |
+| RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. |
+| RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. |
+| RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. |
 | RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). |
 | RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. |
 | RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. **Fixed 2026-10-10.** |
