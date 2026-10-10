@@ -338,14 +338,14 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. **Fixed 2026-10-10.** |
 | RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). |
 | RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. |
-| RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). |
-| RV-CS2 | H | `ocpp201_charge_point.py` `on_transaction_event` | `evse` / `connectorId` required on every TransactionEvent (optional in 2.0.1): an `Ended` without `evse` is refused, the session never completes. |
-| RV-CS3 | H | both adapters' start handlers, `charging_sessions/service.py` | A retried StartTransaction / `Started` is answered `Invalid` (transactionId 0): the session stays ACTIVE forever (PG). |
+| RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). **Fixed 2026-10-10.** |
+| RV-CS2 | H | `ocpp201_charge_point.py` `on_transaction_event` | `evse` / `connectorId` required on every TransactionEvent (optional in 2.0.1): an `Ended` without `evse` is refused, the session never completes. **Fixed 2026-10-10.** |
+| RV-CS3 | H | both adapters' start handlers, `charging_sessions/service.py` | A retried StartTransaction / `Started` is answered `Invalid` (transactionId 0): the session stays ACTIVE forever (PG). **Fixed 2026-10-10.** |
 | RV-BL1 | H | `billing/service.py` `has_minimum_balance` | With the default minimum 0 the check is off: a negative wallet keeps starting charges (BL-14). The existing `test_has_minimum_balance_follows_the_setting` asserts the old rule and changes with the fix. **Fixed 2026-10-10 (BL-25).** |
 | RV-BL2 | H | `billing/repository.py` (every `for_update=True`), `identity/repository.py`, `ocpp_state_repository.py` | The locking re-read returns the stale object from the session's identity map (no `populate_existing`): a poll can overwrite a credited payment to FAILED (PG). |
 | RV-AS6 | M | `vehicles/schemas.py`, `uq_vehicles_live_*` | VIN, plate and battery serial are not normalized and the unique indexes are case-sensitive: duplicate VINs, and the QR scan can bind the wrong truck (PG). |
 | RV-BL3 | M | `api/charging_session_flow.py` | "One open charge per person" is an unlocked read: two simultaneous scans open two charges (PG). |
-| RV-BL4 | M | `ocpp/ocpp16_measurements.py` `_energy_value_wh` | A SignedData energy sample makes StopTransaction fail: the session is never completed or billed. |
+| RV-BL4 | M | `ocpp/ocpp16_measurements.py` `_energy_value_wh` | A SignedData energy sample makes StopTransaction fail: the session is never completed or billed. **Fixed 2026-10-10.** |
 | RV-BL5 / RV-CS4 | M | both adapters' meter extraction | Energy register ignores `phase` and `location`: a per-phase or Inlet value becomes the start/stop reading (wrong bill or ON_HOLD). |
 | RV-CS5 | M | both adapters' meter extraction | Vendor sentinel values and huge 2.0.1 multipliers overflow `Numeric(24,6)` or raise, failing the whole stop message. |
 | RV-CS6 | M | `ocpp_state_repository.py`, `ocpp/command_loop.py` | TIMEOUT measured from `requested_at` while commands wait on the call lock; a late answer overwrites TIMEOUT (no `outcome='PENDING'` guard) (PG). |
@@ -374,9 +374,9 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. |
 | RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. |
 | RV-CS9 | L | both adapters | Station resolved by identity on every message: renaming `ocpp_identity` breaks the open connection. |
-| RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. |
-| RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. |
-| RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. |
+| RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. **Fixed 2026-10-10.** |
+| RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. **Fixed 2026-10-10.** |
+| RV-CS12 | L | `charging_stations/schemas.py` | EVSE / connector / rating integers beyond int32 give 500. **Fixed 2026-10-10.** |
 | RV-ID11 | L | `account_service.py` `lock_user`, `organization_service.py` | Locking an account or closing an organization skips the membership-end hooks (DR-10). |
 | RV-ID12 | L | `member_service.py` `_assert_membership_can_end` | A pending first-admin invitation cannot be cancelled. |
 | RV-OP11 | L | `telematics/schemas.py` | Device serial accepts `/ + #` and spaces, breaking MQTT topics. **Fixed 2026-10-10.** |
