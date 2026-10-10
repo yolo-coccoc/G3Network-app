@@ -371,9 +371,9 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. |
 | RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). |
 | RV-AS10 | L | `vehicles/service.py` `update_vehicle` | Back to ACTIVE keeps the old `status_reason`. |
-| RV-BL7 | L | `billing/schemas.py`, `providers.py` | Money and VAT values beyond their columns give 500 (VAT 100 overflows `numeric(4,2)`). |
-| RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. |
-| RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. |
+| RV-BL7 | L | `billing/schemas.py`, `providers.py` | Money and VAT values beyond their columns give 500 (VAT 100 overflows `numeric(4,2)`). **Fixed 2026-10-10.** |
+| RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. **Fixed 2026-10-10.** |
+| RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. **Fixed 2026-10-10.** |
 | RV-CS9 | L | both adapters | Station resolved by identity on every message: renaming `ocpp_identity` breaks the open connection. **Fixed 2026-10-10.** |
 | RV-CS10 | L | `ocpp/command_loop.py` | A command for a deleted EVSE is widened to the whole charger. **Fixed 2026-10-10.** |
 | RV-CS11 | L | `charging_stations/schemas.py` | Manual REMOTE_START `id_token` allows 36 chars (1.6J max 20) and can never start a session. **Fixed 2026-10-10.** |
