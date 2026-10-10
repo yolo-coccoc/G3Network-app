@@ -319,6 +319,7 @@ fleet rest, charging, billing, notifications.
 | `backend/app/domains/notifications/recipient_service.py` | Fleet scoping asks `fleet` once per limited manager (and `identity` once per role holder for the full role set): no batching (MVP rule). A process that did not call `register_all_hooks` (a script, a test app) skips the checked-in driver and does not narrow limited managers (every process calls it, CV-21). | `backend-runtime-conventions.md` forbids batching before a benchmark; every process registers the hooks (CV-21). |
 | `backend/app/domains/notifications` (inbox) | There is no delete or archive of an inbox entry (the DBML has none), the unseen count includes alerts of every organization the person belongs to, and opening the centre stamps `seen_at` as a side effect of a `GET`; a polling client must use `order=asc`. | Append-only design (NT-09/NT-10); NT-16 documents the choice. |
 | `backend/app/domains/notifications/settings_service.py` | Switching is per kind of alert (the DBML column), not per service; a save always stores the row even when it equals the default; an organization with no row for a kind never shows a `updated_at`. | `organization_notification_settings` is keyed by kind (NT-12); "only exceptions" is not enforced on save. |
+| `backend/app/domains/identity/member_service.py` | The "last HEAD_ADMIN" guard counts ACTIVE holders (ID-51) but takes no lock: two simultaneous removals of the last two usable HEAD_ADMINs can both pass (RV-ID7, second half). | Needs a row lock over the role-holder rows; rare administrator action, left for the owner. |
 
 ## Review findings (2026-10-10)
 
@@ -336,7 +337,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-OP3 | H | `telemetry/schemas.py`, `telematics/schemas.py` | NaN/Infinity, `\u0000`, and integers beyond the column pass validation and fail in PostgreSQL, which stops the worker. **Fixed 2026-10-10.** |
 | RV-OP4 | H | `telemetry/ingestion/mqtt_consumer.py` | The payload's `telematic_serial` is trusted over the topic: one device's credentials can write positions and alerts for any truck. **Fixed 2026-10-10.** |
 | RV-OP5 | H | `telemetry/service.py`, `repository.py` | No bound on `recorded_at`: one future-dated row stays "latest" for good, re-firing alerts on every message and disabling the check-in distance check and auto-end. **Fixed 2026-10-10.** |
-| RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). |
+| RV-ID1 | H | `identity/member_service.py`, `account_service.py` `lock_user` | A CO_ADMIN can force the internal ORG_ADMIN handover and then lock or remove every HEAD_ADMIN, or lock another CO_ADMIN's account (contradicts ID-12). **Fixed 2026-10-10.** |
 | RV-ID2 | H | `identity/member_service.py` invitations | Any self-registered user can invite any phone and resend without limit (SMS with attacker-chosen organization name); the response reveals the account's name, e-mail and status. |
 | RV-CS1 | H | `charging_stations/ocpp/ocpp16_charge_point.py`, `ocpp201_charge_point.py` | python-ocpp logs every raw frame at INFO on the adapter logger, so QR `idTag` tokens reach the application log (IS-07). **Fixed 2026-10-10.** |
 | RV-CS2 | H | `ocpp201_charge_point.py` `on_transaction_event` | `evse` / `connectorId` required on every TransactionEvent (optional in 2.0.1): an `Ended` without `evse` is refused, the session never completes. **Fixed 2026-10-10.** |
@@ -353,7 +354,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-CS8 | M | `charging_stations/service.py` command creation, `command_loop.py` | A command's `session_id` is not checked against the charger or the organization: another tenant's token can be sent to your charger and its session abandoned. |
 | RV-BL6 | M | `billing/router.py` simulate-transfer | The development transfer simulation is always on: an admin can credit any amount with no trace. **Fixed 2026-10-10 (BL-26).** |
 | RV-ID3 | M | `identity/member_service.py`, `account_service.py` | An invitation to an unregistered phone creates a user row that blocks the real owner's sign-up and claims them into the inviter's organization. |
-| RV-ID4 | M | `identity/member_service.py` handover `force` | Internal staff can replace a working customer ORG_ADMIN at will (ID-33 allows force only when the admin is gone). |
+| RV-ID4 | M | `identity/member_service.py` handover `force` | Internal staff can replace a working customer ORG_ADMIN at will (ID-33 allows force only when the admin is gone). **Fixed 2026-10-10.** |
 | RV-ID5 | M | `identity/security.py` `normalize_phone_number` | `+84 0901…` keeps the trunk zero: one SIM can hold several accounts and OTP limits multiply. |
 | RV-ID6 | M | `identity/account_service.py` phone/e-mail/password change | Changing the login phone needs no password and ends no session; wrong current passwords are not counted. |
 | RV-AS1 | M | `fleet/service.py` `add_vehicle_to_fleet` | A fleet-limited manager can add an unassigned truck to their fleet and widen their own reach (FL-10). |
@@ -384,7 +385,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-OP13 | L | `support/service.py` | A DRIVER can file an SOS in a colleague's name. |
 
 Not tested (repository SQL or concurrency a fake cannot show): RV-ID7 (the
-last-HEAD_ADMIN count includes INVITED/LOCKED holders and is not locked),
+last-HEAD_ADMIN count includes INVITED/LOCKED holders and is not locked; **the count now ignores holders who are not ACTIVE, fixed 2026-10-10 (ID-51); the missing lock is still open**),
 RV-ID9 (double grant/invite/consent gives 500, no IntegrityError mapping),
 RV-ID10 (session lifetime follows the current organization; `platform` is
 client-chosen). CS-13 of the review (missing `idTokenInfo`) was dropped: the
