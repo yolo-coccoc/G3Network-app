@@ -3820,3 +3820,255 @@ async def test_data_scope_hides_another_organizations_records_on_postgres(
             ).total == 1
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ownership_transfer_moves_battery_closes_fleet_and_warranties_follow_on_postgres(
+    temporary_database: str,
+) -> None:
+    """WP3 on real rows: fit a battery, enter warranties, then transfer the truck.
+
+    The transfer (VH-12) changes the truck's owner and date in one transaction,
+    closes the seller's fleet membership, moves the seller's battery to the
+    buyer; the ownership and installation periods come from the views; a
+    warranty follows its object, so the buyer sees it and the seller does not.
+    """
+    import app.api.vehicle_transfer as vehicle_transfer
+    import app.domains.batteries.service as battery_service
+    import app.domains.warranties.service as warranty_service
+    from app.domains.batteries.exceptions import (
+        BatteryConflictError,
+        BatteryNotFoundError,
+    )
+    from app.domains.batteries.schemas import (
+        BatteryCreateRequest,
+        BatteryInstallRequest,
+        BatteryModelCreateRequest,
+    )
+    from app.domains.batteries.types import BatteryChemistry
+    from app.domains.fleet.schemas import FleetVehicleAddRequest
+    from app.domains.vehicles.schemas import (
+        VehicleCreateRequest,
+        VehicleOwnershipTransferRequest,
+    )
+    from app.domains.warranties.exceptions import (
+        WarrantyConflictError,
+        WarrantyLimitsInvalidError,
+    )
+    from app.domains.warranties.schemas import (
+        WarrantyCreateRequest,
+        WarrantyUpdateRequest,
+    )
+
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    staff = build_internal_principal()
+    first_handover = datetime.now(timezone.utc) - timedelta(days=90)
+    sale_date = datetime.now(timezone.utc) - timedelta(days=1)
+    today = datetime.now(timezone.utc).date()
+    try:
+        async with session_factory.begin() as db:
+            seller_id, vehicle_model_id = await _insert_vehicle_parents(db)
+            buyer_id = await _integration_organization(db)
+        seller = build_principal(organization_id=seller_id)
+        buyer = build_principal(organization_id=buyer_id)
+
+        async with session_factory.begin() as db:
+            vehicle = await vehicle_service.create_vehicle(
+                db,
+                VehicleCreateRequest(
+                    license_plate="WP3-001",
+                    vin=f"W3{uuid4().hex[:15]}".upper(),
+                    vehicle_model_id=vehicle_model_id,
+                    year=2026,
+                    acquired_at=first_handover,
+                ),
+                principal=seller,
+            )
+            fleet = await fleet_service.create_fleet(
+                db, FleetCreateRequest(name="WP3 fleet"), principal=seller
+            )
+            await fleet_service.add_vehicle_to_fleet(
+                db,
+                fleet.fleet_id,
+                FleetVehicleAddRequest(vehicle_vin=vehicle.vin),
+                principal=seller,
+            )
+            battery_model = await battery_service.create_battery_model(
+                db,
+                BatteryModelCreateRequest(
+                    manufacturer="CATL",
+                    model_name="LFP-WP3",
+                    chemistry=BatteryChemistry.LFP,
+                    design_capacity_kwh=300.0,
+                ),
+            )
+            battery = await battery_service.create_battery(
+                db,
+                BatteryCreateRequest(
+                    serial_number="WP3-BAT-1",
+                    battery_model_id=battery_model.battery_model_id,
+                    organization_id=seller_id,
+                    acquired_at=first_handover,
+                ),
+                principal=staff,
+            )
+            await battery_service.install_battery(
+                db,
+                battery.battery_id,
+                BatteryInstallRequest(
+                    vehicle_id=vehicle.vehicle_id, installed_at=first_handover
+                ),
+                principal=staff,
+            )
+            vehicle_warranty = await warranty_service.create_warranty(
+                db,
+                WarrantyCreateRequest(
+                    vehicle_id=vehicle.vehicle_id,
+                    starts_on=today - timedelta(days=30),
+                    ends_on=today + timedelta(days=10),
+                    limits={"distance_km": 200000},
+                ),
+                principal=staff,
+            )
+            battery_warranty = await warranty_service.create_warranty(
+                db,
+                WarrantyCreateRequest(
+                    battery_id=battery.battery_id,
+                    starts_on=today - timedelta(days=30),
+                    ends_on=today + timedelta(days=400),
+                    limits={"charge_cycles": 3000},
+                ),
+                principal=staff,
+            )
+
+        # Rules proved on the real tables.
+        async with session_factory() as db:
+            with pytest.raises(BatteryConflictError):
+                await battery_service.install_battery(
+                    db,
+                    battery.battery_id,
+                    BatteryInstallRequest(vehicle_id=vehicle.vehicle_id),
+                    principal=staff,
+                )
+            with pytest.raises(WarrantyLimitsInvalidError):
+                await warranty_service.create_warranty(
+                    db,
+                    WarrantyCreateRequest(
+                        vehicle_id=vehicle.vehicle_id,
+                        warranty_type=WarrantyType.EXTENDED,
+                        starts_on=today,
+                        ends_on=today + timedelta(days=5),
+                        limits={"charge_cycles": 1},
+                    ),
+                    principal=staff,
+                )
+            with pytest.raises(WarrantyConflictError):
+                await warranty_service.create_warranty(
+                    db,
+                    WarrantyCreateRequest(
+                        vehicle_id=vehicle.vehicle_id,
+                        starts_on=today,
+                        ends_on=today + timedelta(days=5),
+                    ),
+                    principal=staff,
+                )
+            expiring = await warranty_service.list_warranties(
+                db, principal=seller, expiring_within_days=30
+            )
+            assert [item.warranty_id for item in expiring.items] == [
+                vehicle_warranty.warranty_id
+            ]
+            assert (
+                await battery_service.resolve_installed_battery_capacity_kwh(
+                    db, vehicle.vehicle_id
+                )
+                == 300.0
+            )
+
+        # The transfer, through the orchestrating endpoint.
+        async with session_factory.begin() as db:
+            transfer = await vehicle_transfer.transfer_vehicle_ownership_endpoint(
+                vehicle.vehicle_id,
+                VehicleOwnershipTransferRequest(
+                    organization_id=buyer_id, acquired_at=sale_date, reason="Sold"
+                ),
+                staff,
+                db,
+            )
+        assert transfer.vehicle.organization_id == buyer_id
+        assert transfer.previous_organization_id == seller_id
+        assert transfer.closed_fleet_id == fleet.fleet_id
+        assert transfer.moved_battery_id == battery.battery_id
+        assert transfer.ended_driving_session_id is None
+
+        async with session_factory() as db:
+            periods = await vehicle_service.list_vehicle_ownership_periods(
+                db, vehicle.vehicle_id, principal=staff
+            )
+            assert [
+                (item.organization_id, item.owned_from, item.owned_until)
+                for item in periods.items
+            ] == [
+                (seller_id, first_handover, sale_date),
+                (buyer_id, sale_date, None),
+            ]
+            # The seller no longer reaches the truck, its battery or its warranties.
+            with pytest.raises(BatteryNotFoundError):
+                await battery_service.get_battery(
+                    db, battery.battery_id, principal=seller
+                )
+            assert (
+                await warranty_service.list_warranties(db, principal=seller)
+            ).total == 0
+            buyer_warranties = await warranty_service.list_warranties(
+                db, principal=buyer
+            )
+            assert {item.warranty_id for item in buyer_warranties.items} == {
+                vehicle_warranty.warranty_id,
+                battery_warranty.warranty_id,
+            }
+            moved_battery = await battery_service.get_battery(
+                db, battery.battery_id, principal=buyer
+            )
+            assert moved_battery.organization_id == buyer_id
+            assert moved_battery.vehicle_id == vehicle.vehicle_id
+            installation = await battery_service.list_battery_installation_periods(
+                db, battery.battery_id, principal=buyer
+            )
+            assert [
+                (item.vehicle_id, item.installed_until) for item in installation.items
+            ] == [(vehicle.vehicle_id, None)]
+            memberships = await fleet_service.list_fleet_membership_history(
+                db, fleet.fleet_id, principal=staff
+            )
+            assert memberships.items[0].removed_at is not None
+
+        # Void once; a voided warranty is final.
+        async with session_factory.begin() as db:
+            voided = await warranty_service.void_warranty(
+                db,
+                vehicle_warranty.warranty_id,
+                principal=staff,
+                reason="Charging policy violated",
+            )
+        assert voided.status == "VOIDED"
+        async with session_factory() as db:
+            with pytest.raises(WarrantyConflictError):
+                await warranty_service.void_warranty(
+                    db,
+                    vehicle_warranty.warranty_id,
+                    principal=staff,
+                    reason="Again",
+                )
+            with pytest.raises(WarrantyConflictError):
+                await warranty_service.update_warranty(
+                    db,
+                    vehicle_warranty.warranty_id,
+                    WarrantyUpdateRequest(contract_reference="X"),
+                    principal=staff,
+                )
+    finally:
+        await engine.dispose()

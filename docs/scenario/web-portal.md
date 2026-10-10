@@ -72,13 +72,18 @@ a second table.
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Vehicle list with activation summary | `GET /vehicles` and `GET /vehicles/activation-summary` (**built**) | none |
+| Vehicle list (search, status, model, owner) | `GET /vehicles?q=&status=&vehicle_model_id=&organization_id=` (**built**; the activation summary is computed later, VH-06, WP4) | none |
 | Register a truck: VIN, plate, model, owner, `acquired_at` | `POST /vehicles/` (**built**) | `409` duplicate VIN or plate among live trucks; `422` |
-| Open / edit a truck | `GET /vehicles/{vehicle_id}`, `PATCH /vehicles/{vehicle_id}` (**built**; `reason` planned with change history) | `404`; `409` |
-| Hand over to a new owner (sale) | `POST /vehicles/{vehicle_id}/handover` `{organization_id, acquired_at, reason}` (planned); closes the fleet membership, VH-12 | `409` open driving session; `404` target organization |
-| Retire (soft delete, status INACTIVE) | `DELETE /vehicles/{vehicle_id}` (**built**) | `409` still has a live device or open session |
-| Battery pack: register, fit to a truck (`installed_at`), history | `POST/GET/PATCH /batteries`, `POST /batteries/{battery_id}/installation` (planned) | `409` pack already fitted elsewhere |
-| Warranty: dates, terms, void | `POST/GET/PATCH /warranties`, `POST /warranties/{warranty_id}/void` `{reason}` (planned) | `409` overlapping term; `400` end before start |
+| Open / edit a truck | `GET /vehicles/{vehicle_id}`, `PATCH /vehicles/{vehicle_id}` (**built**; a typed `status_reason` becomes the history reason) | `404`; `409` |
+| Hand over to a new owner (sale), internal staff | `POST /vehicles/{vehicle_id}/transfer-ownership` `{organization_id, acquired_at, reason}` (**built**, VH-21): one transaction closes the seller's fleet membership, ends the open driving session (`OWNER_CHANGED`) and moves a pack the seller owns; answers the truck plus what ended or moved | `404` truck or buyer; `400` same owner or bad date |
+| Ownership periods of a truck | `GET /vehicles/{vehicle_id}/ownership-periods` (**built**, from the view) | `404` |
+| Retire (soft delete, status INACTIVE) | `DELETE /vehicles/{vehicle_id}?reason=` (**built**; a live device or open session does not block it yet) | `404` |
+| Truck model catalog (internal staff write, all read) | `POST/GET /vehicle-models`, `GET/PATCH/DELETE /vehicle-models/{vehicle_model_id}`, list filters `q`, `make` (**built**) | `409` make + name exist; `404` |
+| Battery model catalog | `POST/GET /battery-models`, `GET/PATCH/DELETE /battery-models/{battery_model_id}`, filters `q`, `chemistry` (**built**) | `409` maker + name exist |
+| Battery pack: register, edit, status, delete | `POST/GET /batteries`, `GET/PATCH/DELETE /batteries/{battery_id}` (**built**; filters `q`, `status`, `battery_model_id`, `vehicle_id`, `is_installed`, `organization_id`) | `409` serial exists; `404` |
+| Fit a pack to a truck (`installed_at`), take it out, history | `POST /batteries/{battery_id}/installation`, `DELETE /batteries/{battery_id}/installation?reason=`, `GET /batteries/{battery_id}/installation-periods` (**built**) | `409` pack fitted elsewhere or inactive, or the truck holds a pack; `404` truck; `400` future time |
+| Hand a pack (alone) to another organization | `POST /batteries/{battery_id}/transfer-ownership` `{organization_id, acquired_at, reason}` (**built**) | `409` same owner; `400` bad date |
+| Warranty: enter, list, edit, void, delete | `POST/GET /warranties`, `GET/PATCH/DELETE /warranties/{warranty_id}`, `POST /warranties/{warranty_id}/void` `{reason}` (**built**; filters `vehicle_id`, `battery_id`, `telematic_id`, `station_id`, `status`, `warranty_type`, `expiring_within_days`, `organization_id`) | `409` overlapping term of the same type, or voided; `400` end before start, or a limits key the object does not allow; `404` object |
 | Check-in code (QR sticker) regeneration | `POST /vehicles/{vehicle_id}/check-in-code` `{reason}` (planned, deferred item 94) | `403` |
 
 ## 4. Devices (telematics) and device health

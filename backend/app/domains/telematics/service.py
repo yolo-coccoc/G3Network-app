@@ -872,3 +872,26 @@ async def _push_config_to_fleet_vehicle(
         outcome=TelematicConfigPushOutcome.PUBLISHED,
         reason=None,
     )
+
+
+async def resolve_telematic_owner_organization_id(
+    db: AsyncSession, telematic_id: UUID
+) -> UUID | None:
+    """Tell which organization owns a device now (public, for warranties).
+
+    A warranty has no organization of its own (DM-24): it follows its object,
+    so the warranties domain asks the object's domain who owns it.
+
+    Args:
+        db: Database session owned by the entry boundary.
+        telematic_id: Internal ID of the device.
+
+    Returns:
+        The device's own owner (``telematics.organization_id``, TX-07), or
+        `None` when the device does not exist or was soft-deleted.
+
+    Side Effects:
+        One read-only query.
+    """
+    telematic_record = await telematics_repository.get_by_id(db, telematic_id)
+    return telematic_record.organization_id if telematic_record else None

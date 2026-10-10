@@ -37,12 +37,25 @@
 | `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`), `resolve_own_driver_reference` (the caller's profile), `is_membership_checked_in_to_vehicle` (an SOS on a borrowed truck) | F-I1/F-I2 |
 | `support` → `notifications` | `create_notification` (`SOS_ALERT` when an SOS is created) | F-I2 |
 | `fleet` → `vehicles` | `resolve_vehicle_reference_by_vin`, `resolve_vehicle_summary_by_id` | F-E1 |
+| `batteries` → `vehicles` | `resolve_vehicle_reference_by_id` (the truck to fit a pack to exists) | BAT-01 |
+| `batteries` → `identity` | `resolve_organization_for_new_record` (owner of a new pack or a transfer) | BAT-01 |
+| `telemetry` → `batteries` | `resolve_installed_battery_capacity_kwh` (pack capacity precedence, VH-16) | MON-14 reports |
+| `warranties` → `vehicles` / `batteries` / `telematics` / `charging_stations` | the owner of the covered object (`resolve_vehicle_reference_by_id`, `resolve_battery_owner_organization_id`, `resolve_telematic_owner_organization_id`, `resolve_station_owner_organization_id`) | WAR-01 |
+| `app/api/vehicle_transfer.py` → `vehicles`, `fleet`, `drivers`, `batteries` | `transfer_vehicle_ownership`, `close_membership_of_sold_vehicle`, `end_open_session_on_ownership_change`, `transfer_installed_battery_with_vehicle` | VEH-02 (VH-12) |
 | `telemetry` → `drivers` | `is_membership_checked_in_to_vehicle` (a driver reads the live data of the truck they are checked in to) | MON-02, DR-11 |
 
 **Only exception — `telematics ↔ telemetry` is bidirectional** (ingestion one
 way, device-health monitoring the other). The current `forbidden` contracts
 don't check cycles; if an acyclic/layers contract is ever added, this pair needs
 an explicit exception rather than being treated as a violation.
+
+**Cross-domain actions that need several one-way edges (VH-21).** An action
+that must change data in domains that depend on each other the wrong way round
+(the ownership transfer: `vehicles` cannot call `fleet`, `drivers` or
+`batteries`) is orchestrated in the HTTP layer, in a module under `app/api/`
+that calls each owner's public service inside the request's one transaction.
+Such a module is not a domain, holds no business rule of its own and is
+listed in the table above.
 
 ## Domain roles worth knowing
 

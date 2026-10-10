@@ -20,6 +20,8 @@ from app.domains.vehicles.schemas import (
     VehicleModelCreateRequest,
     VehicleModelListResponse,
     VehicleModelResponse,
+    VehicleModelUpdateRequest,
+    VehicleOwnershipPeriodListResponse,
     VehicleResponse,
     VehicleUpdateRequest,
 )
@@ -45,6 +47,7 @@ VEHICLE_MODEL_WRITERS = require_roles(*roles_for("VEH-03"), internal_only=True)
 # Body of a successful DELETE /vehicles/{vehicle_id}: part of the HTTP
 # contract, so it lives in the router rather than in the service.
 VEHICLE_DELETED_MESSAGE = "Vehicle deleted successfully"
+VEHICLE_MODEL_DELETED_MESSAGE = "Vehicle model removed successfully"
 
 
 @router.post(
@@ -101,6 +104,19 @@ async def list_vehicles_endpoint(
     status_filter: VehicleStatus | None = Query(
         None, alias="status", description="Filter by status"
     ),
+    search: str | None = Query(
+        None,
+        alias="q",
+        min_length=1,
+        max_length=50,
+        description="Plate or VIN fragment (case-insensitive)",
+    ),
+    vehicle_model_id: UUID | None = Query(None, description="Filter by truck model"),
+    owner_organization_id: UUID | None = Query(
+        None,
+        alias="organization_id",
+        description="Filter by owning organization (internal staff)",
+    ),
     principal: Principal = Depends(VEHICLE_READERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleListResponse:
@@ -111,6 +127,10 @@ async def list_vehicles_endpoint(
         page_size: Number of records per page.
         status_filter: Service status filter (query parameter ``status``),
             if any.
+        search: Plate or VIN fragment (query parameter ``q``), if any.
+        vehicle_model_id: Only trucks of this model, if given.
+        owner_organization_id: Only trucks of this owner (query parameter
+            ``organization_id``), if given.
         principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
@@ -122,6 +142,9 @@ async def list_vehicles_endpoint(
         page=page,
         page_size=page_size,
         status_filter=status_filter,
+        search=search,
+        vehicle_model_id=vehicle_model_id,
+        owner_organization_id=owner_organization_id,
         principal=principal,
     )
 
@@ -151,6 +174,37 @@ async def get_vehicle_endpoint(
         VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
     return await vehicle_service.get_vehicle(
+        db_session, vehicle_id, principal=principal
+    )
+
+
+@router.get(
+    "/{vehicle_id}/ownership-periods",
+    response_model=VehicleOwnershipPeriodListResponse,
+    summary="Get the ownership periods of a vehicle",
+    description="Every period in which an organization owned the truck, read "
+    "from the view vehicle_ownership_periods. Internal staff see all owners; "
+    "others only their own periods.",
+)
+async def list_vehicle_ownership_periods_endpoint(
+    vehicle_id: UUID,
+    principal: Principal = Depends(VEHICLE_READERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleOwnershipPeriodListResponse:
+    """List the ownership periods of a vehicle.
+
+    Args:
+        vehicle_id: Internal ID of the vehicle.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The periods, oldest first.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist or is out of reach (404).
+    """
+    return await vehicle_service.list_vehicle_ownership_periods(
         db_session, vehicle_id, principal=principal
     )
 
@@ -269,6 +323,16 @@ async def list_vehicle_models_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    search: str | None = Query(
+        None,
+        alias="q",
+        min_length=1,
+        max_length=50,
+        description="Make or model-name fragment (case-insensitive)",
+    ),
+    make: str | None = Query(
+        None, min_length=1, max_length=50, description="Manufacturer"
+    ),
     principal: Principal = Depends(get_current_principal),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleModelListResponse:
@@ -277,6 +341,8 @@ async def list_vehicle_models_endpoint(
     Args:
         page: Page number.
         page_size: Number of records per page.
+        search: Make or model-name fragment (query parameter ``q``), if any.
+        make: Exact manufacturer, if any.
         principal: The authenticated caller.
         db_session: Database session owned by the HTTP boundary.
 
@@ -284,7 +350,7 @@ async def list_vehicle_models_endpoint(
         Paginated list of vehicle models.
     """
     return await vehicle_service.list_vehicle_models(
-        db_session, page=page, page_size=page_size
+        db_session, page=page, page_size=page_size, search=search, make=make
     )
 
 
@@ -313,3 +379,70 @@ async def get_vehicle_model_endpoint(
         VehicleModelNotFoundError: The model does not exist or was removed (404).
     """
     return await vehicle_service.get_vehicle_model(db_session, vehicle_model_id)
+
+
+@vehicle_models_router.patch(
+    "/{vehicle_model_id}",
+    response_model=VehicleModelResponse,
+    summary="Update a truck model",
+    description="Correct or complete a model's figures. Only the provided "
+    "fields are updated.",
+)
+async def update_vehicle_model_endpoint(
+    vehicle_model_id: UUID,
+    vehicle_model_update_request: VehicleModelUpdateRequest,
+    principal: Principal = Depends(VEHICLE_MODEL_WRITERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleModelResponse:
+    """Partially update a vehicle model.
+
+    Args:
+        vehicle_model_id: Internal ID of the vehicle model.
+        vehicle_model_update_request: Fields to change.
+        principal: The authenticated caller (internal staff).
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        Updated vehicle model.
+
+    Raises:
+        VehicleModelNotFoundError: The model does not exist or was removed (404).
+        VehicleModelConflictError: The make and model name exist already (409).
+    """
+    return await vehicle_service.update_vehicle_model(
+        db_session,
+        vehicle_model_id,
+        vehicle_model_update_request,
+        principal=principal,
+    )
+
+
+@vehicle_models_router.delete(
+    "/{vehicle_model_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Remove a truck model from the catalog",
+    description="Soft-delete a model: trucks that already use it keep it, new "
+    "trucks cannot choose it.",
+)
+async def soft_delete_vehicle_model_endpoint(
+    vehicle_model_id: UUID,
+    principal: Principal = Depends(VEHICLE_MODEL_WRITERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> dict[str, str]:
+    """Remove a vehicle model from the catalog.
+
+    Args:
+        vehicle_model_id: Internal ID of the vehicle model.
+        principal: The authenticated caller (internal staff).
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The confirmation body.
+
+    Raises:
+        VehicleModelNotFoundError: The model does not exist or was removed (404).
+    """
+    await vehicle_service.soft_delete_vehicle_model(
+        db_session, vehicle_model_id, principal=principal
+    )
+    return {"message": VEHICLE_MODEL_DELETED_MESSAGE}

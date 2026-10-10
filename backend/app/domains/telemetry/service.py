@@ -49,6 +49,7 @@ lookup + bulk insert) is deferred until a benchmark needs it - see
 ``docs/decisions/deferred.md`` item 25.
 """
 
+import dataclasses
 import logging
 from datetime import datetime, timedelta
 from typing import TypedDict
@@ -56,6 +57,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.batteries.service as battery_service
 import app.domains.drivers.service as driver_service
 import app.domains.fleet.service as fleet_service
 import app.domains.telematics.service as telematics_service
@@ -129,7 +131,7 @@ async def _get_vehicle_reference(
         TelemetryNotFoundError: If the vehicle does not exist, was
             soft-deleted or is out of the caller's data reach.
     """
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+    vehicle_reference = await _resolve_vehicle_reference_with_pack_capacity(
         db, vehicle_id
     )
     if vehicle_reference is None or (
@@ -138,6 +140,43 @@ async def _get_vehicle_reference(
     ):
         raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
     return vehicle_reference
+
+
+async def _resolve_vehicle_reference_with_pack_capacity(
+    db: AsyncSession, vehicle_id: UUID
+) -> VehicleReference | None:
+    """Resolve a vehicle reference whose capacity follows the installed battery.
+
+    VH-16: a truck's pack capacity is its installed battery's design
+    capacity, else its model's nominal capacity. ``vehicles`` cannot read
+    ``batteries`` (the edge runs the other way), so telemetry, which uses the
+    capacity for its kWh conversions, combines the two public services.
+
+    Args:
+        db: Database session owned by the caller's entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+
+    Returns:
+        The vehicle reference with ``battery_capacity_kwh`` replaced by the
+        installed battery's design capacity when that is recorded, or `None`
+        when the vehicle does not exist or was soft-deleted.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        db, vehicle_id
+    )
+    if vehicle_reference is None:
+        return None
+    installed_capacity_kwh = (
+        await battery_service.resolve_installed_battery_capacity_kwh(db, vehicle_id)
+    )
+    if installed_capacity_kwh is None:
+        return vehicle_reference
+    return dataclasses.replace(
+        vehicle_reference, battery_capacity_kwh=installed_capacity_kwh
+    )
 
 
 def _calculate_is_online(last_received_at: datetime | None) -> bool:
@@ -756,7 +795,7 @@ async def get_fleet_operating_report(
 
     report_vehicles: list[telemetry_reports.FleetReportVehicle] = []
     for vehicle_id in member_vehicle_ids:
-        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+        vehicle_reference = await _resolve_vehicle_reference_with_pack_capacity(
             db, vehicle_id
         )
         if vehicle_reference is None:

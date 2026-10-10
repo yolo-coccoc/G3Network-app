@@ -352,7 +352,7 @@ async def test_a_notification_outside_the_inbox_and_the_organization_is_not_foun
 
 @pytest.mark.asyncio
 async def test_telemetry_of_another_organizations_vehicle_is_not_found(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, no_installed_battery: None
 ) -> None:
     """A vehicle reference of another organization hides the vehicle's data."""
     import app.domains.vehicles.service as vehicle_service
@@ -378,7 +378,7 @@ async def test_telemetry_of_another_organizations_vehicle_is_not_found(
 
 @pytest.mark.asyncio
 async def test_a_driver_reads_live_data_only_of_the_truck_they_are_checked_in_to(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, no_installed_battery: None
 ) -> None:
     """After check-out the driver gets 403, whichever organization owns the truck."""
     import app.domains.vehicles.service as vehicle_service

@@ -2269,3 +2269,31 @@ async def list_station_energy_totals(
         session_count=sum(item.session_count for item in items),
         items=items,
     )
+
+
+async def resolve_station_owner_organization_id(
+    db: AsyncSession, station_id: UUID
+) -> UUID | None:
+    """Tell which organization owns a charger now (public, for warranties).
+
+    A warranty has no organization of its own (DM-24): it follows its object.
+    A charger reads its owner through its location (CS-10).
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        station_id: UUID of the charger.
+
+    Returns:
+        The owning organization of the charger's location, or `None` when the
+        charger does not exist or was soft-deleted.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
+    if station is None:
+        return None
+    location = await charging_stations_repository.get_location_by_id(
+        db, station.location_id, include_deleted=True
+    )
+    return location.organization_id if location is not None else None

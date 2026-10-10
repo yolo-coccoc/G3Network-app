@@ -31,3 +31,29 @@ class WarrantyStatus(str, enum.Enum):
 
     ACTIVE = "ACTIVE"
     VOIDED = "VOIDED"
+
+
+class WarrantyObjectKind(str, enum.Enum):
+    """What a warranty covers: the one link of the row that is set (VH-18, VH-19).
+
+    Attributes:
+        VEHICLE: A truck.
+        BATTERY: A battery; the warranty follows it from truck to truck.
+        TELEMATIC: A T-Box.
+        STATION: A charger.
+    """
+
+    VEHICLE = "VEHICLE"
+    BATTERY = "BATTERY"
+    TELEMATIC = "TELEMATIC"
+    STATION = "STATION"
+
+
+# The ``limits`` keys each kind of object allows (DBML note of
+# ``warranties.limits``): each is the counter reading at which coverage ends.
+WARRANTY_LIMIT_KEYS: dict[WarrantyObjectKind, frozenset[str]] = {
+    WarrantyObjectKind.VEHICLE: frozenset({"distance_km"}),
+    WarrantyObjectKind.BATTERY: frozenset({"energy_throughput_kwh", "charge_cycles"}),
+    WarrantyObjectKind.TELEMATIC: frozenset({"operating_hours", "message_count"}),
+    WarrantyObjectKind.STATION: frozenset({"energy_delivered_kwh", "session_count"}),
+}

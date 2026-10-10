@@ -79,6 +79,44 @@ class VehicleUpdateRequest(BaseModel):
     )
 
 
+class VehicleOwnershipTransferRequest(BaseModel):
+    """HTTP request data for transferring a truck to a new owner (VH-12)."""
+
+    organization_id: UUID = Field(..., description="The organization taking the truck")
+    acquired_at: AwareDatetime | None = Field(
+        default=None,
+        description=(
+            "Effective date of the transfer (handover to the buyer); defaults "
+            "to the time of the request. Not in the future, and after the date "
+            "the current owner took the truck. Must carry a timezone."
+        ),
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Why the truck changes owner (kept in the change history)",
+    )
+
+
+class VehicleOwnershipPeriodResponse(BaseModel):
+    """One period during which an organization owned a truck (VH-10)."""
+
+    organization_id: UUID = Field(..., description="The owning organization")
+    owned_from: datetime = Field(..., description="When it took the truck")
+    owned_until: datetime | None = Field(
+        default=None, description="When the next owner took it; null for the owner now"
+    )
+
+
+class VehicleOwnershipPeriodListResponse(BaseModel):
+    """Ownership periods of a truck, oldest first."""
+
+    items: list[VehicleOwnershipPeriodResponse] = Field(
+        ..., description="Ownership periods, oldest first"
+    )
+
+
 class VehicleResponse(BaseModel):
     """Vehicle data returned via the HTTP API."""
 
@@ -122,6 +160,35 @@ class VehicleModelCreateRequest(BaseModel):
 
     make: str = Field(..., min_length=1, max_length=50, description="Manufacturer")
     model_name: str = Field(..., min_length=1, max_length=50, description="Model line")
+    gross_vehicle_weight_kg: int | None = Field(
+        default=None, gt=0, description="GVW in kg"
+    )
+    max_payload_kg: int | None = Field(
+        default=None, gt=0, description="Maximum payload in kg"
+    )
+    nominal_battery_capacity_kwh: float | None = Field(
+        default=None,
+        gt=0,
+        lt=10000,
+        description="Battery capacity the model is delivered with, in kWh",
+    )
+    consumption_curve: list[ConsumptionCurvePoint] | None = Field(
+        default=None, description="Reference energy consumption by load"
+    )
+
+
+class VehicleModelUpdateRequest(BaseModel):
+    """HTTP request data for partially updating a catalog model (VH-15).
+
+    A field sent as null (or not sent) is left unchanged.
+    """
+
+    make: str | None = Field(
+        default=None, min_length=1, max_length=50, description="Manufacturer"
+    )
+    model_name: str | None = Field(
+        default=None, min_length=1, max_length=50, description="Model line"
+    )
     gross_vehicle_weight_kg: int | None = Field(
         default=None, gt=0, description="GVW in kg"
     )

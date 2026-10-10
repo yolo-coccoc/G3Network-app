@@ -12,6 +12,7 @@ plate/status - the same one-directional edge shape already established by
 `telematics -> vehicles` and `drivers -> vehicles`.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
@@ -1308,3 +1309,39 @@ async def list_geofences_containing(
         )
         for geofence_record in geofence_records
     ]
+
+
+async def close_membership_of_sold_vehicle(
+    db: AsyncSession, vehicle_id: UUID, *, removed_at: datetime
+) -> UUID | None:
+    """Close a truck's open fleet membership because the truck was sold (VH-12).
+
+    Public cross-domain entry point, called by the ownership-transfer
+    orchestration (``app/api/vehicle_transfer.py``); the vehicles domain
+    cannot call ``fleet`` itself (FL-01). The system closes the period, so
+    ``removed_by`` stays ``NULL`` (FL-09).
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        vehicle_id: Internal ID of the sold truck.
+        removed_at: Effective date of the sale.
+
+    Returns:
+        The ID of the fleet the truck left, or `None` when it was in no fleet.
+
+    Side Effects:
+        Stamps the membership's ``removed_at``; does not commit or roll back.
+    """
+    membership_record = await fleet_repository.find_active_membership_by_vehicle(
+        db, vehicle_id
+    )
+    if membership_record is None:
+        return None
+    await fleet_repository.close_membership(
+        db,
+        membership_record,
+        # A sale dated before the truck joined must not give a negative period.
+        removed_at=max(removed_at, membership_record.added_at),
+        removed_by=None,
+    )
+    return membership_record.fleet_id

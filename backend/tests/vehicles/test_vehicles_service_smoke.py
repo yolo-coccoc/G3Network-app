@@ -1,6 +1,6 @@
 """Smoke tests for the vehicles service: vehicle CRUD and the model catalog."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -16,11 +16,14 @@ from app.domains.vehicles.exceptions import (
     VehicleModelConflictError,
     VehicleModelNotFoundError,
     VehicleNotFoundError,
+    VehicleTransferInvalidError,
 )
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.schemas import (
     VehicleCreateRequest,
     VehicleModelCreateRequest,
+    VehicleModelUpdateRequest,
+    VehicleOwnershipTransferRequest,
 )
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
@@ -178,12 +181,18 @@ async def test_list_vehicles_normalizes_page_window(
         limit: int,
         status_filter: VehicleStatus | None = None,
         organization_id: UUID | None = None,
+        search: str | None = None,
+        vehicle_model_id: UUID | None = None,
+        owner_organization_id: UUID | None = None,
     ) -> list[VehicleModel]:
         list_arguments.update(
             offset=offset,
             limit=limit,
             status_filter=status_filter,
             organization_id=organization_id,
+            search=search,
+            vehicle_model_id=vehicle_model_id,
+            owner_organization_id=owner_organization_id,
         )
         return [build_vehicle_record()]
 
@@ -192,6 +201,9 @@ async def test_list_vehicles_normalizes_page_window(
         *,
         status_filter: VehicleStatus | None = None,
         organization_id: UUID | None = None,
+        search: str | None = None,
+        vehicle_model_id: UUID | None = None,
+        owner_organization_id: UUID | None = None,
     ) -> int:
         return 1
 
@@ -205,6 +217,7 @@ async def test_list_vehicles_normalizes_page_window(
         page=3,
         page_size=settings.API_MAX_PAGE_SIZE + 1,
         status_filter=VehicleStatus.ACTIVE,
+        search="TEST",
     )
 
     assert list_arguments == {
@@ -212,6 +225,9 @@ async def test_list_vehicles_normalizes_page_window(
         "limit": settings.API_MAX_PAGE_SIZE,
         "status_filter": VehicleStatus.ACTIVE,
         "organization_id": principal.organization_id,
+        "search": "TEST",
+        "vehicle_model_id": None,
+        "owner_organization_id": None,
     }
     assert vehicle_list_response.page == 3
     assert vehicle_list_response.page_size == settings.API_MAX_PAGE_SIZE
@@ -329,3 +345,124 @@ async def test_get_vehicle_of_another_organization_is_not_found(
 
     # Customers are scoped to their organization; internal staff see all.
     assert scopes == [principal.organization_id, None]
+
+
+@pytest.mark.asyncio
+async def test_transfer_vehicle_ownership_changes_owner_and_date_with_reason(
+    monkeypatch: pytest.MonkeyPatch, own_organization_for_new_records: None
+) -> None:
+    """A transfer writes the buyer and the effective date; the typed reason is the history reason."""
+    record = build_vehicle_record()
+    record.acquired_at = datetime.now(timezone.utc) - timedelta(days=30)
+    buyer_id = uuid4()
+    effective_at = datetime.now(timezone.utc) - timedelta(days=1)
+    written: dict[str, object] = {}
+
+    async def get_by_id(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> VehicleModel:
+        return record
+
+    async def update_fields(
+        db_session: AsyncSession,
+        vehicle_id: UUID,
+        values: dict[str, object],
+        *,
+        change_reason: str,
+        changed_by: UUID | None = None,
+        organization_id: UUID | None = None,
+    ) -> VehicleModel:
+        written.update(values, change_reason=change_reason)
+        return record
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(vehicle_repository, "update_fields", update_fields)
+
+    result = await vehicle_service.transfer_vehicle_ownership(
+        fake_db_session(),
+        record.vehicle_id,
+        VehicleOwnershipTransferRequest(
+            organization_id=buyer_id, acquired_at=effective_at, reason="Sold"
+        ),
+        principal=build_internal_principal(),
+    )
+
+    assert written == {
+        "organization_id": buyer_id,
+        "acquired_at": effective_at,
+        "change_reason": "Sold",
+    }
+    assert result.previous_organization_id == record.organization_id
+    assert result.organization_id == buyer_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset_days", [-60, 2])
+async def test_transfer_rejects_same_owner_and_bad_dates(
+    monkeypatch: pytest.MonkeyPatch,
+    own_organization_for_new_records: None,
+    offset_days: int,
+) -> None:
+    """The buyer must differ, and the date must be after the last handover and not future."""
+    record = build_vehicle_record()
+    record.acquired_at = datetime.now(timezone.utc) - timedelta(days=30)
+
+    async def get_by_id(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> VehicleModel:
+        return record
+
+    monkeypatch.setattr(vehicle_repository, "get_by_id", get_by_id)
+    internal = build_internal_principal()
+
+    with pytest.raises(VehicleTransferInvalidError):
+        await vehicle_service.transfer_vehicle_ownership(
+            fake_db_session(),
+            record.vehicle_id,
+            VehicleOwnershipTransferRequest(
+                organization_id=record.organization_id, reason="Same"
+            ),
+            principal=internal,
+        )
+    with pytest.raises(VehicleTransferInvalidError):
+        await vehicle_service.transfer_vehicle_ownership(
+            fake_db_session(),
+            record.vehicle_id,
+            VehicleOwnershipTransferRequest(
+                organization_id=uuid4(),
+                acquired_at=datetime.now(timezone.utc) + timedelta(days=offset_days),
+                reason="Bad date",
+            ),
+            principal=internal,
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_vehicle_model_rejects_a_taken_make_and_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Renaming a model onto another live model's make and name is a conflict."""
+    record = build_vehicle_model_record()
+
+    async def get_vehicle_model_by_id(
+        db: AsyncSession, vehicle_model_id: UUID, *, include_deleted: bool = False
+    ) -> VehicleModelModel:
+        return record
+
+    async def taken(db: AsyncSession, make: str, model_name: str) -> VehicleModelModel:
+        return build_vehicle_model_record()
+
+    monkeypatch.setattr(
+        vehicle_repository, "get_vehicle_model_by_id", get_vehicle_model_by_id
+    )
+    monkeypatch.setattr(
+        vehicle_repository, "find_vehicle_model_by_make_and_name", taken
+    )
+
+    with pytest.raises(VehicleModelConflictError):
+        await vehicle_service.update_vehicle_model(
+            fake_db_session(),
+            record.vehicle_model_id,
+            VehicleModelUpdateRequest(model_name="EVT-825"),
+            principal=build_internal_principal(),
+        )

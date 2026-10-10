@@ -13,6 +13,7 @@ is owned by the caller's organization unless staff name another one. The
 cross-domain `resolve_*` functions are unscoped system lookups.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from app.domains.vehicles.exceptions import (
     VehicleModelConflictError,
     VehicleModelNotFoundError,
     VehicleNotFoundError,
+    VehicleTransferInvalidError,
 )
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.schemas import (
@@ -35,10 +37,15 @@ from app.domains.vehicles.schemas import (
     VehicleModelCreateRequest,
     VehicleModelListResponse,
     VehicleModelResponse,
+    VehicleModelUpdateRequest,
+    VehicleOwnershipPeriodListResponse,
+    VehicleOwnershipPeriodResponse,
+    VehicleOwnershipTransferRequest,
     VehicleResponse,
     VehicleUpdateRequest,
 )
 from app.domains.vehicles.types import (
+    VehicleOwnershipTransferResult,
     VehicleReference,
     VehicleStatus,
     VehicleSummary,
@@ -50,6 +57,12 @@ from app.libs.common.pagination import normalize_page_window
 # Fixed history reasons of routine actions; the acting user is the caller.
 VEHICLE_EDITED_REASON = "Vehicle details edited"
 VEHICLE_DELETED_REASON = "Vehicle deleted"
+VEHICLE_MODEL_EDITED_REASON = "Vehicle model edited"
+VEHICLE_MODEL_DELETED_REASON = "Vehicle model removed from the catalog"
+
+# A handover date typed on a client may run a little ahead of the server clock;
+# a transfer effective later than this margin is refused (VH-12).
+TRANSFER_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def to_vehicle_response(vehicle_record: VehicleModel) -> VehicleResponse:
@@ -296,6 +309,9 @@ async def list_vehicles(
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     status_filter: VehicleStatus | None = None,
+    search: str | None = None,
+    vehicle_model_id: UUID | None = None,
+    owner_organization_id: UUID | None = None,
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles that are not soft-deleted.
 
@@ -308,6 +324,10 @@ async def list_vehicles(
         page_size: Maximum number of vehicles per page; clamped to
             `1..API_MAX_PAGE_SIZE`.
         status_filter: Service status filter, if any.
+        search: Plate or VIN fragment, if any (case-insensitive).
+        vehicle_model_id: Only trucks of this catalog model, if given.
+        owner_organization_id: Only trucks owned by this organization, if
+            given (for a customer it can only narrow their own trucks).
 
     Returns:
         Paginated vehicle list response carrying the normalized page and
@@ -323,11 +343,17 @@ async def list_vehicles(
         limit=page_window.page_size,
         status_filter=status_filter,
         organization_id=principal.data_scope,
+        search=search,
+        vehicle_model_id=vehicle_model_id,
+        owner_organization_id=owner_organization_id,
     )
     total = await vehicle_repository.count(
         db_session,
         status_filter=status_filter,
         organization_id=principal.data_scope,
+        search=search,
+        vehicle_model_id=vehicle_model_id,
+        owner_organization_id=owner_organization_id,
     )
 
     return VehicleListResponse(
@@ -488,6 +514,131 @@ async def soft_delete_vehicle(
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
 
+async def transfer_vehicle_ownership(
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+    vehicle_ownership_transfer_request: VehicleOwnershipTransferRequest,
+    *,
+    principal: Principal,
+) -> VehicleOwnershipTransferResult:
+    """Hand a truck to a new owning organization (VH-12, DM-22).
+
+    Only the truck's own row changes here: ``organization_id`` and
+    ``acquired_at`` are replaced and the old values stay in ``vehicle_history``
+    with the caller as actor and the typed reason, so the view
+    ``vehicle_ownership_periods`` shows the new period. The rest of VH-12
+    (the seller's fleet memberships, the open driving session, a battery the
+    seller owns) belongs to other domains and is done by the orchestration in
+    ``app/api/vehicle_transfer.py`` in the same transaction, because
+    ``vehicles`` must not call ``fleet``, ``drivers`` or ``batteries``
+    (one-way edges, FL-01, VH-13).
+
+    Rules:
+        The new owner must exist and differ from the current owner. The
+        effective date defaults to now, may not be in the future (beyond
+        ``TRANSFER_CLOCK_SKEW``) and must be after the date the current owner
+        took the truck, so every period has a positive length.
+
+    Args:
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        vehicle_ownership_transfer_request: New owner, effective date, reason.
+        principal: The caller (internal staff); a truck outside their reach is
+            not found.
+
+    Returns:
+        What changed, for the orchestrating caller.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist or is soft-deleted.
+        OrganizationNotFoundError: The new owner does not exist.
+        VehicleTransferInvalidError: A rule above is broken.
+
+    Side Effects:
+        Flushes one UPDATE of the vehicle; does not commit.
+    """
+    vehicle_record = await vehicle_repository.get_by_id(
+        db_session, vehicle_id, organization_id=principal.data_scope
+    )
+    if vehicle_record is None:
+        raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+
+    new_organization_id = await identity_service.resolve_organization_for_new_record(
+        db_session, principal, vehicle_ownership_transfer_request.organization_id
+    )
+    if new_organization_id == vehicle_record.organization_id:
+        raise VehicleTransferInvalidError("The organization already owns this vehicle")
+    now = utc_now()
+    effective_at = vehicle_ownership_transfer_request.acquired_at or now
+    if effective_at > now + TRANSFER_CLOCK_SKEW:
+        raise VehicleTransferInvalidError("The transfer date cannot be in the future")
+    if effective_at <= vehicle_record.acquired_at:
+        raise VehicleTransferInvalidError(
+            "The transfer date must be after the date the current owner took "
+            "the vehicle"
+        )
+
+    previous_organization_id = vehicle_record.organization_id
+    await vehicle_repository.update_fields(
+        db_session,
+        vehicle_id,
+        {"organization_id": new_organization_id, "acquired_at": effective_at},
+        change_reason=vehicle_ownership_transfer_request.reason,
+        changed_by=principal.user_id,
+        organization_id=principal.data_scope,
+    )
+    return VehicleOwnershipTransferResult(
+        vehicle_id=vehicle_id,
+        previous_organization_id=previous_organization_id,
+        organization_id=new_organization_id,
+        acquired_at=effective_at,
+    )
+
+
+async def list_vehicle_ownership_periods(
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    principal: Principal,
+) -> VehicleOwnershipPeriodListResponse:
+    """List the periods in which organizations owned a truck (VH-10).
+
+    Read through the view ``vehicle_ownership_periods``. Internal staff see
+    every period; anyone else sees only their own organization's periods
+    (the truck must be theirs now).
+
+    Args:
+        db_session: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        principal: The caller.
+
+    Returns:
+        The periods, oldest first; the owner now has ``owned_until`` null.
+
+    Raises:
+        VehicleNotFoundError: The vehicle does not exist, is soft-deleted or
+            is out of the caller's reach.
+    """
+    vehicle_record = await vehicle_repository.get_by_id(
+        db_session, vehicle_id, organization_id=principal.data_scope
+    )
+    if vehicle_record is None:
+        raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    period_rows = await vehicle_repository.list_ownership_periods(
+        db_session, vehicle_id, organization_id=principal.data_scope
+    )
+    return VehicleOwnershipPeriodListResponse(
+        items=[
+            VehicleOwnershipPeriodResponse(
+                organization_id=period_organization_id,
+                owned_from=owned_from,
+                owned_until=owned_until,
+            )
+            for period_organization_id, owned_from, owned_until in period_rows
+        ]
+    )
+
+
 def to_vehicle_model_response(
     vehicle_model_record: VehicleModelModel,
 ) -> VehicleModelResponse:
@@ -575,6 +726,8 @@ async def list_vehicle_models(
     *,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+    search: str | None = None,
+    make: str | None = None,
 ) -> VehicleModelListResponse:
     """Get a paginated list of the catalog's vehicle models.
 
@@ -582,6 +735,8 @@ async def list_vehicle_models(
         db_session: Current database session.
         page: Page number, starting from 1; clamped by `normalize_page_window`.
         page_size: Maximum number of models per page.
+        search: Make or model-name fragment, if any.
+        make: Exact manufacturer, if any.
 
     Returns:
         Paginated list response carrying the normalized page and page size.
@@ -591,9 +746,15 @@ async def list_vehicle_models(
     """
     page_window = normalize_page_window(page, page_size)
     vehicle_model_records = await vehicle_repository.list_vehicle_models(
-        db_session, offset=page_window.offset, limit=page_window.page_size
+        db_session,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        search=search,
+        make=make,
     )
-    total = await vehicle_repository.count_vehicle_models(db_session)
+    total = await vehicle_repository.count_vehicle_models(
+        db_session, search=search, make=make
+    )
     return VehicleModelListResponse(
         items=[
             to_vehicle_model_response(vehicle_model_record)
@@ -603,3 +764,112 @@ async def list_vehicle_models(
         page=page_window.page,
         page_size=page_window.page_size,
     )
+
+
+async def update_vehicle_model(
+    db_session: AsyncSession,
+    vehicle_model_id: UUID,
+    vehicle_model_update_request: VehicleModelUpdateRequest,
+    *,
+    principal: Principal,
+) -> VehicleModelResponse:
+    """Partially update a catalog model (VH-15, VEH-03).
+
+    Figures are entered once confirmed and may be corrected later; trucks of
+    the model read the new figures at once (reports use the model's nominal
+    capacity).
+
+    Args:
+        db_session: Current database session.
+        vehicle_model_id: Internal ID of the model.
+        vehicle_model_update_request: Fields to change; null means unchanged.
+        principal: The caller (internal staff), recorded as the history actor.
+
+    Returns:
+        The updated model.
+
+    Raises:
+        VehicleModelNotFoundError: The model does not exist or was removed.
+        VehicleModelConflictError: Another live model has the new make and name.
+
+    Side Effects:
+        Flushes the UPDATE; the change is recorded in the model's history.
+    """
+    vehicle_model_record = await vehicle_repository.get_vehicle_model_by_id(
+        db_session, vehicle_model_id
+    )
+    if vehicle_model_record is None:
+        raise VehicleModelNotFoundError(f"Vehicle model '{vehicle_model_id}' not found")
+
+    update_values = {
+        field_name: value
+        for field_name, value in vehicle_model_update_request.model_dump(
+            exclude_unset=True
+        ).items()
+        if value is not None
+    }
+    if not update_values:
+        return to_vehicle_model_response(vehicle_model_record)
+    capacity_kwh = update_values.get("nominal_battery_capacity_kwh")
+    if capacity_kwh is not None:
+        update_values["nominal_battery_capacity_kwh"] = Decimal(str(capacity_kwh))
+
+    new_make = update_values.get("make", vehicle_model_record.make)
+    new_model_name = update_values.get("model_name", vehicle_model_record.model_name)
+    if (new_make, new_model_name) != (
+        vehicle_model_record.make,
+        vehicle_model_record.model_name,
+    ) and await vehicle_repository.find_vehicle_model_by_make_and_name(
+        db_session, new_make, new_model_name
+    ):
+        raise VehicleModelConflictError(
+            f"Vehicle model '{new_make} {new_model_name}' already exists"
+        )
+    try:
+        updated_record = await vehicle_repository.update_vehicle_model_fields(
+            db_session,
+            vehicle_model_id,
+            update_values,
+            change_reason=VEHICLE_MODEL_EDITED_REASON,
+            changed_by=principal.user_id,
+        )
+    except IntegrityError as error:
+        raise VehicleModelConflictError(
+            "Vehicle model make and name already exist"
+        ) from error
+    if updated_record is None:
+        raise VehicleModelNotFoundError(f"Vehicle model '{vehicle_model_id}' not found")
+    return to_vehicle_model_response(updated_record)
+
+
+async def soft_delete_vehicle_model(
+    db_session: AsyncSession,
+    vehicle_model_id: UUID,
+    *,
+    principal: Principal,
+) -> None:
+    """Remove a model from the catalog (soft delete).
+
+    Trucks that already point to the model keep it and read its figures
+    (``include_deleted``); only new trucks can no longer choose it.
+
+    Args:
+        db_session: Current database session.
+        vehicle_model_id: Internal ID of the model.
+        principal: The caller (internal staff), recorded as the history actor.
+
+    Raises:
+        VehicleModelNotFoundError: The model does not exist or was removed.
+
+    Side Effects:
+        Stamps ``deleted_at``; the change is recorded in the model's history.
+    """
+    removed_record = await vehicle_repository.update_vehicle_model_fields(
+        db_session,
+        vehicle_model_id,
+        {"deleted_at": utc_now()},
+        change_reason=VEHICLE_MODEL_DELETED_REASON,
+        changed_by=principal.user_id,
+    )
+    if removed_record is None:
+        raise VehicleModelNotFoundError(f"Vehicle model '{vehicle_model_id}' not found")

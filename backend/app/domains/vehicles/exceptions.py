@@ -1,6 +1,11 @@
 """Business exceptions raised by the vehicles domain."""
 
-from app.libs.common.errors import ConflictError, DomainError, NotFoundError
+from app.libs.common.errors import (
+    ConflictError,
+    DomainError,
+    InvalidInputError,
+    NotFoundError,
+)
 
 
 class VehicleError(DomainError):
@@ -21,3 +26,11 @@ class VehicleModelNotFoundError(VehicleError, NotFoundError):
 
 class VehicleModelConflictError(VehicleError, ConflictError):
     """Raised when a vehicle model with the same make and model name exists."""
+
+
+class VehicleTransferInvalidError(VehicleError, InvalidInputError):
+    """Raised when an ownership transfer breaks a rule (VH-12).
+
+    The new owner is the current owner, or the effective date is in the future
+    or not after the date the current owner took the truck.
+    """

@@ -12,6 +12,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.api.vehicle_transfer import router as vehicle_transfer_router
+from app.domains.batteries.router import battery_models_router
+from app.domains.batteries.router import router as batteries_router
 from app.domains.charging_sessions.router import router as charging_sessions_router
 from app.domains.charging_stations.router import router as charging_stations_router
 from app.domains.drivers.router import driving_sessions_router
@@ -33,6 +36,7 @@ from app.domains.telematics.router import router as telematics_router
 from app.domains.telemetry.router import router as telemetry_router
 from app.domains.vehicles.router import router as vehicles_router
 from app.domains.vehicles.router import vehicle_models_router
+from app.domains.warranties.router import router as warranties_router
 from app.libs.common.config import settings
 from app.libs.common.errors import (
     ConflictError,
@@ -136,7 +140,11 @@ for _error_base in _DOMAIN_ERROR_STATUS:
 
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
+app.include_router(vehicle_transfer_router, prefix="/api/v1/vehicles")
 app.include_router(vehicle_models_router, prefix="/api/v1/vehicle-models")
+app.include_router(batteries_router, prefix="/api/v1/batteries")
+app.include_router(battery_models_router, prefix="/api/v1/battery-models")
+app.include_router(warranties_router, prefix="/api/v1/warranties")
 app.include_router(telematics_router, prefix="/api/v1/telematics")
 app.include_router(telemetry_router, prefix="/api/v1/telemetry")
 app.include_router(charging_stations_router, prefix="/api/v1")

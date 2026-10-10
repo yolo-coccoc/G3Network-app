@@ -282,6 +282,9 @@ type = "forbidden"
 source_modules = ["app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
     "app.domains.batteries.models",
+    "app.domains.batteries.repository",
+    "app.domains.batteries.router",
+    "app.domains.batteries.schemas",
 ]
 allow_indirect_imports = true
 
@@ -291,6 +294,9 @@ type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles"]
 forbidden_modules = [
     "app.domains.warranties.models",
+    "app.domains.warranties.repository",
+    "app.domains.warranties.router",
+    "app.domains.warranties.schemas",
 ]
 allow_indirect_imports = true
 

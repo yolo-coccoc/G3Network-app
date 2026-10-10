@@ -59,14 +59,30 @@ flowchart LR
 
 FastAPI registers the following domains:
 
-- `vehicles`: vehicle CRUD and soft delete (list filterable by `status`;
-  a vehicle has an owning organization, a model from the `vehicle_models`
-  catalog, change history and the `vehicle_ownership_periods` view) and the
-  catalog endpoints `/vehicle-models`. The pack capacity other domains read
-  (F-A6/F-C6) is the model's nominal capacity. The device-activation state
-  machine is gone (computed later, VH-06). `batteries` (battery models,
-  batteries, the `battery_installation_periods` view) and `warranties` have
-  models only until WP3 (VH-20).
+- `vehicles`: vehicle CRUD and soft delete (list filterable by `status`, a
+  plate/VIN fragment `q`, model and owner; a vehicle has an owning
+  organization, a model from the `vehicle_models` catalog, change history and
+  the `vehicle_ownership_periods` view, read by
+  `GET /vehicles/{id}/ownership-periods`) and the catalog endpoints
+  `/vehicle-models` (create, list, get, update, soft delete; staff write). The
+  ownership transfer `POST /vehicles/{id}/transfer-ownership` is orchestrated
+  in `app/api/vehicle_transfer.py` (VH-21). The pack capacity other domains
+  read (F-A6/F-C6) is the model's nominal capacity; `telemetry` replaces it
+  with the installed battery's design capacity (VH-16, VH-21). The
+  device-activation state machine is gone (computed later, VH-06).
+- `batteries`: battery model catalog (`/battery-models`) and batteries as
+  assets (`/batteries`: register, edit, soft delete, fit to / remove from a
+  truck, transfer the pack's owner, installation periods from the
+  `battery_installation_periods` view). One pack per truck; reads inside the
+  data scope, writes for our own staff (BAT-01 is an internal feature).
+  Depends one-directionally on `vehicles`.
+- `warranties`: warranties of one truck, battery, T-Box or charger
+  (`/warranties`: enter, list with object / owner / status / expiring-soon
+  filters, edit, void with a reason, soft delete); `limits` keys are checked
+  against the covered object; a warranty follows its object, so its data scope
+  is the object's owner (a SQL predicate over the four owner columns). Depends
+  on `vehicles`, `batteries`, `telematics`, `charging_stations`; nothing
+  depends on it.
 - `telematics`: device CRUD (a device has an owning organization, change
   history and soft-delete rules DM-25) and mapping devices to vehicles (an unknown
   VIN is a 404; at most one *live* device per vehicle, so a soft-deleted
@@ -432,8 +448,10 @@ call each other is in
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │       # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
 │   │   │   │
-│   │   │   ├── batteries/             # Battery models and batteries; models and enums only until WP3 (BAT-01)
-│   │   │   ├── warranties/            # Warranties of trucks, batteries, T-Boxes, chargers; models and enums only until WP3 (WAR-01)
+│   │   │   ├── batteries/             # Battery models and batteries (BAT-01)
+│   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   ├── warranties/            # Warranties of trucks, batteries, T-Boxes, chargers (WAR-01)
+│   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1)
 │   │   │       ├── service.py  types.py  exceptions.py  dependencies.py   # public surface (dependencies = FastAPI authentication)
 │   │   │       ├── account_service.py  organization_service.py  member_service.py  legal_service.py  audit_service.py  # internal business rules
@@ -442,7 +460,8 @@ call each other is in
 │   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); security.py = scrypt/HMAC/random primitives, providers.py = SMS/e-mail interface + logging fake
 │   │   │
 │   │   ├── api/
-│   │   │   └── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
+│   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
+│   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
 │   │   └── libs/
 │   │       ├── common/                 # shared, NO business logic: config, logging, errors (domain-exception bases),

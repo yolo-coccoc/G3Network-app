@@ -19,7 +19,7 @@ check against the truck's last T-Box position and the auto-end of an idle
 session. They need telemetry and come with WP5.
 """
 
-from datetime import date
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -876,3 +876,39 @@ async def is_membership_checked_in_to_vehicle(
         db_session, driver_record.driver_id
     )
     return open_session is not None and open_session.vehicle_id == vehicle_id
+
+
+async def end_open_session_on_ownership_change(
+    db_session: AsyncSession, vehicle_id: UUID, *, ended_at: datetime
+) -> UUID | None:
+    """End the open driving session of a truck that was sold (VH-12).
+
+    Public cross-domain entry point, called by the ownership-transfer
+    orchestration (``app/api/vehicle_transfer.py``): the driver belongs to the
+    seller's organization, so the session ends with `OWNER_CHANGED`.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the sold truck.
+        ended_at: Effective date of the sale.
+
+    Returns:
+        The ID of the session that was ended, or `None` when nobody was
+        checked in to the truck.
+
+    Side Effects:
+        Stamps ``ended_at`` and ``end_cause``; does not commit or roll back.
+    """
+    open_session = await driver_repository.find_open_session_by_vehicle(
+        db_session, vehicle_id
+    )
+    if open_session is None:
+        return None
+    await driver_repository.close_session(
+        db_session,
+        open_session,
+        # A sale dated before the check-in must not give a negative duration.
+        ended_at=max(ended_at, open_session.started_at),
+        end_cause=DrivingSessionEndCause.OWNER_CHANGED,
+    )
+    return open_session.driving_session_id

@@ -2,6 +2,7 @@
 
 import enum
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 
@@ -66,3 +67,26 @@ class VehicleSummary:
     vin: str
     license_plate: str
     status: VehicleStatus
+
+
+@dataclass(frozen=True)
+class VehicleOwnershipTransferResult:
+    """What an ownership transfer changed, handed to the orchestrating caller.
+
+    The vehicles domain only changes the truck's owner; whatever else belongs
+    to the seller (fleet memberships, the open driving session, a battery the
+    seller owns) is closed by the other domains' public services, called by
+    the orchestration in ``app/api/vehicle_transfer.py`` with these values.
+
+    Attributes:
+        vehicle_id: Internal ID of the truck.
+        previous_organization_id: The seller.
+        organization_id: The buyer, the owner from now on.
+        acquired_at: Effective date of the transfer (when the buyer took the
+            truck).
+    """
+
+    vehicle_id: UUID
+    previous_organization_id: UUID
+    organization_id: UUID
+    acquired_at: datetime
