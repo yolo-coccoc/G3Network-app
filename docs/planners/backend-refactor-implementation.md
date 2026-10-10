@@ -344,7 +344,7 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-CS3 | H | both adapters' start handlers, `charging_sessions/service.py` | A retried StartTransaction / `Started` is answered `Invalid` (transactionId 0): the session stays ACTIVE forever (PG). **Fixed 2026-10-10.** |
 | RV-BL1 | H | `billing/service.py` `has_minimum_balance` | With the default minimum 0 the check is off: a negative wallet keeps starting charges (BL-14). The existing `test_has_minimum_balance_follows_the_setting` asserts the old rule and changes with the fix. **Fixed 2026-10-10 (BL-25).** |
 | RV-BL2 | H | `billing/repository.py` (every `for_update=True`), `identity/repository.py`, `ocpp_state_repository.py` | The locking re-read returns the stale object from the session's identity map (no `populate_existing`): a poll can overwrite a credited payment to FAILED (PG). **Fixed 2026-10-10.** |
-| RV-AS6 | M | `vehicles/schemas.py`, `uq_vehicles_live_*` | VIN, plate and battery serial are not normalized and the unique indexes are case-sensitive: duplicate VINs, and the QR scan can bind the wrong truck (PG). |
+| RV-AS6 | M | `vehicles/schemas.py`, `uq_vehicles_live_*` | VIN, plate and battery serial are not normalized and the unique indexes are case-sensitive: duplicate VINs, and the QR scan can bind the wrong truck (PG). **Fixed 2026-10-10.** |
 | RV-BL3 | M | `api/charging_session_flow.py` | "One open charge per person" is an unlocked read: two simultaneous scans open two charges (PG). **Fixed 2026-10-10.** |
 | RV-BL4 | M | `ocpp/ocpp16_measurements.py` `_energy_value_wh` | A SignedData energy sample makes StopTransaction fail: the session is never completed or billed. **Fixed 2026-10-10.** |
 | RV-BL5 / RV-CS4 | M | both adapters' meter extraction | Energy register ignores `phase` and `location`: a per-phase or Inlet value becomes the start/stop reading (wrong bill or ON_HOLD). **Fixed 2026-10-10.** |
@@ -357,20 +357,20 @@ fix. Severity: C critical, H high, M medium, L low. `PG` = the test needs
 | RV-ID4 | M | `identity/member_service.py` handover `force` | Internal staff can replace a working customer ORG_ADMIN at will (ID-33 allows force only when the admin is gone). **Fixed 2026-10-10.** |
 | RV-ID5 | M | `identity/security.py` `normalize_phone_number` | `+84 0901…` keeps the trunk zero: one SIM can hold several accounts and OTP limits multiply. **Fixed 2026-10-10.** |
 | RV-ID6 | M | `identity/account_service.py` phone/e-mail/password change | Changing the login phone needs no password and ends no session; wrong current passwords are not counted. **Fixed 2026-10-10.** |
-| RV-AS1 | M | `fleet/service.py` `add_vehicle_to_fleet` | A fleet-limited manager can add an unassigned truck to their fleet and widen their own reach (FL-10). |
-| RV-AS2 | M | `identity/service.py` `resolve_organization_for_new_record` | A CLOSED (or SUSPENDED) organization is accepted as owner of a new or transferred vehicle, battery or fleet. |
-| RV-AS3 | M | `vehicles/service.py` transfer, `batteries/service.py` install | No row lock: concurrent transfers give negative ownership periods; a pack can sit in two trucks (PG). |
-| RV-AS4 | M | `batteries/service.py` install, vehicle/battery create | `installed_at` has no lower bound, `acquired_at` may be in the future (PG for the install half). |
-| RV-AS5 | M | `vehicles/service.py`, `fleet/service.py` | VIN/plate 409 echoes the value across tenants; the fleet remove path distinguishes unknown from elsewhere. |
+| RV-AS1 | M | `fleet/service.py` `add_vehicle_to_fleet` | A fleet-limited manager can add an unassigned truck to their fleet and widen their own reach (FL-10). **Fixed 2026-10-10.** |
+| RV-AS2 | M | `identity/service.py` `resolve_organization_for_new_record` | A CLOSED (or SUSPENDED) organization is accepted as owner of a new or transferred vehicle, battery or fleet. **Fixed 2026-10-10.** |
+| RV-AS3 | M | `vehicles/service.py` transfer, `batteries/service.py` install | No row lock: concurrent transfers give negative ownership periods; a pack can sit in two trucks (PG). **Fixed 2026-10-10.** |
+| RV-AS4 | M | `batteries/service.py` install, vehicle/battery create | `installed_at` has no lower bound, `acquired_at` may be in the future (PG for the install half). **Fixed 2026-10-10.** |
+| RV-AS5 | M | `vehicles/service.py`, `fleet/service.py` | VIN/plate 409 echoes the value across tenants; the fleet remove path distinguishes unknown from elsewhere. **Fixed 2026-10-10.** |
 | RV-OP6 | M | `drivers/service.py` auto-end, `telemetry/repository.py` | Movement read by device clock vs. server-clock `started_at`: a slow device clock auto-ends a moving truck (PG). |
 | RV-OP7 | M | `drivers/repository.py`, `trip_service.py` | Blind updates: the sweep overwrites a committed check-out; two drivers both start one planned trip (PG). |
 | RV-OP8 | M | `telemetry/repository.py` distance fold | `lag()` over rows without odometer gives 0 km; one glitch adds ~1,000,000 km (PG). |
 | RV-OP9 | M | `drivers/service.py` check-in | Check-in to another organization's silent truck relies on phone-sent coordinates only; takeover then exposes the truck. Owner decision needed; no test. |
 | RV-OP10 | M | `telemetry/router.py` `FLEET_REPORT_READERS` | DRIVER can open the organization's fleet operating report. |
-| RV-AS7 | L | `batteries/service.py` `transfer_installed_battery_with_vehicle` | The pack's `acquired_at` can move backwards on a backdated truck sale. |
+| RV-AS7 | L | `batteries/service.py` `transfer_installed_battery_with_vehicle` | The pack's `acquired_at` can move backwards on a backdated truck sale. **Fixed 2026-10-10.** |
 | RV-AS8 / RV-ID8 | L | `libs/db/history.py`, every reason field | A whitespace-only reason passes the schema and becomes a 500. **Fixed 2026-10-10.** |
-| RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). |
-| RV-AS10 | L | `vehicles/service.py` `update_vehicle` | Back to ACTIVE keeps the old `status_reason`. |
+| RV-AS9 | L | `warranties/service.py`, `vehicles/schemas.py` | NaN / Infinity floats pass and fail in JSONB (500). **Fixed 2026-10-10.** |
+| RV-AS10 | L | `vehicles/service.py` `update_vehicle` | Back to ACTIVE keeps the old `status_reason`. **Fixed 2026-10-10.** |
 | RV-BL7 | L | `billing/schemas.py`, `providers.py` | Money and VAT values beyond their columns give 500 (VAT 100 overflows `numeric(4,2)`). **Fixed 2026-10-10.** |
 | RV-BL8 | L | `billing/topup_service.py` `get_payment` | Any internal user (even DRIVER) reads any payment, and the read can mark it FAILED. **Fixed 2026-10-10.** |
 | RV-BL9 | L | `api/charging_session_flow.py` | A PENDING scan cannot be cancelled: the person is blocked for 5 minutes and the charger holds their token. **Fixed 2026-10-10.** |
