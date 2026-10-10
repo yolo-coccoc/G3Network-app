@@ -74,11 +74,15 @@ class Settings(BaseSettings):
         CHARGING_SESSION_SWEEP_INTERVAL_SECONDS: How often the gateway's loop
             sweeps expired PENDING sessions.
         BILLING_MIN_BALANCE_VND: Wallet balance needed to start a charge
-            (BL-14); 0 disables the check.
+            (BL-14, BL-25); never below 0, so a negative wallet must be topped
+            up first.
         BILLING_TOPUP_MIN_VND: Smallest wallet top-up a person may ask for.
         BILLING_TOPUP_MAX_VND: Largest wallet top-up a person may ask for.
         BILLING_TOPUP_EXPIRY_MINUTES: How long a top-up QR code waits for the
             transfer before the payment is shown as failed (unpaid).
+        BILLING_SIMULATE_TRANSFERS_ENABLED: Whether
+            ``POST /payments/vietqr/simulate`` may make the fake provider
+            report a transfer (BL-26); off by default, on for development.
         BILLING_BANK_PROVIDER: Which bank-notification provider reads the
             incoming transfers (PR-15); only the logging ``fake`` exists.
         BILLING_WEBHOOK_SECRET: Shared secret the bank-notification service
@@ -269,8 +273,8 @@ class Settings(BaseSettings):
     CHARGING_PENDING_SESSION_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
     CHARGING_SESSION_SWEEP_INTERVAL_SECONDS: float = Field(default=30.0, gt=0)
 
-    # Wallet minimum balance to start a charge, in VND (BL-14). 0 turns the check
-    # off, which is the default until top-ups exist (WP9).
+    # Wallet minimum balance to start a charge, in VND (BL-14, BL-25). The check
+    # is always on: at the default 0 a negative wallet must be topped up first.
     BILLING_MIN_BALANCE_VND: Decimal = Field(default=Decimal(0), ge=0)
     # Wallet top-up by VietQR bank transfer (BL-15). Amounts are whole dong.
     BILLING_TOPUP_MIN_VND: int = Field(default=10_000, ge=1)
@@ -280,6 +284,9 @@ class Settings(BaseSettings):
     # fake exists. The webhook secret is empty by default, which refuses every
     # notification (fail closed).
     BILLING_BANK_PROVIDER: Literal["fake"] = "fake"
+    # The transfer simulation credits a wallet with no money received, so it is
+    # off unless a deployment turns it on (development, a demo) (BL-26).
+    BILLING_SIMULATE_TRANSFERS_ENABLED: bool = False
     BILLING_WEBHOOK_SECRET: str = ""
     BILLING_VIETQR_BANK_BIN: str = Field(default="970436", pattern=r"^\d{6}$")
     BILLING_VIETQR_ACCOUNT_NUMBER: str = Field(default="0000000000", max_length=19)

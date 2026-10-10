@@ -69,7 +69,9 @@ TARIFF_VERSION_ID = uuid4()
 @pytest.mark.parametrize(
     ("minimum", "balance", "expected"),
     [
-        (0, None, True),  # check switched off, no wallet needed
+        (0, None, True),  # no wallet counts as zero, which meets a 0 minimum
+        (0, Decimal(0), True),
+        (0, Decimal(-1), False),  # a negative wallet must be topped up (BL-25)
         (50_000, None, False),  # no wallet counts as a zero balance
         (50_000, Decimal(49_999), False),
         (50_000, Decimal(50_000), True),
@@ -81,7 +83,8 @@ async def test_has_minimum_balance_follows_the_setting(
     balance: Decimal | None,
     expected: bool,
 ) -> None:
-    """The rule reads BILLING_MIN_BALANCE_VND; 0 disables it; no wallet is not created."""
+    """The rule reads BILLING_MIN_BALANCE_VND, never below zero (BL-25); no wallet
+    is created."""
 
     async def find_wallet(db: object, user_id: UUID) -> Any:
         return (

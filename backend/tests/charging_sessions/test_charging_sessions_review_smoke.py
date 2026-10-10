@@ -200,14 +200,11 @@ async def test_the_bill_and_receipt_of_a_session_out_of_reach_are_not_found(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL1: BILLING_MIN_BALANCE_VND=0 lets a negative wallet charge",
-)
 async def test_a_scan_is_refused_while_the_wallet_is_negative_even_with_no_minimum(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """BL-14: below the minimum (never less than zero) no new charge starts."""
+    """BL-14, BL-25: below the minimum (never less than zero) no new charge starts
+    (RV-BL1)."""
     record = _patch_scan(monkeypatch)
     monkeypatch.setattr(
         billing_service, "resolve_wallet_standing", REAL_RESOLVE_WALLET_STANDING

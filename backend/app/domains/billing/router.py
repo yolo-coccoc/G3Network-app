@@ -788,7 +788,8 @@ async def receive_bank_notification_endpoint(
     response_model=BankNotificationResponse,
     summary="Simulate a bank transfer (development)",
     description="With the fake bank provider, makes it report an incoming "
-    "transfer for a pending top-up, exactly as the webhook would.",
+    "transfer for a pending top-up, exactly as the webhook would. Refused (409) "
+    "unless BILLING_SIMULATE_TRANSFERS_ENABLED is on.",
 )
 async def simulate_bank_transfer_endpoint(
     simulation_request: BankNotificationSimulationRequest,
@@ -806,7 +807,8 @@ async def simulate_bank_transfer_endpoint(
         What happened to the simulated notification.
 
     Raises:
-        BankProviderUnavailableError: The provider cannot simulate (409).
+        BankProviderUnavailableError: Simulation is turned off, or the
+            provider cannot simulate (409).
         PaymentNotFoundError: No payment carries the code (404).
     """
     del principal

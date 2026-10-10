@@ -350,14 +350,11 @@ def test_bill_amounts_convert_wh_to_kwh_and_round_half_up_to_whole_dong(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL6: the dev-only transfer simulation is always enabled",
-)
 async def test_simulating_a_bank_transfer_is_refused_outside_development(
-    store: Store,
+    store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default settings must not let anyone mint a TOP_UP by simulation."""
+    """With the switch off (the default) nobody can mint a TOP_UP (RV-BL6, BL-26)."""
+    monkeypatch.setattr(settings, "BILLING_SIMULATE_TRANSFERS_ENABLED", False)
     payment = _pending_top_up(store)
 
     with pytest.raises(BankProviderUnavailableError):
@@ -370,6 +367,22 @@ async def test_simulating_a_bank_transfer_is_refused_outside_development(
 
     assert payment.status == "PENDING"
     assert store.ledger == []
+
+
+@pytest.mark.asyncio
+async def test_simulating_a_bank_transfer_credits_the_wallet_when_switched_on(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A development deployment turns the switch on and the top-up is credited."""
+    monkeypatch.setattr(settings, "BILLING_SIMULATE_TRANSFERS_ENABLED", True)
+    payment = _pending_top_up(store)
+
+    await topup_service.simulate_bank_transfer(
+        DB, transfer_code=TRANSFER_CODE, amount=None, bank_transaction_id=None
+    )
+
+    assert payment.status == "SUCCEEDED"
+    assert len(store.ledger) == 1
 
 
 @pytest.mark.xfail(

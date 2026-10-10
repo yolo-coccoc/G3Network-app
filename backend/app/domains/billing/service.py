@@ -63,22 +63,20 @@ async def resolve_wallet_standing(db: AsyncSession, user_id: UUID) -> WalletStan
 async def has_minimum_balance(db: AsyncSession, user_id: UUID) -> bool:
     """Tell whether a person's wallet may start a charge (BL-14).
 
-    The minimum is the platform setting ``BILLING_MIN_BALANCE_VND``; ``0``
-    disables the check. A person without a wallet counts as a zero balance. A
-    blocked wallet is not judged here: the caller reads
-    ``resolve_wallet_standing`` for that.
+    The minimum is the platform setting ``BILLING_MIN_BALANCE_VND`` and is
+    never below zero (BL-25): at the default ``0`` a wallet left negative by an
+    earlier charge must be topped up before the next one. A person without a
+    wallet counts as a zero balance. A blocked wallet is not judged here: the
+    caller reads ``resolve_wallet_standing`` for that.
 
     Args:
         db: The async session owned by the entry boundary.
         user_id: The person whose wallet pays.
 
     Returns:
-        ``True`` when the check is off or the balance is at or above the
-        minimum.
+        ``True`` when the balance is at or above the minimum.
     """
     minimum_balance = settings.BILLING_MIN_BALANCE_VND
-    if minimum_balance <= 0:
-        return True
     standing = await resolve_wallet_standing(db, user_id)
     return standing.balance >= minimum_balance
 

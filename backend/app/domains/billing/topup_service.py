@@ -425,6 +425,9 @@ async def simulate_bank_transfer(
 ) -> BankNotificationResponse:
     """Make the fake provider report an incoming transfer (development only).
 
+    Refused unless ``BILLING_SIMULATE_TRANSFERS_ENABLED`` is on (BL-26): it
+    credits a wallet with no money received.
+
     Args:
         db: The async session owned by the entry boundary.
         transfer_code: The code of a pending top-up.
@@ -435,9 +438,15 @@ async def simulate_bank_transfer(
         What happened to the notification.
 
     Raises:
-        BankProviderUnavailableError: The provider cannot simulate (409).
+        BankProviderUnavailableError: Simulation is turned off, or the
+            provider cannot simulate (409).
         PaymentNotFoundError: No payment carries the code (404).
     """
+    if not settings.BILLING_SIMULATE_TRANSFERS_ENABLED:
+        raise BankProviderUnavailableError(
+            "Simulating bank transfers is turned off "
+            "(BILLING_SIMULATE_TRANSFERS_ENABLED)"
+        )
     provider = bank_providers.get_bank_notification_provider()
     if not provider.supports_simulation:
         raise BankProviderUnavailableError(
