@@ -36,7 +36,13 @@ async def insert_telemetry(
     db: AsyncSession,
     telemetry_values: dict[str, object],
 ) -> int:
-    """Insert a single telemetry record using SQLAlchemy Core.
+    """Insert a single telemetry record, skipping a repeated reading.
+
+    A device that sends the same reading twice (an offline buffer replayed, a
+    1 Hz device with second-precision timestamps) repeats
+    ``(telematic_id, recorded_at)``; ``ON CONFLICT DO NOTHING`` on
+    ``uq_telemetry_telematic_recorded_at`` keeps the first row and inserts
+    nothing, instead of an IntegrityError that would stop the worker (RV-OP2).
 
     Args:
         db: Database session owned by the entry boundary.
@@ -45,7 +51,7 @@ async def insert_telemetry(
             the database model.
 
     Returns:
-        Number of rows the database reports as inserted.
+        Number of rows inserted: 1, or 0 for a repeated reading.
 
     Side Effects:
         Writes one row into the current session. The function does not
@@ -53,7 +59,11 @@ async def insert_telemetry(
     """
     query_result = cast(
         CursorResult[Any],
-        await db.execute(insert(TelemetryModel).values(telemetry_values)),
+        await db.execute(
+            insert(TelemetryModel)
+            .values(telemetry_values)
+            .on_conflict_do_nothing(index_elements=["telematic_id", "recorded_at"])
+        ),
     )
     logger.debug(
         "insert_telemetry",

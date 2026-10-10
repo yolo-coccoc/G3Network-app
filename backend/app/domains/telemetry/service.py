@@ -1032,7 +1032,8 @@ class MessageResult(TypedDict):
     Attributes:
         processed: Rows inserted for the message (0 or 1).
         skipped: 1 if the message was skipped because its serial has no
-            vehicle mapping, else 0.
+            vehicle mapping, or because the device already sent a reading
+            with the same ``recorded_at`` (RV-OP2), else 0.
         errors: 1 if the message could not be converted into a row, else 0.
     """
 
@@ -1051,7 +1052,9 @@ async def process_message(
     - Look up exactly one mapping by ``telematic_serial``.
     - A serial that doesn't exist or a device not yet assigned to a vehicle
       is safely skipped.
-    - A valid message is enriched and then exactly one row is inserted.
+    - A valid message is enriched and then exactly one row is inserted; a
+      reading the device already sent (same ``recorded_at``) inserts nothing
+      and is skipped, with no alert raised again (RV-OP2).
     - A message conversion error only increments ``errors`` for the current
       message; a DB error is raised so the transaction boundary rolls back
       and the worker stops per MVP policy.
@@ -1133,6 +1136,18 @@ async def process_message(
         db,
         telemetry_values,
     )
+    if processed_count == 0:
+        # The same reading again (an offline buffer replayed): the first copy
+        # already raised its alerts, so raising them again would only repeat
+        # them.
+        logger.info(
+            "repeated telemetry reading skipped",
+            extra={
+                "telematic_serial": message.telematic_serial,
+                "message_uuid": str(message.message_uuid),
+            },
+        )
+        return {"processed": 0, "skipped": 1, "errors": 0}
     # DEBUG, not INFO: the worker already logs one INFO line per message
     # ("Telemetry message processed") with the same message_uuid and the
     # full counters.

@@ -140,22 +140,18 @@ HUGE_INTEGER = b'{"a": ' + b"1" * 5_000 + b"}"
         pytest.param(
             DEEP_NESTING,
             id="deeply-nested-json",
-            marks=_xfail("RV-OP1", "RecursionError escapes the telemetry consumer"),
         ),
         pytest.param(
             HUGE_INTEGER,
             id="integer-over-4300-digits",
-            marks=_xfail("RV-OP1", "int-digit-limit ValueError escapes the consumer"),
         ),
         pytest.param(
             _encode(_payload(recorded_at="0001-01-01T00:00:00+05:00")),
             id="recorded-at-year-1-with-offset",
-            marks=_xfail("RV-OP1", "OverflowError in recorded_at validator escapes"),
         ),
         pytest.param(
             _encode(_payload(recorded_at="9999-12-31T23:00:00-05:00")),
             id="recorded-at-year-9999-with-offset",
-            marks=_xfail("RV-OP1", "OverflowError in recorded_at validator escapes"),
         ),
     ],
 )

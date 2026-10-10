@@ -173,13 +173,18 @@ class MQTTConsumer:
                 "Payload is not valid UTF-8, message dropped",
                 extra={"error": str(error), "topic": str(message.topic)},
             )
-        except json.JSONDecodeError as error:
-            logger.warning(
-                "Invalid JSON payload",
-                extra={"error": str(error), "topic": str(message.topic)},
-            )
         except ValidationError as error:
             logger.warning(
                 "Telemetry payload validation failed",
+                extra={"error": str(error), "topic": str(message.topic)},
+            )
+        # ValidationError and UnicodeDecodeError are ValueErrors too, so this
+        # clause comes after them. It catches invalid JSON, an integer over
+        # Python's digit limit (ValueError) and a nesting deep enough to
+        # exhaust the recursion limit: one such message must never stop
+        # ingestion for every device (RV-OP1).
+        except (ValueError, RecursionError) as error:
+            logger.warning(
+                "Payload could not be parsed, message dropped",
                 extra={"error": str(error), "topic": str(message.topic)},
             )

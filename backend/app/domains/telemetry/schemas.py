@@ -856,12 +856,19 @@ class TelemetryMessage(BaseModel):
             The same instant in UTC.
 
         Raises:
-            ValueError: If the timestamp carries no timezone; Pydantic
-                reports it as a validation error.
+            ValueError: If the timestamp carries no timezone, or its UTC
+                instant falls outside the years 1-9999 (``0001-01-01`` with a
+                positive offset); Pydantic reports it as a validation error.
         """
         if value.utcoffset() is None:
             raise ValueError("recorded_at must have a timezone")
-        return value.astimezone(timezone.utc)
+        try:
+            return value.astimezone(timezone.utc)
+        except OverflowError as error:
+            # An OverflowError is not turned into a ValidationError by
+            # Pydantic: it would escape the consumer and stop ingestion
+            # (RV-OP1).
+            raise ValueError("recorded_at is out of range") from error
 
     def to_vehicle_telemetry_values(
         self,

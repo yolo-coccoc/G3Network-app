@@ -68,12 +68,10 @@ def _xfail(finding: str, reason: str) -> pytest.MarkDecorator:
         pytest.param(
             b"[" * 100_000 + b"]" * 100_000,
             id="deeply-nested-json",
-            marks=_xfail("RV-OP1", "RecursionError escapes the status consumer"),
         ),
         pytest.param(
             b'{"signal_dbm": ' + b"1" * 5_000 + b"}",
             id="integer-over-4300-digits",
-            marks=_xfail("RV-OP1", "int-digit-limit ValueError escapes the consumer"),
         ),
     ],
 )

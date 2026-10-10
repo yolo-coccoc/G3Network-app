@@ -164,17 +164,13 @@ async def _end_cause_of(db: AsyncSession, driving_session_id: UUID) -> str | Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-OP2: a repeated (telematic_id, recorded_at) raises IntegrityError",
-)
 async def test_repeated_reading_from_one_device_is_skipped_not_fatal(
     temporary_database: str,  # noqa: F811
 ) -> None:
     """A device that sends the same reading twice gets the second one skipped.
 
-    Today the plain INSERT hits `uq_telemetry_telematic_recorded_at`, the
-    worker re-raises and the ingestion process exits for every vehicle.
+    A plain INSERT used to hit `uq_telemetry_telematic_recorded_at`, the worker
+    re-raised and the ingestion process exited for every vehicle (RV-OP2).
     """
     session_factory = _session_factory(temporary_database)
     try:
