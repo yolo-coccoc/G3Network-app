@@ -4,6 +4,9 @@ import asyncio
 import logging
 import signal
 
+# The gateway writes rows that reference other domains' tables (a command's
+# requesting user), so every model must be registered in this process.
+import app.libs.db.model_registry  # noqa: F401
 from app.domains.charging_stations.ocpp.ocpp_server import run_server
 from app.libs.common.logging import configure_logging
 from app.libs.db.session import close_db

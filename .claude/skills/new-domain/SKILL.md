@@ -32,7 +32,7 @@ file before writing its counterpart.
    `<verb>_<object>_endpoint`.
 4. **Wire it up**
    - Router: import and `app.include_router(...)` in `backend/app/api/main.py`.
-   - Models: import the model module in `backend/app/libs/db/migrations/env.py`.
+   - Models: import the model module in `backend/app/libs/db/model_registry.py` (imported by `migrations/env.py`).
    - Schema: hand the change to the `schema-change` agent (or follow
      `.claude/rules/database.md`): models + `.dbml` (`@status built`) +
      `0001_baseline_schema.py` + `make db-reset`.

@@ -21,9 +21,8 @@ the change history of the tracked tables (``_TRACKED_TABLES``: a
 autogenerate because the history tables are not models) and the two period
 views ``vehicle_ownership_periods`` and ``battery_installation_periods``
 (VH-10, VH-16), which read the history tables and are created after them.
-The server defaults the models do not declare (``maintenance_status``,
-``schema_version``) are also hand-added: ``alembic check`` does not compare
-server defaults.
+The server defaults the models do not declare (``schema_version``) are also
+hand-added: ``alembic check`` does not compare server defaults.
 
 Revision ID: 0001_baseline_schema
 Revises:
@@ -75,6 +74,10 @@ _TRACKED_TABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("telematics", "telematic_history", ()),
     ("drivers", "driver_history", ()),
     ("trips", "trip_history", ()),
+    ("charging_locations", "charging_location_history", ()),
+    ("charging_stations", "charging_station_history", ()),
+    ("charging_evses", "charging_evse_history", ()),
+    ("charging_connectors", "charging_connector_history", ()),
 )
 
 # Period views over change history (DM-22, DM-27). Code reads the periods of a
@@ -204,85 +207,6 @@ def upgrade() -> None:
     """Clear the application schema, then create every table from scratch."""
     _clear_application_schema()
 
-    op.create_table(
-        "charging_stations",
-        sa.Column("station_id", sa.UUID(), nullable=False),
-        sa.Column("ocpp_identity", sa.String(length=255), nullable=False),
-        sa.Column("display_name", sa.String(length=200), nullable=False),
-        sa.Column(
-            "location",
-            geoalchemy2.types.Geography(
-                geometry_type="POINT",
-                srid=4326,
-                dimension=2,
-                spatial_index=False,
-                from_text="ST_GeogFromText",
-                name="geography",
-            ),
-            nullable=True,
-        ),
-        sa.Column("power_rating_kw", sa.Numeric(precision=6, scale=2), nullable=True),
-        sa.Column("connector_standard", sa.String(length=20), nullable=True),
-        sa.Column("operating_hours", sa.String(length=100), nullable=True),
-        sa.Column(
-            "maintenance_status",
-            sa.Enum(
-                "OPERATIONAL",
-                "UNDER_MAINTENANCE",
-                "OUT_OF_SERVICE",
-                name="chargingstationmaintenancestatus",
-            ),
-            server_default="OPERATIONAL",
-            nullable=False,
-        ),
-        sa.Column("ocpp_protocol_version", sa.String(length=20), nullable=True),
-        sa.Column("vendor", sa.String(length=100), nullable=True),
-        sa.Column("model", sa.String(length=100), nullable=True),
-        sa.Column("serial_number", sa.String(length=100), nullable=True),
-        sa.Column("firmware_version", sa.String(length=100), nullable=True),
-        sa.Column("last_boot_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "charger_status",
-            sa.Enum(
-                "Available",
-                "Occupied",
-                "Reserved",
-                "Unavailable",
-                "Faulted",
-                "Preparing",
-                "Charging",
-                "SuspendedEV",
-                "SuspendedEVSE",
-                "Finishing",
-                name="chargingconnectorstatus",
-            ),
-            nullable=True,
-        ),
-        sa.Column(
-            "charger_status_updated_at", sa.DateTime(timezone=True), nullable=True
-        ),
-        sa.Column("charger_error_code", sa.String(length=50), nullable=True),
-        sa.Column("charger_vendor_error_code", sa.String(length=100), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("station_id"),
-        sa.UniqueConstraint("ocpp_identity", name="uq_charging_stations_ocpp_identity"),
-    )
-    op.create_index(
-        "ix_charging_stations_deleted_at",
-        "charging_stations",
-        ["deleted_at"],
-        unique=False,
-    )
-    op.create_index(
-        "ix_charging_stations_location",
-        "charging_stations",
-        ["location"],
-        unique=False,
-        postgresql_using="gist",
-    )
     op.create_table(
         "users",
         sa.Column("user_id", sa.UUID(), nullable=False),
@@ -425,74 +349,6 @@ def upgrade() -> None:
         ["vin"],
         unique=True,
         postgresql_where=sa.text("deleted_at IS NULL"),
-    )
-    op.create_table(
-        "charging_evses",
-        sa.Column("evse_id", sa.UUID(), nullable=False),
-        sa.Column("station_id", sa.UUID(), nullable=False),
-        sa.Column("ocpp_evse_id", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "ocpp_evse_id > 0", name="ck_charging_evses_ocpp_id_positive"
-        ),
-        sa.ForeignKeyConstraint(
-            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("evse_id"),
-        sa.UniqueConstraint(
-            "station_id", "ocpp_evse_id", name="uq_charging_evses_station_ocpp_id"
-        ),
-    )
-    op.create_index(
-        "ix_charging_evses_station_deleted",
-        "charging_evses",
-        ["station_id", "deleted_at"],
-        unique=False,
-    )
-    op.create_table(
-        "charging_ocpp_messages",
-        sa.Column("message_id", sa.UUID(), nullable=False),
-        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("station_id", sa.UUID(), nullable=False),
-        sa.Column("ocpp_subprotocol", sa.String(length=20), nullable=False),
-        sa.Column(
-            "direction",
-            sa.Enum("CP_TO_CSMS", "CSMS_TO_CP", name="chargingocppmessagedirection"),
-            nullable=False,
-        ),
-        sa.Column("raw_frame", sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("message_id", "occurred_at"),
-    )
-    op.create_index(
-        "ix_charging_ocpp_messages_station_time",
-        "charging_ocpp_messages",
-        ["station_id", "occurred_at"],
-        unique=False,
-    )
-    op.create_table(
-        "charging_station_configuration_entries",
-        sa.Column("entry_id", sa.UUID(), nullable=False),
-        sa.Column("station_id", sa.UUID(), nullable=False),
-        sa.Column("capture_id", sa.UUID(), nullable=False),
-        sa.Column("captured_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("config_key", sa.String(length=100), nullable=False),
-        sa.Column("value", sa.Text(), nullable=True),
-        sa.Column("is_readonly", sa.Boolean(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("entry_id"),
-    )
-    op.create_index(
-        "ix_charging_config_entries_station_captured",
-        "charging_station_configuration_entries",
-        ["station_id", "captured_at"],
-        unique=False,
     )
     op.create_table(
         "legal_documents",
@@ -737,6 +593,269 @@ def upgrade() -> None:
         postgresql_where=sa.text("deleted_at IS NULL"),
     )
     op.create_table(
+        "charging_locations",
+        sa.Column("location_id", sa.UUID(), nullable=False),
+        sa.Column("organization_id", sa.UUID(), nullable=False),
+        sa.Column("display_name", sa.String(length=200), nullable=False),
+        sa.Column("address", sa.String(length=500), nullable=False),
+        sa.Column(
+            "coordinates",
+            geoalchemy2.types.Geography(
+                geometry_type="POINT",
+                srid=4326,
+                dimension=2,
+                spatial_index=False,
+                from_text="ST_GeogFromText",
+                name="geography",
+            ),
+            nullable=False,
+        ),
+        sa.Column("is_public", sa.Boolean(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_charging_locations_deleted_is_inactive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.organization_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("location_id"),
+    )
+    op.create_index(
+        "ix_charging_locations_coordinates",
+        "charging_locations",
+        ["coordinates"],
+        unique=False,
+        postgresql_using="gist",
+    )
+    op.create_index(
+        "ix_charging_locations_organization_id",
+        "charging_locations",
+        ["organization_id"],
+        unique=False,
+    )
+    op.create_table(
+        "charging_location_access",
+        sa.Column("access_id", sa.UUID(), nullable=False),
+        sa.Column("location_id", sa.UUID(), nullable=False),
+        sa.Column("allowed_organization_id", sa.UUID(), nullable=False),
+        sa.Column("granted_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("granted_by", sa.UUID(), nullable=False),
+        sa.Column("valid_until", sa.Date(), nullable=True),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("revoked_by", sa.UUID(), nullable=True),
+        sa.Column("revoke_reason", sa.String(length=200), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["allowed_organization_id"],
+            ["organizations.organization_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(["granted_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.ForeignKeyConstraint(
+            ["location_id"], ["charging_locations.location_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(["revoked_by"], ["users.user_id"], ondelete="RESTRICT"),
+        sa.PrimaryKeyConstraint("access_id"),
+    )
+    op.create_index(
+        "ix_charging_location_access_allowed_organization_id",
+        "charging_location_access",
+        ["allowed_organization_id"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_charging_location_access_live",
+        "charging_location_access",
+        ["location_id", "allowed_organization_id"],
+        unique=True,
+        postgresql_where=sa.text("revoked_at IS NULL"),
+    )
+    op.create_table(
+        "charging_stations",
+        sa.Column("station_id", sa.UUID(), nullable=False),
+        sa.Column("location_id", sa.UUID(), nullable=False),
+        sa.Column("ocpp_identity", sa.String(length=255), nullable=False),
+        sa.Column("registered_serial_number", sa.String(length=100), nullable=False),
+        sa.Column("physical_reference", sa.String(length=16), nullable=True),
+        sa.Column("max_power_kw", sa.Numeric(precision=6, scale=2), nullable=True),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_charging_stations_deleted_is_inactive",
+        ),
+        sa.ForeignKeyConstraint(
+            ["location_id"], ["charging_locations.location_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("station_id"),
+        sa.UniqueConstraint("ocpp_identity", name="uq_charging_stations_ocpp_identity"),
+    )
+    op.create_index(
+        "ix_charging_stations_deleted_at",
+        "charging_stations",
+        ["deleted_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_stations_location_id",
+        "charging_stations",
+        ["location_id"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_charging_stations_live_registered_serial_number",
+        "charging_stations",
+        ["registered_serial_number"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "charging_station_state",
+        sa.Column("station_id", sa.UUID(), nullable=False),
+        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_boot_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("ocpp_protocol_version", sa.String(length=20), nullable=True),
+        sa.Column("vendor", sa.String(length=100), nullable=True),
+        sa.Column("model", sa.String(length=100), nullable=True),
+        sa.Column("serial_number", sa.String(length=100), nullable=True),
+        sa.Column("firmware_version", sa.String(length=100), nullable=True),
+        sa.Column("charger_status", sa.String(length=20), nullable=True),
+        sa.Column(
+            "charger_status_updated_at", sa.DateTime(timezone=True), nullable=True
+        ),
+        sa.Column("charger_error_code", sa.String(length=50), nullable=True),
+        sa.Column("charger_vendor_error_code", sa.String(length=100), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("station_id"),
+    )
+    op.create_table(
+        "charging_evses",
+        sa.Column("evse_id", sa.UUID(), nullable=False),
+        sa.Column("station_id", sa.UUID(), nullable=False),
+        sa.Column("ocpp_evse_id", sa.Integer(), nullable=False),
+        sa.Column("emi3_evse_id", sa.String(length=48), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status_reason", sa.String(length=200), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "deleted_at IS NULL OR status = 'INACTIVE'",
+            name="ck_charging_evses_deleted_is_inactive",
+        ),
+        sa.CheckConstraint(
+            "ocpp_evse_id > 0", name="ck_charging_evses_ocpp_id_positive"
+        ),
+        sa.ForeignKeyConstraint(
+            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("evse_id"),
+        sa.UniqueConstraint(
+            "station_id", "ocpp_evse_id", name="uq_charging_evses_station_ocpp_id"
+        ),
+    )
+    op.create_index(
+        "ix_charging_evses_station_deleted",
+        "charging_evses",
+        ["station_id", "deleted_at"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_charging_evses_live_emi3_evse_id",
+        "charging_evses",
+        ["emi3_evse_id"],
+        unique=True,
+        postgresql_where=sa.text("deleted_at IS NULL"),
+    )
+    op.create_table(
+        "charging_connectors",
+        sa.Column("connector_id", sa.UUID(), nullable=False),
+        sa.Column("evse_id", sa.UUID(), nullable=False),
+        sa.Column("ocpp_connector_id", sa.Integer(), nullable=False),
+        sa.Column("standard", sa.String(length=30), nullable=False),
+        sa.Column("max_power_kw", sa.Numeric(precision=6, scale=2), nullable=False),
+        sa.Column("max_voltage_v", sa.Integer(), nullable=False),
+        sa.Column("max_current_a", sa.Integer(), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "ocpp_connector_id > 0", name="ck_charging_connectors_ocpp_id_positive"
+        ),
+        sa.ForeignKeyConstraint(
+            ["evse_id"], ["charging_evses.evse_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("connector_id"),
+        sa.UniqueConstraint(
+            "evse_id", "ocpp_connector_id", name="uq_charging_connectors_evse_ocpp_id"
+        ),
+    )
+    op.create_index(
+        "ix_charging_connectors_evse_deleted",
+        "charging_connectors",
+        ["evse_id", "deleted_at"],
+        unique=False,
+    )
+    op.create_table(
+        "charging_connector_state",
+        sa.Column("connector_id", sa.UUID(), nullable=False),
+        sa.Column("status", sa.String(length=20), nullable=True),
+        sa.Column("status_updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("error_code", sa.String(length=50), nullable=True),
+        sa.Column("vendor_error_code", sa.String(length=100), nullable=True),
+        sa.Column("status_info", sa.String(length=50), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["connector_id"], ["charging_connectors.connector_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("connector_id"),
+    )
+    op.create_table(
+        "charging_ocpp_messages",
+        sa.Column("message_id", sa.UUID(), nullable=False),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("station_id", sa.UUID(), nullable=False),
+        sa.Column("ocpp_subprotocol", sa.String(length=20), nullable=False),
+        sa.Column(
+            "direction",
+            sa.Enum("CP_TO_CSMS", "CSMS_TO_CP", name="chargingocppmessagedirection"),
+            nullable=False,
+        ),
+        sa.Column("raw_frame", sa.Text(), nullable=False),
+        sa.Column("action", sa.String(length=50), nullable=True),
+        sa.Column("ocpp_message_id", sa.String(length=36), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("message_id", "occurred_at"),
+    )
+    op.create_index(
+        "ix_charging_ocpp_messages_station_action_time",
+        "charging_ocpp_messages",
+        ["station_id", "action", "occurred_at"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_ocpp_messages_station_message_id",
+        "charging_ocpp_messages",
+        ["station_id", "ocpp_message_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_ocpp_messages_station_time",
+        "charging_ocpp_messages",
+        ["station_id", "occurred_at"],
+        unique=False,
+    )
+    op.create_table(
         "warranties",
         sa.Column("warranty_id", sa.UUID(), nullable=False),
         sa.Column("vehicle_id", sa.UUID(), nullable=True),
@@ -830,52 +949,6 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["user_id"], ["users.user_id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("access_audit_log_id", "occurred_at"),
-    )
-    op.create_table(
-        "charging_connectors",
-        sa.Column("connector_id", sa.UUID(), nullable=False),
-        sa.Column("evse_id", sa.UUID(), nullable=False),
-        sa.Column("ocpp_connector_id", sa.Integer(), nullable=False),
-        sa.Column(
-            "status",
-            sa.Enum(
-                "Available",
-                "Occupied",
-                "Reserved",
-                "Unavailable",
-                "Faulted",
-                "Preparing",
-                "Charging",
-                "SuspendedEV",
-                "SuspendedEVSE",
-                "Finishing",
-                name="chargingconnectorstatus",
-            ),
-            nullable=True,
-        ),
-        sa.Column("status_updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("error_code", sa.String(length=50), nullable=True),
-        sa.Column("vendor_error_code", sa.String(length=100), nullable=True),
-        sa.Column("status_info", sa.String(length=50), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.CheckConstraint(
-            "ocpp_connector_id > 0", name="ck_charging_connectors_ocpp_id_positive"
-        ),
-        sa.ForeignKeyConstraint(
-            ["evse_id"], ["charging_evses.evse_id"], ondelete="RESTRICT"
-        ),
-        sa.PrimaryKeyConstraint("connector_id"),
-        sa.UniqueConstraint(
-            "evse_id", "ocpp_connector_id", name="uq_charging_connectors_evse_ocpp_id"
-        ),
-    )
-    op.create_index(
-        "ix_charging_connectors_evse_deleted",
-        "charging_connectors",
-        ["evse_id", "deleted_at"],
-        unique=False,
     )
     op.create_table(
         "fleets",
@@ -1631,6 +1704,116 @@ def upgrade() -> None:
         ["fleet_id", "membership_id"],
         unique=True,
         postgresql_where=sa.text("unassigned_at IS NULL"),
+    )
+    op.create_table(
+        "charging_station_commands",
+        sa.Column("command_id", sa.UUID(), nullable=False),
+        sa.Column("station_id", sa.UUID(), nullable=False),
+        sa.Column("evse_id", sa.UUID(), nullable=True),
+        sa.Column("session_id", sa.UUID(), nullable=True),
+        sa.Column("command_type", sa.String(length=30), nullable=False),
+        sa.Column("parameters", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("requested_by", sa.UUID(), nullable=True),
+        sa.Column("reason", sa.String(length=200), nullable=True),
+        sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("ocpp_message_id", sa.String(length=36), nullable=True),
+        sa.Column("outcome", sa.String(length=20), nullable=False),
+        sa.Column("response_status", sa.String(length=30), nullable=True),
+        sa.Column("answered_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint(
+            "outcome <> 'NOT_SENT' OR ocpp_message_id IS NULL",
+            name="ck_charging_station_commands_not_sent_no_message",
+        ),
+        sa.CheckConstraint(
+            "outcome IN ('PENDING', 'NOT_SENT') OR answered_at IS NOT NULL",
+            name="ck_charging_station_commands_answered_has_time",
+        ),
+        sa.ForeignKeyConstraint(
+            ["evse_id"], ["charging_evses.evse_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["requested_by"], ["users.user_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["session_id"], ["charging_sessions.session_id"], ondelete="RESTRICT"
+        ),
+        sa.ForeignKeyConstraint(
+            ["station_id"], ["charging_stations.station_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("command_id"),
+    )
+    op.create_index(
+        "ix_charging_station_commands_session_id",
+        "charging_station_commands",
+        ["session_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_charging_station_commands_station_requested",
+        "charging_station_commands",
+        ["station_id", "requested_at"],
+        unique=False,
+    )
+    op.create_table(
+        "charging_station_configuration_captures",
+        sa.Column("capture_id", sa.UUID(), nullable=False),
+        sa.Column("command_id", sa.UUID(), nullable=False),
+        sa.Column("reason", sa.String(length=20), nullable=False),
+        sa.Column("ocpp_protocol_version", sa.String(length=20), nullable=False),
+        sa.Column("ocpp_request_id", sa.Integer(), nullable=True),
+        sa.Column("captured_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("outcome", sa.String(length=20), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["command_id"],
+            ["charging_station_commands.command_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("capture_id"),
+        sa.UniqueConstraint(
+            "command_id", name="uq_charging_station_configuration_captures_command_id"
+        ),
+    )
+    op.create_index(
+        "ix_charging_config_captures_ocpp_request_id",
+        "charging_station_configuration_captures",
+        ["ocpp_request_id"],
+        unique=False,
+    )
+    op.create_table(
+        "charging_station_configuration_entries",
+        sa.Column("entry_id", sa.UUID(), nullable=False),
+        sa.Column("capture_id", sa.UUID(), nullable=False),
+        sa.Column("component_name", sa.String(length=50), nullable=True),
+        sa.Column("component_instance", sa.String(length=50), nullable=True),
+        sa.Column("ocpp_evse_id", sa.Integer(), nullable=True),
+        sa.Column("ocpp_connector_id", sa.Integer(), nullable=True),
+        sa.Column("variable_name", sa.String(length=100), nullable=False),
+        sa.Column("variable_instance", sa.String(length=50), nullable=True),
+        sa.Column("attribute_type", sa.String(length=10), nullable=False),
+        sa.Column("value", sa.Text(), nullable=True),
+        sa.Column("mutability", sa.String(length=10), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["capture_id"],
+            ["charging_station_configuration_captures.capture_id"],
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("entry_id"),
+    )
+    op.create_index(
+        "uq_charging_config_entries_capture_setting",
+        "charging_station_configuration_entries",
+        [
+            "capture_id",
+            "component_name",
+            "component_instance",
+            "ocpp_evse_id",
+            "ocpp_connector_id",
+            "variable_name",
+            "variable_instance",
+            "attribute_type",
+        ],
+        unique=True,
+        postgresql_nulls_not_distinct=True,
     )
     op.create_table(
         "charging_session_events",

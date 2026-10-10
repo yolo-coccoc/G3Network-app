@@ -54,7 +54,13 @@ class Settings(BaseSettings):
             it a few multiples of the heartbeat interval.
         CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: How long the gateway waits for a
             charger's answer to a request it sent (the post-boot
-            ``GetConfiguration``).
+            ``GetConfiguration`` and every queued command).
+        CHARGING_OCPP_COMMAND_POLL_SECONDS: How often the gateway looks for
+            queued ``charging_station_commands`` of its connected chargers
+            (PR-16).
+        CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: How long a queued command
+            may wait for a connected charger before it is closed as
+            ``NOT_SENT`` (CS-20).
         CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
             accepts; bigger ones are refused by the WebSocket library
             instead of being stored truncated in the raw message log.
@@ -159,6 +165,11 @@ class Settings(BaseSettings):
     # Three missed heartbeats at the default interval.
     CHARGING_OFFLINE_TIMEOUT_SECONDS: float = Field(default=180.0, gt=0)
     CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
+    # Command channel between the API and the gateway (PR-16): the gateway polls
+    # the command table; a queued command no connected gateway picks up within
+    # the pickup timeout ends as NOT_SENT.
+    CHARGING_OCPP_COMMAND_POLL_SECONDS: float = Field(default=1.0, gt=0)
+    CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.

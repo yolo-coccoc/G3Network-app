@@ -136,11 +136,11 @@ erDiagram
   fleet_user_assignments }o--o| users : "assigned_by"
   fleet_user_assignments }o--o| users : "unassigned_by"
   geofences }o..o| organizations : "organization_id"
-  charging_locations }o..|| organizations : "organization_id"
-  charging_location_access }o..|| organizations : "allowed_organization_id"
-  charging_location_access }o..|| users : "granted_by"
-  charging_location_access }o..o| users : "revoked_by"
-  charging_station_commands }o..o| users : "requested_by"
+  charging_locations }o--|| organizations : "organization_id"
+  charging_location_access }o--|| organizations : "allowed_organization_id"
+  charging_location_access }o--|| users : "granted_by"
+  charging_location_access }o--o| users : "revoked_by"
+  charging_station_commands }o--o| users : "requested_by"
   charging_sessions }o..|| organizations : "organization_id"
   charging_sessions }o..|| users : "started_by"
   notifications }o..|| organizations : "organization_id"
@@ -246,8 +246,8 @@ Check constraint: (status = 'CLOSED') = (deleted_at IS NOT NULL) (DM-25).
 - [trips](drivers.md#trips).organization_id
 - [fleets](fleet.md#fleets).organization_id
 - [geofences](fleet.md#geofences).organization_id (planned)
-- [charging_locations](charging_stations.md#charging_locations).organization_id (planned)
-- [charging_location_access](charging_stations.md#charging_location_access).allowed_organization_id (planned)
+- [charging_locations](charging_stations.md#charging_locations).organization_id
+- [charging_location_access](charging_stations.md#charging_location_access).allowed_organization_id
 - [charging_sessions](charging_sessions.md#charging_sessions).organization_id (planned)
 - [notifications](notifications.md#notifications).organization_id (planned)
 - [organization_notification_settings](notifications.md#organization_notification_settings).organization_id (planned)
@@ -345,9 +345,9 @@ Check constraint: deleted_at IS NULL OR status = 'LOCKED' (DM-25).
 - [fleet_vehicle_memberships](fleet.md#fleet_vehicle_memberships).removed_by
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).assigned_by
 - [fleet_user_assignments](fleet.md#fleet_user_assignments).unassigned_by
-- [charging_location_access](charging_stations.md#charging_location_access).granted_by (planned)
-- [charging_location_access](charging_stations.md#charging_location_access).revoked_by (planned)
-- [charging_station_commands](charging_stations.md#charging_station_commands).requested_by (planned)
+- [charging_location_access](charging_stations.md#charging_location_access).granted_by
+- [charging_location_access](charging_stations.md#charging_location_access).revoked_by
+- [charging_station_commands](charging_stations.md#charging_station_commands).requested_by
 - [charging_sessions](charging_sessions.md#charging_sessions).started_by (planned)
 - [notification_recipients](notifications.md#notification_recipients).user_id (planned)
 - [charging_policy_versions](policy.md#charging_policy_versions).created_by (planned)

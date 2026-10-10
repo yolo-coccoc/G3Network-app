@@ -17,14 +17,18 @@ from app.domains.charging_stations.exceptions import (
     ChargingOcppMessageInputError,
     ChargingStationNotFoundError,
 )
-from app.domains.charging_stations.models import ChargingStationModel
+from app.domains.charging_stations.models import (
+    ChargingStationModel,
+    ChargingStationStateModel,
+)
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from app.domains.charging_stations.ocpp.parsing import (
     format_ocpp_timestamp,
     parse_ocpp_timestamp,
 )
-from app.domains.charging_stations.types import ChargingStationMaintenanceStatus
+from app.domains.charging_stations.types import ChargingResourceStatus
 from app.libs.common.config import settings
+from tests.builders import build_charging_location_record
 from tests.fakes import FakeSessionFactory
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
@@ -41,19 +45,23 @@ def _charge_point() -> OCPP16ChargePoint:
 def _station(**overrides: Any) -> ChargingStationModel:
     values: dict[str, Any] = {
         "station_id": uuid4(),
+        "location_id": uuid4(),
         "ocpp_identity": "LSC",
-        "display_name": "Station",
-        "location": None,
-        "power_rating_kw": None,
-        "connector_standard": None,
-        "operating_hours": None,
-        "maintenance_status": ChargingStationMaintenanceStatus.OPERATIONAL,
+        "registered_serial_number": "SN-1",
+        "physical_reference": None,
+        "max_power_kw": None,
+        "status": ChargingResourceStatus.ACTIVE.value,
+        "status_reason": None,
         "created_at": NOW,
         "updated_at": NOW,
         "deleted_at": None,
     }
     values.update(overrides)
     return ChargingStationModel(**values)
+
+
+def _state(station_id: Any = None, **overrides: Any) -> ChargingStationStateModel:
+    return ChargingStationStateModel(station_id=station_id or uuid4(), **overrides)
 
 
 # --- adapter handlers -------------------------------------------------------
@@ -187,10 +195,18 @@ def _patch_boot_repository(
         updates.append({"station_id": station_id, **kwargs})
         return True
 
+    async def fake_state(db: object, station_id: Any) -> Any:
+        return SimpleNamespace(
+            firmware_version=getattr(station, "firmware_version", None)
+        )
+
     monkeypatch.setattr(
         charging_stations_repository, "get_station_by_identity", fake_get
     )
     monkeypatch.setattr(ocpp_state_repository, "update_station_boot_info", fake_update)
+    monkeypatch.setattr(
+        ocpp_state_repository, "get_station_state_for_update", fake_state
+    )
     return updates
 
 
@@ -199,7 +215,9 @@ async def test_record_charger_boot_overwrites_device_fields_without_warning_on_f
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The very first boot stores the baseline and warns about nothing."""
-    station = SimpleNamespace(station_id=uuid4(), firmware_version=None)
+    station = SimpleNamespace(
+        station_id=uuid4(), registered_serial_number="S1", firmware_version=None
+    )
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
@@ -223,7 +241,9 @@ async def test_record_charger_boot_warns_but_accepts_when_the_update_matches_no_
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A station deleted between load and update is logged, never raised."""
-    station = SimpleNamespace(station_id=uuid4(), firmware_version=None)
+    station = SimpleNamespace(
+        station_id=uuid4(), registered_serial_number="S1", firmware_version=None
+    )
 
     async def fake_get(db: object, identity: str, **_: Any) -> Any:
         return station
@@ -234,7 +254,14 @@ async def test_record_charger_boot_warns_but_accepts_when_the_update_matches_no_
     monkeypatch.setattr(
         charging_stations_repository, "get_station_by_identity", fake_get
     )
+
+    async def fake_state(db: object, station_id: Any) -> None:
+        return None
+
     monkeypatch.setattr(ocpp_state_repository, "update_station_boot_info", no_row)
+    monkeypatch.setattr(
+        ocpp_state_repository, "get_station_state_for_update", fake_state
+    )
 
     with caplog.at_level(logging.WARNING):
         await ocpp_state_service.record_charger_boot(
@@ -259,7 +286,9 @@ async def test_record_charger_boot_warns_when_firmware_changes(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A different firmware version than the stored baseline is logged as a warning."""
-    station = SimpleNamespace(station_id=uuid4(), firmware_version="FW-1")
+    station = SimpleNamespace(
+        station_id=uuid4(), registered_serial_number="S1", firmware_version="FW-1"
+    )
     updates = _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
@@ -287,7 +316,9 @@ async def test_record_charger_boot_does_not_warn_when_firmware_is_unchanged_or_u
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Same version, or a charger that stops reporting one, is not a firmware swap."""
-    station = SimpleNamespace(station_id=uuid4(), firmware_version="FW-1")
+    station = SimpleNamespace(
+        station_id=uuid4(), registered_serial_number="S1", firmware_version="FW-1"
+    )
     _patch_boot_repository(monkeypatch, station)
 
     with caplog.at_level(logging.WARNING):
@@ -354,10 +385,16 @@ def test_station_response_derives_is_online_from_last_seen(
     last_seen = (
         None if seen_ago_seconds is None else NOW - timedelta(seconds=seen_ago_seconds)
     )
-    station = _station(last_seen_at=last_seen)
+    station = _station()
+    state = _state(station.station_id, last_seen_at=last_seen)
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, available_connector_count=1, now=NOW
+        station,
+        build_charging_location_record(),
+        state,
+        connector_count=2,
+        available_connector_count=1,
+        now=NOW,
     )
 
     assert response.is_online is expected
@@ -366,7 +403,9 @@ def test_station_response_derives_is_online_from_last_seen(
 
 def test_station_response_carries_the_device_fields() -> None:
     """Device info reported at boot is exposed on the station response."""
-    station = _station(
+    station = _station()
+    state = _state(
+        station.station_id,
         ocpp_protocol_version="ocpp1.6",
         vendor="Willdigits",
         model="240kW",
@@ -377,7 +416,12 @@ def test_station_response_carries_the_device_fields() -> None:
     )
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, available_connector_count=1, now=NOW
+        station,
+        build_charging_location_record(),
+        state,
+        connector_count=2,
+        available_connector_count=1,
+        now=NOW,
     )
 
     assert (

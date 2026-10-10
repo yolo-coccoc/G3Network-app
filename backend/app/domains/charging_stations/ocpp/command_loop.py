@@ -1,0 +1,373 @@
+"""Gateway side of the command channel: send queued commands to connected chargers.
+
+The API (or another domain) queues a row in ``charging_station_commands``
+(``PENDING``, no ``ocpp_message_id``; PR-16, CS-20). This module runs inside the
+OCPP gateway process: a loop polls the table for queued commands of the chargers
+connected to *this* process, claims them, sends each as that charger's OCPP call
+and writes the answer back. There is no broker and no shared socket.
+
+Rules:
+
+* A claimed command gets its frame's message ID and the claim is committed
+  **before** anything is sent, so a command is never sent twice, even if the
+  process dies afterwards; a sent command nobody answered ends as ``TIMEOUT``
+  (swept after a while), and a queued one no connected gateway picked up ends as
+  ``NOT_SENT`` (the charger was not connected).
+* Every command runs in its own task; the loop never awaits a charger's answer
+  and no OCPP handler ever awaits a call (the library's receive loop is
+  sequential, so awaiting there would deadlock until the timeout; see
+  ``deferred.md`` 74). The adapter's call lock keeps one request in flight per
+  charger.
+* Each step uses its own short transaction; the answer to a command is written
+  after the call returned, never inside a transaction held across it.
+* One gateway process is assumed: ``NOT_SENT`` is decided by the age of a queued
+  command, so a second gateway holding the charger would race it (Known issues
+  in the refactor plan).
+"""
+
+import asyncio
+import logging
+from datetime import timedelta
+from typing import Any, Final
+from uuid import UUID
+
+from ocpp.exceptions import OCPPError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from websockets.exceptions import ConnectionClosed
+
+import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
+import app.domains.charging_stations.repository as charging_stations_repository
+from app.domains.charging_stations.models import ChargingStationCommandModel
+from app.domains.charging_stations.ocpp.command_types import (
+    RESPONSE_STATUS_MAX_LENGTH,
+    CommandSender,
+    OutboundCommand,
+)
+from app.domains.charging_stations.types import (
+    StationCommandOutcome,
+    StationCommandType,
+)
+from app.libs.common.clock import utc_now
+from app.libs.common.config import settings
+
+logger = logging.getLogger(__name__)
+
+# How many queued commands one poll claims at most.
+_CLAIM_BATCH_SIZE: Final[int] = 20
+# A sent command nobody answered is closed as TIMEOUT after this many request
+# timeouts (the gateway restarted between the send and the answer).
+_STALE_SENT_FACTOR: Final[int] = 3
+
+
+class StationConnectionRegistry:
+    """The chargers connected to this gateway process, by station ID.
+
+    Attributes:
+        _senders: Adapter of each connected charger; one per station, a newer
+            connection of the same charger replaces the older one.
+    """
+
+    def __init__(self) -> None:
+        """Create an empty registry."""
+        self._senders: dict[UUID, CommandSender] = {}
+
+    def register(self, station_id: UUID, sender: CommandSender) -> None:
+        """Record a charger's connection (replacing an older one).
+
+        Args:
+            station_id: The charger.
+            sender: Its adapter.
+        """
+        self._senders[station_id] = sender
+
+    def unregister(self, station_id: UUID, sender: CommandSender) -> None:
+        """Forget a charger's connection, unless a newer one replaced it.
+
+        Args:
+            station_id: The charger.
+            sender: The adapter of the connection that closed.
+        """
+        if self._senders.get(station_id) is sender:
+            del self._senders[station_id]
+
+    def get(self, station_id: UUID) -> CommandSender | None:
+        """Find the adapter of a connected charger.
+
+        Args:
+            station_id: The charger.
+
+        Returns:
+            Its adapter, or ``None`` if it is not connected here.
+        """
+        return self._senders.get(station_id)
+
+    def connected_station_ids(self) -> list[UUID]:
+        """List the chargers connected to this process.
+
+        Returns:
+            Their station IDs.
+        """
+        return list(self._senders)
+
+
+async def _build_outbound_command(
+    db: AsyncSession, command: ChargingStationCommandModel
+) -> OutboundCommand:
+    """Turn a claimed command row into the primitives an adapter needs.
+
+    Args:
+        db: Async session owned by the caller's transaction.
+        command: The claimed command (it has its message ID).
+
+    Returns:
+        The outbound command: the OCPP numbers of the targeted gun, and for a
+        remote start / stop the session's token / transaction ID.
+
+    Raises:
+        ChargingSessionNotFoundError: If the command's session is missing.
+    """
+    assert command.ocpp_message_id is not None, "a claimed command has a message ID"
+    parameters: dict[str, Any] = dict(command.parameters or {})
+    ocpp_evse_id: int | None = None
+    ocpp_connector_id: int | None = None
+    if command.evse_id is not None:
+        evse = await charging_stations_repository.get_evse_by_id(db, command.evse_id)
+        if evse is not None:
+            ocpp_evse_id = evse.ocpp_evse_id
+            connectors = await charging_stations_repository.list_charging_connectors(
+                db, evse_id=evse.evse_id, offset=0, limit=1
+            )
+            if connectors:
+                ocpp_connector_id = connectors[0].ocpp_connector_id
+    id_token: str | None = (
+        str(parameters["id_token"]) if "id_token" in parameters else None
+    )
+    ocpp_transaction_id: str | None = None
+    if command.session_id is not None:
+        reference = await charging_sessions_service.resolve_session_command_reference(
+            db, command.session_id
+        )
+        id_token = reference.id_token or id_token
+        ocpp_transaction_id = reference.ocpp_transaction_id
+    return OutboundCommand(
+        command_id=command.command_id,
+        command_type=StationCommandType(command.command_type),
+        ocpp_message_id=command.ocpp_message_id,
+        ocpp_evse_id=ocpp_evse_id,
+        ocpp_connector_id=ocpp_connector_id,
+        session_id=command.session_id,
+        id_token=id_token,
+        ocpp_transaction_id=ocpp_transaction_id,
+        parameters=parameters,
+    )
+
+
+async def _record_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    command_id: UUID,
+    outcome: StationCommandOutcome,
+    response_status: str | None,
+) -> None:
+    """Write a command that got no usable answer.
+
+    Args:
+        session_factory: Shared factory; one short transaction is used.
+        command_id: The command.
+        outcome: ``ERROR`` or ``TIMEOUT``.
+        response_status: What to keep as the answer, ``None`` for none.
+    """
+    async with session_factory.begin() as db:
+        await ocpp_state_service.fail_command(
+            db,
+            command_id=command_id,
+            outcome=outcome,
+            response_status=(
+                None
+                if response_status is None
+                else response_status[:RESPONSE_STATUS_MAX_LENGTH]
+            ),
+            answered_at=utc_now(),
+        )
+
+
+async def run_command(
+    session_factory: async_sessionmaker[AsyncSession],
+    sender: CommandSender,
+    command_id: UUID,
+) -> None:
+    """Send one claimed command and write the answer back.
+
+    This is a task boundary (nothing awaits it): every failure is turned into
+    an outcome on the row, and an unexpected one is logged with its traceback
+    (``logger.exception``). ``CancelledError`` is never swallowed.
+
+    Args:
+        session_factory: Shared factory; each step uses its own transaction.
+        sender: The adapter of the charger the command goes to.
+        command_id: The claimed command.
+
+    Side Effects:
+        Sends one OCPP call; writes ``outcome`` / ``response_status`` /
+        ``answered_at`` on the command row (``ERROR`` for an OCPP error or a
+        closed connection, ``TIMEOUT`` for no answer).
+    """
+    try:
+        async with session_factory.begin() as db:
+            command = await ocpp_state_repository.get_station_command_by_id(
+                db, command_id
+            )
+            if command is None:
+                return
+            outbound = await _build_outbound_command(db, command)
+        try:
+            result = await sender.send_command(outbound)
+        except TimeoutError:
+            await _record_failure(
+                session_factory, command_id, StationCommandOutcome.TIMEOUT, None
+            )
+            return
+        except OCPPError as error:
+            await _record_failure(
+                session_factory,
+                command_id,
+                StationCommandOutcome.ERROR,
+                getattr(error, "code", None) or type(error).__name__,
+            )
+            return
+        except ConnectionClosed:
+            await _record_failure(
+                session_factory,
+                command_id,
+                StationCommandOutcome.ERROR,
+                "ConnectionClosed",
+            )
+            return
+        if result.handled:
+            return
+        async with session_factory.begin() as db:
+            await ocpp_state_repository.set_command_answer(
+                db,
+                command_id,
+                outcome=result.outcome,
+                response_status=result.response_status,
+                answered_at=utc_now(),
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception(
+            "Station command failed", extra={"command_id": str(command_id)}
+        )
+        try:
+            await _record_failure(
+                session_factory,
+                command_id,
+                StationCommandOutcome.ERROR,
+                "InternalError",
+            )
+        except Exception:
+            logger.exception(
+                "Could not record the failure of a station command",
+                extra={"command_id": str(command_id)},
+            )
+
+
+async def process_queued_commands(
+    registry: StationConnectionRegistry,
+    session_factory: async_sessionmaker[AsyncSession],
+    tasks: set[asyncio.Task[None]],
+) -> int:
+    """Run one poll of the command loop.
+
+    Claims the queued commands of the connected chargers (committing the claim
+    first), schedules a task per command, and closes the commands that nobody
+    picked up in time (``NOT_SENT``) or that were sent and never answered
+    (``TIMEOUT``).
+
+    Args:
+        registry: The chargers connected to this process.
+        session_factory: Shared factory; each step uses its own transaction.
+        tasks: Running command tasks; new ones are added and remove themselves
+            when done, so the caller can cancel them at shutdown.
+
+    Returns:
+        The number of commands claimed in this poll.
+    """
+    async with session_factory.begin() as db:
+        claimed = await ocpp_state_repository.claim_queued_commands(
+            db, registry.connected_station_ids(), limit=_CLAIM_BATCH_SIZE
+        )
+        claimed_by_station = [
+            (command.command_id, command.station_id) for command in claimed
+        ]
+        now = utc_now()
+        await ocpp_state_repository.mark_unsent_commands_not_sent(
+            db,
+            requested_before=now
+            - timedelta(seconds=settings.CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS),
+        )
+        await ocpp_state_repository.mark_stale_commands_timed_out(
+            db,
+            requested_before=now
+            - timedelta(
+                seconds=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS
+                * _STALE_SENT_FACTOR
+            ),
+        )
+    for command_id, station_id in claimed_by_station:
+        sender = registry.get(station_id)
+        if sender is None:
+            await _record_failure(
+                session_factory,
+                command_id,
+                StationCommandOutcome.ERROR,
+                "NotConnected",
+            )
+            continue
+        task = asyncio.create_task(run_command(session_factory, sender, command_id))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+    return len(claimed_by_station)
+
+
+async def run_command_loop(
+    registry: StationConnectionRegistry,
+    session_factory: async_sessionmaker[AsyncSession],
+    stop_event: asyncio.Event,
+) -> None:
+    """Poll the command table until the stop event is set.
+
+    This is a process boundary: a failing poll (for example a database blip) is
+    logged with its traceback and the loop keeps running; ``CancelledError`` is
+    never swallowed. On stop it cancels the commands still in flight.
+
+    Args:
+        registry: The chargers connected to this process.
+        session_factory: Shared factory.
+        stop_event: Set by the gateway when it stops.
+
+    Side Effects:
+        Reads and writes ``charging_station_commands``; sends OCPP calls.
+    """
+    tasks: set[asyncio.Task[None]] = set()
+    try:
+        while not stop_event.is_set():
+            try:
+                await process_queued_commands(registry, session_factory, tasks)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Station command poll failed")
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(),
+                    timeout=settings.CHARGING_OCPP_COMMAND_POLL_SECONDS,
+                )
+            except TimeoutError:
+                continue
+    finally:
+        for task in list(tasks):
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

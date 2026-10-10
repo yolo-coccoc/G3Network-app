@@ -68,25 +68,6 @@ Enum driverstatus {
   INACTIVE
 }
 
-Enum chargingstationmaintenancestatus {
-  OPERATIONAL
-  UNDER_MAINTENANCE
-  OUT_OF_SERVICE
-}
-
-Enum chargingconnectorstatus {
-  Available
-  Occupied
-  Reserved
-  Unavailable
-  Faulted
-  Preparing
-  Charging
-  SuspendedEV
-  SuspendedEVSE
-  Finishing
-}
-
 Enum chargingocppmessagedirection {
   CP_TO_CSMS
   CSMS_TO_CP
@@ -1187,7 +1168,7 @@ Table charging_locations {
     coordinates [name: 'ix_charging_locations_coordinates', note: 'GIST; radius search (STN-06). Replaces ix_charging_stations_location']
     organization_id [name: 'ix_charging_locations_organization_id']
   }
-  Note: '''@status planned @owner customer @features F-C1,F-D1 @tracked *
+  Note: '''@status built @owner customer @features F-C1,F-D1 @tracked * @history built
 One place drivers go to charge: several chargers in a row (CS-09; OCPI
 Location; "trạm sạc" in the app). Owned by one organization (CS-10). Always
 open 24/7: no opening hours are stored, and a closed location is INACTIVE
@@ -1212,7 +1193,7 @@ Table charging_location_access {
     (location_id, allowed_organization_id) [unique, name: 'uq_charging_location_access_live', note: 'WHERE revoked_at IS NULL: one live grant per location and organization']
     allowed_organization_id [name: 'ix_charging_location_access_allowed_organization_id', note: 'Where may this organization charge?']
   }
-  Note: '''@status planned @owner customer @features F-C1
+  Note: '''@status built @owner customer @features F-C1
 Which other organizations may charge at a private location (CS-10, STN-12):
 every member of an allowed organization may charge there; per-driver lists
 are not modelled for now. Granted and revoked by the location's owner. Rows
@@ -1234,39 +1215,22 @@ Ref: charging_location_access.revoked_by > users.user_id [delete: restrict]
 
 Table charging_stations {
   station_id uuid [pk, note: 'Internal ID of the charging station: one charger (trụ sạc), one OCPP connection (CS-09). @vi Mã nội bộ của trụ sạc: một trụ, một kết nối OCPP (CS-09). @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  location_id uuid [not null, note: '@planned CS-09: The location (trạm) the charger stands at; the charger reads its owner through it (DM-24). @vi Trạm sạc nơi đặt trụ; trụ đọc tổ chức sở hữu qua trạm (DM-24). @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
+  location_id uuid [not null, note: 'The location (trạm) the charger stands at; the charger reads its owner through it (DM-24). @vi Trạm sạc nơi đặt trụ; trụ đọc tổ chức sở hữu qua trạm (DM-24). @example 2c7e5a90-6d1b-4f3a-8e2c-9b0d4a6f1c55']
   ocpp_identity varchar(255) [not null, unique, note: 'Name the charger uses in its OCPP WebSocket URL ("Charger ID" on the Willdigits screen), unique and never reused. @vi Tên trụ sạc dùng trong URL WebSocket OCPP ("Charger ID" trên màn hình Willdigits), duy nhất và không bao giờ dùng lại. @example WD-HCM-001']
-  registered_serial_number varchar(100) [not null, note: '@planned CS-14: Serial number read from the charger\'s nameplate and entered at installation: the asset\'s identity for warranty (WAR-01), insurance and vendor support. Unique among chargers not deleted. The serial the charger reports at boot is kept apart in charging_station_state.serial_number; a mismatch is logged as a warning (a swapped controller board or a misconfigured charger). @vi Số serial đọc từ nhãn máy và nhập khi lắp đặt: định danh tài sản cho bảo hành (WAR-01), bảo hiểm và hỗ trợ của hãng. Duy nhất trong các trụ chưa xóa. Serial trụ tự báo khi khởi động được lưu riêng ở charging_station_state.serial_number; nếu khác nhau thì ghi cảnh báo (thay bo mạch điều khiển hoặc cấu hình sai). @example WD2409001234']
-  physical_reference varchar(16) [note: '@planned CS-11: Short label printed on the unit and shown to drivers, e.g. "Trụ 1"; NULL until labelled (OCPI physical_reference). @vi Nhãn ngắn in trên trụ và hiển thị cho tài xế, ví dụ "Trụ 1"; NULL khi chưa dán nhãn. @example Trụ 1']
-  display_name varchar(200) [not null, note: '@remove CS-09: Station name shown to drivers; now the location\'s display_name, and a charger has its physical_reference. @vi Tên trạm hiển thị cho tài xế; nay là display_name của trạm, còn trụ có physical_reference. @example Trạm sạc G3 Bình Dương']
-  location "geography(POINT,4326)" [note: '@remove CS-09: GPS position; now charging_locations.coordinates. @vi Vị trí GPS; nay là charging_locations.coordinates. @example POINT(106.6519 10.9804)']
-  max_power_kw numeric(6,2) [note: '@built-as power_rating_kw: Total output of the charger in kW, shared by its guns (a 240 kW dual-gun unit gives about 120 kW per gun when both are in use); NULL if unknown. Per-gun power and the connector standard go on the connectors (deferred.md 80). @vi Tổng công suất của trụ (kW), chia cho các súng (trụ 240 kW hai súng cấp khoảng 120 kW mỗi súng khi cả hai cùng sạc); NULL nếu chưa biết. Công suất và chuẩn đầu sạc theo từng súng nằm ở súng sạc (deferred.md 80). @example 240.00']
-  connector_standard varchar(20) [note: '@remove CS-11: Plug standard; moves to each connector (deferred.md 80). @vi Chuẩn đầu sạc; chuyển sang từng súng sạc. @example CCS2']
-  operating_hours varchar(100) [note: '@remove CS-11: Opening hours as free text; locations are always open 24/7. @vi Giờ hoạt động dạng văn bản; trạm luôn mở 24/7. @example 24/7']
-  status varchar(20) [not null, note: '@planned CS-11: Set by a person (DM-25). ACTIVE: in service. INACTIVE: out of service, e.g. under repair; the reason says which. A charger that leaves the system is INACTIVE and soft-deleted. Whether it is online is computed from charging_station_state.last_seen_at. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng phục vụ, ví dụ đang sửa chữa; lý do cho biết trường hợp nào. Trụ rời hệ thống được chuyển sang INACTIVE và xóa mềm. Trụ online hay không được tính từ charging_station_state.last_seen_at. @example ACTIVE']
-  status_reason varchar(200) [note: '@planned DM-19: Why the charger has its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Hỏng mô-đun công suất, chờ linh kiện']
-  maintenance_status chargingstationmaintenancestatus [not null, note: '@remove CS-11: Maintenance state set by an admin; replaced by status ACTIVE / INACTIVE with a reason. @vi Trạng thái bảo trì; thay bằng status ACTIVE / INACTIVE kèm lý do. @example OPERATIONAL']
-  ocpp_protocol_version varchar(20) [note: '@remove CS-11: OCPP version of the latest connection; moves to charging_station_state. @vi Phiên bản OCPP của kết nối gần nhất; chuyển sang charging_station_state. @example ocpp1.6']
-  vendor varchar(100) [note: '@remove CS-11: Vendor from BootNotification; moves to charging_station_state. @vi Hãng trụ sạc; chuyển sang charging_station_state. @example Willdigits']
-  model varchar(100) [note: '@remove CS-11: Model from BootNotification; moves to charging_station_state. @vi Model trụ sạc; chuyển sang charging_station_state. @example WD-DC480']
-  serial_number varchar(100) [note: '@remove CS-11: Serial number from BootNotification; moves to charging_station_state. @vi Số serial; chuyển sang charging_station_state. @example WD2409001234']
-  firmware_version varchar(100) [note: '@remove CS-11: Firmware from BootNotification; moves to charging_station_state. @vi Firmware; chuyển sang charging_station_state. @example V2.3.7']
-  last_boot_at timestamptz [note: '@remove CS-11: Latest accepted BootNotification; moves to charging_station_state. @vi BootNotification gần nhất; chuyển sang charging_station_state. @example 2026-09-14T22:00:05Z']
-  last_seen_at timestamptz [note: '@remove CS-11: Latest message of any kind; moves to charging_station_state. @vi Bản tin gần nhất; chuyển sang charging_station_state. @example 2026-09-15T08:29:58Z']
-  charger_status chargingconnectorstatus [note: '@remove CS-11: Whole-charger status (1.6J connector 0); moves to charging_station_state. @vi Trạng thái cả trụ (connector 0); chuyển sang charging_station_state. @example Available']
-  charger_status_updated_at timestamptz [note: '@remove CS-11: When that status was reported; moves to charging_station_state. @vi Thời điểm báo trạng thái đó; chuyển sang charging_station_state. @example 2026-09-15T08:10:00Z']
-  charger_error_code varchar(50) [note: '@remove CS-11: Whole-charger error code; moves to charging_station_state. @vi Mã lỗi của cả trụ; chuyển sang charging_station_state. @example NoError']
-  charger_vendor_error_code varchar(100) [note: '@remove CS-11: Vendor error code for the whole charger; moves to charging_station_state. @vi Mã lỗi riêng của hãng cho cả trụ; chuyển sang charging_station_state. @example E0000']
+  registered_serial_number varchar(100) [not null, note: 'Serial number read from the charger\'s nameplate and entered at installation: the asset\'s identity for warranty (WAR-01), insurance and vendor support. Unique among chargers not deleted. The serial the charger reports at boot is kept apart in charging_station_state.serial_number; a mismatch is logged as a warning (a swapped controller board or a misconfigured charger). @vi Số serial đọc từ nhãn máy và nhập khi lắp đặt: định danh tài sản cho bảo hành (WAR-01), bảo hiểm và hỗ trợ của hãng. Duy nhất trong các trụ chưa xóa. Serial trụ tự báo khi khởi động được lưu riêng ở charging_station_state.serial_number; nếu khác nhau thì ghi cảnh báo (thay bo mạch điều khiển hoặc cấu hình sai). @example WD2409001234']
+  physical_reference varchar(16) [note: 'Short label printed on the unit and shown to drivers, e.g. "Trụ 1"; NULL until labelled (OCPI physical_reference). @vi Nhãn ngắn in trên trụ và hiển thị cho tài xế, ví dụ "Trụ 1"; NULL khi chưa dán nhãn. @example Trụ 1']
+  max_power_kw numeric(6,2) [note: 'Total output of the charger in kW, shared by its guns (a 240 kW dual-gun unit gives about 120 kW per gun when both are in use); NULL if unknown. Per-gun power and the connector standard go on the connectors (deferred.md 80). @vi Tổng công suất của trụ (kW), chia cho các súng (trụ 240 kW hai súng cấp khoảng 120 kW mỗi súng khi cả hai cùng sạc); NULL nếu chưa biết. Công suất và chuẩn đầu sạc theo từng súng nằm ở súng sạc (deferred.md 80). @example 240.00']
+  status varchar(20) [not null, note: 'Set by a person (DM-25). ACTIVE: in service. INACTIVE: out of service, e.g. under repair; the reason says which. A charger that leaves the system is INACTIVE and soft-deleted. Whether it is online is computed from charging_station_state.last_seen_at. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng phục vụ, ví dụ đang sửa chữa; lý do cho biết trường hợp nào. Trụ rời hệ thống được chuyển sang INACTIVE và xóa mềm. Trụ online hay không được tính từ charging_station_state.last_seen_at. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the charger has its current status; NULL when ACTIVE. @vi Lý do của trạng thái hiện tại; NULL khi ACTIVE. @example Hỏng mô-đun công suất, chờ linh kiện']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When a person last edited the row (UTC); device reports go to charging_station_state and never change it. @vi Thời điểm con người sửa bản ghi gần nhất (UTC); báo cáo của thiết bị ghi vào charging_station_state và không làm thay đổi cột này. @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the charger is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: trụ không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
-    location [name: 'ix_charging_stations_location', note: 'GIST; replaced by ix_charging_locations_coordinates (CS-09)']
     deleted_at [name: 'ix_charging_stations_deleted_at']
-    location_id [name: 'ix_charging_stations_location_id', note: 'Planned (CS-09)']
-    registered_serial_number [unique, name: 'uq_charging_stations_live_registered_serial_number', note: 'Planned (CS-14): WHERE deleted_at IS NULL']
+    location_id [name: 'ix_charging_stations_location_id']
+    registered_serial_number [unique, name: 'uq_charging_stations_live_registered_serial_number', note: 'WHERE deleted_at IS NULL']
   }
-  Note: '''@status built @owner customer @features F-C1,F-C2,F-D1,F-G2 @tracked *
+  Note: '''@status built @owner customer @features F-C1,F-C2,F-D1,F-G2 @tracked * @history built
 One charger (trụ sạc): one OCPP connection, OCPP 2.0.1's "Charging Station"
 and 1.6J's "Charge Point" (CS-09). It stands at one location and reads its
 owner through it (CS-10). Profile only: what the charger reports (boot
@@ -1291,7 +1255,7 @@ Table charging_station_state {
   charger_status_updated_at timestamptz [note: 'When that status was last reported. @vi Thời điểm trạng thái đó được báo gần nhất. @example 2026-09-15T08:10:00Z']
   charger_error_code varchar(50) [note: 'Error code reported for the whole charger, as sent. @vi Mã lỗi của cả trụ, đúng như trụ gửi. @example NoError']
   charger_vendor_error_code varchar(100) [note: 'Vendor-specific error code for the whole charger. @vi Mã lỗi riêng của hãng cho cả trụ. @example E0000']
-  Note: '''@status planned @owner customer @features F-C2,F-G2 @state-of charging_stations
+  Note: '''@status built @owner customer @features F-C2,F-G2 @state-of charging_stations
 What the charger reports about itself, written by the OCPP gateway, often and
 with no explanation needed: boot information, liveness and the whole-charger
 status (DM-16). Latest values only: the history of boots, firmware and status
@@ -1305,18 +1269,18 @@ Table charging_evses {
   evse_id uuid [pk, note: 'Internal ID of the EVSE. @vi Mã nội bộ của EVSE. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
   station_id uuid [not null, note: 'The charger (charging station) the EVSE belongs to. @vi Trụ sạc chứa EVSE. @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
   ocpp_evse_id integer [not null, note: 'EVSE number used in OCPP, unique within the charger, positive. For OCPP 1.6J gun n is EVSE n (CS-03). @vi Số EVSE dùng trong OCPP, duy nhất trong trụ, là số dương. Với OCPP 1.6J súng n là EVSE n (CS-03). @example 1']
-  emi3_evse_id varchar(48) [not null, note: '@planned CS-16: Public industry ID of the outlet in eMI3 format VN*<operator ID>*E<code> (OCPI EVSE.evse_id, up to 48 characters), assigned when the EVSE is set up. Unique among EVSEs not deleted: when the hardware is replaced, the new EVSE row takes over the same ID, so the public ID outlives the hardware. Named with its source as a prefix because evse_id is our primary key. The operator ID G3N is provisional until roaming. @vi Mã công khai theo chuẩn ngành của EVSE, định dạng eMI3 VN*<mã nhà vận hành>*E<mã> (OCPI EVSE.evse_id, tối đa 48 ký tự), gán khi khai báo EVSE. Duy nhất trong các EVSE chưa xóa: khi thay phần cứng, EVSE mới nhận lại đúng mã này, nên mã công khai tồn tại lâu hơn phần cứng. Mã nhà vận hành G3N là tạm thời cho tới khi kết nối liên mạng (roaming). @example VN*G3N*E0001A']
-  status varchar(20) [not null, note: '@planned CS-16: Set by a person (DM-25). ACTIVE: in service. INACTIVE: taken out of service on its own, e.g. a damaged cable, while the rest of the charger keeps working; the reason says why. Sent to the charger as OCPP ChangeAvailability for this EVSE. An EVSE that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng riêng EVSE này, ví dụ cáp hỏng, trong khi phần còn lại của trụ vẫn hoạt động; lý do cho biết vì sao. Gửi xuống trụ bằng lệnh OCPP ChangeAvailability cho EVSE này. EVSE rời hệ thống được chuyển sang INACTIVE và xóa mềm. @example ACTIVE']
-  status_reason varchar(200) [note: '@planned DM-19: Why the EVSE is out of service; NULL when ACTIVE. @vi Lý do EVSE ngừng phục vụ; NULL khi ACTIVE. @example Cáp súng 2 bị dập, chờ thay']
+  emi3_evse_id varchar(48) [not null, note: 'Public industry ID of the outlet in eMI3 format VN*<operator ID>*E<code> (OCPI EVSE.evse_id, up to 48 characters), assigned when the EVSE is set up. Unique among EVSEs not deleted: when the hardware is replaced, the new EVSE row takes over the same ID, so the public ID outlives the hardware. Named with its source as a prefix because evse_id is our primary key. The operator ID G3N is provisional until roaming. @vi Mã công khai theo chuẩn ngành của EVSE, định dạng eMI3 VN*<mã nhà vận hành>*E<mã> (OCPI EVSE.evse_id, tối đa 48 ký tự), gán khi khai báo EVSE. Duy nhất trong các EVSE chưa xóa: khi thay phần cứng, EVSE mới nhận lại đúng mã này, nên mã công khai tồn tại lâu hơn phần cứng. Mã nhà vận hành G3N là tạm thời cho tới khi kết nối liên mạng (roaming). @example VN*G3N*E0001A']
+  status varchar(20) [not null, note: 'Set by a person (DM-25). ACTIVE: in service. INACTIVE: taken out of service on its own, e.g. a damaged cable, while the rest of the charger keeps working; the reason says why. Sent to the charger as OCPP ChangeAvailability for this EVSE. An EVSE that leaves the system is INACTIVE and soft-deleted. Values: ACTIVE | INACTIVE. @vi Do con người đặt (DM-25). ACTIVE: đang phục vụ. INACTIVE: ngừng riêng EVSE này, ví dụ cáp hỏng, trong khi phần còn lại của trụ vẫn hoạt động; lý do cho biết vì sao. Gửi xuống trụ bằng lệnh OCPP ChangeAvailability cho EVSE này. EVSE rời hệ thống được chuyển sang INACTIVE và xóa mềm. @example ACTIVE']
+  status_reason varchar(200) [note: 'Why the EVSE is out of service; NULL when ACTIVE. @vi Lý do EVSE ngừng phục vụ; NULL khi ACTIVE. @example Cáp súng 2 bị dập, chờ thay']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When the row was last changed (UTC). @vi Thời điểm bản ghi được sửa gần nhất (UTC). @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the EVSE is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept, and the reason is in status_reason. NULL while it is part of the system. @vi Thời điểm xóa mềm: EVSE không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ, lý do nằm trong status_reason. NULL khi còn thuộc hệ thống. @example NULL']
   indexes {
     (station_id, deleted_at) [name: 'ix_charging_evses_station_deleted']
     (station_id, ocpp_evse_id) [unique, name: 'uq_charging_evses_station_ocpp_id']
-    emi3_evse_id [unique, name: 'uq_charging_evses_live_emi3_evse_id', note: 'Planned (CS-16): WHERE deleted_at IS NULL']
+    emi3_evse_id [unique, name: 'uq_charging_evses_live_emi3_evse_id', note: 'WHERE deleted_at IS NULL']
   }
-  Note: '''@status built @owner customer @features F-C1,F-G2 @tracked *
+  Note: '''@status built @owner customer @features F-C1,F-G2 @tracked * @history built
 One EVSE: an outlet that charges one truck at a time, with one or more
 connectors of which only one is used at a time (CS-09). For our OCPP 1.6J
 charger each gun is one EVSE with one connector (CS-03). Owned through its
@@ -1331,15 +1295,10 @@ Table charging_connectors {
   connector_id uuid [pk, note: 'Internal ID of the connector (one physical gun). @vi Mã nội bộ của súng sạc (một súng vật lý). @example 0f3c8e5b-7d1a-4b9c-a2e6-4f8d1c0b3eaa']
   evse_id uuid [not null, note: 'EVSE the connector belongs to. @vi EVSE chứa súng sạc. @example 1e7a4c9f-6b3d-4e2a-8c5f-9d0b2e7a4c99']
   ocpp_connector_id integer [not null, note: 'Connector number used in OCPP, unique within the EVSE, positive (1 for each gun of our 1.6J charger). @vi Số súng dùng trong OCPP, duy nhất trong EVSE, là số dương (1 với mỗi súng của trụ 1.6J). @example 1']
-  standard varchar(30) [not null, note: '@planned CS-17: Plug standard, with OCPI ConnectorType names; entered by a person at setup from the gun\'s nameplate or the purchase order, because OCPP 1.6J never reports it and OCPP 2.0.1\'s ConnectorType has no GB/T value (a 2.0.1 report is only a cross-check). The app shows the short name (CCS2, GB/T). Values: IEC_62196_T2_COMBO (CCS2) | GBT_DC | CHADEMO | CHAOJI | IEC_62196_T1_COMBO (CCS1); MCS added when megawatt chargers come. @vi Chuẩn đầu cắm, theo tên ConnectorType của OCPI; do con người nhập khi khai báo, từ nhãn trên súng hoặc đơn mua hàng, vì OCPP 1.6J không bao giờ báo và ConnectorType của OCPP 2.0.1 không có GB/T. Ứng dụng hiển thị tên ngắn (CCS2, GB/T). @example IEC_62196_T2_COMBO']
-  max_power_kw numeric(6,2) [not null, note: '@planned CS-17: Highest power this gun can deliver, in kW, from its nameplate; the charger\'s max_power_kw is shared between its guns, so the real power is the lower of the two and of what the truck asks for (deferred.md 80). @vi Công suất cao nhất súng này cấp được (kW), theo nhãn; max_power_kw của trụ được chia cho các súng, nên công suất thực là giá trị nhỏ hơn giữa hai giá trị đó và mức xe yêu cầu. @example 240.00']
-  max_voltage_v integer [not null, note: '@planned CS-17: Highest output voltage in volts, from the nameplate; tells whether the gun suits an 800 V truck (OCPI max_voltage). @vi Điện áp ra cao nhất (V), theo nhãn; cho biết súng có hợp với xe 800 V không. @example 1000']
-  max_current_a integer [not null, note: '@planned CS-17: Highest output current in amperes, from the nameplate (OCPI max_amperage). @vi Dòng ra cao nhất (A), theo nhãn. @example 250']
-  status chargingconnectorstatus [note: '@remove CS-17: Live status from the latest StatusNotification; moves to charging_connector_state. @vi Trạng thái trực tiếp; chuyển sang charging_connector_state. @example Charging']
-  status_updated_at timestamptz [note: '@remove CS-17: When that status was reported; moves to charging_connector_state. @vi Thời điểm báo trạng thái; chuyển sang charging_connector_state. @example 2026-09-15T08:31:00Z']
-  error_code varchar(50) [note: '@remove CS-17: Error code from the latest report; moves to charging_connector_state. @vi Mã lỗi theo báo cáo gần nhất; chuyển sang charging_connector_state. @example NoError']
-  vendor_error_code varchar(100) [note: '@remove CS-17: Vendor-specific error code; moves to charging_connector_state. @vi Mã lỗi riêng của hãng; chuyển sang charging_connector_state. @example E0000']
-  status_info varchar(50) [note: '@remove CS-17: Free-text info from the latest report; moves to charging_connector_state. @vi Thông tin văn bản tự do; chuyển sang charging_connector_state. @example Cable locked']
+  standard varchar(30) [not null, note: 'Plug standard, with OCPI ConnectorType names; entered by a person at setup from the gun\'s nameplate or the purchase order, because OCPP 1.6J never reports it and OCPP 2.0.1\'s ConnectorType has no GB/T value (a 2.0.1 report is only a cross-check). The app shows the short name (CCS2, GB/T). Values: IEC_62196_T2_COMBO (CCS2) | GBT_DC | CHADEMO | CHAOJI | IEC_62196_T1_COMBO (CCS1); MCS added when megawatt chargers come. @vi Chuẩn đầu cắm, theo tên ConnectorType của OCPI; do con người nhập khi khai báo, từ nhãn trên súng hoặc đơn mua hàng, vì OCPP 1.6J không bao giờ báo và ConnectorType của OCPP 2.0.1 không có GB/T. Ứng dụng hiển thị tên ngắn (CCS2, GB/T). @example IEC_62196_T2_COMBO']
+  max_power_kw numeric(6,2) [not null, note: 'Highest power this gun can deliver, in kW, from its nameplate; the charger\'s max_power_kw is shared between its guns, so the real power is the lower of the two and of what the truck asks for (deferred.md 80). @vi Công suất cao nhất súng này cấp được (kW), theo nhãn; max_power_kw của trụ được chia cho các súng, nên công suất thực là giá trị nhỏ hơn giữa hai giá trị đó và mức xe yêu cầu. @example 240.00']
+  max_voltage_v integer [not null, note: 'Highest output voltage in volts, from the nameplate; tells whether the gun suits an 800 V truck (OCPI max_voltage). @vi Điện áp ra cao nhất (V), theo nhãn; cho biết súng có hợp với xe 800 V không. @example 1000']
+  max_current_a integer [not null, note: 'Highest output current in amperes, from the nameplate (OCPI max_amperage). @vi Dòng ra cao nhất (A), theo nhãn. @example 250']
   created_at timestamptz [not null, note: 'When the row was created (UTC). @vi Thời điểm tạo bản ghi (UTC). @example 2026-09-01T02:00:00Z']
   updated_at timestamptz [not null, note: 'When a person last edited the row (UTC); status reports go to charging_connector_state. @vi Thời điểm con người sửa bản ghi gần nhất (UTC); báo cáo trạng thái ghi vào charging_connector_state. @example 2026-09-10T07:15:00Z']
   deleted_at timestamptz [note: 'Soft-delete time: the gun is no longer part of the system, because it was removed or entered by mistake (DM-25); all its data is kept. NULL while it is part of the system. A gun is taken out of service through its EVSE\'s status. @vi Thời điểm xóa mềm: súng không còn thuộc hệ thống, do đã tháo đi hoặc nhập nhầm (DM-25); mọi dữ liệu vẫn được giữ. NULL khi còn thuộc hệ thống. Súng ngừng phục vụ qua trạng thái của EVSE. @example NULL']
@@ -1347,7 +1306,7 @@ Table charging_connectors {
     (evse_id, deleted_at) [name: 'ix_charging_connectors_evse_deleted']
     (evse_id, ocpp_connector_id) [unique, name: 'uq_charging_connectors_evse_ocpp_id']
   }
-  Note: '''@status built @owner customer @features F-C1,F-C2 @tracked *
+  Note: '''@status built @owner customer @features F-C1,F-C2 @tracked * @history built
 One physical gun (plug): its standard and its power (CS-17), owned through its
 EVSE, charger and location. Profile only: the live status the charger reports
 moves to charging_connector_state (DM-16, DM-17). No status of its own: a gun
@@ -1365,7 +1324,7 @@ Table charging_connector_state {
   error_code varchar(50) [note: 'Error code from the latest report, as sent; replaced by every report. @vi Mã lỗi theo báo cáo gần nhất, đúng như trụ gửi; bị thay mỗi lần báo. @example NoError']
   vendor_error_code varchar(100) [note: 'Vendor-specific error code from the latest report. @vi Mã lỗi riêng của hãng theo báo cáo gần nhất. @example E0000']
   status_info varchar(50) [note: 'Free-text info from the latest report. @vi Thông tin văn bản tự do theo báo cáo gần nhất. @example Cable locked']
-  Note: '''@status planned @owner customer @features F-C2 @state-of charging_connectors
+  Note: '''@status built @owner customer @features F-C2 @state-of charging_connectors
 The live status of one gun as the charger reports it, written by the OCPP
 gateway (DM-16). Latest values only: the history is the raw log in
 charging_ocpp_messages (CS-15).
@@ -1380,12 +1339,12 @@ Table charging_ocpp_messages {
   ocpp_subprotocol varchar(20) [not null, note: 'OCPP version negotiated for the connection. @vi Phiên bản OCPP đã thỏa thuận cho kết nối. @example ocpp1.6']
   direction chargingocppmessagedirection [not null, note: 'From the charger (CP_TO_CSMS) or to it (CSMS_TO_CP). @vi Chiều bản tin: từ trụ sạc lên (CP_TO_CSMS) hay gửi xuống trụ (CSMS_TO_CP). @example CP_TO_CSMS']
   raw_frame text [not null, note: 'The exact frame text, never re-serialised. Contains RFID idTags: never copy into application logs. @vi Nội dung bản tin nguyên văn, không chuẩn hóa lại. Có chứa mã RFID idTag: không bao giờ chép vào log ứng dụng. @example [2,"19223201","Heartbeat",{}]']
-  action varchar(50) [note: '@planned CS-18: Message type copied from the envelope of a request ([2, message ID, action, payload]), e.g. StatusNotification, RemoteStartTransaction; NULL for answers and errors (they carry no action) and for a frame that cannot be read. raw_frame stays the record. @vi Loại bản tin chép từ phần bao của một yêu cầu, ví dụ StatusNotification, RemoteStartTransaction; NULL với bản tin trả lời và báo lỗi (không có action) và với bản tin không đọc được. raw_frame vẫn là bản gốc. @example StatusNotification']
-  ocpp_message_id varchar(36) [note: '@planned CS-18: The frame\'s own message ID from the envelope, on every frame; a request and its answer share it, so (station_id, ocpp_message_id) pairs them, e.g. our RemoteStartTransaction with the charger\'s Accepted. NULL for a frame that cannot be read. Not unique: the charger and the gateway number their requests separately. @vi Mã bản tin riêng trong phần bao, có ở mọi bản tin; yêu cầu và câu trả lời dùng chung mã này, nên (station_id, ocpp_message_id) ghép được chúng, ví dụ lệnh RemoteStartTransaction của chúng ta với câu trả lời Accepted của trụ. NULL với bản tin không đọc được. Không duy nhất: trụ và cổng OCPP đánh số yêu cầu riêng. @example 19223201']
+  action varchar(50) [note: 'Message type copied from the envelope of a request ([2, message ID, action, payload]), e.g. StatusNotification, RemoteStartTransaction; NULL for answers and errors (they carry no action) and for a frame that cannot be read. raw_frame stays the record. @vi Loại bản tin chép từ phần bao của một yêu cầu, ví dụ StatusNotification, RemoteStartTransaction; NULL với bản tin trả lời và báo lỗi (không có action) và với bản tin không đọc được. raw_frame vẫn là bản gốc. @example StatusNotification']
+  ocpp_message_id varchar(36) [note: 'The frame\'s own message ID from the envelope, on every frame; a request and its answer share it, so (station_id, ocpp_message_id) pairs them, e.g. our RemoteStartTransaction with the charger\'s Accepted. NULL for a frame that cannot be read. Not unique: the charger and the gateway number their requests separately. @vi Mã bản tin riêng trong phần bao, có ở mọi bản tin; yêu cầu và câu trả lời dùng chung mã này, nên (station_id, ocpp_message_id) ghép được chúng, ví dụ lệnh RemoteStartTransaction của chúng ta với câu trả lời Accepted của trụ. NULL với bản tin không đọc được. Không duy nhất: trụ và cổng OCPP đánh số yêu cầu riêng. @example 19223201']
   indexes {
     (station_id, occurred_at) [name: 'ix_charging_ocpp_messages_station_time']
-    (station_id, action, occurred_at) [name: 'ix_charging_ocpp_messages_station_action_time', note: 'Planned (CS-18): the message viewer filtering by type (STN-15)']
-    (station_id, ocpp_message_id) [name: 'ix_charging_ocpp_messages_station_message_id', note: 'Planned (CS-18): pairing a request with its answer']
+    (station_id, action, occurred_at) [name: 'ix_charging_ocpp_messages_station_action_time', note: 'the message viewer filtering by type (STN-15)']
+    (station_id, ocpp_message_id) [name: 'ix_charging_ocpp_messages_station_message_id', note: 'pairing a request with its answer']
   }
   Note: '''@status built @owner internal @features F-G2 @hypertable occurred_at
 Every OCPP frame in both directions, verbatim and append-only.
@@ -1404,7 +1363,7 @@ Table charging_station_configuration_captures {
   indexes {
     ocpp_request_id [name: 'ix_charging_config_captures_ocpp_request_id', note: 'Finds the snapshot when a 2.0.1 NotifyReport part arrives, together with the command\'s charger']
   }
-  Note: '''@status planned @owner internal @features F-G2
+  Note: '''@status built @owner internal @features F-G2
 One snapshot of a charger\'s settings: one GetConfiguration answer (1.6J) or
 one GetBaseReport answered in several NotifyReport parts (2.0.1). The settings
 themselves are rows of charging_station_configuration_entries. Append-only:
@@ -1420,22 +1379,18 @@ snapshot checks that it was applied.
 
 Table charging_station_configuration_entries {
   entry_id uuid [pk, note: 'Internal ID of the row: one value of one setting in one snapshot. @vi Mã nội bộ của dòng: một giá trị của một cấu hình trong một lần chụp. @example 00000007-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  station_id uuid [not null, note: '@remove CS-19: The charger; now read through the capture\'s command (CS-21). @vi Trụ sạc; nay đọc qua lệnh của lần chụp (CS-21). @example 4b9d6f3a-2e8c-4a1b-9d5e-7f0c3a8b2d88']
-  capture_id uuid [not null, note: 'The snapshot this value belongs to. Built today as a plain grouping ID; it becomes a foreign key to charging_station_configuration_captures.capture_id in the refactor (CS-19; not drawn as a reference while that table is planned). @vi Lần chụp chứa giá trị này. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
-  captured_at timestamptz [not null, note: '@remove CS-19: When the answer arrived; now on the capture. @vi Thời điểm nhận câu trả lời; nay nằm ở lần chụp. @example 2026-09-14T22:00:10Z']
-  component_name varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. @vi Thành phần OCPP 2.0.1, ví dụ OCPPCommCtrlr, EVSE, Connector; NULL với 1.6J (chỉ có khóa). @example NULL']
-  component_instance varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): instance of the component when it has several (2.0.1); NULL otherwise. @vi Bản thể của thành phần khi có nhiều (2.0.1); NULL nếu không. @example NULL']
-  ocpp_evse_id integer [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): EVSE the component sits on (2.0.1); NULL for the whole charger and for 1.6J. @vi EVSE chứa thành phần (2.0.1); NULL với cả trụ và với 1.6J. @example NULL']
-  ocpp_connector_id integer [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): connector the component sits on (2.0.1); NULL otherwise. @vi Súng chứa thành phần (2.0.1); NULL nếu không. @example NULL']
-  variable_name varchar(100) [not null, note: '@built-as config_key: The setting: the 1.6J configuration key (e.g. HeartbeatInterval, AuthorizeRemoteTxRequests) or the 2.0.1 variable within its component. @vi Cấu hình: khóa cấu hình của 1.6J (ví dụ HeartbeatInterval) hoặc biến của 2.0.1 trong thành phần của nó. @example HeartbeatInterval']
-  variable_instance varchar(50) [note: '@planned CS-19: OCPP 2.0.1 only (CO-15): instance of the variable (2.0.1); NULL otherwise. @vi Bản thể của biến (2.0.1); NULL nếu không. @example NULL']
-  attribute_type varchar(10) [not null, note: '@planned CS-19: Which value of the setting: Actual (the current value; always for 1.6J), Target, MinSet or MaxSet (2.0.1). @vi Giá trị nào của cấu hình: Actual (giá trị hiện tại; luôn là Actual với 1.6J), Target, MinSet hoặc MaxSet (2.0.1). @example Actual']
+  capture_id uuid [not null, note: 'The snapshot this value belongs to. @vi Lần chụp chứa giá trị này. @example 00000008-5a6b-4c7d-8e9f-0a1b2c3d4e5f']
+  component_name varchar(50) [note: 'OCPP 2.0.1 only (CO-15): the component, e.g. OCPPCommCtrlr, EVSE, Connector; NULL for 1.6J, which has keys only. @vi Thành phần OCPP 2.0.1, ví dụ OCPPCommCtrlr, EVSE, Connector; NULL với 1.6J (chỉ có khóa). @example NULL']
+  component_instance varchar(50) [note: 'OCPP 2.0.1 only (CO-15): instance of the component when it has several (2.0.1); NULL otherwise. @vi Bản thể của thành phần khi có nhiều (2.0.1); NULL nếu không. @example NULL']
+  ocpp_evse_id integer [note: 'OCPP 2.0.1 only (CO-15): EVSE the component sits on (2.0.1); NULL for the whole charger and for 1.6J. @vi EVSE chứa thành phần (2.0.1); NULL với cả trụ và với 1.6J. @example NULL']
+  ocpp_connector_id integer [note: 'OCPP 2.0.1 only (CO-15): connector the component sits on (2.0.1); NULL otherwise. @vi Súng chứa thành phần (2.0.1); NULL nếu không. @example NULL']
+  variable_name varchar(100) [not null, note: 'The setting: the 1.6J configuration key (e.g. HeartbeatInterval, AuthorizeRemoteTxRequests) or the 2.0.1 variable within its component. @vi Cấu hình: khóa cấu hình của 1.6J (ví dụ HeartbeatInterval) hoặc biến của 2.0.1 trong thành phần của nó. @example HeartbeatInterval']
+  variable_instance varchar(50) [note: 'OCPP 2.0.1 only (CO-15): instance of the variable (2.0.1); NULL otherwise. @vi Bản thể của biến (2.0.1); NULL nếu không. @example NULL']
+  attribute_type varchar(10) [not null, note: 'Which value of the setting: Actual (the current value; always for 1.6J), Target, MinSet or MaxSet (2.0.1). @vi Giá trị nào của cấu hình: Actual (giá trị hiện tại; luôn là Actual với 1.6J), Target, MinSet hoặc MaxSet (2.0.1). @example Actual']
   value text [note: 'The value as text, as the charger sent it; NULL if it sent none (e.g. a write-only setting). @vi Giá trị dạng chuỗi, đúng như trụ gửi; NULL nếu trụ không gửi (ví dụ cấu hình chỉ-ghi). @example 60']
-  mutability varchar(10) [not null, note: '@planned CS-19: Whether the setting can be changed: READ_ONLY (a change is refused, e.g. NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, e.g. a password: no value is shown). 1.6J readonly=true maps to READ_ONLY, false to READ_WRITE. @vi Cấu hình có đổi được không: READ_ONLY (lệnh đổi bị từ chối, ví dụ NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, ví dụ mật khẩu: không hiện giá trị). Với 1.6J readonly=true là READ_ONLY, false là READ_WRITE. @example READ_WRITE']
-  is_readonly boolean [not null, note: '@remove CS-19: Whether the charger reports the key as read-only; replaced by mutability, which also covers 2.0.1. @vi Trụ có báo khóa này là chỉ-đọc không; thay bằng mutability, bao cả 2.0.1. @example false']
+  mutability varchar(10) [not null, note: 'Whether the setting can be changed: READ_ONLY (a change is refused, e.g. NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, e.g. a password: no value is shown). 1.6J readonly=true maps to READ_ONLY, false to READ_WRITE. @vi Cấu hình có đổi được không: READ_ONLY (lệnh đổi bị từ chối, ví dụ NumberOfConnectors), READ_WRITE, WRITE_ONLY (2.0.1, ví dụ mật khẩu: không hiện giá trị). Với 1.6J readonly=true là READ_ONLY, false là READ_WRITE. @example READ_WRITE']
   indexes {
-    (station_id, captured_at) [name: 'ix_charging_config_entries_station_captured', note: 'Replaced by ix_charging_config_captures_station_captured (CS-19)']
-    (capture_id, component_name, component_instance, ocpp_evse_id, ocpp_connector_id, variable_name, variable_instance, attribute_type) [unique, name: 'uq_charging_config_entries_capture_setting', note: 'Planned (CS-19): NULLS NOT DISTINCT; one value per setting and attribute in a snapshot']
+    (capture_id, component_name, component_instance, ocpp_evse_id, ocpp_connector_id, variable_name, variable_instance, attribute_type) [unique, name: 'uq_charging_config_entries_capture_setting', note: 'NULLS NOT DISTINCT; one value per setting and attribute in a snapshot']
   }
   Note: '''@status built @owner internal @features F-G2
 One value of one setting in one snapshot (CS-19). Named the OCPP 2.0.1 way
@@ -1457,28 +1412,30 @@ Table charging_station_commands {
   requested_by uuid [note: 'User who asked for it: the scanning driver for a remote start, an operator for a manual command; NULL when the system sent it on its own (e.g. the configuration request after boot, CO-05). @vi Người dùng đã yêu cầu: tài xế quét mã với lệnh bắt đầu từ xa, nhân viên vận hành với lệnh thủ công; NULL khi hệ thống tự gửi (ví dụ yêu cầu cấu hình sau khi khởi động, CO-05). @example 9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22']
   reason varchar(200) [note: 'Why, typed by the operator for a manual command; NULL for routine ones (a QR start, the configuration request after boot). @vi Lý do, do nhân viên vận hành nhập với lệnh thủ công; NULL với lệnh thường lệ (sạc bằng QR, yêu cầu cấu hình sau khi khởi động). @example Súng 2 kẹt, mở khóa cho tài xế']
   requested_at timestamptz [not null, note: 'When we created the command, by our server\'s clock. @vi Thời điểm tạo lệnh, theo đồng hồ máy chủ của chúng ta. @example 2026-09-15T08:29:11Z']
-  ocpp_message_id varchar(36) [note: 'Message ID of the frame we sent; finds that frame and the charger\'s answer in charging_ocpp_messages (CS-18). NULL when nothing was sent. @vi Mã bản tin của khung đã gửi; dùng để tìm khung đó và câu trả lời của trụ trong charging_ocpp_messages (CS-18). NULL khi chưa gửi gì. @example 7f3a9c1e-2b4d-4e8a-9c6f-1d0e2b7a5c33']
-  outcome varchar(20) [not null, note: 'Observed result, in one shape (no reason column: observed, not decided). PENDING: sent, waiting for the answer. ACCEPTED / REJECTED: the charger\'s verdict. ERROR: the charger answered with an OCPP error. TIMEOUT: no answer within the configured time. NOT_SENT: the charger was not connected. Values: PENDING | ACCEPTED | REJECTED | ERROR | TIMEOUT | NOT_SENT. @vi Kết quả quan sát được, cùng một dạng (không có cột lý do vì là quan sát, không phải quyết định). PENDING: đã gửi, đang chờ trả lời. ACCEPTED / REJECTED: trụ chấp nhận hoặc từ chối. ERROR: trụ trả lời bằng lỗi OCPP. TIMEOUT: không có trả lời trong thời gian cấu hình. NOT_SENT: trụ không kết nối. @example ACCEPTED']
+  ocpp_message_id varchar(36) [note: 'Message ID of the frame we sent; finds that frame and the charger\'s answer in charging_ocpp_messages (CS-18). NULL while the command is queued and when nothing was sent. @vi Mã bản tin của khung đã gửi; dùng để tìm khung đó và câu trả lời của trụ trong charging_ocpp_messages (CS-18). NULL khi lệnh còn xếp hàng hoặc chưa gửi gì. @example 7f3a9c1e-2b4d-4e8a-9c6f-1d0e2b7a5c33']
+  outcome varchar(20) [not null, note: 'Observed result, in one shape (no reason column: observed, not decided). PENDING: queued by the API (no ocpp_message_id yet) or sent and waiting for the answer (CS-24). ACCEPTED / REJECTED: the charger\'s verdict. ERROR: the charger answered with an OCPP error. TIMEOUT: no answer within the configured time. NOT_SENT: the charger was not connected to any gateway in time (CS-24). Values: PENDING | ACCEPTED | REJECTED | ERROR | TIMEOUT | NOT_SENT. @vi Kết quả quan sát được, cùng một dạng (không có cột lý do vì là quan sát, không phải quyết định). PENDING: đã xếp hàng chờ cổng OCPP (chưa có ocpp_message_id) hoặc đã gửi và đang chờ trả lời (CS-24). ACCEPTED / REJECTED: trụ chấp nhận hoặc từ chối. ERROR: trụ trả lời bằng lỗi OCPP. TIMEOUT: không có trả lời trong thời gian cấu hình. NOT_SENT: trụ không kết nối. @example ACCEPTED']
   response_status varchar(30) [note: 'The charger\'s answer as sent, which may say more than accepted or rejected: Scheduled, RebootRequired, UnlockFailed, NotSupported, or an error code such as NotImplemented. NULL when there was no answer. @vi Câu trả lời của trụ, đúng như gửi, có thể chi tiết hơn chấp nhận hay từ chối: Scheduled, RebootRequired, UnlockFailed, NotSupported, hoặc một mã lỗi như NotImplemented. NULL khi không có trả lời. @example Accepted']
   answered_at timestamptz [note: 'When the answer or the timeout was recorded; NULL while PENDING or when NOT_SENT. @vi Thời điểm ghi nhận câu trả lời hoặc hết thời gian chờ; NULL khi PENDING hoặc NOT_SENT. @example 2026-09-15T08:29:12Z']
   indexes {
     (station_id, requested_at) [name: 'ix_charging_station_commands_station_requested', note: 'A charger\'s commands, newest first (STN-10)']
     session_id [name: 'ix_charging_station_commands_session_id', note: 'A session\'s remote start and stop']
   }
-  Note: '''@status planned @owner internal @features F-G2,F-H1
+  Note: '''@status built @owner internal @features F-G2,F-H1
 Every command we send to a charger and its answer (STN-10, CS-20): who asked,
 why, which session it is about, and outcomes that leave no frame in the raw
 log (not sent, timed out). Commands are a capability of the OCPP gateway, so
 the table lives in charging_stations, never in charging_sessions (which
 never calls back into this domain). Written when the command is created and
-updated once with the answer; no change history, no soft delete. Most
+updated once with the answer; no change history, no soft delete. It is also
+the channel to the OCPP gateway process (PR-16, CS-24): a row queued with no
+ocpp_message_id is picked up by the gateway holding the charger's connection. Most
 answers are a verdict only; the result arrives later as its own message (a
 remote start's start message, a configuration read's snapshot). A T-Box
 command table (telematic_commands, deferred.md 55) would take the same shape.
 Check constraints (CS-20): outcome <> 'NOT_SENT' OR ocpp_message_id IS NULL;
 outcome IN ('PENDING', 'NOT_SENT') OR answered_at IS NOT NULL.
 @vi-name Lệnh gửi trụ sạc
-@vi Mọi lệnh chúng ta gửi tới trụ sạc và câu trả lời (STN-10, CS-20): ai yêu cầu, vì sao, liên quan phiên sạc nào, và các kết quả không để lại bản tin trong nhật ký thô (chưa gửi, hết thời gian chờ). Gửi lệnh là khả năng của cổng OCPP nên bảng thuộc miền charging_stations, không thuộc charging_sessions. Ghi khi tạo lệnh và cập nhật một lần khi có trả lời; không có lịch sử thay đổi, không xóa mềm. Phần lớn câu trả lời chỉ là chấp nhận hay từ chối; kết quả thật đến sau bằng bản tin riêng. Bảng lệnh cho T-Box (telematic_commands, deferred.md 55) sẽ dùng cùng dạng. Ràng buộc kiểm tra (CS-20): lệnh NOT_SENT không có ocpp_message_id; lệnh đã có kết quả (không PENDING, không NOT_SENT) phải có answered_at.'''
+@vi Mọi lệnh chúng ta gửi tới trụ sạc và câu trả lời (STN-10, CS-20): ai yêu cầu, vì sao, liên quan phiên sạc nào, và các kết quả không để lại bản tin trong nhật ký thô (chưa gửi, hết thời gian chờ). Gửi lệnh là khả năng của cổng OCPP nên bảng thuộc miền charging_stations, không thuộc charging_sessions. Ghi khi tạo lệnh và cập nhật một lần khi có trả lời; không có lịch sử thay đổi, không xóa mềm. Bảng cũng là kênh tới cổng OCPP (PR-16, CS-24): dòng xếp hàng chưa có ocpp_message_id sẽ được cổng OCPP đang giữ kết nối của trụ nhận. Phần lớn câu trả lời chỉ là chấp nhận hay từ chối; kết quả thật đến sau bằng bản tin riêng. Bảng lệnh cho T-Box (telematic_commands, deferred.md 55) sẽ dùng cùng dạng. Ràng buộc kiểm tra (CS-20): lệnh NOT_SENT không có ocpp_message_id; lệnh đã có kết quả (không PENDING, không NOT_SENT) phải có answered_at.'''
 }
 
 Ref: charging_stations.location_id > charging_locations.location_id [delete: restrict]
@@ -1487,7 +1444,7 @@ Ref: charging_evses.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_connectors.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_connector_state.connector_id - charging_connectors.connector_id [delete: restrict]
 Ref: charging_ocpp_messages.station_id > charging_stations.station_id [delete: restrict]
-Ref: charging_station_configuration_entries.station_id > charging_stations.station_id [delete: restrict]
+Ref: charging_station_configuration_entries.capture_id > charging_station_configuration_captures.capture_id [delete: restrict]
 Ref: charging_station_commands.station_id > charging_stations.station_id [delete: restrict]
 Ref: charging_station_commands.evse_id > charging_evses.evse_id [delete: restrict]
 Ref: charging_station_commands.session_id > charging_sessions.session_id [delete: restrict]

@@ -1,6 +1,7 @@
 """Smoke tests for OCPP 1.6J StatusNotification, connector 0 and the widened status enum."""
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -19,15 +20,18 @@ from app.domains.charging_stations.exceptions import (
 )
 from app.domains.charging_stations.models import (
     ChargingConnectorModel,
+    ChargingConnectorStateModel,
     ChargingStationModel,
+    ChargingStationStateModel,
 )
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from app.domains.charging_stations.ocpp.ocpp201_charge_point import OCPP201ChargePoint
-from app.domains.charging_stations.schemas import ChargingConnectorResponse
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
-    ChargingStationMaintenanceStatus,
+    ChargingResourceStatus,
+    ConnectorStandard,
 )
+from tests.builders import build_charging_location_record
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 STATION_ID, EVSE_ID, CONNECTOR_ID = uuid4(), uuid4(), uuid4()
@@ -464,17 +468,26 @@ def test_connector_response_exposes_status_and_error_fields() -> None:
         connector_id=CONNECTOR_ID,
         evse_id=EVSE_ID,
         ocpp_connector_id=1,
-        status=ChargingConnectorStatus.SUSPENDED_EVSE,
-        status_updated_at=NOW,
-        error_code="NoError",
-        vendor_error_code=None,
-        status_info="load sharing",
+        standard=ConnectorStandard.IEC_62196_T2_COMBO.value,
+        max_power_kw=Decimal("120.00"),
+        max_voltage_v=1000,
+        max_current_a=250,
         created_at=NOW,
         updated_at=NOW,
         deleted_at=None,
     )
+    state = ChargingConnectorStateModel(
+        connector_id=CONNECTOR_ID,
+        status=ChargingConnectorStatus.SUSPENDED_EVSE.value,
+        status_updated_at=NOW,
+        error_code="NoError",
+        vendor_error_code=None,
+        status_info="load sharing",
+    )
 
-    response = ChargingConnectorResponse.model_validate(connector)
+    response = charging_stations_service.to_charging_connector_response(
+        connector, state
+    )
 
     assert response.status is ChargingConnectorStatus.SUSPENDED_EVSE
     assert (response.error_code, response.vendor_error_code, response.status_info) == (
@@ -488,24 +501,32 @@ def test_station_response_exposes_the_charger_level_status() -> None:
     """Connector 0 (the whole charger) is visible on the station response."""
     station = ChargingStationModel(
         station_id=STATION_ID,
+        location_id=uuid4(),
         ocpp_identity="LSC",
-        display_name="Station",
-        location=None,
-        power_rating_kw=None,
-        connector_standard=None,
-        operating_hours=None,
-        maintenance_status=ChargingStationMaintenanceStatus.OPERATIONAL,
-        charger_status=ChargingConnectorStatus.FAULTED,
-        charger_status_updated_at=NOW,
-        charger_error_code="PowerMeterFailure",
-        charger_vendor_error_code="23",
+        registered_serial_number="SN-1",
+        physical_reference=None,
+        max_power_kw=None,
+        status=ChargingResourceStatus.ACTIVE.value,
+        status_reason=None,
         created_at=NOW,
         updated_at=NOW,
         deleted_at=None,
     )
+    state = ChargingStationStateModel(
+        station_id=STATION_ID,
+        charger_status=ChargingConnectorStatus.FAULTED.value,
+        charger_status_updated_at=NOW,
+        charger_error_code="PowerMeterFailure",
+        charger_vendor_error_code="23",
+    )
 
     response = charging_stations_service.to_charging_station_response(
-        station, connector_count=2, available_connector_count=1, now=NOW
+        station,
+        build_charging_location_record(),
+        state,
+        connector_count=2,
+        available_connector_count=1,
+        now=NOW,
     )
 
     assert response.charger_status is ChargingConnectorStatus.FAULTED

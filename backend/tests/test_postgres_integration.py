@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import asyncpg  # type: ignore[import-untyped]
 import pytest
 import pytest_asyncio
+import websockets
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +42,26 @@ import app.domains.vehicles.service as vehicle_service
 from app.domains.batteries.models import BatteryModel, BatteryModelModel
 from app.domains.batteries.types import BatteryStatus
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
+from app.domains.charging_stations.exceptions import (
+    ChargingLocationAccessConflictError,
+    ChargingStationCommandInputError,
+    ChargingStationNotFoundError,
+)
+from app.domains.charging_stations.schemas import (
+    ChargingConnectorCreateRequest,
+    ChargingEvseCreateRequest,
+    ChargingLocationAccessCreateRequest,
+    ChargingLocationAccessRevokeRequest,
+    ChargingLocationCreateRequest,
+    ChargingLocationUpdateRequest,
+    ChargingStationCreateRequest,
+    ChargingStationUpdateRequest,
+)
+from app.domains.charging_stations.types import (
+    ConnectorStandard,
+    StationCommandOutcome,
+    StationCommandType,
+)
 from app.domains.drivers.models import DriverModel, TripModel
 from app.domains.drivers.types import (
     CheckInMethod,
@@ -223,11 +244,15 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
                             WHERE table_schema = 'public'
                             AND table_name IN (
                                 'vehicles', 'telematics', 'telemetry',
-                                'charging_stations', 'charging_evses',
-                                'charging_connectors', 'charging_sessions',
+                                'charging_locations', 'charging_location_access',
+                                'charging_stations', 'charging_station_state',
+                                'charging_evses', 'charging_connectors',
+                                'charging_connector_state', 'charging_sessions',
                                 'charging_session_events',
                                 'charging_session_measurements',
                                 'charging_ocpp_messages',
+                                'charging_station_commands',
+                                'charging_station_configuration_captures',
                                 'charging_station_configuration_entries'
                             )
                             """)
@@ -249,7 +274,7 @@ async def test_migration_upgrade_downgrade_upgrade_creates_baseline(
         # .claude/rules/database.md): a schema change edits that revision
         # instead of adding a new one, so the head never moves.
         assert version == "0001_baseline_schema"
-        assert len(tables) == 11
+        assert len(tables) == 17
         # The raw OCPP message log must be a real TimescaleDB hypertable
         # partitioned on occurred_at, not just an ordinary table.
         # Exactly five hypertables: the OCPP 1.6J work replaced the session
@@ -484,37 +509,149 @@ def _wait_for_port(port: int, timeout_seconds: float = 30.0) -> None:
     raise AssertionError(f"Nothing listened on port {port} after {timeout_seconds}s")
 
 
-async def _provision_station(
-    engine: object, identity: str, evse_ids: list[int]
-) -> None:
-    """Insert a station with one EVSE (and one connector) per given EVSE number."""
+async def _provision_location(
+    engine: object,
+    *,
+    longitude: float = 106.0,
+    is_public: bool = True,
+    status: str = "ACTIVE",
+) -> tuple[UUID, UUID]:
+    """Insert an organization and a location it owns; return both IDs."""
+    organization = build_organization_record()
+    organization_id = organization.organization_id
+    async with AsyncSession(engine) as db, db.begin():  # type: ignore[arg-type]
+        db.add(organization)
+    location_id = uuid4()
     now = datetime.now(timezone.utc)
-    station_id = uuid4()
     async with engine.begin() as connection:  # type: ignore[attr-defined]
         await connection.execute(
             text(
-                "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
-                "maintenance_status, created_at, updated_at) "
-                "VALUES (:s, :i, 'e2e', 'OPERATIONAL', :t, :t)"
+                "INSERT INTO charging_locations (location_id, organization_id, "
+                "display_name, address, coordinates, is_public, status, "
+                "status_reason, created_at, updated_at) VALUES (:l, :o, 'IT location', "
+                "'IT road', ST_GeogFromText(:p), :pub, :st, :reason, :t, :t)"
             ),
-            {"s": station_id, "i": identity, "t": now},
+            {
+                "l": location_id,
+                "o": organization_id,
+                "p": f"SRID=4326;POINT({longitude} 10.0)",
+                "pub": is_public,
+                "st": status,
+                "reason": None if status == "ACTIVE" else "closed for the test",
+                "t": now,
+            },
         )
-        for evse_number in evse_ids:
-            evse_id = uuid4()
+    return organization_id, location_id
+
+
+async def _provision_station_at(
+    engine: object,
+    location_id: UUID,
+    identity: str,
+    connector_statuses: list[str | None],
+    *,
+    status: str = "ACTIVE",
+) -> tuple[UUID, list[UUID]]:
+    """Insert a charger with its state row and one EVSE/connector per given gun status.
+
+    Returns the station ID and the connector IDs, in EVSE-number order. The
+    gun status goes to ``charging_connector_state`` (what the charger reported).
+    """
+    now = datetime.now(timezone.utc)
+    station_id = uuid4()
+    connector_ids: list[UUID] = []
+    async with engine.begin() as connection:  # type: ignore[attr-defined]
+        await connection.execute(
+            text(
+                "INSERT INTO charging_stations (station_id, location_id, "
+                "ocpp_identity, registered_serial_number, status, status_reason, "
+                "created_at, updated_at) VALUES (:s, :l, :i, :i, :st, :reason, :t, :t)"
+            ),
+            {
+                "s": station_id,
+                "l": location_id,
+                "i": identity,
+                "st": status,
+                "reason": None if status == "ACTIVE" else "repair",
+                "t": now,
+            },
+        )
+        await connection.execute(
+            text("INSERT INTO charging_station_state (station_id) VALUES (:s)"),
+            {"s": station_id},
+        )
+        for evse_number, connector_status in enumerate(connector_statuses, start=1):
+            evse_id, connector_id = uuid4(), uuid4()
             await connection.execute(
                 text(
                     "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
-                    "created_at, updated_at) VALUES (:e, :s, :n, :t, :t)"
+                    "emi3_evse_id, status, created_at, updated_at) "
+                    "VALUES (:e, :s, :n, :emi3, 'ACTIVE', :t, :t)"
                 ),
-                {"e": evse_id, "s": station_id, "n": evse_number, "t": now},
+                {
+                    "e": evse_id,
+                    "s": station_id,
+                    "n": evse_number,
+                    "emi3": f"VN*G3N*E{identity}-{evse_number}",
+                    "t": now,
+                },
             )
             await connection.execute(
                 text(
                     "INSERT INTO charging_connectors (connector_id, evse_id, "
-                    "ocpp_connector_id, created_at, updated_at) "
-                    "VALUES (:c, :e, 1, :t, :t)"
+                    "ocpp_connector_id, standard, max_power_kw, max_voltage_v, "
+                    "max_current_a, created_at, updated_at) VALUES "
+                    "(:c, :e, 1, 'IEC_62196_T2_COMBO', 120, 1000, 250, :t, :t)"
                 ),
-                {"c": uuid4(), "e": evse_id, "t": now},
+                {"c": connector_id, "e": evse_id, "t": now},
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connector_state (connector_id, status, "
+                    "status_updated_at) VALUES (:c, :st, :t)"
+                ),
+                {"c": connector_id, "st": connector_status, "t": now},
+            )
+            connector_ids.append(connector_id)
+    return station_id, connector_ids
+
+
+async def _provision_station(
+    engine: object, identity: str, evse_ids: list[int]
+) -> None:
+    """Insert a public location with a station and one EVSE (and connector) per EVSE number."""
+    _, location_id = await _provision_location(engine)
+    station_id, _ = await _provision_station_at(engine, location_id, identity, [])
+    now = datetime.now(timezone.utc)
+    async with engine.begin() as connection:  # type: ignore[attr-defined]
+        for evse_number in evse_ids:
+            evse_id, connector_id = uuid4(), uuid4()
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
+                    "emi3_evse_id, status, created_at, updated_at) "
+                    "VALUES (:e, :s, :n, :emi3, 'ACTIVE', :t, :t)"
+                ),
+                {
+                    "e": evse_id,
+                    "s": station_id,
+                    "n": evse_number,
+                    "emi3": f"VN*G3N*E{identity}-{evse_number}",
+                    "t": now,
+                },
+            )
+            await connection.execute(
+                text(
+                    "INSERT INTO charging_connectors (connector_id, evse_id, "
+                    "ocpp_connector_id, standard, max_power_kw, max_voltage_v, "
+                    "max_current_a, created_at, updated_at) VALUES "
+                    "(:c, :e, 1, 'IEC_62196_T2_COMBO', 120, 1000, 250, :t, :t)"
+                ),
+                {"c": connector_id, "e": evse_id, "t": now},
+            )
+            await connection.execute(
+                text("INSERT INTO charging_connector_state (connector_id) VALUES (:c)"),
+                {"c": connector_id},
             )
 
 
@@ -592,19 +729,23 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             station = (
                 await connection.execute(
                     text(
-                        "SELECT station_id, ocpp_protocol_version, vendor, model, "
-                        "firmware_version, last_boot_at IS NOT NULL AS booted, "
-                        "last_seen_at IS NOT NULL AS seen, charger_status::text AS charger_status, "
-                        "charger_error_code FROM charging_stations WHERE ocpp_identity = 'E2E-16'"
+                        "SELECT s.station_id, st.ocpp_protocol_version, st.vendor, st.model, "
+                        "st.firmware_version, st.last_boot_at IS NOT NULL AS booted, "
+                        "st.last_seen_at IS NOT NULL AS seen, st.charger_status, "
+                        "st.charger_error_code, s.updated_at = s.created_at AS station_kept "
+                        "FROM charging_stations s "
+                        "JOIN charging_station_state st USING (station_id) "
+                        "WHERE s.ocpp_identity = 'E2E-16'"
                     )
                 )
             ).one()
             gun_statuses = (
                 await connection.execute(
                     text(
-                        "SELECT e.ocpp_evse_id, c.status::text, c.error_code, "
+                        "SELECT e.ocpp_evse_id, cs.status, cs.error_code, "
                         "c.updated_at = c.created_at AS updated_at_kept "
                         "FROM charging_connectors c JOIN charging_evses e USING (evse_id) "
+                        "JOIN charging_connector_state cs USING (connector_id) "
                         "WHERE e.station_id = :s ORDER BY e.ocpp_evse_id"
                     ),
                     {"s": station.station_id},
@@ -658,18 +799,36 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             captures = (
                 await connection.execute(
                     text(
-                        "SELECT count(DISTINCT capture_id) AS captures, count(*) AS keys, "
-                        "max(value) FILTER (WHERE config_key = 'SupportedFeatureProfiles') AS profiles "
-                        "FROM charging_station_configuration_entries WHERE station_id = :s"
+                        "SELECT count(DISTINCT cap.capture_id) AS captures, count(e.entry_id) AS keys, "
+                        "max(e.value) FILTER (WHERE e.variable_name = 'SupportedFeatureProfiles') AS profiles, "
+                        "max(cap.outcome) AS outcome, max(cap.reason) AS reason, "
+                        "max(cmd.command_type) AS command_type, max(cmd.outcome) AS command_outcome, "
+                        "max(cmd.ocpp_message_id) AS message_id, "
+                        "bool_and(e.mutability IN ('READ_ONLY', 'READ_WRITE')) AS mutability_ok "
+                        "FROM charging_station_configuration_captures cap "
+                        "JOIN charging_station_commands cmd USING (command_id) "
+                        "JOIN charging_station_configuration_entries e USING (capture_id) "
+                        "WHERE cmd.station_id = :s"
                     ),
                     {"s": station.station_id},
                 )
             ).one()
+            paired = (
+                await connection.execute(
+                    text(
+                        "SELECT count(*) FROM charging_ocpp_messages m "
+                        "WHERE m.station_id = :s AND m.action = 'GetConfiguration' "
+                        "AND m.ocpp_message_id = :m"
+                    ),
+                    {"s": station.station_id, "m": captures.message_id},
+                )
+            ).scalar_one()
             legacy = (
                 await connection.execute(
                     text(
-                        "SELECT s.ocpp_protocol_version, x.status::text, x.meter_end_wh, "
+                        "SELECT st.ocpp_protocol_version, x.status::text, x.meter_end_wh, "
                         "x.energy_delivered_wh FROM charging_stations s "
+                        "JOIN charging_station_state st ON st.station_id = s.station_id "
                         "JOIN charging_sessions x ON x.station_id = s.station_id "
                         "WHERE s.ocpp_identity = 'E2E-201'"
                     )
@@ -689,7 +848,9 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             "Available",
             "NoError",
         )
-        # Device-reported status never bumps updated_at (last admin edit).
+        # Device reports go to the state tables and never touch the profile rows
+        # (updated_at keeps meaning "last edit by a person", DM-16).
+        assert station.station_kept
         assert [tuple(row) for row in gun_statuses] == [
             (1, "Available", "NoError", True),
             (2, "Available", "NoError", True),
@@ -725,9 +886,16 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
         assert (
             outbound_calls == inbound_answers and len(outbound_calls) == 1
         )  # GetConfiguration
-        # One configuration capture with the charger's supported profiles.
+        # One configuration snapshot of one GET_CONFIGURATION command (CS-21):
+        # the system's own request after boot, answered, its frame in the raw log.
         assert (captures.captures, captures.keys) == (1, 16)
         assert captures.profiles == "Core,SmartCharging,RemoteTrigger"
+        assert (captures.outcome, captures.reason) == ("COMPLETE", "BOOT")
+        assert (captures.command_type, captures.command_outcome) == (
+            "GET_CONFIGURATION",
+            "ACCEPTED",
+        )
+        assert captures.mutability_ok and paired == 1
         # The 2.0.1 path is unaffected.
         assert tuple(legacy) == ("ocpp2.0.1", "completed", 1500, 500)
     finally:
@@ -1155,68 +1323,32 @@ async def _provision_located_station(
     identity: str,
     longitude: float,
     connector_statuses: list[str | None],
-    maintenance_status: str = "OPERATIONAL",
+    station_status: str = "ACTIVE",
+    is_public: bool = True,
 ) -> tuple[UUID, list[UUID]]:
-    """Insert a located station with one EVSE/connector per given gun status.
+    """Insert a located charger with one EVSE/connector per given gun status.
 
     Returns the station ID and the connector IDs, in EVSE-number order.
     """
-    now = datetime.now(timezone.utc)
-    station_id = uuid4()
-    connector_ids: list[UUID] = []
-    async with engine.begin() as connection:  # type: ignore[attr-defined]
-        await connection.execute(
-            text(
-                "INSERT INTO charging_stations (station_id, ocpp_identity, display_name, "
-                "location, maintenance_status, created_at, updated_at) VALUES "
-                "(:s, :i, :i, ST_GeogFromText(:p), "
-                "CAST(:m AS chargingstationmaintenancestatus), :t, :t)"
-            ),
-            {
-                "s": station_id,
-                "i": identity,
-                "p": f"SRID=4326;POINT({longitude} 10.0)",
-                "m": maintenance_status,
-                "t": now,
-            },
-        )
-        for evse_number, connector_status in enumerate(connector_statuses, start=1):
-            evse_id, connector_id = uuid4(), uuid4()
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_evses (evse_id, station_id, ocpp_evse_id, "
-                    "created_at, updated_at) VALUES (:e, :s, :n, :t, :t)"
-                ),
-                {"e": evse_id, "s": station_id, "n": evse_number, "t": now},
-            )
-            await connection.execute(
-                text(
-                    "INSERT INTO charging_connectors (connector_id, evse_id, "
-                    "ocpp_connector_id, status, status_updated_at, created_at, "
-                    "updated_at) VALUES (:c, :e, 1, "
-                    "CAST(:st AS chargingconnectorstatus), :t, :t, :t)"
-                ),
-                {
-                    "c": connector_id,
-                    "e": evse_id,
-                    "st": connector_status,
-                    "t": now,
-                },
-            )
-            connector_ids.append(connector_id)
-    return station_id, connector_ids
+    _, location_id = await _provision_location(
+        engine, longitude=longitude, is_public=is_public
+    )
+    return await _provision_station_at(
+        engine, location_id, identity, connector_statuses, status=station_status
+    )
 
 
 @pytest.mark.asyncio
 async def test_station_availability_counts_only_available_connectors_on_postgres(
     temporary_database: str,
 ) -> None:
-    """D3 on real PostGIS: OPERATIONAL + >=1 active Available connector, online not needed.
+    """D3 on real PostGIS: ACTIVE + >=1 active Available connector, online not needed.
 
     Query point at longitude 106.0020. From nearest to farthest:
     deleted-gun (0.0002 away, its only Available gun is soft-deleted), maintenance
-    (0.0005, Available but UNDER_MAINTENANCE), busy (0.0010, Charging only) and
-    free (0.0020, one Charging and one Available gun). Only "free" is available.
+    (0.0005, Available but the charger is INACTIVE), busy (0.0010, Charging only)
+    and free (0.0020, one Charging and one Available gun). Only "free" is
+    available. A private location (nearer than all of them) is never found.
     """
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     session_factory = async_sessionmaker(
@@ -1240,13 +1372,20 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
             identity="AV-MAINT",
             longitude=106.0015,
             connector_statuses=["Available"],
-            maintenance_status="UNDER_MAINTENANCE",
+            station_status="INACTIVE",
         )
         deleted_gun_id, deleted_connectors = await _provision_located_station(
             engine,
             identity="AV-DELETED",
             longitude=106.0018,
             connector_statuses=["Available", None],
+        )
+        await _provision_located_station(
+            engine,
+            identity="AV-PRIVATE",
+            longitude=106.0019,
+            connector_statuses=["Available"],
+            is_public=False,
         )
         async with engine.begin() as connection:
             await connection.execute(
@@ -1466,10 +1605,12 @@ async def test_ocpp201_boot_notification_stores_device_info_and_liveness(
             station = (
                 await connection.execute(
                     text(
-                        "SELECT ocpp_protocol_version, vendor, model, firmware_version, "
-                        "last_boot_at IS NOT NULL AS booted, "
-                        "last_seen_at IS NOT NULL AS seen "
-                        "FROM charging_stations WHERE ocpp_identity = 'BOOT-201'"
+                        "SELECT st.ocpp_protocol_version, st.vendor, st.model, "
+                        "st.firmware_version, st.last_boot_at IS NOT NULL AS booted, "
+                        "st.last_seen_at IS NOT NULL AS seen "
+                        "FROM charging_stations s "
+                        "JOIN charging_station_state st USING (station_id) "
+                        "WHERE s.ocpp_identity = 'BOOT-201'"
                     )
                 )
             ).one()
@@ -2699,4 +2840,378 @@ async def test_fleet_operating_report_totals_sum_members_on_postgres(
         assert report.totals.energy_cost_vnd == pytest.approx(240_000.0)
         assert report.totals.cost_per_km_vnd == pytest.approx(800.0)
     finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_location_station_topology_history_and_cascade_on_postgres(
+    temporary_database: str,
+) -> None:
+    """Locations, chargers, EVSEs and guns through the service on real PostgreSQL.
+
+    A private location is invisible to the nearby search until it is made public
+    (CS-10); every tracked update writes a history row with its reason (DM-21);
+    access grants refuse the owner and duplicates and can be granted again after
+    a revoke (CS-13); a soft delete cascades down to the guns, sets the closing
+    status (DM-25) and closes the grants; a command to the deleted charger is
+    refused.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory.begin() as db:
+            owner = build_organization_record()
+            partner = build_organization_record()
+            actor = UserModel(
+                phone_number="+84900000077",
+                full_name="Admin",
+                status=UserStatus.ACTIVE.value,
+            )
+            db.add_all([owner, partner, actor])
+            await db.flush()
+            owner_id, partner_id, actor_id = (
+                owner.organization_id,
+                partner.organization_id,
+                actor.user_id,
+            )
+
+        async with session_factory.begin() as db:
+            location = await charging_stations_service.create_charging_location(
+                db,
+                ChargingLocationCreateRequest(
+                    organization_id=owner_id,
+                    display_name="Binh Duong",
+                    address="Km 1",
+                    latitude=10.0,
+                    longitude=106.0,
+                    is_public=False,
+                ),
+            )
+            station = await charging_stations_service.create_charging_station(
+                db,
+                ChargingStationCreateRequest(
+                    location_id=location.location_id,
+                    ocpp_identity="IT-CRUD-1",
+                    registered_serial_number="SN-CRUD-1",
+                    physical_reference="Tru 1",
+                    max_power_kw=240,
+                ),
+            )
+            evse = await charging_stations_service.create_charging_evse(
+                db,
+                station.station_id,
+                ChargingEvseCreateRequest(
+                    ocpp_evse_id=1, emi3_evse_id="VN*G3N*E-CRUD-1"
+                ),
+            )
+            connector = await charging_stations_service.create_charging_connector(
+                db,
+                evse.evse_id,
+                ChargingConnectorCreateRequest(
+                    ocpp_connector_id=1,
+                    standard=ConnectorStandard.IEC_62196_T2_COMBO,
+                    max_power_kw=120,
+                    max_voltage_v=1000,
+                    max_current_a=250,
+                ),
+            )
+        assert station.organization_id == owner_id
+        assert station.is_online is False and station.charger_status is None
+        assert connector.status is None and connector.standard.value.startswith("IEC")
+
+        async with session_factory() as db:
+            hidden = await charging_stations_service.list_nearby_charging_stations(
+                db, latitude=10.0, longitude=106.0, radius_km=5
+            )
+        assert hidden.total == 0
+
+        async with session_factory.begin() as db:
+            await charging_stations_service.update_charging_location(
+                db,
+                location.location_id,
+                ChargingLocationUpdateRequest.model_validate({"is_public": True}),
+            )
+            await charging_stations_service.update_charging_station(
+                db,
+                station.station_id,
+                ChargingStationUpdateRequest.model_validate(
+                    {"status": "INACTIVE", "status_reason": "Power module broken"}
+                ),
+            )
+        async with session_factory() as db:
+            shown = await charging_stations_service.list_nearby_charging_stations(
+                db,
+                latitude=10.0,
+                longitude=106.0,
+                radius_km=5,
+                connector_standard="CCS2",
+                is_operational_only=False,
+            )
+            operational_only = (
+                await charging_stations_service.list_nearby_charging_stations(
+                    db, latitude=10.0, longitude=106.0, radius_km=5
+                )
+            )
+        # An INACTIVE charger is found only when operational filtering is off.
+        assert (shown.total, operational_only.total) == (1, 0)
+
+        async with engine.connect() as connection:
+            location_history = (
+                await connection.execute(
+                    text(
+                        "SELECT is_public, change_reason FROM charging_location_history "
+                        "WHERE location_id = :l"
+                    ),
+                    {"l": location.location_id},
+                )
+            ).all()
+            station_history = (
+                await connection.execute(
+                    text(
+                        "SELECT status, change_reason FROM charging_station_history "
+                        "WHERE station_id = :s"
+                    ),
+                    {"s": station.station_id},
+                )
+            ).all()
+        assert [tuple(row) for row in location_history] == [
+            (False, "Charging location edited")
+        ]
+        assert [tuple(row) for row in station_history] == [
+            ("ACTIVE", "Power module broken")
+        ]
+
+        async with session_factory.begin() as db:
+            with pytest.raises(ChargingLocationAccessConflictError):
+                await charging_stations_service.grant_charging_location_access(
+                    db,
+                    location.location_id,
+                    ChargingLocationAccessCreateRequest(
+                        allowed_organization_id=owner_id, granted_by=actor_id
+                    ),
+                )
+            grant = await charging_stations_service.grant_charging_location_access(
+                db,
+                location.location_id,
+                ChargingLocationAccessCreateRequest(
+                    allowed_organization_id=partner_id, granted_by=actor_id
+                ),
+            )
+            with pytest.raises(ChargingLocationAccessConflictError):
+                await charging_stations_service.grant_charging_location_access(
+                    db,
+                    location.location_id,
+                    ChargingLocationAccessCreateRequest(
+                        allowed_organization_id=partner_id, granted_by=actor_id
+                    ),
+                )
+            await charging_stations_service.revoke_charging_location_access(
+                db,
+                location.location_id,
+                grant.access_id,
+                ChargingLocationAccessRevokeRequest(
+                    revoked_by=actor_id, revoke_reason="Contract ended"
+                ),
+            )
+            regrant = await charging_stations_service.grant_charging_location_access(
+                db,
+                location.location_id,
+                ChargingLocationAccessCreateRequest(
+                    allowed_organization_id=partner_id, granted_by=actor_id
+                ),
+            )
+        assert regrant.access_id != grant.access_id
+
+        async with session_factory.begin() as db:
+            queued = await charging_stations_service.queue_station_command(
+                db,
+                station_id=station.station_id,
+                command_type=StationCommandType.RESET,
+                requested_by=actor_id,
+                reason="Hung charger",
+            )
+            with pytest.raises(ChargingStationCommandInputError):
+                await charging_stations_service.queue_station_command(
+                    db,
+                    station_id=station.station_id,
+                    command_type=StationCommandType.CHANGE_CONFIGURATION,
+                )
+        assert queued.outcome is StationCommandOutcome.PENDING
+
+        async with session_factory.begin() as db:
+            await charging_stations_service.soft_delete_charging_location(
+                db, location.location_id, status_reason="Site closed"
+            )
+        async with engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        "SELECT s.status, s.deleted_at IS NOT NULL, "
+                        "(SELECT bool_and(c.deleted_at IS NOT NULL) "
+                        " FROM charging_connectors c WHERE c.connector_id = :c), "
+                        "(SELECT count(*) FROM charging_location_access a "
+                        " WHERE a.location_id = :l AND a.revoked_at IS NULL) "
+                        "FROM charging_stations s WHERE s.station_id = :s"
+                    ),
+                    {
+                        "s": station.station_id,
+                        "c": connector.connector_id,
+                        "l": location.location_id,
+                    },
+                )
+            ).one()
+        assert tuple(rows) == ("INACTIVE", True, True, 0)
+        async with session_factory.begin() as db:
+            with pytest.raises(ChargingStationNotFoundError):
+                await charging_stations_service.queue_station_command(
+                    db,
+                    station_id=station.station_id,
+                    command_type=StationCommandType.RESET,
+                )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_gateway_command_loop_sends_queued_commands_and_writes_answers(
+    temporary_database: str,
+) -> None:
+    """A queued command reaches a connected charger and its answer comes back (PR-16).
+
+    Real gateway process, a raw WebSocket "charger" speaking OCPP 1.6J: after the
+    boot the gateway asks for the configuration itself (answered); a RESET queued
+    through the service is then sent with the message ID stored on the row and
+    the charger's verdict is written back, a refused CHANGE_CONFIGURATION ends
+    REJECTED, and a command for a charger that never connects ends NOT_SENT.
+    """
+    port = _free_port()
+    environment = os.environ | {
+        "DATABASE_URL": temporary_database,
+        "CHARGING_OCPP_HOST": "127.0.0.1",
+        "CHARGING_OCPP_PORT": str(port),
+        "CHARGING_OCPP_COMMAND_POLL_SECONDS": "0.2",
+        "CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS": "2",
+    }
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    await _provision_station(engine, "CMD-16", [1])
+    await _provision_station(engine, "CMD-OFFLINE", [1])
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
+        cwd=_backend_root(),
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    async def station_id_of(identity: str) -> UUID:
+        async with engine.connect() as connection:
+            return UUID(
+                str(
+                    (
+                        await connection.execute(
+                            text(
+                                "SELECT station_id FROM charging_stations "
+                                "WHERE ocpp_identity = :i"
+                            ),
+                            {"i": identity},
+                        )
+                    ).scalar_one()
+                )
+            )
+
+    async def wait_for_outcome(command_id: UUID) -> tuple[str, str | None, str | None]:
+        for _ in range(100):
+            async with engine.connect() as connection:
+                row = (
+                    await connection.execute(
+                        text(
+                            "SELECT outcome, response_status, ocpp_message_id "
+                            "FROM charging_station_commands WHERE command_id = :c"
+                        ),
+                        {"c": command_id},
+                    )
+                ).one()
+            if row.outcome != "PENDING":
+                return (row.outcome, row.response_status, row.ocpp_message_id)
+            await asyncio.sleep(0.2)
+        raise AssertionError("the command was never answered")
+
+    try:
+        _wait_for_port(port)
+        station_id = await station_id_of("CMD-16")
+        offline_id = await station_id_of("CMD-OFFLINE")
+        async with websockets.connect(
+            f"ws://127.0.0.1:{port}/ocpp/CMD-16",
+            subprotocols=["ocpp1.6"],  # type: ignore[list-item]
+        ) as charger:
+            await charger.send(
+                json.dumps(
+                    [
+                        2,
+                        "boot-1",
+                        "BootNotification",
+                        {"chargePointVendor": "V", "chargePointModel": "M"},
+                    ]
+                )
+            )
+            boot_answer = json.loads(await asyncio.wait_for(charger.recv(), 10))
+            assert (boot_answer[0], boot_answer[1]) == (3, "boot-1")
+            get_configuration = json.loads(await asyncio.wait_for(charger.recv(), 10))
+            assert get_configuration[2] == "GetConfiguration"
+            await charger.send(
+                json.dumps([3, get_configuration[1], {"configurationKey": []}])
+            )
+
+            async with session_factory.begin() as db:
+                reset = await charging_stations_service.queue_station_command(
+                    db,
+                    station_id=station_id,
+                    command_type=StationCommandType.RESET,
+                    parameters={"reset_type": "Hard"},
+                )
+            reset_call = json.loads(await asyncio.wait_for(charger.recv(), 10))
+            assert (reset_call[0], reset_call[2]) == (2, "Reset")
+            assert reset_call[3] == {"type": "Hard"}
+            await charger.send(json.dumps([3, reset_call[1], {"status": "Accepted"}]))
+            outcome, response_status, message_id = await wait_for_outcome(
+                reset.command_id
+            )
+            assert (outcome, response_status) == ("ACCEPTED", "Accepted")
+            assert message_id == reset_call[1]
+
+            async with session_factory.begin() as db:
+                change = await charging_stations_service.queue_station_command(
+                    db,
+                    station_id=station_id,
+                    command_type=StationCommandType.CHANGE_CONFIGURATION,
+                    parameters={"key": "HeartbeatInterval", "value": "5"},
+                )
+            change_call = json.loads(await asyncio.wait_for(charger.recv(), 10))
+            assert change_call[2] == "ChangeConfiguration"
+            assert change_call[3] == {"key": "HeartbeatInterval", "value": "5"}
+            await charger.send(json.dumps([3, change_call[1], {"status": "Rejected"}]))
+            assert (await wait_for_outcome(change.command_id))[:2] == (
+                "REJECTED",
+                "Rejected",
+            )
+
+        async with session_factory.begin() as db:
+            unsent = await charging_stations_service.queue_station_command(
+                db,
+                station_id=offline_id,
+                command_type=StationCommandType.RESET,
+            )
+        outcome, response_status, message_id = await wait_for_outcome(unsent.command_id)
+        assert (outcome, response_status, message_id) == ("NOT_SENT", None, None)
+    finally:
+        gateway.terminate()
+        try:
+            gateway.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            gateway.kill()
         await engine.dispose()

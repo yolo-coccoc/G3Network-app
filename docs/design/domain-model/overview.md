@@ -21,7 +21,7 @@ the backend models and that these views are up to date.
 
 ## At a glance
 
-**85 tables in 16 domains:** 61 main, 21 history (N.h, generated), 3 state · 50 built, 34 planned, 1 proposed.
+**85 tables in 16 domains:** 61 main, 21 history (N.h, generated), 3 state · 60 built, 24 planned, 1 proposed.
 
 ## Domain map
 
@@ -35,7 +35,7 @@ flowchart LR
   telemetry["Telemetry<br/>1 built"]:::built
   drivers["Drivers<br/>5 built"]:::built
   fleet["Fleet<br/>5 built"]:::built
-  charging_stations["Charging stations<br/>5 built · 10 planned"]:::partial
+  charging_stations["Charging stations<br/>15 built"]:::built
   charging_sessions["Charging sessions<br/>3 built"]:::built
   notifications["Notifications<br/>1 built · 3 planned"]:::partial
   support["Support<br/>1 built · 2 planned"]:::partial
@@ -55,8 +55,8 @@ flowchart LR
   drivers --> vehicles
   fleet --> vehicles
   fleet --> identity
-  charging_stations -.-> identity
-  charging_stations -.-> charging_sessions
+  charging_stations --> identity
+  charging_stations --> charging_sessions
   charging_sessions --> charging_stations
   charging_sessions -.-> identity
   charging_sessions -.-> vehicles
@@ -98,7 +98,7 @@ Not drawn, to keep the map readable: 13 domains also point to **identity** throu
 | [Telemetry](domains/telemetry.md) | built | 1 | 0 | 0 | 20 telemetry |
 | [Drivers](domains/drivers.md) | built | 5 | 0 | 0 | 21 drivers, 21.h driver_history, 22 driving_sessions, 23 trips, 23.h trip_history |
 | [Fleet](domains/fleet.md) | built | 5 | 0 | 0 | 24 fleets, 24.h fleet_history, 25 fleet_vehicle_memberships, 26 geofences, 27 fleet_user_assignments |
-| [Charging stations](domains/charging_stations.md) | partial | 5 | 10 | 0 | 28 charging_locations, 28.h charging_location_history, 29 charging_location_access, 30 charging_stations, 30.h charging_station_history, 31 charging_station_state, 32 charging_evses, 32.h charging_evse_history, 33 charging_connectors, 33.h charging_connector_history, 34 charging_connector_state, 35 charging_ocpp_messages, 36 charging_station_configuration_captures, 37 charging_station_configuration_entries, 38 charging_station_commands |
+| [Charging stations](domains/charging_stations.md) | built | 15 | 0 | 0 | 28 charging_locations, 28.h charging_location_history, 29 charging_location_access, 30 charging_stations, 30.h charging_station_history, 31 charging_station_state, 32 charging_evses, 32.h charging_evse_history, 33 charging_connectors, 33.h charging_connector_history, 34 charging_connector_state, 35 charging_ocpp_messages, 36 charging_station_configuration_captures, 37 charging_station_configuration_entries, 38 charging_station_commands |
 | [Charging sessions](domains/charging_sessions.md) | built | 3 | 0 | 0 | 39 charging_sessions, 40 ~~charging_session_events~~, 41 charging_session_measurements |
 | [Notifications](domains/notifications.md) | partial | 1 | 3 | 0 | 42 notifications, 43 notification_recipients, 44 organization_notification_settings, 44.h organization_notification_setting_history |
 | [Support](domains/support.md) | partial | 1 | 2 | 0 | 45 support_cases, 46 repair_partners, 47 maintenance_bookings |

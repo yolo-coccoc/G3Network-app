@@ -11,15 +11,19 @@ planner (``docs/planners/backend-ocpp16-charger-integration.md``). Currently
 handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
 ``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``.
 After every accepted ``BootNotification`` the adapter itself asks the charger for
-its configuration (``GetConfiguration``, the only request this backend sends)
-and stores the answer. Every other action a 1.6J
+its configuration (``GetConfiguration``, CO-05) and stores the answer as a
+snapshot of its own ``GET_CONFIGURATION`` command. The other requests this
+backend sends are the commands of the command loop (``send_command``: remote
+start/stop, unlock, reset, availability, configuration change, trigger
+message; CS-20). Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
 """
 
 import asyncio
 import logging
-from uuid import UUID
+from typing import Final
+from uuid import UUID, uuid4
 
 from ocpp.exceptions import OCPPError
 from ocpp.routing import after, on
@@ -32,6 +36,11 @@ import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions.types import (
     STOP_REASON_MAX_LENGTH,
     SessionEventType,
+)
+from app.domains.charging_stations.ocpp.command_types import (
+    CommandResult,
+    OutboundCommand,
+    to_command_result,
 )
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     V16Extraction,
@@ -46,12 +55,18 @@ from app.domains.charging_stations.ocpp.parsing import (
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
+    ConfigurationCaptureReason,
     ConfigurationEntry,
+    StationCommandOutcome,
+    StationCommandType,
 )
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Subprotocol label this adapter serves; stored with each configuration snapshot.
+OCPP16_PROTOCOL_VERSION: Final[str] = "ocpp1.6"
 
 
 class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
@@ -71,6 +86,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         The class receives OCPP actions after the handshake and does not
         create the WebSocket connection itself.
     """
+
+    protocol_version = OCPP16_PROTOCOL_VERSION
 
     def __init__(
         self,
@@ -581,25 +598,39 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
     async def _capture_configuration(self) -> None:
         """Ask the charger for its full configuration and store the answer.
 
-        Sends ``GetConfiguration`` with **no key**, which makes the charger
-        return every key it supports (including ``SupportedFeatureProfiles``,
-        its own answer to which OCPP profiles it implements). The call uses
+        The system's own ``GET_CONFIGURATION`` command (reason ``BOOT``,
+        CS-21) is written first, holding the message ID of the frame, so even
+        a request the charger never answers leaves a record. Sends
+        ``GetConfiguration`` with **no key**, which makes the charger return
+        every key it supports (including ``SupportedFeatureProfiles``, its own
+        answer to which OCPP profiles it implements). The call uses
         ``suppress=False`` so a ``CALLERROR`` is raised instead of being
         mistaken for an empty answer.
 
         This is a task boundary: nothing awaits the task, so a failure is logged
         here (``logger.exception``) and never affects the connection. A charger
         that refuses or does not answer within
-        ``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS`` is logged as a warning and
-        nothing is stored. ``CancelledError`` is never swallowed.
+        ``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS`` is logged as a warning, and
+        the command and its snapshot are closed as failed. ``CancelledError``
+        is never swallowed.
 
         Side Effects:
-            Sends one request; on success inserts one capture in its own atomic
-            transaction.
+            Sends one request; writes the command and snapshot in their own
+            short transactions.
         """
         try:
+            ocpp_message_id = str(uuid4())
+            async with self.session_factory.begin() as db:
+                command_id = await ocpp_state_service.start_boot_configuration_command(
+                    db,
+                    ocpp_identity=self.id,
+                    ocpp_protocol_version=self.protocol_version,
+                    ocpp_message_id=ocpp_message_id,
+                )
             try:
-                response = await self.call(call.GetConfiguration(), suppress=False)
+                response = await self.call(
+                    call.GetConfiguration(), suppress=False, unique_id=ocpp_message_id
+                )
             except (OCPPError, TimeoutError) as error:
                 logger.warning(
                     "Charger did not answer GetConfiguration",
@@ -608,27 +639,156 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                         "error_type": type(error).__name__,
                     },
                 )
+                async with self.session_factory.begin() as db:
+                    await ocpp_state_service.fail_command(
+                        db,
+                        command_id=command_id,
+                        outcome=(
+                            StationCommandOutcome.TIMEOUT
+                            if isinstance(error, TimeoutError)
+                            else StationCommandOutcome.ERROR
+                        ),
+                        response_status=(
+                            None
+                            if isinstance(error, TimeoutError)
+                            else type(error).__name__
+                        ),
+                        answered_at=utc_now(),
+                    )
                 return
-            entries = _to_configuration_entries(response.configuration_key)
-            if response.unknown_key:
-                logger.info(
-                    "Charger reported unknown configuration keys",
-                    extra={
-                        "ocpp_identity": self.id,
-                        "unknown_keys": response.unknown_key,
-                    },
-                )
-            async with self.session_factory.begin() as db:
-                await ocpp_state_service.record_configuration_snapshot(
-                    db,
-                    ocpp_identity=self.id,
-                    entries=entries,
-                    captured_at=utc_now(),
-                )
+            await self._store_configuration_answer(command_id, response)
         except Exception:
             logger.exception(
                 "Configuration capture failed", extra={"ocpp_identity": self.id}
             )
+
+    async def _store_configuration_answer(
+        self, command_id: UUID, response: call_result.GetConfiguration
+    ) -> None:
+        """Store a ``GetConfiguration`` answer into the command's snapshot.
+
+        Args:
+            command_id: The ``GET_CONFIGURATION`` command that was answered.
+            response: The parsed answer.
+
+        Side Effects:
+            Inserts the entries and closes command and snapshot in one atomic
+            transaction.
+        """
+        entries = _to_configuration_entries(response.configuration_key)
+        if response.unknown_key:
+            logger.info(
+                "Charger reported unknown configuration keys",
+                extra={
+                    "ocpp_identity": self.id,
+                    "unknown_keys": response.unknown_key,
+                },
+            )
+        async with self.session_factory.begin() as db:
+            await ocpp_state_service.complete_configuration_capture(
+                db,
+                command_id=command_id,
+                entries=entries,
+                captured_at=utc_now(),
+            )
+
+    async def send_command(self, command: OutboundCommand) -> CommandResult:
+        """Send one command of the command loop as an OCPP 1.6J call (CS-20).
+
+        The frame carries the command's message ID so it pairs with the row in
+        the raw log. Gun ``n`` is EVSE ``n`` (CS-03), so the EVSE number is the
+        1.6J ``connectorId``; a command with no EVSE addresses the whole
+        charger (connector ``0``).
+
+        Args:
+            command: The claimed command.
+
+        Returns:
+            The charger's verdict; a ``GET_CONFIGURATION`` command is written
+            back with its snapshot (``handled=True``).
+
+        Raises:
+            TimeoutError: If the charger does not answer in time.
+            OCPPError: If the charger answers with a ``CALLERROR``.
+            ValueError: If the command lacks something its type needs (the
+                service validated the parameters, so this is a data error).
+        """
+        gun = command.ocpp_evse_id if command.ocpp_evse_id is not None else 0
+        parameters = command.parameters
+        command_type = command.command_type
+        payload: object
+        if command_type is StationCommandType.REMOTE_START:
+            if command.id_token is None:
+                raise ValueError("REMOTE_START has no token to send")
+            payload = call.RemoteStartTransaction(
+                id_tag=command.id_token,
+                connector_id=command.ocpp_evse_id,
+            )
+        elif command_type is StationCommandType.REMOTE_STOP:
+            if command.ocpp_transaction_id is None:
+                raise ValueError("REMOTE_STOP has no transaction to stop")
+            payload = call.RemoteStopTransaction(
+                transaction_id=int(command.ocpp_transaction_id)
+            )
+        elif command_type is StationCommandType.UNLOCK_CONNECTOR:
+            payload = call.UnlockConnector(connector_id=gun)
+        elif command_type is StationCommandType.RESET:
+            payload = call.Reset(type=str(parameters.get("reset_type", "Soft")))
+        elif command_type is StationCommandType.CHANGE_AVAILABILITY:
+            payload = call.ChangeAvailability(
+                connector_id=gun,
+                type=str(parameters.get("availability", "Inoperative")),
+            )
+        elif command_type is StationCommandType.CHANGE_CONFIGURATION:
+            payload = call.ChangeConfiguration(
+                key=str(parameters["key"]), value=str(parameters["value"])
+            )
+        elif command_type is StationCommandType.TRIGGER_MESSAGE:
+            payload = call.TriggerMessage(
+                requested_message=str(parameters["requested_message"]),
+                connector_id=command.ocpp_evse_id,
+            )
+        else:
+            return await self._send_get_configuration(command)
+        response = await self.call(
+            payload, suppress=False, unique_id=command.ocpp_message_id
+        )
+        return to_command_result(getattr(response, "status", None))
+
+    async def _send_get_configuration(self, command: OutboundCommand) -> CommandResult:
+        """Run a ``GET_CONFIGURATION`` command: ask, then store the snapshot.
+
+        Args:
+            command: The claimed command.
+
+        Returns:
+            An accepted result already written back (``handled=True``).
+
+        Raises:
+            TimeoutError: If the charger does not answer in time.
+            OCPPError: If the charger answers with a ``CALLERROR``.
+        """
+        async with self.session_factory.begin() as db:
+            await ocpp_state_service.open_configuration_capture(
+                db,
+                command_id=command.command_id,
+                reason=ConfigurationCaptureReason(
+                    str(command.parameters.get("capture_reason", "ON_DEMAND"))
+                ),
+                ocpp_protocol_version=self.protocol_version,
+            )
+        key = command.parameters.get("keys")
+        response = await self.call(
+            call.GetConfiguration(key=list(key) if isinstance(key, list) else None),
+            suppress=False,
+            unique_id=command.ocpp_message_id,
+        )
+        await self._store_configuration_answer(command.command_id, response)
+        return CommandResult(
+            outcome=StationCommandOutcome.ACCEPTED,
+            response_status="Accepted",
+            handled=True,
+        )
 
     async def cancel_background_tasks(self) -> None:
         """Cancel the post-boot capture if it is still running.

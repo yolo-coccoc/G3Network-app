@@ -29,23 +29,37 @@ from app.domains.charging_stations.exceptions import (
 )
 from app.domains.charging_stations.models import (
     ChargingConnectorModel,
+    ChargingConnectorStateModel,
+    ChargingLocationModel,
     ChargingStationModel,
+    ChargingStationStateModel,
 )
 from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
-    ChargingStationMaintenanceStatus,
+    ChargingResourceStatus,
 )
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
-from tests.builders import build_charging_station_record, fake_db_session
+from tests.builders import (
+    build_charging_location_record,
+    build_charging_station_record,
+    build_charging_station_state_record,
+    fake_db_session,
+)
 
 
 def test_to_nearby_charging_station_response_decodes_location_and_distance() -> None:
     """to_nearby_charging_station_response() decodes lat/lon and carries distance_km (F-D1)."""
     station = build_charging_station_record()
+    location = build_charging_location_record()
 
     response = charging_stations_service.to_nearby_charging_station_response(
-        station, connector_count=4, available_connector_count=1, distance_km=2.5
+        station,
+        location,
+        None,
+        connector_count=4,
+        available_connector_count=1,
+        distance_km=2.5,
     )
 
     assert response.latitude == pytest.approx(10.762622)
@@ -53,7 +67,8 @@ def test_to_nearby_charging_station_response_decodes_location_and_distance() -> 
     assert response.connector_count == 4
     assert response.available_connector_count == 1
     assert response.distance_km == pytest.approx(2.5)
-    assert response.power_rating_kw == pytest.approx(120.0)
+    assert response.max_power_kw == pytest.approx(120.0)
+    assert response.display_name == location.display_name
     # The builder's station never connected.
     assert response.is_online is False
 
@@ -62,12 +77,16 @@ def test_nearby_response_is_online_follows_last_seen_at() -> None:
     """is_online on a nearby result is derived exactly like the station detail's."""
     now = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
     station = build_charging_station_record()
-    station.last_seen_at = now - timedelta(
-        seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS - 1
+    location = build_charging_location_record()
+    state = build_charging_station_state_record(
+        last_seen_at=now
+        - timedelta(seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS - 1)
     )
 
     online = charging_stations_service.to_nearby_charging_station_response(
         station,
+        location,
+        state,
         connector_count=2,
         available_connector_count=2,
         distance_km=1.0,
@@ -75,6 +94,8 @@ def test_nearby_response_is_online_follows_last_seen_at() -> None:
     )
     offline = charging_stations_service.to_nearby_charging_station_response(
         station,
+        location,
+        state,
         connector_count=2,
         available_connector_count=2,
         distance_km=1.0,
@@ -90,13 +111,19 @@ async def test_list_nearby_charging_stations_clamps_radius_and_paginates(
 ) -> None:
     """The nearby-search service clamps radius/page/page_size before querying."""
     station = build_charging_station_record()
+    location = build_charging_location_record()
     captured: dict[str, object] = {}
 
     async def list_nearby(
         db: AsyncSession, **kwargs: object
-    ) -> list[tuple[ChargingStationModel, float]]:
+    ) -> list[tuple[ChargingStationModel, ChargingLocationModel, float]]:
         captured.update(kwargs)
-        return [(station, 1500.0)]
+        return [(station, location, 1500.0)]
+
+    async def station_state(
+        db: AsyncSession, station_id: UUID
+    ) -> ChargingStationStateModel | None:
+        return None
 
     async def count_nearby(db: AsyncSession, **kwargs: object) -> int:
         return 1
@@ -109,6 +136,9 @@ async def test_list_nearby_charging_stations_clamps_radius_and_paginates(
 
     monkeypatch.setattr(
         charging_stations_repository, "list_nearby_stations", list_nearby
+    )
+    monkeypatch.setattr(
+        charging_stations_repository, "get_station_state", station_state
     )
     monkeypatch.setattr(
         charging_stations_repository, "count_nearby_stations", count_nearby
@@ -159,11 +189,11 @@ def test_available_only_nearby_filter_requires_operational_and_a_free_connector(
     None
 ):
     """is_available_only adds OPERATIONAL plus an EXISTS on an Available connector (D3)."""
-    location = coordinates_to_location(10.0, 106.0)
-    assert location is not None
+    point = coordinates_to_location(10.0, 106.0)
+    assert point is not None
 
     plain = charging_stations_repository._nearby_station_conditions(
-        location,
+        point,
         radius_meters=1000.0,
         connector_standard=None,
         min_power_kw=None,
@@ -171,7 +201,7 @@ def test_available_only_nearby_filter_requires_operational_and_a_free_connector(
         is_available_only=False,
     )
     available = charging_stations_repository._nearby_station_conditions(
-        location,
+        point,
         radius_meters=1000.0,
         connector_standard=None,
         min_power_kw=None,
@@ -181,12 +211,17 @@ def test_available_only_nearby_filter_requires_operational_and_a_free_connector(
 
     plain_sql = _compile(select(ChargingStationModel).where(*plain))
     available_sql = _compile(select(ChargingStationModel).where(*available))
-    assert "EXISTS" not in plain_sql and "OPERATIONAL" not in plain_sql
-    assert "maintenance_status = 'OPERATIONAL'" in available_sql
+    assert "EXISTS" not in plain_sql
+    assert "charging_stations.status = 'ACTIVE'" not in plain_sql
+    # A driver only sees public, open locations (CS-10).
+    assert "charging_locations.is_public IS true" in plain_sql
+    assert "charging_locations.status = 'ACTIVE'" in plain_sql
+    assert "charging_stations.status = 'ACTIVE'" in available_sql
     assert "EXISTS" in available_sql
-    assert "charging_connectors.status = 'Available'" in available_sql
+    assert "charging_connector_state.status = 'Available'" in available_sql
     assert "charging_connectors.deleted_at IS NULL" in available_sql
     assert "charging_evses.deleted_at IS NULL" in available_sql
+    assert "charging_evses.status = 'ACTIVE'" in available_sql
     # The subquery is correlated to the outer station row.
     assert "charging_evses.station_id = charging_stations.station_id" in available_sql
 
@@ -225,10 +260,10 @@ async def test_nearest_station_lookup_requires_an_available_connector() -> None:
     sql = str(compiled)
     assert reference is None
     assert "EXISTS" in sql
-    assert "charging_connectors.status = " in sql
+    assert "charging_connector_state.status = " in sql
     assert "charging_evses.station_id = charging_stations.station_id" in sql
-    assert ChargingConnectorStatus.AVAILABLE in compiled.params.values()
-    assert ChargingStationMaintenanceStatus.OPERATIONAL in compiled.params.values()
+    assert ChargingConnectorStatus.AVAILABLE.value in compiled.params.values()
+    assert ChargingResourceStatus.ACTIVE.value in compiled.params.values()
 
 
 @pytest.mark.asyncio
@@ -237,9 +272,20 @@ async def test_station_response_carries_both_connector_counts(
 ) -> None:
     """The station detail reports all connectors and the Available ones (F-D1)."""
     station = build_charging_station_record()
+    location = build_charging_location_record()
 
     async def get_station(db: AsyncSession, station_id: UUID) -> ChargingStationModel:
         return station
+
+    async def get_location(
+        db: AsyncSession, location_id: UUID, **kwargs: object
+    ) -> ChargingLocationModel:
+        return location
+
+    async def station_state(
+        db: AsyncSession, station_id: UUID
+    ) -> ChargingStationStateModel | None:
+        return None
 
     async def connector_count(db: AsyncSession, station_id: UUID) -> int:
         return 3
@@ -248,6 +294,12 @@ async def test_station_response_carries_both_connector_counts(
         return 2
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", get_station)
+    monkeypatch.setattr(
+        charging_stations_repository, "get_location_by_id", get_location
+    )
+    monkeypatch.setattr(
+        charging_stations_repository, "get_station_state", station_state
+    )
     monkeypatch.setattr(
         charging_stations_repository, "count_connectors_by_station_id", connector_count
     )
@@ -278,7 +330,7 @@ async def test_available_connector_count_query_counts_only_available_active_rows
 
     sql = _compile(recorder.statements[0])
     assert count == 4
-    assert "charging_connectors.status = 'Available'" in sql
+    assert "charging_connector_state.status = 'Available'" in sql
     assert "charging_connectors.deleted_at IS NULL" in sql
     assert "charging_evses.deleted_at IS NULL" in sql
 
@@ -307,24 +359,27 @@ async def test_station_status_lists_the_charger_and_every_gun(
     """F-C2: connector 0 status on the station plus each gun with its EVSE number."""
     now = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
     station = build_charging_station_record()
-    station.charger_status = ChargingConnectorStatus.AVAILABLE
-    station.charger_status_updated_at = now
-    station.charger_error_code = "NoError"
+    state = build_charging_station_state_record(station_id=station.station_id)
+    state.charger_status = ChargingConnectorStatus.AVAILABLE.value
+    state.charger_status_updated_at = now
+    state.charger_error_code = "NoError"
     gun_one = ChargingConnectorModel(
-        connector_id=uuid4(),
-        evse_id=uuid4(),
-        ocpp_connector_id=1,
-        status=ChargingConnectorStatus.CHARGING,
+        connector_id=uuid4(), evse_id=uuid4(), ocpp_connector_id=1
+    )
+    gun_one_state = ChargingConnectorStateModel(
+        connector_id=gun_one.connector_id,
+        status=ChargingConnectorStatus.CHARGING.value,
         status_updated_at=now,
         error_code="NoError",
         vendor_error_code=None,
         status_info=None,
     )
     gun_two = ChargingConnectorModel(
-        connector_id=uuid4(),
-        evse_id=uuid4(),
-        ocpp_connector_id=1,
-        status=ChargingConnectorStatus.FAULTED,
+        connector_id=uuid4(), evse_id=uuid4(), ocpp_connector_id=1
+    )
+    gun_two_state = ChargingConnectorStateModel(
+        connector_id=gun_two.connector_id,
+        status=ChargingConnectorStatus.FAULTED.value,
         status_updated_at=now,
         error_code="GroundFailure",
         vendor_error_code="E42",
@@ -334,12 +389,18 @@ async def test_station_status_lists_the_charger_and_every_gun(
     async def get_station(db: AsyncSession, station_id: UUID) -> ChargingStationModel:
         return station
 
+    async def get_state(
+        db: AsyncSession, station_id: UUID
+    ) -> ChargingStationStateModel | None:
+        return state
+
     async def list_connectors(
         db: AsyncSession, station_id: UUID
-    ) -> list[tuple[ChargingConnectorModel, int]]:
-        return [(gun_one, 1), (gun_two, 2)]
+    ) -> list[tuple[ChargingConnectorModel, int, ChargingConnectorStateModel | None]]:
+        return [(gun_one, 1, gun_one_state), (gun_two, 2, gun_two_state)]
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", get_station)
+    monkeypatch.setattr(charging_stations_repository, "get_station_state", get_state)
     monkeypatch.setattr(
         charging_stations_repository, "list_connectors_by_station_id", list_connectors
     )
@@ -383,12 +444,14 @@ async def test_station_energy_totals_rank_every_station_highest_first(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """F-C5: every active station is listed (zero included), highest energy first."""
-    quiet = build_charging_station_record()
-    quiet.display_name = "A quiet"
-    busy = build_charging_station_record()
-    busy.display_name = "B busy"
-    medium = build_charging_station_record()
-    medium.display_name = "C medium"
+    pairs = []
+    for name in ("A quiet", "B busy", "C medium"):
+        station = build_charging_station_record()
+        station.physical_reference = None
+        location = build_charging_location_record()
+        location.display_name = name
+        pairs.append((station, location))
+    quiet, busy, medium = (station for station, _ in pairs)
     energy_by_station = {
         quiet.station_id: (Decimal(0), 0),
         busy.station_id: (Decimal("42000"), 3),
@@ -397,8 +460,10 @@ async def test_station_energy_totals_rank_every_station_highest_first(
     start = datetime(2026, 9, 1, tzinfo=timezone.utc)
     end = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
-    async def list_stations(db: AsyncSession) -> list[ChargingStationModel]:
-        return [quiet, busy, medium]
+    async def list_stations(
+        db: AsyncSession,
+    ) -> list[tuple[ChargingStationModel, ChargingLocationModel]]:
+        return pairs
 
     async def energy_total(
         db: AsyncSession,
@@ -414,7 +479,9 @@ async def test_station_energy_totals_rank_every_station_highest_first(
         )
 
     monkeypatch.setattr(
-        charging_stations_repository, "list_active_stations", list_stations
+        charging_stations_repository,
+        "list_active_stations_with_location",
+        list_stations,
     )
     monkeypatch.setattr(
         charging_sessions_service, "resolve_station_energy_total", energy_total
@@ -490,10 +557,8 @@ class _StatementRecorder:
 
 
 @pytest.mark.asyncio
-async def test_connector_status_update_keeps_updated_at_as_the_last_admin_edit() -> (
-    None
-):
-    """A device-reported status sets updated_at to itself, never to "now" (F-C2)."""
+async def test_connector_status_update_writes_the_state_row_only() -> None:
+    """A device-reported status updates charging_connector_state, never the profile row (DM-16)."""
     recorder = _StatementRecorder(rowcount=1)
 
     is_updated = await ocpp_state_repository.update_connector_status(
@@ -509,15 +574,14 @@ async def test_connector_status_update_keeps_updated_at_as_the_last_admin_edit()
         )
     )
     assert is_updated is True
-    assert "updated_at=charging_connectors.updated_at" in sql
-    assert "charging_connectors.deleted_at IS NULL" in sql
+    assert sql.startswith("UPDATE charging_connector_state SET")
+    assert "charging_connectors" not in sql
+    assert " updated_at=" not in sql
 
 
 @pytest.mark.asyncio
-async def test_connector_status_update_reports_no_row_for_an_inactive_connector() -> (
-    None
-):
-    """No matching active row means False, which the service turns into 404-style."""
+async def test_connector_status_update_reports_no_row_without_a_state_row() -> None:
+    """No matching state row means False, which the service turns into 404-style."""
     recorder = _StatementRecorder(rowcount=0)
 
     is_updated = await ocpp_state_repository.update_connector_status(

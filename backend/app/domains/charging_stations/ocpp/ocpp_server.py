@@ -5,7 +5,9 @@ pre-provisioned station, then keeps one stable connection within the
 process. The negotiated subprotocol (``ocpp2.0.1`` or ``ocpp1.6``) selects
 the adapter class: ``OCPP201ChargePoint`` (``ocpp201_charge_point.py``) or
 ``OCPP16ChargePoint`` (``ocpp16_charge_point.py``); this module holds no
-protocol handler itself. Every frame exchanged on a connection is stored
+protocol handler itself. It also records which chargers are connected to this
+process and runs the command loop (``command_loop.py``) that sends the queued
+``charging_station_commands`` of those chargers (PR-16). Every frame exchanged on a connection is stored
 verbatim by ``RecordingConnection`` (see ``raw_log.py``) before any parsing.
 Production reliability, reconnect, and technical status history are outside
 the active path.
@@ -25,6 +27,10 @@ from websockets.http11 import Request, Response
 from websockets.typing import Subprotocol
 
 import app.domains.charging_stations.repository as charging_stations_repository
+from app.domains.charging_stations.ocpp.command_loop import (
+    StationConnectionRegistry,
+    run_command_loop,
+)
 from app.domains.charging_stations.ocpp.ocpp16_charge_point import OCPP16ChargePoint
 from app.domains.charging_stations.ocpp.ocpp201_charge_point import (
     OCPP201ChargePoint,
@@ -158,7 +164,10 @@ class OCPPServer:
         port: Bind port taken from charging settings.
         session_factory: Shared async session factory used to resolve
             stations.
+        connections: The chargers currently connected to this process.
         _server: WebSocket server after it has started successfully.
+        _command_stop: Event that ends the command loop.
+        _command_task: The running command loop, while the server runs.
     """
 
     def __init__(
@@ -183,7 +192,10 @@ class OCPPServer:
         self.host = host
         self.port = port
         self.session_factory = session_factory
+        self.connections = StationConnectionRegistry()
         self._server: Server | None = None
+        self._command_stop = asyncio.Event()
+        self._command_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Open the WebSocket listener for OCPP 2.0.1 and OCPP 1.6J.
@@ -213,6 +225,10 @@ class OCPPServer:
             max_size=settings.CHARGING_OCPP_MAX_MESSAGE_BYTES,
             logger=logger,
         )
+        self._command_stop.clear()
+        self._command_task = asyncio.create_task(
+            run_command_loop(self.connections, self.session_factory, self._command_stop)
+        )
         logger.info(
             "OCPP gateway started",
             extra={"host": self.host, "port": self.port},
@@ -222,9 +238,14 @@ class OCPPServer:
         """Stop the listener and release the socket.
 
         Side Effects:
-            Closes the current listener and waits for the socket to be
+            Stops the command loop (cancelling commands still in flight),
+            closes the current listener and waits for the socket to be
             released. Safe to call when the listener has not been started.
         """
+        self._command_stop.set()
+        if self._command_task is not None:
+            await self._command_task
+            self._command_task = None
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()
@@ -328,6 +349,7 @@ class OCPPServer:
             "OCPP station connected",
             extra={"ocpp_identity": identity, "subprotocol": connection.subprotocol},
         )
+        self.connections.register(station.station_id, charge_point)
         try:
             await charge_point.start()
         except ConnectionClosed:
@@ -342,6 +364,7 @@ class OCPPServer:
                 extra={"ocpp_identity": identity},
             )
         finally:
+            self.connections.unregister(station.station_id, charge_point)
             # A 1.6J adapter may have a post-boot request in flight; it must not
             # outlive its connection.
             if isinstance(charge_point, OCPP16ChargePoint):

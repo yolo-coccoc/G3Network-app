@@ -1,4 +1,4 @@
-"""Smoke tests for the post-boot GetConfiguration capture and configuration snapshots."""
+"""Smoke tests for the post-boot GetConfiguration capture and configuration snapshots (CS-21)."""
 
 import asyncio
 import json
@@ -27,11 +27,15 @@ from app.domains.charging_stations.ocpp.ocpp16_charge_point import (
     OCPP16ChargePoint,
     _to_configuration_entries,
 )
-from app.domains.charging_stations.types import ConfigurationEntry
+from app.domains.charging_stations.types import (
+    ConfigurationEntry,
+    StationCommandOutcome,
+)
 from tests.builders import fake_db_session
 
 NOW = datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)
 STATION_ID = uuid4()
+COMMAND_ID = uuid4()
 
 
 class _CountingFactory:
@@ -57,15 +61,33 @@ def _charge_point(factory: _CountingFactory | None = None) -> OCPP16ChargePoint:
     )
 
 
-def _snapshot_recorder(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    recorded: list[dict[str, Any]] = []
+def _snapshot_recorder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, list[dict[str, Any]]]:
+    """Replace the three service calls of a capture and record their arguments."""
+    recorded: dict[str, list[dict[str, Any]]] = {
+        "start": [],
+        "complete": [],
+        "fail": [],
+    }
 
-    async def fake_snapshot(db: object, **kwargs: Any) -> None:
-        recorded.append(kwargs)
+    async def fake_start(db: object, **kwargs: Any) -> Any:
+        recorded["start"].append(kwargs)
+        return COMMAND_ID
+
+    async def fake_complete(db: object, **kwargs: Any) -> None:
+        recorded["complete"].append(kwargs)
+
+    async def fake_fail(db: object, **kwargs: Any) -> None:
+        recorded["fail"].append(kwargs)
 
     monkeypatch.setattr(
-        ocpp_state_service, "record_configuration_snapshot", fake_snapshot
+        ocpp_state_service, "start_boot_configuration_command", fake_start
     )
+    monkeypatch.setattr(
+        ocpp_state_service, "complete_configuration_capture", fake_complete
+    )
+    monkeypatch.setattr(ocpp_state_service, "fail_command", fake_fail)
     return recorded
 
 
@@ -128,9 +150,13 @@ async def test_capture_stores_every_reported_key_with_its_readonly_flag(
     await charge_point._capture_configuration()
 
     assert seen["suppress"] is False
-    assert recorded[0]["ocpp_identity"] == "LSC"
-    assert recorded[0]["captured_at"].utcoffset() == timedelta(0)
-    assert recorded[0]["entries"] == [
+    # The frame carries the message ID stored on the command (CS-18, CS-21).
+    assert seen["unique_id"] == recorded["start"][0]["ocpp_message_id"]
+    assert recorded["start"][0]["ocpp_identity"] == "LSC"
+    complete = recorded["complete"][0]
+    assert complete["command_id"] == COMMAND_ID
+    assert complete["captured_at"].utcoffset() == timedelta(0)
+    assert complete["entries"] == [
         ConfigurationEntry("SupportedFeatureProfiles", "Core,SmartCharging", True),
         ConfigurationEntry("MeterValueSampleInterval", "60", False),
         ConfigurationEntry("NoValueKey", None, False),
@@ -142,7 +168,7 @@ async def test_capture_stores_every_reported_key_with_its_readonly_flag(
     "failure",
     [OcppNotImplementedError(), TimeoutError("no answer")],
 )
-async def test_a_refusal_or_timeout_is_logged_and_stores_nothing(
+async def test_a_refusal_or_timeout_is_logged_and_fails_the_command(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     failure: Exception,
@@ -163,8 +189,16 @@ async def test_a_refusal_or_timeout_is_logged_and_stores_nothing(
     assert any(
         "did not answer GetConfiguration" in r.getMessage() for r in caplog.records
     )
-    assert recorded == []
-    assert factory.entered == 0
+    assert recorded["complete"] == []
+    # One transaction for the command, one for its failure.
+    assert factory.entered == 2
+    failure_outcome = (
+        StationCommandOutcome.TIMEOUT
+        if isinstance(failure, TimeoutError)
+        else StationCommandOutcome.ERROR
+    )
+    assert recorded["fail"][0]["outcome"] is failure_outcome
+    assert recorded["fail"][0]["command_id"] == COMMAND_ID
 
 
 @pytest.mark.asyncio
@@ -183,8 +217,9 @@ async def test_an_unexpected_failure_is_logged_at_the_task_boundary_not_raised(
         raise RuntimeError("database down")
 
     charge_point.call = fake_call
+    _snapshot_recorder(monkeypatch)
     monkeypatch.setattr(
-        ocpp_state_service, "record_configuration_snapshot", failing_snapshot
+        ocpp_state_service, "complete_configuration_capture", failing_snapshot
     )
 
     with caplog.at_level(logging.ERROR):
@@ -194,7 +229,9 @@ async def test_an_unexpected_failure_is_logged_at_the_task_boundary_not_raised(
 
 
 @pytest.mark.asyncio
-async def test_closing_the_connection_cancels_a_capture_that_is_still_waiting() -> None:
+async def test_closing_the_connection_cancels_a_capture_that_is_still_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A task must not outlive its connection."""
     charge_point = _charge_point()
     started = asyncio.Event()
@@ -204,6 +241,7 @@ async def test_closing_the_connection_cancels_a_capture_that_is_still_waiting() 
         await asyncio.sleep(3600)
 
     charge_point.call = slow_call
+    _snapshot_recorder(monkeypatch)
 
     charge_point.after_boot_notification()
     await started.wait()
@@ -214,7 +252,9 @@ async def test_closing_the_connection_cancels_a_capture_that_is_still_waiting() 
 
 
 @pytest.mark.asyncio
-async def test_a_second_boot_cancels_the_capture_of_the_first() -> None:
+async def test_a_second_boot_cancels_the_capture_of_the_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Only the newest boot's capture keeps running."""
     charge_point = _charge_point()
     started = asyncio.Event()
@@ -224,6 +264,7 @@ async def test_a_second_boot_cancels_the_capture_of_the_first() -> None:
         await asyncio.sleep(3600)
 
     charge_point.call = slow_call
+    _snapshot_recorder(monkeypatch)
 
     charge_point.after_boot_notification()
     await started.wait()
@@ -331,14 +372,14 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
                 )
             )
             for _ in range(50):  # wait up to ~2.5 s for the snapshot
-                if recorded:
+                if recorded["complete"]:
                     break
                 await asyncio.sleep(0.05)
 
     assert (first[0], first[1]) == (3, "boot-1")  # the boot answer comes first
     assert first[2]["status"] == "Accepted"
     assert (second[0], second[2]) == (2, "GetConfiguration")  # then the request
-    assert recorded[0]["entries"] == [
+    assert recorded["complete"][0]["entries"] == [
         ConfigurationEntry("SupportedFeatureProfiles", "Core", True)
     ]
 
@@ -346,30 +387,55 @@ async def test_boot_reply_comes_first_then_the_request_and_nothing_deadlocks(
 # --- service ------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_record_configuration_snapshot_writes_one_capture_of_all_entries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Every row of a capture shares its ID and UTC time; the call returns the ID."""
-    inserted: list[dict[str, Any]] = []
+def _patch_capture_repository(
+    monkeypatch: pytest.MonkeyPatch, *, capture: Any
+) -> dict[str, list[dict[str, Any]]]:
+    """Replace the repository calls of a completed capture and record them."""
+    written: dict[str, list[dict[str, Any]]] = {
+        "entries": [],
+        "outcome": [],
+        "answer": [],
+    }
 
-    async def fake_get(db: object, identity: str, **_: Any) -> Any:
-        return SimpleNamespace(station_id=STATION_ID)
+    async def fake_capture(db: object, command_id: Any) -> Any:
+        return capture
 
     async def fake_insert(db: object, **kwargs: Any) -> None:
-        inserted.append(kwargs)
+        written["entries"].append(kwargs)
+
+    async def fake_outcome(db: object, capture_id: Any, **kwargs: Any) -> None:
+        written["outcome"].append({"capture_id": capture_id, **kwargs})
+
+    async def fake_answer(db: object, command_id: Any, **kwargs: Any) -> None:
+        written["answer"].append({"command_id": command_id, **kwargs})
 
     monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
+        ocpp_state_repository, "get_configuration_capture_by_command_id", fake_capture
     )
     monkeypatch.setattr(
         ocpp_state_repository, "insert_configuration_entry", fake_insert
     )
+    monkeypatch.setattr(
+        ocpp_state_repository, "set_configuration_capture_outcome", fake_outcome
+    )
+    monkeypatch.setattr(ocpp_state_repository, "set_command_answer", fake_answer)
+    return written
+
+
+@pytest.mark.asyncio
+async def test_complete_configuration_capture_stores_entries_and_closes_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every key becomes an Actual entry of the snapshot; readonly maps to mutability."""
+    capture_id = uuid4()
+    written = _patch_capture_repository(
+        monkeypatch, capture=SimpleNamespace(capture_id=capture_id)
+    )
     local = datetime(2026, 9, 24, 17, 0, tzinfo=timezone(timedelta(hours=7)))
 
-    capture_id = await ocpp_state_service.record_configuration_snapshot(
+    result = await ocpp_state_service.complete_configuration_capture(
         fake_db_session(),
-        ocpp_identity="LSC",
+        command_id=COMMAND_ID,
         entries=[
             ConfigurationEntry("A", "1", True),
             ConfigurationEntry("B", None, False),
@@ -377,88 +443,87 @@ async def test_record_configuration_snapshot_writes_one_capture_of_all_entries(
         captured_at=local,
     )
 
-    assert capture_id is not None
-    assert {row["capture_id"] for row in inserted} == {capture_id}
-    assert {row["captured_at"] for row in inserted} == {NOW}
-    assert [(r["config_key"], r["value"], r["is_readonly"]) for r in inserted] == [
-        ("A", "1", True),
-        ("B", None, False),
+    assert result == capture_id
+    assert [
+        (r["capture_id"], r["variable_name"], r["value"], r["mutability"])
+        for r in written["entries"]
+    ] == [
+        (capture_id, "A", "1", "READ_ONLY"),
+        (capture_id, "B", None, "READ_WRITE"),
     ]
-    assert all(r["station_id"] == STATION_ID for r in inserted)
+    assert written["outcome"][0]["captured_at"] == NOW
+    assert written["outcome"][0]["outcome"].value == "COMPLETE"
+    assert written["answer"][0]["outcome"] is StationCommandOutcome.ACCEPTED
+    assert written["answer"][0]["answered_at"] == NOW
 
 
 @pytest.mark.asyncio
-async def test_record_configuration_snapshot_stores_nothing_for_an_empty_answer(
+async def test_complete_configuration_capture_without_a_snapshot_stores_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A capture with no keys would be unreadable, so it is not written."""
-    inserted: list[Any] = []
+    """A command with no snapshot row (not a GET_CONFIGURATION) is left alone."""
+    written = _patch_capture_repository(monkeypatch, capture=None)
 
-    async def fake_get(db: object, identity: str, **_: Any) -> Any:
-        return SimpleNamespace(station_id=STATION_ID)
-
-    async def fake_insert(db: object, **kwargs: Any) -> None:
-        inserted.append(kwargs)
-
-    monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
-    )
-    monkeypatch.setattr(
-        ocpp_state_repository, "insert_configuration_entry", fake_insert
-    )
-
-    result = await ocpp_state_service.record_configuration_snapshot(
+    result = await ocpp_state_service.complete_configuration_capture(
         fake_db_session(),
-        ocpp_identity="LSC",
-        entries=[],
+        command_id=COMMAND_ID,
+        entries=[ConfigurationEntry("A", "1", False)],
         captured_at=NOW,
     )
 
     assert result is None
-    assert inserted == []
+    assert written == {"entries": [], "outcome": [], "answer": []}
 
 
 @pytest.mark.asyncio
-async def test_record_configuration_snapshot_rejects_naive_time_and_unknown_station(
+async def test_complete_configuration_capture_rejects_a_naive_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Metadata is validated; an unprovisioned station is an error."""
-
-    async def fake_get(db: object, identity: str, **_: Any) -> None:
-        return None
-
-    monkeypatch.setattr(
-        charging_stations_repository, "get_station_by_identity", fake_get
-    )
-    entries = [ConfigurationEntry("A", "1", False)]
+    """The strict timestamp rule applies to the capture time."""
+    _patch_capture_repository(monkeypatch, capture=None)
 
     with pytest.raises(ChargingOcppMessageInputError):
-        await ocpp_state_service.record_configuration_snapshot(
+        await ocpp_state_service.complete_configuration_capture(
             fake_db_session(),
-            ocpp_identity="LSC",
-            entries=entries,
+            command_id=COMMAND_ID,
+            entries=[],
             captured_at=datetime(2026, 9, 24, 10, 0),
         )
-    with pytest.raises(ChargingStationNotFoundError):
-        await ocpp_state_service.record_configuration_snapshot(
-            fake_db_session(),
-            ocpp_identity="LSC",
-            entries=entries,
-            captured_at=NOW,
-        )
+
+
+@pytest.mark.asyncio
+async def test_fail_command_fails_a_pending_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A command with no usable answer closes its pending snapshot as FAILED."""
+    capture_id = uuid4()
+    written = _patch_capture_repository(
+        monkeypatch, capture=SimpleNamespace(capture_id=capture_id, outcome="PENDING")
+    )
+
+    await ocpp_state_service.fail_command(
+        fake_db_session(),
+        command_id=COMMAND_ID,
+        outcome=StationCommandOutcome.TIMEOUT,
+        response_status=None,
+        answered_at=NOW,
+    )
+
+    assert written["answer"][0]["outcome"] is StationCommandOutcome.TIMEOUT
+    assert written["outcome"][0]["outcome"].value == "FAILED"
+    assert written["outcome"][0]["captured_at"] is None
 
 
 def _entry(
-    key: str, value: str | None, readonly: bool, capture_id: Any
+    key: str, value: str | None, mutability: str, capture_id: Any
 ) -> ChargingStationConfigurationEntryModel:
     return ChargingStationConfigurationEntryModel(
         entry_id=uuid4(),
-        station_id=STATION_ID,
         capture_id=capture_id,
-        captured_at=NOW,
-        config_key=key,
+        variable_name=key,
+        attribute_type="Actual",
         value=value,
-        is_readonly=readonly,
+        mutability=mutability,
     )
 
 
@@ -476,11 +541,11 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
     async def fake_latest(db: object, station_id: Any) -> Any:
         return state["latest"]
 
-    async def fake_entries(db: object, station_id: Any, cap: Any) -> Any:
+    async def fake_entries(db: object, cap: Any) -> Any:
         assert cap == capture_id
         return [
-            _entry("HeartbeatInterval", "60", False, capture_id),
-            _entry("SupportedFeatureProfiles", "Core", True, capture_id),
+            _entry("HeartbeatInterval", "60", "READ_WRITE", capture_id),
+            _entry("SupportedFeatureProfiles", "Core", "READ_ONLY", capture_id),
         ]
 
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_station)
@@ -505,9 +570,9 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
 
     assert (empty.capture_id, empty.captured_at, empty.items) == (None, None, [])
     assert (latest.capture_id, latest.captured_at) == (capture_id, NOW)
-    assert [(i.config_key, i.value, i.is_readonly) for i in latest.items] == [
-        ("HeartbeatInterval", "60", False),
-        ("SupportedFeatureProfiles", "Core", True),
+    assert [(i.variable_name, i.value, i.mutability) for i in latest.items] == [
+        ("HeartbeatInterval", "60", "READ_WRITE"),
+        ("SupportedFeatureProfiles", "Core", "READ_ONLY"),
     ]
 
 

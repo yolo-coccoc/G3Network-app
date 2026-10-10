@@ -69,6 +69,7 @@ from app.domains.charging_sessions.types import (
     MeasurementInput,
     MeterIngestResult,
     MeterSampleInput,
+    SessionCommandReference,
     SessionEventType,
     SessionStatus,
     StationEnergyTotal,
@@ -1539,4 +1540,32 @@ async def resolve_session_by_transaction(
         evse_id=session_record.evse_id,
         connector_id=session_record.connector_id,
         status=session_record.status,
+    )
+
+
+async def resolve_session_command_reference(
+    db: AsyncSession, session_id: UUID
+) -> SessionCommandReference:
+    """Read the token and transaction ID the gateway sends in a remote command.
+
+    The remote start's token is kept on the session, not copied into the
+    command (CS-20); the gateway reads it here when it sends the command.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        session_id: UUID of the session.
+
+    Returns:
+        A frozen reference with the session's token and transaction ID.
+
+    Raises:
+        ChargingSessionNotFoundError: If the session does not exist.
+    """
+    session_record = await charging_session_repository.get_session_by_id(db, session_id)
+    if session_record is None:
+        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
+    return SessionCommandReference(
+        session_id=session_record.session_id,
+        id_token=session_record.id_tag,
+        ocpp_transaction_id=session_record.ocpp_transaction_id,
     )

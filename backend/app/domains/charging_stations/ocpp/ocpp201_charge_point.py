@@ -7,9 +7,11 @@ helpers, mirroring
 ``ocpp16_charge_point.py``/``ocpp16_measurements.py`` for 1.6J. The two
 adapters never share payload code: the protocols shape a ``SampledValue``
 differently (2.0.1 has a nested ``unitOfMeasure`` with a multiplier, 1.6J a
-flat ``unit``). Every other 2.0.1 action is answered with ``CALLERROR
-NotImplemented`` by ``python-ocpp`` (the frame is still stored by the raw
-message log).
+flat ``unit``). Besides the charger's own messages, the adapter sends the commands of the
+command loop (``send_command``, CS-20) and receives the ``NotifyReport`` parts
+that answer a ``GET_CONFIGURATION`` command. Every other 2.0.1 action is
+answered with ``CALLERROR NotImplemented`` by ``python-ocpp`` (the frame is
+still stored by the raw message log).
 
 ``python-ocpp``'s ``ChargePoint._handle_call`` only snake_cases inbound JSON
 keys and splats the result as handler kwargs - it never constructs the
@@ -27,7 +29,7 @@ from typing import Final
 from uuid import UUID
 
 from ocpp.routing import on
-from ocpp.v201 import ChargePoint, call_result
+from ocpp.v201 import ChargePoint, call, call_result
 from ocpp.v201.enums import (
     Action,
     ConnectorStatusEnumType,
@@ -43,17 +45,47 @@ from app.domains.charging_sessions.types import (
     MeterSampleInput,
     SessionEventType,
 )
+from app.domains.charging_stations.ocpp.command_types import (
+    CommandResult,
+    OutboundCommand,
+    to_command_result,
+)
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
     format_ocpp_timestamp,
     parse_ocpp_timestamp,
 )
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
-from app.domains.charging_stations.types import ChargingConnectorStatus
+from app.domains.charging_stations.types import (
+    ChargingConnectorStatus,
+    ConfigurationCaptureReason,
+    ConfigurationMutability,
+    ReportEntry,
+    StationCommandOutcome,
+    StationCommandType,
+)
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Subprotocol label this adapter serves; stored with each configuration snapshot.
+OCPP201_PROTOCOL_VERSION: Final[str] = "ocpp2.0.1"
+# Component a ``CHANGE_CONFIGURATION`` command addresses when it names none.
+_DEFAULT_CONFIGURATION_COMPONENT: Final[str] = "OCPPCommCtrlr"
+# 2.0.1 mutability labels of a report -> the table's mutability values.
+_MUTABILITY_BY_REPORT: Final[dict[str, ConfigurationMutability]] = {
+    "ReadOnly": ConfigurationMutability.READ_ONLY,
+    "WriteOnly": ConfigurationMutability.WRITE_ONLY,
+    "ReadWrite": ConfigurationMutability.READ_WRITE,
+}
+# Our Soft/Hard reset names -> 2.0.1 ResetEnumType.
+_RESET_TYPE_BY_NAME: Final[dict[str, str]] = {
+    "Soft": "OnIdle",
+    "Hard": "Immediate",
+    "OnIdle": "OnIdle",
+    "Immediate": "Immediate",
+}
 
 # Wh is OCPP's default unit; kWh is the only other energy unit in the 2.0.1
 # standardized list. Keys are lowercased for a case-insensitive match,
@@ -193,6 +225,8 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         connection itself.
     """
 
+    protocol_version = OCPP201_PROTOCOL_VERSION
+
     def __init__(
         self,
         identity: str,
@@ -209,10 +243,16 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 action handler.
 
         Side Effects:
-            Initializes the ``python-ocpp`` base class state and attaches
-            the gateway logger.
+            Initializes the ``python-ocpp`` base class state, attaches the
+            gateway logger and sets the response timeout for requests this
+            backend sends (``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS``).
         """
-        super().__init__(identity, connection, logger=logger)
+        super().__init__(
+            identity,
+            connection,
+            response_timeout=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS,
+            logger=logger,
+        )
         self.session_factory = session_factory
         self._session_by_evse: dict[int, UUID] = {}
 
@@ -506,3 +546,246 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 status_updated_at=parse_ocpp_timestamp(timestamp),
             )
         return call_result.StatusNotification()
+
+    @on(Action.notify_report)  # type: ignore[untyped-decorator]
+    async def on_notify_report(
+        self,
+        request_id: int,
+        generated_at: str,
+        seq_no: int,
+        report_data: list[OcppPayload] | None = None,
+        tbc: bool = False,
+        **_: object,
+    ) -> call_result.NotifyReport:
+        """Store one part of a configuration report into its snapshot (CS-19).
+
+        A ``GetBaseReport`` is answered in several ``NotifyReport`` parts that
+        share the ``requestId`` of the request; the snapshot of the matching
+        ``GET_CONFIGURATION`` command receives the parts' settings and becomes
+        complete with the last part (``tbc`` false). A part nobody asked for
+        (no pending snapshot with that ``requestId``) is acknowledged and
+        dropped; the raw log keeps it.
+
+        Args:
+            request_id: The ``requestId`` of the ``GetBaseReport``.
+            generated_at: When the part was generated; not stored (the arrival
+                time is the capture time).
+            seq_no: Sequence number of the part; not used (parts are inserted
+                as they arrive).
+            report_data: The reported components and variables, as plain dicts.
+            tbc: ``True`` while more parts follow.
+            **_: Optional OCPP fields not stored.
+
+        Returns:
+            A valid empty response for NotifyReport.
+
+        Side Effects:
+            Inserts the part's entries and, on the last part, closes the
+            snapshot and its command in one atomic transaction.
+        """
+        del generated_at, seq_no
+        entries = to_report_entries(report_data or [])
+        async with self.session_factory.begin() as db:
+            await ocpp_state_service.store_configuration_report_part(
+                db,
+                ocpp_identity=self.id,
+                ocpp_request_id=request_id,
+                entries=entries,
+                is_last_part=not tbc,
+                received_at=utc_now(),
+            )
+        return call_result.NotifyReport()
+
+    async def send_command(self, command: OutboundCommand) -> CommandResult:
+        """Send one command of the command loop as an OCPP 2.0.1 call (CS-20).
+
+        The frame carries the command's message ID so it pairs with the row in
+        the raw log. ``GET_CONFIGURATION`` sends ``GetBaseReport``; the settings
+        arrive later in ``NotifyReport`` parts, so its snapshot stays pending
+        and the command is accepted with the charger's verdict only.
+
+        Args:
+            command: The claimed command.
+
+        Returns:
+            The charger's verdict.
+
+        Raises:
+            TimeoutError: If the charger does not answer in time.
+            OCPPError: If the charger answers with a ``CALLERROR``.
+            ValueError: If the command lacks something its type needs.
+        """
+        parameters = command.parameters
+        command_type = command.command_type
+        payload: object
+        if command_type is StationCommandType.REMOTE_START:
+            if command.id_token is None:
+                raise ValueError("REMOTE_START has no token to send")
+            payload = call.RequestStartTransaction(
+                id_token={"id_token": command.id_token, "type": "Central"},
+                remote_start_id=int(
+                    parameters.get("remote_start_id", command.command_id.int % 2**31)
+                ),
+                evse_id=command.ocpp_evse_id,
+            )
+        elif command_type is StationCommandType.REMOTE_STOP:
+            if command.ocpp_transaction_id is None:
+                raise ValueError("REMOTE_STOP has no transaction to stop")
+            payload = call.RequestStopTransaction(
+                transaction_id=command.ocpp_transaction_id
+            )
+        elif command_type is StationCommandType.UNLOCK_CONNECTOR:
+            if command.ocpp_evse_id is None or command.ocpp_connector_id is None:
+                raise ValueError("UNLOCK_CONNECTOR needs an EVSE and connector")
+            payload = call.UnlockConnector(
+                evse_id=command.ocpp_evse_id, connector_id=command.ocpp_connector_id
+            )
+        elif command_type is StationCommandType.RESET:
+            payload = call.Reset(
+                type=_RESET_TYPE_BY_NAME.get(
+                    str(parameters.get("reset_type", "Soft")), "OnIdle"
+                ),
+                evse_id=command.ocpp_evse_id,
+            )
+        elif command_type is StationCommandType.CHANGE_AVAILABILITY:
+            payload = call.ChangeAvailability(
+                operational_status=str(parameters.get("availability", "Inoperative")),
+                evse=(
+                    None
+                    if command.ocpp_evse_id is None
+                    else {"id": command.ocpp_evse_id}
+                ),
+            )
+        elif command_type is StationCommandType.CHANGE_CONFIGURATION:
+            payload = call.SetVariables(
+                set_variable_data=[
+                    {
+                        "attribute_value": str(parameters["value"]),
+                        "component": {
+                            "name": str(
+                                parameters.get(
+                                    "component_name", _DEFAULT_CONFIGURATION_COMPONENT
+                                )
+                            )
+                        },
+                        "variable": {"name": str(parameters["key"])},
+                    }
+                ]
+            )
+        elif command_type is StationCommandType.TRIGGER_MESSAGE:
+            payload = call.TriggerMessage(
+                requested_message=str(parameters["requested_message"]),
+                evse=(
+                    None
+                    if command.ocpp_evse_id is None
+                    else {"id": command.ocpp_evse_id}
+                ),
+            )
+        else:
+            return await self._send_get_base_report(command)
+        response = await self.call(
+            payload, suppress=False, unique_id=command.ocpp_message_id
+        )
+        if isinstance(response, call_result.SetVariables):
+            # One CHANGE_CONFIGURATION sets one setting, so one result (CS-20).
+            results = response.set_variable_result
+            return to_command_result(
+                results[0]["attribute_status"] if results else None
+            )
+        return to_command_result(getattr(response, "status", None))
+
+    async def _send_get_base_report(self, command: OutboundCommand) -> CommandResult:
+        """Run a ``GET_CONFIGURATION`` command: open the snapshot, ask for a report.
+
+        Args:
+            command: The claimed command.
+
+        Returns:
+            The charger's verdict on the request. An accepted request leaves
+            the snapshot pending until its last ``NotifyReport`` part; a
+            refused one fails the snapshot at once.
+
+        Raises:
+            TimeoutError: If the charger does not answer in time.
+            OCPPError: If the charger answers with a ``CALLERROR``.
+        """
+        request_id = int(
+            command.parameters.get("ocpp_request_id", command.command_id.int % 2**31)
+        )
+        async with self.session_factory.begin() as db:
+            await ocpp_state_service.open_configuration_capture(
+                db,
+                command_id=command.command_id,
+                reason=ConfigurationCaptureReason(
+                    str(command.parameters.get("capture_reason", "ON_DEMAND"))
+                ),
+                ocpp_protocol_version=self.protocol_version,
+                ocpp_request_id=request_id,
+            )
+        response = await self.call(
+            call.GetBaseReport(request_id=request_id, report_base="FullInventory"),
+            suppress=False,
+            unique_id=command.ocpp_message_id,
+        )
+        result = to_command_result(getattr(response, "status", None))
+        if result.outcome is not StationCommandOutcome.ACCEPTED:
+            async with self.session_factory.begin() as db:
+                await ocpp_state_service.fail_command(
+                    db,
+                    command_id=command.command_id,
+                    outcome=result.outcome,
+                    response_status=result.response_status,
+                    answered_at=utc_now(),
+                )
+            return CommandResult(
+                outcome=result.outcome,
+                response_status=result.response_status,
+                handled=True,
+            )
+        return result
+
+
+def to_report_entries(report_data: list[OcppPayload]) -> list[ReportEntry]:
+    """Convert the ``reportData`` of a ``NotifyReport`` part into storable entries.
+
+    Args:
+        report_data: Items of the part (component, variable and their
+            attributes), snake_cased by ``python-ocpp`` into plain dicts.
+
+    Returns:
+        One entry per variable attribute; a variable that lists no attribute
+        yields one ``Actual`` entry with no value. ``WriteOnly`` values are
+        dropped (nothing is shown for them).
+    """
+    entries: list[ReportEntry] = []
+    for item in report_data:
+        component = item.get("component") or {}
+        evse = component.get("evse") or {}
+        variable = item.get("variable") or {}
+        if not variable.get("name") or not component.get("name"):
+            continue
+        for attribute in item.get("variable_attribute") or [{}]:
+            mutability = _MUTABILITY_BY_REPORT.get(
+                str(attribute.get("mutability") or "ReadWrite"),
+                ConfigurationMutability.READ_WRITE,
+            )
+            value = attribute.get("value")
+            entries.append(
+                ReportEntry(
+                    variable_name=str(variable["name"]),
+                    value=(
+                        None
+                        if value is None
+                        or mutability is ConfigurationMutability.WRITE_ONLY
+                        else str(value)
+                    ),
+                    mutability=mutability,
+                    attribute_type=str(attribute.get("type") or "Actual"),
+                    component_name=str(component["name"]),
+                    component_instance=component.get("instance"),
+                    ocpp_evse_id=evse.get("id"),
+                    ocpp_connector_id=evse.get("connector_id"),
+                    variable_instance=variable.get("instance"),
+                )
+            )
+    return entries

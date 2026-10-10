@@ -18,7 +18,7 @@ local database holds no data worth keeping; `make db-reset` wipes it.
    `generate` command. Never hand-edit a generated view (a hook blocks it).
 2. **Model** — change the SQLAlchemy model in `backend/app/domains/<domain>/models.py`
    following the naming/PK/enum/geography conventions. A new model module
-   must be imported in `backend/app/libs/db/migrations/env.py`.
+   must be imported in `backend/app/libs/db/model_registry.py` (which `migrations/env.py` imports).
 3. **Migration** — edit `backend/app/libs/db/migrations/versions/0001_baseline_schema.py`
    in place; never add a revision. Keep the hand-written parts its docstring
    lists (clear step, `charging_ocpp16_transaction_id_seq`, the hypertable

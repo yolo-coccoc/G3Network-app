@@ -114,16 +114,22 @@ FastAPI registers the following domains:
   isn't UTF-8, JSON or the schema is logged and dropped, and the process
   exits non-zero when the consumer or worker stops on its own (only a
   shutdown signal is a clean exit).
-- `charging_stations`: Station → EVSE → Connector topology CRUD, station
-  directory metadata (location, power rating, connector standard, operating
-  hours, maintenance status, read-time `available_connector_count`), a
-  nearby-station radius search with an `is_available_only` filter (F-D1),
+- `charging_stations`: Location → charging station (charger) → EVSE →
+  Connector topology CRUD (a location is owned by an organization, public or
+  private, with access grants for other organizations; a charger reads its
+  owner through its location; change history on all four), the profile/state
+  split (`charging_station_state`, `charging_connector_state`: what the
+  charger reports, written by the gateway; read-time `is_online` and
+  `available_connector_count`), a nearby-station radius search (public
+  locations only until authentication) with an `is_available_only` filter
+  (F-D1),
   a per-station status view (`GET /charging-stations/{id}/connectors`:
   the whole charger plus every gun), the all-stations energy ranking
   (`GET /charging-sessions/stations/energy`, F-C5, served here because this
   domain owns the station directory), and the OCPP gateway. "Available"
-  (F-A2/F-D1) = not deleted, `OPERATIONAL` and at least one connector whose
-  last status is `Available`; `is_online` is reported but not required.
+  (F-A2/F-D1) = charger and location `ACTIVE` and not deleted, a public
+  location, and at least one connector whose last status is `Available`;
+  `is_online` is reported but not required.
   The gateway serves **OCPP 2.0.1 and OCPP 1.6J**: it
   negotiates the WebSocket subprotocol (`ocpp2.0.1` preferred, `ocpp1.6`
   accepted) and uses one adapter class per protocol
@@ -133,7 +139,10 @@ FastAPI registers the following domains:
   / `ocpp_state_repository.py` (identity/topology resolution, frame log,
   boot info, charger/connector status, configuration captures); the public
   `service.py`/`repository.py` keep topology CRUD, the directory and geo
-  searches and the configuration read.
+  searches, the configuration read and the command channel (`charging_station_commands`
+  queued by the API or another domain; the gateway's `command_loop.py` claims the
+  queued rows of the chargers connected to its process, sends the OCPP call per
+  protocol and writes the answer back; CS-24, PR-16).
   A `RecordingConnection` wrapper stores every frame, both directions,
   verbatim in `charging_ocpp_messages` before it is parsed, and every
   inbound frame of either protocol refreshes `last_seen_at` (the station's
@@ -283,10 +292,10 @@ extensions:
   `telemetry` is indexed on `(vehicle_id, recorded_at DESC)` for the
   latest/history reads and on `(vehicle_id, received_at DESC)` for the
   device-health monitor's last-seen lookup.
-- PostGIS: used for `charging_stations.location` (F-C1),
+- PostGIS: used for `charging_locations.coordinates` (F-C1),
   `telemetry.location` and `support_cases.location` (all
   `geography(Point, 4326)` columns) and `geofences.boundary`
-  (`geography(POLYGON, 4326)`, F-A5). Only `charging_stations.location`
+  (`geography(POLYGON, 4326)`, F-A5). Only `charging_locations.coordinates`
   has a GIST index: `telemetry.location` is a high-frequency write
   path that is never searched spatially, and a geofence check always
   filters by fleet first (`ix_geofences_fleet_id`) before `ST_Covers`.
@@ -365,7 +374,9 @@ call each other is in
 │   │   │   │   ├── ocpp_state_service.py     # internal (ocpp/ only): identity/topology resolution, frame log, boot info, charger/connector status, GetConfiguration captures
 │   │   │   │   ├── ocpp_state_repository.py  # the matching queries
 │   │   │   │   └── ocpp/              # WebSocket server for charging station communication (OCPP 2.0.1 and 1.6J)
-│   │   │   │       ├── ocpp_server.py       # handshake, subprotocol negotiation, connection handling (no protocol handler)
+│   │   │   │       ├── ocpp_server.py       # handshake, subprotocol negotiation, connection handling, connected-charger registry (no protocol handler)
+│   │   │   │       ├── command_loop.py      # sends queued charging_station_commands to connected chargers and writes the answers back
+│   │   │   │       ├── command_types.py     # OutboundCommand / CommandResult passed between the loop and the adapters
 │   │   │   │       ├── ocpp201_charge_point.py # OCPP 2.0.1 adapter (OCPP201ChargePoint): Boot/Heartbeat/TransactionEvent/MeterValues/StatusNotification + payload helpers
 │   │   │   │       ├── ocpp16_charge_point.py  # OCPP 1.6J adapter (OCPP16ChargePoint): Boot/Heartbeat/Status/Authorize/Start/Stop/MeterValues + post-boot GetConfiguration
 │   │   │   │       ├── ocpp16_measurements.py  # pure 1.6J MeterValues -> energy samples + measurements (never shares code with the 2.0.1 normalizer)

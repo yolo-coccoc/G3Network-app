@@ -140,6 +140,23 @@ class TransactionSessionReference:
     status: SessionStatus
 
 
+@dataclass(frozen=True, slots=True)
+class SessionCommandReference:
+    """What the OCPP gateway needs from a session to send a remote start or stop.
+
+    Attributes:
+        session_id: The UUID of the session.
+        id_token: The ``idTag`` the session carries (the single-use token of a
+            QR start, CE-11); never copy it into application logs (IS-07).
+        ocpp_transaction_id: The charger's transaction ID as stored, ``None``
+            while the session is still waiting for the charger.
+    """
+
+    session_id: UUID
+    id_token: str | None
+    ocpp_transaction_id: str | None
+
+
 class EnergySeriesGranularity(str, enum.Enum):
     """Bucket size of the station energy time series (F-C5).
 

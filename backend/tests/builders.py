@@ -14,10 +14,12 @@ from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
     SessionStatus,
 )
-from app.domains.charging_stations.models import ChargingStationModel
-from app.domains.charging_stations.types import (
-    ChargingStationMaintenanceStatus,
+from app.domains.charging_stations.models import (
+    ChargingLocationModel,
+    ChargingStationModel,
+    ChargingStationStateModel,
 )
+from app.domains.charging_stations.types import ChargingResourceStatus
 from app.domains.drivers.models import DriverModel, DrivingSessionModel
 from app.domains.drivers.types import CheckInMethod, DriverStatus
 from app.domains.fleet.models import FleetModel, FleetVehicleMembershipModel
@@ -345,21 +347,50 @@ def build_charging_session(
     )
 
 
-def build_charging_station_record(
-    *, station_id: UUID | None = None
-) -> ChargingStationModel:
-    """Create a minimal ORM station for a nearby-search mapper test."""
+def build_charging_location_record(
+    *, location_id: UUID | None = None, organization_id: UUID | None = None
+) -> ChargingLocationModel:
+    """Create a minimal ORM location (public, ACTIVE) for mapper tests."""
     now = datetime.now(timezone.utc)
-    return ChargingStationModel(
-        station_id=station_id or uuid4(),
-        ocpp_identity="OCPP-TEST-001",
-        display_name="Test Station",
-        location=coordinates_to_location(10.762622, 106.660172),
-        power_rating_kw=Decimal("120.00"),
-        connector_standard="CCS2",
-        operating_hours="24/7",
-        maintenance_status=ChargingStationMaintenanceStatus.OPERATIONAL,
+    return ChargingLocationModel(
+        location_id=location_id or uuid4(),
+        organization_id=organization_id or uuid4(),
+        display_name="Test Location",
+        address="Km 1872+500 QL1A, Dong Nai",
+        coordinates=coordinates_to_location(10.762622, 106.660172),
+        is_public=True,
+        status=ChargingResourceStatus.ACTIVE.value,
+        status_reason=None,
         created_at=now,
         updated_at=now,
         deleted_at=None,
+    )
+
+
+def build_charging_station_record(
+    *, station_id: UUID | None = None, location_id: UUID | None = None
+) -> ChargingStationModel:
+    """Create a minimal ORM station (ACTIVE) for a mapper test."""
+    now = datetime.now(timezone.utc)
+    return ChargingStationModel(
+        station_id=station_id or uuid4(),
+        location_id=location_id or uuid4(),
+        ocpp_identity="OCPP-TEST-001",
+        registered_serial_number="SN-TEST-001",
+        physical_reference="Tru 1",
+        max_power_kw=Decimal("120.00"),
+        status=ChargingResourceStatus.ACTIVE.value,
+        status_reason=None,
+        created_at=now,
+        updated_at=now,
+        deleted_at=None,
+    )
+
+
+def build_charging_station_state_record(
+    *, station_id: UUID | None = None, last_seen_at: datetime | None = None
+) -> ChargingStationStateModel:
+    """Create a minimal ORM station state row for a mapper test."""
+    return ChargingStationStateModel(
+        station_id=station_id or uuid4(), last_seen_at=last_seen_at
     )

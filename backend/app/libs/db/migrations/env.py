@@ -16,61 +16,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Every model module must be imported so its tables join ``Base.metadata``;
-# the names themselves are unused here.
-from app.domains.batteries.models import (  # noqa: F401
-    BatteryModel,
-    BatteryModelModel,
-)
-from app.domains.charging_sessions.models import (  # noqa: F401
-    ChargingSessionEventModel,
-    ChargingSessionMeasurementModel,
-    ChargingSessionModel,
-)
-from app.domains.charging_stations.models import (  # noqa: F401
-    ChargingConnectorModel,
-    ChargingEvseModel,
-    ChargingOcppMessageModel,
-    ChargingStationConfigurationEntryModel,
-    ChargingStationModel,
-)
-from app.domains.drivers.models import (  # noqa: F401
-    DriverModel,
-    DrivingSessionModel,
-    TripModel,
-)
-from app.domains.fleet.models import (  # noqa: F401
-    FleetModel,
-    FleetUserAssignmentModel,
-    FleetVehicleMembershipModel,
-    GeofenceModel,
-)
-from app.domains.identity.models import (  # noqa: F401
-    AccessAuditLogModel,
-    LegalDocumentModel,
-    MembershipModel,
-    OneTimeCodeModel,
-    OrganizationModel,
-    OrganizationSettingModel,
-    UserConsentModel,
-    UserCredentialModel,
-    UserModel,
-    UserRoleAssignmentModel,
-    UserSessionModel,
-    UserStateModel,
-)
-from app.domains.notifications.models import NotificationModel  # noqa: F401
-from app.domains.support.models import SupportCaseModel  # noqa: F401
-from app.domains.telematics.models import (  # noqa: F401
-    TelematicModel,
-    TelematicStatusReportModel,
-)
-from app.domains.telemetry.models import TelemetryModel  # noqa: F401
-from app.domains.vehicles.models import (  # noqa: F401
-    VehicleModel,
-    VehicleModelModel,
-)
-from app.domains.warranties.models import WarrantyModel  # noqa: F401
+# Every model module must be imported so its tables join ``Base.metadata``
+# (autogenerate only sees imported modules); the registry does it for all.
+import app.libs.db.model_registry  # noqa: F401
 from app.libs.common.config import settings
 from app.libs.db.base import Base
 

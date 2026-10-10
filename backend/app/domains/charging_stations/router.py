@@ -1,8 +1,10 @@
 """HTTP router for the charging station directory and its topology.
 
-Endpoints: station/EVSE/connector CRUD with soft-delete (F-C1), the
-driver-facing nearby search (F-D1), the station status view (F-C2), the
-latest configuration a charger reported over OCPP, and the all-stations
+Endpoints: location CRUD with soft-delete and the access grants of private
+locations (CS-09, CS-10), station/EVSE/connector CRUD with soft-delete (F-C1),
+the driver-facing nearby search (F-D1), the station status view (F-C2), the
+latest configuration a charger reported over OCPP, the command channel to a
+charger (queue a command, read its answer; STN-10, PR-16), and the all-stations
 energy report (F-C5; served here under ``/charging-sessions/stations/energy``
 because it needs the station directory, which ``charging_sessions`` may not
 read). The router only accepts HTTP dependencies and calls the
@@ -27,7 +29,18 @@ from app.domains.charging_stations.schemas import (
     ChargingEvseListResponse,
     ChargingEvseResponse,
     ChargingEvseUpdateRequest,
+    ChargingLocationAccessCreateRequest,
+    ChargingLocationAccessListResponse,
+    ChargingLocationAccessResponse,
+    ChargingLocationAccessRevokeRequest,
+    ChargingLocationCreateRequest,
+    ChargingLocationListResponse,
+    ChargingLocationResponse,
+    ChargingLocationUpdateRequest,
     ChargingResourceDeleteResponse,
+    ChargingStationCommandCreateRequest,
+    ChargingStationCommandListResponse,
+    ChargingStationCommandResponse,
     ChargingStationConfigurationResponse,
     ChargingStationCreateRequest,
     ChargingStationEnergyTotalListResponse,
@@ -629,4 +642,321 @@ async def soft_delete_charging_connector_endpoint(
     """
     return await charging_stations_service.soft_delete_charging_connector(
         db, connector_id
+    )
+
+
+@router.post(
+    "/charging-locations",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ChargingLocationResponse,
+    summary="Create a charging location",
+)
+async def create_charging_location_endpoint(
+    location_create_request: ChargingLocationCreateRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationResponse:
+    """Create a location (the place drivers go to charge).
+
+    Args:
+        location_create_request: Location creation payload, already validated.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the newly created location.
+
+    Raises:
+        ChargingTopologyConflictError: 409 if the owner organization does not
+            exist.
+    """
+    return await charging_stations_service.create_charging_location(
+        db, location_create_request
+    )
+
+
+@router.get(
+    "/charging-locations",
+    response_model=ChargingLocationListResponse,
+    summary="List charging locations",
+)
+async def list_charging_locations_endpoint(
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationListResponse:
+    """List active locations with pagination.
+
+    Args:
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response with the list of locations.
+    """
+    return await charging_stations_service.list_charging_locations(
+        db, page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/charging-locations/{location_id}",
+    response_model=ChargingLocationResponse,
+    summary="Get a charging location",
+)
+async def get_charging_location_endpoint(
+    location_id: UUID,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationResponse:
+    """Get an active location.
+
+    Args:
+        location_id: UUID of the location.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the location.
+
+    Raises:
+        ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
+    """
+    return await charging_stations_service.get_charging_location(db, location_id)
+
+
+@router.patch(
+    "/charging-locations/{location_id}",
+    response_model=ChargingLocationResponse,
+    summary="Update a charging location",
+)
+async def update_charging_location_endpoint(
+    location_id: UUID,
+    location_update_request: ChargingLocationUpdateRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationResponse:
+    """Partially update a location.
+
+    Args:
+        location_id: UUID of the location.
+        location_update_request: PATCH fields, already validated.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the updated location.
+
+    Raises:
+        ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
+    """
+    return await charging_stations_service.update_charging_location(
+        db, location_id, location_update_request
+    )
+
+
+@router.delete(
+    "/charging-locations/{location_id}",
+    response_model=ChargingResourceDeleteResponse,
+    summary="Soft-delete a charging location",
+)
+async def soft_delete_charging_location_endpoint(
+    location_id: UUID,
+    status_reason: str = Query(
+        "Charging location removed", min_length=1, max_length=200
+    ),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingResourceDeleteResponse:
+    """Soft-delete a location with its chargers, EVSEs, connectors and grants.
+
+    Args:
+        location_id: UUID of the location.
+        status_reason: Why the location leaves the system.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response with the confirmation message.
+
+    Raises:
+        ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
+    """
+    return await charging_stations_service.soft_delete_charging_location(
+        db, location_id, status_reason=status_reason
+    )
+
+
+@router.post(
+    "/charging-locations/{location_id}/access",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ChargingLocationAccessResponse,
+    summary="Let an organization charge at a private location",
+)
+async def grant_charging_location_access_endpoint(
+    location_id: UUID,
+    access_create_request: ChargingLocationAccessCreateRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationAccessResponse:
+    """Grant an organization access to a location.
+
+    Args:
+        location_id: UUID of the location.
+        access_create_request: The grantee, the granting user and the end date.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the new grant.
+
+    Raises:
+        ChargingLocationNotFoundError: 404 if the location is not active.
+        ChargingLocationAccessConflictError: 409 for a grant to the owner, a
+            duplicate live grant, or an unknown organization or user.
+    """
+    return await charging_stations_service.grant_charging_location_access(
+        db, location_id, access_create_request
+    )
+
+
+@router.get(
+    "/charging-locations/{location_id}/access",
+    response_model=ChargingLocationAccessListResponse,
+    summary="List the live access grants of a location",
+)
+async def list_charging_location_access_endpoint(
+    location_id: UUID,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationAccessListResponse:
+    """List the grants that are not revoked.
+
+    Args:
+        location_id: UUID of the location.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response with the live grants.
+
+    Raises:
+        ChargingLocationNotFoundError: 404 if the location is not active.
+    """
+    return await charging_stations_service.list_charging_location_access(
+        db, location_id
+    )
+
+
+@router.post(
+    "/charging-locations/{location_id}/access/{access_id}/revoke",
+    response_model=ChargingLocationAccessResponse,
+    summary="Revoke an access grant",
+)
+async def revoke_charging_location_access_endpoint(
+    location_id: UUID,
+    access_id: UUID,
+    access_revoke_request: ChargingLocationAccessRevokeRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingLocationAccessResponse:
+    """Close an access grant.
+
+    Args:
+        location_id: UUID of the location.
+        access_id: UUID of the grant.
+        access_revoke_request: Who revokes it and why.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the closed grant.
+
+    Raises:
+        ChargingLocationAccessNotFoundError: 404 if the location has no such
+            grant.
+        ChargingLocationAccessConflictError: 409 if it is already revoked.
+    """
+    return await charging_stations_service.revoke_charging_location_access(
+        db, location_id, access_id, access_revoke_request
+    )
+
+
+@router.post(
+    "/charging-stations/{station_id}/commands",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=ChargingStationCommandResponse,
+    summary="Send a command to a charger",
+)
+async def create_charging_station_command_endpoint(
+    station_id: UUID,
+    command_create_request: ChargingStationCommandCreateRequest,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationCommandResponse:
+    """Queue a command; the OCPP gateway sends it and records the answer.
+
+    Args:
+        station_id: UUID of the charger.
+        command_create_request: The command, already validated.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the queued command (poll it for the outcome).
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the charger is not active.
+        ChargingStationCommandInputError: 400 if a link or parameter the
+            command type needs is missing.
+    """
+    return await charging_stations_service.create_charging_station_command(
+        db, station_id, command_create_request
+    )
+
+
+@router.get(
+    "/charging-stations/{station_id}/commands",
+    response_model=ChargingStationCommandListResponse,
+    summary="List the commands sent to a charger",
+)
+async def list_charging_station_commands_endpoint(
+    station_id: UUID,
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationCommandListResponse:
+    """List a charger's commands, newest first.
+
+    Args:
+        station_id: UUID of the charger.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response with the commands.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the charger is not active.
+    """
+    return await charging_stations_service.list_charging_station_commands(
+        db, station_id, page=page, page_size=page_size
+    )
+
+
+@router.get(
+    "/charging-stations/{station_id}/commands/{command_id}",
+    response_model=ChargingStationCommandResponse,
+    summary="Get a command sent to a charger",
+)
+async def get_charging_station_command_endpoint(
+    station_id: UUID,
+    command_id: UUID,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationCommandResponse:
+    """Get one command with its current outcome.
+
+    Args:
+        station_id: UUID of the charger.
+        command_id: UUID of the command.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the command.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the command is not the charger's.
+    """
+    return await charging_stations_service.get_charging_station_command(
+        db, station_id, command_id
     )

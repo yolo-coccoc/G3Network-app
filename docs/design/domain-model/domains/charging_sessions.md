@@ -35,7 +35,7 @@ erDiagram
     timestamptz sampled_at PK
     uuid session_id FK
   }
-  charging_station_commands }o..o| charging_sessions : "session_id"
+  charging_station_commands }o--o| charging_sessions : "session_id"
   charging_sessions }o--|| charging_stations : "station_id"
   charging_sessions }o--|| charging_evses : "evse_id"
   charging_sessions }o--|| charging_connectors : "connector_id"
@@ -114,7 +114,7 @@ status <> 'COMPLETED' OR ended_at IS NOT NULL; status NOT IN ('PENDING',
 
 **Referenced by**
 
-- [charging_station_commands](charging_stations.md#charging_station_commands).session_id (planned)
+- [charging_station_commands](charging_stations.md#charging_station_commands).session_id
 - [charging_session_events](#charging_session_events).session_id
 - [charging_session_measurements](#charging_session_measurements).session_id
 - [policy_violations](policy.md#policy_violations).session_id (planned)
