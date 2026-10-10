@@ -114,12 +114,13 @@ Tables: `fleets`, `fleet_vehicle_memberships`, `fleet_user_assignments`,
 | Step | API call | Main error cases |
 |---|---|---|
 | Create a fleet, optionally under a parent (tree) | `POST /fleets/` (**built**) | `409` duplicate name under the same parent; `400` cycle in the tree |
-| Fleet tree / list / open | `GET /fleets/`, `GET /fleets/{fleet_id}` (**built**) | `404` |
-| Rename, move, delete | `PATCH`, `DELETE /fleets/{fleet_id}` (**built**; delete closes memberships, FL-06) | `409` fleet has children |
+| Fleet tree / list / open | `GET /fleets/tree?organization_id=` (**built**: nested, each node with `vehicle_count` and the roll-up `vehicle_count_with_descendants`; `organization_id` is for internal staff), `GET /fleets/?parent_fleet_id=&include_descendants=` and `GET /fleets/{fleet_id}?include_descendants=` (**built**; `include_descendants` lists every fleet below the parent and makes `vehicle_count` include the sub-fleets) | `404` |
+| Rename, move, delete | `PATCH`, `DELETE /fleets/{fleet_id}` (**built**; delete closes memberships, FL-06, and ends the user assignments pointing at the fleet, `unassigned_by` empty = system, FL-10) | `409` fleet has children; `403` a manager limited to some fleets deletes a fleet given to someone |
 | **Add a truck** | `POST /fleets/{fleet_id}/vehicles` `{vehicle_vin}` (**built**) | `404` unknown VIN; `409` truck already in a fleet |
 | **Remove a truck** | `DELETE /fleets/{fleet_id}/vehicles/{vehicle_vin}` (**built**) | `404` not a member |
 | Trucks of a fleet and membership history | `GET /fleets/{fleet_id}/vehicles`, `GET /fleets/{fleet_id}/memberships` (**built**), `DELETE /fleets/{fleet_id}/memberships/{fleet_vehicle_membership_id}` (**built**) | `404` |
-| **Give a user a fleet limit** (FL-10): a FLEET_MANAGER or DISPATCHER sees the chosen fleets and everything below them | `POST /memberships/{membership_id}/fleets` `{fleet_id}`, `DELETE /memberships/{membership_id}/fleets/{fleet_id}`, `GET /memberships/{membership_id}/fleets` (planned) | `400` fleet is not in the membership's organization; the portal warns when the fleet is already covered by an assigned parent (allowed) |
+| **Give a user a fleet limit** (FL-10): a FLEET_MANAGER or DISPATCHER sees the chosen fleets and everything below them | `POST /memberships/{membership_id}/fleets` `{fleet_id}` (answers `warnings: ["FLEET_ALREADY_COVERED_BY_ASSIGNED_PARENT"]` when a fleet above is already assigned; allowed), `DELETE /memberships/{membership_id}/fleets/{fleet_id}`, `GET /memberships/{membership_id}/fleets?include_closed=`, `GET /fleets/{fleet_id}/user-assignments` (all **built**, FL-13; organization administrator and internal staff only; with no open row the member sees the whole organization) | `400` fleet is not in the membership's organization; `404` membership or fleet; `409` fleet already held; `404` taking away a fleet the member does not hold |
+| What a limited manager sees | the same endpoints, narrower: fleets (list, tree, open, trucks, memberships, geofences), vehicles (`GET /vehicles/`, `/vehicles/{id}`), driving sessions and trips lists, `/telemetry` fleet and per-vehicle views, device health and config push of a fleet. Organization administrators and internal staff are never limited | `404` for anything outside the limit |
 | Geofences of a fleet | `POST/GET/PATCH/DELETE /fleets/{fleet_id}/geofences[/{geofence_id}]` (**built**) | `400` invalid polygon; `404` |
 
 ## 6. Drivers and trip planning
@@ -152,9 +153,9 @@ All **built** under `/telemetry`; fleet endpoints need the fleet in reach.
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Live map of a fleet | `GET /telemetry/fleets/{fleet_id}/vehicles/latest` | `404` fleet |
+| Live map of a fleet | `GET /telemetry/fleets/{fleet_id}/vehicles/latest?include_descendants=` (the flag adds the trucks of every sub-fleet) | `404` fleet |
 | One truck now / history trail | `GET /telemetry/vehicles/{vehicle_id}/latest`, `.../history` (both log a `VIEW`) | `404`; `422` range |
-| Operating report (truck, fleet) | `GET /telemetry/vehicles/{vehicle_id}/operating-report`, `GET /telemetry/fleets/{fleet_id}/operating-report` | `422` bad period |
+| Operating report (truck, fleet) | `GET /telemetry/vehicles/{vehicle_id}/operating-report`, `GET /telemetry/fleets/{fleet_id}/operating-report?include_descendants=` (rolls up over the sub-fleets) | `422` bad period |
 | Battery health, energy use | `GET /telemetry/vehicles/{vehicle_id}/battery-health`, `.../energy-usage` | `404` |
 | Export a report | `POST /reports/exports` `{report, params, reason}` (planned) | `422` missing reason |
 
@@ -244,6 +245,6 @@ Our staff and each ORG_ADMIN (own organization) read it.
 
 ## Open points
 
-- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings, the audit-log export, and the per-manager fleet limits (FL-10, WP6).
+- The identity layer (`/auth`, organizations, members, roles, consent, audit) is built (WP2a) and every other router requires the login since WP2b (ID-50). Still planned: flow 11's notification settings and the audit-log export. The per-manager fleet limits (FL-10) are built (WP6, FL-13).
 - Billing (`/tariffs`, `/wallets`, bills) is unbuilt; the charging-location split of `charging_stations` is part of the pending refactor (database.md, "Profile vs state").
 - Per-role feature lists are set in the permission-granting step (ID-44).

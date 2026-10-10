@@ -369,6 +369,7 @@ async def get_vehicle(
     vehicle_id: UUID,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> VehicleResponse:
     """Get an active vehicle by ID inside the caller's data reach.
 
@@ -377,6 +378,8 @@ async def get_vehicle(
         vehicle_id: Internal ID of the vehicle.
         principal: The caller; a vehicle of another organization is not found
             unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a truck outside the set is not found. `None` means no limit.
 
     Returns:
         Response for the vehicle.
@@ -387,7 +390,9 @@ async def get_vehicle(
     vehicle_record = await vehicle_repository.get_by_id(
         db_session, vehicle_id, organization_id=principal.data_scope
     )
-    if not vehicle_record:
+    if not vehicle_record or (
+        visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids
+    ):
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
     return to_vehicle_response(vehicle_record)
@@ -403,6 +408,7 @@ async def list_vehicles(
     search: str | None = None,
     vehicle_model_id: UUID | None = None,
     owner_organization_id: UUID | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles that are not soft-deleted.
 
@@ -419,6 +425,8 @@ async def list_vehicles(
         vehicle_model_id: Only trucks of this catalog model, if given.
         owner_organization_id: Only trucks owned by this organization, if
             given (for a customer it can only narrow their own trucks).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            only these are listed. `None` means no limit.
 
     Returns:
         Paginated vehicle list response carrying the normalized page and
@@ -437,6 +445,7 @@ async def list_vehicles(
         search=search,
         vehicle_model_id=vehicle_model_id,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     total = await vehicle_repository.count(
         db_session,
@@ -445,6 +454,7 @@ async def list_vehicles(
         search=search,
         vehicle_model_id=vehicle_model_id,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
 
     return VehicleListResponse(

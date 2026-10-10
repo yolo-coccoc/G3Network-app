@@ -12,6 +12,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.fleet.models import (
     FleetModel,
+    FleetUserAssignmentModel,
     FleetVehicleMembershipModel,
     GeofenceModel,
 )
@@ -113,6 +114,7 @@ def _fleet_list_conditions(
     search_text: str | None,
     vehicle_id: UUID | None,
     organization_id: UUID | None,
+    fleet_ids: frozenset[UUID] | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_all` and `count`.
 
@@ -122,11 +124,16 @@ def _fleet_list_conditions(
         vehicle_id: Only the fleet this vehicle is currently (open
             membership) a member of, if given.
         organization_id: Data scope; `None` means every organization.
+        fleet_ids: Only these fleets (the caller's fleet limit, FL-10, or the
+            descendants of a parent); `None` means no restriction, an empty
+            set matches nothing.
 
     Returns:
         Conditions to AND together; always excludes soft-deleted fleets.
     """
     conditions: list[ColumnElement[bool]] = [FleetModel.deleted_at.is_(None)]
+    if fleet_ids is not None:
+        conditions.append(FleetModel.fleet_id.in_(fleet_ids))
     if organization_id is not None:
         conditions.append(FleetModel.organization_id == organization_id)
 
@@ -158,6 +165,7 @@ async def list_all(
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    fleet_ids: frozenset[UUID] | None = None,
 ) -> list[FleetModel]:
     """Get a paginated list of fleets, excluding soft-deleted records.
 
@@ -170,6 +178,7 @@ async def list_all(
         vehicle_id: Only the fleet this vehicle is currently a member of,
             if given.
         organization_id: Data scope; `None` means every organization.
+        fleet_ids: Only these fleets, if given (see `_fleet_list_conditions`).
 
     Returns:
         List of fleet records, newest first.
@@ -178,6 +187,7 @@ async def list_all(
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        fleet_ids=fleet_ids,
     )
     query_result = await db_session.execute(
         select(FleetModel)
@@ -195,6 +205,7 @@ async def count(
     search_text: str | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    fleet_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the fleets matching the same filters as `list_all`.
 
@@ -205,6 +216,7 @@ async def count(
         vehicle_id: Only the fleet this vehicle is currently a member of,
             if given.
         organization_id: Data scope; `None` means every organization.
+        fleet_ids: Only these fleets, if given (see `_fleet_list_conditions`).
 
     Returns:
         Total number of matching fleets.
@@ -213,6 +225,7 @@ async def count(
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        fleet_ids=fleet_ids,
     )
     query_result = await db_session.execute(
         select(func.count(FleetModel.fleet_id)).where(and_(*conditions))
@@ -307,6 +320,78 @@ async def count_child_fleets(db_session: AsyncSession, fleet_id: UUID) -> int:
         )
     )
     return query_result.scalar() or 0
+
+
+async def list_child_fleet_ids(db_session: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    """List the live fleets sitting directly under a fleet.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Internal ID of the parent fleet.
+
+    Returns:
+        IDs of the fleets not soft-deleted whose `parent_fleet_id` is
+        `fleet_id`, oldest first.
+    """
+    query_result = await db_session.execute(
+        select(FleetModel.fleet_id)
+        .where(
+            FleetModel.parent_fleet_id == fleet_id,
+            FleetModel.deleted_at.is_(None),
+        )
+        .order_by(FleetModel.created_at.asc())
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_by_organization(
+    db_session: AsyncSession, organization_id: UUID
+) -> list[FleetModel]:
+    """List every live fleet of one organization, with no pagination.
+
+    For the fleet tree (FLT-01): an organization's fleets are a handful to a
+    few hundred rows, and the tree needs all of them to be assembled.
+
+    Args:
+        db_session: Current database session.
+        organization_id: Organization whose fleets are read.
+
+    Returns:
+        Fleet records not soft-deleted, oldest first.
+    """
+    query_result = await db_session.execute(
+        select(FleetModel)
+        .where(
+            FleetModel.organization_id == organization_id,
+            FleetModel.deleted_at.is_(None),
+        )
+        .order_by(FleetModel.created_at.asc())
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_active_vehicle_ids_by_fleet_ids(
+    db_session: AsyncSession, fleet_ids: frozenset[UUID]
+) -> list[UUID]:
+    """List the vehicles with an open membership in any of the given fleets.
+
+    Args:
+        db_session: Current database session.
+        fleet_ids: The fleets to read.
+
+    Returns:
+        Vehicle IDs, each once (a vehicle has at most one open membership),
+        oldest member first.
+    """
+    query_result = await db_session.execute(
+        select(FleetVehicleMembershipModel.vehicle_id)
+        .where(
+            FleetVehicleMembershipModel.fleet_id.in_(fleet_ids),
+            FleetVehicleMembershipModel.removed_at.is_(None),
+        )
+        .order_by(FleetVehicleMembershipModel.added_at.asc())
+    )
+    return list(query_result.scalars().all())
 
 
 async def find_active_membership_by_vehicle(
@@ -722,3 +807,226 @@ async def list_geofences_covering_point(
         .order_by(GeofenceModel.created_at.asc())
     )
     return list(query_result.scalars().all())
+
+
+def _assignment_conditions(
+    *,
+    fleet_id: UUID | None,
+    membership_id: UUID | None,
+    include_closed: bool,
+) -> list[ColumnElement[bool]]:
+    """Build the WHERE conditions shared by the assignment list and count.
+
+    Args:
+        fleet_id: Only assignments of this fleet, if given.
+        membership_id: Only assignments of this membership, if given.
+        include_closed: Also return assignments that were taken away.
+
+    Returns:
+        Conditions to AND together (possibly empty).
+    """
+    conditions: list[ColumnElement[bool]] = []
+    if fleet_id is not None:
+        conditions.append(FleetUserAssignmentModel.fleet_id == fleet_id)
+    if membership_id is not None:
+        conditions.append(FleetUserAssignmentModel.membership_id == membership_id)
+    if not include_closed:
+        conditions.append(FleetUserAssignmentModel.unassigned_at.is_(None))
+    return conditions
+
+
+async def insert_assignment(
+    db_session: AsyncSession,
+    *,
+    fleet_id: UUID,
+    membership_id: UUID,
+    assigned_at: datetime,
+    assigned_by: UUID | None,
+) -> FleetUserAssignmentModel:
+    """Open a fleet assignment for a membership and flush it.
+
+    Args:
+        db_session: Current database session; the repository does not commit.
+        fleet_id: The fleet the membership is limited to.
+        membership_id: The membership whose fleet-level roles are limited.
+        assigned_at: When the fleet is given.
+        assigned_by: User who gave it; `None` when the system did.
+
+    Returns:
+        The new open assignment.
+
+    Side Effects:
+        Flushes, which is where the partial unique index would raise
+        `IntegrityError` for a fleet the membership already holds.
+    """
+    assignment_record = FleetUserAssignmentModel(
+        fleet_id=fleet_id,
+        membership_id=membership_id,
+        assigned_at=assigned_at,
+        assigned_by=assigned_by,
+    )
+    db_session.add(assignment_record)
+    await db_session.flush()
+    await db_session.refresh(assignment_record)
+    return assignment_record
+
+
+async def find_open_assignment(
+    db_session: AsyncSession, fleet_id: UUID, membership_id: UUID
+) -> FleetUserAssignmentModel | None:
+    """Find the open assignment of a fleet to a membership, if any.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Internal ID of the fleet.
+        membership_id: Internal ID of the membership.
+
+    Returns:
+        The open assignment, or None.
+    """
+    query_result = await db_session.execute(
+        select(FleetUserAssignmentModel).where(
+            FleetUserAssignmentModel.fleet_id == fleet_id,
+            FleetUserAssignmentModel.membership_id == membership_id,
+            FleetUserAssignmentModel.unassigned_at.is_(None),
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def list_open_assignments_by_membership(
+    db_session: AsyncSession, membership_id: UUID
+) -> list[FleetUserAssignmentModel]:
+    """List every open assignment of a membership, with no pagination.
+
+    Used to compute the visible fleet set, which must never be truncated.
+
+    Args:
+        db_session: Current database session.
+        membership_id: Internal ID of the membership.
+
+    Returns:
+        Open assignments, oldest first.
+    """
+    query_result = await db_session.execute(
+        select(FleetUserAssignmentModel)
+        .where(
+            FleetUserAssignmentModel.membership_id == membership_id,
+            FleetUserAssignmentModel.unassigned_at.is_(None),
+        )
+        .order_by(FleetUserAssignmentModel.assigned_at.asc())
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_open_assignments_by_fleet(
+    db_session: AsyncSession, fleet_id: UUID
+) -> list[FleetUserAssignmentModel]:
+    """List every open assignment pointing at a fleet, with no pagination.
+
+    Used when a fleet is deleted, so no assignment is left behind.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Internal ID of the fleet.
+
+    Returns:
+        Open assignments of the fleet.
+    """
+    query_result = await db_session.execute(
+        select(FleetUserAssignmentModel).where(
+            FleetUserAssignmentModel.fleet_id == fleet_id,
+            FleetUserAssignmentModel.unassigned_at.is_(None),
+        )
+    )
+    return list(query_result.scalars().all())
+
+
+async def list_assignments(
+    db_session: AsyncSession,
+    *,
+    fleet_id: UUID | None = None,
+    membership_id: UUID | None = None,
+    include_closed: bool = False,
+    offset: int,
+    limit: int,
+) -> list[FleetUserAssignmentModel]:
+    """Get a page of fleet assignments, newest first.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Only assignments of this fleet, if given.
+        membership_id: Only assignments of this membership, if given.
+        include_closed: Also return assignments that were taken away.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
+
+    Returns:
+        Assignment records ordered by `assigned_at` descending.
+    """
+    conditions = _assignment_conditions(
+        fleet_id=fleet_id, membership_id=membership_id, include_closed=include_closed
+    )
+    query_result = await db_session.execute(
+        select(FleetUserAssignmentModel)
+        .where(*conditions)
+        .order_by(FleetUserAssignmentModel.assigned_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(query_result.scalars().all())
+
+
+async def count_assignments(
+    db_session: AsyncSession,
+    *,
+    fleet_id: UUID | None = None,
+    membership_id: UUID | None = None,
+    include_closed: bool = False,
+) -> int:
+    """Count the assignments matching the same filters as `list_assignments`.
+
+    Args:
+        db_session: Current database session.
+        fleet_id: Only assignments of this fleet, if given.
+        membership_id: Only assignments of this membership, if given.
+        include_closed: Also count assignments that were taken away.
+
+    Returns:
+        Number of matching assignments.
+    """
+    conditions = _assignment_conditions(
+        fleet_id=fleet_id, membership_id=membership_id, include_closed=include_closed
+    )
+    query_result = await db_session.execute(
+        select(func.count(FleetUserAssignmentModel.fleet_user_assignment_id)).where(
+            *conditions
+        )
+    )
+    return query_result.scalar() or 0
+
+
+async def close_assignment(
+    db_session: AsyncSession,
+    assignment_record: FleetUserAssignmentModel,
+    *,
+    unassigned_at: datetime,
+    unassigned_by: UUID | None,
+) -> FleetUserAssignmentModel:
+    """Close an open assignment.
+
+    Args:
+        db_session: Current database session; the repository does not commit.
+        assignment_record: The open assignment to close.
+        unassigned_at: When the fleet is taken away.
+        unassigned_by: User who took it away; `None` when the system did
+            (the fleet was deleted).
+
+    Returns:
+        The closed assignment.
+    """
+    assignment_record.unassigned_at = unassigned_at
+    assignment_record.unassigned_by = unassigned_by
+    await db_session.flush()
+    await db_session.refresh(assignment_record)
+    return assignment_record

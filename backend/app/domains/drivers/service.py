@@ -1122,6 +1122,7 @@ async def list_driving_sessions(
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     driver_id: UUID | None = None,
     vehicle_vin: str | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> DrivingSessionListResponse:
     """Get a paginated list of driving sessions, newest first.
 
@@ -1135,6 +1136,10 @@ async def list_driving_sessions(
         driver_id: Only this driver's sessions, if given.
         vehicle_vin: Only this truck's sessions, if given; an unknown VIN
             yields an empty page.
+        visible_vehicle_ids: The caller's fleet limit (FL-10): a manager
+            limited to some fleets sees only sessions on those trucks.
+            `None` means no limit. A DRIVER-only caller's own sessions are
+            not limited.
 
     Returns:
         Paginated session list, open and closed sessions.
@@ -1155,6 +1160,7 @@ async def list_driving_sessions(
             )
         driver_id = own_record.driver_id
         organization_id = None
+        visible_vehicle_ids = None
     vehicle_id: UUID | None = None
     if vehicle_vin is not None:
         vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
@@ -1176,12 +1182,14 @@ async def list_driving_sessions(
         driver_id=driver_id,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     total = await driver_repository.count_sessions(
         db_session,
         driver_id=driver_id,
         vehicle_id=vehicle_id,
         organization_id=organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     return DrivingSessionListResponse(
         items=[

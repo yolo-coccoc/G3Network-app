@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+import app.api.fleet_visibility as fleet_visibility
 import app.api.membership_end_hooks as membership_end_hooks
 from app.api.vehicle_transfer import router as vehicle_transfer_router
 from app.domains.batteries.router import battery_models_router
@@ -21,6 +22,7 @@ from app.domains.charging_stations.router import router as charging_stations_rou
 from app.domains.drivers.router import driving_sessions_router
 from app.domains.drivers.router import router as drivers_router
 from app.domains.drivers.trip_router import router as trips_router
+from app.domains.fleet.router import membership_fleets_router
 from app.domains.fleet.router import router as fleet_router
 from app.domains.identity.compliance_router import (
     audit_router as access_audit_router,
@@ -143,6 +145,7 @@ for _error_base in _DOMAIN_ERROR_STATUS:
 # Ending or locking a membership also closes the driver profile and the open
 # driving session (DR-10); identity cannot call drivers, so it is wired here.
 membership_end_hooks.register_membership_end_hooks()
+fleet_visibility.register_fleet_visibility()
 
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")
@@ -165,6 +168,7 @@ app.include_router(auth_router, prefix="/api/v1/auth")
 app.include_router(users_router, prefix="/api/v1/users")
 app.include_router(organizations_router, prefix="/api/v1/organizations")
 app.include_router(memberships_router, prefix="/api/v1/memberships")
+app.include_router(membership_fleets_router, prefix="/api/v1/memberships")
 app.include_router(legal_documents_router, prefix="/api/v1/legal-documents")
 app.include_router(consents_router, prefix="/api/v1/consents")
 app.include_router(access_audit_router, prefix="/api/v1/access-audit-logs")

@@ -28,6 +28,7 @@ from app.domains.drivers.schemas import (
 from app.domains.drivers.types import DriverStatus
 from app.domains.identity.dependencies import (
     get_client_context,
+    get_visible_vehicle_ids,
     require_roles,
 )
 from app.domains.identity.types import (
@@ -350,6 +351,7 @@ async def list_driving_sessions_endpoint(
     ),
     client_context: ClientContext = Depends(get_client_context),
     principal: Principal = Depends(DRIVING_SESSION_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionListResponse:
     """Get a paginated list of driving sessions.
@@ -361,6 +363,7 @@ async def list_driving_sessions_endpoint(
         vehicle_vin: Truck filter (VIN), if any.
         client_context: IP address and user agent, for the audit row.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -373,6 +376,7 @@ async def list_driving_sessions_endpoint(
         driver_id=driver_id,
         vehicle_vin=vehicle_vin,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     if principal.has_any_role(*driver_service.DRIVER_MANAGER_ROLES):
         # A manager sees who drove where (personal data, DR-08): one VIEW row

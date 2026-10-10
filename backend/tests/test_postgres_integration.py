@@ -106,6 +106,7 @@ from app.domains.fleet.schemas import (
     GeofenceUpdateRequest,
 )
 from app.domains.identity.exceptions import (
+    AccessDeniedError,
     FailureRecordedError,
     InvalidCredentialsError,
     InvalidOneTimeCodeError,
@@ -4526,6 +4527,240 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
                 db, principal=build_principal(user_id=people["manager"])
             )
             assert again.unread_count == 1
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignments(
+    temporary_database: str,
+) -> None:
+    """FL-10 / FLT-01 on real rows: a manager limited to a parent fleet sees the
+    parent and everything below (fleets, trucks, tree), moving a sub-fleet
+    changes it, a deleted fleet ends its assignments (system, NULL actor) and
+    taking away the last one lifts the limit."""
+    import app.domains.fleet.assignment_service as assignment_service
+    from app.domains.fleet.exceptions import (
+        FleetNotFoundError,
+        FleetUserAssignmentOrganizationMismatchError,
+    )
+    from app.domains.vehicles.exceptions import VehicleNotFoundError
+
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory() as db:
+            organization_id, vehicle_model_id = await _insert_vehicle_parents(db)
+            other_organization_id = await _integration_organization(db)
+            user = UserModel(
+                phone_number=f"+84{uuid4().hex[:9]}",
+                full_name="Regional Manager",
+                status=UserStatus.ACTIVE.value,
+            )
+            db.add(user)
+            await db.flush()
+            membership = MembershipModel(
+                organization_id=organization_id,
+                user_id=user.user_id,
+                status=MembershipStatus.ACTIVE.value,
+            )
+            db.add(membership)
+            await db.flush()
+            admin = build_principal(organization_id=organization_id)
+            manager = dataclasses.replace(
+                build_principal(
+                    roles=frozenset({UserRole.FLEET_MANAGER}),
+                    organization_id=organization_id,
+                    user_id=user.user_id,
+                ),
+                membership_id=membership.membership_id,
+            )
+
+            async def make_fleet(name: str, parent_id: UUID | None) -> UUID:
+                created = await fleet_service.create_fleet(
+                    db,
+                    FleetCreateRequest(name=name, parent_fleet_id=parent_id),
+                    principal=admin,
+                )
+                return created.fleet_id
+
+            region = await make_fleet("Region", None)
+            branch = await make_fleet("Branch", region)
+            depot = await make_fleet("Depot", branch)
+            other = await make_fleet("Other region", None)
+
+            async def truck_in(fleet_id: UUID, plate: str) -> UUID:
+                vehicle = VehicleModel(
+                    vehicle_id=uuid4(),
+                    organization_id=organization_id,
+                    vehicle_model_id=vehicle_model_id,
+                    license_plate=plate,
+                    vin=f"FL{uuid4().hex[:15]}".upper(),
+                    year=2026,
+                    status=VehicleStatus.ACTIVE,
+                )
+                db.add(vehicle)
+                await db.flush()
+                await fleet_repository.insert_membership(
+                    db,
+                    fleet_id=fleet_id,
+                    vehicle_id=vehicle.vehicle_id,
+                    added_at=datetime.now(timezone.utc),
+                )
+                return vehicle.vehicle_id
+
+            truck_region = await truck_in(region, "FL-REGION")
+            truck_depot = await truck_in(depot, "FL-DEPOT")
+            truck_other = await truck_in(other, "FL-OTHER")
+
+            # No assignment: no limit, and the limited-role caller sees all.
+            assert (
+                await fleet_service.resolve_visible_fleet_ids(
+                    db, membership.membership_id, organization_id
+                )
+                is None
+            )
+            assert (await fleet_service.list_fleets(db, principal=manager)).total == 4
+
+            # Parent assigned: the union is the parent and everything below it.
+            first = await assignment_service.assign_fleet_to_membership(
+                db, membership.membership_id, region, principal=admin
+            )
+            assert first.warnings == [] and first.assigned_by == admin.user_id
+            # A child of an assigned parent is allowed, with a warning.
+            second = await assignment_service.assign_fleet_to_membership(
+                db, membership.membership_id, branch, principal=admin
+            )
+            assert second.warnings == [
+                assignment_service.WARNING_COVERED_BY_ASSIGNED_PARENT
+            ]
+            assert await fleet_service.resolve_visible_fleet_ids(
+                db, membership.membership_id, organization_id
+            ) == frozenset({region, branch, depot})
+            assert await fleet_service.resolve_visible_vehicle_ids(
+                db, membership.membership_id, organization_id
+            ) == frozenset({truck_region, truck_depot})
+
+            # The limit applies to fleets, the tree, trucks and fleet-wide views.
+            assert (await fleet_service.list_fleets(db, principal=manager)).total == 3
+            with pytest.raises(FleetNotFoundError):
+                await fleet_service.get_fleet(db, other, principal=manager)
+            tree = await fleet_service.get_fleet_tree(db, principal=manager)
+            assert [node.fleet_id for node in tree.items] == [region]
+            assert tree.total_fleets == 3
+            assert tree.items[0].vehicle_count == 1
+            assert tree.items[0].vehicle_count_with_descendants == 2
+            admin_tree = await fleet_service.get_fleet_tree(db, principal=admin)
+            assert {node.fleet_id for node in admin_tree.items} == {region, other}
+            assert admin_tree.total_fleets == 4
+            visible_trucks = await fleet_service.resolve_principal_visible_vehicle_ids(
+                db, manager
+            )
+            assert (
+                await vehicle_service.list_vehicles(
+                    db, principal=manager, visible_vehicle_ids=visible_trucks
+                )
+            ).total == 2
+            with pytest.raises(VehicleNotFoundError):
+                await vehicle_service.get_vehicle(
+                    db,
+                    truck_other,
+                    principal=manager,
+                    visible_vehicle_ids=visible_trucks,
+                )
+            assert set(
+                await fleet_service.list_active_member_vehicle_ids(
+                    db, region, principal=manager
+                )
+            ) == {truck_region}
+            assert set(
+                await fleet_service.list_active_member_vehicle_ids(
+                    db, region, principal=manager, include_descendants=True
+                )
+            ) == {truck_region, truck_depot}
+            with pytest.raises(FleetNotFoundError):
+                await fleet_service.list_active_member_vehicle_ids(
+                    db, other, principal=manager
+                )
+            below_region = await fleet_service.list_fleets(
+                db,
+                principal=admin,
+                parent_fleet_id=region,
+                include_descendants=True,
+            )
+            assert {item.fleet_id for item in below_region.items} == {branch, depot}
+            children_only = await fleet_service.list_fleets(
+                db, principal=admin, parent_fleet_id=region
+            )
+            assert [item.fleet_id for item in children_only.items] == [branch]
+
+            # Another organization's fleet cannot be given to this membership.
+            foreign = await fleet_service.create_fleet(
+                db,
+                FleetCreateRequest(
+                    name="Foreign", organization_id=other_organization_id
+                ),
+                principal=build_internal_principal(),
+            )
+            with pytest.raises(FleetUserAssignmentOrganizationMismatchError):
+                await assignment_service.assign_fleet_to_membership(
+                    db,
+                    membership.membership_id,
+                    foreign.fleet_id,
+                    principal=build_internal_principal(),
+                )
+
+            # Moving the depot under the other region changes what is visible.
+            await fleet_service.update_fleet(
+                db, depot, FleetUpdateRequest(parent_fleet_id=other), principal=admin
+            )
+            assert await fleet_service.resolve_visible_fleet_ids(
+                db, membership.membership_id, organization_id
+            ) == frozenset({region, branch})
+            assert await fleet_service.resolve_visible_vehicle_ids(
+                db, membership.membership_id, organization_id
+            ) == frozenset({truck_region})
+            assert set(
+                await fleet_service.list_active_member_vehicle_ids(
+                    db, other, principal=admin, include_descendants=True
+                )
+            ) == {truck_other, truck_depot}
+            rolled_up = await fleet_service.get_fleet(
+                db, other, principal=admin, include_descendants=True
+            )
+            assert rolled_up.vehicle_count == 2
+
+            # A manager limited to fleets cannot delete a fleet given to someone.
+            with pytest.raises(AccessDeniedError):
+                await fleet_service.soft_delete_fleet(db, branch, principal=manager)
+
+            # Deleting the branch ends its assignment: the system closed it.
+            await fleet_service.soft_delete_fleet(db, branch, principal=admin)
+            history = await assignment_service.list_assignments_by_membership(
+                db, membership.membership_id, principal=admin, include_closed=True
+            )
+            by_fleet = {item.fleet_id: item for item in history.items}
+            assert by_fleet[branch].unassigned_at is not None
+            assert by_fleet[branch].unassigned_by is None
+            assert by_fleet[region].unassigned_at is None
+            open_rows = await assignment_service.list_assignments_by_fleet(
+                db, region, principal=admin
+            )
+            assert open_rows.total == 1
+
+            # Taking away the last fleet lifts the limit.
+            await assignment_service.unassign_fleet_from_membership(
+                db, membership.membership_id, region, principal=admin
+            )
+            assert (
+                await fleet_service.resolve_visible_fleet_ids(
+                    db, membership.membership_id, organization_id
+                )
+                is None
+            )
             await db.rollback()
     finally:
         await engine.dispose()

@@ -64,3 +64,22 @@ class FleetMembershipNotFoundError(FleetError, NotFoundError):
 class GeofenceNotFoundError(FleetError, NotFoundError):
     """Raised when a geofence does not exist, was soft-deleted, or belongs to
     another fleet."""
+
+
+class FleetUserAssignmentMembershipNotFoundError(FleetError, NotFoundError):
+    """Raised when the membership given for a fleet assignment does not exist
+    or is out of the caller's data reach (FL-10)."""
+
+
+class FleetUserAssignmentOrganizationMismatchError(FleetError, InvalidInputError):
+    """Raised when a fleet is given to a membership of another organization
+    (FL-10): the fleet and the membership must share their organization."""
+
+
+class FleetUserAssignmentConflictError(FleetError, ConflictError):
+    """Raised when the membership already holds the fleet (FL-10): an open
+    assignment is unique per fleet and membership."""
+
+
+class FleetUserAssignmentNotFoundError(FleetError, NotFoundError):
+    """Raised when taking away a fleet the membership does not hold (FL-10)."""

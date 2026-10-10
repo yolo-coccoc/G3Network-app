@@ -420,6 +420,9 @@ async def list_fleet_vehicle_live_statuses_endpoint(
         le=settings.API_MAX_PAGE_SIZE,
         description="Number of records per page",
     ),
+    include_descendants: bool = Query(
+        False, description="Also include the trucks of every sub-fleet"
+    ),
     principal: Principal = Depends(FLEET_LIVE_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetVehicleLiveStatusListResponse:
@@ -429,6 +432,7 @@ async def list_fleet_vehicle_live_statuses_endpoint(
         fleet_id: Internal ID of the fleet.
         page: Page number.
         page_size: Number of records per page.
+        include_descendants: Roll the map up over the sub-fleets.
         principal: The authenticated caller.
         db: Database session managed by the dependency.
 
@@ -441,7 +445,12 @@ async def list_fleet_vehicle_live_statuses_endpoint(
             soft-deleted.
     """
     return await telemetry_service.list_fleet_vehicle_live_statuses(
-        db, fleet_id, page=page, page_size=page_size, principal=principal
+        db,
+        fleet_id,
+        page=page,
+        page_size=page_size,
+        include_descendants=include_descendants,
+        principal=principal,
     )
 
 
@@ -456,6 +465,9 @@ async def get_fleet_operating_report_endpoint(
     start_time: datetime,
     end_time: datetime,
     report_format: ReportFormat = Query(ReportFormat.JSON, alias="format"),
+    include_descendants: bool = Query(
+        False, description="Also include the trucks of every sub-fleet"
+    ),
     principal: Principal = Depends(FLEET_REPORT_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> FleetOperatingReportResponse | Response:
@@ -472,6 +484,8 @@ async def get_fleet_operating_report_endpoint(
         report_format: ``json`` (default) or ``csv`` (query parameter
             ``format``) - CSV has one row per vehicle plus a final
             ``TOTAL`` row.
+        include_descendants: Roll the report up over the sub-fleets
+            (FLT-01: reports roll up to parents).
         principal: The authenticated caller.
         db: Database session managed by the dependency.
 
@@ -487,7 +501,12 @@ async def get_fleet_operating_report_endpoint(
             soft-deleted.
     """
     fleet_report = await telemetry_service.get_fleet_operating_report(
-        db, fleet_id, start_time=start_time, end_time=end_time, principal=principal
+        db,
+        fleet_id,
+        start_time=start_time,
+        end_time=end_time,
+        principal=principal,
+        include_descendants=include_descendants,
     )
     if report_format is ReportFormat.CSV:
         return Response(

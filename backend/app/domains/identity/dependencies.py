@@ -13,6 +13,7 @@ committed with the request.
 """
 
 from collections.abc import Awaitable, Callable
+from uuid import UUID
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -98,6 +99,56 @@ async def get_current_principal(
         OrganizationInactiveError: 403, the organization is suspended/closed.
     """
     return await account_service.resolve_principal(db_session, session_identity)
+
+
+# Resolver of the trucks a fleet-limited caller may see (FL-10), registered at
+# start-up by `app/api/fleet_visibility.py`. `identity` depends on no domain
+# and `vehicles` cannot call `fleet` (FL-01), so the fleet function reaches
+# the vehicle endpoints through this one slot.
+VisibleVehicleResolver = Callable[
+    [AsyncSession, Principal], Awaitable[frozenset[UUID] | None]
+]
+_visible_vehicle_resolver: VisibleVehicleResolver | None = None
+
+
+def register_visible_vehicle_resolver(resolver: VisibleVehicleResolver) -> None:
+    """Register the function that tells which trucks a limited caller may see.
+
+    Args:
+        resolver: Called with the request's session and principal; returns
+            the visible vehicle IDs, or `None` when the caller is not limited.
+
+    Side Effects:
+        Replaces any resolver registered before; calling it again with the
+        same function changes nothing.
+    """
+    global _visible_vehicle_resolver
+    _visible_vehicle_resolver = resolver
+
+
+async def get_visible_vehicle_ids(
+    principal: Principal = Depends(get_current_principal),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> frozenset[UUID] | None:
+    """Resolve once per request the trucks the caller's fleet limit allows.
+
+    Args:
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        `None` when the caller is not limited (internal staff, the
+        organization administrator, a member with no fleet assignment, or any
+        role that is not fleet-level); otherwise the IDs of the trucks
+        currently in the assigned fleets and every fleet below them. If no
+        resolver was registered, a limited caller gets an empty set (fail
+        closed) rather than the whole organization.
+    """
+    if not principal.is_fleet_limited:
+        return None
+    if _visible_vehicle_resolver is None:
+        return frozenset()
+    return await _visible_vehicle_resolver(db_session, principal)
 
 
 def require_roles(

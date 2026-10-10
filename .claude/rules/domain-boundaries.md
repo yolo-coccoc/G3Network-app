@@ -25,12 +25,12 @@
 | `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `resolve_vehicle_summary_by_id` (VIN/plate/status in the fleet live-position list); `list_vehicle_summaries` + `resolve_first_handover_at` (the computed VEH-05 activation: the trucks of a scope and their handover date) | F-A6/F-C6 reports, F-E1, VEH-05 |
 | `telemetry` → `notifications` | raise battery / anomaly / SOH alerts | F-A2, F-A4, F-A3 |
 | `telemetry` → `charging_stations` | nearest available station (≥1 `Available` connector) for the alert payload | F-A2 |
-| `telemetry` → `fleet` | `list_active_member_vehicle_ids` (fleet live positions, fleet report rollup), `find_current_fleet_id_by_vehicle` + `list_geofences_containing` (geofence entry/exit alerts) | F-E1, F-A6, F-A5 |
+| `telemetry` → `fleet` | `list_active_member_vehicle_ids` (fleet live positions, fleet report rollup, optionally over the sub-fleets and under the caller's fleet limit), `resolve_principal_visible_vehicle_ids` (a limited manager reads only the trucks of their fleets), `find_current_fleet_id_by_vehicle` + `list_geofences_containing` (geofence entry/exit alerts) | F-E1, F-A6, F-A5, FLT-01, FL-10 |
 | `telematics` → `vehicles` | resolve/validate the vehicle mapping (a soft-deleted vehicle maps nothing) | F-G1, F-J1 |
 | `telematics` → `telemetry` | `resolve_last_telemetry_at` (device-health monitor), `resolve_vehicle_live_status` (device health on the API) | F-J1/F-J3 |
 | `telematics` → `notifications` | raise device-offline alerts and deliver them (`create_notification`, `add_notification_recipients`) | DEV-05 |
 | `telematics` → `identity` | `list_organization_role_holder_user_ids` (ORG_ADMIN + FLEET_MANAGER of the truck's organization receive the silence alert) | DEV-05 |
-| `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push) | F-J2 |
+| `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push, device health of a fleet; takes the principal so the fleet limit applies) | F-J2, FL-10 |
 | `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint); `resolve_session_command_reference` (the token and transaction ID the gateway sends in a remote start / stop) | F-B2, F-C5, F-H1 |
 | `drivers` → `vehicles` | `resolve_vehicle_reference_by_code` (VIN or plate) / `_by_vin` / `_by_id` (check-in: the truck and its owner), `resolve_vehicle_summary_by_id` (plate in the driver's summary) | F-E4, DR-11 |
 | `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses), `membership_holds_role` (a profile needs the DRIVER role), `search_membership_ids_by_person` (list search by name/phone), `resolve_organization_settings` (auto-end time) | F-E4, DRV-01 |
@@ -40,6 +40,8 @@
 | `support` → `drivers` | `resolve_driver_reference_by_id` (validate + `driver_name`), `resolve_own_driver_reference` (the caller's profile), `is_membership_checked_in_to_vehicle` (an SOS on a borrowed truck) | F-I1/F-I2 |
 | `support` → `notifications` | `create_notification` (`SOS_ALERT` when an SOS is created) | F-I2 |
 | `fleet` → `vehicles` | `resolve_vehicle_reference_by_vin`, `resolve_vehicle_summary_by_id` | F-E1 |
+| `fleet` → `identity` | `resolve_organization_for_new_record` (owner of a new fleet, the tree's organization), `resolve_membership_person_reference` (a fleet limit names a membership and its organization) | FLT-01, FLT-03 |
+| `app/api/fleet_visibility.py` → `identity`, `fleet` | `register_visible_vehicle_resolver`, `resolve_principal_visible_vehicle_ids` (the vehicle, driving-session and trip lists read the caller's fleet limit through the `get_visible_vehicle_ids` request dependency: `vehicles` and `drivers` cannot call `fleet`, FL-01) | FLT-03 (FL-13) |
 | `batteries` → `vehicles` | `resolve_vehicle_reference_by_id` (the truck to fit a pack to exists) | BAT-01 |
 | `batteries` → `identity` | `resolve_organization_for_new_record` (owner of a new pack or a transfer) | BAT-01 |
 | `telemetry` → `batteries` | `resolve_installed_battery_capacity_kwh` (pack capacity precedence, VH-16) | MON-14 reports |
@@ -63,7 +65,10 @@ Such a module is not a domain, holds no business rule of its own and is
 listed in the table above. When `identity` (which depends on no domain) must
 trigger work elsewhere (ending or locking a membership, DR-10), it exposes a
 hook (`register_membership_end_hook`) that `app/api/membership_end_hooks.py`
-fills with the other domain's public function at start-up (DR-15).
+fills with the other domain's public function at start-up (DR-15); the same
+pattern gives the vehicle endpoints the caller's fleet limit
+(`register_visible_vehicle_resolver`, filled by `app/api/fleet_visibility.py`,
+FL-13).
 
 ## Domain roles worth knowing
 

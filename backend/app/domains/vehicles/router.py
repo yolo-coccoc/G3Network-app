@@ -12,7 +12,11 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.vehicles.service as vehicle_service
-from app.domains.identity.dependencies import get_current_principal, require_roles
+from app.domains.identity.dependencies import (
+    get_current_principal,
+    get_visible_vehicle_ids,
+    require_roles,
+)
 from app.domains.identity.types import Principal, roles_for
 from app.domains.vehicles.schemas import (
     VehicleCreateRequest,
@@ -118,6 +122,7 @@ async def list_vehicles_endpoint(
         description="Filter by owning organization (internal staff)",
     ),
     principal: Principal = Depends(VEHICLE_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleListResponse:
     """Get a paginated list of vehicles.
@@ -132,6 +137,7 @@ async def list_vehicles_endpoint(
         owner_organization_id: Only trucks of this owner (query parameter
             ``organization_id``), if given.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -146,6 +152,7 @@ async def list_vehicles_endpoint(
         vehicle_model_id=vehicle_model_id,
         owner_organization_id=owner_organization_id,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -158,6 +165,7 @@ async def list_vehicles_endpoint(
 async def get_vehicle_endpoint(
     vehicle_id: UUID,
     principal: Principal = Depends(VEHICLE_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Get the details of a vehicle by ID.
@@ -165,6 +173,7 @@ async def get_vehicle_endpoint(
     Args:
         vehicle_id: Internal ID of the vehicle.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -174,7 +183,10 @@ async def get_vehicle_endpoint(
         VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
     return await vehicle_service.get_vehicle(
-        db_session, vehicle_id, principal=principal
+        db_session,
+        vehicle_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

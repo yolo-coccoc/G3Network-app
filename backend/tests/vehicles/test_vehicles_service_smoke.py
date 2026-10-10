@@ -184,6 +184,7 @@ async def test_list_vehicles_normalizes_page_window(
         search: str | None = None,
         vehicle_model_id: UUID | None = None,
         owner_organization_id: UUID | None = None,
+        vehicle_ids: frozenset[UUID] | None = None,
     ) -> list[VehicleModel]:
         list_arguments.update(
             offset=offset,
@@ -193,6 +194,7 @@ async def test_list_vehicles_normalizes_page_window(
             search=search,
             vehicle_model_id=vehicle_model_id,
             owner_organization_id=owner_organization_id,
+            vehicle_ids=vehicle_ids,
         )
         return [build_vehicle_record()]
 
@@ -204,6 +206,7 @@ async def test_list_vehicles_normalizes_page_window(
         search: str | None = None,
         vehicle_model_id: UUID | None = None,
         owner_organization_id: UUID | None = None,
+        vehicle_ids: frozenset[UUID] | None = None,
     ) -> int:
         return 1
 
@@ -228,6 +231,7 @@ async def test_list_vehicles_normalizes_page_window(
         "search": "TEST",
         "vehicle_model_id": None,
         "owner_organization_id": None,
+        "vehicle_ids": None,
     }
     assert vehicle_list_response.page == 3
     assert vehicle_list_response.page_size == settings.API_MAX_PAGE_SIZE

@@ -1,11 +1,15 @@
 """Business service and public contract of the fleet domain.
 
-This module holds the business rules for fleet records, fleet-vehicle
-membership and fleet geofences (F-E1, F-A5). Other domains may only call the
-public cross-domain functions at the end of this module
-(`list_active_member_vehicle_ids`, `find_current_fleet_id_by_vehicle`,
-`list_geofences_containing`), which take and return primitives or frozen
-DTOs - never the ORM model or HTTP response schema of the fleet domain. This
+This module holds the business rules for fleet records, the fleet tree,
+fleet-vehicle membership and fleet geofences (F-E1, F-A5), and the fleet
+limit of a fleet-level user (FL-10). Other domains may only call the public
+cross-domain functions at the end of this module
+(`list_active_member_vehicle_ids`, `list_descendant_fleet_ids`,
+`resolve_visible_fleet_ids`, `resolve_visible_vehicle_ids`,
+`find_current_fleet_id_by_vehicle`, `list_geofences_containing`), which take
+and return primitives or frozen DTOs - never the ORM model or HTTP response
+schema of the fleet domain. The assignment endpoints (who is limited to which
+fleet) live in `assignment_service.py`, internal to this domain. This
 domain depends on the `vehicles` domain's public service to resolve a VIN
 into a vehicle and to enrich a response with a vehicle's VIN/license
 plate/status - the same one-directional edge shape already established by
@@ -48,6 +52,8 @@ from app.domains.fleet.schemas import (
     FleetMembershipHistoryResponse,
     FleetMembershipResponse,
     FleetResponse,
+    FleetTreeNodeResponse,
+    FleetTreeResponse,
     FleetUpdateRequest,
     FleetVehicleAddRequest,
     FleetVehicleListResponse,
@@ -59,6 +65,7 @@ from app.domains.fleet.schemas import (
     GeofenceUpdateRequest,
 )
 from app.domains.fleet.types import GeofenceReference
+from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import Principal
 from app.domains.vehicles.types import VehicleStatus, VehicleSummary
 from app.libs.common.clock import utc_now
@@ -94,7 +101,10 @@ def to_membership_response(
 
 
 async def build_fleet_response(
-    db_session: AsyncSession, fleet_record: FleetModel
+    db_session: AsyncSession,
+    fleet_record: FleetModel,
+    *,
+    include_descendants: bool = False,
 ) -> FleetResponse:
     """Build a fleet response enriched with its current vehicle count.
 
@@ -102,18 +112,34 @@ async def build_fleet_response(
         db_session: Current database session.
         fleet_record: Fleet ORM record already queried, created, or
             updated by the caller.
+        include_descendants: Count the trucks of every fleet below this one
+            too (the roll-up of FLT-01), not only the trucks directly in it.
 
     Returns:
         Response data with `vehicle_count` populated from the fleet's
         open memberships.
 
     Side Effects:
-        One count query against this domain's own membership table -
-        read-only; does not commit or rollback.
+        One count query against this domain's own membership table, or, with
+        `include_descendants`, a walk down the tree and one query for the
+        trucks of the whole subtree - read-only; does not commit or rollback.
     """
-    vehicle_count = await fleet_repository.count_active_memberships_by_fleet(
-        db_session, fleet_record.fleet_id
-    )
+    if include_descendants:
+        subtree_fleet_ids = frozenset(
+            [
+                fleet_record.fleet_id,
+                *await list_descendant_fleet_ids(db_session, fleet_record.fleet_id),
+            ]
+        )
+        vehicle_count = len(
+            await fleet_repository.list_active_vehicle_ids_by_fleet_ids(
+                db_session, subtree_fleet_ids
+            )
+        )
+    else:
+        vehicle_count = await fleet_repository.count_active_memberships_by_fleet(
+            db_session, fleet_record.fleet_id
+        )
     return FleetResponse(
         fleet_id=fleet_record.fleet_id,
         organization_id=fleet_record.organization_id,
@@ -225,10 +251,24 @@ async def create_fleet(
             another organization.
         OrganizationNotFoundError: When the named organization does not exist
             or is out of the caller's reach.
+        AccessDeniedError: When a caller limited to some fleets (FL-10)
+            creates a top-level fleet.
     """
     organization_id = await identity_service.resolve_organization_for_new_record(
         db_session, principal, fleet_create_request.organization_id
     )
+    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    if visible_fleet_ids is not None and (
+        fleet_create_request.parent_fleet_id not in visible_fleet_ids
+    ):
+        # A top-level fleet would sit outside the caller's limit (FL-10).
+        if fleet_create_request.parent_fleet_id is None:
+            raise AccessDeniedError(
+                "A manager limited to some fleets creates a fleet under one of them"
+            )
+        raise FleetParentNotFoundError(
+            f"Parent fleet with id '{fleet_create_request.parent_fleet_id}' not found"
+        )
     if fleet_create_request.fleet_code is not None:
         existing_fleet = await fleet_repository.find_by_fleet_code(
             db_session,
@@ -266,14 +306,17 @@ async def get_fleet(
     fleet_id: UUID,
     *,
     principal: Principal,
+    include_descendants: bool = False,
 ) -> FleetResponse:
     """Get an active fleet by ID inside the caller's data reach.
 
     Args:
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
-        principal: The caller; a fleet of another organization is not found
-            unless the caller is internal.
+        principal: The caller; a fleet of another organization (or outside
+            the caller's fleet limit, FL-10) is not found unless the caller
+            is internal.
+        include_descendants: Count the trucks of the sub-fleets too.
 
     Returns:
         Response for the fleet.
@@ -282,7 +325,9 @@ async def get_fleet(
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
     """
     fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
-    return await build_fleet_response(db_session, fleet_record)
+    return await build_fleet_response(
+        db_session, fleet_record, include_descendants=include_descendants
+    )
 
 
 async def list_fleets(
@@ -293,6 +338,8 @@ async def list_fleets(
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     search_text: str | None = None,
     vehicle_vin: str | None = None,
+    parent_fleet_id: UUID | None = None,
+    include_descendants: bool = False,
 ) -> FleetListResponse:
     """Get a paginated list of active fleets.
 
@@ -308,6 +355,11 @@ async def list_fleets(
             ("which fleet is this vehicle in"), if given. A VIN that doesn't
             resolve to an active vehicle yields an empty page, not an error:
             it is a filter, like the others.
+        parent_fleet_id: Only the fleets directly under this fleet (all the
+            fleets below it with `include_descendants`), if given.
+        include_descendants: With `parent_fleet_id`, list every fleet below it,
+            not only its children; in every case a fleet's `vehicle_count`
+            then counts the trucks of its sub-fleets too (FLT-01 roll-up).
 
     Returns:
         Paginated fleet list response.
@@ -317,6 +369,22 @@ async def list_fleets(
         ``vehicle_vin``. Read-only; does not commit or rollback.
     """
     page_window = normalize_page_window(page, page_size)
+
+    # The fleets this caller may see (FL-10), narrowed to the part of the tree
+    # under `parent_fleet_id` when given.
+    fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    if parent_fleet_id is not None:
+        await _get_fleet_record(db_session, parent_fleet_id, principal)
+        below_parent_ids = frozenset(
+            await list_descendant_fleet_ids(db_session, parent_fleet_id)
+            if include_descendants
+            else await fleet_repository.list_child_fleet_ids(
+                db_session, parent_fleet_id
+            )
+        )
+        fleet_ids = (
+            below_parent_ids if fleet_ids is None else below_parent_ids & fleet_ids
+        )
 
     vehicle_id: UUID | None = None
     if vehicle_vin is not None:
@@ -339,22 +407,148 @@ async def list_fleets(
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=principal.data_scope,
+        fleet_ids=fleet_ids,
     )
     total = await fleet_repository.count(
         db_session,
         search_text=search_text,
         vehicle_id=vehicle_id,
         organization_id=principal.data_scope,
+        fleet_ids=fleet_ids,
     )
 
     return FleetListResponse(
         items=[
-            await build_fleet_response(db_session, fleet_record)
+            await build_fleet_response(
+                db_session, fleet_record, include_descendants=include_descendants
+            )
             for fleet_record in fleet_records
         ],
         total=total,
         page=page_window.page,
         page_size=page_window.page_size,
+    )
+
+
+async def get_fleet_tree(
+    db_session: AsyncSession,
+    *,
+    principal: Principal,
+    organization_id: UUID | None = None,
+) -> FleetTreeResponse:
+    """Get the nested fleet tree of an organization (FLT-01).
+
+    A caller limited to some fleets (FL-10) gets only the fleets they may see:
+    the tops of their assigned subtrees become the roots. Each node carries
+    the trucks directly in it and the trucks of its whole subtree.
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+        organization_id: The organization to show; internal staff only
+            (defaults to the caller's own organization).
+
+    Returns:
+        The tree: root fleets with their children, oldest first.
+
+    Raises:
+        OrganizationNotFoundError: When the named organization does not exist
+            or is out of the caller's reach.
+
+    Side Effects:
+        Read-only; one query for the organization's fleets and one count per
+        fleet (no batching).
+    """
+    tree_organization_id = await identity_service.resolve_organization_for_new_record(
+        db_session, principal, organization_id
+    )
+    fleet_records = await fleet_repository.list_by_organization(
+        db_session, tree_organization_id
+    )
+    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    if visible_fleet_ids is not None:
+        fleet_records = [
+            fleet_record
+            for fleet_record in fleet_records
+            if fleet_record.fleet_id in visible_fleet_ids
+        ]
+
+    fleet_records_by_id = {
+        fleet_record.fleet_id: fleet_record for fleet_record in fleet_records
+    }
+    child_records_by_parent_id: dict[UUID, list[FleetModel]] = {}
+    root_records: list[FleetModel] = []
+    for fleet_record in fleet_records:
+        if fleet_record.parent_fleet_id in fleet_records_by_id:
+            child_records_by_parent_id.setdefault(
+                fleet_record.parent_fleet_id, []
+            ).append(fleet_record)
+        else:
+            root_records.append(fleet_record)
+
+    own_vehicle_counts = {
+        fleet_record.fleet_id: await fleet_repository.count_active_memberships_by_fleet(
+            db_session, fleet_record.fleet_id
+        )
+        for fleet_record in fleet_records
+    }
+    return FleetTreeResponse(
+        organization_id=tree_organization_id,
+        items=[
+            build_fleet_tree_node(
+                root_record, child_records_by_parent_id, own_vehicle_counts, set()
+            )
+            for root_record in root_records
+        ],
+        total_fleets=len(fleet_records),
+    )
+
+
+def build_fleet_tree_node(
+    fleet_record: FleetModel,
+    child_records_by_parent_id: dict[UUID, list[FleetModel]],
+    own_vehicle_counts: dict[UUID, int],
+    visited_fleet_ids: set[UUID],
+) -> FleetTreeNodeResponse:
+    """Assemble one tree node and, recursively, the fleets below it.
+
+    Pure mapping only, no I/O. The visited set keeps a damaged loop in the
+    data from recursing forever.
+
+    Args:
+        fleet_record: The fleet of this node.
+        child_records_by_parent_id: The live fleets of the tree grouped by
+            their parent's ID.
+        own_vehicle_counts: Trucks directly in each fleet, by fleet ID.
+        visited_fleet_ids: Fleets already placed in the tree.
+
+    Returns:
+        The node with its roll-up count and children.
+    """
+    visited_fleet_ids.add(fleet_record.fleet_id)
+    child_nodes = [
+        build_fleet_tree_node(
+            child_record,
+            child_records_by_parent_id,
+            own_vehicle_counts,
+            visited_fleet_ids,
+        )
+        for child_record in child_records_by_parent_id.get(fleet_record.fleet_id, [])
+        if child_record.fleet_id not in visited_fleet_ids
+    ]
+    own_vehicle_count = own_vehicle_counts.get(fleet_record.fleet_id, 0)
+    return FleetTreeNodeResponse(
+        fleet_id=fleet_record.fleet_id,
+        organization_id=fleet_record.organization_id,
+        fleet_code=fleet_record.fleet_code,
+        name=fleet_record.name,
+        parent_fleet_id=fleet_record.parent_fleet_id,
+        vehicle_count=own_vehicle_count,
+        vehicle_count_with_descendants=own_vehicle_count
+        + sum(child.vehicle_count_with_descendants for child in child_nodes),
+        children=child_nodes,
+        created_at=fleet_record.created_at,
+        updated_at=fleet_record.updated_at,
     )
 
 
@@ -409,6 +603,19 @@ async def update_fleet(
         fleet_update_request.parent_fleet_id is not None
         and fleet_update_request.parent_fleet_id != fleet_record.parent_fleet_id
     ):
+        visible_fleet_ids = await resolve_principal_visible_fleet_ids(
+            db_session, principal
+        )
+        if (
+            visible_fleet_ids is not None
+            and fleet_update_request.parent_fleet_id not in visible_fleet_ids
+        ):
+            # A caller limited to some fleets cannot move a fleet out of
+            # (or into somewhere outside) their own part of the tree (FL-10).
+            raise FleetParentNotFoundError(
+                f"Parent fleet with id '{fleet_update_request.parent_fleet_id}' "
+                "not found"
+            )
         await _ensure_valid_parent_fleet(
             db_session,
             fleet_update_request.parent_fleet_id,
@@ -466,17 +673,34 @@ async def soft_delete_fleet(
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
         FleetHasSubFleetsError: When live fleets still sit under this one.
 
+    Raises (besides the above):
+        AccessDeniedError: When a caller limited to some fleets (FL-10) deletes
+            a fleet that is given to someone, which would end that limit.
+
     Side Effects:
         Closes every open membership of this fleet (if any) in the same
         transaction as the soft delete, so a deleted fleet never holds a
         vehicle hostage against the active-membership partial unique index.
         One `close_membership` call per member vehicle - no batching, per
-        this repo's no-premature-batching convention.
+        this repo's no-premature-batching convention. Also ends every open
+        user assignment pointing at the fleet (``unassigned_by`` NULL: the
+        system ended it, FL-10); a member whose last assignment ended is no
+        longer limited.
     """
     await _get_fleet_record(db_session, fleet_id, principal)
     if await fleet_repository.count_child_fleets(db_session, fleet_id) > 0:
         raise FleetHasSubFleetsError(
             f"Fleet '{fleet_id}' still has sub-fleets; move or delete them first"
+        )
+    open_assignments = await fleet_repository.list_open_assignments_by_fleet(
+        db_session, fleet_id
+    )
+    if open_assignments and principal.is_fleet_limited:
+        # Deleting an assigned fleet ends the limit of whoever holds it; only
+        # the organization administrator may lift a limit (FLT-03).
+        raise AccessDeniedError(
+            "A fleet given to a user can be deleted only by the organization "
+            "administrator"
         )
 
     active_memberships = await fleet_repository.list_all_active_memberships_by_fleet(
@@ -488,6 +712,13 @@ async def soft_delete_fleet(
             membership_record,
             removed_at=utc_now(),
             removed_by=principal.user_id,
+        )
+    for assignment_record in open_assignments:
+        await fleet_repository.close_assignment(
+            db_session,
+            assignment_record,
+            unassigned_at=utc_now(),
+            unassigned_by=None,
         )
 
     fleet_record = await fleet_repository.soft_delete(
@@ -973,18 +1204,23 @@ async def _get_fleet_record(
         db_session: Current database session.
         fleet_id: Internal ID of the fleet.
         principal: The caller; a fleet of another organization does not exist
-            for them unless they are internal.
+            for them unless they are internal, nor does a fleet outside the
+            fleets they are limited to (FL-10).
 
     Returns:
         The fleet record.
 
     Raises:
-        FleetNotFoundError: When the fleet does not exist or was soft-deleted.
+        FleetNotFoundError: When the fleet does not exist, was soft-deleted
+            or is outside the caller's reach.
     """
     fleet_record = await fleet_repository.get_by_id(
         db_session, fleet_id, organization_id=principal.data_scope
     )
     if fleet_record is None:
+        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    if visible_fleet_ids is not None and fleet_id not in visible_fleet_ids:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
     return fleet_record
 
@@ -1212,13 +1448,175 @@ async def soft_delete_geofence(
     return {"message": "Geofence deleted successfully"}
 
 
+async def list_descendant_fleet_ids(db: AsyncSession, fleet_id: UUID) -> list[UUID]:
+    """List every live fleet below a fleet, at any depth. Public cross-domain entry point.
+
+    Walks the tree one fleet at a time (one query per fleet, no batching;
+    trees are a few levels deep) with a visited set, so a damaged loop in the
+    data still ends. The fleet itself is not included.
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        fleet_id: Internal ID of the top fleet. Not checked: an unknown or
+            deleted fleet simply has no descendants.
+
+    Returns:
+        IDs of the fleets below, nearest first.
+
+    Side Effects:
+        Read-only; does not commit or rollback.
+    """
+    descendant_ids: list[UUID] = []
+    visited_ids: set[UUID] = {fleet_id}
+    pending_ids = [fleet_id]
+    while pending_ids:
+        parent_id = pending_ids.pop(0)
+        for child_id in await fleet_repository.list_child_fleet_ids(db, parent_id):
+            if child_id in visited_ids:
+                continue
+            visited_ids.add(child_id)
+            descendant_ids.append(child_id)
+            pending_ids.append(child_id)
+    return descendant_ids
+
+
+async def resolve_visible_fleet_ids(
+    db: AsyncSession, principal_membership_id: UUID, organization_id: UUID
+) -> frozenset[UUID] | None:
+    """Resolve the fleets a membership's fleet-level roles are limited to (FL-10).
+
+    Public cross-domain entry point. The rule is the union of the fleets
+    assigned to the membership (open `fleet_user_assignments` rows) and every
+    fleet below them.
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal_membership_id: The membership (person in the organization).
+        organization_id: The organization the membership acts for; an
+            assigned fleet owned by another organization (or deleted since)
+            adds nothing.
+
+    Returns:
+        `None` when the membership has no open assignment: no limit, the
+        whole organization. Otherwise the visible fleet IDs; the set is empty
+        when every assigned fleet has vanished, so the limit then fails closed
+        and shows nothing rather than everything.
+
+    Side Effects:
+        Read-only; one query for the assignments, then one per assigned fleet
+        and per fleet of its subtree (no batching).
+    """
+    assignment_records = await fleet_repository.list_open_assignments_by_membership(
+        db, principal_membership_id
+    )
+    if not assignment_records:
+        return None
+    visible_ids: set[UUID] = set()
+    for assignment_record in assignment_records:
+        fleet_record = await fleet_repository.get_by_id(
+            db, assignment_record.fleet_id, organization_id=organization_id
+        )
+        if fleet_record is None:
+            continue
+        visible_ids.add(fleet_record.fleet_id)
+        visible_ids.update(await list_descendant_fleet_ids(db, fleet_record.fleet_id))
+    return frozenset(visible_ids)
+
+
+async def resolve_visible_vehicle_ids(
+    db: AsyncSession, principal_membership_id: UUID, organization_id: UUID
+) -> frozenset[UUID] | None:
+    """Resolve the trucks a membership's fleet limit lets it see (FL-10).
+
+    Public cross-domain entry point.
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal_membership_id: The membership (person in the organization).
+        organization_id: The organization the membership acts for.
+
+    Returns:
+        `None` when the membership is not limited. Otherwise the IDs of the
+        trucks that currently have an open fleet membership in a visible
+        fleet (a truck in no fleet is not visible to a limited member).
+
+    Side Effects:
+        Read-only; see `resolve_visible_fleet_ids`, plus one query for the
+        trucks.
+    """
+    visible_fleet_ids = await resolve_visible_fleet_ids(
+        db, principal_membership_id, organization_id
+    )
+    if visible_fleet_ids is None:
+        return None
+    if not visible_fleet_ids:
+        return frozenset()
+    return frozenset(
+        await fleet_repository.list_active_vehicle_ids_by_fleet_ids(
+            db, visible_fleet_ids
+        )
+    )
+
+
+async def resolve_principal_visible_fleet_ids(
+    db: AsyncSession, principal: Principal
+) -> frozenset[UUID] | None:
+    """Resolve the fleet limit of an HTTP caller (FL-10).
+
+    Public cross-domain entry point for endpoints. Internal staff, the
+    organization administrator and roles that are not fleet-level are never
+    limited and cost no query.
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal: The authenticated caller.
+
+    Returns:
+        `None` for no limit, else the visible fleet IDs
+        (see `resolve_visible_fleet_ids`).
+    """
+    if not principal.is_fleet_limited:
+        return None
+    return await resolve_visible_fleet_ids(
+        db, principal.membership_id, principal.organization_id
+    )
+
+
+async def resolve_principal_visible_vehicle_ids(
+    db: AsyncSession, principal: Principal
+) -> frozenset[UUID] | None:
+    """Resolve the truck limit of an HTTP caller (FL-10).
+
+    Public cross-domain entry point; the function the HTTP layer registers
+    for the vehicle endpoints (`app/api/fleet_visibility.py`).
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal: The authenticated caller.
+
+    Returns:
+        `None` for no limit, else the visible truck IDs
+        (see `resolve_visible_vehicle_ids`).
+    """
+    if not principal.is_fleet_limited:
+        return None
+    return await resolve_visible_vehicle_ids(
+        db, principal.membership_id, principal.organization_id
+    )
+
+
 async def list_active_member_vehicle_ids(
-    db: AsyncSession, fleet_id: UUID, *, organization_id: UUID | None = None
+    db: AsyncSession,
+    fleet_id: UUID,
+    *,
+    organization_id: UUID | None = None,
+    include_descendants: bool = False,
+    principal: Principal | None = None,
 ) -> list[UUID]:
     """List the vehicles currently in a fleet. Public cross-domain entry point.
 
     Used by the telemetry domain's fleet-wide views and by the telematics
-    domain's fleet-wide config push.
+    domain's fleet-wide config push and device-health list.
 
     Args:
         db: Session owned by the caller's entry boundary.
@@ -1226,6 +1624,11 @@ async def list_active_member_vehicle_ids(
         organization_id: Data scope of an HTTP caller: a fleet of another
             organization is then not found. `None` (internal staff, system
             callers) means no restriction.
+        include_descendants: Also list the trucks of every fleet below this
+            one (reports roll up to parents, FLT-01).
+        principal: The HTTP caller. When given, its data scope replaces
+            `organization_id` and its fleet limit (FL-10) applies: a fleet
+            outside the limit is not found.
 
     Returns:
         IDs of the vehicles with an open membership, oldest member first.
@@ -1234,17 +1637,30 @@ async def list_active_member_vehicle_ids(
         vehicles domain if it needs a live vehicle.
 
     Raises:
-        FleetNotFoundError: When the fleet does not exist or was
-            soft-deleted.
+        FleetNotFoundError: When the fleet does not exist, was
+            soft-deleted or is outside the caller's reach.
 
     Side Effects:
         Read-only; does not commit or rollback.
     """
+    if principal is not None:
+        organization_id = principal.data_scope
     fleet_record = await fleet_repository.get_by_id(
         db, fleet_id, organization_id=organization_id
     )
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    if principal is not None:
+        visible_fleet_ids = await resolve_principal_visible_fleet_ids(db, principal)
+        if visible_fleet_ids is not None and fleet_id not in visible_fleet_ids:
+            raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
+    if include_descendants:
+        subtree_fleet_ids = frozenset(
+            [fleet_id, *await list_descendant_fleet_ids(db, fleet_id)]
+        )
+        return await fleet_repository.list_active_vehicle_ids_by_fleet_ids(
+            db, subtree_fleet_ids
+        )
     membership_records = await fleet_repository.list_all_active_memberships_by_fleet(
         db, fleet_id
     )

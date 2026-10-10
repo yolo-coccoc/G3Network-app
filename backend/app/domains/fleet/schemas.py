@@ -323,3 +323,92 @@ class GeofenceListResponse(BaseModel):
     page_size: int = Field(
         ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Number of items per page"
     )
+
+
+class FleetTreeNodeResponse(FleetResponse):
+    """One fleet of the organization's tree with the fleets sitting under it.
+
+    Attributes:
+        vehicle_count_with_descendants: Trucks in this fleet plus every fleet
+            below it (the roll-up of FLT-01); ``vehicle_count`` stays the
+            trucks directly in this fleet.
+        children: The fleets directly under this one, oldest first.
+    """
+
+    vehicle_count_with_descendants: int = Field(
+        ..., ge=0, description="Trucks in this fleet and every fleet below it"
+    )
+    children: list["FleetTreeNodeResponse"] = Field(
+        default_factory=list, description="Fleets directly under this one"
+    )
+
+
+class FleetTreeResponse(BaseModel):
+    """The fleet tree of one organization, as seen by the caller.
+
+    A caller limited to some fleets (FL-10) gets only the subtrees of the
+    fleets assigned to them: their tops are the roots.
+
+    Attributes:
+        organization_id: The organization whose fleets are shown.
+        items: Top-level fleets (or the tops of the visible subtrees).
+        total_fleets: Number of fleets in the whole tree.
+    """
+
+    organization_id: UUID = Field(..., description="Organization of the tree")
+    items: list[FleetTreeNodeResponse] = Field(..., description="Root fleets")
+    total_fleets: int = Field(..., ge=0, description="Number of fleets in the tree")
+
+
+class FleetUserAssignmentCreateRequest(BaseModel):
+    """HTTP request data for limiting a membership to a fleet (FL-10)."""
+
+    fleet_id: UUID = Field(..., description="Fleet to give to the membership")
+
+
+class FleetUserAssignmentResponse(BaseModel):
+    """A fleet given to a membership, open or taken away (FL-10).
+
+    Attributes:
+        fleet_user_assignment_id: Internal ID of the assignment.
+        fleet_id: The fleet the membership is limited to.
+        fleet_code: Code of that fleet, if it has one.
+        fleet_name: Name of that fleet, if it has one.
+        membership_id: The membership whose fleet-level roles are limited.
+        full_name: The person's name.
+        phone_number: The person's phone number.
+        assigned_at: When the fleet was given.
+        assigned_by: User who gave it; null when the system did.
+        unassigned_at: When it was taken away; null while in force.
+        unassigned_by: User who took it away; null while in force or when the
+            system ended it (the fleet was deleted).
+        warnings: Non-blocking notes; ``FLEET_ALREADY_COVERED_BY_ASSIGNED_PARENT``
+            when a fleet above this one is already assigned to the membership
+            (allowed, because it keeps access if the tree changes, FL-10).
+    """
+
+    fleet_user_assignment_id: UUID = Field(..., description="Assignment ID")
+    fleet_id: UUID = Field(..., description="Fleet ID")
+    fleet_code: str | None = Field(default=None, description="Fleet code")
+    fleet_name: str | None = Field(default=None, description="Fleet name")
+    membership_id: UUID = Field(..., description="Membership ID")
+    full_name: str | None = Field(default=None, description="Person's name")
+    phone_number: str | None = Field(default=None, description="Person's phone")
+    assigned_at: datetime = Field(..., description="When the fleet was given")
+    assigned_by: UUID | None = Field(default=None, description="Who gave it")
+    unassigned_at: datetime | None = Field(
+        default=None, description="When it was taken away"
+    )
+    unassigned_by: UUID | None = Field(default=None, description="Who took it away")
+    warnings: list[str] = Field(default_factory=list, description="Non-blocking notes")
+
+
+class FleetUserAssignmentListResponse(BaseModel):
+    """Paginated fleet assignments returned via the HTTP API."""
+
+    items: list[FleetUserAssignmentResponse] = Field(..., description="Assignments")
+    total: int = Field(..., ge=0, description="Total number of assignments")
+    page: int = Field(..., ge=1, description="Current page")
+    page_size: int = Field(
+        ..., ge=1, le=settings.API_MAX_PAGE_SIZE, description="Number of items per page"
+    )

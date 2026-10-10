@@ -180,6 +180,7 @@ name = "Other domains use only fleet's service, types and exceptions"
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.fleet.assignment_service",
     "app.domains.fleet.models",
     "app.domains.fleet.repository",
     "app.domains.fleet.router",

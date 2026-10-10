@@ -859,7 +859,7 @@ async def push_fleet_config(
         Writes nothing.
     """
     vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db_session, fleet_id, organization_id=principal.data_scope
+        db_session, fleet_id, principal=principal
     )
     fleet_config_push_results = [
         await _push_config_to_fleet_vehicle(
@@ -1239,7 +1239,7 @@ async def _collect_device_health(
         )
     else:
         vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-            db_session, fleet_id, organization_id=principal.data_scope
+            db_session, fleet_id, principal=principal
         )
         telematic_records = []
         for vehicle_id in vehicle_ids:

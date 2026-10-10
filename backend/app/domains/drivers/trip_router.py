@@ -23,7 +23,7 @@ from app.domains.drivers.schemas import (
     TripUpdateRequest,
 )
 from app.domains.drivers.types import TripStatus
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -131,6 +131,7 @@ async def list_trips_endpoint(
         None, alias="to", description="Planned (or actual) start before"
     ),
     principal: Principal = Depends(TRIP_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TripListResponse:
     """Get a paginated list of trips.
@@ -144,6 +145,7 @@ async def list_trips_endpoint(
         from_time: Lower time bound.
         to_time: Exclusive upper time bound.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -159,6 +161,7 @@ async def list_trips_endpoint(
         driver_id=driver_id,
         from_time=from_time,
         to_time=to_time,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

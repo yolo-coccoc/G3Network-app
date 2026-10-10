@@ -293,9 +293,27 @@ FastAPI registers the following domains:
   Fleets nest through `parent_fleet_id` (FL-02): a parent must be a live
   fleet, a move under the fleet itself or one of its sub-fleets is refused
   (400), and so is deleting a fleet that still has live sub-fleets (409).
-  Nothing rolls up the tree yet: `vehicle_count`, the fleet views in
-  `telemetry`, geofences and the fleet-wide config push all cover only a
-  fleet's own members, not those of its sub-fleets.
+  The tree is read through `GET /fleets/tree` (nested, with an own and a
+  roll-up vehicle count) and the `parent_fleet_id` / `include_descendants`
+  parameters of the list; `include_descendants` also rolls `vehicle_count`
+  and the telemetry fleet map and report up over the sub-fleets
+  (`list_descendant_fleet_ids`). Geofences and the fleet-wide config push
+  still cover only a fleet's own members.
+  **Fleet limits (FL-10, FLT-03, WP6):** `fleet_user_assignments` gives a
+  membership's `FLEET_MANAGER` / `DISPATCHER` roles some fleets and
+  everything below them (`POST/GET /memberships/{id}/fleets`,
+  `DELETE /memberships/{id}/fleets/{fleet_id}`, `GET
+  /fleets/{id}/user-assignments`, organization administrator and internal
+  staff only; rules in `fleet/assignment_service.py`). No open row means the
+  whole organization. `fleet.service.resolve_visible_fleet_ids` /
+  `resolve_visible_vehicle_ids` compute the visible set (assigned fleets plus
+  all descendants, and the trucks in them); the fleet service, the telemetry
+  and telematics fleet views, and per-vehicle telemetry apply it directly,
+  while the vehicle, driving-session and trip lists get it through the
+  `identity.dependencies.get_visible_vehicle_ids` request dependency, filled
+  by `app/api/fleet_visibility.py` (FL-13). The organization administrator and
+  internal staff are never limited; deleting a fleet ends the assignments
+  pointing at it (`unassigned_by` NULL).
   Depends one-directionally on `vehicles` to resolve/validate a VIN on
   membership add/remove (both by VIN) and to enrich F-E1's vehicle list
   (`vin`/`license_plate`/`status`, via a `VehicleSummary` DTO; null for a
@@ -306,7 +324,8 @@ FastAPI registers the following domains:
   other domains the current member vehicle IDs, a vehicle's current fleet
   and the geofences covering a point (`ST_Covers` on geography); `telemetry`
   (fleet views, geofence alerts) and `telematics` (fleet-wide config push)
-  call them, never the reverse. F-E2 (KPI dashboard) is deferred.
+  call them, never the reverse. It depends on `identity` for the caller and
+  for the membership of a fleet limit. F-E2 (KPI dashboard) is deferred.
 
 The API process runs separately via Uvicorn. Telemetry ingestion, the T-Box
 status-report ingestion, the OCPP gateway, and the telematics device-health
@@ -470,7 +489,7 @@ call each other is in
 │   │   │   ├── support/               # Support case tickets and SOS intake (F-I1, F-I2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   ├── fleet/                 # Fleet CRUD, vehicle membership and geofences (F-E1, F-A5)
+│   │   │   ├── fleet/                 # Fleet CRUD and tree, vehicle membership, geofences, fleet limits of a member (F-E1, F-A5, FLT-03); assignment_service.py = the limits
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │       # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
 │   │   │   │
@@ -487,6 +506,7 @@ call each other is in
 │   │   │
 │   │   ├── api/
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
+│   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the vehicle, driving-session and trip lists (FL-13)
 │   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │

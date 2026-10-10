@@ -453,6 +453,7 @@ async def list_trips(
     driver_id: UUID | None = None,
     from_time: datetime | None = None,
     to_time: datetime | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripListResponse:
     """List trips: the dispatch board for a manager, "my trips" for a driver.
 
@@ -468,6 +469,10 @@ async def list_trips(
         driver_id: A manager's filter to one driver's trips.
         from_time: Lower bound of the planned (or actual) start, if given.
         to_time: Exclusive upper bound of the planned (or actual) start.
+        visible_vehicle_ids: The caller's fleet limit (FL-10): the dispatch
+            board of a manager limited to some fleets shows only trips on
+            those trucks. `None` means no limit; it does not apply to a
+            person's own trips.
 
     Returns:
         A page of trips, newest plan first. A caller with no driver profile
@@ -485,6 +490,7 @@ async def list_trips(
             return empty_page
         organization_id = None
         scope_driver_id = own_driver.driver_id
+        visible_vehicle_ids = None
     status_values = [status.value for status in statuses] if statuses else None
     trip_records = await driver_repository.list_trips(
         db_session,
@@ -495,6 +501,7 @@ async def list_trips(
         statuses=status_values,
         from_time=from_time,
         to_time=to_time,
+        vehicle_ids=visible_vehicle_ids,
     )
     total = await driver_repository.count_trips(
         db_session,
@@ -503,6 +510,7 @@ async def list_trips(
         statuses=status_values,
         from_time=from_time,
         to_time=to_time,
+        vehicle_ids=visible_vehicle_ids,
     )
     return TripListResponse(
         items=[

@@ -130,6 +130,7 @@ def _build_list_conditions(
     search: str | None = None,
     vehicle_model_id: UUID | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by ``list_all`` and ``count``.
 
@@ -141,12 +142,16 @@ def _build_list_conditions(
         vehicle_model_id: Only trucks of this model.
         owner_organization_id: Only trucks owned by this organization (a
             filter the caller chose, on top of the data scope).
+        vehicle_ids: Fleet limit of the caller (FL-10): only these trucks;
+            `None` means no limit, an empty set matches nothing.
 
     Returns:
         Conditions to AND together: always "not soft-deleted", plus every
         filter and the organization scope when given.
     """
     conditions: list[ColumnElement[bool]] = [VehicleModel.deleted_at.is_(None)]
+    if vehicle_ids is not None:
+        conditions.append(VehicleModel.vehicle_id.in_(vehicle_ids))
     if organization_id is not None:
         conditions.append(VehicleModel.organization_id == organization_id)
     if owner_organization_id is not None:
@@ -176,6 +181,7 @@ async def list_all(
     search: str | None = None,
     vehicle_model_id: UUID | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[VehicleModel]:
     """Get a page of vehicles, newest first, excluding soft-deleted records.
 
@@ -188,6 +194,7 @@ async def list_all(
         search: Plate or VIN fragment, if any.
         vehicle_model_id: Only trucks of this model, if given.
         owner_organization_id: Only trucks owned by this organization, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         List of vehicle records.
@@ -198,6 +205,7 @@ async def list_all(
         search=search,
         vehicle_model_id=vehicle_model_id,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
 
     query_result = await db_session.execute(
@@ -218,6 +226,7 @@ async def count(
     search: str | None = None,
     vehicle_model_id: UUID | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the total number of vehicles, excluding soft-deleted records.
 
@@ -228,6 +237,7 @@ async def count(
         search: Plate or VIN fragment, if any.
         vehicle_model_id: Only trucks of this model, if given.
         owner_organization_id: Only trucks owned by this organization, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Total number of vehicles matching the filter.
@@ -238,6 +248,7 @@ async def count(
         search=search,
         vehicle_model_id=vehicle_model_id,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
 
     query_result = await db_session.execute(

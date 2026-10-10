@@ -130,15 +130,16 @@ async def _get_vehicle_reference(
         db: Database session owned by the HTTP boundary.
         vehicle_id: Internal ID of the vehicle to resolve.
         principal: The HTTP caller, whose data reach limits the vehicle to
-            its organization (internal staff: all); `None` for a system
-            caller inside the backend.
+            its organization (internal staff: all) and, for a manager
+            limited to some fleets (FL-10), to the trucks in those fleets;
+            `None` for a system caller inside the backend.
 
     Returns:
         The vehicle's cross-domain reference (id, VIN, battery capacity).
 
     Raises:
         TelemetryNotFoundError: If the vehicle does not exist, was
-            soft-deleted or is out of the caller's data reach.
+            soft-deleted or is out of the caller's data reach or fleet limit.
     """
     vehicle_reference = await _resolve_vehicle_reference_with_pack_capacity(
         db, vehicle_id
@@ -148,6 +149,12 @@ async def _get_vehicle_reference(
         and not principal.can_access_organization(vehicle_reference.organization_id)
     ):
         raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    if principal is not None:
+        visible_vehicle_ids = await fleet_service.resolve_principal_visible_vehicle_ids(
+            db, principal
+        )
+        if visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids:
+            raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
     return vehicle_reference
 
 
@@ -763,6 +770,7 @@ async def list_fleet_vehicle_live_statuses(
     fleet_id: UUID,
     *,
     principal: Principal,
+    include_descendants: bool = False,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> FleetVehicleLiveStatusListResponse:
@@ -780,8 +788,11 @@ async def list_fleet_vehicle_live_statuses(
     Args:
         db: Database session owned by the HTTP boundary.
         fleet_id: Internal ID of the fleet.
-        principal: The caller; a fleet of another organization is not found
-            unless the caller is internal.
+        principal: The caller; a fleet of another organization, or outside the
+            fleets a limited manager may see (FL-10), is not found unless the
+            caller is internal.
+        include_descendants: Also list the trucks of every fleet below this
+            one (reports and maps roll up to parents, FLT-01).
         page: Requested page (1-based), clamped by ``normalize_page_window``.
         page_size: Requested page size, clamped the same way.
 
@@ -796,7 +807,10 @@ async def list_fleet_vehicle_live_statuses(
         Read-only queries; does not commit or roll back.
     """
     member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db, fleet_id, organization_id=principal.data_scope
+        db,
+        fleet_id,
+        include_descendants=include_descendants,
+        principal=principal,
     )
     page_window = normalize_page_window(page, page_size)
     page_vehicle_ids = member_vehicle_ids[
@@ -829,6 +843,7 @@ async def get_fleet_operating_report(
     start_time: datetime,
     end_time: datetime,
     principal: Principal,
+    include_descendants: bool = False,
 ) -> FleetOperatingReportResponse:
     """Get the operating performance of a fleet's current members (F-A6 rollup).
 
@@ -845,8 +860,11 @@ async def get_fleet_operating_report(
         fleet_id: Internal ID of the fleet.
         start_time: Inclusive lower bound; must carry a timezone.
         end_time: Inclusive upper bound; must carry a timezone.
-        principal: The caller; a fleet of another organization is not found
-            unless the caller is internal.
+        principal: The caller; a fleet of another organization, or outside the
+            fleets a limited manager may see (FL-10), is not found unless the
+            caller is internal.
+        include_descendants: Also fold in the trucks of every fleet below this
+            one (reports roll up to parents, FLT-01).
 
     Returns:
         One row per included vehicle (oldest member first) and the totals.
@@ -865,7 +883,10 @@ async def get_fleet_operating_report(
         start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
     )
     member_vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
-        db, fleet_id, organization_id=principal.data_scope
+        db,
+        fleet_id,
+        include_descendants=include_descendants,
+        principal=principal,
     )
 
     report_vehicles: list[telemetry_reports.FleetReportVehicle] = []

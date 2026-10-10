@@ -450,6 +450,22 @@ class Principal:
         return None if self.is_internal else self.organization_id
 
     @property
+    def is_fleet_limited(self) -> bool:
+        """Tell whether the caller's fleet-level roles may be limited (FL-10).
+
+        Only a customer user whose reach comes from ``FLEET_MANAGER`` or
+        ``DISPATCHER`` can be limited to some fleets through
+        ``fleet_user_assignments``. The organization administrator and
+        internal staff are never limited. Whether a limit is actually set is
+        the fleet domain's answer (no open assignment means no limit).
+        """
+        return (
+            not self.is_internal
+            and UserRole.ORG_ADMIN not in self.roles
+            and self.has_any_role(UserRole.FLEET_MANAGER, UserRole.DISPATCHER)
+        )
+
+    @property
     def features(self) -> frozenset[str]:
         """Feature codes granted by the caller's roles (role only, BL-16)."""
         return features_of_roles(self.roles)

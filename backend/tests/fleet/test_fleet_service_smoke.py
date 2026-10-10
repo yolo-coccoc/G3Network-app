@@ -24,6 +24,7 @@ from app.domains.fleet.exceptions import (
 )
 from app.domains.fleet.models import (
     FleetModel,
+    FleetUserAssignmentModel,
     FleetVehicleMembershipModel,
     GeofenceModel,
 )
@@ -640,6 +641,24 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
     async def count_child_fleets(db: AsyncSession, fleet_id: UUID) -> int:
         return 0
 
+    open_assignment = FleetUserAssignmentModel(
+        fleet_id=fleet_record.fleet_id, membership_id=uuid4()
+    )
+    closed_assignments: list[dict[str, object]] = []
+
+    async def list_open_assignments(
+        db: AsyncSession, fleet_id: UUID
+    ) -> list[FleetUserAssignmentModel]:
+        return [open_assignment]
+
+    async def close_assignment(
+        db: AsyncSession,
+        assignment_record: FleetUserAssignmentModel,
+        **kwargs: object,
+    ) -> FleetUserAssignmentModel:
+        closed_assignments.append(kwargs)
+        return assignment_record
+
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(fleet_repository, "count_child_fleets", count_child_fleets)
     monkeypatch.setattr(
@@ -647,12 +666,19 @@ async def test_soft_delete_fleet_closes_active_memberships_first(
     )
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
     monkeypatch.setattr(fleet_repository, "soft_delete", soft_delete)
+    monkeypatch.setattr(
+        fleet_repository, "list_open_assignments_by_fleet", list_open_assignments
+    )
+    monkeypatch.setattr(fleet_repository, "close_assignment", close_assignment)
 
     deletion_response = await fleet_service.soft_delete_fleet(
         fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
     assert len(closed) == 2
+    # FL-10: the system ends the user assignments of a deleted fleet.
+    assert len(closed_assignments) == 1
+    assert closed_assignments[0]["unassigned_by"] is None
     assert deletion_response == {"message": "Fleet deleted successfully"}
 
 

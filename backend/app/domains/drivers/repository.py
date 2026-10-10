@@ -416,6 +416,7 @@ async def list_sessions(
     driver_id: UUID | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[DrivingSessionModel]:
     """Get a paginated list of driving sessions, newest first.
 
@@ -426,13 +427,17 @@ async def list_sessions(
         driver_id: Only this driver's sessions, if given.
         vehicle_id: Only this truck's sessions, if given.
         organization_id: Data scope; `None` means every organization.
+        vehicle_ids: Fleet limit of the caller (FL-10): only sessions on
+            these trucks; `None` means no limit.
 
     Returns:
         Session records ordered by `started_at` descending.
     """
     query_result = await db_session.execute(
         select(DrivingSessionModel)
-        .where(*_session_conditions(driver_id, vehicle_id, organization_id))
+        .where(
+            *_session_conditions(driver_id, vehicle_id, organization_id, vehicle_ids)
+        )
         .order_by(DrivingSessionModel.started_at.desc())
         .offset(offset)
         .limit(limit)
@@ -446,6 +451,7 @@ async def count_sessions(
     driver_id: UUID | None = None,
     vehicle_id: UUID | None = None,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the driving sessions matching the same filters as `list_sessions`.
 
@@ -454,20 +460,24 @@ async def count_sessions(
         driver_id: Only this driver's sessions, if given.
         vehicle_id: Only this truck's sessions, if given.
         organization_id: Data scope; `None` means every organization.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Total number of matching sessions, open and closed.
     """
     query_result = await db_session.execute(
         select(func.count(DrivingSessionModel.driving_session_id)).where(
-            *_session_conditions(driver_id, vehicle_id, organization_id)
+            *_session_conditions(driver_id, vehicle_id, organization_id, vehicle_ids)
         )
     )
     return query_result.scalar() or 0
 
 
 def _session_conditions(
-    driver_id: UUID | None, vehicle_id: UUID | None, organization_id: UUID | None
+    driver_id: UUID | None,
+    vehicle_id: UUID | None,
+    organization_id: UUID | None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[ColumnElement[bool]]:
     """Build the optional driver/truck conditions of a session query.
 
@@ -477,11 +487,15 @@ def _session_conditions(
         organization_id: Data scope: only sessions recorded for this owner
             organization (the truck's owner at check-in, DM-24 C); `None`
             means every organization.
+        vehicle_ids: Only sessions on these trucks (the caller's fleet limit,
+            FL-10); `None` means no limit, an empty set matches nothing.
 
     Returns:
         Conditions to AND together (empty when no filter is given).
     """
     conditions: list[ColumnElement[bool]] = []
+    if vehicle_ids is not None:
+        conditions.append(DrivingSessionModel.vehicle_id.in_(vehicle_ids))
     if organization_id is not None:
         conditions.append(DrivingSessionModel.organization_id == organization_id)
     if driver_id is not None:
@@ -749,6 +763,7 @@ def _trip_list_conditions(
     statuses: list[str] | None,
     from_time: datetime | None,
     to_time: datetime | None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by `list_trips` and `count_trips`.
 
@@ -758,11 +773,25 @@ def _trip_list_conditions(
         statuses: Only these statuses, if given.
         from_time: Only trips planned or started at or after this time.
         to_time: Only trips planned or started before this time.
+        vehicle_ids: Only trips on these trucks (the caller's fleet limit,
+            FL-10): planned for one of them, or run in a driving session on
+            one of them. `None` means no limit.
 
     Returns:
         Conditions to AND together (empty when no filter is given).
     """
     conditions: list[ColumnElement[bool]] = []
+    if vehicle_ids is not None:
+        conditions.append(
+            or_(
+                TripModel.planned_vehicle_id.in_(vehicle_ids),
+                TripModel.driving_session_id.in_(
+                    select(DrivingSessionModel.driving_session_id).where(
+                        DrivingSessionModel.vehicle_id.in_(vehicle_ids)
+                    )
+                ),
+            )
+        )
     # A trip is placed on the board by its plan, or by its start when it has
     # no plan (a personal trip).
     trip_time = func.coalesce(TripModel.planned_start_at, TripModel.started_at)
@@ -789,6 +818,7 @@ async def list_trips(
     statuses: list[str] | None = None,
     from_time: datetime | None = None,
     to_time: datetime | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[TripModel]:
     """Get a paginated list of trips, newest plan first.
 
@@ -801,6 +831,7 @@ async def list_trips(
         statuses: Only these statuses, if given.
         from_time: Lower bound of the plan (or start) time, if given.
         to_time: Exclusive upper bound of the plan (or start) time, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Trips ordered by plan (or start) time descending.
@@ -815,6 +846,7 @@ async def list_trips(
                 statuses=statuses,
                 from_time=from_time,
                 to_time=to_time,
+                vehicle_ids=vehicle_ids,
             )
         )
         .order_by(trip_time.desc(), TripModel.created_at.desc())
@@ -832,6 +864,7 @@ async def count_trips(
     statuses: list[str] | None = None,
     from_time: datetime | None = None,
     to_time: datetime | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the trips matching the same filters as `list_trips`.
 
@@ -842,6 +875,7 @@ async def count_trips(
         statuses: Only these statuses, if given.
         from_time: Lower bound of the plan (or start) time, if given.
         to_time: Exclusive upper bound of the plan (or start) time, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Total number of matching trips.
@@ -854,6 +888,7 @@ async def count_trips(
                 statuses=statuses,
                 from_time=from_time,
                 to_time=to_time,
+                vehicle_ids=vehicle_ids,
             )
         )
     )
