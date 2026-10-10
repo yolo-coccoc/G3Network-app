@@ -385,10 +385,6 @@ async def test_simulating_a_bank_transfer_credits_the_wallet_when_switched_on(
     assert len(store.ledger) == 1
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL7: webhook amount has no upper bound (numeric(14,2) overflow)",
-)
 def test_a_webhook_amount_beyond_the_money_columns_is_refused() -> None:
     """An amount the ``numeric(14,2)`` columns cannot hold is a 400, not a 500."""
     provider = FakeBankNotificationProvider()
@@ -426,10 +422,6 @@ def test_a_webhook_amount_beyond_the_money_columns_is_refused() -> None:
         ),
     ],
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL7: request bounds wider than the numeric columns (500)",
-)
 def test_requests_beyond_the_money_columns_are_refused_by_validation(
     build_request: Any,
 ) -> None:
@@ -439,10 +431,6 @@ def test_requests_beyond_the_money_columns_are_refused_by_validation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL8: any internal user can read (and expire) anyone's payment",
-)
 async def test_an_internal_driver_cannot_read_another_persons_payment(
     store: Store, monkeypatch: pytest.MonkeyPatch
 ) -> None:

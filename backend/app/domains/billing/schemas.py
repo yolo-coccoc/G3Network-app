@@ -12,6 +12,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domains.billing.types import (
+    MAX_AMOUNT_VND,
+    MAX_PRICE_VND,
+    MAX_VAT_RATE_PERCENT,
     BankNotificationResult,
     ChargingSessionBillStatus,
     PaymentPurpose,
@@ -43,7 +46,7 @@ class TariffPeriodSchema(BaseModel):
     days: list[str] = Field(..., min_length=1, max_length=7)
     from_time: str = Field(..., alias="from")
     to_time: str = Field(..., alias="to")
-    price_per_kwh: int = Field(..., ge=0)
+    price_per_kwh: int = Field(..., ge=0, le=MAX_PRICE_VND)
 
 
 class TariffCreateRequest(BaseModel):
@@ -89,15 +92,17 @@ class TariffVersionPublishRequest(BaseModel):
 
     Attributes:
         price_per_kwh: Normal price per kWh before VAT, whole dong.
-        vat_rate_percent: VAT rate, 0 to 100.
+        vat_rate_percent: VAT rate, 0 to 99.99 (the column holds two digits).
         time_periods: Time-of-use periods replacing the normal price in some
             hours; ``None`` for one price all day.
         effective_from: When it takes over; now or later (default now).
         change_reason: Why this version is published.
     """
 
-    price_per_kwh: int = Field(..., ge=0)
-    vat_rate_percent: Decimal = Field(..., ge=0, le=100, decimal_places=2)
+    price_per_kwh: int = Field(..., ge=0, le=MAX_PRICE_VND)
+    vat_rate_percent: Decimal = Field(
+        ..., ge=0, le=MAX_VAT_RATE_PERCENT, decimal_places=2
+    )
     time_periods: list[TariffPeriodSchema] | None = None
     effective_from: datetime | None = None
     change_reason: str = _REASON_FIELD
@@ -353,7 +358,7 @@ class WalletAdjustmentRequest(BaseModel):
         reason: Why, kept on the ledger line.
     """
 
-    amount: int
+    amount: int = Field(..., ge=-MAX_AMOUNT_VND, le=MAX_AMOUNT_VND)
     reason: str = _REASON_FIELD
 
 
@@ -379,7 +384,7 @@ class TopUpRequest(BaseModel):
         amount: Amount to transfer in whole dong, within the configured limits.
     """
 
-    amount: int = Field(..., ge=1)
+    amount: int = Field(..., ge=1, le=MAX_AMOUNT_VND)
 
 
 class PaymentResponse(BaseModel):

@@ -1708,7 +1708,9 @@ async def authorize_session_stop(
     """Check that the caller may stop a session now and return it (CHG-01).
 
     Only the person who started the charge (the payer, BL-13) or internal staff
-    may stop it, and only while it is ``ACTIVE``.
+    may stop it, and only while it is ``ACTIVE`` or still ``PENDING``: a scan
+    the charger never started is cancelled by the same call, so the person is
+    not blocked until the pending window ends (RV-BL9).
 
     Args:
         db: The async session owned by the HTTP boundary.
@@ -1723,14 +1725,15 @@ async def authorize_session_stop(
             the caller's reach.
         ChargingSessionStopDeniedError: The caller neither started the session
             nor is internal staff.
-        ChargingSessionStateError: The session is not ``ACTIVE``.
+        ChargingSessionStateError: The session is neither ``ACTIVE`` nor
+            ``PENDING``.
     """
     session_record = await _get_charging_session_record(db, session_id, principal)
     if session_record.started_by != principal.user_id and not principal.is_internal:
         raise ChargingSessionStopDeniedError(
             "Only the person who started this charge, or our staff, may stop it"
         )
-    if session_record.status is not SessionStatus.ACTIVE:
+    if session_record.status not in (SessionStatus.ACTIVE, SessionStatus.PENDING):
         raise ChargingSessionStateError(
             f"Session '{session_id}' is {session_record.status.value}, not active"
         )

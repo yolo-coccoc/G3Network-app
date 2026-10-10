@@ -64,7 +64,7 @@ from app.domains.billing.types import (
     WalletStatus,
     WalletTransactionType,
 )
-from app.domains.identity.types import Principal
+from app.domains.identity.types import Principal, roles_for
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
@@ -229,7 +229,11 @@ async def create_top_up(
 async def get_payment(
     db: AsyncSession, payment_id: UUID, *, principal: Principal
 ) -> PaymentResponse:
-    """Get a payment the caller owns, or any payment for internal staff.
+    """Get a payment the caller owns, or any payment for internal wallet staff.
+
+    Wallet staff are the internal roles of PAY-13; any other internal user
+    (a driver, a support agent) sees their own payments only, because the read
+    below can also expire a PENDING payment (RV-BL8).
 
     A PENDING payment past its expiry is shown, and stored, as FAILED
     ("expired unpaid"); a transfer that still arrives later is credited anyway.
@@ -249,8 +253,11 @@ async def get_payment(
         May mark an expired PENDING payment FAILED.
     """
     payment_record = await billing_repository.get_payment_by_id(db, payment_id)
+    is_wallet_staff = principal.is_internal and principal.has_any_role(
+        *roles_for("PAY-13")
+    )
     if payment_record is None or (
-        not principal.is_internal and payment_record.user_id != principal.user_id
+        not is_wallet_staff and payment_record.user_id != principal.user_id
     ):
         raise PaymentNotFoundError(f"Payment '{payment_id}' was not found")
     now = utc_now()

@@ -443,7 +443,7 @@ async def test_stop_queues_a_remote_stop_for_the_person_who_started_the_charge(
 async def test_stop_is_refused_to_a_stranger_and_for_a_session_that_is_not_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the starter or internal staff stop, and only an ACTIVE session."""
+    """Only the starter or internal staff stop, and only an ACTIVE or PENDING session."""
     session = build_charging_session()
     session.organization_id = DRIVER.organization_id
     _patch_session_lookup(monkeypatch, session)
@@ -460,7 +460,13 @@ async def test_stop_is_refused_to_a_stranger_and_for_a_session_that_is_not_activ
         )
     ).session_id == session.session_id
 
+    # A PENDING scan may be cancelled by the same call (RV-BL9); a finished
+    # session may not be stopped.
     session.status = SessionStatus.PENDING
+    await charging_service.authorize_session_stop(
+        fake_db_session(), session.session_id, principal=staff
+    )
+    session.status = SessionStatus.COMPLETED
     with pytest.raises(ChargingSessionStateError):
         await charging_service.authorize_session_stop(
             fake_db_session(), session.session_id, principal=staff

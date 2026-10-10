@@ -76,13 +76,14 @@ class ChargingSessionStopResponse(BaseModel):
 
     Attributes:
         session_id: UUID of the session.
-        command_id: UUID of the queued ``REMOTE_STOP`` command.
+        command_id: UUID of the queued ``REMOTE_STOP`` command; ``None`` when a
+            ``PENDING`` scan was cancelled and no command was needed.
         status: The session status now (still ``ACTIVE``: the charger confirms
-            the stop with its own message).
+            the stop with its own message; ``ABANDONED`` for a cancelled scan).
     """
 
     session_id: UUID
-    command_id: UUID
+    command_id: UUID | None
     status: SessionStatus
 
 

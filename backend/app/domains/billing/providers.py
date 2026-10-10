@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domains.billing.exceptions import PaymentInputError
-from app.domains.billing.types import BankNotification
+from app.domains.billing.types import MAX_AMOUNT_VND, BankNotification
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
@@ -96,8 +96,16 @@ class FakeBankNotificationProvider:
             or len(bank_transaction_id) > _MAX_BANK_TRANSACTION_ID_LENGTH
         ):
             raise PaymentInputError("bank_transaction_id is missing or too long")
-        if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
-            raise PaymentInputError("amount must be a whole number above zero")
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, int)
+            or not 0 < amount <= MAX_AMOUNT_VND
+        ):
+            # The upper bound is the money column's: a larger value would
+            # fail the insert as a 500 instead of being refused (RV-BL7).
+            raise PaymentInputError(
+                f"amount must be a whole number from 1 to {MAX_AMOUNT_VND}"
+            )
         if not isinstance(content, str):
             raise PaymentInputError("content must be a text")
         return BankNotification(

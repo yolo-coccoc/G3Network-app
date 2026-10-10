@@ -14,6 +14,13 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
+# Largest whole-dong value each money column can hold (RV-BL7): the columns are
+# ``numeric(12,2)`` (price), ``numeric(14,2)`` (amounts, balances) and
+# ``numeric(4,2)`` (VAT rate), so anything above would fail as a 500.
+MAX_PRICE_VND = 10**10 - 1
+MAX_AMOUNT_VND = 10**12 - 1
+MAX_VAT_RATE_PERCENT = Decimal("99.99")
+
 
 class TariffStatus(str, enum.Enum):
     """Status of a tariff, decided by its owner (DM-19).

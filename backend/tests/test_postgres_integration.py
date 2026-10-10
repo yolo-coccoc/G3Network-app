@@ -4051,6 +4051,7 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             remote_stop = await next_call(charger, "RemoteStopTransaction")
             assert remote_stop[3] == {"transactionId": transaction_id}
             await charger.send(json.dumps([3, remote_stop[1], {"status": "Accepted"}]))
+            assert stop.command_id is not None
             assert await command_outcome(stop.command_id) == "ACCEPTED"
             await request(
                 charger,

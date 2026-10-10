@@ -302,11 +302,14 @@ async def stop_charging_session_endpoint(
     principal: Principal = Depends(SESSION_STOPPERS),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionStopResponse:
-    """Queue a ``REMOTE_STOP`` for a running session.
+    """Queue a ``REMOTE_STOP`` for a running session, or cancel a pending scan.
 
     The session stays ``ACTIVE`` until the charger confirms with its own stop
-    message; the caller follows the command's outcome. Only the person who
-    started the charge, or internal staff, may stop it.
+    message; the caller follows the command's outcome. A scan the charger has
+    not started yet (``PENDING``) is abandoned at once instead: no command is
+    queued, ``command_id`` is ``null``, and the session-ended hook voids the
+    quoted bill (RV-BL9). Only the person who started the charge, or internal
+    staff, may stop it.
 
     Args:
         session_id: UUID of the session to stop.
@@ -316,13 +319,16 @@ async def stop_charging_session_endpoint(
             ``get_db`` dependency.
 
     Returns:
-        The session ID, the queued command's ID and the session status.
+        The session ID, the queued command's ID (``None`` for a cancelled
+        scan) and the session status.
 
     Raises:
         ChargingSessionNotFoundError: Unknown session or out of reach (404).
         ChargingSessionStopDeniedError: The caller did not start the charge
             and is not staff (403).
-        ChargingSessionStateError: The session is not ``ACTIVE`` (409).
+        ChargingSessionStateError: The session is neither ``ACTIVE`` nor
+            ``PENDING``, or the charger started a pending one while it was
+            being cancelled (409).
     """
     session = await charging_session_service.authorize_session_stop(
         db_session, session_id, principal=principal

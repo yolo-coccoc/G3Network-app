@@ -239,10 +239,6 @@ async def test_a_scan_is_refused_while_the_wallet_is_negative_even_with_no_minim
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL9: a PENDING scan cannot be cancelled by the person who made it",
-)
 async def test_the_person_who_scanned_can_end_their_pending_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
