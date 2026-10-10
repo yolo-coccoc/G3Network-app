@@ -28,11 +28,20 @@ def _request(path: str, subprotocols: str | None) -> Request:
     return Request(path, headers)
 
 
-def _server(monkeypatch: pytest.MonkeyPatch, *, station_exists: bool) -> OCPPServer:
+def _server(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    station_exists: bool,
+    station_status: str = "ACTIVE",
+) -> OCPPServer:
     """Build a gateway whose station lookup answers without a database."""
 
     async def fake_get_station(db: object, identity: str, **_: Any) -> Any:
-        return SimpleNamespace(station_id="station") if station_exists else None
+        return (
+            SimpleNamespace(station_id="station", status=station_status)
+            if station_exists
+            else None
+        )
 
     monkeypatch.setattr(
         charging_stations_repository, "get_station_by_identity", fake_get_station
@@ -90,6 +99,22 @@ async def test_handshake_rejects_bad_path_and_unknown_station(
 
     assert bad_path is not None and bad_path.status_code == 404
     assert unknown_station is not None and unknown_station.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_handshake_rejects_a_registered_charger_that_is_not_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """STN-02: a charger taken out of service may not connect until it is ACTIVE."""
+    server = _server(monkeypatch, station_exists=True, station_status="INACTIVE")
+
+    response = await server._process_request(
+        None,  # type: ignore[arg-type]
+        _request("/ocpp/LSC", "ocpp1.6"),
+    )
+
+    assert response is not None
+    assert response.status_code == 403
 
 
 def test_select_subprotocol_prefers_2_0_1_when_both_are_offered() -> None:

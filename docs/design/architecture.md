@@ -153,8 +153,13 @@ FastAPI registers the following domains:
   locations, the caller's own and those granted to the caller's organization;
   internal staff see all, CS-28) with an `is_available_only` filter
   (F-D1),
-  a per-station status view (`GET /charging-stations/{id}/connectors`:
-  the whole charger plus every gun), the all-stations energy ranking
+  a per-station status view (`GET /charging-stations/{id}/status`: the whole
+  charger plus every gun, derived counts and a stale flag when the charger is
+  offline; `GET /charging-stations/status` is the network board), the
+  connection facts (`.../connection`), a staff-only message-log read
+  (`.../ocpp-messages`, frame text on request and audited), list filters with a
+  manage / view scope (`scope=MANAGED|VISIBLE`, CS-29), per-type command
+  checks and a cancel for a queued command (CS-29), the all-stations energy ranking
   (`GET /charging-sessions/stations/energy`, F-C5, served here because this
   domain owns the station directory), and the OCPP gateway. "Available"
   (F-A2/F-D1) = charger and location `ACTIVE` and not deleted, a public

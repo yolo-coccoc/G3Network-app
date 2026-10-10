@@ -19,7 +19,7 @@ Capability negotiation and status history remain deferred
 """
 
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -28,6 +28,7 @@ from app.domains.charging_stations.types import (
     ChargingConnectorStatus,
     ChargingResourceStatus,
     ConnectorStandard,
+    OcppMessageDirection,
     StationCommandOutcome,
     StationCommandType,
 )
@@ -750,6 +751,126 @@ class ChargingStationCommandCreateRequest(BaseModel):
     reason: str | None = Field(None, min_length=1, max_length=200)
 
 
+class _StationCommandParameters(BaseModel):
+    """Base of the per-type ``parameters`` of a command: unknown keys are refused."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RemoteStartCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``REMOTE_START``.
+
+    Attributes:
+        id_token: Token for a manual start without a session (OCPP allows 36
+            characters in 2.0.1, 20 in 1.6J; the gateway sends it as given).
+        remote_start_id: The 2.0.1 ``remoteStartId``; filled in when queued.
+    """
+
+    id_token: str | None = Field(None, min_length=1, max_length=36)
+    remote_start_id: int | None = Field(None, ge=0, le=2**31 - 1)
+
+
+class NoCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``REMOTE_STOP`` and ``UNLOCK_CONNECTOR``: none."""
+
+
+class ResetCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``RESET``.
+
+    Attributes:
+        reset_type: ``Soft`` / ``OnIdle`` wait for sessions to end (1.6J sends
+            ``Soft``); ``Hard`` / ``Immediate`` restart at once.
+    """
+
+    reset_type: Literal["Soft", "Hard", "OnIdle", "Immediate"] = "Soft"
+
+
+class ChangeAvailabilityCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``CHANGE_AVAILABILITY``.
+
+    Attributes:
+        availability: ``Inoperative`` takes the target out of service,
+            ``Operative`` puts it back.
+    """
+
+    availability: Literal["Operative", "Inoperative"] = "Inoperative"
+
+
+class ChangeConfigurationCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``CHANGE_CONFIGURATION`` (one setting per command).
+
+    Attributes:
+        key: The 1.6J key or the 2.0.1 variable name.
+        value: The new value as text.
+        component_name: 2.0.1 only: the component (default ``OCPPCommCtrlr``).
+    """
+
+    key: str = Field(..., min_length=1, max_length=50)
+    value: str = Field(..., max_length=500)
+    component_name: str | None = Field(None, min_length=1, max_length=50)
+
+
+class GetConfigurationCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``GET_CONFIGURATION``.
+
+    Attributes:
+        keys: Only these 1.6J keys; all settings when empty.
+        capture_reason: Why the snapshot is taken; ``ON_DEMAND`` when empty.
+    """
+
+    keys: list[str] | None = Field(None, max_length=50)
+    capture_reason: Literal["BOOT", "ON_DEMAND", "AFTER_CHANGE"] | None = None
+
+    @field_validator("keys")
+    @classmethod
+    def validate_keys(cls, value: list[str] | None) -> list[str] | None:
+        """Check each key is a non-blank name of at most 50 characters.
+
+        Args:
+            value: Keys from the request, or ``None``.
+
+        Returns:
+            The keys unchanged.
+
+        Raises:
+            ValueError: If a key is blank or too long.
+        """
+        if value is not None and any(not key.strip() or len(key) > 50 for key in value):
+            raise ValueError("each key must be 1 to 50 characters")
+        return value
+
+
+class TriggerMessageCommandParameters(_StationCommandParameters):
+    """``parameters`` of ``TRIGGER_MESSAGE``.
+
+    Attributes:
+        requested_message: The message to send now; only the ones both OCPP
+            versions know.
+    """
+
+    requested_message: Literal[
+        "BootNotification",
+        "FirmwareStatusNotification",
+        "Heartbeat",
+        "MeterValues",
+        "StatusNotification",
+    ]
+
+
+# Which parameter model checks which command type (STN-10). A type missing here
+# takes no parameters.
+COMMAND_PARAMETER_MODELS: dict[StationCommandType, type[_StationCommandParameters]] = {
+    StationCommandType.REMOTE_START: RemoteStartCommandParameters,
+    StationCommandType.REMOTE_STOP: NoCommandParameters,
+    StationCommandType.UNLOCK_CONNECTOR: NoCommandParameters,
+    StationCommandType.RESET: ResetCommandParameters,
+    StationCommandType.CHANGE_AVAILABILITY: ChangeAvailabilityCommandParameters,
+    StationCommandType.CHANGE_CONFIGURATION: ChangeConfigurationCommandParameters,
+    StationCommandType.GET_CONFIGURATION: GetConfigurationCommandParameters,
+    StationCommandType.TRIGGER_MESSAGE: TriggerMessageCommandParameters,
+}
+
+
 class ChargingStationCommandResponse(BaseModel):
     """A command and its answer.
 
@@ -852,9 +973,15 @@ class ChargingStationConnectorStatusResponse(BaseModel):
         ocpp_evse_id: EVSE number in OCPP; for a 1.6J charger this is the gun
             number (decision D3 of the OCPP 1.6J planner).
         ocpp_connector_id: Connector number within the EVSE.
+        standard: Plug standard of the gun (CS-17).
+        max_power_kw: Highest power the gun can deliver, in kW (the power
+            available to a truck is at most this).
         status: Last status reported via ``StatusNotification``, nullable if
             the connector has not reported yet.
         status_updated_at: Time that status was reported, nullable.
+        is_status_stale: ``True`` when the charger is offline now, so the
+            status is only what it last said (STN-04: "status unknown when
+            the charger goes offline"); the status itself is kept.
         error_code: ``errorCode`` of the latest report (1.6J), nullable.
         vendor_error_code: ``vendorErrorCode`` of the latest report, nullable.
         status_info: Free-text ``info`` of the latest report, nullable.
@@ -864,8 +991,11 @@ class ChargingStationConnectorStatusResponse(BaseModel):
     evse_id: UUID
     ocpp_evse_id: int
     ocpp_connector_id: int
+    standard: ConnectorStandard
+    max_power_kw: float
     status: ChargingConnectorStatus | None
     status_updated_at: datetime | None
+    is_status_stale: bool
     error_code: str | None
     vendor_error_code: str | None
     status_info: str | None
@@ -879,22 +1009,155 @@ class ChargingStationStatusResponse(BaseModel):
 
     Attributes:
         station_id: Internal UUID of the station.
+        is_online: Derived from ``last_seen_at``.
+        last_seen_at: Latest frame of any kind, nullable.
         charger_status: Status of the whole charger, nullable.
         charger_status_updated_at: Time that status was reported, nullable.
         charger_error_code: ``errorCode`` reported for the whole charger,
             nullable.
         charger_vendor_error_code: ``vendorErrorCode`` reported for the whole
             charger, nullable.
+        connector_count: Active guns of the charger.
+        available_connector_count: Guns whose last report is ``Available``.
+        status_counts: Number of guns per reported status value (a gun that
+            never reported is counted under ``Unknown``).
         connectors: Every active connector of the station's active EVSEs,
             ordered by EVSE number, then connector number.
     """
 
     station_id: UUID
+    is_online: bool
+    last_seen_at: datetime | None
     charger_status: ChargingConnectorStatus | None
     charger_status_updated_at: datetime | None
     charger_error_code: str | None
     charger_vendor_error_code: str | None
+    connector_count: int = Field(..., ge=0)
+    available_connector_count: int = Field(..., ge=0)
+    status_counts: dict[str, int]
     connectors: list[ChargingStationConnectorStatusResponse]
+
+
+class ChargingStationStatusSummaryResponse(BaseModel):
+    """One row of the network status board: a charger and its guns in numbers (STN-04).
+
+    Attributes:
+        station_id: Internal UUID of the charger.
+        location_id: The location it stands at.
+        location_display_name: Name of that location.
+        physical_reference: Label printed on the unit, nullable.
+        is_online: Derived from ``last_seen_at``.
+        last_seen_at: Latest frame of any kind, nullable.
+        charger_status: Status of the whole charger, nullable.
+        connector_count: Active guns.
+        available_connector_count: Guns whose last report is ``Available``.
+        status_counts: Number of guns per reported status value (a gun that
+            never reported is counted under ``Unknown``).
+    """
+
+    station_id: UUID
+    location_id: UUID
+    location_display_name: str
+    physical_reference: str | None
+    is_online: bool
+    last_seen_at: datetime | None
+    charger_status: ChargingConnectorStatus | None
+    connector_count: int = Field(..., ge=0)
+    available_connector_count: int = Field(..., ge=0)
+    status_counts: dict[str, int]
+
+
+class ChargingStationStatusSummaryListResponse(BaseModel):
+    """Paginated network status board.
+
+    Attributes:
+        items: Chargers on the current page.
+        total: Total number of chargers matching the filters.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+    """
+
+    items: list[ChargingStationStatusSummaryResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
+
+
+class ChargingStationConnectionResponse(BaseModel):
+    """What the gateway knows about a charger's connection (STN-03).
+
+    Attributes:
+        station_id: Internal UUID of the charger.
+        ocpp_identity: The identity it connects with.
+        is_online: Derived: ``last_seen_at`` is within the offline threshold.
+        offline_after_seconds: That threshold (``CHARGING_OFFLINE_TIMEOUT_SECONDS``).
+        last_seen_at: Latest frame of any kind, nullable (never connected).
+        last_boot_at: Latest accepted ``BootNotification``, nullable.
+        ocpp_protocol_version: Subprotocol of the latest connection, nullable.
+        vendor: Vendor reported at boot, nullable.
+        model: Model reported at boot, nullable.
+        serial_number: Serial reported at boot, nullable.
+        registered_serial_number: Serial entered at installation (CS-14).
+        is_serial_matching: ``None`` before the first boot; otherwise whether
+            the reported serial equals the registered one (a mismatch means
+            another unit is behind this identity).
+        firmware_version: Firmware reported at the latest boot, nullable.
+    """
+
+    station_id: UUID
+    ocpp_identity: str
+    is_online: bool
+    offline_after_seconds: float
+    last_seen_at: datetime | None
+    last_boot_at: datetime | None
+    ocpp_protocol_version: str | None
+    vendor: str | None
+    model: str | None
+    serial_number: str | None
+    registered_serial_number: str
+    is_serial_matching: bool | None
+    firmware_version: str | None
+
+
+class ChargingOcppMessageResponse(BaseModel):
+    """One logged OCPP frame (STN-15 minimal read, internal staff).
+
+    Attributes:
+        message_id: Internal UUID of the log row.
+        occurred_at: Receive/send time on our server (UTC).
+        direction: ``CP_TO_CSMS`` or ``CSMS_TO_CP``.
+        ocpp_subprotocol: Subprotocol of the connection.
+        action: Request type, ``None`` for an answer or an unreadable frame.
+        ocpp_message_id: The frame's own message ID, nullable.
+        raw_frame: The frame text; only filled when the caller asked for it
+            (it can hold RFID ``idTag`` values) and is internal staff.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    message_id: UUID
+    occurred_at: datetime
+    direction: OcppMessageDirection
+    ocpp_subprotocol: str
+    action: str | None
+    ocpp_message_id: str | None
+    raw_frame: str | None = None
+
+
+class ChargingOcppMessageListResponse(BaseModel):
+    """Paginated message log of one charger, newest first.
+
+    Attributes:
+        items: Frames on the current page.
+        total: Total number of matching frames.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+    """
+
+    items: list[ChargingOcppMessageResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
 class ChargingStationEnergyTotalResponse(BaseModel):

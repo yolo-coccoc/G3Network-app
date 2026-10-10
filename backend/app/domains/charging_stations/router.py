@@ -3,8 +3,10 @@
 Endpoints: location CRUD with soft-delete and the access grants of private
 locations (CS-09, CS-10), station/EVSE/connector CRUD with soft-delete (F-C1),
 the driver-facing nearby search (F-D1), the station status view (F-C2), the
-latest configuration a charger reported over OCPP, the command channel to a
-charger (queue a command, read its answer; STN-10, PR-16), and the all-stations
+latest configuration a charger reported over OCPP, the connection facts and the
+staff-only message log (STN-03), the live status of one charger and the network
+status board (STN-04), the command channel to a charger (queue a command, read
+its answer, cancel a queued one; STN-10, PR-16), and the all-stations
 energy report (F-C5; served here under ``/charging-sessions/stations/energy``
 because it needs the station directory, which ``charging_sessions`` may not
 read). The router only accepts HTTP dependencies and calls the
@@ -20,6 +22,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_stations.service as charging_stations_service
+import app.domains.identity.service as identity_service
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
@@ -37,21 +40,36 @@ from app.domains.charging_stations.schemas import (
     ChargingLocationListResponse,
     ChargingLocationResponse,
     ChargingLocationUpdateRequest,
+    ChargingOcppMessageListResponse,
     ChargingResourceDeleteResponse,
     ChargingStationCommandCreateRequest,
     ChargingStationCommandListResponse,
     ChargingStationCommandResponse,
     ChargingStationConfigurationResponse,
+    ChargingStationConnectionResponse,
     ChargingStationCreateRequest,
     ChargingStationEnergyTotalListResponse,
     ChargingStationListResponse,
     ChargingStationResponse,
     ChargingStationStatusResponse,
+    ChargingStationStatusSummaryListResponse,
     ChargingStationUpdateRequest,
     NearbyChargingStationListResponse,
 )
-from app.domains.identity.dependencies import require_roles
-from app.domains.identity.types import Principal, roles_for
+from app.domains.charging_stations.types import (
+    ChargingResourceStatus,
+    OcppMessageDirection,
+    StationCommandOutcome,
+    StationCommandType,
+    StationListScope,
+)
+from app.domains.identity.dependencies import get_client_context, require_roles
+from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
+    Principal,
+    roles_for,
+)
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -66,6 +84,10 @@ STATION_SEARCHERS = require_roles(*roles_for("STN-06"))
 STATION_ADMINS = require_roles(*roles_for("STN-01", "STN-02", "STN-12"))
 STATION_OPERATORS = require_roles(*roles_for("STN-10"))
 STATION_ENERGY_READERS = require_roles(*roles_for("STN-14", "CHG-05"))
+# The connection facts show identities and serials: managers of the charger only.
+STATION_CONNECTION_READERS = require_roles(*roles_for("STN-02", "STN-03"))
+# The raw message log is for our own staff (STN-15, CS-18).
+STATION_LOG_READERS = require_roles(*roles_for("STN-15"), internal_only=True)
 
 
 @router.post(
@@ -104,6 +126,12 @@ async def create_charging_station_endpoint(
     summary="List charging stations",
 )
 async def list_charging_stations_endpoint(
+    scope: StationListScope = Query(StationListScope.MANAGED),
+    organization_id: UUID | None = Query(None),
+    location_id: UUID | None = Query(None),
+    is_public: bool | None = Query(None),
+    status_filter: ChargingResourceStatus | None = Query(None, alias="status"),
+    q: str | None = Query(None, min_length=1, max_length=100),
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE,
@@ -113,9 +141,19 @@ async def list_charging_stations_endpoint(
     principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationListResponse:
-    """List active stations with pagination.
+    """List active stations with filters and pagination (STN-01, STN-12).
 
     Args:
+        scope: ``MANAGED`` (default): the chargers of the caller's own
+            locations (all for internal staff). ``VISIBLE``: also those at
+            public locations and at locations the caller's organization holds
+            a grant on.
+        organization_id: Only chargers at locations of this owner organization.
+        location_id: Only chargers at this location.
+        is_public: Only chargers at public (true) or private (false) locations.
+        status_filter: Only chargers with this status (query name ``status``).
+        q: Case-insensitive fragment of the label, OCPP identity, or the
+            location's name or address.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
         principal: The authenticated caller.
@@ -130,9 +168,63 @@ async def list_charging_stations_endpoint(
     """
     return await charging_stations_service.list_charging_stations(
         db,
+        principal=principal,
+        scope=scope,
+        owner_organization_id=organization_id,
+        location_id=location_id,
+        is_public=is_public,
+        status=status_filter,
+        search_text=q,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/charging-stations/status",
+    response_model=ChargingStationStatusSummaryListResponse,
+    summary="Network status board: every charger with its gun counts",
+)
+async def list_charging_station_status_summaries_endpoint(
+    scope: StationListScope = Query(StationListScope.VISIBLE),
+    organization_id: UUID | None = Query(None),
+    location_id: UUID | None = Query(None),
+    q: str | None = Query(None, min_length=1, max_length=100),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    principal: Principal = Depends(STATION_VIEWERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationStatusSummaryListResponse:
+    """List the chargers the caller may see with online flag and gun counts (STN-04).
+
+    Registered before ``GET /charging-stations/{station_id}`` so ``/status``
+    isn't captured by that path's ``{station_id}`` parameter.
+
+    Args:
+        scope: ``VISIBLE`` (default) or ``MANAGED``, see the station list.
+        organization_id: Only chargers at locations of this owner organization.
+        location_id: Only chargers at this location.
+        q: Case-insensitive fragment of the label, identity, or the location's
+            name or address.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+        principal: The authenticated caller.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        One summary row per charger.
+    """
+    return await charging_stations_service.list_charging_station_status_summaries(
+        db,
         principal=principal,
+        scope=scope,
+        owner_organization_id=organization_id,
+        location_id=location_id,
+        search_text=q,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -242,16 +334,24 @@ async def list_station_energy_totals_endpoint(
 
 
 @router.get(
+    "/charging-stations/{station_id}/status",
+    response_model=ChargingStationStatusResponse,
+    summary="Get the status of a station's charger and every connector",
+)
+@router.get(
     "/charging-stations/{station_id}/connectors",
     response_model=ChargingStationStatusResponse,
     summary="Get the status of a station's charger and every connector",
+    deprecated=True,
 )
 async def get_charging_station_status_endpoint(
     station_id: UUID,
     principal: Principal = Depends(STATION_VIEWERS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingStationStatusResponse:
-    """Get the whole charger's status and every gun's status (F-C2).
+    """Get the whole charger's status and every gun's status (STN-04, F-C2).
+
+    Also served at the older path ``/charging-stations/{station_id}/connectors``.
 
     Args:
         station_id: UUID of the station.
@@ -438,6 +538,105 @@ async def get_charging_station_endpoint(
     return await charging_stations_service.get_charging_station(
         db, station_id, principal=principal
     )
+
+
+@router.get(
+    "/charging-stations/{station_id}/connection",
+    response_model=ChargingStationConnectionResponse,
+    summary="Get the connection facts of a charger",
+)
+async def get_charging_station_connection_endpoint(
+    station_id: UUID,
+    principal: Principal = Depends(STATION_CONNECTION_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationConnectionResponse:
+    """Get liveness, protocol version and the data of the latest boot (STN-03).
+
+    Args:
+        station_id: UUID of the station.
+        principal: The authenticated caller.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        The connection facts; empty before the charger first connects.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the station does not exist, was
+            soft-deleted or is out of the caller's reach.
+    """
+    return await charging_stations_service.get_charging_station_connection(
+        db, station_id, principal=principal
+    )
+
+
+@router.get(
+    "/charging-stations/{station_id}/ocpp-messages",
+    response_model=ChargingOcppMessageListResponse,
+    summary="Read the OCPP message log of a charger (internal staff)",
+)
+async def list_charging_station_ocpp_messages_endpoint(
+    station_id: UUID,
+    action: str | None = Query(None, min_length=1, max_length=50),
+    direction: OcppMessageDirection | None = Query(None),
+    occurred_from: datetime | None = Query(None),
+    occurred_to: datetime | None = Query(None),
+    include_raw_frame: bool = Query(False),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    client_context: ClientContext = Depends(get_client_context),
+    principal: Principal = Depends(STATION_LOG_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingOcppMessageListResponse:
+    """Read a charger's logged frames, newest first (minimal STN-15).
+
+    The frame text can hold RFID ``idTag`` values, so it is left out unless
+    ``include_raw_frame`` is true; asking for it writes a ``VIEW`` row of the
+    access audit log.
+
+    Args:
+        station_id: UUID of the station.
+        action: Only requests of this OCPP action, e.g. ``StatusNotification``.
+        direction: Only frames in this direction.
+        occurred_from: Inclusive lower bound on the time (needs a timezone).
+        occurred_to: Exclusive upper bound on the time (needs a timezone).
+        include_raw_frame: Whether to return the frame text.
+        page: Page number, starting at one.
+        page_size: Maximum number of items per page.
+        client_context: IP address and user agent, for the audit row.
+        principal: The authenticated caller; internal staff only.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        The frames and pagination metadata.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the station does not exist.
+        ChargingStationReportRangeError: 400 if a time bound has no timezone.
+    """
+    response = await charging_stations_service.list_charging_station_ocpp_messages(
+        db,
+        station_id,
+        principal=principal,
+        action=action,
+        direction=direction,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
+        include_raw_frame=include_raw_frame,
+        page=page,
+        page_size=page_size,
+    )
+    if include_raw_frame:
+        await identity_service.record_data_access(
+            db,
+            principal=principal,
+            action=AccessAuditAction.VIEW,
+            resource_type="OCPP_RAW_FRAMES",
+            resource_id=str(station_id),
+            client_context=client_context,
+        )
+    return response
 
 
 @router.get(
@@ -753,6 +952,11 @@ async def create_charging_location_endpoint(
     summary="List charging locations",
 )
 async def list_charging_locations_endpoint(
+    scope: StationListScope = Query(StationListScope.MANAGED),
+    organization_id: UUID | None = Query(None),
+    is_public: bool | None = Query(None),
+    status_filter: ChargingResourceStatus | None = Query(None, alias="status"),
+    q: str | None = Query(None, min_length=1, max_length=100),
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
@@ -760,9 +964,16 @@ async def list_charging_locations_endpoint(
     principal: Principal = Depends(STATION_ADMINS),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingLocationListResponse:
-    """List active locations with pagination.
+    """List active locations with filters and pagination (STN-01, STN-12).
 
     Args:
+        scope: ``MANAGED`` (default): the caller's own locations (all for
+            internal staff). ``VISIBLE``: also public locations and those the
+            caller's organization holds a grant on (the map data).
+        organization_id: Only locations of this owner organization.
+        is_public: Only public (true) or private (false) locations.
+        status_filter: Only locations with this status (query name ``status``).
+        q: Case-insensitive fragment of the name or address.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
         principal: The authenticated caller.
@@ -772,7 +983,15 @@ async def list_charging_locations_endpoint(
         HTTP response with the list of locations.
     """
     return await charging_stations_service.list_charging_locations(
-        db, page=page, page_size=page_size, principal=principal
+        db,
+        principal=principal,
+        scope=scope,
+        owner_organization_id=organization_id,
+        is_public=is_public,
+        status=status_filter,
+        search_text=q,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -1001,6 +1220,8 @@ async def create_charging_station_command_endpoint(
 )
 async def list_charging_station_commands_endpoint(
     station_id: UUID,
+    outcome: StationCommandOutcome | None = Query(None),
+    command_type: StationCommandType | None = Query(None),
     page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
     page_size: int = Query(
         settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
@@ -1012,6 +1233,8 @@ async def list_charging_station_commands_endpoint(
 
     Args:
         station_id: UUID of the charger.
+        outcome: Only commands with this observed outcome.
+        command_type: Only commands of this type.
         page: Page number, starting at one.
         page_size: Maximum number of items per page.
         principal: The authenticated caller.
@@ -1024,7 +1247,13 @@ async def list_charging_station_commands_endpoint(
         ChargingStationNotFoundError: 404 if the charger is not active.
     """
     return await charging_stations_service.list_charging_station_commands(
-        db, station_id, page=page, page_size=page_size, principal=principal
+        db,
+        station_id,
+        outcome=outcome,
+        command_type=command_type,
+        page=page,
+        page_size=page_size,
+        principal=principal,
     )
 
 
@@ -1054,5 +1283,37 @@ async def get_charging_station_command_endpoint(
         ChargingStationNotFoundError: 404 if the command is not the charger's.
     """
     return await charging_stations_service.get_charging_station_command(
+        db, station_id, command_id, principal=principal
+    )
+
+
+@router.post(
+    "/charging-stations/{station_id}/commands/{command_id}/cancel",
+    response_model=ChargingStationCommandResponse,
+    summary="Cancel a command that was not sent yet",
+)
+async def cancel_charging_station_command_endpoint(
+    station_id: UUID,
+    command_id: UUID,
+    principal: Principal = Depends(STATION_OPERATORS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingStationCommandResponse:
+    """Cancel a queued command: it ends ``NOT_SENT`` (``response_status`` "Cancelled").
+
+    Args:
+        station_id: UUID of the charger.
+        command_id: UUID of the command.
+        principal: The authenticated caller.
+        db: Async session owned by the ``get_db`` dependency.
+
+    Returns:
+        HTTP response for the command as it is now.
+
+    Raises:
+        ChargingStationNotFoundError: 404 if the command is not the charger's.
+        ChargingStationCommandConflictError: 409 if a gateway already sent it
+            or it is closed.
+    """
+    return await charging_stations_service.cancel_charging_station_command(
         db, station_id, command_id, principal=principal
     )

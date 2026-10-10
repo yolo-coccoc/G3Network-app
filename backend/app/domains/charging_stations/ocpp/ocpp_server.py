@@ -36,6 +36,7 @@ from app.domains.charging_stations.ocpp.ocpp201_charge_point import (
     OCPP201ChargePoint,
 )
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
+from app.domains.charging_stations.types import ChargingResourceStatus
 from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
 
@@ -269,7 +270,8 @@ class OCPPServer:
         Side Effects:
             Opens a short read-only transaction to resolve the station
             identity and rejects an identity that has not been
-            pre-provisioned.
+            pre-provisioned (404) or whose charger is not ``ACTIVE`` (403,
+            STN-02: a registered charger connects only while in service).
         """
         identity = parse_ocpp_identity(request.path)
         if identity is None:
@@ -291,6 +293,13 @@ class OCPPServer:
                 extra={"ocpp_identity": identity},
             )
             return _http_rejection(404, "Not Found", "Unknown OCPP station identity")
+        if station.status != ChargingResourceStatus.ACTIVE.value:
+            # STN-02: a registered charger connects only while it is ACTIVE.
+            logger.warning(
+                "Rejected OCPP connection for station out of service",
+                extra={"ocpp_identity": identity},
+            )
+            return _http_rejection(403, "Forbidden", "OCPP station is out of service")
         return None
 
     async def _handle_connection(self, connection: ServerConnection) -> None:
@@ -306,8 +315,8 @@ class OCPPServer:
             disconnects or the handler is cancelled. Every frame is stored verbatim in its own transaction.
             Handler errors (including a failure to store a frame) are
             logged; ``CancelledError`` is re-raised so shutdown keeps working.
-            If the station was soft-deleted between the handshake and this
-            point, the connection is closed with code 1008.
+            If the station was soft-deleted or set ``INACTIVE`` between the
+            handshake and this point, the connection is closed with code 1008.
         """
         request = connection.request
         # ``process_request`` already validated the request and path before
@@ -324,9 +333,10 @@ class OCPPServer:
             station = await charging_stations_repository.get_station_by_identity(
                 db, identity, include_deleted=False
             )
-        if station is None:
-            # Only reachable if the station was deleted right after the
-            # handshake validation; nothing can be logged without a station.
+        if station is None or station.status != ChargingResourceStatus.ACTIVE.value:
+            # Only reachable if the station was deleted or taken out of service
+            # right after the handshake validation; nothing can be logged
+            # without a station.
             logger.warning(
                 "Closing OCPP connection for station deleted after handshake",
                 extra={"ocpp_identity": identity},

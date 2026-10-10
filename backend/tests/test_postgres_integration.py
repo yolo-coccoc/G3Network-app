@@ -26,6 +26,7 @@ from sqlalchemy.pool import NullPool
 
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
@@ -55,6 +56,7 @@ from app.domains.batteries.types import BatteryStatus
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
 from app.domains.charging_stations.exceptions import (
     ChargingLocationAccessConflictError,
+    ChargingStationCommandConflictError,
     ChargingStationCommandInputError,
     ChargingStationNotFoundError,
 )
@@ -65,13 +67,16 @@ from app.domains.charging_stations.schemas import (
     ChargingLocationAccessRevokeRequest,
     ChargingLocationCreateRequest,
     ChargingLocationUpdateRequest,
+    ChargingStationCommandCreateRequest,
     ChargingStationCreateRequest,
     ChargingStationUpdateRequest,
 )
 from app.domains.charging_stations.types import (
     ConnectorStandard,
+    OcppMessageDirection,
     StationCommandOutcome,
     StationCommandType,
+    StationListScope,
 )
 from app.domains.drivers.exceptions import (
     DriverTooFarFromVehicleError,
@@ -4762,5 +4767,259 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
                 is None
             )
             await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_private_visibility_grants_commands_connection_and_status_on_postgres(
+    temporary_database: str,
+) -> None:
+    """WP7 on real PostgreSQL: list visibility, grant expiry, commands and reads.
+
+    A private location is listed for its owner and for a granted organization
+    in the view scope (and for nobody else); a grant past its last day gives
+    nothing and is closed when the same organization is granted again (CS-13);
+    a command can be cancelled while queued and only then; the connection and
+    status reads follow the state rows; the message log hides the frame text.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    try:
+        async with session_factory.begin() as db:
+            owner = build_organization_record()
+            partner = build_organization_record()
+            stranger = build_organization_record()
+            db.add_all([owner, partner, stranger])
+            await db.flush()
+            owner_id, partner_id, stranger_id = (
+                owner.organization_id,
+                partner.organization_id,
+                stranger.organization_id,
+            )
+        staff = build_internal_principal()
+        async with session_factory.begin() as db:
+            location = await charging_stations_service.create_charging_location(
+                db,
+                ChargingLocationCreateRequest(
+                    organization_id=owner_id,
+                    display_name="Mine depot",
+                    address="Km 9",
+                    latitude=10.0,
+                    longitude=106.0,
+                    is_public=False,
+                ),
+                principal=staff,
+            )
+            station = await charging_stations_service.create_charging_station(
+                db,
+                ChargingStationCreateRequest(
+                    location_id=location.location_id,
+                    ocpp_identity="IT-WP7-1",
+                    registered_serial_number="SN-WP7-1",
+                    physical_reference="Tru 1",
+                    max_power_kw=240,
+                ),
+                principal=staff,
+            )
+            evse = await charging_stations_service.create_charging_evse(
+                db,
+                station.station_id,
+                ChargingEvseCreateRequest(ocpp_evse_id=1, emi3_evse_id="VN*G3N*E-WP7"),
+                principal=staff,
+            )
+            connector = await charging_stations_service.create_charging_connector(
+                db,
+                evse.evse_id,
+                ChargingConnectorCreateRequest(
+                    ocpp_connector_id=1,
+                    standard=ConnectorStandard.IEC_62196_T2_COMBO,
+                    max_power_kw=120,
+                    max_voltage_v=1000,
+                    max_current_a=250,
+                ),
+                principal=staff,
+            )
+
+        async def listed(
+            organization_id: UUID, scope: StationListScope, **filters: object
+        ) -> tuple[int, int]:
+            """Count the locations and chargers a customer's list returns."""
+            principal = build_principal(organization_id=organization_id)
+            async with session_factory() as db:
+                locations = await charging_stations_service.list_charging_locations(
+                    db,
+                    principal=principal,
+                    scope=scope,
+                    **filters,  # type: ignore[arg-type]
+                )
+                stations = await charging_stations_service.list_charging_stations(
+                    db,
+                    principal=principal,
+                    scope=scope,
+                    **filters,  # type: ignore[arg-type]
+                )
+            return locations.total, stations.total
+
+        visible, managed = StationListScope.VISIBLE, StationListScope.MANAGED
+        assert await listed(owner_id, managed) == (1, 1)
+        assert await listed(owner_id, visible) == (1, 1)
+        assert await listed(partner_id, visible) == (0, 0)
+        assert await listed(stranger_id, visible) == (0, 0)
+        assert await listed(owner_id, managed, search_text="mine") == (1, 1)
+        assert await listed(owner_id, managed, search_text="zzz") == (0, 0)
+        assert await listed(owner_id, managed, is_public=True) == (0, 0)
+
+        today = charging_stations_service._today_in_report_zone()
+        async with session_factory.begin() as db:
+            await charging_stations_service.grant_charging_location_access(
+                db,
+                location.location_id,
+                ChargingLocationAccessCreateRequest(
+                    allowed_organization_id=partner_id, valid_until=today
+                ),
+                principal=staff,
+            )
+            # A grant whose last day was yesterday (inserted the way an old
+            # contract would be): it blocks nothing and shows nothing.
+            await db.execute(
+                text(
+                    "INSERT INTO charging_location_access (access_id, location_id, "
+                    "allowed_organization_id, granted_at, granted_by, valid_until) "
+                    "VALUES (:a, :l, :o, now(), :u, :d)"
+                ),
+                {
+                    "a": uuid4(),
+                    "l": location.location_id,
+                    "o": stranger_id,
+                    "u": ACTOR_USER_ID,
+                    "d": today - timedelta(days=1),
+                },
+            )
+        assert await listed(partner_id, visible) == (1, 1)
+        assert await listed(partner_id, managed) == (0, 0)
+        assert await listed(stranger_id, visible) == (0, 0)
+        async with session_factory.begin() as db:
+            regrant = await charging_stations_service.grant_charging_location_access(
+                db,
+                location.location_id,
+                ChargingLocationAccessCreateRequest(
+                    allowed_organization_id=stranger_id
+                ),
+                principal=staff,
+            )
+        assert regrant.revoked_at is None
+        assert await listed(stranger_id, visible) == (1, 1)
+        async with engine.connect() as connection:
+            closed_reason = (
+                await connection.execute(
+                    text(
+                        "SELECT revoke_reason FROM charging_location_access "
+                        "WHERE allowed_organization_id = :o AND revoked_at IS NOT NULL"
+                    ),
+                    {"o": stranger_id},
+                )
+            ).scalar_one()
+        assert closed_reason == "Access expired"
+
+        # The charger connected, boot data arrived and the gun reported.
+        async with session_factory.begin() as db:
+            await db.execute(
+                text(
+                    "UPDATE charging_station_state SET last_seen_at = now(), "
+                    "ocpp_protocol_version = 'ocpp1.6', serial_number = 'SN-OTHER' "
+                    "WHERE station_id = :s"
+                ),
+                {"s": station.station_id},
+            )
+            await db.execute(
+                text(
+                    "UPDATE charging_connector_state SET status = 'Available', "
+                    "status_updated_at = now() WHERE connector_id = :c"
+                ),
+                {"c": connector.connector_id},
+            )
+            for direction, action in (
+                (OcppMessageDirection.CP_TO_CSMS, "BootNotification"),
+                (OcppMessageDirection.CSMS_TO_CP, None),
+            ):
+                await ocpp_state_repository.insert_ocpp_message(
+                    db,
+                    station_id=station.station_id,
+                    occurred_at=datetime.now(timezone.utc),
+                    ocpp_subprotocol="ocpp1.6",
+                    direction=direction,
+                    raw_frame='[2,"m1","BootNotification",{"idTag":"SECRET"}]',
+                    action=action,
+                    ocpp_message_id="m1",
+                )
+        owner_principal = build_principal(organization_id=owner_id)
+        partner_principal = build_principal(organization_id=partner_id)
+        async with session_factory() as db:
+            connection_facts = (
+                await charging_stations_service.get_charging_station_connection(
+                    db, station.station_id, principal=owner_principal
+                )
+            )
+            status = await charging_stations_service.get_charging_station_status(
+                db, station.station_id, principal=partner_principal
+            )
+            board = (
+                await charging_stations_service.list_charging_station_status_summaries(
+                    db, principal=partner_principal
+                )
+            )
+            log = await charging_stations_service.list_charging_station_ocpp_messages(
+                db,
+                station.station_id,
+                principal=staff,
+                action="BootNotification",
+            )
+        assert connection_facts.is_online is True
+        assert connection_facts.is_serial_matching is False
+        assert connection_facts.ocpp_protocol_version == "ocpp1.6"
+        assert status.available_connector_count == 1
+        assert status.status_counts == {"Available": 1}
+        assert status.connectors[0].is_status_stale is False
+        assert [item.station_id for item in board.items] == [station.station_id]
+        assert (log.total, log.items[0].raw_frame) == (1, None)
+
+        # Commands: a queued one can be cancelled once; the log filters by outcome.
+        async with session_factory.begin() as db:
+            queued = await charging_stations_service.create_charging_station_command(
+                db,
+                station.station_id,
+                ChargingStationCommandCreateRequest(
+                    command_type=StationCommandType.RESET, reason="Hung charger"
+                ),
+                principal=owner_principal,
+            )
+        assert queued.outcome is StationCommandOutcome.PENDING
+        async with session_factory.begin() as db:
+            cancelled = await charging_stations_service.cancel_charging_station_command(
+                db, station.station_id, queued.command_id, principal=owner_principal
+            )
+        assert cancelled.outcome is StationCommandOutcome.NOT_SENT
+        assert cancelled.response_status == "Cancelled"
+        async with session_factory() as db:
+            with pytest.raises(ChargingStationCommandConflictError):
+                await charging_stations_service.cancel_charging_station_command(
+                    db, station.station_id, queued.command_id, principal=owner_principal
+                )
+            pending = await charging_stations_service.list_charging_station_commands(
+                db,
+                station.station_id,
+                principal=owner_principal,
+                outcome=StationCommandOutcome.PENDING,
+            )
+            not_sent = await charging_stations_service.list_charging_station_commands(
+                db,
+                station.station_id,
+                principal=owner_principal,
+                outcome=StationCommandOutcome.NOT_SENT,
+            )
+        assert (pending.total, not_sent.total) == (0, 1)
     finally:
         await engine.dispose()

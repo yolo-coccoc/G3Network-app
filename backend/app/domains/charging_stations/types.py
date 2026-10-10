@@ -90,6 +90,20 @@ class ChargingConnectorStatus(str, enum.Enum):
     FINISHING = "Finishing"
 
 
+class StationListScope(str, enum.Enum):
+    """Which locations a charger or location list covers (CS-28).
+
+    Attributes:
+        MANAGED: The ones the caller manages: owned by their organization (all
+            of them for internal staff).
+        VISIBLE: Everything the caller may see: managed ones, public ones and
+            the ones their organization holds a grant on.
+    """
+
+    MANAGED = "MANAGED"
+    VISIBLE = "VISIBLE"
+
+
 class OcppMessageDirection(str, enum.Enum):
     """Direction of a stored OCPP frame relative to the CSMS.
 

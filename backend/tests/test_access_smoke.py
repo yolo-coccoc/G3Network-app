@@ -7,6 +7,7 @@ feature list means 403, and a record of another organization is "not found"
 """
 
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -434,7 +435,7 @@ async def test_a_foreign_location_is_visible_when_public_or_granted_but_never_ma
     async def get_live_location_access(
         db: AsyncSession, location_id: UUID, organization_id: UUID
     ) -> object | None:
-        return object() if has_grant else None
+        return SimpleNamespace(valid_until=None) if has_grant else None
 
     monkeypatch.setattr(
         charging_stations_repository,

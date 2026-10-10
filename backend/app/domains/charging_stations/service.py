@@ -8,8 +8,12 @@ soft-delete (F-C1), the directory reads (charger list/detail with the derived
 domains call (F-A2, used by ``telemetry``), the driver-facing nearby search
 (F-D1), the all-stations energy report (F-C5, which asks ``charging_sessions``
 for each station's total), the command channel the API (and ``charging_sessions``
-for a remote start) writes to (CS-20, PR-16), and the read of the latest
-configuration a charger reported. This is the only module another domain may
+for a remote start) writes to (CS-20, PR-16; the API path checks the parameters
+per type, the reason, the charger being online, and can cancel a queued command),
+the read of the latest configuration a charger reported, the connection facts
+(STN-03), the staff-only OCPP message-log read, the network status board
+(STN-04) and the filtered lists with a manage / view scope (STN-01, STN-12,
+CS-29). This is the only module another domain may
 import; the OCPP gateway's own writes live in the internal
 ``ocpp_state_service.py``.
 
@@ -34,10 +38,12 @@ commit or roll back.
 """
 
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,8 +57,10 @@ from app.domains.charging_stations.exceptions import (
     ChargingLocationAccessConflictError,
     ChargingLocationAccessNotFoundError,
     ChargingLocationNotFoundError,
+    ChargingStationCommandConflictError,
     ChargingStationCommandInputError,
     ChargingStationNotFoundError,
+    ChargingStationOfflineError,
     ChargingStationReportRangeError,
     ChargingTopologyConflictError,
 )
@@ -62,11 +70,13 @@ from app.domains.charging_stations.models import (
     ChargingEvseModel,
     ChargingLocationAccessModel,
     ChargingLocationModel,
+    ChargingOcppMessageModel,
     ChargingStationCommandModel,
     ChargingStationModel,
     ChargingStationStateModel,
 )
 from app.domains.charging_stations.schemas import (
+    COMMAND_PARAMETER_MODELS,
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
     ChargingConnectorResponse,
@@ -83,12 +93,15 @@ from app.domains.charging_stations.schemas import (
     ChargingLocationListResponse,
     ChargingLocationResponse,
     ChargingLocationUpdateRequest,
+    ChargingOcppMessageListResponse,
+    ChargingOcppMessageResponse,
     ChargingResourceDeleteResponse,
     ChargingStationCommandCreateRequest,
     ChargingStationCommandListResponse,
     ChargingStationCommandResponse,
     ChargingStationConfigurationEntryResponse,
     ChargingStationConfigurationResponse,
+    ChargingStationConnectionResponse,
     ChargingStationConnectorStatusResponse,
     ChargingStationCreateRequest,
     ChargingStationEnergyTotalListResponse,
@@ -96,6 +109,8 @@ from app.domains.charging_stations.schemas import (
     ChargingStationListResponse,
     ChargingStationResponse,
     ChargingStationStatusResponse,
+    ChargingStationStatusSummaryListResponse,
+    ChargingStationStatusSummaryResponse,
     ChargingStationUpdateRequest,
     NearbyChargingStationListResponse,
     NearbyChargingStationResponse,
@@ -106,16 +121,46 @@ from app.domains.charging_stations.types import (
     ConnectorStandard,
     LocationViewer,
     NearestChargingStationReference,
+    OcppMessageDirection,
     StationCommandOutcome,
     StationCommandReference,
     StationCommandType,
+    StationListScope,
 )
-from app.domains.identity.exceptions import OrganizationNotFoundError
+from app.domains.identity.exceptions import AccessDeniedError, OrganizationNotFoundError
 from app.domains.identity.types import Principal
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location, location_to_coordinates
 from app.libs.common.pagination import normalize_page_window
+
+
+def _today_in_report_zone() -> date:
+    """Tell today's calendar date in the report time zone (Vietnam time, CS-13).
+
+    Returns:
+        The date a grant's ``valid_until`` is compared with.
+    """
+    return utc_now().astimezone(ZoneInfo(settings.APP_REPORT_TIMEZONE)).date()
+
+
+def _list_reach(
+    principal: Principal, scope: StationListScope
+) -> tuple[UUID | None, LocationViewer | None]:
+    """Pick the repository arguments of a list for the caller and the scope (CS-28).
+
+    Args:
+        principal: The caller.
+        scope: ``MANAGED`` for what they manage, ``VISIBLE`` for everything
+            they may see.
+
+    Returns:
+        ``(organization_id, viewer)`` for the repository's list and count
+        functions: the manage scope or the view scope, never both.
+    """
+    if scope is StationListScope.VISIBLE:
+        return None, _viewer_of(principal)
+    return principal.data_scope, None
 
 
 def _viewer_of(principal: Principal) -> LocationViewer:
@@ -161,7 +206,9 @@ async def _can_reach_location(
     grant = await charging_stations_repository.get_live_location_access(
         db, location.location_id, principal.organization_id
     )
-    return grant is not None
+    return grant is not None and (
+        grant.valid_until is None or grant.valid_until >= _today_in_report_zone()
+    )
 
 
 async def _get_location_in_reach(
@@ -650,14 +697,27 @@ async def list_charging_locations(
     db: AsyncSession,
     *,
     principal: Principal,
+    scope: StationListScope = StationListScope.MANAGED,
+    owner_organization_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: ChargingResourceStatus | None = None,
+    search_text: str | None = None,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingLocationListResponse:
-    """List the active locations the caller owns (all of them for internal staff).
+    """List active locations the caller manages, or all they may see (STN-01, STN-12).
 
     Args:
         db: Async session owned by the HTTP boundary.
         principal: The caller (data scope).
+        scope: ``MANAGED`` (default): the ones owned by the caller's
+            organization, all for internal staff. ``VISIBLE``: also the public
+            ones and the ones the caller's organization holds a grant on (the
+            map data of CS-28).
+        owner_organization_id: Only locations of this owner organization.
+        is_public: Only public (`True`) or private (`False`) locations.
+        status: Only locations with this status.
+        search_text: Case-insensitive fragment of the name or address.
         page: Page number starting at one.
         page_size: Page size, clamped according to settings.
 
@@ -665,14 +725,28 @@ async def list_charging_locations(
         The locations and pagination metadata.
     """
     page_window = normalize_page_window(page, page_size)
+    organization_id, viewer = _list_reach(principal, scope)
+    status_value = status.value if status is not None else None
+    search = search_text.strip() if search_text else None
     locations = await charging_stations_repository.list_charging_locations(
         db,
         offset=page_window.offset,
         limit=page_window.page_size,
-        organization_id=principal.data_scope,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        is_public=is_public,
+        status=status_value,
+        search_text=search,
     )
     total = await charging_stations_repository.count_locations(
-        db, organization_id=principal.data_scope
+        db,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        is_public=is_public,
+        status=status_value,
+        search_text=search,
     )
     return ChargingLocationListResponse(
         items=[to_charging_location_response(location) for location in locations],
@@ -773,6 +847,16 @@ async def soft_delete_charging_location(
         ChargingLocationNotFoundError: If it does not exist or was deleted.
     """
     await _get_location_in_reach(db, location_id, principal)
+    for (
+        station_id
+    ) in await charging_stations_repository.list_station_ids_by_location_id(
+        db, location_id
+    ):
+        await _ensure_no_active_session(
+            db,
+            await _connector_ids_of_station(db, station_id),
+            "A charging session is in progress at this location",
+        )
     if not await charging_stations_repository.soft_delete_location(
         db, location_id, status_reason=status_reason, changed_by=principal.user_id
     ):
@@ -815,6 +899,8 @@ async def grant_charging_location_access(
             live grant exists.
     """
     location = await _get_location_in_reach(db, location_id, principal)
+    # An expired grant would still block a new one (one live row per pair).
+    await charging_stations_repository.close_expired_location_access(db, location_id)
     if access_create_request.allowed_organization_id == location.organization_id:
         raise ChargingLocationAccessConflictError(
             "The owner organization already may charge at its own location"
@@ -867,6 +953,7 @@ async def list_charging_location_access(
         ChargingLocationNotFoundError: If the location is not active.
     """
     await _get_location_in_reach(db, location_id, principal)
+    await charging_stations_repository.close_expired_location_access(db, location_id)
     grants = await charging_stations_repository.list_live_location_access(
         db, location_id
     )
@@ -993,14 +1080,27 @@ async def list_charging_stations(
     db: AsyncSession,
     *,
     principal: Principal,
+    scope: StationListScope = StationListScope.MANAGED,
+    owner_organization_id: UUID | None = None,
+    location_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: ChargingResourceStatus | None = None,
+    search_text: str | None = None,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingStationListResponse:
-    """List the active stations at the caller's locations (all for internal staff).
+    """List active stations the caller manages, or all they may see (STN-01, STN-12).
 
     Args:
         db: Async session owned by the HTTP boundary.
         principal: The caller (data scope, through the chargers' locations).
+        scope: ``MANAGED`` (default) or ``VISIBLE``, see `list_charging_locations`.
+        owner_organization_id: Only chargers at locations of this owner.
+        location_id: Only chargers at this location.
+        is_public: Only chargers at public (`True`) or private locations.
+        status: Only chargers with this status.
+        search_text: Case-insensitive fragment of the label, OCPP identity, or
+            the location's name or address.
         page: Page number starting at one; lower values are clamped to the
             default.
         page_size: Page size, clamped according to settings.
@@ -1015,14 +1115,30 @@ async def list_charging_stations(
         ``docs/decisions/deferred.md``); does not commit or rollback.
     """
     page_window = normalize_page_window(page, page_size)
+    organization_id, viewer = _list_reach(principal, scope)
+    status_value = status.value if status is not None else None
+    search = search_text.strip() if search_text else None
     stations = await charging_stations_repository.list_charging_stations(
         db,
         offset=page_window.offset,
         limit=page_window.page_size,
-        organization_id=principal.data_scope,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        is_public=is_public,
+        status=status_value,
+        search_text=search,
     )
     total = await charging_stations_repository.count_stations(
-        db, organization_id=principal.data_scope
+        db,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        is_public=is_public,
+        status=status_value,
+        search_text=search,
     )
     items = [
         await _build_charging_station_response(db, station) for station in stations
@@ -1058,10 +1174,44 @@ async def get_charging_station(
     return await _build_charging_station_response(db, station)
 
 
+_UNKNOWN_STATUS = "Unknown"
+
+
+def _summarize_connector_statuses(
+    connectors: list[
+        tuple[ChargingConnectorModel, int, ChargingConnectorStateModel | None]
+    ],
+) -> tuple[int, int, dict[str, int]]:
+    """Count a charger's guns, the available ones and the guns per status (STN-04).
+
+    Args:
+        connectors: The ``(connector, ocpp_evse_id, state)`` triples of the
+            charger, as the repository lists them.
+
+    Returns:
+        ``(connector_count, available_connector_count, status_counts)``; a
+        gun that never reported is counted under ``Unknown``. Derived at read
+        time, nothing is stored.
+    """
+    status_counts: dict[str, int] = {}
+    for _connector, _ocpp_evse_id, connector_state in connectors:
+        reported = (
+            connector_state.status
+            if connector_state is not None and connector_state.status
+            else _UNKNOWN_STATUS
+        )
+        status_counts[reported] = status_counts.get(reported, 0) + 1
+    return (
+        len(connectors),
+        status_counts.get(ChargingConnectorStatus.AVAILABLE.value, 0),
+        status_counts,
+    )
+
+
 async def get_charging_station_status(
     db: AsyncSession, station_id: UUID, *, principal: Principal
 ) -> ChargingStationStatusResponse:
-    """Get the whole charger's status and every gun's status of a station (F-C2).
+    """Get the whole charger's status and every gun's status of a station (STN-04).
 
     Args:
         db: Async session owned by the HTTP boundary.
@@ -1069,10 +1219,11 @@ async def get_charging_station_status(
         principal: The caller (view access, see the module docstring).
 
     Returns:
-        The whole-charger status fields of the station and one entry per
-        active connector, ordered by OCPP EVSE number, then connector number.
-        Statuses are returned as last reported, even if the charger is
-        offline.
+        The whole-charger status fields of the station, the derived counts and
+        one entry per active connector, ordered by OCPP EVSE number, then
+        connector number. Statuses are returned as last reported, even if the
+        charger is offline; then ``is_online`` is false and every gun is
+        flagged ``is_status_stale``, so a client shows "unknown".
 
     Raises:
         ChargingStationNotFoundError: If the station does not exist or was
@@ -1086,8 +1237,14 @@ async def get_charging_station_status(
     connectors = await charging_stations_repository.list_connectors_by_station_id(
         db, station_id
     )
+    is_online = _is_station_online(state, utc_now())
+    connector_count, available_connector_count, status_counts = (
+        _summarize_connector_statuses(connectors)
+    )
     return ChargingStationStatusResponse(
         station_id=station.station_id,
+        is_online=is_online,
+        last_seen_at=state.last_seen_at if state else None,
         charger_status=(
             ChargingConnectorStatus(state.charger_status)
             if state is not None and state.charger_status is not None
@@ -1096,12 +1253,17 @@ async def get_charging_station_status(
         charger_status_updated_at=state.charger_status_updated_at if state else None,
         charger_error_code=state.charger_error_code if state else None,
         charger_vendor_error_code=state.charger_vendor_error_code if state else None,
+        connector_count=connector_count,
+        available_connector_count=available_connector_count,
+        status_counts=status_counts,
         connectors=[
             ChargingStationConnectorStatusResponse(
                 connector_id=connector.connector_id,
                 evse_id=connector.evse_id,
                 ocpp_evse_id=ocpp_evse_id,
                 ocpp_connector_id=connector.ocpp_connector_id,
+                standard=ConnectorStandard(connector.standard),
+                max_power_kw=float(connector.max_power_kw),
                 status=(
                     ChargingConnectorStatus(connector_state.status)
                     if connector_state is not None and connector_state.status
@@ -1110,6 +1272,7 @@ async def get_charging_station_status(
                 status_updated_at=(
                     connector_state.status_updated_at if connector_state else None
                 ),
+                is_status_stale=not is_online,
                 error_code=connector_state.error_code if connector_state else None,
                 vendor_error_code=(
                     connector_state.vendor_error_code if connector_state else None
@@ -1118,6 +1281,252 @@ async def get_charging_station_status(
             )
             for connector, ocpp_evse_id, connector_state in connectors
         ],
+    )
+
+
+async def list_charging_station_status_summaries(
+    db: AsyncSession,
+    *,
+    principal: Principal,
+    scope: StationListScope = StationListScope.VISIBLE,
+    owner_organization_id: UUID | None = None,
+    location_id: UUID | None = None,
+    search_text: str | None = None,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+) -> ChargingStationStatusSummaryListResponse:
+    """List the chargers the caller may see with their gun counts (STN-04 board).
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        principal: The caller.
+        scope: ``VISIBLE`` by default (the board of everything the caller may
+            see); ``MANAGED`` for their own chargers only.
+        owner_organization_id: Only chargers at locations of this owner.
+        location_id: Only chargers at this location.
+        search_text: Case-insensitive fragment, see `list_charging_stations`.
+        page: Page number starting at one.
+        page_size: Page size, clamped according to settings.
+
+    Returns:
+        One summary row per charger and pagination metadata.
+
+    Side Effects:
+        One location, state and gun-list query per charger on the page (no
+        batching, deferred.md 34); does not commit or roll back.
+    """
+    page_window = normalize_page_window(page, page_size)
+    organization_id, viewer = _list_reach(principal, scope)
+    search = search_text.strip() if search_text else None
+    stations = await charging_stations_repository.list_charging_stations(
+        db,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        search_text=search,
+    )
+    total = await charging_stations_repository.count_stations(
+        db,
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        search_text=search,
+    )
+    checked_at = utc_now()
+    items: list[ChargingStationStatusSummaryResponse] = []
+    for station in stations:
+        location = await charging_stations_repository.get_location_by_id(
+            db, station.location_id, include_deleted=True
+        )
+        assert location is not None, "the foreign key guarantees the location"
+        state = await charging_stations_repository.get_station_state(
+            db, station.station_id
+        )
+        connectors = await charging_stations_repository.list_connectors_by_station_id(
+            db, station.station_id
+        )
+        connector_count, available_connector_count, status_counts = (
+            _summarize_connector_statuses(connectors)
+        )
+        items.append(
+            ChargingStationStatusSummaryResponse(
+                station_id=station.station_id,
+                location_id=station.location_id,
+                location_display_name=location.display_name,
+                physical_reference=station.physical_reference,
+                is_online=_is_station_online(state, checked_at),
+                last_seen_at=state.last_seen_at if state else None,
+                charger_status=(
+                    ChargingConnectorStatus(state.charger_status)
+                    if state is not None and state.charger_status is not None
+                    else None
+                ),
+                connector_count=connector_count,
+                available_connector_count=available_connector_count,
+                status_counts=status_counts,
+            )
+        )
+    return ChargingStationStatusSummaryListResponse(
+        items=items,
+        total=total,
+        page=page_window.page,
+        page_size=page_window.page_size,
+    )
+
+
+async def get_charging_station_connection(
+    db: AsyncSession, station_id: UUID, *, principal: Principal
+) -> ChargingStationConnectionResponse:
+    """Get what the gateway knows about a charger's connection (STN-03).
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station.
+        principal: The caller (manage access: it shows the OCPP identity and
+            serial numbers, which a driver who may only view the charger
+            never needs).
+
+    Returns:
+        Liveness (``last_seen_at`` and the derived ``is_online``), protocol
+        version and the data of the latest boot; all empty before the first
+        connection.
+
+    Raises:
+        ChargingStationNotFoundError: If the station does not exist, was
+            deleted or is out of the caller's reach.
+    """
+    station = await _get_station_in_reach(db, station_id, principal)
+    state = await charging_stations_repository.get_station_state(db, station_id)
+    reported_serial = state.serial_number if state else None
+    return ChargingStationConnectionResponse(
+        station_id=station.station_id,
+        ocpp_identity=station.ocpp_identity,
+        is_online=_is_station_online(state, utc_now()),
+        offline_after_seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS,
+        last_seen_at=state.last_seen_at if state else None,
+        last_boot_at=state.last_boot_at if state else None,
+        ocpp_protocol_version=state.ocpp_protocol_version if state else None,
+        vendor=state.vendor if state else None,
+        model=state.model if state else None,
+        serial_number=reported_serial,
+        registered_serial_number=station.registered_serial_number,
+        is_serial_matching=(
+            None
+            if reported_serial is None
+            else reported_serial == station.registered_serial_number
+        ),
+        firmware_version=state.firmware_version if state else None,
+    )
+
+
+async def list_charging_station_ocpp_messages(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    principal: Principal,
+    action: str | None = None,
+    direction: OcppMessageDirection | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+    include_raw_frame: bool = False,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+) -> ChargingOcppMessageListResponse:
+    """Read a charger's OCPP message log, newest first (STN-03, minimal STN-15).
+
+    Rule:
+        Only internal staff read the log. The text of a frame can hold RFID
+        ``idTag`` values, so it is left out unless the caller asks for it with
+        ``include_raw_frame`` (and the router then writes an audit row); a
+        customer never reaches this function, whatever they ask.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        station_id: UUID of the station.
+        principal: The caller; must be internal staff.
+        action: Only requests of this OCPP action (case as OCPP writes it).
+        direction: Only frames in this direction.
+        occurred_from: Inclusive lower bound on the time; must carry a timezone.
+        occurred_to: Exclusive upper bound on the time; must carry a timezone.
+        include_raw_frame: Whether to return the frame text.
+        page: Page number starting at one.
+        page_size: Page size, clamped according to settings.
+
+    Returns:
+        The frames and pagination metadata.
+
+    Raises:
+        AccessDeniedError: The caller is not internal staff.
+        ChargingStationNotFoundError: The station does not exist or was deleted.
+        ChargingStationReportRangeError: A time bound has no timezone.
+    """
+    if not principal.is_internal:
+        raise AccessDeniedError("The OCPP message log is for our own staff")
+    await _get_station_in_reach(db, station_id, principal)
+    lower = (
+        _normalize_report_bound(occurred_from, "occurred_from")
+        if occurred_from is not None
+        else None
+    )
+    upper = (
+        _normalize_report_bound(occurred_to, "occurred_to")
+        if occurred_to is not None
+        else None
+    )
+    page_window = normalize_page_window(page, page_size)
+    messages = await ocpp_state_repository.list_ocpp_messages(
+        db,
+        station_id=station_id,
+        offset=page_window.offset,
+        limit=page_window.page_size,
+        action=action,
+        direction=direction,
+        occurred_from=lower,
+        occurred_to=upper,
+    )
+    total = await ocpp_state_repository.count_ocpp_messages(
+        db,
+        station_id=station_id,
+        action=action,
+        direction=direction,
+        occurred_from=lower,
+        occurred_to=upper,
+    )
+    return ChargingOcppMessageListResponse(
+        items=[
+            to_charging_ocpp_message_response(message, include_raw_frame)
+            for message in messages
+        ],
+        total=total,
+        page=page_window.page,
+        page_size=page_window.page_size,
+    )
+
+
+def to_charging_ocpp_message_response(
+    message: ChargingOcppMessageModel, include_raw_frame: bool
+) -> ChargingOcppMessageResponse:
+    """Build a message-log response, with or without the frame text.
+
+    Args:
+        message: Log row queried by the repository.
+        include_raw_frame: Whether to copy the frame text into the response.
+
+    Returns:
+        The response; ``raw_frame`` is `None` unless asked for.
+    """
+    return ChargingOcppMessageResponse(
+        message_id=message.message_id,
+        occurred_at=message.occurred_at,
+        direction=message.direction,
+        ocpp_subprotocol=message.ocpp_subprotocol,
+        action=message.action,
+        ocpp_message_id=message.ocpp_message_id,
+        raw_frame=message.raw_frame if include_raw_frame else None,
     )
 
 
@@ -1446,6 +1855,11 @@ async def soft_delete_charging_station(
         delete records and does not commit on its own.
     """
     await _get_station_in_reach(db, station_id, principal)
+    await _ensure_no_active_session(
+        db,
+        await _connector_ids_of_station(db, station_id),
+        "A charging session is in progress on this charger",
+    )
     if not await charging_stations_repository.soft_delete_station(
         db, station_id, status_reason=status_reason, changed_by=principal.user_id
     ):
@@ -1654,12 +2068,18 @@ async def soft_delete_charging_evse(
 
     Raises:
         ChargingEvseNotFoundError: If the EVSE is not active.
+        ChargingTopologyConflictError: If a charge is running on one of its guns.
 
     Side Effects:
         Marks the EVSE and its child connectors; does not physically delete
         and does not commit.
     """
     await _get_evse_in_reach(db, evse_id, principal)
+    await _ensure_no_active_session(
+        db,
+        await _connector_ids_of_evse(db, evse_id),
+        "A charging session is in progress on this EVSE",
+    )
     if not await charging_stations_repository.soft_delete_evse(
         db, evse_id, status_reason=status_reason, changed_by=principal.user_id
     ):
@@ -1868,6 +2288,9 @@ async def soft_delete_charging_connector(
         on its own.
     """
     await _get_connector_in_reach(db, connector_id, principal)
+    await _ensure_no_active_session(
+        db, [connector_id], "A charging session is in progress on this connector"
+    )
     if not await charging_stations_repository.soft_delete_connector(
         db,
         connector_id,
@@ -1881,6 +2304,21 @@ async def soft_delete_charging_connector(
 # --- Commands ----------------------------------------------------------------
 
 
+# Commands that change the charger or a session need the operator's reason
+# (scenario 8: "operator reason required"); reading the settings or asking the
+# charger to resend a message changes nothing.
+_COMMANDS_NEEDING_REASON = frozenset(
+    {
+        StationCommandType.REMOTE_START,
+        StationCommandType.REMOTE_STOP,
+        StationCommandType.UNLOCK_CONNECTOR,
+        StationCommandType.RESET,
+        StationCommandType.CHANGE_AVAILABILITY,
+        StationCommandType.CHANGE_CONFIGURATION,
+    }
+)
+
+
 def _validate_command_parameters(
     command_type: StationCommandType,
     *,
@@ -1889,6 +2327,10 @@ def _validate_command_parameters(
     parameters: dict[str, object] | None,
 ) -> dict[str, object] | None:
     """Check that a command carries what its type needs and fill the defaults.
+
+    The ``parameters`` are checked against the schema of the type
+    (``COMMAND_PARAMETER_MODELS``: allowed keys, value ranges, word lists), then
+    the links the type needs (a session, an EVSE) are checked.
 
     Args:
         command_type: What to ask.
@@ -1900,10 +2342,21 @@ def _validate_command_parameters(
         The parameters to store (defaults added), ``None`` if there are none.
 
     Raises:
-        ChargingStationCommandInputError: If a required link or parameter is
-            missing.
+        ChargingStationCommandInputError: If a parameter is unknown or out of
+            range, or a required link or parameter is missing.
     """
-    values: dict[str, object] = dict(parameters or {})
+    parameter_model = COMMAND_PARAMETER_MODELS[command_type]
+    try:
+        checked = parameter_model.model_validate(parameters or {})
+    except ValidationError as error:
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg']}"
+            for problem in error.errors()
+        )
+        raise ChargingStationCommandInputError(
+            f"Invalid parameters for {command_type.value}: {problems}"
+        ) from error
+    values: dict[str, object] = dict(checked.model_dump(exclude_none=True))
     if command_type is StationCommandType.REMOTE_START:
         if session_id is None and "id_token" not in values:
             raise ChargingStationCommandInputError(
@@ -1918,21 +2371,59 @@ def _validate_command_parameters(
     elif command_type is StationCommandType.UNLOCK_CONNECTOR:
         if evse_id is None:
             raise ChargingStationCommandInputError("UNLOCK_CONNECTOR needs an EVSE")
-    elif command_type is StationCommandType.RESET:
-        values.setdefault("reset_type", "Soft")
-    elif command_type is StationCommandType.CHANGE_AVAILABILITY:
-        values.setdefault("availability", "Inoperative")
-    elif command_type is StationCommandType.CHANGE_CONFIGURATION:
-        if "key" not in values or "value" not in values:
-            raise ChargingStationCommandInputError(
-                "CHANGE_CONFIGURATION needs key and value parameters"
-            )
-    elif command_type is StationCommandType.TRIGGER_MESSAGE:
-        if "requested_message" not in values:
-            raise ChargingStationCommandInputError(
-                "TRIGGER_MESSAGE needs a requested_message parameter"
-            )
     return values or None
+
+
+async def _ensure_no_active_session(
+    db: AsyncSession, connector_ids: list[UUID], message: str
+) -> None:
+    """Refuse an action while a charge is running on any of the given guns.
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        connector_ids: The guns to check.
+        message: What to say when one of them is charging.
+
+    Raises:
+        ChargingTopologyConflictError: A gun has an ``ACTIVE`` session.
+    """
+    for connector_id in connector_ids:
+        if await charging_sessions_service.has_active_session_on_connector(
+            db, connector_id
+        ):
+            raise ChargingTopologyConflictError(message)
+
+
+async def _connector_ids_of_evse(db: AsyncSession, evse_id: UUID) -> list[UUID]:
+    """List the active guns of an EVSE (a handful per EVSE).
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        evse_id: The EVSE.
+
+    Returns:
+        The connector IDs.
+    """
+    connectors = await charging_stations_repository.list_charging_connectors(
+        db, evse_id=evse_id, offset=0, limit=100
+    )
+    return [connector.connector_id for connector in connectors]
+
+
+async def _connector_ids_of_station(db: AsyncSession, station_id: UUID) -> list[UUID]:
+    """List the active guns of a charger.
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        station_id: The charger.
+
+    Returns:
+        The connector IDs.
+    """
+    connectors = await charging_stations_repository.list_connectors_by_station_id(
+        db, station_id
+    )
+    return [connector.connector_id for connector, _evse_number, _state in connectors]
 
 
 async def queue_station_command(
@@ -2033,13 +2524,43 @@ async def create_charging_station_command(
     Raises:
         ChargingStationNotFoundError: If the charger is not active or is out
             of the caller's reach.
-        ChargingStationCommandInputError: See ``queue_station_command``.
+        ChargingStationCommandInputError: The parameters do not fit the type, a
+            link is missing, or the type needs the operator's reason.
+        ChargingStationOfflineError: The charger is not connected now (the
+            gateway could only answer ``NOT_SENT``).
+        ChargingStationCommandConflictError: An unlock was asked while a charge
+            runs on that gun.
     """
     await _get_station_in_reach(db, station_id, principal)
+    command_type = command_create_request.command_type
+    if command_type in _COMMANDS_NEEDING_REASON and not command_create_request.reason:
+        raise ChargingStationCommandInputError(
+            f"{command_type.value} needs a reason typed by the operator"
+        )
+    state = await charging_stations_repository.get_station_state(db, station_id)
+    if not _is_station_online(state, utc_now()):
+        raise ChargingStationOfflineError(
+            "The charger is not connected, so a command cannot reach it now"
+        )
+    if (
+        command_type is StationCommandType.UNLOCK_CONNECTOR
+        and command_create_request.evse_id is not None
+    ):
+        evse = await charging_stations_repository.get_evse_by_id(
+            db, command_create_request.evse_id
+        )
+        if evse is not None and evse.station_id == station_id:
+            for connector_id in await _connector_ids_of_evse(db, evse.evse_id):
+                if await charging_sessions_service.has_active_session_on_connector(
+                    db, connector_id
+                ):
+                    raise ChargingStationCommandConflictError(
+                        "A charge is running on this gun; stop it before unlocking"
+                    )
     reference = await queue_station_command(
         db,
         station_id=station_id,
-        command_type=command_create_request.command_type,
+        command_type=command_type,
         evse_id=command_create_request.evse_id,
         session_id=command_create_request.session_id,
         parameters=command_create_request.parameters,
@@ -2094,11 +2615,53 @@ async def get_charging_station_command(
     return to_charging_station_command_response(command)
 
 
+async def cancel_charging_station_command(
+    db: AsyncSession, station_id: UUID, command_id: UUID, *, principal: Principal
+) -> ChargingStationCommandResponse:
+    """Cancel a command that no gateway has picked up yet (STN-10).
+
+    Rule:
+        Only a queued command (``PENDING`` with no message ID) can be cancelled;
+        it is closed as ``NOT_SENT`` with ``response_status`` "Cancelled" and is
+        never sent. One conditional ``UPDATE`` decides, so a gateway that claims
+        the command at the same moment wins and the cancel is refused.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        station_id: The charger.
+        command_id: The command.
+        principal: The caller (manage access to the charger).
+
+    Returns:
+        The command as it is now.
+
+    Raises:
+        ChargingStationNotFoundError: The command is not the charger's, or the
+            charger is out of the caller's reach.
+        ChargingStationCommandConflictError: The command was already sent or
+            closed.
+    """
+    command = await get_charging_station_command(
+        db, station_id, command_id, principal=principal
+    )
+    if not await ocpp_state_repository.cancel_queued_command(
+        db, command_id, response_status="Cancelled"
+    ):
+        raise ChargingStationCommandConflictError(
+            f"Command '{command.command_id}' is already sent or closed"
+        )
+    cancelled = await ocpp_state_repository.get_station_command_by_id(db, command_id)
+    assert cancelled is not None, "the command was just cancelled"
+    return to_charging_station_command_response(cancelled)
+
+
 async def list_charging_station_commands(
     db: AsyncSession,
     station_id: UUID,
     *,
     principal: Principal,
+    outcome: StationCommandOutcome | None = None,
+    command_type: StationCommandType | None = None,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
 ) -> ChargingStationCommandListResponse:
@@ -2108,6 +2671,8 @@ async def list_charging_station_commands(
         db: Async session owned by the HTTP boundary.
         station_id: The charger.
         principal: The caller (manage access to the charger).
+        outcome: Only commands with this observed outcome.
+        command_type: Only commands of this type.
         page: Page number starting at one.
         page_size: Page size, bounded by settings.
 
@@ -2124,8 +2689,12 @@ async def list_charging_station_commands(
         station_id=station_id,
         offset=page_window.offset,
         limit=page_window.page_size,
+        outcome=outcome,
+        command_type=command_type,
     )
-    total = await ocpp_state_repository.count_station_commands(db, station_id)
+    total = await ocpp_state_repository.count_station_commands(
+        db, station_id, outcome=outcome, command_type=command_type
+    )
     return ChargingStationCommandListResponse(
         items=[to_charging_station_command_response(command) for command in commands],
         total=total,

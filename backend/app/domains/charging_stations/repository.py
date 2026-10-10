@@ -24,7 +24,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import exists, func, or_, select, update
+from sqlalchemy import Date, and_, cast, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -43,6 +43,7 @@ from app.domains.charging_stations.types import (
     LocationViewer,
 )
 from app.libs.common.clock import utc_now
+from app.libs.common.config import settings
 from app.libs.db.history import set_change_context
 
 _ACTIVE = ChargingResourceStatus.ACTIVE.value
@@ -115,12 +116,130 @@ async def get_location_by_id(
     return result.scalar_one_or_none()
 
 
+def _grant_in_force_condition(
+    allowed_organization_id: UUID | ColumnElement[UUID],
+) -> ColumnElement[bool]:
+    """Build "this organization holds a grant at the location that is in force" (CS-13).
+
+    A grant is in force while it is not revoked and its ``valid_until`` (the
+    last valid day, Vietnam time) has not passed. The check is made at read
+    time, so an expired grant stops counting even before anything closed its
+    row. Correlated on ``ChargingLocationModel.location_id``.
+
+    Args:
+        allowed_organization_id: The organization (or a column) to look for.
+
+    Returns:
+        A correlated ``EXISTS`` condition.
+    """
+    today = cast(func.timezone(settings.APP_REPORT_TIMEZONE, func.now()), Date)
+    return exists().where(
+        ChargingLocationAccessModel.location_id == ChargingLocationModel.location_id,
+        ChargingLocationAccessModel.allowed_organization_id == allowed_organization_id,
+        ChargingLocationAccessModel.revoked_at.is_(None),
+        or_(
+            ChargingLocationAccessModel.valid_until.is_(None),
+            ChargingLocationAccessModel.valid_until >= today,
+        ),
+    )
+
+
+_LIKE_ESCAPE = "\\"
+
+
+def _like_pattern(search_text: str) -> str:
+    """Build a contains-pattern for ``ILIKE ... ESCAPE`` from user-typed text.
+
+    Args:
+        search_text: The text the caller typed.
+
+    Returns:
+        ``%text%`` with the wildcards inside the text escaped.
+    """
+    escaped = (
+        search_text.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", _LIKE_ESCAPE + "%")
+        .replace("_", _LIKE_ESCAPE + "_")
+    )
+    return f"%{escaped}%"
+
+
+def _location_list_conditions(
+    *,
+    organization_id: UUID | None,
+    viewer: LocationViewer | None,
+    owner_organization_id: UUID | None,
+    is_public: bool | None,
+    status: str | None,
+    search_text: str | None,
+) -> list[ColumnElement[bool]]:
+    """Build the conditions of a location list (STN-01, STN-12, CS-28).
+
+    Two reaches, never both: ``organization_id`` is the *manage* scope (only
+    locations the organization owns; `None` is every organization), ``viewer``
+    is the *view* scope (the viewer's own locations in any status, plus the
+    ``ACTIVE`` public ones and the ``ACTIVE`` ones with a grant in force;
+    internal staff see all).
+
+    Args:
+        organization_id: Manage scope, `None` for no restriction.
+        viewer: View scope; when given, ``organization_id`` is not used.
+        owner_organization_id: Narrow to one owner organization.
+        is_public: Narrow to public (`True`) or private (`False`) locations.
+        status: Narrow to one status value.
+        search_text: Case-insensitive fragment of the name or address.
+
+    Returns:
+        Conditions on ``ChargingLocationModel``, always excluding deleted ones.
+    """
+    conditions: list[ColumnElement[bool]] = [ChargingLocationModel.deleted_at.is_(None)]
+    if viewer is not None:
+        if not viewer.sees_all:
+            reach: list[ColumnElement[bool]] = []
+            others_visible: list[ColumnElement[bool]] = [
+                ChargingLocationModel.is_public.is_(True)
+            ]
+            if viewer.organization_id is not None:
+                reach.append(
+                    ChargingLocationModel.organization_id == viewer.organization_id
+                )
+                others_visible.append(_grant_in_force_condition(viewer.organization_id))
+            reach.append(
+                and_(ChargingLocationModel.status == _ACTIVE, or_(*others_visible))
+            )
+            conditions.append(or_(*reach))
+    elif organization_id is not None:
+        conditions.append(ChargingLocationModel.organization_id == organization_id)
+    if owner_organization_id is not None:
+        conditions.append(
+            ChargingLocationModel.organization_id == owner_organization_id
+        )
+    if is_public is not None:
+        conditions.append(ChargingLocationModel.is_public.is_(is_public))
+    if status is not None:
+        conditions.append(ChargingLocationModel.status == status)
+    if search_text:
+        pattern = _like_pattern(search_text)
+        conditions.append(
+            or_(
+                ChargingLocationModel.display_name.ilike(pattern, escape=_LIKE_ESCAPE),
+                ChargingLocationModel.address.ilike(pattern, escape=_LIKE_ESCAPE),
+            )
+        )
+    return conditions
+
+
 async def list_charging_locations(
     db: AsyncSession,
     *,
     offset: int,
     limit: int,
     organization_id: UUID | None = None,
+    viewer: LocationViewer | None = None,
+    owner_organization_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: str | None = None,
+    search_text: str | None = None,
 ) -> list[ChargingLocationModel]:
     """Get non-soft-deleted locations in a stable order.
 
@@ -128,15 +247,26 @@ async def list_charging_locations(
         db: Current async session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        organization_id: Data scope: only locations owned by this
+        organization_id: Manage scope: only locations owned by this
             organization; `None` means every organization.
+        viewer: View scope (owned, public and granted locations); replaces
+            ``organization_id`` when given.
+        owner_organization_id: Narrow to one owner organization.
+        is_public: Narrow to public or private locations.
+        status: Narrow to one status value.
+        search_text: Case-insensitive fragment of the name or address.
 
     Returns:
         Active locations ordered by creation time descending.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingLocationModel.deleted_at.is_(None)]
-    if organization_id is not None:
-        conditions.append(ChargingLocationModel.organization_id == organization_id)
+    conditions = _location_list_conditions(
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        is_public=is_public,
+        status=status,
+        search_text=search_text,
+    )
     result = await db.execute(
         select(ChargingLocationModel)
         .where(*conditions)
@@ -151,20 +281,37 @@ async def list_charging_locations(
 
 
 async def count_locations(
-    db: AsyncSession, *, organization_id: UUID | None = None
+    db: AsyncSession,
+    *,
+    organization_id: UUID | None = None,
+    viewer: LocationViewer | None = None,
+    owner_organization_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: str | None = None,
+    search_text: str | None = None,
 ) -> int:
-    """Count active locations.
+    """Count active locations with the same filters as `list_charging_locations`.
 
     Args:
         db: Current async session.
-        organization_id: Data scope; `None` means every organization.
+        organization_id: Manage scope; `None` means every organization.
+        viewer: View scope; replaces ``organization_id`` when given.
+        owner_organization_id: Narrow to one owner organization.
+        is_public: Narrow to public or private locations.
+        status: Narrow to one status value.
+        search_text: Case-insensitive fragment of the name or address.
 
     Returns:
-        Number of non-soft-deleted locations.
+        Number of matching non-soft-deleted locations.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingLocationModel.deleted_at.is_(None)]
-    if organization_id is not None:
-        conditions.append(ChargingLocationModel.organization_id == organization_id)
+    conditions = _location_list_conditions(
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        is_public=is_public,
+        status=status,
+        search_text=search_text,
+    )
     result = await db.execute(
         select(func.count(ChargingLocationModel.location_id)).where(*conditions)
     )
@@ -375,6 +522,42 @@ async def list_live_location_access(
     return list(result.scalars().all())
 
 
+async def close_expired_location_access(
+    db: AsyncSession, location_id: UUID | None = None
+) -> int:
+    """Close the grants whose last valid day has passed (CS-13).
+
+    The system closes them (``revoked_by`` stays ``NULL``) so a new grant to
+    the same organization is possible again. Reads already ignore an expired
+    grant (`_grant_in_force_condition`); this only tidies the rows.
+
+    Args:
+        db: Current async session.
+        location_id: Only this location's grants; `None` for every location.
+
+    Returns:
+        The number of grants closed.
+
+    Side Effects:
+        Updates rows and flushes; does not commit.
+    """
+    today = cast(func.timezone(settings.APP_REPORT_TIMEZONE, func.now()), Date)
+    conditions: list[ColumnElement[bool]] = [
+        ChargingLocationAccessModel.revoked_at.is_(None),
+        ChargingLocationAccessModel.valid_until.is_not(None),
+        ChargingLocationAccessModel.valid_until < today,
+    ]
+    if location_id is not None:
+        conditions.append(ChargingLocationAccessModel.location_id == location_id)
+    result = await db.execute(
+        update(ChargingLocationAccessModel)
+        .where(*conditions)
+        .values(revoked_at=utc_now(), revoke_reason="Access expired")
+    )
+    await db.flush()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+
+
 async def revoke_location_access(
     db: AsyncSession,
     access: ChargingLocationAccessModel,
@@ -531,23 +714,77 @@ async def get_station_state(
     return await db.get(ChargingStationStateModel, station_id)
 
 
-def _station_owner_condition(organization_id: UUID) -> ColumnElement[bool]:
-    """Build "the charger stands at a location owned by this organization".
+def _station_list_conditions(
+    *,
+    organization_id: UUID | None,
+    viewer: LocationViewer | None,
+    owner_organization_id: UUID | None,
+    location_id: UUID | None,
+    is_public: bool | None,
+    status: str | None,
+    search_text: str | None,
+) -> list[ColumnElement[bool]]:
+    """Build the conditions of a charger list (STN-01, STN-12, CS-28).
 
-    A charger has no owner column; it reads its owner through its location
-    (CS-10, DM-24).
+    A charger has no owner column; it reads its owner and its visibility
+    through its location, so the location filters are applied to a subquery of
+    locations (see `_location_list_conditions` for the two reaches). The text
+    matches the charger's label and OCPP identity or its location's name and
+    address.
 
     Args:
-        organization_id: The owner organization.
+        organization_id: Manage scope, `None` for no restriction.
+        viewer: View scope; replaces ``organization_id`` when given.
+        owner_organization_id: Narrow to one owner organization.
+        location_id: Narrow to one location.
+        is_public: Narrow to chargers at public or private locations.
+        status: Narrow to one charger status value.
+        search_text: Case-insensitive fragment.
 
     Returns:
-        A condition on ``ChargingStationModel.location_id``.
+        Conditions on ``ChargingStationModel``, always excluding deleted ones.
     """
-    return ChargingStationModel.location_id.in_(
-        select(ChargingLocationModel.location_id).where(
-            ChargingLocationModel.organization_id == organization_id
+    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
+    location_conditions = _location_list_conditions(
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        is_public=is_public,
+        status=None,
+        search_text=None,
+    )
+    conditions.append(
+        ChargingStationModel.location_id.in_(
+            select(ChargingLocationModel.location_id).where(*location_conditions)
         )
     )
+    if location_id is not None:
+        conditions.append(ChargingStationModel.location_id == location_id)
+    if status is not None:
+        conditions.append(ChargingStationModel.status == status)
+    if search_text:
+        pattern = _like_pattern(search_text)
+        conditions.append(
+            or_(
+                ChargingStationModel.physical_reference.ilike(
+                    pattern, escape=_LIKE_ESCAPE
+                ),
+                ChargingStationModel.ocpp_identity.ilike(pattern, escape=_LIKE_ESCAPE),
+                ChargingStationModel.location_id.in_(
+                    select(ChargingLocationModel.location_id).where(
+                        or_(
+                            ChargingLocationModel.display_name.ilike(
+                                pattern, escape=_LIKE_ESCAPE
+                            ),
+                            ChargingLocationModel.address.ilike(
+                                pattern, escape=_LIKE_ESCAPE
+                            ),
+                        )
+                    )
+                ),
+            )
+        )
+    return conditions
 
 
 async def list_charging_stations(
@@ -556,6 +793,12 @@ async def list_charging_stations(
     offset: int,
     limit: int,
     organization_id: UUID | None = None,
+    viewer: LocationViewer | None = None,
+    owner_organization_id: UUID | None = None,
+    location_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: str | None = None,
+    search_text: str | None = None,
 ) -> list[ChargingStationModel]:
     """Get non-soft-deleted stations in a stable order.
 
@@ -563,15 +806,29 @@ async def list_charging_stations(
         db: Current async session.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
-        organization_id: Data scope: only chargers at locations owned by this
+        organization_id: Manage scope: only chargers at locations owned by this
             organization; `None` means every organization.
+        viewer: View scope (chargers at owned, public and granted locations);
+            replaces ``organization_id`` when given.
+        owner_organization_id: Narrow to one owner organization.
+        location_id: Narrow to one location.
+        is_public: Narrow to chargers at public or private locations.
+        status: Narrow to one charger status value.
+        search_text: Case-insensitive fragment of the label, OCPP identity,
+            or the location's name or address.
 
     Returns:
         List of active stations ordered by creation time descending.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
-    if organization_id is not None:
-        conditions.append(_station_owner_condition(organization_id))
+    conditions = _station_list_conditions(
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        is_public=is_public,
+        status=status,
+        search_text=search_text,
+    )
     result = await db.execute(
         select(ChargingStationModel)
         .where(*conditions)
@@ -586,20 +843,40 @@ async def list_charging_stations(
 
 
 async def count_stations(
-    db: AsyncSession, *, organization_id: UUID | None = None
+    db: AsyncSession,
+    *,
+    organization_id: UUID | None = None,
+    viewer: LocationViewer | None = None,
+    owner_organization_id: UUID | None = None,
+    location_id: UUID | None = None,
+    is_public: bool | None = None,
+    status: str | None = None,
+    search_text: str | None = None,
 ) -> int:
-    """Count active stations.
+    """Count active stations with the same filters as `list_charging_stations`.
 
     Args:
         db: Current async session.
-        organization_id: Data scope; `None` means every organization.
+        organization_id: Manage scope; `None` means every organization.
+        viewer: View scope; replaces ``organization_id`` when given.
+        owner_organization_id: Narrow to one owner organization.
+        location_id: Narrow to one location.
+        is_public: Narrow to chargers at public or private locations.
+        status: Narrow to one charger status value.
+        search_text: Case-insensitive fragment.
 
     Returns:
-        Number of non-soft-deleted stations.
+        Number of matching non-soft-deleted stations.
     """
-    conditions: list[ColumnElement[bool]] = [ChargingStationModel.deleted_at.is_(None)]
-    if organization_id is not None:
-        conditions.append(_station_owner_condition(organization_id))
+    conditions = _station_list_conditions(
+        organization_id=organization_id,
+        viewer=viewer,
+        owner_organization_id=owner_organization_id,
+        location_id=location_id,
+        is_public=is_public,
+        status=status,
+        search_text=search_text,
+    )
     result = await db.execute(
         select(func.count(ChargingStationModel.station_id)).where(*conditions)
     )
@@ -703,15 +980,7 @@ def _visible_active_location_conditions(
     visible: list[ColumnElement[bool]] = [ChargingLocationModel.is_public.is_(True)]
     if viewer is not None and viewer.organization_id is not None:
         visible.append(ChargingLocationModel.organization_id == viewer.organization_id)
-        visible.append(
-            exists().where(
-                ChargingLocationAccessModel.location_id
-                == ChargingLocationModel.location_id,
-                ChargingLocationAccessModel.allowed_organization_id
-                == viewer.organization_id,
-                ChargingLocationAccessModel.revoked_at.is_(None),
-            )
-        )
+        visible.append(_grant_in_force_condition(viewer.organization_id))
     conditions.append(or_(*visible))
     return conditions
 
@@ -980,6 +1249,29 @@ async def count_available_connectors_by_station_id(
         )
     )
     return int(result.scalar() or 0)
+
+
+async def list_station_ids_by_location_id(
+    db: AsyncSession, location_id: UUID
+) -> list[UUID]:
+    """List the non-deleted chargers of a location.
+
+    Args:
+        db: Current async session.
+        location_id: The location.
+
+    Returns:
+        The chargers' IDs, oldest first.
+    """
+    result = await db.execute(
+        select(ChargingStationModel.station_id)
+        .where(
+            ChargingStationModel.location_id == location_id,
+            ChargingStationModel.deleted_at.is_(None),
+        )
+        .order_by(ChargingStationModel.created_at.asc())
+    )
+    return list(result.scalars().all())
 
 
 async def list_connectors_by_station_id(

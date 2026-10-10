@@ -20,6 +20,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.charging_stations.models import (
     ChargingConnectorStateModel,
@@ -131,6 +132,124 @@ async def insert_ocpp_message(
     db.add(message)
     await db.flush()
     return message
+
+
+def _ocpp_message_conditions(
+    station_id: UUID,
+    *,
+    action: str | None,
+    direction: OcppMessageDirection | None,
+    occurred_from: datetime | None,
+    occurred_to: datetime | None,
+) -> list[ColumnElement[bool]]:
+    """Build the filters of a station's message-log read (STN-15 minimal read).
+
+    Args:
+        station_id: The station.
+        action: Only requests of this OCPP action (answers carry none).
+        direction: Only frames in this direction.
+        occurred_from: Inclusive lower bound on the receive/send time.
+        occurred_to: Exclusive upper bound on the receive/send time.
+
+    Returns:
+        Conditions on ``ChargingOcppMessageModel``; every one filters the
+        hypertable by its time or station key where it can.
+    """
+    conditions: list[ColumnElement[bool]] = [
+        ChargingOcppMessageModel.station_id == station_id
+    ]
+    if action is not None:
+        conditions.append(ChargingOcppMessageModel.action == action)
+    if direction is not None:
+        conditions.append(ChargingOcppMessageModel.direction == direction)
+    if occurred_from is not None:
+        conditions.append(ChargingOcppMessageModel.occurred_at >= occurred_from)
+    if occurred_to is not None:
+        conditions.append(ChargingOcppMessageModel.occurred_at < occurred_to)
+    return conditions
+
+
+async def list_ocpp_messages(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    offset: int,
+    limit: int,
+    action: str | None = None,
+    direction: OcppMessageDirection | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+) -> list[ChargingOcppMessageModel]:
+    """List a station's logged frames, newest first.
+
+    Args:
+        db: Current async session.
+        station_id: The station.
+        offset: Number of rows to skip.
+        limit: Maximum number of rows.
+        action: Only requests of this OCPP action.
+        direction: Only frames in this direction.
+        occurred_from: Inclusive lower bound on the receive/send time.
+        occurred_to: Exclusive upper bound on the receive/send time.
+
+    Returns:
+        The frames, newest first.
+    """
+    result = await db.execute(
+        select(ChargingOcppMessageModel)
+        .where(
+            *_ocpp_message_conditions(
+                station_id,
+                action=action,
+                direction=direction,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+            )
+        )
+        .order_by(
+            ChargingOcppMessageModel.occurred_at.desc(),
+            ChargingOcppMessageModel.message_id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
+async def count_ocpp_messages(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    action: str | None = None,
+    direction: OcppMessageDirection | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+) -> int:
+    """Count a station's logged frames with the filters of `list_ocpp_messages`.
+
+    Args:
+        db: Current async session.
+        station_id: The station.
+        action: Only requests of this OCPP action.
+        direction: Only frames in this direction.
+        occurred_from: Inclusive lower bound on the receive/send time.
+        occurred_to: Exclusive upper bound on the receive/send time.
+
+    Returns:
+        The number of matching frames.
+    """
+    result = await db.execute(
+        select(func.count(ChargingOcppMessageModel.message_id)).where(
+            *_ocpp_message_conditions(
+                station_id,
+                action=action,
+                direction=direction,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+            )
+        )
+    )
+    return int(result.scalar() or 0)
 
 
 async def get_station_state_for_update(
@@ -324,8 +443,42 @@ async def get_station_command_by_id(
     return await db.get(ChargingStationCommandModel, command_id)
 
 
+def _station_command_conditions(
+    station_id: UUID,
+    *,
+    outcome: StationCommandOutcome | None,
+    command_type: StationCommandType | None,
+) -> list[ColumnElement[bool]]:
+    """Build the filters of a charger's command log.
+
+    Args:
+        station_id: The charger.
+        outcome: Only commands with this observed outcome.
+        command_type: Only commands of this type.
+
+    Returns:
+        Conditions on ``ChargingStationCommandModel``.
+    """
+    conditions: list[ColumnElement[bool]] = [
+        ChargingStationCommandModel.station_id == station_id
+    ]
+    if outcome is not None:
+        conditions.append(ChargingStationCommandModel.outcome == outcome.value)
+    if command_type is not None:
+        conditions.append(
+            ChargingStationCommandModel.command_type == command_type.value
+        )
+    return conditions
+
+
 async def list_station_commands(
-    db: AsyncSession, *, station_id: UUID, offset: int, limit: int
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    offset: int,
+    limit: int,
+    outcome: StationCommandOutcome | None = None,
+    command_type: StationCommandType | None = None,
 ) -> list[ChargingStationCommandModel]:
     """List a charger's commands, newest first (STN-10).
 
@@ -334,13 +487,19 @@ async def list_station_commands(
         station_id: The charger.
         offset: Number of records to skip.
         limit: Maximum number of records to return.
+        outcome: Only commands with this observed outcome.
+        command_type: Only commands of this type.
 
     Returns:
         The commands ordered by request time, newest first.
     """
     result = await db.execute(
         select(ChargingStationCommandModel)
-        .where(ChargingStationCommandModel.station_id == station_id)
+        .where(
+            *_station_command_conditions(
+                station_id, outcome=outcome, command_type=command_type
+            )
+        )
         .order_by(
             ChargingStationCommandModel.requested_at.desc(),
             ChargingStationCommandModel.command_id.desc(),
@@ -351,22 +510,67 @@ async def list_station_commands(
     return list(result.scalars().all())
 
 
-async def count_station_commands(db: AsyncSession, station_id: UUID) -> int:
-    """Count a charger's commands.
+async def count_station_commands(
+    db: AsyncSession,
+    station_id: UUID,
+    *,
+    outcome: StationCommandOutcome | None = None,
+    command_type: StationCommandType | None = None,
+) -> int:
+    """Count a charger's commands with the filters of `list_station_commands`.
 
     Args:
         db: Current async session.
         station_id: The charger.
+        outcome: Only commands with this observed outcome.
+        command_type: Only commands of this type.
 
     Returns:
-        The number of commands.
+        The number of matching commands.
     """
     result = await db.execute(
         select(func.count(ChargingStationCommandModel.command_id)).where(
-            ChargingStationCommandModel.station_id == station_id
+            *_station_command_conditions(
+                station_id, outcome=outcome, command_type=command_type
+            )
         )
     )
     return int(result.scalar() or 0)
+
+
+async def cancel_queued_command(
+    db: AsyncSession, command_id: UUID, *, response_status: str
+) -> bool:
+    """Close a command that no gateway has claimed yet as ``NOT_SENT``.
+
+    One conditional ``UPDATE``: it only matches a row that is still queued
+    (``PENDING`` with no message ID), the same condition ``claim_queued_commands``
+    uses, so a command that a gateway claimed in the meantime is never
+    cancelled and a cancelled one is never sent.
+
+    Args:
+        db: Current async session.
+        command_id: The command.
+        response_status: Text kept in ``response_status`` to tell a cancel from
+            the age-based ``NOT_SENT`` (the charger answered nothing).
+
+    Returns:
+        ``True`` when the command was still queued and is closed now.
+    """
+    result = await db.execute(
+        update(ChargingStationCommandModel)
+        .where(
+            ChargingStationCommandModel.command_id == command_id,
+            ChargingStationCommandModel.outcome == StationCommandOutcome.PENDING.value,
+            ChargingStationCommandModel.ocpp_message_id.is_(None),
+        )
+        .values(
+            outcome=StationCommandOutcome.NOT_SENT.value,
+            response_status=response_status,
+        )
+    )
+    await db.flush()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
 
 
 async def claim_queued_commands(

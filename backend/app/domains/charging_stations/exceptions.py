@@ -41,3 +41,11 @@ class ChargingStationReportRangeError(InvalidInputError):
 
 class ChargingStationCommandInputError(InvalidInputError):
     """A command misses a parameter its type needs, or points to a missing row (CS-20)."""
+
+
+class ChargingStationOfflineError(ConflictError):
+    """A command was asked for a charger that is not connected now (STN-10)."""
+
+
+class ChargingStationCommandConflictError(ConflictError):
+    """A command cannot be sent or cancelled in the charger's current state (STN-10)."""

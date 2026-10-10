@@ -368,7 +368,11 @@ async def test_station_status_lists_the_charger_and_every_gun(
     state.charger_status_updated_at = now
     state.charger_error_code = "NoError"
     gun_one = ChargingConnectorModel(
-        connector_id=uuid4(), evse_id=uuid4(), ocpp_connector_id=1
+        connector_id=uuid4(),
+        evse_id=uuid4(),
+        ocpp_connector_id=1,
+        standard="IEC_62196_T2_COMBO",
+        max_power_kw=Decimal("120.00"),
     )
     gun_one_state = ChargingConnectorStateModel(
         connector_id=gun_one.connector_id,
@@ -379,7 +383,11 @@ async def test_station_status_lists_the_charger_and_every_gun(
         status_info=None,
     )
     gun_two = ChargingConnectorModel(
-        connector_id=uuid4(), evse_id=uuid4(), ocpp_connector_id=1
+        connector_id=uuid4(),
+        evse_id=uuid4(),
+        ocpp_connector_id=1,
+        standard="GBT_DC",
+        max_power_kw=Decimal("60.00"),
     )
     gun_two_state = ChargingConnectorStateModel(
         connector_id=gun_two.connector_id,
