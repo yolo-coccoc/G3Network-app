@@ -4,10 +4,7 @@ import asyncio
 import logging
 import signal
 
-# The gateway writes rows that reference other domains' tables (a command's
-# requesting user), so every model must be registered in this process.
-import app.libs.db.model_registry  # noqa: F401
-from app.api.startup import register_session_hooks
+from app.api.startup import register_all_hooks
 from app.domains.charging_stations.ocpp.ocpp_server import run_server
 from app.libs.common.logging import configure_logging
 from app.libs.db.session import close_db
@@ -23,9 +20,9 @@ async def run() -> None:
         the shared database engine after the gateway stops.
     """
     configure_logging()
-    # A charger's stop message completes a session here, so the gateway bills
-    # it with the same hook the API registers (BL-19).
-    register_session_hooks()
+    # A charger's stop message completes a session here, so the gateway must
+    # bill it (BL-19); every cross-domain hook, the same in every process (CV-21).
+    register_all_hooks()
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
     handled_signals = (signal.SIGINT, signal.SIGTERM)

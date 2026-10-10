@@ -5796,9 +5796,9 @@ async def test_sos_routing_channel_switches_and_inbox_seen_read_on_postgres(
     default sends push and e-mail, an organization switch-off suppresses the
     push but not the inbox, the setting's history records the reason, and the
     inbox keeps seen and read apart (NT-10, NT-12, NT-15)."""
-    from app.api.startup import register_notification_hooks
+    from app.api.startup import register_all_hooks
 
-    register_notification_hooks()
+    register_all_hooks()
     pushed: list[str] = []
     emailed: list[str] = []
 

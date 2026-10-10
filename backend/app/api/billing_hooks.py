@@ -6,9 +6,8 @@ stop handlers call ``charging_sessions.complete_session`` from a different
 process than the API, and ``charging_sessions`` may not import ``billing`` (the
 edge between them stays one-way), so it exposes a hook list
 (``register_session_ended_hook``) and this module, above the domains like
-``membership_end_hooks.py``, registers the billing function on it. Both the API
-and the gateway call `app.api.startup.register_session_billing_hooks` at
-start-up.
+``membership_end_hooks.py``, registers the billing function on it. Every
+process registers it through `app.api.startup.register_all_hooks` (CV-21).
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession

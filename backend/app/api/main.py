@@ -148,8 +148,9 @@ for _error_base in _DOMAIN_ERROR_STATUS:
 
 # Cross-domain reactions wired from above the domains: ending a membership
 # closes the driver profile (DR-10), the fleet limit reaches the vehicle
-# endpoints (FL-10), the end of a charging session bills it (BL-19).
-startup.register_api_hooks()
+# endpoints (FL-10), alert routing (NT-15), the end of a charging session bills
+# it (BL-19). Every process calls the same function (CV-21).
+startup.register_all_hooks()
 
 # Include routers
 app.include_router(vehicles_router, prefix="/api/v1/vehicles")

@@ -12,10 +12,7 @@ import asyncio
 import logging
 import signal
 
-# An alert is routed to people and devices (identity tables), so every model
-# must be registered in this process (NT-15).
-import app.libs.db.model_registry  # noqa: F401
-from app.api.startup import register_notification_hooks
+from app.api.startup import register_all_hooks
 from app.domains.telematics.monitoring.device_health_monitor import run_monitor
 from app.libs.common.logging import configure_logging
 from app.libs.db.session import close_db
@@ -36,8 +33,8 @@ async def run() -> None:
         fails - closes the shared database engine and removes the handlers.
     """
     configure_logging()
-    # Alerts raised here are routed with the drivers and fleet answers (NT-15).
-    register_notification_hooks()
+    # Every cross-domain hook, the same in every process (CV-21).
+    register_all_hooks()
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
     handled_signals = (signal.SIGINT, signal.SIGTERM)

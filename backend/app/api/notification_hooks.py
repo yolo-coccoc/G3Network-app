@@ -6,9 +6,8 @@ fleet-limited managers may see a truck (``fleet``, FL-10). The
 ``notifications`` domain may not import them (it would close a cycle with the
 producers), so this module, above the domains like ``billing_hooks.py``,
 registers both answers on ``notifications.service`` at start-up. Every process
-that raises alerts (the API, the telemetry ingestion, the device-health
-monitor) calls ``app.api.startup.register_notification_hooks``; a process that
-does not still routes by role, see ``notifications.recipient_service``.
+registers them through ``app.api.startup.register_all_hooks`` (CV-21); without
+them routing falls back to roles only, see ``notifications.recipient_service``.
 """
 
 from collections.abc import Sequence

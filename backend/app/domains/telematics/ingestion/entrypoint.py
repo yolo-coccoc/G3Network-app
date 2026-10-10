@@ -10,6 +10,7 @@ import asyncio
 import logging
 import signal
 
+from app.api.startup import register_all_hooks
 from app.domains.telematics.ingestion.message_worker import StatusReportWorker
 from app.domains.telematics.ingestion.mqtt_consumer import StatusReportConsumer
 from app.domains.telematics.schemas import TelematicStatusEnvelope
@@ -59,6 +60,8 @@ async def run() -> None:
         resources when the process stops.
     """
     configure_logging()
+    # Every cross-domain hook, the same in every process (CV-21).
+    register_all_hooks()
     queue: asyncio.Queue[TelematicStatusEnvelope] = asyncio.Queue(
         maxsize=settings.TELEMATICS_STATUS_QUEUE_SIZE
     )

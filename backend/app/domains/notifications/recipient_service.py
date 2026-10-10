@@ -35,8 +35,8 @@ def register_vehicle_audience_hooks(hooks: VehicleAudienceHooks) -> None:
         hooks: The two answers; replaces any earlier registration.
 
     Side Effects:
-        Sets the process-wide hooks (done at start-up of every process that
-        raises alerts).
+        Sets the process-wide hooks (done at start-up of every process, through
+        ``app.api.startup.register_all_hooks``).
     """
     global _vehicle_audience_hooks
     _vehicle_audience_hooks = hooks

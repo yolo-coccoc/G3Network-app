@@ -12,6 +12,7 @@ import asyncio
 import logging
 import signal
 
+from app.api.startup import register_all_hooks
 from app.domains.drivers.monitoring.auto_end_worker import run_worker
 from app.libs.common.logging import configure_logging
 from app.libs.db.session import close_db
@@ -32,6 +33,8 @@ async def run() -> None:
         fails - closes the shared database engine and removes the handlers.
     """
     configure_logging()
+    # Every cross-domain hook, the same in every process (CV-21).
+    register_all_hooks()
     stop_event = asyncio.Event()
     event_loop = asyncio.get_running_loop()
     handled_signals = (signal.SIGINT, signal.SIGTERM)

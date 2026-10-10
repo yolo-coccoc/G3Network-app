@@ -79,11 +79,11 @@ async def test_the_hook_settles_a_completed_session_and_voids_an_abandoned_one(
 def test_registering_the_hooks_twice_adds_billing_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The API and the gateway call the same start-up function; it is idempotent."""
+    """Every process calls the same start-up function; it is idempotent."""
     monkeypatch.setattr(charging_service, "_session_ended_hooks", [])
 
-    startup.register_session_hooks()
-    startup.register_session_hooks()
+    startup.register_all_hooks()
+    startup.register_all_hooks()
 
     assert charging_service._session_ended_hooks == [billing_hooks.bill_ended_session]
 

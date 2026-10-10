@@ -103,8 +103,8 @@ logger = logging.getLogger(__name__)
 
 # Callbacks run, in the caller's transaction, after a session ended (BL-19).
 # Registered once per process at start-up through `register_session_ended_hook`
-# (API and OCPP gateway both do, see `app/api/startup.py`); this domain imports
-# no other domain.
+# (every process does, see `app/api/startup.py`); this domain imports no other
+# domain.
 _session_ended_hooks: list[SessionEndedHook] = []
 
 

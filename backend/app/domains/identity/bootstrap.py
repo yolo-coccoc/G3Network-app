@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
+from app.api.startup import register_all_hooks
 from app.domains.identity.models import OrganizationModel, UserModel
 from app.domains.identity.security import hash_password, normalize_phone_number
 from app.domains.identity.types import (
@@ -268,6 +269,8 @@ def main() -> None:
         SystemExit: With code 1 when the configuration is missing or invalid.
     """
     configure_logging()
+    # Every cross-domain hook, the same in every process (CV-21).
+    register_all_hooks()
     try:
         result = asyncio.run(run())
     except BootstrapConfigError as error:
