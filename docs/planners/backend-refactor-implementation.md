@@ -392,6 +392,14 @@ spec does not require it.
 
 ## Next steps (debugging phase)
 
+**Status (2026-10-10):** every review finding with a test is fixed (CE-27, BL-28, ID-52, VH-23, DR-16 and earlier). What is left of the Known issues is the list below, plus these owner points:
+
+- **RV-OP9** (check-in to another organization's silent truck relies on phone-sent coordinates): owner decision needed.
+- **RV-ID7 lock**: the last-HEAD_ADMIN count ignores non-active holders, but two simultaneous removals of the last two usable HEAD_ADMINs can still both pass; it needs a row lock.
+- **RV-ID10, `platform` is client-chosen**: a client can pick the 90-day phone session lifetime; the staff lifetime now follows the person's memberships.
+- Still open from the brief: whether the vehicle-model and battery-model lists stay readable by any logged-in user; adding `httpx` for HTTP-level tests (item 5); whether customers may create trucks at all.
+- Borderline naming left as is: `lock_wallet_for_charge`, `run_membership_end_hooks_for_user` / `_for_organization` (convention reviewer, `_for_` idiom).
+
 The ten biggest items of the Known issues table, most severe first. Security
 gaps come first.
 

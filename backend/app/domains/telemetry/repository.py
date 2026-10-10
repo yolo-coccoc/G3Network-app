@@ -97,7 +97,7 @@ async def get_latest_vehicle_telemetry(
 
 
 async def get_previous_vehicle_telemetry(
-    db: AsyncSession, vehicle_id: UUID, before: datetime
+    db: AsyncSession, vehicle_id: UUID, *, before: datetime
 ) -> TelemetryModel | None:
     """Get the newest reading of a vehicle recorded before a given instant.
 

@@ -366,7 +366,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         self._station_id = station_id
         self._session_by_evse: dict[int, UUID] = {}
 
-    async def _station_id_for(self, db: AsyncSession) -> UUID:
+    async def _resolve_station_id(self, db: AsyncSession) -> UUID:
         """Return the charger's internal ID, resolving it by identity once if unset.
 
         Args:
@@ -426,7 +426,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
-                station_id=await self._station_id_for(db),
+                station_id=await self._resolve_station_id(db),
                 vendor=str(charging_station["vendor_name"]),
                 model=str(charging_station["model"]),
                 serial_number=charging_station.get("serial_number"),
@@ -477,7 +477,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         token = str(id_token.get("id_token") or "")
         async with self.session_factory.begin() as db:
-            station_id = await self._station_id_for(db)
+            station_id = await self._resolve_station_id(db)
             is_valid = await charging_sessions_service.is_start_token_valid(
                 db, station_id=station_id, id_token=token
             )
@@ -592,7 +592,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                         connector_uuid,
                     ) = await ocpp_state_service.resolve_ocpp_topology(
                         db,
-                        await self._station_id_for(db),
+                        await self._resolve_station_id(db),
                         ocpp_evse_id,
                         ocpp_connector_id,
                     )
@@ -634,7 +634,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                             db, session_id=session_id, samples=other_measurements
                         )
                 else:
-                    station_id = await self._station_id_for(db)
+                    station_id = await self._resolve_station_id(db)
                     reference = (
                         await charging_sessions_service.resolve_session_by_transaction(
                             db, station_id=station_id, transaction_id=transaction_id
@@ -815,7 +815,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 _evse_id,
                 connector_uuid,
             ) = await ocpp_state_service.resolve_ocpp_topology(
-                db, await self._station_id_for(db), evse_id, connector_id
+                db, await self._resolve_station_id(db), evse_id, connector_id
             )
             await ocpp_state_service.update_connector_status(
                 db,
@@ -866,7 +866,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.store_configuration_report_part(
                 db,
-                station_id=await self._station_id_for(db),
+                station_id=await self._resolve_station_id(db),
                 ocpp_request_id=request_id,
                 entries=entries,
                 is_last_part=not tbc,

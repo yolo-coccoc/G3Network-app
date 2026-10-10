@@ -124,7 +124,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         self._station_id = station_id
         self._configuration_task: asyncio.Task[None] | None = None
 
-    async def _station_id_for(self, db: AsyncSession) -> UUID:
+    async def _resolve_station_id(self, db: AsyncSession) -> UUID:
         """Return the charger's internal ID, resolving it by identity once if unset.
 
         Args:
@@ -181,7 +181,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
-                station_id=await self._station_id_for(db),
+                station_id=await self._resolve_station_id(db),
                 vendor=charge_point_vendor,
                 model=charge_point_model,
                 serial_number=charge_point_serial_number or charge_box_serial_number,
@@ -265,7 +265,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             if connector_id == 0:
                 await ocpp_state_service.update_charger_status(
                     db,
-                    station_id=await self._station_id_for(db),
+                    station_id=await self._resolve_station_id(db),
                     status=reported_status,
                     status_updated_at=reported_at,
                     error_code=error_code,
@@ -277,7 +277,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     _evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, await self._station_id_for(db), connector_id
+                    db, await self._resolve_station_id(db), connector_id
                 )
                 await ocpp_state_service.update_connector_status(
                     db,
@@ -310,7 +310,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ChargingStationNotFoundError: If the station is not provisioned.
         """
         async with self.session_factory.begin() as db:
-            station_id = await self._station_id_for(db)
+            station_id = await self._resolve_station_id(db)
             is_valid = await charging_sessions_service.is_start_token_valid(
                 db, station_id=station_id, id_token=id_tag
             )
@@ -389,7 +389,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, await self._station_id_for(db), connector_id
+                    db, await self._resolve_station_id(db), connector_id
                 )
                 if await charging_sessions_service.has_active_session_on_connector(
                     db, connector_uuid
@@ -523,7 +523,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         transaction_key = str(int(transaction_id))
         extraction = extract_v16_measurements(transaction_data or [])
         async with self.session_factory.begin() as db:
-            station_id = await self._station_id_for(db)
+            station_id = await self._resolve_station_id(db)
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=transaction_key
             )
@@ -606,7 +606,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             )
             return call_result.MeterValues()
         async with self.session_factory.begin() as db:
-            station_id = await self._station_id_for(db)
+            station_id = await self._resolve_station_id(db)
             reference = await charging_sessions_service.resolve_session_by_transaction(
                 db, station_id=station_id, transaction_id=str(int(transaction_id))
             )
@@ -705,7 +705,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             async with self.session_factory.begin() as db:
                 command_id = await ocpp_state_service.start_boot_configuration_command(
                     db,
-                    station_id=await self._station_id_for(db),
+                    station_id=await self._resolve_station_id(db),
                     ocpp_protocol_version=self.protocol_version,
                     ocpp_message_id=ocpp_message_id,
                 )

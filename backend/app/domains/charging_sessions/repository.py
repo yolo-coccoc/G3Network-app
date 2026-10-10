@@ -107,7 +107,7 @@ async def find_pending_session_by_token(
 
 
 async def find_active_session_by_token(
-    db: AsyncSession, station_id: UUID, id_token: str
+    db: AsyncSession, *, station_id: UUID, id_token: str
 ) -> ChargingSessionModel | None:
     """Find the ACTIVE session a charger already started with a token (RV-CS3).
 

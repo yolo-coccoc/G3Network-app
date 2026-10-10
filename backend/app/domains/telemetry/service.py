@@ -1129,7 +1129,7 @@ async def process_message(
     # F-A2/F-A3/F-A4 detectors compare SOC, SOH, temperature, voltage and
     # error codes.
     previous_telemetry = await telemetry_repository.get_previous_vehicle_telemetry(
-        db, vehicle_id, message.recorded_at
+        db, vehicle_id, before=message.recorded_at
     )
 
     try:

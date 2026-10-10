@@ -885,7 +885,7 @@ async def count_one_time_codes_since(
 
 
 async def count_invitation_codes_by_issuer_since(
-    db_session: AsyncSession, issued_by: UUID, since: datetime
+    db_session: AsyncSession, *, issued_by: UUID, since: datetime
 ) -> int:
     """Count the invitation SMS one person triggered since a time (inviter quota).
 

@@ -1029,7 +1029,7 @@ async def find_started_session_by_token(
         such session exists.
     """
     session_record = await charging_session_repository.find_active_session_by_token(
-        db, station_id, id_token
+        db, station_id=station_id, id_token=id_token
     )
     if session_record is None or session_record.ocpp_transaction_id is None:
         return None

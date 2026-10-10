@@ -257,7 +257,7 @@ async def _enforce_inviter_quota(db_session: AsyncSession, issued_by: UUID) -> N
             reached.
     """
     sent_today = await identity_repository.count_invitation_codes_by_issuer_since(
-        db_session, issued_by, utc_now() - timedelta(hours=24)
+        db_session, issued_by=issued_by, since=utc_now() - timedelta(hours=24)
     )
     if sent_today >= settings.IDENTITY_INVITES_PER_USER_PER_DAY:
         raise OneTimeCodeRateLimitError("Too many invitations sent today")
