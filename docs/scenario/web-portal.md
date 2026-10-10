@@ -213,7 +213,7 @@ BL-23. **Built** (WP9) except where marked. A wallet is keyed by the **user**
 | Unmatched bank transfers (wrong `transfer_code`) and manual match | **not built**: such a transfer is only logged (BL-23, no table to hold it) | – |
 | **Adjust** a balance | `POST /wallets/{user_id}/adjustments` `{amount, reason}` (**built**, ADJUSTMENT row with who and why) | `400` zero amount; `422` reason missing; `403` role |
 | Block / unblock a wallet (fraud check) | `POST /wallets/{user_id}/status` `{status, reason}` (**built**; a tracked decision) | `409` same status; `404` no wallet |
-| Simulate a bank transfer (development, fake provider) | `POST /payments/vietqr/simulate` `{transfer_code, amount?, bank_transaction_id?}` (HEAD_ADMIN / CO_ADMIN) | `404` unknown code |
+| Simulate a bank transfer (development, fake provider) | `POST /payments/vietqr/simulate` `{transfer_code, amount?, bank_transaction_id?}` (HEAD_ADMIN / CO_ADMIN; only when `BILLING_SIMULATE_TRANSFERS_ENABLED` is on, BL-26) | `404` unknown code, `409` switched off |
 | Refund unused balance through the original top-up | **not built** (`POST /payments/{payment_id}/refund`; REFUND payments wait for a real bank channel) | – |
 
 The bank-notification service calls `POST /payments/vietqr/notifications` with
