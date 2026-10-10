@@ -8,12 +8,12 @@ Delivering alerts and messages to the right people on the right channels (app, p
 
 ## Checklist
 
-- [ ] **NTF-01** [Notification center](#ntf-01) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **NTF-02** [Push notifications](#ntf-02) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **NTF-01** [Notification center](#ntf-01) — Backend ✅ · App ⬜ · Portal ⬜
+- [ ] **NTF-02** [Push notifications](#ntf-02) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **NTF-03** [SMS messages](#ntf-03) — Backend ⬜
-- [ ] **NTF-04** [E-mail messages](#ntf-04) — Backend ⬜
-- [ ] **NTF-05** [Organization channel settings](#ntf-05) — Backend ⬜ · Portal ⬜
-- [ ] **NTF-06** [Recipient routing](#ntf-06) — Backend ⬜
+- [x] **NTF-04** [E-mail messages](#ntf-04) — Backend ✅
+- [ ] **NTF-05** [Organization channel settings](#ntf-05) — Backend ✅ · Portal ⬜
+- [x] **NTF-06** [Recipient routing](#ntf-06) — Backend ✅
 - [ ] **NTF-07** [Delivery status tracking](#ntf-07) — Backend ⬜ · Portal ⬜
 - [ ] **NTF-08** [Alert escalation](#ntf-08) — Backend ⬜ · App ⬜ · Portal ⬜
 
@@ -37,10 +37,10 @@ Every alert and message appears in the app and the portal, with unread count and
 - Unread count, mark one or all as read
 - History kept
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Needed by:** [DEV-05](telematics.md#dev-05), [FLT-05](fleet.md#flt-05), [FLT-06](fleet.md#flt-06), [MNT-01](maintenance.md#mnt-01), [MON-04](telemetry.md#mon-04), [MON-05](telemetry.md#mon-05), [MON-06](telemetry.md#mon-06), [NTF-02](#ntf-02), [NTF-08](#ntf-08), [POL-03](policy.md#pol-03), [SAF-07](safety.md#saf-07), [STN-05](charging_stations.md#stn-05), [SUP-02](support.md#sup-02)  
-**Related tables:** — (after the database review)  
+**Related tables:** `notifications`, `notification_recipients`  
 **Sources:** PRD F-F3 · Decision NT-02  
 **Old codes:** F-F3
 
@@ -61,13 +61,17 @@ Send alerts as push notifications to the person's phones and browsers.
 - Push via Firebase to registered devices
 - Open the related screen from the notification
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [NTF-01](#ntf-01), [ACC-16](identity.md#acc-16), [NTF-06](#ntf-06)  
 **Needed by:** [NTF-07](#ntf-07)  
-**Related tables:** — (after the database review)  
+**Related tables:** `notification_recipients`, `user_sessions`  
 **Sources:** PRD F-F3 · Decision ID-19 · deferred.md 41  
 **Old codes:** F-F3
+
+**Open questions:**
+
+- Push goes through a logging fake provider and is sent inside the producer's transaction; a real provider needs an after-commit outbox (deferred.md 100).
 
 <a id="ntf-03"></a>
 
@@ -111,11 +115,15 @@ Send notifications and reports by e-mail to people with an address on file.
 - Transactional e-mail provider
 - Only when the person has an e-mail address
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Depends on:** [NTF-06](#ntf-06)  
-**Related tables:** — (after the database review)  
+**Related tables:** `notification_recipients`, `notifications`  
 **Sources:** Decision NT-03
+
+**Open questions:**
+
+- E-mail goes through a logging fake provider and is sent inside the producer's transaction (deferred.md 100).
 
 <a id="ntf-05"></a>
 
@@ -134,11 +142,11 @@ Each organization switches push, SMS and e-mail on or off per service; in-app an
 - Channel switches per service
 - Sensible defaults for new organizations
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [NTF-06](#ntf-06)  
 **Needed by:** [PAY-12](billing.md#pay-12)  
-**Related tables:** — (after the database review)  
+**Related tables:** `organization_notification_settings`  
 **Sources:** Decision NT-03
 
 <a id="ntf-06"></a>
@@ -158,12 +166,12 @@ Decide who receives each message: people whose role and plan include the service
 - Each message type belongs to a service
 - Recipients = role ∩ plan ∩ data scope
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Depends on:** [ACC-14](identity.md#acc-14), [ACC-15](identity.md#acc-15)  
 **Needed by:** [NTF-02](#ntf-02), [NTF-03](#ntf-03), [NTF-04](#ntf-04), [NTF-05](#ntf-05), [NTF-08](#ntf-08)  
 **Also touches:** `identity`  
-**Related tables:** — (after the database review)  
+**Related tables:** `notifications`, `notification_recipients`  
 **Sources:** Decision NT-03 · deferred.md 40
 
 <a id="ntf-07"></a>

@@ -18,7 +18,7 @@ Two kinds of material, kept apart:
 
 | Question | Home |
 |---|---|
-| What do we build, and how far along is it? | [Feature catalog](./docs/product/features/README.md) (`features.yaml` + generated views; statuses "todo" until the backend sync — until then the old [`feature-list.md`](./docs/product/feature-list.md) still holds the backend status) |
+| What do we build, and how far along is it? | [Feature catalog](./docs/product/features/README.md) (`features.yaml` + generated views; holds the backend status per feature since the 2026-10-10 sync — the old [`feature-list.md`](./docs/product/feature-list.md) is superseded by it for the features the refactor-and-build run built) |
 | What exists today: components, stack, domains, database, directory layout? | [`docs/design/architecture.md`](./docs/design/architecture.md) |
 | What does the database look like (built and planned)? | [Domain model](./docs/design/domain-model/overview.md) (`domain-model.dbml` + generated views) |
 | External contracts (OCPP charger, MQTT telematics)? | [`docs/design/specifications/`](./docs/design/specifications/) |

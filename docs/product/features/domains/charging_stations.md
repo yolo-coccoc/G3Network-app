@@ -8,18 +8,18 @@ Stations and chargers, their live status over OCPP, faults, the station map, que
 
 ## Checklist
 
-- [ ] **STN-01** [Station directory](#stn-01) — Backend ⬜ · Portal ⬜
-- [ ] **STN-02** [Charger topology](#stn-02) — Backend ⬜ · Portal ⬜
-- [ ] **STN-03** [Charger connection (OCPP)](#stn-03) — Backend ⬜
-- [ ] **STN-04** [Live connector status](#stn-04) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **STN-01** [Station directory](#stn-01) — Backend ✅ · Portal ⬜
+- [ ] **STN-02** [Charger topology](#stn-02) — Backend ✅ · Portal ⬜
+- [x] **STN-03** [Charger connection (OCPP)](#stn-03) — Backend ✅
+- [ ] **STN-04** [Live connector status](#stn-04) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **STN-05** [Charger fault alerts](#stn-05) — Backend ⬜ · Portal ⬜
 - [ ] **STN-06** [Station map and search](#stn-06) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **STN-07** [Queue and waiting time](#stn-07) — Backend ⬜ · App ⬜
 - [ ] **STN-08** [Station load forecast and balancing](#stn-08) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **STN-09** [Charger reservation](#stn-09) — Backend ⬜ · App ⬜
-- [ ] **STN-10** [Remote charger commands](#stn-10) — Backend ⬜ · Portal ⬜
+- [ ] **STN-10** [Remote charger commands](#stn-10) — Backend ✅ · Portal ⬜
 - [ ] **STN-11** [Secure charger connections](#stn-11) — Backend ⬜ · Portal ⬜
-- [ ] **STN-12** [Private stations](#stn-12) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **STN-12** [Private stations](#stn-12) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **STN-13** [Green generation and storage data](#stn-13) — Backend ⬜ · Portal ⬜
 - [ ] **STN-14** [Station energy output](#stn-14) — Backend ⬜ · Portal ⬜
 - [ ] **STN-15** [Charger message log viewer](#stn-15) — Backend ⬜ · Portal ⬜
@@ -44,10 +44,10 @@ Keep every station: location, region, power, number of chargers, connector stand
 - Owning organization per station; charger alerts go to its operations staff; stations are open 24/7 and a closed one is marked inactive with a reason
 - Map view of all stations
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Needed by:** [PAY-09](billing.md#pay-09), [STN-02](#stn-02), [STN-12](#stn-12), [STN-13](#stn-13)  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_locations`, `charging_stations`, `charging_evses`, `charging_connectors`  
 **Sources:** PRD F-C1 · Data IN-25 · Decision CS-09 · Decision CS-10 · Decision CS-11  
 **Old codes:** F-C1
 
@@ -68,12 +68,16 @@ Describe each station's chargers and guns: identities used by the charger, power
 - Provision chargers and guns before they connect
 - Power and connector standard per gun
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [STN-01](#stn-01)  
 **Needed by:** [STN-03](#stn-03)  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_stations`, `charging_evses`, `charging_connectors`, `charging_station_state`  
 **Sources:** Decision CS-02 · Decision CS-03 · deferred.md 80 · Decision CS-16 · Decision CS-17
+
+**Open questions:**
+
+- Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 74).
 
 <a id="stn-03"></a>
 
@@ -94,11 +98,11 @@ Connect chargers over OCPP 1.6J and 2.0.1: boot, heartbeat, status, transactions
 - Verbatim, append-only message log
 - Online flag from the last message
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Depends on:** [STN-02](#stn-02)  
 **Needed by:** [CHG-02](charging_sessions.md#chg-02), [STN-04](#stn-04), [STN-10](#stn-10), [STN-11](#stn-11), [STN-15](#stn-15)  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_stations`, `charging_station_state`, `charging_ocpp_messages`, `charging_station_configuration_captures`, `charging_station_configuration_entries`  
 **Sources:** PRD F-G2 · Decision CO-01 · Decision CO-02 · Decision CO-05  
 **Old codes:** F-G2
 
@@ -125,13 +129,17 @@ Available, charging or faulted status and available power of every gun across th
 - Whole-charger and per-gun status in one view
 - Mark status unknown when the charger goes offline
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [STN-03](#stn-03)  
 **Needed by:** [STN-05](#stn-05), [STN-06](#stn-06), [STN-07](#stn-07)  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_connector_state`, `charging_connectors`  
 **Sources:** PRD F-C2 · Data IN-26 · Data OUT-48 · NF-02 · deferred.md 76  
 **Old codes:** F-C2
+
+**Open questions:**
+
+- The status is flagged stale when the charger is offline but the last reported value is still returned; a real expiry rule is deferred.md 76.
 
 <a id="stn-05"></a>
 
@@ -286,11 +294,11 @@ Send commands to chargers: start and stop a charge, unlock a connector, reset, c
 - Unlock, reset, change configuration, diagnostics
 - Every command and its answer logged
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [STN-03](#stn-03)  
 **Needed by:** [CHG-01](charging_sessions.md#chg-01), [STN-09](#stn-09)  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_station_commands`  
 **Sources:** Decision CO-12 · deferred.md 74 · Decision CS-20
 
 <a id="stn-11"></a>
@@ -333,11 +341,11 @@ Stations that are not public (for example at a mine or a customer's depot) are v
 - Public or private station; allowed organizations
 - Separate tariff for a private station
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [STN-01](#stn-01), [PAY-09](billing.md#pay-09)  
 **Also touches:** `billing`  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_locations`, `charging_location_access`  
 **Sources:** Data OUT-10 · Decision CS-10
 
 **Open questions:**

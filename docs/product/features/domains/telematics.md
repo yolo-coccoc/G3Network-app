@@ -8,11 +8,11 @@ The on-board devices that send vehicle data: registry, mapping to vehicles, heal
 
 ## Checklist
 
-- [ ] **DEV-01** [Device registry](#dev-01) — Backend ⬜ · Portal ⬜
-- [ ] **DEV-02** [Device-to-vehicle assignment](#dev-02) — Backend ⬜ · Portal ⬜
-- [ ] **DEV-03** [Telematics data integration](#dev-03) — Backend ⬜
-- [ ] **DEV-04** [Device health dashboard](#dev-04) — Backend ⬜ · Portal ⬜
-- [ ] **DEV-05** [Device silence alert](#dev-05) — Backend ⬜ · Portal ⬜
+- [ ] **DEV-01** [Device registry](#dev-01) — Backend ✅ · Portal ⬜
+- [ ] **DEV-02** [Device-to-vehicle assignment](#dev-02) — Backend ✅ · Portal ⬜
+- [x] **DEV-03** [Telematics data integration](#dev-03) — Backend ✅
+- [ ] **DEV-04** [Device health dashboard](#dev-04) — Backend ✅ · Portal ⬜
+- [ ] **DEV-05** [Device silence alert](#dev-05) — Backend ✅ · Portal ⬜
 - [ ] **DEV-06** [Tamper and power-loss detection](#dev-06) — Backend ⬜ · Portal ⬜
 - [ ] **DEV-07** [Remote device configuration](#dev-07) — Backend ⬜ · Portal ⬜
 - [ ] **DEV-08** [Device identity certificates](#dev-08) — Backend ⬜ · Portal ⬜
@@ -37,10 +37,10 @@ Keep every telematics device: serial, IMEI, SIM/ICCID, firmware and status.
 - Unique serial; retired devices keep their history
 - Each device has its own owner, the truck's owner or G3; a device the seller owns moves with the truck when it is sold
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Needed by:** [DEV-02](#dev-02), [DEV-04](#dev-04), [DEV-08](#dev-08)  
-**Related tables:** — (after the database review)  
+**Related tables:** `telematics`  
 **Sources:** Data IN-19 · Data IN-20 · Data IN-21 · PRD F-G1 · Decision TX-07 · Decision TX-08  
 **Old codes:** F-G1
 
@@ -61,12 +61,12 @@ Link a device to a truck at handover, replace it when needed, and keep the histo
 - One live device per truck
 - Assign, unassign and replace, with history
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [DEV-01](#dev-01), [VEH-01](vehicles.md#veh-01)  
 **Needed by:** [DEV-05](#dev-05), [DEV-07](#dev-07), [VEH-05](vehicles.md#veh-05)  
 **Also touches:** `vehicles`  
-**Related tables:** — (after the database review)  
+**Related tables:** `telematics`, `vehicles`  
 **Sources:** Data IN-19 · PRD F-G1 · Decision TX-02 · Decision TX-08  
 **Old codes:** F-G1
 
@@ -88,10 +88,10 @@ Receive data from the Tri-Ring on-board unit over a defined, versioned contract,
 - Simulator and real device behind the same interface
 - All core fields received in full
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Needed by:** [MON-01](telemetry.md#mon-01)  
-**Related tables:** — (after the database review)  
+**Related tables:** `telematics`, `telemetry`, `telematic_status_reports`  
 **Sources:** PRD F-G1 · Data IN-17 · Prerequisite 1  
 **Old codes:** F-G1
 
@@ -118,11 +118,11 @@ Per-device view of last seen, online/silent, firmware, SIM and data status, powe
 - SIM/ICCID, data, power, storage and GNSS status
 - Share of healthy devices across the network
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [DEV-01](#dev-01), [MON-01](telemetry.md#mon-01)  
 **Also touches:** `telemetry`  
-**Related tables:** — (after the database review)  
+**Related tables:** `telematics`, `telematic_status_reports`, `telemetry`  
 **Sources:** PRD F-J1 · Data IN-21 · Data IN-22 · Data OUT-55 · deferred.md 50 · Decision TX-10  
 **Old codes:** F-J1
 
@@ -143,12 +143,12 @@ Alert operations when a truck has sent no data for longer than a set time, once 
 - Periodic check of the newest data per active device
 - One alert per silence episode; configurable threshold
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [DEV-02](#dev-02), [NTF-01](notifications.md#ntf-01)  
 **Needed by:** [DEV-06](#dev-06)  
 **Also touches:** `telemetry`, `notifications`  
-**Related tables:** — (after the database review)  
+**Related tables:** `telematics`, `telemetry`, `notifications`  
 **Sources:** PRD F-J1 · PRD F-J3 · Data OUT-56  
 **Old codes:** F-J1, F-J3
 

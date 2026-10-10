@@ -10,6 +10,12 @@ implements **only the backend**, so each feature below also carries this
 repo's **backend implementation status** and, where applicable, the
 **backend domain** that owns it.
 
+> **Superseded for backend status (2026-10-10).** The refactor-and-build run
+> ([plan](../planners/backend-refactor-implementation.md)) rebuilt the backend
+> on the reviewed design and renumbered the features. The per-feature backend
+> status now lives in the [feature catalog](./features/README.md) (`surfaces.backend`);
+> the statuses below are the older F-xx record and are no longer kept current.
+
 ## Status legend
 
 **✅ Done** | **🚧 In progress** | **📋 Planned (not started)** | **⚪ N/A

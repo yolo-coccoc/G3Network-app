@@ -40,6 +40,7 @@ infrastructure, waits for PostgreSQL, applies the migration and runs
 
 Basic commands:
 - `make infra-up` / `make infra-down` — Start / stop PostgreSQL and EMQX (data kept); `make infra-reset` removes the volumes (all data)
+- `make infra-logs` — Follow the PostgreSQL and EMQX logs
 - `make backend-install` — `uv sync` (runtime dependencies + `dev` group)
 - `make backend-dev` — API server (port 8000, auto-reload)
 - `make telemetry-dev` — MQTT telemetry ingestion

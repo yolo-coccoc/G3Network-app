@@ -8,10 +8,10 @@ Driver profiles, vehicle assignment, shifts, driving time and per-driver reports
 
 ## Checklist
 
-- [ ] **DRV-01** [Driver profiles](#drv-01) — Backend ⬜ · Portal ⬜
-- [ ] **DRV-02** [Driver check-in](#drv-02) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **DRV-01** [Driver profiles](#drv-01) — Backend ✅ · Portal ⬜
+- [ ] **DRV-02** [Driver check-in](#drv-02) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **DRV-03** [Driver work schedule](#drv-03) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **DRV-04** [Driver identification per shift](#drv-04) — Backend ⬜ · App ⬜
+- [ ] **DRV-04** [Driver identification per shift](#drv-04) — Backend ✅ · App ⬜
 - [ ] **DRV-05** [Driving-time warning](#drv-05) — Backend ⬜ · App ⬜
 - [ ] **DRV-06** [Driving and rest compliance report](#drv-06) — Backend ⬜ · Portal ⬜
 - [ ] **DRV-07** [Driver charging-efficiency report](#drv-07) — Backend ⬜ · App ⬜ · Portal ⬜
@@ -36,12 +36,12 @@ Keep each driver's facts for one organization: licence number, class and expiry,
 - Licence expiry reminder
 - A driver profile belongs to one membership; a former driver keeps their history
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [ACC-12](identity.md#acc-12)  
 **Needed by:** [ACC-10](identity.md#acc-10), [DRV-02](#drv-02), [SUP-01](support.md#sup-01)  
 **Also touches:** `identity`  
-**Related tables:** — (after the database review)  
+**Related tables:** `drivers`, `memberships`  
 **Sources:** PRD F-E4 · Data IN-37 · Data OUT-34 · Decision ID-13 · Decision DR-03 · Decision DR-09 · Decision DR-10  
 **Old codes:** F-E4
 
@@ -66,12 +66,12 @@ The driver checks in to the truck they are about to drive by scanning its QR cod
 - Driver alerts go to the driver checked in and to the portal
 - Full history per driver and per truck in the portal; the driver sees only a summary of their own sessions in the app (no route or places, no export)
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [DRV-01](#drv-01), [VEH-01](vehicles.md#veh-01)  
 **Needed by:** [CHG-07](charging_sessions.md#chg-07), [DRV-03](#drv-03), [DRV-04](#drv-04), [DRV-07](#drv-07), [FLT-07](fleet.md#flt-07), [MON-11](telemetry.md#mon-11)  
 **Also touches:** `vehicles`, `telemetry`, `notifications`  
-**Related tables:** — (after the database review)  
+**Related tables:** `driving_sessions`, `drivers`  
 **Sources:** PRD F-E4 · Data IN-55 · Data OUT-34 · Decision DR-07 · Decision DR-08 · Decision DR-10 · Decision DR-11 · Decision NT-07 · Decision ID-45  
 **Old codes:** F-E4
 
@@ -119,12 +119,12 @@ Record who is actually driving each shift, by face, card or app login, with shif
 - Start and end a shift by face, card or app
 - Alert when the person driving is not the assigned driver
 
-**Status:** Backend ⬜ · App ⬜
+**Status:** Backend ✅ · App ⬜
 
 **Depends on:** [DRV-02](#drv-02), [SAF-03](safety.md#saf-03)  
 **Needed by:** [DRV-05](#drv-05), [SAF-01](safety.md#saf-01), [SAF-05](safety.md#saf-05), [SAF-08](safety.md#saf-08)  
 **Also touches:** `scoring`  
-**Related tables:** — (after the database review)  
+**Related tables:** `driving_sessions`, `drivers`  
 **Sources:** Data IN-58
 
 **Open questions:**

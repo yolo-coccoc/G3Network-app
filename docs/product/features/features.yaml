@@ -308,7 +308,8 @@ features:
       - ["Status Active / Suspended / Closed, with the reason", "Trạng thái Hoạt động / Tạm ngưng / Đã đóng, kèm lý do"]
       - ["Mark internal organizations, whose users see every organization's data", "Đánh dấu tổ chức nội bộ, người dùng của tổ chức này xem được dữ liệu mọi tổ chức"]
       - ["Keep the full change history of each organization", "Lưu toàn bộ lịch sử thay đổi của từng tổ chức"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [organizations, organization_settings]
     priority: Must
     release: P1.0
     offer: internal
@@ -334,7 +335,8 @@ features:
     capabilities:
       - ["Assign or change the account manager of an organization", "Gán hoặc đổi người phụ trách của một tổ chức"]
       - ["List the customers each sales person manages", "Xem danh sách khách hàng mỗi nhân viên kinh doanh phụ trách"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [organizations, users]
     priority: Should
     release: P1.0
     offer: internal
@@ -361,7 +363,8 @@ features:
       - ["Profile: full name, phone number (login ID), optional e-mail", "Hồ sơ: họ tên, số điện thoại (tên đăng nhập), e-mail không bắt buộc"]
       - ["Account status Invited / Active / Locked, with the reason; only our administrators lock a whole account", "Trạng thái Đã mời / Hoạt động / Bị khóa, kèm lý do; chỉ quản trị nội bộ được khóa cả tài khoản"]
       - ["Record who created each account and keep its change history", "Ghi nhận ai tạo tài khoản và lưu lịch sử thay đổi"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [users, user_state, user_credentials]
     priority: Must
     release: P1.0
     offer: included
@@ -392,7 +395,8 @@ features:
       - ["Passwords stored only as one-way hashes; old ones cannot be reused", "Mật khẩu chỉ lưu dạng băm một chiều; không dùng lại mật khẩu cũ"]
       - ["Record last login and last activity", "Ghi nhận lần đăng nhập và hoạt động gần nhất"]
       - ["Login history (time, IP, device) visible to the user and our admins; alert the user on a login from a new device", "Lịch sử đăng nhập (thời gian, IP, thiết bị) cho người dùng và quản trị nội bộ xem; báo người dùng khi đăng nhập từ thiết bị mới"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [user_credentials, user_sessions, user_state]
     priority: Must
     release: P1.0
     offer: included
@@ -418,7 +422,8 @@ features:
       - ["Codes are hashed, expire, and work once; 5 wrong attempts kill a code; only the newest code counts", "Mã được băm, có hạn dùng và chỉ dùng một lần; nhập sai 5 lần thì mã hết hiệu lực; chỉ mã mới nhất được tính"]
       - ["Rate limit per phone number against abuse and SMS cost", "Giới hạn số lần gửi theo SĐT để chống lạm dụng và tiết kiệm chi phí SMS"]
       - ["One mechanism for sign-up, invitation, password reset and phone change", "Một cơ chế dùng chung cho đăng ký, lời mời, đặt lại mật khẩu và đổi SĐT"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [one_time_codes]
     priority: Must
     release: P1.0
     offer: included
@@ -444,7 +449,10 @@ features:
       - ["Change phone number: OTP to the new number; the change is kept in history", "Đổi SĐT: OTP gửi tới số mới; thay đổi được lưu lịch sử"]
       - ["Change password while logged in", "Đổi mật khẩu khi đang đăng nhập"]
       - ["Extra check by customer care or the organization admin before resetting the password of a long-inactive account (phone numbers get recycled)", "CSKH hoặc quản trị tổ chức xác minh thêm trước khi đặt lại mật khẩu cho tài khoản lâu không hoạt động (số điện thoại có thể bị nhà mạng cấp lại)"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
+    related_tables: [one_time_codes, user_credentials, users]
+    questions:
+      - ["Phone-recycling check (extra verification before resetting a long-inactive account) and the per-device rate limit are not built (deferred.md 99).", "Chưa có bước xác minh thêm khi đặt lại mật khẩu tài khoản lâu không hoạt động (SĐT bị cấp lại) và giới hạn tần suất theo thiết bị (deferred.md 99)."]
     priority: Must
     release: P1.0
     offer: included
@@ -471,7 +479,8 @@ features:
       - ["Create a personal (individual) organization with the user as its administrator and driver", "Tạo tổ chức cá nhân, người dùng là quản trị và tài xế của tổ chức đó"]
       - ["Accept terms and privacy policy at sign-up", "Đồng ý điều khoản và chính sách quyền riêng tư khi đăng ký"]
       - ["Start on the free default plan (charging, wallet, receipts, history)", "Bắt đầu với gói mặc định miễn phí (sạc, ví, biên nhận, lịch sử)"]
-    surfaces: {backend: todo, app: todo}
+    surfaces: {backend: done, app: todo}
+    related_tables: [users, organizations, memberships, user_credentials, one_time_codes]
     priority: Must
     release: P1.0
     offer: included
@@ -497,7 +506,8 @@ features:
       - ["Invite the first organization administrator by phone", "Mời quản trị viên đầu tiên của tổ chức qua SĐT"]
       - ["Assign the account manager", "Gán nhân viên phụ trách"]
       - ["The first administrator accepts the data processing agreement for the company at first login", "Quản trị viên đầu tiên chấp thuận thỏa thuận xử lý dữ liệu thay mặt doanh nghiệp ở lần đăng nhập đầu"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [organizations, users, memberships, one_time_codes]
     priority: Must
     release: P1.0
     offer: internal
@@ -522,7 +532,8 @@ features:
       - ["Invite by phone number with one or more roles", "Mời qua SĐT kèm một hoặc nhiều vai trò"]
       - ["The invitee joins with OTP; an existing user just gains the new organization", "Người được mời tham gia bằng OTP; người đã có tài khoản chỉ được thêm tổ chức mới"]
       - ["Resend or cancel a pending invitation", "Gửi lại hoặc hủy lời mời đang chờ"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [memberships, users, one_time_codes, user_role_assignments]
     priority: Must
     release: P1.0
     offer: included
@@ -546,7 +557,8 @@ features:
     capabilities:
       - ["Register a driver by phone with the driver role and a driver profile", "Đăng ký tài xế bằng SĐT kèm vai trò tài xế và hồ sơ tài xế"]
       - ["Driver claims the account with OTP and sets a password", "Tài xế kích hoạt bằng OTP và đặt mật khẩu"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [memberships, drivers, one_time_codes, users]
     priority: Must
     release: P1.0
     offer: included
@@ -598,7 +610,8 @@ features:
       - ["List members of an organization with their roles", "Danh sách thành viên của tổ chức kèm vai trò"]
       - ["Lock, unlock or remove a member with a reason (removal keeps history); see when each member was invited and when they joined", "Khóa, mở khóa hoặc cho thành viên rời tổ chức kèm lý do (vẫn giữ lịch sử); xem thời điểm mời và thời điểm tham gia của từng thành viên"]
       - ["A person sees and switches between their organizations", "Người dùng xem và chuyển giữa các tổ chức của mình"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [memberships]
     priority: Must
     release: P1.0
     offer: included
@@ -625,7 +638,8 @@ features:
       - ["Grant and revoke roles per membership, with history: who granted or revoked each role, and when", "Gán và thu hồi vai trò theo từng thành viên, có lịch sử: ai đã cấp hoặc thu hồi từng vai trò, và khi nào"]
       - ["Exactly one organization administrator: hand the role over in one step; our co-administrator appoints a new one if the admin is gone", "Đúng một quản trị tổ chức: chuyển giao vai trò trong một bước; đồng quản trị của chúng ta chỉ định người mới khi quản trị viên không còn"]
       - ["Head and co-administrator roles exist only in internal organizations; co-administrators cannot manage administrators", "Vai trò quản trị trưởng và đồng quản trị chỉ có ở tổ chức nội bộ; đồng quản trị không quản lý được quản trị viên"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [user_role_assignments, memberships]
     priority: Must
     release: P1.0
     offer: included
@@ -653,7 +667,8 @@ features:
       - ["A role gives internal and customer users the same features; they differ only in which data they reach. Each role's feature list is granted in one step when nearly all features are built", "Một vai trò cho người dùng nội bộ và khách hàng cùng các tính năng; khác nhau chỉ ở phạm vi dữ liệu được xem. Danh sách tính năng của từng vai trò được cấp trong một bước khi gần hoàn tất các tính năng"]
       - ["The app and portal hide what the user cannot use", "App và portal ẩn những gì người dùng không được dùng"]
       - ["Lock features of an overdue subscription", "Khóa tính năng khi thuê bao quá hạn"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [user_role_assignments, memberships]
     priority: Must
     release: P1.0
     offer: included
@@ -681,7 +696,8 @@ features:
       - ["Filter every organization-owned record by the current organization", "Lọc mọi bản ghi thuộc tổ chức theo tổ chức đang chọn"]
       - ["Internal organizations see all organizations, still limited by role", "Tổ chức nội bộ xem mọi tổ chức, vẫn giới hạn theo vai trò"]
       - ["Fleet-level roles limited to their fleets and every fleet below", "Vai trò cấp đội xe chỉ xem đội được giao và các đội cấp dưới"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [memberships, organizations, fleet_user_assignments]
     priority: Must
     release: P1.0
     offer: included
@@ -707,7 +723,8 @@ features:
       - ["Store the Firebase token on the device's login session, refreshed at login; optional when the user refuses notifications", "Lưu token Firebase trên phiên đăng nhập của thiết bị, làm mới khi đăng nhập; không bắt buộc khi người dùng từ chối thông báo"]
       - ["The token disappears with the session: logout, expiry, password change, account lock, or the app reported uninstalled", "Token mất cùng với phiên: đăng xuất, hết hạn, đổi mật khẩu, khóa tài khoản, hoặc app bị báo đã gỡ"]
       - ["Notifications from all of the person's organizations reach every device; opening one switches to its organization", "Thông báo của mọi tổ chức của người dùng tới mọi thiết bị; mở thông báo sẽ chuyển sang tổ chức của nó"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [user_sessions]
     priority: Must
     release: P1.0
     offer: included
@@ -741,7 +758,10 @@ features:
       - ["Employed drivers acknowledge the privacy notice once per version; individual customers consent per purpose", "Tài xế là nhân viên xác nhận đã đọc thông báo quyền riêng tư mỗi phiên bản một lần; khách hàng cá nhân đồng ý theo từng mục đích"]
       - ["Proof kept with each acceptance: exact text version, time, IP and device; never changed", "Bằng chứng lưu kèm mỗi lần chấp thuận: đúng phiên bản văn bản, thời điểm, IP và thiết bị; không bao giờ sửa"]
       - ["Withdrawing a required acceptance means leaving the service (account closure)", "Rút lại chấp thuận bắt buộc nghĩa là ngừng sử dụng dịch vụ (đóng tài khoản)"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
+    related_tables: [user_consents, legal_documents]
+    questions:
+      - ["Acceptance is recorded, but no endpoint refuses use while legal texts are pending; the enforcement point comes with permission granting (ID-44).", "Việc chấp nhận được ghi nhận, nhưng chưa có API nào từ chối sử dụng khi còn văn bản chưa chấp nhận; điểm áp dụng sẽ làm cùng bước cấp quyền (ID-44)."]
     priority: Must
     release: P1.0
     offer: included
@@ -769,7 +789,8 @@ features:
       - ["Search the log by person, organization, time and data type", "Tra cứu nhật ký theo người truy cập, tổ chức, thời gian và loại dữ liệu"]
       - ["One entry per screen opened (not per refresh); kept forever, older months compressed", "Ghi một dòng mỗi lần mở màn hình (không ghi mỗi lần làm mới); lưu vĩnh viễn, các tháng cũ được nén"]
       - ["Account security events in the same log: logins, failed logins, lockouts, logouts, password and phone changes, with IP and device", "Sự kiện bảo mật tài khoản trong cùng nhật ký: đăng nhập, đăng nhập sai, bị khóa tạm, đăng xuất, đổi mật khẩu và số điện thoại, kèm IP và thiết bị"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [access_audit_logs]
     priority: Must
     release: P1.0
     offer: internal
@@ -825,7 +846,8 @@ features:
     capabilities:
       - ["Create and seal the emergency account before go-live", "Tạo và niêm phong tài khoản khẩn cấp trước khi vận hành chính thức"]
       - ["Alert the owners whenever it logs in", "Báo cho chủ sở hữu mỗi khi tài khoản này đăng nhập"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [users, user_role_assignments, access_audit_logs]
     priority: Should
     release: P1.0
     offer: internal
@@ -906,7 +928,8 @@ features:
       - ["VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason", "VIN và biển số không trùng trong các xe đang dùng và đều sửa được (nhập nhầm, biển số theo chủ xe); lưu lịch sử thay đổi kèm lý do"]
       - ["Service status: active or inactive (in the workshop, not used), with a reason; a truck that leaves the system is removed with its reason and its data kept; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ: đang phục vụ hoặc không phục vụ (ở xưởng, không dùng), kèm lý do; xe rời hệ thống được gỡ khỏi hệ thống kèm lý do và vẫn giữ dữ liệu; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
       - ["Filter by status, model, owner and fleet", "Lọc theo trạng thái, dòng xe, chủ sở hữu và đội xe"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [vehicles, vehicle_models]
     priority: Must
     release: P1.0
     offer: included
@@ -933,7 +956,8 @@ features:
       - ["Record the owner at handover", "Ghi nhận chủ sở hữu khi bàn giao"]
       - ["Transfer ownership with an effective date in one step: the seller's fleet memberships, driving session, charging rules, subscription and VIN charging credential for the truck end at once", "Chuyển quyền sở hữu kèm ngày hiệu lực trong một bước: tư cách thành viên đội xe, phiên lái, quy tắc sạc, thuê bao và thẻ sạc theo VIN của bên bán đối với xe kết thúc cùng lúc"]
       - ["The previous owner keeps its own data from before the sale; the truck's condition and lifetime totals follow it to the new owner; every ownership period with who recorded it and why", "Chủ cũ giữ dữ liệu của mình trước ngày bán; tình trạng xe và các tổng tích lũy đi theo xe sang chủ mới; mọi giai đoạn sở hữu kèm người ghi nhận và lý do"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [vehicles, organizations]
     priority: Must
     release: P1.0
     offer: internal
@@ -959,7 +983,8 @@ features:
     capabilities:
       - ["Model specifications confirmed by the manufacturer", "Thông số dòng xe được nhà sản xuất xác nhận"]
       - ["Consumption reference curve by load, used by forecasts and empty-trip detection", "Đường cong tiêu thụ tham chiếu theo tải, dùng cho dự báo và phát hiện chạy rỗng"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [vehicle_models]
     priority: Should
     release: P1.0
     offer: internal
@@ -985,7 +1010,8 @@ features:
     capabilities:
       - ["Activation computed from the device fitted now and the data received, so a truck whose T-Box was removed shows it", "Kích hoạt được tính từ thiết bị đang lắp và dữ liệu đã nhận, nên xe bị tháo T-Box sẽ hiện đúng như vậy"]
       - ["Activation success rate and the list of trucks still waiting", "Tỷ lệ kích hoạt thành công và danh sách xe còn đang chờ"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [vehicles, telematics, telemetry]
     priority: Must
     release: P1.0
     offer: internal
@@ -1046,7 +1072,8 @@ features:
       - ["Each battery: serial number, model, owner (may differ from the truck's owner), status with a reason", "Từng pin: số serial, dòng pin, chủ sở hữu (có thể khác chủ xe), trạng thái kèm lý do"]
       - ["One battery per truck; history of which truck each battery was installed in", "Mỗi xe một pin; lịch sử pin đã được lắp trên xe nào"]
       - ["A battery owned by the seller moves to the buyer when its truck is sold", "Pin thuộc bên bán chuyển sang bên mua khi xe được bán"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [batteries, battery_models]
     priority: Must
     release: P1.0
     offer: internal
@@ -1084,7 +1111,8 @@ features:
       - ["Expiry computed from the date and the truck's or battery's counters; voiding with a reason and history", "Hết hạn được tính từ ngày và bộ đếm của xe hoặc pin; hủy bảo hành kèm lý do và lịch sử"]
       - ["A battery's warranty follows the battery to another truck", "Bảo hành của pin đi theo pin sang xe khác"]
       - ["Charger warranties limited by energy delivered (kWh) and number of sessions, identified by the registered serial number", "Bảo hành trụ sạc giới hạn theo điện năng đã cấp (kWh) và số phiên sạc, nhận diện theo số serial đã đăng ký"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [warranties]
     priority: Must
     release: P1.0
     offer: included
@@ -1113,7 +1141,8 @@ features:
       - ["Create, edit, search and retire devices", "Tạo, sửa, tìm kiếm và ngừng sử dụng thiết bị"]
       - ["Unique serial; retired devices keep their history", "Serial không trùng; thiết bị ngừng dùng vẫn giữ lịch sử"]
       - ["Each device has its own owner, the truck's owner or G3; a device the seller owns moves with the truck when it is sold", "Mỗi thiết bị có chủ sở hữu riêng, là chủ xe hoặc G3; thiết bị thuộc bên bán đi theo xe khi bán xe"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [telematics]
     priority: Must
     release: P1.0
     offer: internal
@@ -1137,7 +1166,8 @@ features:
     capabilities:
       - ["One live device per truck", "Mỗi xe chỉ có một thiết bị đang hoạt động"]
       - ["Assign, unassign and replace, with history", "Gắn, gỡ và thay thiết bị, có lịch sử"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [telematics, vehicles]
     priority: Must
     release: P1.0
     offer: internal
@@ -1166,7 +1196,8 @@ features:
       - ["Versioned message contract (fields, units, frequency)", "Hợp đồng bản tin có phiên bản (trường, đơn vị, tần suất)"]
       - ["Simulator and real device behind the same interface", "Giả lập và thiết bị thật dùng chung một giao diện"]
       - ["All core fields received in full", "Nhận đủ toàn bộ trường dữ liệu cốt lõi"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [telematics, telemetry, telematic_status_reports]
     priority: Must
     release: P1.0
     offer: internal
@@ -1194,7 +1225,8 @@ features:
       - ["Online and silent flags derived from the latest data", "Cờ online và im lặng tính từ dữ liệu mới nhất"]
       - ["SIM/ICCID, data, power, storage and GNSS status", "Trạng thái SIM/ICCID, data, nguồn, bộ nhớ và GNSS"]
       - ["Share of healthy devices across the network", "Tỷ lệ thiết bị khỏe trên toàn mạng"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [telematics, telematic_status_reports, telemetry]
     priority: Must
     release: P1.0
     offer: internal
@@ -1221,7 +1253,8 @@ features:
     capabilities:
       - ["Periodic check of the newest data per active device", "Kiểm tra định kỳ dữ liệu mới nhất của mỗi thiết bị đang hoạt động"]
       - ["One alert per silence episode; configurable threshold", "Mỗi đợt mất tín hiệu một cảnh báo; ngưỡng cấu hình được"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [telematics, telemetry, notifications]
     priority: Must
     release: P1.0
     offer: internal
@@ -1334,7 +1367,8 @@ features:
       - ["Battery safety signals: cell voltage, imbalance, insulation, contactor, over/under voltage and temperature", "Tín hiệu an toàn pin: điện áp cell, mất cân bằng, cách điện, contactor, quá/thấp áp và nhiệt độ"]
       - ["Instantaneous consumption rate", "Tốc độ tiêu thụ năng lượng tức thời"]
       - ["≤30 s p95 while online; scale from 300 to 1,200+ vehicles", "≤30 giây (p95) khi online; mở rộng từ 300 lên 1.200+ xe"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [telemetry, telematics]
     priority: Must
     release: P1.0
     offer: included
@@ -1361,7 +1395,8 @@ features:
     capabilities:
       - ["Latest reading per truck with the time it was received", "Dữ liệu mới nhất của từng xe kèm thời điểm nhận"]
       - ["Online flag computed when read", "Cờ online tính tại thời điểm đọc"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [telemetry]
     priority: Must
     release: P1.0
     offer: tbd
@@ -1621,7 +1656,8 @@ features:
       - ["Reminder when the truck moves with no trip started; an open trip closes when the session ends", "Nhắc khi xe chạy mà chưa bắt đầu chuyến; chuyến đang mở tự đóng khi phiên lái kết thúc"]
       - ["Per-trip km, kWh, kWh/km and cost", "Km, kWh, kWh/km và chi phí theo chuyến"]
       - ["Trip history and costs in the driver app", "Lịch sử chuyến và chi phí trên app tài xế"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [trips, driving_sessions]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2047,7 +2083,8 @@ features:
       - ["Add, edit, search and deactivate drivers", "Thêm, sửa, tìm kiếm và ngừng hoạt động tài xế"]
       - ["Licence expiry reminder", "Nhắc bằng lái sắp hết hạn"]
       - ["A driver profile belongs to one membership; a former driver keeps their history", "Hồ sơ tài xế thuộc một thành viên tổ chức; tài xế đã nghỉ vẫn giữ lịch sử"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [drivers, memberships]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2080,7 +2117,8 @@ features:
       - ["Alert the portal when a truck drives with nobody checked in", "Cảnh báo lên portal khi xe chạy mà không ai nhận xe"]
       - ["Driver alerts go to the driver checked in and to the portal", "Cảnh báo dành cho tài xế gửi tới tài xế đang nhận xe và portal"]
       - ["Full history per driver and per truck in the portal; the driver sees only a summary of their own sessions in the app (no route or places, no export)", "Lịch sử đầy đủ theo tài xế và theo xe trên portal; tài xế chỉ xem bản tóm tắt các phiên của mình trên ứng dụng (không có lộ trình hay địa điểm, không xuất dữ liệu)"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [driving_sessions, drivers]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2130,7 +2168,8 @@ features:
     capabilities:
       - ["Start and end a shift by face, card or app", "Bắt đầu và kết thúc ca bằng khuôn mặt, thẻ hoặc app"]
       - ["Alert when the person driving is not the assigned driver", "Cảnh báo khi người lái không phải tài xế được phân công"]
-    surfaces: {backend: todo, app: todo}
+    surfaces: {backend: done, app: todo}
+    related_tables: [driving_sessions, drivers]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2250,7 +2289,8 @@ features:
       - ["Create, rename, move and close fleets", "Tạo, đổi tên, di chuyển và đóng đội xe"]
       - ["Nested fleets; reports roll up to parents", "Đội xe lồng nhau; báo cáo cộng dồn lên cấp trên"]
       - ["Search by name or code", "Tìm theo tên hoặc mã"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [fleets]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2275,7 +2315,8 @@ features:
     capabilities:
       - ["Add or remove by VIN; membership history", "Thêm hoặc rút xe theo VIN; lịch sử thành viên"]
       - ["Which fleet is this truck in?", "Xe này đang thuộc đội nào?"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [fleet_vehicle_memberships]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2302,7 +2343,10 @@ features:
     capabilities:
       - ["Assign fleets to a member's fleet-level roles", "Giao đội xe cho vai trò cấp đội xe của thành viên"]
       - ["Assignment covers every fleet below", "Phạm vi được giao bao gồm mọi đội cấp dưới"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: doing, portal: todo}
+    related_tables: [fleet_user_assignments]
+    questions:
+      - ["The fleet limit is applied to fleets, telemetry, vehicle, driver-session and trip lists and to alert recipients, not yet to the organization notification list, support cases, charging sessions, bills, batteries, warranties or detail-by-ID endpoints (see Known issues in the refactor plan).", "Giới hạn đội xe đã áp dụng cho đội xe, dữ liệu xe, danh sách xe, phiên lái, chuyến đi và người nhận cảnh báo; chưa áp dụng cho danh sách thông báo của tổ chức, ca hỗ trợ, phiên sạc, hóa đơn, pin, bảo hành và các API chi tiết theo ID (xem Known issues trong kế hoạch refactor)."]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2331,7 +2375,8 @@ features:
       - ["Latest position and state of every member truck", "Vị trí và trạng thái mới nhất của mọi xe trong đội"]
       - ["Offline trucks and overnight alerts highlighted", "Làm nổi bật xe offline và cảnh báo qua đêm"]
       - ["Filter by state, status and search by VIN or plate", "Lọc theo trạng thái và tìm theo VIN hoặc biển số"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [fleets, fleet_vehicle_memberships, telemetry]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2357,7 +2402,8 @@ features:
       - ["Create, edit and delete polygon areas", "Tạo, sửa và xóa vùng đa giác"]
       - ["Entry and exit alerts per reading", "Cảnh báo vào và ra vùng theo từng bản tin"]
       - ["Areas owned by the organization, applicable to chosen fleets", "Vùng thuộc tổ chức, áp dụng cho các đội được chọn"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [geofences]
     priority: Must
     release: P1.0
     offer: tbd
@@ -2468,7 +2514,8 @@ features:
       - ["Create, edit, search and retire stations", "Tạo, sửa, tìm kiếm và ngừng hoạt động trạm"]
       - ["Owning organization per station; charger alerts go to its operations staff; stations are open 24/7 and a closed one is marked inactive with a reason", "Tổ chức sở hữu của từng trạm; cảnh báo trụ sạc gửi tới nhân viên vận hành của tổ chức đó; trạm mở 24/7, trạm tạm đóng được đánh dấu ngừng hoạt động kèm lý do"]
       - ["Map view of all stations", "Xem mọi trạm trên bản đồ"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [charging_locations, charging_stations, charging_evses, charging_connectors]
     priority: Must
     release: P1.0
     offer: internal
@@ -2492,7 +2539,10 @@ features:
     capabilities:
       - ["Provision chargers and guns before they connect", "Khai báo trụ và súng trước khi kết nối"]
       - ["Power and connector standard per gun", "Công suất và chuẩn đầu sạc theo từng súng"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [charging_stations, charging_evses, charging_connectors, charging_station_state]
+    questions:
+      - ["Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 74).", "Đặt trụ INACTIVE chỉ có hiệu lực ở lần bắt tay kết nối kế tiếp; trụ đang kết nối vẫn giữ kết nối đến khi nối lại (deferred.md 74)."]
     priority: Must
     release: P1.0
     offer: internal
@@ -2518,7 +2568,8 @@ features:
       - ["Charger info, firmware and configuration captured after each boot", "Thông tin trụ, firmware và cấu hình được ghi lại sau mỗi lần khởi động"]
       - ["Verbatim, append-only message log", "Nhật ký bản tin nguyên văn, chỉ ghi thêm"]
       - ["Online flag from the last message", "Cờ online từ bản tin gần nhất"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [charging_stations, charging_station_state, charging_ocpp_messages, charging_station_configuration_captures, charging_station_configuration_entries]
     priority: Must
     release: P1.0
     offer: internal
@@ -2547,7 +2598,10 @@ features:
       - ["Status as reported by the charger, with error details", "Trạng thái theo đúng trụ báo, kèm chi tiết lỗi"]
       - ["Whole-charger and per-gun status in one view", "Trạng thái cả trụ và từng súng trong một màn hình"]
       - ["Mark status unknown when the charger goes offline", "Đánh dấu không rõ trạng thái khi trụ mất kết nối"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [charging_connector_state, charging_connectors]
+    questions:
+      - ["The status is flagged stale when the charger is offline but the last reported value is still returned; a real expiry rule is deferred.md 76.", "Trạng thái được đánh dấu cũ khi trụ ngoại tuyến nhưng vẫn trả giá trị báo cáo cuối; quy tắc hết hạn thật là deferred.md 76."]
     priority: Must
     release: P1.0
     offer: included
@@ -2711,7 +2765,8 @@ features:
       - ["Remote start and stop", "Bắt đầu và dừng sạc từ xa"]
       - ["Unlock, reset, change configuration, diagnostics", "Mở khóa, khởi động lại, đổi cấu hình, chẩn đoán"]
       - ["Every command and its answer logged", "Mọi lệnh và phản hồi đều được ghi lại"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [charging_station_commands]
     priority: Must
     release: P1.0
     offer: internal
@@ -2761,7 +2816,8 @@ features:
     capabilities:
       - ["Public or private station; allowed organizations", "Trạm công cộng hay riêng; danh sách tổ chức được phép"]
       - ["Separate tariff for a private station", "Biểu giá riêng cho trạm riêng"]
-    surfaces: {backend: todo, portal: todo, app: todo}
+    surfaces: {backend: done, portal: todo, app: todo}
+    related_tables: [charging_locations, charging_location_access]
     priority: Should
     release: P1.0
     offer: tbd
@@ -2874,7 +2930,8 @@ features:
       - ["Live progress: kWh, battery %, power, cost so far", "Tiến trình realtime: kWh, % pin, công suất, chi phí tạm tính"]
       - ["Stop on the charger's screen (or by the truck); the app may also send a remote stop for the person who started the charge", "Dừng trên màn hình trụ (hoặc do xe tự dừng); ứng dụng cũng có thể gửi lệnh dừng từ xa cho người đã bắt đầu sạc"]
       - ["Keep the session and bill later if the signal is weak", "Giữ phiên và tính tiền sau nếu sóng yếu"]
-    surfaces: {backend: todo, app: todo}
+    surfaces: {backend: done, app: todo}
+    related_tables: [charging_sessions, charging_station_commands]
     priority: Must
     release: P1.0
     offer: included
@@ -2907,7 +2964,8 @@ features:
       - ["All measurements (energy, power, voltage, current, battery %, temperature)", "Mọi chỉ số đo (điện năng, công suất, điện áp, dòng, % pin, nhiệt độ)"]
       - ["Append-only once finished", "Không sửa được sau khi kết thúc"]
       - ["Retry, duplicate and out-of-order handling", "Xử lý gửi lại, trùng lặp và sai thứ tự"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [charging_sessions, charging_session_measurements]
     priority: Must
     release: P1.0
     offer: internal
@@ -2932,7 +2990,8 @@ features:
     capabilities:
       - ["Receipt in the app right after charging", "Biên nhận trên app ngay sau khi sạc"]
       - ["Unit price from the tariff applied to the session", "Đơn giá theo biểu giá áp dụng cho phiên"]
-    surfaces: {backend: todo, app: todo}
+    surfaces: {backend: done, app: todo}
+    related_tables: [charging_sessions, charging_session_bills]
     priority: Must
     release: P1.0
     offer: included
@@ -2957,7 +3016,8 @@ features:
     capabilities:
       - ["Filters by period, station, truck and driver", "Lọc theo kỳ, trạm, xe và tài xế"]
       - ["Session detail with duration, battery % and peak power", "Chi tiết phiên với thời lượng, % pin và công suất cao nhất"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [charging_sessions]
     priority: Must
     release: P1.0
     offer: included
@@ -2982,7 +3042,10 @@ features:
     capabilities:
       - ["kWh per organization, truck and session over a period", "kWh theo tổ chức, xe và phiên trong kỳ"]
       - ["Station-metered figures, not estimates", "Số liệu đo tại trụ, không phải ước tính"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: doing, portal: todo}
+    related_tables: [charging_sessions, charging_session_measurements]
+    questions:
+      - ["Per-session energy and per-station energy are built; the per-organization total over a period is not, and a charger owner sees only the sessions its own organization paid for.", "Đã có điện năng theo phiên và theo trụ; chưa có tổng theo tổ chức trong kỳ, và chủ trụ chỉ thấy phiên do tổ chức mình trả tiền."]
     priority: Must
     release: P1.0
     offer: internal
@@ -3034,7 +3097,8 @@ features:
       - ["From the QR start: user and organization", "Từ lần quét QR: người dùng và tổ chức"]
       - ["From the driver's assignment: the truck", "Từ phân công của tài xế: xe"]
       - ["Confirm with the truck's battery and position during the session", "Xác nhận bằng mức pin và vị trí của xe trong phiên"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [charging_sessions, driving_sessions]
     priority: Must
     release: P1.0
     offer: included
@@ -3387,7 +3451,10 @@ features:
       - ["Payment gateways with tokenized cards", "Cổng thanh toán, thẻ được mã hóa token"]
       - ["Payment status and gateway reconciliation codes", "Trạng thái thanh toán và mã đối soát của cổng"]
       - ["Refunds", "Hoàn tiền"]
-    surfaces: {backend: todo, app: todo}
+    surfaces: {backend: done, app: todo}
+    related_tables: [payments, wallets, charging_session_bills]
+    questions:
+      - ["The VietQR payload layout follows the NAPAS profile but was never scanned with a real banking app; verify with the first real account. Bank notifications use a logging fake provider.", "Cấu trúc mã VietQR theo chuẩn NAPAS nhưng chưa được quét thử bằng app ngân hàng thật; cần kiểm chứng với tài khoản thật đầu tiên. Thông báo ngân hàng đang dùng nhà cung cấp giả."]
     priority: Must
     release: P1.0
     offer: included
@@ -3414,7 +3481,8 @@ features:
       - ["Top-up and withdrawal within legal limits", "Nạp và rút trong hạn mức theo quy định"]
       - ["Balance always reconciles with sessions", "Số dư luôn khớp với các phiên sạc"]
       - ["Deposit handling (e.g. 300k deposit)", "Xử lý tiền cọc (vd cọc 300 nghìn)"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [wallets, wallet_transactions, payments]
     priority: Should
     release: P1.0
     offer: included
@@ -3473,7 +3541,8 @@ features:
       - ["Tariff versions per station and time slot", "Phiên bản biểu giá theo trạm và khung giờ"]
       - ["Current price and cheapest window in the app", "Giá hiện tại và khung giờ rẻ nhất trên app"]
       - ["Price shown at session start = price billed (100%)", "Giá hiển thị khi bắt đầu sạc = giá tính tiền (100%)"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [tariffs, tariff_versions]
     priority: Should
     release: P1.0
     offer: included
@@ -3501,7 +3570,8 @@ features:
     capabilities:
       - ["Tariff version and price stored on the session", "Lưu phiên bản biểu giá và đơn giá trên phiên"]
       - ["Kept ≥5 years", "Lưu ≥5 năm"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [charging_session_bills, tariff_versions]
     priority: Must
     release: P1.0
     offer: internal
@@ -3615,7 +3685,8 @@ features:
       - ["List, filter by type, severity and truck", "Danh sách, lọc theo loại, mức độ và xe"]
       - ["Unread count, mark one or all as read", "Số chưa đọc, đánh dấu một hoặc tất cả đã đọc"]
       - ["History kept", "Lưu lịch sử"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [notifications, notification_recipients]
     priority: Must
     release: P1.0
     offer: included
@@ -3638,7 +3709,10 @@ features:
     capabilities:
       - ["Push via Firebase to registered devices", "Đẩy qua Firebase tới các thiết bị đã đăng ký"]
       - ["Open the related screen from the notification", "Mở đúng màn hình liên quan từ thông báo"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
+    related_tables: [notification_recipients, user_sessions]
+    questions:
+      - ["Push goes through a logging fake provider and is sent inside the producer's transaction; a real provider needs an after-commit outbox (deferred.md 100).", "Thông báo đẩy đi qua nhà cung cấp giả và được gửi trong giao dịch của bên tạo; nhà cung cấp thật cần outbox gửi sau khi commit (deferred.md 100)."]
     priority: Must
     release: P1.0
     offer: included
@@ -3687,7 +3761,10 @@ features:
     capabilities:
       - ["Transactional e-mail provider", "Nhà cung cấp gửi e-mail giao dịch"]
       - ["Only when the person has an e-mail address", "Chỉ gửi khi người nhận có địa chỉ e-mail"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [notification_recipients, notifications]
+    questions:
+      - ["E-mail goes through a logging fake provider and is sent inside the producer's transaction (deferred.md 100).", "E-mail đi qua nhà cung cấp giả và được gửi trong giao dịch của bên tạo (deferred.md 100)."]
     priority: Should
     release: P1.0
     offer: included
@@ -3711,7 +3788,8 @@ features:
     capabilities:
       - ["Channel switches per service", "Bật/tắt kênh theo từng dịch vụ"]
       - ["Sensible defaults for new organizations", "Cấu hình mặc định hợp lý cho tổ chức mới"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
+    related_tables: [organization_notification_settings]
     priority: Must
     release: P1.0
     offer: included
@@ -3735,7 +3813,8 @@ features:
     capabilities:
       - ["Each message type belongs to a service", "Mỗi loại thông báo thuộc về một dịch vụ"]
       - ["Recipients = role ∩ plan ∩ data scope", "Người nhận = vai trò ∩ gói ∩ phạm vi dữ liệu"]
-    surfaces: {backend: todo}
+    surfaces: {backend: done}
+    related_tables: [notifications, notification_recipients]
     priority: Must
     release: P1.0
     offer: included

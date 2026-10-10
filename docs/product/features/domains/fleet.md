@@ -8,11 +8,11 @@ Groups of trucks inside an organization, their managers, the live fleet map, geo
 
 ## Checklist
 
-- [ ] **FLT-01** [Fleets and fleet hierarchy](#flt-01) — Backend ⬜ · Portal ⬜
-- [ ] **FLT-02** [Fleet vehicle membership](#flt-02) — Backend ⬜ · Portal ⬜
-- [ ] **FLT-03** [Fleet manager scope](#flt-03) — Backend ⬜ · Portal ⬜
-- [ ] **FLT-04** [Fleet list and live map](#flt-04) — Backend ⬜ · Portal ⬜
-- [ ] **FLT-05** [Geofences and zone alerts](#flt-05) — Backend ⬜ · Portal ⬜
+- [ ] **FLT-01** [Fleets and fleet hierarchy](#flt-01) — Backend ✅ · Portal ⬜
+- [ ] **FLT-02** [Fleet vehicle membership](#flt-02) — Backend ✅ · Portal ⬜
+- [ ] **FLT-03** [Fleet manager scope](#flt-03) — Backend 🚧 · Portal ⬜
+- [ ] **FLT-04** [Fleet list and live map](#flt-04) — Backend ✅ · Portal ⬜
+- [ ] **FLT-05** [Geofences and zone alerts](#flt-05) — Backend ✅ · Portal ⬜
 - [ ] **FLT-06** [Fleet KPI dashboard](#flt-06) — Backend ⬜ · Portal ⬜
 - [ ] **FLT-07** [Fleet operating cost report](#flt-07) — Backend ⬜ · Portal ⬜
 - [ ] **FLT-08** [Charging and warranty report](#flt-08) — Backend ⬜ · Portal ⬜
@@ -37,11 +37,11 @@ Group an organization's trucks into named fleets that can sit under other fleets
 - Nested fleets; reports roll up to parents
 - Search by name or code
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [ACC-01](identity.md#acc-01)  
 **Needed by:** [FLT-02](#flt-02), [FLT-03](#flt-03)  
-**Related tables:** — (after the database review)  
+**Related tables:** `fleets`  
 **Sources:** PRD F-E1 · Decision FL-02  
 **Old codes:** F-E1
 
@@ -62,12 +62,12 @@ Add trucks to a fleet and remove them, keeping the history; a truck is in at mos
 - Add or remove by VIN; membership history
 - Which fleet is this truck in?
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [FLT-01](#flt-01), [VEH-01](vehicles.md#veh-01)  
 **Needed by:** [FLT-04](#flt-04), [FLT-05](#flt-05)  
 **Also touches:** `vehicles`  
-**Related tables:** — (after the database review)  
+**Related tables:** `fleet_vehicle_memberships`  
 **Sources:** PRD F-E1 · Decision FL-01 · Decision FL-06  
 **Old codes:** F-E1
 
@@ -88,13 +88,17 @@ Limit a fleet manager or dispatcher to some fleets (and everything below them); 
 - Assign fleets to a member's fleet-level roles
 - Assignment covers every fleet below
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend 🚧 · Portal ⬜
 
 **Depends on:** [FLT-01](#flt-01), [ACC-13](identity.md#acc-13)  
 **Needed by:** [ACC-15](identity.md#acc-15)  
 **Also touches:** `identity`  
-**Related tables:** — (after the database review)  
+**Related tables:** `fleet_user_assignments`  
 **Sources:** Decision FL-03
+
+**Open questions:**
+
+- The fleet limit is applied to fleets, telemetry, vehicle, driver-session and trip lists and to alert recipients, not yet to the organization notification list, support cases, charging sessions, bills, batteries, warranties or detail-by-ID endpoints (see Known issues in the refactor plan).
 
 <a id="flt-04"></a>
 
@@ -114,11 +118,11 @@ Every truck of the fleet on a list and a live map with its operating state (driv
 - Offline trucks and overnight alerts highlighted
 - Filter by state, status and search by VIN or plate
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [FLT-02](#flt-02), [MON-02](telemetry.md#mon-02), [MON-09](telemetry.md#mon-09)  
 **Also touches:** `telemetry`  
-**Related tables:** — (after the database review)  
+**Related tables:** `fleets`, `fleet_vehicle_memberships`, `telemetry`  
 **Sources:** PRD F-E1 · Data OUT-24  
 **Old codes:** F-E1
 
@@ -140,12 +144,12 @@ Draw areas on the map and get an alert when a truck enters or leaves one.
 - Entry and exit alerts per reading
 - Areas owned by the organization, applicable to chosen fleets
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [FLT-02](#flt-02), [MON-01](telemetry.md#mon-01), [NTF-01](notifications.md#ntf-01)  
 **Needed by:** [TMS-02](tms.md#tms-02)  
 **Also touches:** `telemetry`, `notifications`  
-**Related tables:** — (after the database review)  
+**Related tables:** `geofences`  
 **Sources:** PRD F-A5 · Decision FL-05 · deferred.md 86  
 **Old codes:** F-A5
 

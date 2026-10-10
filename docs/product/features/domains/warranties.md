@@ -8,7 +8,7 @@ The warranties of each truck, battery and device: their periods and limits, and 
 
 ## Checklist
 
-- [ ] **WAR-01** [Warranty register](#war-01) — Backend ⬜ · Portal ⬜
+- [ ] **WAR-01** [Warranty register](#war-01) — Backend ✅ · Portal ⬜
 
 ## Features
 
@@ -31,8 +31,8 @@ Keep every warranty of a truck, its battery, its devices and of a charger: perio
 - A battery's warranty follows the battery to another truck
 - Charger warranties limited by energy delivered (kWh) and number of sessions, identified by the registered serial number
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [VEH-01](vehicles.md#veh-01), [BAT-01](batteries.md#bat-01)  
-**Related tables:** — (after the database review)  
+**Related tables:** `warranties`  
 **Sources:** Data IN-32 · Decision VH-09 · Decision VH-14 · Decision VH-18 · Decision VH-19 · Decision CS-14

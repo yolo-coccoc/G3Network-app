@@ -16,27 +16,27 @@ A feature is done when every surface it needs is done. A cell shows
 
 | Domain | Features | Done | Backend | App | Portal |
 |---|---|---|---|---|---|
-| [ACC — Accounts & access](domains/identity.md) | 22 | 0 | 0/22 | 0/12 | 0/19 |
-| [VEH — Vehicles](domains/vehicles.md) | 5 | 0 | 0/5 | — | 0/5 |
-| [BAT — Batteries](domains/batteries.md) | 1 | 0 | 0/1 | — | 0/1 |
-| [WAR — Warranties](domains/warranties.md) | 1 | 0 | 0/1 | — | 0/1 |
-| [DEV — Telematics devices](domains/telematics.md) | 8 | 0 | 0/8 | — | 0/7 |
-| [MON — Vehicle & battery monitoring](domains/telemetry.md) | 19 | 0 | 0/18 | 0/10 | 0/16 |
+| [ACC — Accounts & access](domains/identity.md) | 22 | 2 | 16/22 | 0/12 | 0/19 |
+| [VEH — Vehicles](domains/vehicles.md) | 5 | 0 | 4/5 | — | 0/5 |
+| [BAT — Batteries](domains/batteries.md) | 1 | 0 | 1/1 | — | 0/1 |
+| [WAR — Warranties](domains/warranties.md) | 1 | 0 | 1/1 | — | 0/1 |
+| [DEV — Telematics devices](domains/telematics.md) | 8 | 1 | 5/8 | — | 0/7 |
+| [MON — Vehicle & battery monitoring](domains/telemetry.md) | 19 | 1 | 3/18 | 0/10 | 0/16 |
 | [RTE — Range & route planning](domains/routing.md) | 7 | 0 | 0/6 | 0/5 | 0/1 |
-| [DRV — Drivers](domains/drivers.md) | 7 | 0 | 0/7 | 0/5 | 0/5 |
-| [FLT — Fleet management](domains/fleet.md) | 8 | 0 | 0/8 | — | 0/8 |
-| [STN — Charging network](domains/charging_stations.md) | 15 | 0 | 0/15 | 0/6 | 0/12 |
-| [CHG — Charging sessions](domains/charging_sessions.md) | 8 | 0 | 0/8 | 0/3 | 0/5 |
+| [DRV — Drivers](domains/drivers.md) | 7 | 0 | 3/7 | 0/5 | 0/5 |
+| [FLT — Fleet management](domains/fleet.md) | 8 | 0 | 4/8 | — | 0/8 |
+| [STN — Charging network](domains/charging_stations.md) | 15 | 1 | 6/15 | 0/6 | 0/12 |
+| [CHG — Charging sessions](domains/charging_sessions.md) | 8 | 1 | 5/8 | 0/3 | 0/5 |
 | [POL — Charging policy & warranty](domains/policy.md) | 6 | 0 | 0/6 | 0/2 | 0/5 |
-| [PAY — Plans, payments & invoices](domains/billing.md) | 13 | 0 | 0/13 | 0/6 | 0/10 |
-| [NTF — Notifications](domains/notifications.md) | 8 | 0 | 0/8 | 0/3 | 0/5 |
+| [PAY — Plans, payments & invoices](domains/billing.md) | 13 | 1 | 4/13 | 0/6 | 0/10 |
+| [NTF — Notifications](domains/notifications.md) | 8 | 2 | 5/8 | 0/3 | 0/5 |
 | [SUP — Support & rescue](domains/support.md) | 7 | 0 | 0/7 | 0/4 | 0/5 |
 | [MNT — Maintenance & asset lifecycle](domains/maintenance.md) | 10 | 0 | 0/10 | 0/2 | 0/10 |
 | [SAF — Driver safety & camera](domains/safety.md) | 9 | 0 | 0/9 | 0/3 | 0/8 |
 | [CRB — Carbon & green transition](domains/carbon.md) | 11 | 0 | 0/11 | 0/2 | 0/7 |
 | [PLT — Platform, data & compliance](domains/platform.md) | 7 | 0 | 0/7 | — | 0/4 |
 | [TMS — Transport management integration (Phase 2)](domains/tms.md) | 6 | 0 | 0/6 | 0/1 | 0/4 |
-| **Total** | **178** | **0** | **0/176** | **0/64** | **0/138** |
+| **Total** | **178** | **9** | **57/176** | **0/64** | **0/138** |
 
 ## Domains and releases
 

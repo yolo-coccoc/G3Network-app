@@ -8,8 +8,8 @@ Live and historical vehicle data, battery and safety alerts, battery health, tri
 
 ## Checklist
 
-- [ ] **MON-01** [Vehicle data ingestion](#mon-01) — Backend ⬜
-- [ ] **MON-02** [Live vehicle status](#mon-02) — Backend ⬜ · App ⬜ · Portal ⬜
+- [x] **MON-01** [Vehicle data ingestion](#mon-01) — Backend ✅
+- [ ] **MON-02** [Live vehicle status](#mon-02) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **MON-03** [Driver home screen](#mon-03) — Backend ⬜ · App ⬜
 - [ ] **MON-04** [Tiered battery alerts](#mon-04) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **MON-05** [Battery safety alerts](#mon-05) — Backend ⬜ · App ⬜ · Portal ⬜
@@ -18,7 +18,7 @@ Live and historical vehicle data, battery and safety alerts, battery health, tri
 - [ ] **MON-08** [Cell-level battery diagnostics](#mon-08) — Backend ⬜ · Portal ⬜
 - [ ] **MON-09** [Vehicle operating state](#mon-09) — Backend ⬜ · Portal ⬜
 - [ ] **MON-10** [Location history and route replay](#mon-10) — Backend ⬜ · Portal ⬜
-- [ ] **MON-11** [Trips](#mon-11) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **MON-11** [Trips](#mon-11) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **MON-12** [Stops and parking log](#mon-12) — Backend ⬜ · Portal ⬜
 - [ ] **MON-13** [Load status and empty-trip detection](#mon-13) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **MON-14** [Vehicle operating report](#mon-14) — Backend ⬜ · App ⬜ · Portal ⬜
@@ -50,12 +50,12 @@ Receive and store every truck's data stream (battery, motor, speed, odometer, GP
 - Instantaneous consumption rate
 - ≤30 s p95 while online; scale from 300 to 1,200+ vehicles
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Depends on:** [DEV-03](telematics.md#dev-03)  
 **Needed by:** [CHG-06](charging_sessions.md#chg-06), [CRB-03](carbon.md#crb-03), [DEV-04](telematics.md#dev-04), [FLT-05](fleet.md#flt-05), [MNT-01](maintenance.md#mnt-01), [MON-02](#mon-02), [MON-04](#mon-04), [MON-05](#mon-05), [MON-06](#mon-06), [MON-07](#mon-07), [MON-09](#mon-09), [MON-10](#mon-10), [MON-14](#mon-14), [MON-16](#mon-16), [PLT-01](platform.md#plt-01), [POL-02](policy.md#pol-02), [RTE-01](routing.md#rte-01), [SAF-01](safety.md#saf-01), [SAF-08](safety.md#saf-08)  
 **Also touches:** `telematics`, `vehicles`  
-**Related tables:** — (after the database review)  
+**Related tables:** `telemetry`, `telematics`  
 **Sources:** PRD F-A1 · Data IN-1 · Data IN-2 · Data IN-6 · Data IN-7 · Data IN-12 · Data IN-13 · Data IN-14 · Data IN-17 · NF-01 · NF-04  
 **Old codes:** F-A1
 
@@ -76,11 +76,11 @@ Show a truck's latest battery level, position, speed and whether it is online ri
 - Latest reading per truck with the time it was received
 - Online flag computed when read
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01)  
 **Needed by:** [FLT-04](fleet.md#flt-04), [MON-03](#mon-03), [STN-07](charging_stations.md#stn-07)  
-**Related tables:** — (after the database review)  
+**Related tables:** `telemetry`  
 **Sources:** PRD F-A1 · PRD F-A5  
 **Old codes:** F-A1, F-A5
 
@@ -326,11 +326,11 @@ Trips planned by a fleet manager (A to B, planned times, driver, truck) and exec
 - Per-trip km, kWh, kWh/km and cost
 - Trip history and costs in the driver app
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-09](#mon-09), [DRV-02](drivers.md#drv-02)  
 **Needed by:** [CRB-05](carbon.md#crb-05), [FLT-07](fleet.md#flt-07), [MON-13](#mon-13), [MON-15](#mon-15), [TMS-01](tms.md#tms-01)  
-**Related tables:** — (after the database review)  
+**Related tables:** `trips`, `driving_sessions`  
 **Sources:** Data IN-14 · Data OUT-17 · Data IN-40 · deferred.md 46 · Decision DR-12
 
 <a id="mon-12"></a>

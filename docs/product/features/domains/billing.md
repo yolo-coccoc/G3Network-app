@@ -13,11 +13,11 @@ What customers buy (features, plans, add-ons), how they pay for charging and sub
 - [ ] **PAY-03** [Customer subscriptions](#pay-03) — Backend ⬜ · Portal ⬜
 - [ ] **PAY-04** [Add-ons](#pay-04) — Backend ⬜ · Portal ⬜
 - [ ] **PAY-05** [Self-service plan purchase](#pay-05) — Backend ⬜ · App ⬜
-- [ ] **PAY-06** [In-app charging payment](#pay-06) — Backend ⬜ · App ⬜
-- [ ] **PAY-07** [Prepaid wallet](#pay-07) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **PAY-06** [In-app charging payment](#pay-06) — Backend ✅ · App ⬜
+- [ ] **PAY-07** [Prepaid wallet](#pay-07) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **PAY-08** [Fleet centralized billing](#pay-08) — Backend ⬜ · Portal ⬜
-- [ ] **PAY-09** [Dynamic tariffs](#pay-09) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **PAY-10** [Tariff log per session](#pay-10) — Backend ⬜
+- [ ] **PAY-09** [Dynamic tariffs](#pay-09) — Backend ✅ · App ⬜ · Portal ⬜
+- [x] **PAY-10** [Tariff log per session](#pay-10) — Backend ✅
 - [ ] **PAY-11** [E-invoicing](#pay-11) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **PAY-12** [Promotion campaigns](#pay-12) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **PAY-13** [Platform revenue report](#pay-13) — Backend ⬜ · Portal ⬜
@@ -168,14 +168,18 @@ Pay for charging in the app with VNPay, Momo or the wallet, without storing card
 - Payment status and gateway reconciliation codes
 - Refunds
 
-**Status:** Backend ⬜ · App ⬜
+**Status:** Backend ✅ · App ⬜
 
 **Depends on:** [CHG-01](charging_sessions.md#chg-01), [CHG-03](charging_sessions.md#chg-03)  
 **Needed by:** [CHG-06](charging_sessions.md#chg-06), [PAY-05](#pay-05), [PAY-07](#pay-07), [PAY-13](#pay-13), [STN-09](charging_stations.md#stn-09)  
 **Also touches:** `charging_sessions`  
-**Related tables:** — (after the database review)  
+**Related tables:** `payments`, `wallets`, `charging_session_bills`  
 **Sources:** PRD F-H1 · Data IN-45 · NF-05  
 **Old codes:** F-H1
+
+**Open questions:**
+
+- The VietQR payload layout follows the NAPAS profile but was never scanned with a real banking app; verify with the first real account. Bank notifications use a logging fake provider.
 
 <a id="pay-07"></a>
 
@@ -195,11 +199,11 @@ A prepaid wallet for a driver or a fleet: top up, withdraw, pay for charging, wi
 - Balance always reconciles with sessions
 - Deposit handling (e.g. 300k deposit)
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [PAY-06](#pay-06)  
 **Needed by:** [CHG-08](charging_sessions.md#chg-08)  
-**Related tables:** — (after the database review)  
+**Related tables:** `wallets`, `wallet_transactions`, `payments`  
 **Sources:** PRD F-H2 · Data IN-45 · Data OUT-12  
 **Old codes:** F-H2
 
@@ -255,12 +259,12 @@ Prices by time of day and generation source (grid, solar, wind, biomass, storage
 - Current price and cheapest window in the app
 - Price shown at session start = price billed (100%)
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [STN-01](charging_stations.md#stn-01), [STN-13](charging_stations.md#stn-13)  
 **Needed by:** [DRV-07](drivers.md#drv-07), [MON-14](telemetry.md#mon-14), [PAY-10](#pay-10), [RTE-05](routing.md#rte-05), [STN-12](charging_stations.md#stn-12)  
 **Also touches:** `charging_stations`  
-**Related tables:** — (after the database review)  
+**Related tables:** `tariffs`, `tariff_versions`  
 **Sources:** PRD F-C8 · Data IN-30 · Data OUT-8 · NF-19  
 **Old codes:** F-C8
 
@@ -285,12 +289,12 @@ Record the tariff version and unit price applied to each session, kept at least 
 - Tariff version and price stored on the session
 - Kept ≥5 years
 
-**Status:** Backend ⬜
+**Status:** Backend ✅
 
 **Depends on:** [PAY-09](#pay-09), [CHG-02](charging_sessions.md#chg-02)  
 **Needed by:** [CHG-03](charging_sessions.md#chg-03)  
 **Also touches:** `charging_sessions`  
-**Related tables:** — (after the database review)  
+**Related tables:** `charging_session_bills`, `tariff_versions`  
 **Sources:** Data OUT-54 · NF-19
 
 <a id="pay-11"></a>

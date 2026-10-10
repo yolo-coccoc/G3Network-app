@@ -24,9 +24,10 @@ flowchart LR
     Ingestion["Telemetry ingestion\nMQTT consumer + worker"]
     OCPP["charging_stations/ocpp\nWebSocket gateway"]
     Monitor["telematics/monitoring\nperiodic device-health check"]
+    StatusIngestion["telematics/ingestion\nT-Box status reports"]
     AutoEnd["drivers/monitoring\nauto-end of idle driving sessions"]
     API["FastAPI API"]
-    Domains["identity\nvehicles\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\ndrivers\nsupport\nfleet"]
+    Domains["identity\nvehicles\nbatteries\nwarranties\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\nbilling\ndrivers\nsupport\nfleet"]
     Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
     Portal["Admin web portal\n(polls, not built yet)"]
@@ -34,6 +35,8 @@ flowchart LR
     Vehicle -->|MQTT telemetry| Broker
     Broker --> Ingestion
     Ingestion -->|telemetry| DB
+    Broker --> StatusIngestion
+    StatusIngestion -->|telematic_status_reports| DB
     Ingestion -->|battery/SOH/anomaly/geofence alerts, F-A2-A5| Notifications
     Ingestion -->|nearest available station, fleet geofences| Domains
     Notifications -->|notifications| DB
@@ -315,9 +318,8 @@ FastAPI registers the following domains:
   `vehicles`', `identity`'s and `telemetry`'s public services (`telemetry` calls
   `drivers` back for the "checked in to this truck" test); ending or locking a
   membership reaches it through a hook wired in `app/api/membership_end_hooks.py`
-  (DR-15).
-   — the same shape as `telematics → vehicles`. F-A9 (empty-trip detection) is suspended, not
-  built here — see `deferred.md` item 67.
+  (DR-15). F-A9 (empty-trip detection) is suspended, not built here - see
+  `deferred.md` item 67.
 - `support`: support case tickets (F-I1) and SOS intake (F-I2). One
   `support_cases` table discriminated by `case_type` rather than two
   tables. Depends one-directionally on `vehicles` (resolve/validate a VIN)
@@ -382,8 +384,10 @@ FastAPI registers the following domains:
   for the membership of a fleet limit. F-E2 (KPI dashboard) is deferred.
 
 The API process runs separately via Uvicorn. Telemetry ingestion, the T-Box
-status-report ingestion, the OCPP gateway, and the telematics device-health
-monitor each have their own entrypoint, sharing the same database/session configuration.
+status-report ingestion, the OCPP gateway, the telematics device-health
+monitor and the driving-session auto-end worker each have their own entrypoint
+(`make identity-bootstrap` is a one-off script that creates the first
+administrator), sharing the same database/session configuration.
 
 Domain exceptions are mapped to HTTP once: each inherits one base in
 `app/libs/common/errors.py` (`NotFoundError` 404, `ConflictError` 409,
@@ -454,14 +458,13 @@ bootstrap phase (no data worth keeping) a schema change edits that migration
 instead of adding a revision, and `make db-reset` clears the database and
 rebuilds it; see `.claude/rules/database.md`.
 
-The charging MVP only supports pre-provisioned topology and the happy path
+The charging MVP supports pre-provisioned topology and the happy path
 (2.0.1: `Started → Updated/MeterValues → Ended`; 1.6J: `StartTransaction →
-MeterValues → StopTransaction`). The OCPP 1.6J work added an append-only raw
-OCPP message log, the charger's device/liveness fields, the widened connector
-status, session `idTag`/stop reason/`meterStop`, the unified measurements
-table and configuration snapshots, but **not** reconnect/offline recovery,
-fault alerting, remote commands or TLS/authentication (`deferred.md` items 27,
-73-76).
+MeterValues → StopTransaction`), an append-only raw OCPP message log, the
+charger's state tables, configuration snapshots and the remote command
+channel (`charging_station_commands`, sent by the gateway's command loop). It
+has no reconnect/offline recovery, fault alerting (STN-05) or
+TLS/per-charger authentication (STN-11); see `deferred.md` items 27, 73-76.
 
 ## Local infrastructure
 
@@ -636,11 +639,12 @@ convention will be written once the first task for that part starts.
 
 ## Not yet in the MVP
 
-- Per-manager fleet limits (`fleet_user_assignments`, FL-10) and the
-  permission-granting step (ID-44) are not applied: every role sees every
-  record of its organization within its feature list. `drivers` has a
-  profile-CRUD and check-in/check-out slice (F-E4), but no empty-trip
-  detection (F-A9, suspended — no trip concept exists in this backend).
+- The permission-granting step (ID-44): the role table is a copy of the
+  catalog in `identity/types.py`. The per-manager fleet limit (FL-10) is
+  applied to fleets, telemetry, vehicle, driving-session and trip lists and
+  to alert recipients, not to every list (Known issues in
+  [the refactor plan](../planners/backend-refactor-implementation.md)).
+  `drivers` has no empty-trip detection (F-A9, suspended).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query
   (`GET /telemetry/vehicles/{id}/history`). Geofences are owned by a fleet,
@@ -657,23 +661,23 @@ convention will be written once the first task for that part starts.
   persisting anomaly, and a motor-temperature anomaly detector.
 - F-J1's SIM/power status fields and F-J3's power-loss-vs-signal-loss
   distinction (no such data in the MQTT contract), charging policy,
-  payment and billing.
+  subscription plans and invoices, refunds, and real bank/SMS/push/e-mail
+  providers (fakes only).
 - F-J2's confirmation-of-applied-config and rollback (no MQTT ack topic
   exists, so a successful publish only proves the broker accepted the
   message) and local alert thresholds (only the telemetry publish interval
   is implemented).
 - Time-of-use or per-tenant electricity pricing for F-A6 (one flat
   `TELEMETRY_ENERGY_COST_PER_KWH_VND` setting today), and vendor-confirmed
-  battery capacity (falls back to a documented default when a vehicle has
-  none recorded). F-C6 specifically cannot satisfy NF-10's 3-way
-  reconciliation with its current SOC-based method - that needs the
-  vehicle-linkage `charging_sessions` still lacks.
+  battery capacity (the installed pack's design capacity, else the model's
+  nominal capacity). F-C6 still uses an SOC-based method, so NF-10's 3-way
+  reconciliation with station-metered energy is not met.
 - F-E2's fleet KPI dashboard (the km/kWh/cost half exists as the fleet
   operating report; SOH, alert counts and utilization are missing -
   `deferred.md` item 72), F-E3's charging & warranty report, and F-A8's
-  per-driver charging-efficiency report - the latter two are hard-blocked
-  on `charging_sessions` having no vehicle/driver linkage at all (same
-  blocker as F-C6/NF-10 above), plus F-E3 also needs the `policy` domain.
+  per-driver charging-efficiency report - sessions now carry the truck and
+  the scanning user, but these reports are not built, and F-E3 also needs the
+  `policy` domain.
 - F-I4's repair/rescue partner directory and dispatch routing, and F-I3's
   maintenance-scheduling booking - both considered alongside F-I1/F-I2 when
   `support` was built but deferred (`deferred.md` items 68-69). An
