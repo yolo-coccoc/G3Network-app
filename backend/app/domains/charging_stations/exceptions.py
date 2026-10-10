@@ -1,6 +1,11 @@
 """Business exceptions for the charging_stations domain."""
 
-from app.libs.common.errors import ConflictError, InvalidInputError, NotFoundError
+from app.libs.common.errors import (
+    ConflictError,
+    InvalidInputError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 
 
 class ChargingStationNotFoundError(NotFoundError):
@@ -49,3 +54,11 @@ class ChargingStationOfflineError(ConflictError):
 
 class ChargingStationCommandConflictError(ConflictError):
     """A command cannot be sent or cancelled in the charger's current state (STN-10)."""
+
+
+class ChargingLocationAccessDeniedError(PermissionDeniedError):
+    """The caller's organization may not charge at a private location (CS-10, CHG-01)."""
+
+
+class ChargingStationUnavailableError(ConflictError):
+    """The charger, its location or the chosen gun is out of service (CHG-01)."""

@@ -1233,6 +1233,36 @@ async def is_membership_checked_in_to_vehicle(
     return open_session is not None and open_session.vehicle_id == vehicle_id
 
 
+async def find_open_vehicle_id_by_membership(
+    db_session: AsyncSession, membership_id: UUID
+) -> UUID | None:
+    """Find the truck a person is checked in to right now. Cross-domain.
+
+    Used by the QR charging start to attribute a session to the truck the
+    scanning driver is at the wheel of (CE-13, CHG-07).
+
+    Args:
+        db_session: Session owned by the caller's entry boundary.
+        membership_id: The person's membership (their driver profile's owner).
+
+    Returns:
+        The truck's internal ID, or `None` when the person has no live driver
+        profile or no open driving session.
+
+    Side Effects:
+        Read-only queries; does not commit or rollback.
+    """
+    driver_record = await driver_repository.find_by_membership_id(
+        db_session, membership_id
+    )
+    if driver_record is None or driver_record.deleted_at is not None:
+        return None
+    open_session = await driver_repository.find_open_session_by_driver(
+        db_session, driver_record.driver_id
+    )
+    return None if open_session is None else open_session.vehicle_id
+
+
 async def end_open_session_on_ownership_change(
     db_session: AsyncSession, vehicle_id: UUID, *, ended_at: datetime
 ) -> UUID | None:

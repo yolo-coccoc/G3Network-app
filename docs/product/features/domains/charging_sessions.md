@@ -37,7 +37,7 @@ The driver scans the QR code on the charger's screen; the app authorizes them an
 - The driver chooses the gun and starts on the charger's screen
 - Record who started the charge and which organization pays
 - Live progress: kWh, battery %, power, cost so far
-- Stop on the charger's screen (or by the truck); the app sends no command
+- Stop on the charger's screen (or by the truck); the app may also send a remote stop for the person who started the charge
 - Keep the session and bill later if the signal is weak
 
 **Status:** Backend ⬜ · App ⬜

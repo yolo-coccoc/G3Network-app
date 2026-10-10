@@ -266,22 +266,43 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
 
     @on(Action.authorize)  # type: ignore[untyped-decorator]
     async def on_authorize(self, id_tag: str, **_: object) -> call_result.Authorize:
-        """Accept every idTag (decision D7 of the OCPP 1.6J planner).
+        """Accept only a tag a QR scan issued for this charger (CE-11).
 
-        There is no tag registry to check against and the vendor's Autocharge
-        behaviour is unknown, so rejecting unknown tags would block all
-        charging. Real validation is deferred (``deferred.md`` #26, #62).
+        The tag must belong to a PENDING session of this charger scanned inside
+        the pending window, or to its ACTIVE session (the same tag shown again
+        to stop at the screen). Any other tag is answered ``Invalid`` and
+        stays in the raw log only.
 
         Args:
-            id_tag: The tag presented at the charger; not stored here (it is
-                stored on the session by ``StartTransaction``).
+            id_tag: The tag presented at the charger; never log it (IS-07).
             **_: A 1.6 ``Authorize`` has no other fields.
 
         Returns:
-            ``Accepted`` for any tag.
+            ``Accepted`` for a token we issued, otherwise ``Invalid``.
+
+        Raises:
+            ChargingStationNotFoundError: If the station is not provisioned.
         """
+        async with self.session_factory.begin() as db:
+            station_id = await ocpp_state_service.resolve_station_id_by_identity(
+                db, self.id
+            )
+            is_valid = await charging_sessions_service.is_start_token_valid(
+                db, station_id=station_id, id_token=id_tag
+            )
+        if not is_valid:
+            logger.warning(
+                "Authorize refused: no scan issued this tag",
+                extra={"ocpp_identity": self.id},
+            )
         return call_result.Authorize(
-            id_tag_info={"status": AuthorizationStatus.accepted}
+            id_tag_info={
+                "status": (
+                    AuthorizationStatus.accepted
+                    if is_valid
+                    else AuthorizationStatus.invalid
+                )
+            }
         )
 
     @on(Action.start_transaction)  # type: ignore[untyped-decorator]

@@ -617,7 +617,7 @@ async def claim_queued_commands(
 
 async def mark_unsent_commands_not_sent(
     db: AsyncSession, *, requested_before: datetime
-) -> int:
+) -> list[UUID]:
     """Close queued commands that no gateway picked up in time.
 
     Args:
@@ -625,7 +625,8 @@ async def mark_unsent_commands_not_sent(
         requested_before: Queued commands requested before this time are closed.
 
     Returns:
-        The number of commands set to ``NOT_SENT``.
+        The IDs of the commands set to ``NOT_SENT``, so the gateway can end the
+        sessions of failed remote starts.
 
     Side Effects:
         ``NOT_SENT`` keeps ``ocpp_message_id`` and ``answered_at`` empty (the
@@ -639,14 +640,16 @@ async def mark_unsent_commands_not_sent(
             ChargingStationCommandModel.requested_at < requested_before,
         )
         .values(outcome=StationCommandOutcome.NOT_SENT.value)
+        .returning(ChargingStationCommandModel.command_id)
     )
+    command_ids = list(result.scalars().all())
     await db.flush()
-    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+    return command_ids
 
 
 async def mark_stale_commands_timed_out(
     db: AsyncSession, *, requested_before: datetime
-) -> int:
+) -> list[UUID]:
     """Close sent commands that never got an answer (gateway restarted mid-call).
 
     Args:
@@ -655,7 +658,7 @@ async def mark_stale_commands_timed_out(
             time are closed.
 
     Returns:
-        The number of commands set to ``TIMEOUT``.
+        The IDs of the commands set to ``TIMEOUT``.
     """
     result = await db.execute(
         update(ChargingStationCommandModel)
@@ -665,9 +668,11 @@ async def mark_stale_commands_timed_out(
             ChargingStationCommandModel.requested_at < requested_before,
         )
         .values(outcome=StationCommandOutcome.TIMEOUT.value, answered_at=utc_now())
+        .returning(ChargingStationCommandModel.command_id)
     )
+    command_ids = list(result.scalars().all())
     await db.flush()
-    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+    return command_ids
 
 
 async def set_command_message_id(

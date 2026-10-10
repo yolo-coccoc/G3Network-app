@@ -1,8 +1,10 @@
-"""HTTP router of the charging sessions: the scan and the monitoring reads.
+"""HTTP router of the charging sessions: the monitoring reads and history.
 
 The router only accepts HTTP dependencies and calls the public service; domain
 exceptions are mapped to status codes centrally in ``app/api/main.py``. It does
-not expose raw OCPP payloads or command transport.
+not expose raw OCPP payloads or command transport. The start by QR, the stop and
+the receipt need the charger, the wallet and the driving session, which this
+domain may not call, so they live in ``app/api/charging_session_flow.py``.
 """
 
 from dataclasses import dataclass
@@ -10,7 +12,6 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from fastapi import status as http_status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
@@ -19,8 +20,6 @@ from app.domains.charging_sessions.schemas import (
     ChargingSessionListResponse,
     ChargingSessionMeasurementListResponse,
     ChargingSessionMeterValueListResponse,
-    ChargingSessionScanRequest,
-    ChargingSessionScanResponse,
     StationEnergySeriesResponse,
     StationEnergySummaryResponse,
 )
@@ -35,13 +34,13 @@ from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-sessions"])
 
-# Who may call what (features.yaml `users`, via `roles_for`): CHG-01 scan (the
-# driver), CHG-02..05 session reads (a DRIVER-only caller sees just their own
+# Who may call what (features.yaml `users`, via `roles_for`): CHG-04 own
+# history (the driver), CHG-02..05 session reads (a DRIVER-only caller sees just their own
 # sessions, enforced by the service). The per-station energy figures cannot be
 # limited to a charger's owner here (`charging_sessions` may not ask
 # `charging_stations`), so they are for our own staff only (STN-14); an owner
 # reads their chargers' totals through `GET /charging-sessions/stations/energy`.
-SESSION_SCANNERS = require_roles(*roles_for("CHG-01"))
+MY_HISTORY_READERS = require_roles(*roles_for("CHG-04"))
 SESSION_READERS = require_roles(*roles_for("CHG-02", "CHG-03", "CHG-04", "CHG-05"))
 STATION_ENERGY_STAFF = require_roles(*roles_for("STN-14", "CHG-05"), internal_only=True)
 
@@ -79,35 +78,55 @@ def _page_query(
     return _PageQuery(page=page, page_size=page_size)
 
 
-@router.post(
-    "/charging-sessions",
-    response_model=ChargingSessionScanResponse,
-    status_code=http_status.HTTP_201_CREATED,
-    summary="Scan a charger's QR code (create a PENDING session)",
+@router.get(
+    "/charging-sessions/mine",
+    response_model=ChargingSessionListResponse,
+    summary="List my own charging history",
 )
-async def scan_charging_session_endpoint(
-    scan_request: ChargingSessionScanRequest,
-    principal: Principal = Depends(SESSION_SCANNERS),
+async def list_my_charging_sessions_endpoint(
+    vehicle_id: UUID | None = None,
+    status: SessionStatus | None = None,
+    started_from: datetime | None = Query(
+        None, description="Inclusive lower bound on started_at, with a timezone."
+    ),
+    started_to: datetime | None = Query(
+        None, description="Exclusive upper bound on started_at, with a timezone."
+    ),
+    page_query: _PageQuery = Depends(_page_query),
+    principal: Principal = Depends(MY_HISTORY_READERS),
     db: AsyncSession = Depends(get_db, scope="function"),
-) -> ChargingSessionScanResponse:
-    """Create the PENDING session of a scan and return its single-use token (CE-10).
+) -> ChargingSessionListResponse:
+    """List the sessions the caller started, newest first (CHG-04).
 
-    The remote start that sends the token to the charger comes with the QR
-    start flow (WP8); until then a charger (or simulator) can be started with
-    this token.
+    Declared before ``/charging-sessions/{session_id}`` so ``mine`` is not read
+    as a session ID.
 
     Args:
-        scan_request: The charger and optional truck; the payer is the
-            caller's organization and the scanning user is the caller.
+        vehicle_id: Only sessions attributed to this truck.
+        status: Only sessions in this lifecycle status.
+        started_from: Inclusive lower bound on ``started_at``.
+        started_to: Exclusive upper bound on ``started_at``.
+        page_query: The page and page size.
         principal: The authenticated caller.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
     Returns:
-        The new session's ID, status ``PENDING`` and token.
+        A paginated list of the caller's own sessions.
+
+    Raises:
+        ChargingSessionInputError: A time bound lacks a timezone or
+            ``started_to`` is not after ``started_from`` (HTTP 400).
     """
-    return await charging_session_service.scan_charging_session(
-        db, scan_request, principal=principal
+    return await charging_session_service.list_my_charging_sessions(
+        db,
+        principal=principal,
+        page=page_query.page,
+        page_size=page_query.page_size,
+        vehicle_id=vehicle_id,
+        status=status,
+        started_from=started_from,
+        started_to=started_to,
     )
 
 
@@ -120,6 +139,10 @@ async def list_charging_sessions_endpoint(
     station_id: UUID | None = None,
     connector_id: UUID | None = None,
     organization_id: UUID | None = None,
+    vehicle_id: UUID | None = None,
+    started_by: UUID | None = Query(
+        None, description="Only sessions scanned by this user (the driver)."
+    ),
     status: SessionStatus | None = None,
     started_from: datetime | None = Query(
         None, description="Inclusive lower bound on started_at, with a timezone."
@@ -137,6 +160,9 @@ async def list_charging_sessions_endpoint(
         station_id: Only sessions of this station.
         connector_id: Only sessions on this connector.
         organization_id: Only sessions paid by this organization.
+        vehicle_id: Only sessions attributed to this truck.
+        started_by: Only sessions scanned by this user (the driver at the
+            wheel).
         status: Only sessions in this lifecycle status.
         started_from: Inclusive lower bound on ``started_at``.
         started_to: Exclusive upper bound on ``started_at``.
@@ -161,6 +187,8 @@ async def list_charging_sessions_endpoint(
         station_id=station_id,
         connector_id=connector_id,
         organization_id=organization_id,
+        vehicle_id=vehicle_id,
+        started_by=started_by,
         status=status,
         started_from=started_from,
         started_to=started_to,

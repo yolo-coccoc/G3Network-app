@@ -192,29 +192,43 @@ FastAPI registers the following domains:
   heartbeat interval), `Heartbeat`, `TransactionEvent`, `MeterValues`
   and `StatusNotification`.
   1.6J is verified against a simulator; a real charger has not been connected.
-- `charging_sessions`: a session is created `PENDING` at the QR scan
-  (`POST /charging-sessions`: paying organization, scanning user, optional
-  truck, a single-use token) and turned `ACTIVE` by the charger's start
-  message only when it carries that token on the same charger (CE-10, CE-11;
-  any other token is answered `Invalid` and creates no row); the stop message
-  completes it and stores the charger's declared `meter_stop_wh`, the billing
-  figure (CE-12). Every measurement (energy register, SoC, power, voltage,
-  current, temperature and vendor measurands) lives in
-  `charging_session_measurements`, written by the OCPP gateway in one fixed
-  unit per known measurand with the OCPP defaults for context and location
-  (CE-14); there is no events table (CE-15). The module also serves F-C5's
-  station energy total and hourly/daily series (energy-register deltas
-  between consecutive outlet readings, each booked in the bucket of its later
-  reading, buckets cut in `APP_REPORT_TIMEZONE`), the session detail's
-  read-time summary (energy, duration, first/last SoC, `max_power_kw`) and
-  the list filters; `resolve_station_energy_total` is the DTO
-  `charging_stations` uses for the all-stations ranking. The 1.6J backend
-  assigns the integer `transactionId` from a database sequence. Still no
-  retry/out-of-order recovery/DLQ/dedup. The remote start, wallet check and
-  abandoned-session sweep of the QR flow come with WP8.
-- `billing`: tables and enums only so far (tariffs and their versions,
-  session bills, payments, wallets and the wallet ledger); services and
-  endpoints come with WP9.
+- `charging_sessions`: a session is created `PENDING` at the QR scan and turned
+  `ACTIVE` by the charger's start message only when it carries that token on
+  the same charger (CE-10, CE-11; any other token is answered `Invalid` and
+  creates no row; `Authorize` follows the same rule in both adapters); the stop
+  message completes it and stores the charger's declared `meter_stop_wh`, the
+  billing figure (CE-12). The start by QR (`POST /charging-sessions/scan`), the
+  stop (`POST /charging-sessions/{id}/stop`) and the receipt
+  (`GET /charging-sessions/{id}/receipt`) need the charger, the wallet and the
+  driving session, so they live in `app/api/charging_session_flow.py`, above
+  the domains (CE-20): the scan resolves the charger and checks its location's
+  visibility, that it is in service and connected
+  (`charging_stations.resolve_scan_target`), that the gun and the person have no
+  charge open, the wallet (`billing.has_minimum_balance`), takes the truck from
+  the person's open driving session (`drivers`), creates the PENDING row and
+  queues a `REMOTE_START` command for the gateway. A PENDING row ends
+  `ABANDONED` when its remote start is refused / times out / is not sent (the
+  gateway's command loop, in the same step as the command's outcome) or when
+  the scan is older than `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (swept by
+  the same loop every `CHARGING_SESSION_SWEEP_INTERVAL_SECONDS`). Every
+  measurement (energy register, SoC, power, voltage, current, temperature and
+  vendor measurands) lives in `charging_session_measurements`, written by the
+  OCPP gateway in one fixed unit per known measurand with the OCPP defaults for
+  context and location (CE-14); there is no events table (CE-15). The module
+  also serves F-C5's station energy total and hourly/daily series
+  (energy-register deltas between consecutive outlet readings, each booked in
+  the bucket of its later reading, buckets cut in `APP_REPORT_TIMEZONE`), the
+  session detail's read-time summary (energy, duration, first/last SoC, newest
+  and maximum power), the list filters (truck, scanning user, dates) and the
+  caller's own history (`GET /charging-sessions/mine`);
+  `resolve_station_energy_total` is the DTO `charging_stations` uses for the
+  all-stations ranking. The 1.6J backend assigns the integer `transactionId`
+  from a database sequence. Still no retry/out-of-order recovery/DLQ/dedup.
+- `billing`: tables and enums, plus the small service the QR charge needs
+  (WP8): `has_minimum_balance` (the wallet minimum of BL-14, setting
+  `BILLING_MIN_BALANCE_VND`, 0 = off; a missing wallet counts as zero),
+  `resolve_wallet_standing` and `find_session_bill_reference`. The tariff, bill,
+  payment and ledger services and the endpoints come with WP9.
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=` (ascending cursor;
   `order=desc` returns the newest page instead), filterable by vehicle,
@@ -479,8 +493,8 @@ call each other is in
 │   │   │   ├── charging_sessions/     # QR-scan sessions, token-matched start/stop, measurements (F-B2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │
-│   │   │   ├── billing/               # Tariffs, session bills, payments, wallets: models only (WP9 adds the rest)
-│   │   │   │   └── models.py  types.py
+│   │   │   ├── billing/               # Tariffs, session bills, payments, wallets: models + the wallet-minimum / bill reads (WP9 adds the rest)
+│   │   │   │   └── service.py  repository.py  models.py  types.py  exceptions.py
 │   │   │   │
 │   │   │   ├── notifications/         # Alerts per organization, per-person inbox state, channel switches (F-A2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -513,6 +527,7 @@ call each other is in
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
 │   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the vehicle, driving-session and trip lists (FL-13)
 │   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
+│   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt across charging_stations, billing, drivers, charging_sessions (CE-20)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
 │   │   └── libs/

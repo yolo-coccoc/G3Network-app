@@ -306,3 +306,56 @@ class LocationViewer:
 
     organization_id: UUID | None = None
     sees_all: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ScanTargetReference:
+    """The charger (and gun) a QR scan named, checked for a charge to start.
+
+    Returned by ``resolve_scan_target`` to ``charging_sessions``' start flow
+    (CHG-01); never an ORM model.
+
+    Attributes:
+        station_id: The charger.
+        location_id: The location it stands at.
+        location_name: Display name of the location.
+        evse_id: The gun named by the scan, ``None`` when the driver will pick
+            the gun on the charger's screen (CO-14).
+        connector_id: The plug of that gun, ``None`` with ``evse_id``.
+        gun_number: The gun's number (its OCPP EVSE number), ``None`` with
+            ``evse_id``.
+        connector_ids: Every active plug of the charger, used to tell whether
+            the whole charger is busy.
+    """
+
+    station_id: UUID
+    location_id: UUID
+    location_name: str
+    evse_id: UUID | None
+    connector_id: UUID | None
+    gun_number: int | None
+    connector_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionPlaceReference:
+    """Where a session happened, for its receipt (CHG-03).
+
+    Attributes:
+        station_id: The charger.
+        location_id: The location it stands at.
+        location_name: Display name of the location.
+        location_address: Street address of the location.
+        physical_reference: The number printed on the charger, if any.
+        gun_number: The gun's number (OCPP EVSE number), ``None`` when the
+            session never reached a gun or the gun was deleted since.
+        connector_standard: The plug standard of the gun, ``None`` with it.
+    """
+
+    station_id: UUID
+    location_id: UUID
+    location_name: str
+    location_address: str
+    physical_reference: str | None
+    gun_number: int | None
+    connector_standard: str | None

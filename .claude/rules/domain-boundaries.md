@@ -31,7 +31,7 @@
 | `telematics` → `notifications` | raise device-offline alerts and deliver them (`create_notification`, `add_notification_recipients`) | DEV-05 |
 | `telematics` → `identity` | `list_organization_role_holder_user_ids` (ORG_ADMIN + FLEET_MANAGER of the truck's organization receive the silence alert) | DEV-05 |
 | `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push, device health of a fleet; takes the principal so the fleet limit applies) | F-J2, FL-10 |
-| `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint); `resolve_session_command_reference` (the token and transaction ID the gateway sends in a remote start / stop) | F-B2, F-C5, F-H1 |
+| `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint); `resolve_session_command_reference` (the token and transaction ID the gateway sends in a remote start / stop); `is_start_token_valid` (both `Authorize` handlers); the gateway's command loop calls `abandon_pending_session` (a failed remote start) and `abandon_expired_pending_sessions` (the sweep) | F-B2, F-C5, F-H1, CHG-01 |
 | `drivers` → `vehicles` | `resolve_vehicle_reference_by_code` (VIN or plate) / `_by_vin` / `_by_id` (check-in: the truck and its owner), `resolve_vehicle_summary_by_id` (plate in the driver's summary) | F-E4, DR-11 |
 | `drivers` → `identity` | `resolve_membership_person_reference` (a profile's person: name, phone, statuses), `membership_holds_role` (a profile needs the DRIVER role), `search_membership_ids_by_person` (list search by name/phone), `resolve_organization_settings` (auto-end time) | F-E4, DRV-01 |
 | `drivers` → `telemetry` | `resolve_vehicle_live_status` (phone-to-truck check at check-in, trip start/end position, odometer, battery %), `resolve_last_telemetry_at` + `resolve_last_movement_at` (auto-end of an idle session), `resolve_distance_km_in_window` (distance in the driver's summary) | DR-07, DR-11, DR-12 |
@@ -47,6 +47,7 @@
 | `telemetry` → `batteries` | `resolve_installed_battery_capacity_kwh` (pack capacity precedence, VH-16) | MON-14 reports |
 | `warranties` → `vehicles` / `batteries` / `telematics` / `charging_stations` | the owner of the covered object (`resolve_vehicle_reference_by_id`, `resolve_battery_owner_organization_id`, `resolve_telematic_owner_organization_id`, `resolve_station_owner_organization_id`) | WAR-01 |
 | `app/api/vehicle_transfer.py` → `vehicles`, `fleet`, `drivers`, `batteries` | `transfer_vehicle_ownership`, `close_membership_of_sold_vehicle`, `end_open_session_on_ownership_change`, `transfer_installed_battery_with_vehicle` | VEH-02 (VH-12) |
+| `app/api/charging_session_flow.py` → `charging_stations`, `charging_sessions`, `billing`, `drivers` | scan: `resolve_scan_target`, `has_active_session_on_connector`, `has_open_session_by_user`, `resolve_wallet_standing`, `has_minimum_balance`, `find_open_vehicle_id_by_membership`, `create_pending_session`, `queue_station_command`; stop: `authorize_session_stop`, `queue_station_command`; receipt: `get_charging_session`, `resolve_session_place_reference`, `find_session_bill_reference` | CHG-01, CHG-03 (CE-20) |
 | `telemetry` → `drivers` | `is_membership_checked_in_to_vehicle` (a driver reads the live data of the truck they are checked in to) | MON-02, DR-11 |
 
 **Exceptions — `telematics ↔ telemetry` and `drivers ↔ telemetry` are
@@ -62,7 +63,11 @@ that must change data in domains that depend on each other the wrong way round
 `batteries`) is orchestrated in the HTTP layer, in a module under `app/api/`
 that calls each owner's public service inside the request's one transaction.
 Such a module is not a domain, holds no business rule of its own and is
-listed in the table above. When `identity` (which depends on no domain) must
+listed in the table above. The QR charge is the second case (CE-20):
+`charging_stations` already calls `charging_sessions`, so the scan, stop and
+receipt, which need both plus `billing` and `drivers`, sit in
+`app/api/charging_session_flow.py` instead of adding the reverse edge
+`charging_sessions` → `charging_stations`. When `identity` (which depends on no domain) must
 trigger work elsewhere (ending or locking a membership, DR-10), it exposes a
 hook (`register_membership_end_hook`) that `app/api/membership_end_hooks.py`
 fills with the other domain's public function at start-up (DR-15); the same
@@ -72,6 +77,7 @@ FL-13).
 
 ## Domain roles worth knowing
 
+- **`billing`** is a leaf (it calls no domain). WP8 added the wallet minimum and the bill read for the QR charge; the rest comes with WP9.
 - **`notifications`** is a leaf: it stores/reads notifications and depends on no domain.
 - **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `deferred.md` before reopening.
 - **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.

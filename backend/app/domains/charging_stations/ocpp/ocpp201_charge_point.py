@@ -2,7 +2,7 @@
 
 This module holds the adapter class for the ``ocpp2.0.1`` subprotocol
 (``OCPP201ChargePoint``: ``BootNotification``, ``Heartbeat``,
-``TransactionEvent``, ``MeterValues``, ``StatusNotification``) and its payload
+``Authorize``, ``TransactionEvent``, ``MeterValues``, ``StatusNotification``) and its payload
 helpers, mirroring
 ``ocpp16_charge_point.py``/``ocpp16_measurements.py`` for 1.6J. The two
 adapters never share payload code: the protocols shape a ``SampledValue``
@@ -397,6 +397,50 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             The server's current UTC time.
         """
         return call_result.Heartbeat(current_time=format_ocpp_timestamp(utc_now()))
+
+    @on(Action.authorize)  # type: ignore[untyped-decorator]
+    async def on_authorize(
+        self, id_token: OcppPayload, **_: object
+    ) -> call_result.Authorize:
+        """Accept only a token a QR scan issued for this charger (CE-11).
+
+        Same rule as the 1.6J adapter: the token must belong to a PENDING
+        session of this charger scanned inside the pending window, or to its
+        ACTIVE session. Any other token is answered ``Invalid``.
+
+        Args:
+            id_token: The ``idToken`` object (``id_token`` and ``type``), as a
+                plain dict; never log it (IS-07).
+            **_: Optional certificate fields, unused.
+
+        Returns:
+            ``idTokenInfo`` ``Accepted`` for a token we issued, else ``Invalid``.
+
+        Raises:
+            ChargingStationNotFoundError: If the station is not provisioned.
+        """
+        token = str(id_token.get("id_token") or "")
+        async with self.session_factory.begin() as db:
+            station_id = await ocpp_state_service.resolve_station_id_by_identity(
+                db, self.id
+            )
+            is_valid = await charging_sessions_service.is_start_token_valid(
+                db, station_id=station_id, id_token=token
+            )
+        if not is_valid:
+            logger.warning(
+                "Authorize refused: no scan issued this token",
+                extra={"ocpp_identity": self.id},
+            )
+        return call_result.Authorize(
+            id_token_info={
+                "status": (
+                    AuthorizationStatusEnumType.accepted
+                    if is_valid
+                    else AuthorizationStatusEnumType.invalid
+                )
+            }
+        )
 
     @on(Action.transaction_event)  # type: ignore[untyped-decorator]
     async def on_transaction_event(

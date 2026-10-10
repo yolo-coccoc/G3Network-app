@@ -12,7 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Sequence, func, or_, select
+from sqlalchemy import Sequence, and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -62,7 +62,11 @@ async def get_session_by_transaction(
 
 
 async def find_pending_session_by_token(
-    db: AsyncSession, station_id: UUID, id_token: str
+    db: AsyncSession,
+    station_id: UUID,
+    id_token: str,
+    *,
+    created_after: datetime | None = None,
 ) -> ChargingSessionModel | None:
     """Find the PENDING session a charger's start message belongs to (CE-11).
 
@@ -70,22 +74,150 @@ async def find_pending_session_by_token(
         db: The async session owned by the entry boundary.
         station_id: UUID of the charger that sent the start message.
         id_token: The token the message carries.
+        created_after: Only a scan made after this time counts (the pending
+            window); `None` means no limit.
 
     Returns:
         The PENDING session of that charger holding the token (the newest if
         several), or ``None`` when no scan issued it.
     """
+    conditions: list[ColumnElement[bool]] = [
+        ChargingSessionModel.station_id == station_id,
+        ChargingSessionModel.id_token == id_token,
+        ChargingSessionModel.status == SessionStatus.PENDING,
+    ]
+    if created_after is not None:
+        conditions.append(ChargingSessionModel.created_at > created_after)
     query_result = await db.execute(
         select(ChargingSessionModel)
-        .where(
-            ChargingSessionModel.station_id == station_id,
-            ChargingSessionModel.id_token == id_token,
-            ChargingSessionModel.status == SessionStatus.PENDING,
-        )
+        .where(*conditions)
         .order_by(ChargingSessionModel.created_at.desc())
         .limit(1)
     )
     return query_result.scalar_one_or_none()
+
+
+async def count_sessions_with_token(
+    db: AsyncSession,
+    station_id: UUID,
+    id_token: str,
+    *,
+    pending_created_after: datetime,
+) -> int:
+    """Count the sessions of a charger that a presented token belongs to.
+
+    A token belongs to a session that is still waiting for the charger (PENDING,
+    scanned after ``pending_created_after``) or already running (ACTIVE, so the
+    same token may be shown again to stop it).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger that presented the token.
+        id_token: The presented token.
+        pending_created_after: Oldest scan time a PENDING session may have.
+
+    Returns:
+        The number of matching sessions.
+    """
+    query_result = await db.execute(
+        select(func.count())
+        .select_from(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.id_token == id_token,
+            or_(
+                ChargingSessionModel.status == SessionStatus.ACTIVE,
+                and_(
+                    ChargingSessionModel.status == SessionStatus.PENDING,
+                    ChargingSessionModel.created_at > pending_created_after,
+                ),
+            ),
+        )
+    )
+    return int(query_result.scalar_one())
+
+
+async def count_open_sessions_by_user(
+    db: AsyncSession, user_id: UUID, *, pending_created_after: datetime
+) -> int:
+    """Count the open sessions a person started (ACTIVE, or a live PENDING scan).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        user_id: The scanning user.
+        pending_created_after: Oldest scan time a PENDING session may have to
+            still count as open.
+
+    Returns:
+        The number of open sessions of that user.
+    """
+    query_result = await db.execute(
+        select(func.count())
+        .select_from(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.started_by == user_id,
+            or_(
+                ChargingSessionModel.status == SessionStatus.ACTIVE,
+                and_(
+                    ChargingSessionModel.status == SessionStatus.PENDING,
+                    ChargingSessionModel.created_at > pending_created_after,
+                ),
+            ),
+        )
+    )
+    return int(query_result.scalar_one())
+
+
+async def abandon_pending_session(db: AsyncSession, session_id: UUID) -> bool:
+    """Turn one PENDING session ABANDONED (a no-op for any other status).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        session_id: UUID of the session.
+
+    Returns:
+        ``True`` when a PENDING row was changed.
+
+    Side Effects:
+        One UPDATE; flushes, does not commit.
+    """
+    result = await db.execute(
+        update(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.session_id == session_id,
+            ChargingSessionModel.status == SessionStatus.PENDING,
+        )
+        .values(status=SessionStatus.ABANDONED, updated_at=utc_now())
+    )
+    await db.flush()
+    return bool(result.rowcount)  # type: ignore[attr-defined]
+
+
+async def abandon_pending_sessions_created_before(
+    db: AsyncSession, created_before: datetime
+) -> int:
+    """Turn every PENDING session scanned before a time ABANDONED.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        created_before: Scans older than this have waited too long.
+
+    Returns:
+        The number of sessions changed.
+
+    Side Effects:
+        One UPDATE; flushes, does not commit.
+    """
+    result = await db.execute(
+        update(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.status == SessionStatus.PENDING,
+            ChargingSessionModel.created_at < created_before,
+        )
+        .values(status=SessionStatus.ABANDONED, updated_at=utc_now())
+    )
+    await db.flush()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
 
 async def get_session_by_id(
@@ -143,6 +275,8 @@ def _session_list_conditions(
         )
     if filters.started_by is not None:
         conditions.append(ChargingSessionModel.started_by == filters.started_by)
+    if filters.vehicle_id is not None:
+        conditions.append(ChargingSessionModel.vehicle_id == filters.vehicle_id)
     if filters.status is not None:
         conditions.append(ChargingSessionModel.status == filters.status)
     if filters.started_from is not None:

@@ -23,13 +23,14 @@ from app.libs.db.session import get_db
 DOMAINS_ROOT = Path(__file__).resolve().parents[1] / "app" / "domains"
 # Every module that holds routers: `router.py` and the `*_router.py` files of
 # a domain with several (identity).
-# `app.api.vehicle_transfer` is the cross-domain orchestration router (VH-12).
+# `app.api.vehicle_transfer` (VH-12) and `app.api.charging_session_flow` (CHG-01)
+# are the cross-domain orchestration routers.
 ROUTER_MODULES = sorted(
     [
         f"app.domains.{path.parent.name}.{path.stem}"
         for path in DOMAINS_ROOT.glob("*/*router.py")
     ]
-    + ["app.api.vehicle_transfer"]
+    + ["app.api.vehicle_transfer", "app.api.charging_session_flow"]
 )
 
 

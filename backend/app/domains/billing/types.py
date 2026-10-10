@@ -1,12 +1,17 @@
-"""Shared internal enums of the billing domain.
+"""Shared internal enums and DTOs of the billing domain.
 
-The billing tables store these as plain ``varchar`` columns (the DBML lists the
-allowed values in each column note, with no database value check); the enums
-name the allowed values for code. Services, repositories and endpoints come
-with the billing work package (WP9).
+The billing tables store the enums as plain ``varchar`` columns (the DBML lists
+the allowed values in each column note, with no database value check); the
+enums name the allowed values for code. The frozen dataclasses are what other
+domains receive from the billing service (never an ORM model). The tariff,
+bill and payment services come with the billing work package (WP9); today the
+service answers only what the QR start and the receipt need (WP8).
 """
 
 import enum
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 
 
 class TariffStatus(str, enum.Enum):
@@ -113,3 +118,40 @@ class WalletTransactionType(str, enum.Enum):
     SESSION_BILL = "SESSION_BILL"
     REFUND = "REFUND"
     ADJUSTMENT = "ADJUSTMENT"
+
+
+@dataclass(frozen=True, slots=True)
+class WalletStanding:
+    """What the scan needs to know about a person's wallet (BL-13, BL-14).
+
+    Attributes:
+        balance: Current balance; ``0`` when the person has no wallet yet (the
+            scan never creates one).
+        is_blocked: Whether the wallet exists and is ``BLOCKED``.
+    """
+
+    balance: Decimal
+    is_blocked: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SessionBillReference:
+    """A session's bill as the receipt shows it (CHG-03, BL-10).
+
+    Attributes:
+        status: ``QUOTED``, ``BILLED``, ``ON_HOLD`` or ``VOID``.
+        price_per_kwh: Price frozen at the scan, before VAT.
+        vat_rate_percent: VAT rate frozen with the price.
+        energy_wh: Energy billed in Wh, ``None`` until billed.
+        amount_before_vat: Rounded amount before VAT, ``None`` until billed.
+        vat_amount: Rounded VAT, ``None`` until billed.
+        billed_at: When the amount was fixed, ``None`` until billed.
+    """
+
+    status: ChargingSessionBillStatus
+    price_per_kwh: Decimal
+    vat_rate_percent: Decimal
+    energy_wh: Decimal | None
+    amount_before_vat: Decimal | None
+    vat_amount: Decimal | None
+    billed_at: datetime | None

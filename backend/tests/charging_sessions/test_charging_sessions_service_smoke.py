@@ -66,7 +66,11 @@ async def test_activate_pending_session_fills_the_charger_side(
     evse_id, connector_id = uuid4(), uuid4()
 
     async def find_pending(
-        db: AsyncSession, station_id: UUID, id_token: str
+        db: AsyncSession,
+        station_id: UUID,
+        id_token: str,
+        *,
+        created_after: datetime | None = None,
     ) -> ChargingSessionModel | None:
         return session if id_token == session.id_token else None
 
@@ -102,7 +106,11 @@ async def test_activate_pending_session_refuses_a_token_no_scan_issued(
     """An unknown token creates no row and raises the token error (CE-11)."""
 
     async def find_pending(
-        db: AsyncSession, station_id: UUID, id_token: str
+        db: AsyncSession,
+        station_id: UUID,
+        id_token: str,
+        *,
+        created_after: datetime | None = None,
     ) -> ChargingSessionModel | None:
         return None
 

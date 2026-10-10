@@ -149,3 +149,29 @@ async def test_ended_event_stores_the_last_reading_as_the_closing_reading(
     completed = calls[1][1]
     assert completed["meter_stop_wh"] == Decimal(1520340)
     assert completed["stop_reason"] == "Local"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_issued", [True, False])
+async def test_authorize_accepts_only_a_token_a_scan_issued(
+    monkeypatch: pytest.MonkeyPatch, is_issued: bool
+) -> None:
+    """CE-11: the 2.0.1 Authorize answers Accepted for an issued token only."""
+    asked: dict[str, Any] = {}
+
+    async def station(db: object, ocpp_identity: str) -> Any:
+        return STATION_ID
+
+    async def valid(db: object, *, station_id: Any, id_token: str) -> bool:
+        asked.update(station_id=station_id, id_token=id_token)
+        return is_issued
+
+    monkeypatch.setattr(ocpp_state_service, "resolve_station_id_by_identity", station)
+    monkeypatch.setattr(charging_service, "is_start_token_valid", valid)
+
+    response = await _charge_point().on_authorize(
+        id_token={"id_token": "TOKEN-1", "type": "Central"}
+    )
+
+    assert response.id_token_info["status"] == ("Accepted" if is_issued else "Invalid")
+    assert asked == {"station_id": STATION_ID, "id_token": "TOKEN-1"}

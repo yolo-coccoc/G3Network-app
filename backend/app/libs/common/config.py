@@ -6,6 +6,7 @@ from environment variables or the ``.env`` file; the module does not contain
 default credentials.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -67,6 +68,13 @@ class Settings(BaseSettings):
         CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: How long a queued command
             may wait for a connected charger before it is closed as
             ``NOT_SENT`` (CS-20).
+        CHARGING_PENDING_SESSION_TIMEOUT_SECONDS: How long a scan may wait for
+            the charger to start before its PENDING session is ABANDONED
+            (CE-10).
+        CHARGING_SESSION_SWEEP_INTERVAL_SECONDS: How often the gateway's loop
+            sweeps expired PENDING sessions.
+        BILLING_MIN_BALANCE_VND: Wallet balance needed to start a charge
+            (BL-14); 0 disables the check.
         CHARGING_OCPP_MAX_MESSAGE_BYTES: Largest OCPP message the gateway
             accepts; bigger ones are refused by the WebSocket library
             instead of being stored truncated in the raw message log.
@@ -233,6 +241,16 @@ class Settings(BaseSettings):
     # the pickup timeout ends as NOT_SENT.
     CHARGING_OCPP_COMMAND_POLL_SECONDS: float = Field(default=1.0, gt=0)
     CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
+    # QR charging (CE-10, CE-11): a PENDING session whose charger never started
+    # within this many seconds of the scan becomes ABANDONED, and its token
+    # stops working. The gateway's command loop runs the sweep every
+    # CHARGING_SESSION_SWEEP_INTERVAL_SECONDS.
+    CHARGING_PENDING_SESSION_TIMEOUT_SECONDS: float = Field(default=300.0, gt=0)
+    CHARGING_SESSION_SWEEP_INTERVAL_SECONDS: float = Field(default=30.0, gt=0)
+
+    # Wallet minimum balance to start a charge, in VND (BL-14). 0 turns the check
+    # off, which is the default until top-ups exist (WP9).
+    BILLING_MIN_BALANCE_VND: Decimal = Field(default=Decimal(0), ge=0)
 
     # Upper bound for the nearby-station search's radius_km query param
     # (F-D1) - guards against an unbounded PostGIS scan.

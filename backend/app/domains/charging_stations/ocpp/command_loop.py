@@ -20,6 +20,10 @@ Rules:
   charger.
 * Each step uses its own short transaction; the answer to a command is written
   after the call returned, never inside a transaction held across it.
+* A ``REMOTE_START`` that ends ``REJECTED``, ``ERROR``, ``TIMEOUT`` or
+  ``NOT_SENT`` abandons its PENDING session in the same step (CE-10), and the
+  loop also sweeps the PENDING sessions whose scan outlived
+  ``CHARGING_PENDING_SESSION_TIMEOUT_SECONDS`` (no separate process).
 * One gateway process is assumed: ``NOT_SENT`` is decided by the age of a queued
   command, so a second gateway holding the charger would race it (Known issues
   in the refactor plan).
@@ -27,6 +31,7 @@ Rules:
 
 import asyncio
 import logging
+import time
 from datetime import timedelta
 from typing import Any, Final
 from uuid import UUID
@@ -59,6 +64,48 @@ _CLAIM_BATCH_SIZE: Final[int] = 20
 # A sent command nobody answered is closed as TIMEOUT after this many request
 # timeouts (the gateway restarted between the send and the answer).
 _STALE_SENT_FACTOR: Final[int] = 3
+
+
+# Outcomes after which a remote start can no longer begin its session (CE-10).
+_FAILED_START_OUTCOMES: Final[frozenset[str]] = frozenset(
+    {
+        StationCommandOutcome.REJECTED.value,
+        StationCommandOutcome.ERROR.value,
+        StationCommandOutcome.TIMEOUT.value,
+        StationCommandOutcome.NOT_SENT.value,
+    }
+)
+
+
+async def abandon_session_of_failed_start(
+    db: AsyncSession, command_id: UUID, outcome: StationCommandOutcome
+) -> None:
+    """Abandon the PENDING session of a remote start that did not go through.
+
+    For a ``REMOTE_START`` with a session and a failed outcome, turns that
+    session ``ABANDONED``. Any other command, a session-less start or a start
+    that was accepted changes nothing; a session that is no longer PENDING is
+    left alone. Why the session was abandoned stays on the command row (CS-20).
+
+    Args:
+        db: Async session owned by the caller's transaction.
+        command_id: The command that just ended.
+        outcome: The outcome just written for it. Passed in rather than read
+            back, because the caller wrote it with an UPDATE statement that a
+            row already loaded in this session would not reflect.
+
+    Side Effects:
+        May update one session row in the caller's transaction.
+    """
+    if outcome.value not in _FAILED_START_OUTCOMES:
+        return
+    command = await ocpp_state_repository.get_station_command_by_id(db, command_id)
+    if (
+        command is not None
+        and command.command_type == StationCommandType.REMOTE_START.value
+        and command.session_id is not None
+    ):
+        await charging_sessions_service.abandon_pending_session(db, command.session_id)
 
 
 class StationConnectionRegistry:
@@ -190,6 +237,7 @@ async def _record_failure(
             ),
             answered_at=utc_now(),
         )
+        await abandon_session_of_failed_start(db, command_id, outcome)
 
 
 async def run_command(
@@ -254,6 +302,7 @@ async def run_command(
                 response_status=result.response_status,
                 answered_at=utc_now(),
             )
+            await abandon_session_of_failed_start(db, command_id, result.outcome)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -303,12 +352,12 @@ async def process_queued_commands(
             (command.command_id, command.station_id) for command in claimed
         ]
         now = utc_now()
-        await ocpp_state_repository.mark_unsent_commands_not_sent(
+        not_sent_ids = await ocpp_state_repository.mark_unsent_commands_not_sent(
             db,
             requested_before=now
             - timedelta(seconds=settings.CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS),
         )
-        await ocpp_state_repository.mark_stale_commands_timed_out(
+        timed_out_ids = await ocpp_state_repository.mark_stale_commands_timed_out(
             db,
             requested_before=now
             - timedelta(
@@ -316,6 +365,14 @@ async def process_queued_commands(
                 * _STALE_SENT_FACTOR
             ),
         )
+        for closed_command_id in not_sent_ids:
+            await abandon_session_of_failed_start(
+                db, closed_command_id, StationCommandOutcome.NOT_SENT
+            )
+        for closed_command_id in timed_out_ids:
+            await abandon_session_of_failed_start(
+                db, closed_command_id, StationCommandOutcome.TIMEOUT
+            )
     for command_id, station_id in claimed_by_station:
         sender = registry.get(station_id)
         if sender is None:
@@ -330,6 +387,33 @@ async def process_queued_commands(
         tasks.add(task)
         task.add_done_callback(tasks.discard)
     return len(claimed_by_station)
+
+
+async def sweep_expired_pending_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Abandon the PENDING sessions whose scan outlived the pending window (CE-10).
+
+    The simplest home for the sweep is the gateway's own loop: it already runs
+    one short transaction per step and is the process that knows whether a
+    charger answered, so QR charging needs no extra process.
+
+    Args:
+        session_factory: Shared factory; one short transaction is used.
+
+    Returns:
+        The number of sessions abandoned.
+    """
+    async with session_factory.begin() as db:
+        abandoned_count = (
+            await charging_sessions_service.abandon_expired_pending_sessions(db)
+        )
+    if abandoned_count:
+        logger.info(
+            "Abandoned expired pending sessions",
+            extra={"abandoned_count": abandoned_count},
+        )
+    return abandoned_count
 
 
 async def run_command_loop(
@@ -349,9 +433,12 @@ async def run_command_loop(
         stop_event: Set by the gateway when it stops.
 
     Side Effects:
-        Reads and writes ``charging_station_commands``; sends OCPP calls.
+        Reads and writes ``charging_station_commands``; sends OCPP calls;
+        every ``CHARGING_SESSION_SWEEP_INTERVAL_SECONDS`` abandons the expired
+        PENDING sessions.
     """
     tasks: set[asyncio.Task[None]] = set()
+    last_sweep = float("-inf")
     try:
         while not stop_event.is_set():
             try:
@@ -360,6 +447,17 @@ async def run_command_loop(
                 raise
             except Exception:
                 logger.exception("Station command poll failed")
+            if (
+                time.monotonic() - last_sweep
+                >= settings.CHARGING_SESSION_SWEEP_INTERVAL_SECONDS
+            ):
+                last_sweep = time.monotonic()
+                try:
+                    await sweep_expired_pending_sessions(session_factory)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Pending session sweep failed")
             try:
                 await asyncio.wait_for(
                     stop_event.wait(),

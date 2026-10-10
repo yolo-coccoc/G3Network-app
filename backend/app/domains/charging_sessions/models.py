@@ -129,6 +129,18 @@ class ChargingSessionModel(Base):
         DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now
     )
 
+    @property
+    def energy_delivered_wh(self) -> Decimal | None:
+        """The energy of a finished session: stop reading minus start reading.
+
+        Derived, never stored (CE-12). ``None`` while the session has no stop
+        reading; the detail read substitutes the newest measurement for a
+        running session.
+        """
+        if self.meter_start_wh is None or self.meter_stop_wh is None:
+            return None
+        return self.meter_stop_wh - self.meter_start_wh
+
     __table_args__ = (
         CheckConstraint(
             "status NOT IN ('ACTIVE', 'COMPLETED') OR ("

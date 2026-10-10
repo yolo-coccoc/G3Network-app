@@ -2872,7 +2872,7 @@ features:
       - ["The driver chooses the gun and starts on the charger's screen", "Tài xế chọn súng và bắt đầu sạc trên màn hình trụ"]
       - ["Record who started the charge and which organization pays", "Ghi nhận ai bắt đầu sạc và tổ chức nào trả tiền"]
       - ["Live progress: kWh, battery %, power, cost so far", "Tiến trình realtime: kWh, % pin, công suất, chi phí tạm tính"]
-      - ["Stop on the charger's screen (or by the truck); the app sends no command", "Dừng trên màn hình trụ (hoặc do xe tự dừng); ứng dụng không gửi lệnh"]
+      - ["Stop on the charger's screen (or by the truck); the app may also send a remote stop for the person who started the charge", "Dừng trên màn hình trụ (hoặc do xe tự dừng); ứng dụng cũng có thể gửi lệnh dừng từ xa cho người đã bắt đầu sạc"]
       - ["Keep the session and bill later if the signal is weak", "Giữ phiên và tính tiền sau nếu sóng yếu"]
     surfaces: {backend: todo, app: todo}
     priority: Must

@@ -1,6 +1,11 @@
 """Business exceptions for the charging_sessions domain."""
 
-from app.libs.common.errors import ConflictError, InvalidInputError, NotFoundError
+from app.libs.common.errors import (
+    ConflictError,
+    InvalidInputError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 
 
 class ChargingSessionNotFoundError(NotFoundError):
@@ -26,3 +31,15 @@ class ChargingSessionTokenError(InvalidInputError):
     The gateway answers the charger ``Invalid``; no session row is created and
     the frame stays in the raw OCPP log.
     """
+
+
+class ChargingConnectorBusyError(ConflictError):
+    """The gun (or every gun of the charger) already has a running charge (CHG-01)."""
+
+
+class ChargingSessionAlreadyOpenError(ConflictError):
+    """The person already has a charge open, so a second scan is refused (CHG-01)."""
+
+
+class ChargingSessionStopDeniedError(PermissionDeniedError):
+    """Only the person who started a charge, or our staff, may stop it (CHG-01)."""

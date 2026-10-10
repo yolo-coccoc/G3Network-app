@@ -10,7 +10,9 @@ domains call (F-A2, used by ``telemetry``), the driver-facing nearby search
 for each station's total), the command channel the API (and ``charging_sessions``
 for a remote start) writes to (CS-20, PR-16; the API path checks the parameters
 per type, the reason, the charger being online, and can cancel a queued command),
-the read of the latest configuration a charger reported, the connection facts
+the read of the latest configuration a charger reported, the scan checks and the
+session place read of the QR charge (``resolve_scan_target``,
+``resolve_session_place_reference``, CHG-01), the connection facts
 (STN-03), the staff-only OCPP message-log read, the network status board
 (STN-04) and the filtered lists with a manage / view scope (STN-01, STN-12,
 CS-29). This is the only module another domain may
@@ -55,6 +57,7 @@ from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingEvseNotFoundError,
     ChargingLocationAccessConflictError,
+    ChargingLocationAccessDeniedError,
     ChargingLocationAccessNotFoundError,
     ChargingLocationNotFoundError,
     ChargingStationCommandConflictError,
@@ -62,6 +65,7 @@ from app.domains.charging_stations.exceptions import (
     ChargingStationNotFoundError,
     ChargingStationOfflineError,
     ChargingStationReportRangeError,
+    ChargingStationUnavailableError,
     ChargingTopologyConflictError,
 )
 from app.domains.charging_stations.models import (
@@ -122,6 +126,8 @@ from app.domains.charging_stations.types import (
     LocationViewer,
     NearestChargingStationReference,
     OcppMessageDirection,
+    ScanTargetReference,
+    SessionPlaceReference,
     StationCommandOutcome,
     StationCommandReference,
     StationCommandType,
@@ -2866,3 +2872,165 @@ async def resolve_station_owner_organization_id(
         db, station.location_id, include_deleted=True
     )
     return location.organization_id if location is not None else None
+
+
+async def resolve_scan_target(
+    db: AsyncSession,
+    *,
+    charger_code: str,
+    gun_number: int | None,
+    principal: Principal,
+) -> ScanTargetReference:
+    """Find and check the charger a driver scanned, before a charge starts (CHG-01).
+
+    The QR content is vendor-open (CO-14), so the code is matched against the
+    charger's OCPP identity first and its registered serial number second. The
+    checks run in this order, so the caller sees the first problem:
+
+    1. the charger exists and was not deleted (not found);
+    2. its location is visible to the caller: public, owned by the caller's
+       organization, or granted to it (CS-10, CS-13); otherwise a refusal;
+    3. the charger and its location are ``ACTIVE`` and, when a gun is named,
+       the gun's EVSE is ``ACTIVE`` and has a plug (unavailable);
+    4. the charger is connected now (offline).
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        charger_code: What the QR carries: the charger's OCPP identity (or its
+            registered serial number).
+        gun_number: The gun named by the scan (its OCPP EVSE number), ``None``
+            when the driver picks the gun on the charger's screen.
+        principal: The caller whose visibility applies.
+
+    Returns:
+        The charger, its location and, when named, the gun and its plug.
+
+    Raises:
+        ChargingStationNotFoundError: No such charger, or the gun does not
+            exist on it.
+        ChargingLocationAccessDeniedError: The location is private and not
+            granted to the caller's organization.
+        ChargingStationUnavailableError: The charger, its location or the gun
+            is out of service.
+        ChargingStationOfflineError: The charger is not connected now.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    code = charger_code.strip()
+    station = await charging_stations_repository.get_station_by_identity(
+        db, code, include_deleted=False
+    )
+    if station is None:
+        station = (
+            await charging_stations_repository.find_live_station_by_registered_serial(
+                db, code
+            )
+        )
+    if station is None:
+        raise ChargingStationNotFoundError("No charger matches this code")
+    location = await charging_stations_repository.get_location_by_id(
+        db, station.location_id
+    )
+    if location is None:
+        raise ChargingStationNotFoundError("No charger matches this code")
+    if not await _can_reach_location(db, location, principal, view=True):
+        raise ChargingLocationAccessDeniedError(
+            "This charger is at a private location your organization may not use"
+        )
+    if (
+        station.status != ChargingResourceStatus.ACTIVE.value
+        or location.status != ChargingResourceStatus.ACTIVE.value
+    ):
+        raise ChargingStationUnavailableError("This charger is out of service")
+    state = await charging_stations_repository.get_station_state(db, station.station_id)
+    if not _is_station_online(state, utc_now()):
+        raise ChargingStationOfflineError("This charger is not connected right now")
+    evse_id: UUID | None = None
+    connector_id: UUID | None = None
+    if gun_number is not None:
+        evse = await charging_stations_repository.get_evse_by_identity(
+            db, station.station_id, gun_number, include_deleted=False
+        )
+        if evse is None:
+            raise ChargingStationNotFoundError(
+                f"The charger has no gun number {gun_number}"
+            )
+        if evse.status != ChargingResourceStatus.ACTIVE.value:
+            raise ChargingStationUnavailableError(
+                f"Gun number {gun_number} is out of service"
+            )
+        plugs = await charging_stations_repository.list_charging_connectors(
+            db, evse_id=evse.evse_id, offset=0, limit=1
+        )
+        if not plugs:
+            raise ChargingStationUnavailableError(
+                f"Gun number {gun_number} has no plug set up"
+            )
+        evse_id = evse.evse_id
+        connector_id = plugs[0].connector_id
+    connector_ids = tuple(
+        plug.connector_id
+        for plug, _evse_number, _state in (
+            await charging_stations_repository.list_connectors_by_station_id(
+                db, station.station_id
+            )
+        )
+    )
+    return ScanTargetReference(
+        station_id=station.station_id,
+        location_id=location.location_id,
+        location_name=location.display_name,
+        evse_id=evse_id,
+        connector_id=connector_id,
+        gun_number=gun_number,
+        connector_ids=connector_ids,
+    )
+
+
+async def resolve_session_place_reference(
+    db: AsyncSession, station_id: UUID, evse_id: UUID | None
+) -> SessionPlaceReference | None:
+    """Describe where a session happened, for its receipt (CHG-03). Cross-domain.
+
+    The caller has already checked that the session is in the caller's reach,
+    so nothing is filtered here.
+
+    Args:
+        db: Async session owned by the caller's entry boundary.
+        station_id: The session's charger.
+        evse_id: The session's gun, ``None`` when it never started.
+
+    Returns:
+        The place, or ``None`` when the charger was soft-deleted since.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    station = await charging_stations_repository.get_station_by_id(db, station_id)
+    if station is None:
+        return None
+    location = await charging_stations_repository.get_location_by_id(
+        db, station.location_id, include_deleted=True
+    )
+    if location is None:
+        return None
+    gun_number: int | None = None
+    connector_standard: str | None = None
+    if evse_id is not None:
+        evse = await charging_stations_repository.get_evse_by_id(db, evse_id)
+        if evse is not None:
+            gun_number = evse.ocpp_evse_id
+            plugs = await charging_stations_repository.list_charging_connectors(
+                db, evse_id=evse.evse_id, offset=0, limit=1
+            )
+            connector_standard = plugs[0].standard if plugs else None
+    return SessionPlaceReference(
+        station_id=station.station_id,
+        location_id=location.location_id,
+        location_name=location.display_name,
+        location_address=location.address,
+        physical_reference=station.physical_reference,
+        gun_number=gun_number,
+        connector_standard=connector_standard,
+    )

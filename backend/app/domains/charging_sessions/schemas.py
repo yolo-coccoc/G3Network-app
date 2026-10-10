@@ -21,34 +21,69 @@ from app.libs.common.config import settings
 
 
 class ChargingSessionScanRequest(BaseModel):
-    """The scan of a charger's QR code that creates a PENDING session (CE-10).
+    """The scan of a charger's QR code that starts a charge (CHG-01, CE-10).
+
+    The QR content is vendor-open (CO-14), so the app sends what it read as
+    ``charger_code``: the charger's OCPP identity (its registered serial number
+    also matches). The scanning user pays from their own wallet (BL-13), and
+    the paying organization is the one they act for.
 
     Attributes:
-        station_id: UUID of the charger the QR code names.
-        organization_id: UUID of the organization that pays; internal staff
-            only, defaults to the organization the caller acts for.
-        vehicle_id: UUID of the truck being charged, if known (CE-13).
+        charger_code: What the QR code names: the charger's OCPP identity.
+        connector_number: The gun's number (its OCPP EVSE number) when the QR
+            names one; left out when the driver picks the gun on the charger's
+            screen (CO-14).
     """
 
-    station_id: UUID
-    organization_id: UUID | None = None
-    vehicle_id: UUID | None = None
+    charger_code: str = Field(..., min_length=1, max_length=255)
+    connector_number: int | None = Field(default=None, ge=1)
 
 
 class ChargingSessionScanResponse(BaseModel):
-    """The PENDING session a scan created.
+    """The PENDING session a scan created and the remote start queued for it.
 
     Attributes:
         session_id: UUID of the new session.
         station_id: UUID of the charger.
         status: Always ``PENDING``.
-        id_token: The single-use token for the remote start; shown only here.
+        id_token: The single-use token of the remote start; shown only here.
+        command_id: UUID of the queued ``REMOTE_START`` command, to follow its
+            outcome.
+        expires_at: When the PENDING session is abandoned if the charger has
+            not started.
     """
 
     session_id: UUID
     station_id: UUID
     status: SessionStatus
     id_token: str
+    command_id: UUID
+    expires_at: datetime
+
+
+class ChargingSessionStopRequest(BaseModel):
+    """A request to stop a running session from the app or the portal.
+
+    Attributes:
+        reason: Why, typed by staff; the app sends none (a fixed text is used).
+    """
+
+    reason: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ChargingSessionStopResponse(BaseModel):
+    """The stop command queued for a running session.
+
+    Attributes:
+        session_id: UUID of the session.
+        command_id: UUID of the queued ``REMOTE_STOP`` command.
+        status: The session status now (still ``ACTIVE``: the charger confirms
+            the stop with its own message).
+    """
+
+    session_id: UUID
+    command_id: UUID
+    status: SessionStatus
 
 
 class ChargingSessionResponse(BaseModel):
@@ -71,6 +106,9 @@ class ChargingSessionResponse(BaseModel):
         stop_reason: Why the session stopped, as reported, nullable.
         meter_stop_wh: The meter reading declared in the stop message, the
             billing figure (CE-12), nullable.
+        energy_delivered_wh: Stop reading minus start reading of a finished
+            session (CE-12), ``null`` without a stop reading; the detail read
+            also estimates it while the session runs.
         created_at: When the session was created: the scan time.
         updated_at: The time of the last update.
     """
@@ -91,6 +129,7 @@ class ChargingSessionResponse(BaseModel):
     meter_start_wh: Decimal | None
     stop_reason: str | None
     meter_stop_wh: Decimal | None
+    energy_delivered_wh: Decimal | None
     created_at: datetime
     updated_at: datetime
 
@@ -103,8 +142,9 @@ class ChargingSessionDetailResponse(ChargingSessionResponse):
 
     Attributes:
         energy_delivered_wh: Stop reading minus start reading; while the
-            session runs the newest outlet energy measurement stands in for
-            the stop reading. ``null`` without a start reading.
+            session runs (or the stop message carried no reading) the newest
+            outlet energy measurement stands in for the stop reading. ``null``
+            without a start reading.
         duration_seconds: ``ended_at - started_at``, or now - ``started_at``
             while the session is active; never negative; ``0`` before the
             start.
@@ -114,13 +154,15 @@ class ChargingSessionDetailResponse(ChargingSessionResponse):
             nullable (the latest so far while active).
         max_power_kw: Highest outlet ``Power.Active.Import`` sample in kW
             (stored in W, CE-14), nullable.
+        current_power_kw: Newest outlet ``Power.Active.Import`` sample in kW,
+            nullable: the live power of a running session.
     """
 
-    energy_delivered_wh: Decimal | None
     duration_seconds: int = Field(..., ge=0)
     soc_start_percent: float | None
     soc_end_percent: float | None
     max_power_kw: float | None
+    current_power_kw: float | None
 
 
 class ChargingSessionListResponse(BaseModel):

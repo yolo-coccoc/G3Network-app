@@ -100,12 +100,31 @@ def _patch_start(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tag", ["04AABBCCDD", "UNKNOWN-TAG", "0", "x" * 20])
-async def test_authorize_accepts_every_id_tag(tag: str) -> None:
-    """Decision D7: any tag is accepted; there is no tag registry yet."""
-    response = await _charge_point().on_authorize(id_tag=tag)
+@pytest.mark.parametrize("is_issued", [True, False])
+async def test_authorize_accepts_only_a_tag_a_scan_issued(
+    monkeypatch: pytest.MonkeyPatch, is_issued: bool
+) -> None:
+    """CE-11: Authorize is Accepted for an issued token and Invalid otherwise."""
+    asked: dict[str, Any] = {}
 
-    assert response.id_tag_info["status"] == AuthorizationStatus.accepted
+    async def fake_station(db: object, ocpp_identity: str) -> Any:
+        return STATION_ID
+
+    async def fake_valid(db: object, *, station_id: Any, id_token: str) -> bool:
+        asked.update(station_id=station_id, id_token=id_token)
+        return is_issued
+
+    monkeypatch.setattr(
+        ocpp_state_service, "resolve_station_id_by_identity", fake_station
+    )
+    monkeypatch.setattr(charging_service, "is_start_token_valid", fake_valid)
+
+    response = await _charge_point().on_authorize(id_tag="TAG-1")
+
+    assert response.id_tag_info["status"] == (
+        AuthorizationStatus.accepted if is_issued else AuthorizationStatus.invalid
+    )
+    assert asked == {"station_id": STATION_ID, "id_token": "TAG-1"}
 
 
 # --- StartTransaction ------------------------------------------------------------

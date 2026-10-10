@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 import app.api.fleet_visibility as fleet_visibility
 import app.api.membership_end_hooks as membership_end_hooks
+from app.api.charging_session_flow import router as charging_session_flow_router
 from app.api.vehicle_transfer import router as vehicle_transfer_router
 from app.domains.batteries.router import battery_models_router
 from app.domains.batteries.router import router as batteries_router
@@ -158,6 +159,7 @@ app.include_router(telematics_router, prefix="/api/v1/telematics")
 app.include_router(telemetry_router, prefix="/api/v1/telemetry")
 app.include_router(charging_stations_router, prefix="/api/v1")
 app.include_router(charging_sessions_router, prefix="/api/v1")
+app.include_router(charging_session_flow_router, prefix="/api/v1")
 app.include_router(notifications_router, prefix="/api/v1/notifications")
 app.include_router(drivers_router, prefix="/api/v1/drivers")
 app.include_router(driving_sessions_router, prefix="/api/v1/driving-sessions")

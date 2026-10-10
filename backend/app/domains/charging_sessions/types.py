@@ -200,6 +200,7 @@ class ChargingSessionListFilter:
         connector_id: Only sessions on this connector.
         organization_id: Only sessions paid by this organization.
         started_by: Only sessions started (scanned) by this user.
+        vehicle_id: Only sessions attributed to this truck (CHG-07).
         status: Only sessions in this lifecycle status.
         started_from: Only sessions with ``started_at >= started_from``
             (UTC, inclusive).
@@ -211,6 +212,7 @@ class ChargingSessionListFilter:
     connector_id: UUID | None = None
     organization_id: UUID | None = None
     started_by: UUID | None = None
+    vehicle_id: UUID | None = None
     status: SessionStatus | None = None
     started_from: datetime | None = None
     started_to: datetime | None = None

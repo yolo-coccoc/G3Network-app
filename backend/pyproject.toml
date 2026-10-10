@@ -313,6 +313,7 @@ type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
     "app.domains.billing.models",
+    "app.domains.billing.repository",
 ]
 allow_indirect_imports = true
 

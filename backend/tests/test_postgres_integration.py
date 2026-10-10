@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import asyncpg  # type: ignore[import-untyped]
@@ -24,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.api.charging_session_flow as charging_session_flow
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
@@ -53,12 +55,19 @@ import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
 from app.domains.batteries.models import BatteryModel, BatteryModelModel
 from app.domains.batteries.types import BatteryStatus
+from app.domains.billing.exceptions import InsufficientBalanceError
+from app.domains.charging_sessions.exceptions import ChargingSessionAlreadyOpenError
+from app.domains.charging_sessions.schemas import (
+    ChargingSessionScanRequest,
+    ChargingSessionStopRequest,
+)
 from app.domains.charging_sessions.types import EnergySeriesGranularity, SessionStatus
 from app.domains.charging_stations.exceptions import (
     ChargingLocationAccessConflictError,
     ChargingStationCommandConflictError,
     ChargingStationCommandInputError,
     ChargingStationNotFoundError,
+    ChargingStationOfflineError,
 )
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
@@ -3685,6 +3694,326 @@ async def test_gateway_command_loop_sends_queued_commands_and_writes_answers(
             )
         outcome, response_status, message_id = await wait_for_outcome(unsent.command_id)
         assert (outcome, response_status, message_id) == ("NOT_SENT", None, None)
+    finally:
+        gateway.terminate()
+        try:
+            gateway.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            gateway.kill()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole QR charge on PostgreSQL with a raw OCPP 1.6J charger (WP8, CHG-01..04).
+
+    Real gateway process, a raw WebSocket "charger": the scan checks the wallet
+    minimum, creates the PENDING session and queues a REMOTE_START that the
+    gateway's loop sends with the session token; Authorize accepts only that
+    token; StartTransaction with it turns the session ACTIVE; MeterValues feed
+    the live progress; the stop endpoint queues a REMOTE_STOP and the charger's
+    StopTransaction completes the session; the receipt and the user's history
+    read it. Then a rejected remote start abandons its session at once, and a
+    scan the charger never starts is swept to ABANDONED, after which its token
+    is refused.
+    """
+    port = _free_port()
+    environment = os.environ | {
+        "DATABASE_URL": temporary_database,
+        "CHARGING_OCPP_HOST": "127.0.0.1",
+        "CHARGING_OCPP_PORT": str(port),
+        "CHARGING_OCPP_COMMAND_POLL_SECONDS": "0.2",
+        "CHARGING_PENDING_SESSION_TIMEOUT_SECONDS": "6",
+        "CHARGING_SESSION_SWEEP_INTERVAL_SECONDS": "1",
+    }
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    await _provision_station(engine, "QR-16", [1])
+    await _provision_station(engine, "QR-OFFLINE", [1])
+    organization_id, user_id = await _provision_organization_and_user(engine)
+    driver = build_principal(
+        roles=frozenset({UserRole.DRIVER}),
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "app.domains.charging_stations.ocpp.entrypoint"],
+        cwd=_backend_root(),
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    async def next_call(charger: Any, action: str) -> list[Any]:
+        frame = json.loads(await asyncio.wait_for(charger.recv(), 10))
+        assert (frame[0], frame[2]) == (2, action), frame
+        return list(frame)
+
+    async def request(
+        charger: Any, message_id: str, action: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        await charger.send(json.dumps([2, message_id, action, payload]))
+        frame = json.loads(await asyncio.wait_for(charger.recv(), 10))
+        assert (frame[0], frame[1]) == (3, message_id), frame
+        return dict(frame[2])
+
+    async def command_outcome(command_id: UUID) -> str:
+        for _ in range(100):
+            async with engine.connect() as connection:
+                outcome = (
+                    await connection.execute(
+                        text(
+                            "SELECT outcome FROM charging_station_commands "
+                            "WHERE command_id = :c"
+                        ),
+                        {"c": command_id},
+                    )
+                ).scalar_one()
+            if outcome != "PENDING":
+                return str(outcome)
+            await asyncio.sleep(0.2)
+        raise AssertionError("the command was never answered")
+
+    async def session_status(session_id: UUID) -> str:
+        async with engine.connect() as connection:
+            return str(
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT status::text FROM charging_sessions "
+                            "WHERE session_id = :s"
+                        ),
+                        {"s": session_id},
+                    )
+                ).scalar_one()
+            )
+
+    def stamp(offset_seconds: int) -> str:
+        moment = datetime.now(timezone.utc) + timedelta(seconds=offset_seconds)
+        return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    scan_request = ChargingSessionScanRequest(charger_code="QR-16", connector_number=1)
+    try:
+        _wait_for_port(port)
+        async with websockets.connect(
+            f"ws://127.0.0.1:{port}/ocpp/QR-16",
+            subprotocols=["ocpp1.6"],  # type: ignore[list-item]
+        ) as charger:
+            await request(
+                charger,
+                "boot-1",
+                "BootNotification",
+                {"chargePointVendor": "V", "chargePointModel": "M"},
+            )
+            get_configuration = await next_call(charger, "GetConfiguration")
+            await charger.send(
+                json.dumps([3, get_configuration[1], {"configurationKey": []}])
+            )
+
+            # A charger that never connected cannot be scanned (offline).
+            async with session_factory.begin() as db:
+                with pytest.raises(ChargingStationOfflineError):
+                    await charging_session_flow.scan_charging_session_endpoint(
+                        ChargingSessionScanRequest(charger_code="QR-OFFLINE"),
+                        principal=driver,
+                        db_session=db,
+                    )
+
+            # The wallet minimum is read from the wallets table (BL-14).
+            monkeypatch.setattr(settings, "BILLING_MIN_BALANCE_VND", Decimal(50000))
+            async with session_factory.begin() as db:
+                with pytest.raises(InsufficientBalanceError):
+                    await charging_session_flow.scan_charging_session_endpoint(
+                        scan_request, principal=driver, db_session=db
+                    )
+            now = datetime.now(timezone.utc)
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "INSERT INTO wallets (wallet_id, user_id, balance, currency, "
+                        "status, created_at, updated_at) VALUES "
+                        "(:w, :u, 60000, 'VND', 'ACTIVE', :t, :t)"
+                    ),
+                    {"w": uuid4(), "u": user_id, "t": now},
+                )
+
+            # 1. The scan: PENDING session, token, REMOTE_START queued.
+            async with session_factory.begin() as db:
+                scan = await charging_session_flow.scan_charging_session_endpoint(
+                    scan_request, principal=driver, db_session=db
+                )
+            assert scan.status is SessionStatus.PENDING
+            remote_start = await next_call(charger, "RemoteStartTransaction")
+            assert remote_start[3]["idTag"] == scan.id_token
+            assert remote_start[3]["connectorId"] == 1
+            await charger.send(json.dumps([3, remote_start[1], {"status": "Accepted"}]))
+            assert await command_outcome(scan.command_id) == "ACCEPTED"
+            assert await session_status(scan.session_id) == "PENDING"
+
+            # A second scan while this one is open is refused.
+            async with session_factory.begin() as db:
+                with pytest.raises(ChargingSessionAlreadyOpenError):
+                    await charging_session_flow.scan_charging_session_endpoint(
+                        scan_request, principal=driver, db_session=db
+                    )
+
+            # 2. Authorize: only the token we issued.
+            wrong = await request(charger, "auth-1", "Authorize", {"idTag": "OTHER"})
+            assert wrong["idTagInfo"]["status"] == "Invalid"
+            right = await request(
+                charger, "auth-2", "Authorize", {"idTag": scan.id_token}
+            )
+            assert right["idTagInfo"]["status"] == "Accepted"
+
+            # 3. StartTransaction with the token turns the session ACTIVE.
+            invalid_start = await request(
+                charger,
+                "start-0",
+                "StartTransaction",
+                {
+                    "connectorId": 1,
+                    "idTag": "OTHER",
+                    "meterStart": 1000,
+                    "timestamp": stamp(0),
+                },
+            )
+            assert invalid_start["idTagInfo"]["status"] == "Invalid"
+            started = await request(
+                charger,
+                "start-1",
+                "StartTransaction",
+                {
+                    "connectorId": 1,
+                    "idTag": scan.id_token,
+                    "meterStart": 1000,
+                    "timestamp": stamp(0),
+                },
+            )
+            assert started["idTagInfo"]["status"] == "Accepted"
+            transaction_id = started["transactionId"]
+            assert await session_status(scan.session_id) == "ACTIVE"
+
+            # 4. MeterValues: live progress from the measurements.
+            await request(
+                charger,
+                "meter-1",
+                "MeterValues",
+                {
+                    "connectorId": 1,
+                    "transactionId": transaction_id,
+                    "meterValue": [
+                        {
+                            "timestamp": stamp(5),
+                            "sampledValue": [
+                                {
+                                    "value": "1250",
+                                    "measurand": "Energy.Active.Import.Register",
+                                    "unit": "Wh",
+                                },
+                                {"value": "60", "measurand": "SoC", "unit": "Percent"},
+                                {
+                                    "value": "90",
+                                    "measurand": "Power.Active.Import",
+                                    "unit": "kW",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            )
+            async with session_factory.begin() as db:
+                live = await charging_sessions_service.get_charging_session(
+                    db, scan.session_id, principal=driver
+                )
+            assert live.status is SessionStatus.ACTIVE
+            assert live.energy_delivered_wh == Decimal(250)
+            assert (live.soc_end_percent, live.current_power_kw) == (60.0, 90.0)
+
+            # 5. Stop from the app: REMOTE_STOP with the transaction ID.
+            async with session_factory.begin() as db:
+                stop = await charging_session_flow.stop_charging_session_endpoint(
+                    scan.session_id,
+                    ChargingSessionStopRequest(),
+                    principal=driver,
+                    db_session=db,
+                )
+            remote_stop = await next_call(charger, "RemoteStopTransaction")
+            assert remote_stop[3] == {"transactionId": transaction_id}
+            await charger.send(json.dumps([3, remote_stop[1], {"status": "Accepted"}]))
+            assert await command_outcome(stop.command_id) == "ACCEPTED"
+            await request(
+                charger,
+                "stop-1",
+                "StopTransaction",
+                {
+                    "meterStop": 1500,
+                    "timestamp": stamp(10),
+                    "transactionId": transaction_id,
+                    "reason": "Remote",
+                },
+            )
+            assert await session_status(scan.session_id) == "COMPLETED"
+
+            # 6. Receipt and history.
+            async with session_factory.begin() as db:
+                receipt = (
+                    await charging_session_flow.get_charging_session_receipt_endpoint(
+                        scan.session_id, principal=driver, db_session=db
+                    )
+                )
+                history = await charging_sessions_service.list_my_charging_sessions(
+                    db, principal=driver, page=1, page_size=10
+                )
+            assert receipt.energy_delivered_wh == Decimal(500)
+            assert (receipt.location_name, receipt.gun_number) == ("IT location", 1)
+            assert receipt.stop_reason == "Remote"
+            assert receipt.bill_status is None and receipt.total_amount is None
+            assert [item.session_id for item in history.items] == [scan.session_id]
+            assert history.items[0].energy_delivered_wh == Decimal(500)
+
+            # 7. A rejected remote start abandons its session at once.
+            async with session_factory.begin() as db:
+                rejected_scan = (
+                    await charging_session_flow.scan_charging_session_endpoint(
+                        scan_request, principal=driver, db_session=db
+                    )
+                )
+            rejected_start = await next_call(charger, "RemoteStartTransaction")
+            await charger.send(
+                json.dumps([3, rejected_start[1], {"status": "Rejected"}])
+            )
+            assert await command_outcome(rejected_scan.command_id) == "REJECTED"
+            assert await session_status(rejected_scan.session_id) == "ABANDONED"
+
+            # 8. An accepted remote start nobody follows up is swept, and its
+            #    token no longer starts a charge.
+            async with session_factory.begin() as db:
+                idle_scan = await charging_session_flow.scan_charging_session_endpoint(
+                    scan_request, principal=driver, db_session=db
+                )
+            idle_start = await next_call(charger, "RemoteStartTransaction")
+            await charger.send(json.dumps([3, idle_start[1], {"status": "Accepted"}]))
+            for _ in range(60):
+                if await session_status(idle_scan.session_id) == "ABANDONED":
+                    break
+                await asyncio.sleep(0.5)
+            assert await session_status(idle_scan.session_id) == "ABANDONED"
+            late = await request(
+                charger,
+                "start-late",
+                "StartTransaction",
+                {
+                    "connectorId": 1,
+                    "idTag": idle_scan.id_token,
+                    "meterStart": 1500,
+                    "timestamp": stamp(30),
+                },
+            )
+            assert late["idTagInfo"]["status"] == "Invalid"
     finally:
         gateway.terminate()
         try:

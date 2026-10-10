@@ -44,11 +44,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_session_repository
-import app.domains.identity.service as identity_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionInputError,
     ChargingSessionNotFoundError,
     ChargingSessionStateError,
+    ChargingSessionStopDeniedError,
     ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import (
@@ -63,8 +63,6 @@ from app.domains.charging_sessions.schemas import (
     ChargingSessionMeterValueListResponse,
     ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
-    ChargingSessionScanRequest,
-    ChargingSessionScanResponse,
     StationEnergySeriesBucketResponse,
     StationEnergySeriesResponse,
     StationEnergySummaryResponse,
@@ -204,6 +202,19 @@ def _validate_measurement(sample: MeasurementInput) -> MeasurementInput:
         raise ChargingSessionInputError("value must be a finite Decimal")
     return dataclasses.replace(
         sample, sampled_at=_normalize_utc(sample.sampled_at, "sampled_at")
+    )
+
+
+def _pending_window_start() -> datetime:
+    """Tell the oldest scan time a PENDING session may still have (CE-10, CE-11).
+
+    Returns:
+        Now minus ``CHARGING_PENDING_SESSION_TIMEOUT_SECONDS``: a scan older
+        than this is expired even before the sweep marks it ABANDONED, so its
+        token no longer starts a charge.
+    """
+    return utc_now() - timedelta(
+        seconds=settings.CHARGING_PENDING_SESSION_TIMEOUT_SECONDS
     )
 
 
@@ -456,11 +467,11 @@ async def _build_charging_session_detail_response(
 
     Returns:
         The session response plus the delivered energy, ``duration_seconds``,
-        the first/last SoC and the maximum outlet import power in kW
+        the first/last SoC and the maximum and newest outlet import power in kW
         (``None`` where the session has no such sample).
 
     Side Effects:
-        Runs up to four measurement queries; does not commit or roll back.
+        Runs up to five measurement queries; does not commit or roll back.
     """
     soc_start = await charging_session_repository.find_first_measurement_value(
         db, session_record.session_id, measurand=_SOC_MEASURAND
@@ -474,9 +485,15 @@ async def _build_charging_session_detail_response(
         measurand=_POWER_ACTIVE_IMPORT_MEASURAND,
         measurement_location=MEASUREMENT_LOCATION_OUTLET,
     )
+    current_power_w = await charging_session_repository.find_last_measurement_value(
+        db,
+        session_record.session_id,
+        measurand=_POWER_ACTIVE_IMPORT_MEASURAND,
+        measurement_location=MEASUREMENT_LOCATION_OUTLET,
+    )
     session_response = ChargingSessionResponse.model_validate(session_record)
     return ChargingSessionDetailResponse(
-        **session_response.model_dump(),
+        **session_response.model_dump(exclude={"energy_delivered_wh"}),
         energy_delivered_wh=await _resolve_energy_delivered_wh(db, session_record),
         duration_seconds=calculate_session_duration_seconds(
             session_record, now=utc_now()
@@ -485,6 +502,9 @@ async def _build_charging_session_detail_response(
         soc_end_percent=float(soc_end) if soc_end is not None else None,
         max_power_kw=(
             float(max_power_w / _W_PER_KW) if max_power_w is not None else None
+        ),
+        current_power_kw=(
+            float(current_power_w / _W_PER_KW) if current_power_w is not None else None
         ),
     )
 
@@ -508,7 +528,7 @@ async def get_charging_session(
         ChargingSessionNotFoundError: If the session does not exist.
 
     Side Effects:
-        Performs one aggregate query and three measurement queries; does not
+        Performs one aggregate query and four measurement queries; does not
         commit or roll back.
     """
     session_record = await _get_charging_session_record(db, session_id, principal)
@@ -524,6 +544,8 @@ async def list_charging_sessions(
     station_id: UUID | None = None,
     connector_id: UUID | None = None,
     organization_id: UUID | None = None,
+    vehicle_id: UUID | None = None,
+    started_by: UUID | None = None,
     status: SessionStatus | None = None,
     started_from: datetime | None = None,
     started_to: datetime | None = None,
@@ -541,6 +563,9 @@ async def list_charging_sessions(
         connector_id: Only sessions on this connector, if given.
         organization_id: Only sessions paid by this organization, if given; a
             caller who cannot reach that organization gets an empty page.
+        vehicle_id: Only sessions attributed to this truck, if given (CHG-07).
+        started_by: Only sessions scanned by this user (the driver at the
+            wheel), if given; a DRIVER-only caller always gets their own.
         status: Only sessions in this status, if given.
         started_from: Only sessions with ``started_at >= started_from``;
             must carry a timezone.
@@ -584,7 +609,78 @@ async def list_charging_sessions(
         station_id=station_id,
         connector_id=connector_id,
         organization_id=scope if scope is not None else organization_id,
-        started_by=_session_started_by_scope(principal),
+        started_by=_session_started_by_scope(principal) or started_by,
+        vehicle_id=vehicle_id,
+        status=status,
+        started_from=normalized_from,
+        started_to=normalized_to,
+    )
+    return await _build_page_response(
+        ChargingSessionListResponse,
+        page=page,
+        page_size=page_size,
+        list_rows=lambda page_window: charging_session_repository.list_sessions(
+            db,
+            filters=filters,
+            offset=page_window.offset,
+            limit=page_window.page_size,
+        ),
+        count_rows=lambda: charging_session_repository.count_sessions(db, filters),
+        to_item=ChargingSessionResponse.model_validate,
+    )
+
+
+async def list_my_charging_sessions(
+    db: AsyncSession,
+    *,
+    principal: Principal,
+    page: int,
+    page_size: int,
+    vehicle_id: UUID | None = None,
+    status: SessionStatus | None = None,
+    started_from: datetime | None = None,
+    started_to: datetime | None = None,
+) -> ChargingSessionListResponse:
+    """List the caller's own charging history, newest first (CHG-04).
+
+    The history follows the person, not the organization they act for now: the
+    scanning user's own wallet pays (BL-13), so every session they started is
+    listed whichever organization it was recorded under.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        principal: The caller; only sessions they started are listed.
+        page: The page, starting at one.
+        page_size: The page size.
+        vehicle_id: Only sessions attributed to this truck, if given.
+        status: Only sessions in this status, if given.
+        started_from: Inclusive lower bound on ``started_at`` (timezone needed).
+        started_to: Exclusive upper bound on ``started_at`` (timezone needed).
+
+    Returns:
+        The caller's sessions and pagination metadata.
+
+    Raises:
+        ChargingSessionInputError: A time bound lacks a timezone or
+            ``started_to`` is not after ``started_from``.
+    """
+    normalized_from = (
+        _normalize_utc(started_from, "started_from")
+        if started_from is not None
+        else None
+    )
+    normalized_to = (
+        _normalize_utc(started_to, "started_to") if started_to is not None else None
+    )
+    if (
+        normalized_from is not None
+        and normalized_to is not None
+        and normalized_to <= normalized_from
+    ):
+        raise ChargingSessionInputError("started_to must be after started_from")
+    filters = ChargingSessionListFilter(
+        started_by=principal.user_id,
+        vehicle_id=vehicle_id,
         status=status,
         started_from=normalized_from,
         started_to=normalized_to,
@@ -733,9 +829,9 @@ async def create_pending_session(
 
     The token is sent to the charger in the remote start; the charger echoes it
     in its start message, which is how that message finds this row (CE-11).
-    Sending the remote start, checking the scanning user's wallet and taking
-    the truck from the user's driving session come with the QR start flow
-    (WP8); this function is the row creation they build on.
+    The checks before a scan (the charger, the wallet minimum, the truck from
+    the driving session) and the remote start belong to the start flow in
+    ``app/api/charging_session_flow.py``, which calls this function last.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -765,50 +861,6 @@ async def create_pending_session(
         session_id=session_record.session_id,
         station_id=station_id,
         id_token=id_token,
-    )
-
-
-async def scan_charging_session(
-    db: AsyncSession,
-    scan_request: ChargingSessionScanRequest,
-    *,
-    principal: Principal,
-) -> ChargingSessionScanResponse:
-    """Create the PENDING session of a scan made by the authenticated caller.
-
-    The payer is the organization the caller acts for (internal staff may name
-    another one) and the scanning user is the caller (CE-10).
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        scan_request: The charger and optional truck / paying organization.
-        principal: The caller.
-
-    Returns:
-        The new session's ID, status ``PENDING`` and single-use token.
-
-    Raises:
-        OrganizationNotFoundError: The named paying organization does not
-            exist or is out of the caller's reach.
-
-    Side Effects:
-        One insert (see ``create_pending_session``).
-    """
-    paying_organization_id = await identity_service.resolve_organization_for_new_record(
-        db, principal, scan_request.organization_id
-    )
-    pending_session = await create_pending_session(
-        db,
-        station_id=scan_request.station_id,
-        organization_id=paying_organization_id,
-        started_by=principal.user_id,
-        vehicle_id=scan_request.vehicle_id,
-    )
-    return ChargingSessionScanResponse(
-        session_id=pending_session.session_id,
-        station_id=pending_session.station_id,
-        status=SessionStatus.PENDING,
-        id_token=pending_session.id_token,
     )
 
 
@@ -877,7 +929,7 @@ async def activate_pending_session(
     if validated_meter_start_wh is None:
         raise ChargingSessionInputError("meter_start_wh is required to start a session")
     session_record = await charging_session_repository.find_pending_session_by_token(
-        db, station_id, id_token
+        db, station_id, id_token, created_after=_pending_window_start()
     )
     if session_record is None:
         # The token is deliberately left out of the message and the log (IS-07).
@@ -1417,6 +1469,127 @@ async def get_station_energy_series(
             )
         ],
     )
+
+
+async def has_open_session_by_user(db: AsyncSession, user_id: UUID) -> bool:
+    """Tell whether a person already has a charge open (CHG-01).
+
+    A person pays from one wallet and may run one charge at a time: an
+    ``ACTIVE`` session, or a ``PENDING`` scan still inside its window, counts.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        user_id: The scanning user.
+
+    Returns:
+        ``True`` when such a session exists.
+    """
+    open_count = await charging_session_repository.count_open_sessions_by_user(
+        db, user_id, pending_created_after=_pending_window_start()
+    )
+    return open_count > 0
+
+
+async def is_start_token_valid(
+    db: AsyncSession, *, station_id: UUID, id_token: str
+) -> bool:
+    """Tell whether a charger's ``Authorize`` presents a token we issued (CE-11).
+
+    Used by both OCPP adapters: a token is valid when a scan issued it for this
+    charger and the session is still waiting (inside its window) or running
+    (the same token may be shown again to stop at the screen).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: The charger that sent the message.
+        id_token: The presented token; never log it (IS-07).
+
+    Returns:
+        ``True`` for a token of a PENDING or ACTIVE session of that charger.
+    """
+    if not id_token or len(id_token) > ID_TOKEN_MAX_LENGTH:
+        return False
+    token_count = await charging_session_repository.count_sessions_with_token(
+        db, station_id, id_token, pending_created_after=_pending_window_start()
+    )
+    return token_count > 0
+
+
+async def abandon_pending_session(db: AsyncSession, session_id: UUID) -> bool:
+    """End a scan that will never start: the session becomes ``ABANDONED``.
+
+    Called by the OCPP gateway when the remote start of the session ended
+    ``REJECTED``, ``ERROR``, ``TIMEOUT`` or ``NOT_SENT`` (CE-10). Idempotent: a
+    session that is no longer ``PENDING`` (the charger started anyway) is left
+    alone. Why it was abandoned stays on the command's record (CS-20).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        session_id: The session whose start failed.
+
+    Returns:
+        ``True`` when a PENDING session was abandoned.
+
+    Side Effects:
+        One UPDATE in the caller's transaction.
+    """
+    return await charging_session_repository.abandon_pending_session(db, session_id)
+
+
+async def abandon_expired_pending_sessions(db: AsyncSession) -> int:
+    """Abandon every PENDING session whose scan is older than the window (CE-10).
+
+    The window is ``CHARGING_PENDING_SESSION_TIMEOUT_SECONDS`` counted from the
+    scan (``created_at``). The OCPP gateway's loop calls this every
+    ``CHARGING_SESSION_SWEEP_INTERVAL_SECONDS``.
+
+    Args:
+        db: The async session owned by the entry boundary.
+
+    Returns:
+        The number of sessions abandoned.
+
+    Side Effects:
+        One UPDATE in the caller's transaction.
+    """
+    return await charging_session_repository.abandon_pending_sessions_created_before(
+        db, _pending_window_start()
+    )
+
+
+async def authorize_session_stop(
+    db: AsyncSession, session_id: UUID, *, principal: Principal
+) -> ChargingSessionResponse:
+    """Check that the caller may stop a session now and return it (CHG-01).
+
+    Only the person who started the charge (the payer, BL-13) or internal staff
+    may stop it, and only while it is ``ACTIVE``.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session to stop.
+        principal: The caller.
+
+    Returns:
+        The session, with the gun and transaction the stop command needs.
+
+    Raises:
+        ChargingSessionNotFoundError: The session does not exist or is out of
+            the caller's reach.
+        ChargingSessionStopDeniedError: The caller neither started the session
+            nor is internal staff.
+        ChargingSessionStateError: The session is not ``ACTIVE``.
+    """
+    session_record = await _get_charging_session_record(db, session_id, principal)
+    if session_record.started_by != principal.user_id and not principal.is_internal:
+        raise ChargingSessionStopDeniedError(
+            "Only the person who started this charge, or our staff, may stop it"
+        )
+    if session_record.status is not SessionStatus.ACTIVE:
+        raise ChargingSessionStateError(
+            f"Session '{session_id}' is {session_record.status.value}, not active"
+        )
+    return ChargingSessionResponse.model_validate(session_record)
 
 
 async def allocate_ocpp16_transaction_id(db: AsyncSession) -> int:
