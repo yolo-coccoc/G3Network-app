@@ -84,7 +84,6 @@ def test_energy_register_keeps_its_reading_context() -> None:
         {"value": "1", "unit": "MWh"},
         {"value": "abc"},  # unreadable
         {"value": None},
-        {"value": "1", "format": "SignedData"},  # cannot be interpreted
     ],
 )
 def test_energy_register_that_cannot_be_read_fails_loudly(
@@ -93,6 +92,21 @@ def test_energy_register_that_cannot_be_read_fails_loudly(
     """A register reading that cannot be interpreted is never silently dropped."""
     with pytest.raises(ValueError):
         extract_v16_measurements([_group(sampled_value)])
+
+
+def test_signed_energy_register_is_skipped_and_counted() -> None:
+    """A SignedData reading is no number: it is skipped, never fails the message (RV-BL4)."""
+    result = extract_v16_measurements(
+        [
+            _group(
+                {"value": "AP;0;3;ALCV3D", "format": "SignedData"},
+                {"value": "5", "unit": "kWh"},
+            )
+        ]
+    )
+
+    assert [sample.value_wh for sample in result.energy] == [Decimal(5000)]
+    assert result.skipped == {"signed_data": 1}
 
 
 # --- extraction: everything else -------------------------------------------------

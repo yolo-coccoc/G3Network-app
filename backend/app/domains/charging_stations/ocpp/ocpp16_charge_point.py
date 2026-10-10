@@ -40,6 +40,7 @@ from app.domains.charging_stations.ocpp.command_types import (
     OutboundCommand,
     to_command_result,
 )
+from app.domains.charging_stations.ocpp.library_logging import OCPP_LIBRARY_LOGGER
 from app.domains.charging_stations.ocpp.ocpp16_measurements import (
     V16Extraction,
     extract_v16_measurements,
@@ -104,14 +105,14 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
 
         Side Effects:
             Initializes the ``python-ocpp`` base class state, attaches the
-            module logger, and sets the response timeout for requests this
+            frame-redacting library logger (RV-CS1), and sets the response timeout for requests this
             backend sends (``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS``).
         """
         super().__init__(
             identity,
             connection,
             response_timeout=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS,
-            logger=logger,
+            logger=OCPP_LIBRARY_LOGGER,
         )
         self.session_factory = session_factory
         self._configuration_task: asyncio.Task[None] | None = None
@@ -357,6 +358,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             number is then skipped, which is harmless).
         """
         started_at = parse_ocpp_timestamp(timestamp)
+        station_id: UUID | None = None
         try:
             async with self.session_factory.begin() as db:
                 (
@@ -391,6 +393,16 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     meter_start_wh=to_decimal(meter_start, "meter_start"),
                 )
         except ChargingSessionTokenError:
+            retried_transaction_id = await self._find_transaction_started_by_token(
+                station_id, id_tag
+            )
+            if retried_transaction_id is not None:
+                # The charger sent the start again because it never got our
+                # answer: give it the transaction identity it was given before.
+                return call_result.StartTransaction(
+                    transaction_id=retried_transaction_id,
+                    id_tag_info={"status": AuthorizationStatus.accepted},
+                )
             logger.warning(
                 "StartTransaction refused: no scan issued its token",
                 extra={"ocpp_identity": self.id, "ocpp_connector_id": connector_id},
@@ -403,6 +415,30 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             transaction_id=transaction_id,
             id_tag_info={"status": AuthorizationStatus.accepted},
         )
+
+    async def _find_transaction_started_by_token(
+        self, station_id: UUID | None, id_tag: str
+    ) -> int | None:
+        """Look up the transaction a token already started on this charger.
+
+        Args:
+            station_id: The charger's internal ID, or ``None`` when the
+                message failed before the topology was resolved.
+            id_tag: The token of the start message; never log it (IS-07).
+
+        Returns:
+            The 1.6J ``transactionId`` already given for the token, or
+            ``None`` when no ACTIVE session holds it.
+        """
+        if station_id is None:
+            return None
+        async with self.session_factory.begin() as db:
+            started = await charging_sessions_service.find_started_session_by_token(
+                db, station_id=station_id, id_token=id_tag
+            )
+        if started is None or not started.ocpp_transaction_id.isdigit():
+            return None
+        return int(started.ocpp_transaction_id)
 
     @on(Action.stop_transaction, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_stop_transaction(

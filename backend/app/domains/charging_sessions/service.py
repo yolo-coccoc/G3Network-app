@@ -90,6 +90,7 @@ from app.domains.charging_sessions.types import (
     SessionEndedEvent,
     SessionEndedHook,
     SessionStatus,
+    StartedSessionReference,
     StationEnergyTotal,
     TransactionIngestResult,
     TransactionSessionReference,
@@ -1004,6 +1005,37 @@ async def activate_pending_session(
     _touch_session(session_record)
     return TransactionIngestResult(
         session_id=session_record.session_id, status=session_record.status
+    )
+
+
+async def find_started_session_by_token(
+    db: AsyncSession, *, station_id: UUID, id_token: str
+) -> StartedSessionReference | None:
+    """Find the session a token already started on a charger (RV-CS3).
+
+    A charger that never got the answer to its ``StartTransaction`` sends it
+    again. The token then matches no PENDING session, but the session it
+    started is ACTIVE: the retry must get the same transaction identity back,
+    or the charger adopts ``0``, its stop finds nothing and the session never
+    completes.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger that sent the message.
+        id_token: The token the message carries (never logged, IS-07).
+
+    Returns:
+        The ACTIVE session's ID and transaction identity, or ``None`` when no
+        such session exists.
+    """
+    session_record = await charging_session_repository.find_active_session_by_token(
+        db, station_id, id_token
+    )
+    if session_record is None or session_record.ocpp_transaction_id is None:
+        return None
+    return StartedSessionReference(
+        session_id=session_record.session_id,
+        ocpp_transaction_id=session_record.ocpp_transaction_id,
     )
 
 

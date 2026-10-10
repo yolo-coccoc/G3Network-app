@@ -92,7 +92,14 @@ def _patch_start(
     monkeypatch.setattr(
         charging_service, "allocate_ocpp16_transaction_id", fake_allocate
     )
+
+    async def fake_find_started(db: object, **kwargs: Any) -> None:
+        return None
+
     monkeypatch.setattr(charging_service, "activate_pending_session", fake_ingest)
+    monkeypatch.setattr(
+        charging_service, "find_started_session_by_token", fake_find_started
+    )
     return record
 
 

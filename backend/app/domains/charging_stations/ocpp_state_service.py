@@ -144,7 +144,7 @@ async def resolve_ocpp_topology(
     db: AsyncSession,
     ocpp_identity: str,
     ocpp_evse_id: int,
-    ocpp_connector_id: int,
+    ocpp_connector_id: int | None,
 ) -> tuple[UUID, UUID, UUID]:
     """Resolve an OCPP station/EVSE/connector identity into internal IDs.
 
@@ -152,7 +152,9 @@ async def resolve_ocpp_topology(
         db: Async session owned by the OCPP entry boundary.
         ocpp_identity: Station identity from the WebSocket path.
         ocpp_evse_id: EVSE ID in the OCPP message.
-        ocpp_connector_id: Connector ID in the OCPP message.
+        ocpp_connector_id: Connector ID in the OCPP message; ``None`` when the
+            message omitted it (``EVSEType.connectorId`` is optional in
+            2.0.1), which means the EVSE's single connector (RV-CS2).
 
     Returns:
         Tuple ``(station_id, evse_id, connector_id)`` to pass to the
@@ -174,6 +176,15 @@ async def resolve_ocpp_topology(
         raise ChargingEvseNotFoundError(
             f"OCPP EVSE '{ocpp_evse_id}' not found in station"
         )
+    if ocpp_connector_id is None:
+        connectors = await charging_stations_repository.list_charging_connectors(
+            db, evse_id=evse.evse_id, offset=0, limit=2
+        )
+        if len(connectors) != 1:
+            raise ChargingConnectorNotFoundError(
+                "The message names no connector and the EVSE does not have exactly one"
+            )
+        return station.station_id, evse.evse_id, connectors[0].connector_id
     connector = await charging_stations_repository.get_connector_by_identity(
         db, evse.evse_id, ocpp_connector_id, include_deleted=False
     )

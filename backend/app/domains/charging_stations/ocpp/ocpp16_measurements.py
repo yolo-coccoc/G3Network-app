@@ -112,8 +112,8 @@ def _energy_value_wh(sampled_value: OcppPayload) -> Decimal:
         The reading in Wh.
 
     Raises:
-        ValueError: If the sample is signed data, its unit is neither Wh nor
-            kWh, or its value is unreadable.
+        ValueError: If the sample is signed data (callers skip those first),
+            its unit is neither Wh nor kWh, or its value is unreadable.
     """
     if (sampled_value.get("format") or "Raw") != "Raw":
         raise ValueError("Signed-data energy register readings are not supported")
@@ -151,6 +151,11 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
             context = sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT
             location = sampled_value.get("location") or DEFAULT_MEASUREMENT_LOCATION
             if measurand == ENERGY_ACTIVE_IMPORT_REGISTER:
+                if (sampled_value.get("format") or "Raw") != "Raw":
+                    # A signed (SignedData) reading cannot be read as a number;
+                    # the session still completes from ``meterStop`` (RV-BL4).
+                    skipped["signed_data"] += 1
+                    continue
                 energy.append(
                     MeterSampleInput(
                         sampled_at=sampled_at,

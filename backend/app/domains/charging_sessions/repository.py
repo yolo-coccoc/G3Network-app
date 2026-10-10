@@ -97,6 +97,38 @@ async def find_pending_session_by_token(
     return query_result.scalar_one_or_none()
 
 
+async def find_active_session_by_token(
+    db: AsyncSession, station_id: UUID, id_token: str
+) -> ChargingSessionModel | None:
+    """Find the ACTIVE session a charger already started with a token (RV-CS3).
+
+    Used when a start message arrives again after its answer was lost: the
+    token no longer matches a PENDING session, but the session it started is
+    ACTIVE and already holds a transaction identity.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        station_id: UUID of the charger that sent the start message.
+        id_token: The token the message carries.
+
+    Returns:
+        The newest ACTIVE session of that charger holding the token, or
+        ``None``.
+    """
+    query_result = await db.execute(
+        select(ChargingSessionModel)
+        .where(
+            ChargingSessionModel.station_id == station_id,
+            ChargingSessionModel.id_token == id_token,
+            ChargingSessionModel.status == SessionStatus.ACTIVE,
+            ChargingSessionModel.ocpp_transaction_id.is_not(None),
+        )
+        .order_by(ChargingSessionModel.created_at.desc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
 async def count_sessions_with_token(
     db: AsyncSession,
     station_id: UUID,

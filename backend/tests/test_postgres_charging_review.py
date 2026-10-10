@@ -364,10 +364,6 @@ async def test_a_start_and_an_abandon_of_one_scan_never_both_win(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS3: a retried 1.6J StartTransaction is answered Invalid / id 0",
-)
 async def test_a_retried_1_6_start_transaction_gets_the_same_transaction_id(
     temporary_database: str,
 ) -> None:

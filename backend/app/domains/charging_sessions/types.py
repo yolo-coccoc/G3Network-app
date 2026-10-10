@@ -198,6 +198,20 @@ class TransactionSessionReference:
 
 
 @dataclass(frozen=True, slots=True)
+class StartedSessionReference:
+    """A session a start message's token already started (a retried start).
+
+    Attributes:
+        session_id: The UUID of the ACTIVE session.
+        ocpp_transaction_id: The transaction identity already given to the
+            charger, as stored (a 1.6J number as text).
+    """
+
+    session_id: UUID
+    ocpp_transaction_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class SessionCommandReference:
     """What the OCPP gateway needs from a session to send a remote start or stop.
 

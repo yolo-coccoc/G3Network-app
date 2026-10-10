@@ -162,5 +162,7 @@ def test_parse_ocpp_evse_reference_reads_dict_payload() -> None:
     assert parse_ocpp_evse_reference({"id": 1, "connector_id": 2}) == (1, 2)
     with pytest.raises(ValueError):
         parse_ocpp_evse_reference(None)
+    # connectorId is optional in 2.0.1 (RV-CS2): the EVSE alone is a reference.
+    assert parse_ocpp_evse_reference({"id": 1}) == (1, None)
     with pytest.raises(ValueError):
-        parse_ocpp_evse_reference({"id": 1})
+        parse_ocpp_evse_reference({"connector_id": 1})

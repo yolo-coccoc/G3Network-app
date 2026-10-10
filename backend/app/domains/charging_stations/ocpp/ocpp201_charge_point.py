@@ -41,7 +41,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions.exceptions import ChargingSessionTokenError
+from app.domains.charging_sessions.exceptions import (
+    ChargingSessionNotFoundError,
+    ChargingSessionStateError,
+    ChargingSessionTokenError,
+)
 from app.domains.charging_sessions.types import (
     DEFAULT_MEASUREMENT_CONTEXT,
     DEFAULT_MEASUREMENT_LOCATION,
@@ -49,12 +53,14 @@ from app.domains.charging_sessions.types import (
     STOP_REASON_MAX_LENGTH,
     MeasurementInput,
     MeterSampleInput,
+    SessionStatus,
 )
 from app.domains.charging_stations.ocpp.command_types import (
     CommandResult,
     OutboundCommand,
     to_command_result,
 )
+from app.domains.charging_stations.ocpp.library_logging import OCPP_LIBRARY_LOGGER
 from app.domains.charging_stations.ocpp.measurement_units import (
     KNOWN_MEASURAND_UNITS,
     convert_measurement,
@@ -261,7 +267,7 @@ def parse_ocpp_transaction_id(transaction_info: OcppPayload) -> str:
     return str(transaction_id)
 
 
-def parse_ocpp_evse_reference(evse: OcppPayload | None) -> tuple[int, int]:
+def parse_ocpp_evse_reference(evse: OcppPayload | None) -> tuple[int, int | None]:
     """Read the OCPP EVSE and connector IDs out of a raw ``evse`` payload.
 
     Args:
@@ -269,14 +275,17 @@ def parse_ocpp_evse_reference(evse: OcppPayload | None) -> tuple[int, int]:
             plain dict - see the module docstring.
 
     Returns:
-        A ``(ocpp_evse_id, ocpp_connector_id)`` pair.
+        A ``(ocpp_evse_id, ocpp_connector_id)`` pair; the connector is
+        ``None`` when the payload omits it (``connectorId`` is optional in
+        2.0.1 and then means the EVSE's single connector).
 
     Raises:
-        ValueError: If the payload is missing the EVSE or the connector.
+        ValueError: If the payload is missing the EVSE.
     """
-    if evse is None or evse.get("id") is None or evse.get("connector_id") is None:
-        raise ValueError("TransactionEvent must have an EVSE and connector")
-    return int(evse["id"]), int(evse["connector_id"])
+    if evse is None or evse.get("id") is None:
+        raise ValueError("TransactionEvent must have an EVSE")
+    connector_id = evse.get("connector_id")
+    return int(evse["id"]), None if connector_id is None else int(connector_id)
 
 
 class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
@@ -323,7 +332,7 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
             identity,
             connection,
             response_timeout=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS,
-            logger=logger,
+            logger=OCPP_LIBRARY_LOGGER,
         )
         self.session_factory = session_factory
         self._session_by_evse: dict[int, UUID] = {}
@@ -517,41 +526,69 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
         energy_samples = extract_meter_samples(meter_value) if meter_value else []
         other_measurements = extract_measurements(meter_value) if meter_value else []
         transaction_id = parse_ocpp_transaction_id(transaction_info)
-        ocpp_evse_id, ocpp_connector_id = parse_ocpp_evse_reference(evse)
+        is_start = event_type == TransactionEventEnumType.started
+        # ``evse`` is required only on the first event of a transaction: a
+        # later one may omit it, and its gun then comes from the session
+        # (RV-CS2).
+        ocpp_evse_id: int | None = None
+        ocpp_connector_id: int | None = None
+        if is_start or evse is not None:
+            ocpp_evse_id, ocpp_connector_id = parse_ocpp_evse_reference(evse)
         session_id: UUID
         try:
             async with self.session_factory.begin() as db:
-                (
-                    station_id,
-                    evse_uuid,
-                    connector_uuid,
-                ) = await ocpp_state_service.resolve_ocpp_topology(
-                    db, self.id, ocpp_evse_id, ocpp_connector_id
-                )
-                if event_type == TransactionEventEnumType.started:
+                if is_start:
+                    assert ocpp_evse_id is not None
+                    (
+                        station_id,
+                        evse_uuid,
+                        connector_uuid,
+                    ) = await ocpp_state_service.resolve_ocpp_topology(
+                        db, self.id, ocpp_evse_id, ocpp_connector_id
+                    )
                     token = (id_token or {}).get("id_token")
                     if not token:
                         raise ChargingSessionTokenError(
                             "The start event carries no idToken"
                         )
-                    result = await charging_sessions_service.activate_pending_session(
-                        db,
-                        station_id=station_id,
-                        evse_id=evse_uuid,
-                        connector_id=connector_uuid,
-                        id_token=str(token),
-                        transaction_id=transaction_id,
-                        started_at=event_timestamp,
-                        meter_start_wh=(
-                            energy_samples[0].value_wh if energy_samples else None
-                        ),
-                    )
-                    session_id = result.session_id
+                    try:
+                        result = (
+                            await charging_sessions_service.activate_pending_session(
+                                db,
+                                station_id=station_id,
+                                evse_id=evse_uuid,
+                                connector_id=connector_uuid,
+                                id_token=str(token),
+                                transaction_id=transaction_id,
+                                started_at=event_timestamp,
+                                meter_start_wh=(
+                                    energy_samples[0].value_wh
+                                    if energy_samples
+                                    else None
+                                ),
+                            )
+                        )
+                        session_id = result.session_id
+                    except ChargingSessionTokenError:
+                        # A start sent again after its answer was lost: the
+                        # session with this transaction is already ACTIVE, so
+                        # the retry is accepted (RV-CS3).
+                        started = await self._find_active_session(
+                            db, station_id, transaction_id
+                        )
+                        if started is None:
+                            raise
+                        session_id = started
                     if other_measurements:
                         await charging_sessions_service.ingest_measurements(
                             db, session_id=session_id, samples=other_measurements
                         )
                 else:
+                    station_id = (
+                        await ocpp_state_service.resolve_station_id_by_identity(
+                            db, self.id
+                        )
+                    )
                     reference = (
                         await charging_sessions_service.resolve_session_by_transaction(
                             db, station_id=station_id, transaction_id=transaction_id
@@ -570,8 +607,8 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                         await charging_sessions_service.complete_session(
                             db,
                             station_id=station_id,
-                            evse_id=evse_uuid,
-                            connector_id=connector_uuid,
+                            evse_id=reference.evse_id,
+                            connector_id=reference.connector_id,
                             transaction_id=transaction_id,
                             ended_at=event_timestamp,
                             stop_reason=(
@@ -594,10 +631,36 @@ class OCPP201ChargePoint(ChargePoint):  # type: ignore[misc]
                 id_token_info={"status": AuthorizationStatusEnumType.invalid}
             )
         if event_type == TransactionEventEnumType.ended:
-            self._session_by_evse.pop(ocpp_evse_id, None)
-        else:
+            for mapped_evse, mapped_session in list(self._session_by_evse.items()):
+                if mapped_session == session_id:
+                    del self._session_by_evse[mapped_evse]
+        elif ocpp_evse_id is not None:
             self._session_by_evse[ocpp_evse_id] = session_id
         return call_result.TransactionEvent()
+
+    async def _find_active_session(
+        self, db: AsyncSession, station_id: UUID, transaction_id: str
+    ) -> UUID | None:
+        """Find the ACTIVE session a transaction identity already started.
+
+        Args:
+            db: The event's open session.
+            station_id: The charger's internal ID.
+            transaction_id: The transaction identity of the event.
+
+        Returns:
+            The session's ID, or ``None`` when the charger has no ACTIVE
+            session with that transaction identity.
+        """
+        try:
+            reference = await charging_sessions_service.resolve_session_by_transaction(
+                db, station_id=station_id, transaction_id=transaction_id
+            )
+        except (ChargingSessionNotFoundError, ChargingSessionStateError):
+            return None
+        return (
+            reference.session_id if reference.status == SessionStatus.ACTIVE else None
+        )
 
     @on(Action.meter_values)  # type: ignore[untyped-decorator]
     async def on_meter_values(

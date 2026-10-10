@@ -387,10 +387,6 @@ async def test_status_for_a_negative_connector_is_refused_and_writes_nothing(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS1: python-ocpp logs every raw frame (idTags) at INFO",
-)
 @pytest.mark.parametrize("protocol", ["ocpp1.6", "ocpp2.0.1"])
 async def test_gateway_never_writes_raw_frames_or_id_tags_to_the_logs(
     monkeypatch: pytest.MonkeyPatch,
@@ -500,10 +496,6 @@ def _energy_group(*sampled_values: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS2: TransactionEvent Ended without the optional evse fails",
-)
 async def test_2_0_1_ended_event_without_evse_completes_the_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -525,10 +517,6 @@ async def test_2_0_1_ended_event_without_evse_completes_the_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-CS2: TransactionEvent Started with evse.id only (no connectorId)",
-)
 async def test_2_0_1_started_event_with_evse_id_only_activates_the_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -653,10 +641,6 @@ def test_2_0_1_huge_multiplier_does_not_fail_the_message() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="RV-BL4: a SignedData energy sample makes StopTransaction fail",
-)
 async def test_1_6_stop_with_signed_energy_samples_completes_from_meter_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -965,6 +949,11 @@ async def test_1_6_start_with_a_token_no_scan_issued_is_invalid_with_transaction
         charging_sessions_service, "allocate_ocpp16_transaction_id", make("tx", 9)
     )
     monkeypatch.setattr(charging_sessions_service, "activate_pending_session", refuse)
+    monkeypatch.setattr(
+        charging_sessions_service,
+        "find_started_session_by_token",
+        make("retry", None),
+    )
 
     response = await _charge_point_16().on_start_transaction(
         connector_id=1,

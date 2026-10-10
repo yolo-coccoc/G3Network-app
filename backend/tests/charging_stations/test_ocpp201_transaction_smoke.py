@@ -9,7 +9,10 @@ import pytest
 
 import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions.exceptions import ChargingSessionTokenError
+from app.domains.charging_sessions.exceptions import (
+    ChargingSessionNotFoundError,
+    ChargingSessionTokenError,
+)
 from app.domains.charging_sessions.types import SessionStatus
 from app.domains.charging_stations.ocpp.ocpp201_charge_point import OCPP201ChargePoint
 
@@ -53,8 +56,24 @@ def _patch(
             "R", (), {"session_id": SESSION_ID, "status": SessionStatus.ACTIVE}
         )()
 
+    async def station(db: object, ocpp_identity: str) -> Any:
+        return STATION_ID
+
     async def reference(db: object, **kwargs: Any) -> Any:
-        return type("R", (), {"session_id": SESSION_ID})()
+        if not token_issued:
+            # No ACTIVE session carries the transaction: a refused start stays
+            # refused (RV-CS3 looks for one before answering Invalid).
+            raise ChargingSessionNotFoundError("no such transaction")
+        return type(
+            "R",
+            (),
+            {
+                "session_id": SESSION_ID,
+                "evse_id": EVSE_ID,
+                "connector_id": CONNECTOR_ID,
+                "status": SessionStatus.ACTIVE,
+            },
+        )()
 
     async def meter(db: object, **kwargs: Any) -> None:
         calls.append(("energy", kwargs))
@@ -63,6 +82,7 @@ def _patch(
         calls.append(("complete", kwargs))
 
     monkeypatch.setattr(ocpp_state_service, "resolve_ocpp_topology", topology)
+    monkeypatch.setattr(ocpp_state_service, "resolve_station_id_by_identity", station)
     monkeypatch.setattr(charging_service, "activate_pending_session", activate)
     monkeypatch.setattr(charging_service, "resolve_session_by_transaction", reference)
     monkeypatch.setattr(charging_service, "ingest_meter_values", meter)
@@ -125,6 +145,44 @@ async def test_started_event_without_an_issued_token_is_answered_invalid(
         )
         assert response.id_token_info == {"status": "Invalid"}
 
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_started_event_sent_again_is_accepted_for_the_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retried start finds its ACTIVE session by transaction and is accepted (RV-CS3)."""
+    calls = _patch(monkeypatch, token_issued=False)
+
+    async def active_reference(db: object, **kwargs: Any) -> Any:
+        return type(
+            "R",
+            (),
+            {
+                "session_id": SESSION_ID,
+                "evse_id": EVSE_ID,
+                "connector_id": CONNECTOR_ID,
+                "status": SessionStatus.ACTIVE,
+            },
+        )()
+
+    monkeypatch.setattr(
+        charging_service, "resolve_session_by_transaction", active_reference
+    )
+
+    response = await _charge_point().on_transaction_event(
+        event_type="Started",
+        timestamp="2026-10-01T09:00:00Z",
+        trigger_reason="RemoteStart",
+        seq_no=0,
+        transaction_info={"transaction_id": "TX-1"},
+        meter_value=_METER,
+        evse={"id": 1},
+        id_token={"id_token": "TOKEN-1", "type": "Central"},
+    )
+
+    assert response.id_token_info is None
     assert calls == []
 
 
