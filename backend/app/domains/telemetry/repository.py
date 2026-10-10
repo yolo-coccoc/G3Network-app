@@ -110,6 +110,37 @@ async def find_latest_received_at(
     return query_result.scalar_one_or_none()
 
 
+async def find_first_received_at(
+    db: AsyncSession, vehicle_id: UUID, telematic_id: UUID, since: datetime
+) -> datetime | None:
+    """Get when a device first delivered data for a truck at or after a time.
+
+    Served by ``ix_telemetry_vehicle_received``. Used to tell whether a truck
+    was activated (VEH-05): the first sample the mounted device sent after the
+    later of its mounting and the truck's handover.
+
+    Args:
+        db: Current database session.
+        vehicle_id: Internal ID of the vehicle.
+        telematic_id: Internal ID of the device that must have sent the sample.
+        since: Only samples received at or after this time count.
+
+    Returns:
+        The smallest matching ``received_at``, or `None` if there is none.
+    """
+    query_result = await db.execute(
+        select(TelemetryModel.received_at)
+        .where(
+            TelemetryModel.vehicle_id == vehicle_id,
+            TelemetryModel.telematic_id == telematic_id,
+            TelemetryModel.received_at >= since,
+        )
+        .order_by(TelemetryModel.received_at.asc())
+        .limit(1)
+    )
+    return query_result.scalar_one_or_none()
+
+
 async def get_vehicle_telemetry_history(
     db: AsyncSession,
     *,

@@ -7,6 +7,7 @@ SQL. Every lookup excludes soft-deleted devices; functions flush when they
 need a generated value or a constraint error, and never commit or roll back.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -65,6 +66,29 @@ async def find_by_serial(
     query_result = await db_session.execute(
         select(TelematicModel).where(
             TelematicModel.telematic_serial == telematic_serial,
+            TelematicModel.deleted_at.is_(None),
+        )
+    )
+    return query_result.scalar_one_or_none()
+
+
+async def find_by_imei(
+    db_session: AsyncSession,
+    imei: str,
+) -> TelematicModel | None:
+    """Find a device that has not been soft-deleted, by its modem IMEI.
+
+    Args:
+        db_session: Current database session.
+        imei: IMEI of the device modem.
+
+    Returns:
+        The device record, or ``None`` if not found or soft-deleted; mirrors
+        the partial unique index ``uq_telematics_imei``.
+    """
+    query_result = await db_session.execute(
+        select(TelematicModel).where(
+            TelematicModel.imei == imei,
             TelematicModel.deleted_at.is_(None),
         )
     )
@@ -204,6 +228,33 @@ async def list_all(
     )
     if status_filter is not None:
         statement = statement.where(TelematicModel.status == status_filter)
+    if organization_id is not None:
+        statement = statement.where(TelematicModel.organization_id == organization_id)
+    query_result = await db_session.execute(statement)
+    return list(query_result.scalars().all())
+
+
+async def list_in_scope(
+    db_session: AsyncSession,
+    *,
+    organization_id: UUID | None = None,
+) -> list[TelematicModel]:
+    """Get every device that has not been soft-deleted, for the health dashboard.
+
+    Args:
+        db_session: Current database session.
+        organization_id: Data scope; `None` means every organization.
+
+    Returns:
+        All matching devices, newest first. Unbounded: the MVP's device count
+        needs no paging here (DEV-04 summary and filters work on the whole
+        scope); add a cap if that changes.
+    """
+    statement = (
+        select(TelematicModel)
+        .where(TelematicModel.deleted_at.is_(None))
+        .order_by(TelematicModel.created_at.desc())
+    )
     if organization_id is not None:
         statement = statement.where(TelematicModel.organization_id == organization_id)
     query_result = await db_session.execute(statement)
@@ -355,3 +406,52 @@ async def find_latest_status_report(
         .limit(1)
     )
     return query_result.scalar_one_or_none()
+
+
+async def insert_status_report(
+    db_session: AsyncSession,
+    values: dict[str, object],
+) -> TelematicStatusReportModel:
+    """Append one status report of a device (TX-10, append-only).
+
+    Args:
+        db_session: Current database session.
+        values: Column values of the row.
+
+    Returns:
+        The new report, flushed so its ID is set.
+    """
+    status_report_record = TelematicStatusReportModel(**values)
+    db_session.add(status_report_record)
+    await db_session.flush()
+    return status_report_record
+
+
+async def list_status_reports(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+    *,
+    since: datetime | None,
+    limit: int,
+) -> list[TelematicStatusReportModel]:
+    """List a device's status reports, newest first (the DEV-04 trend).
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+        since: Only reports produced at or after this time, if given.
+        limit: Maximum number of reports.
+
+    Returns:
+        Reports ordered by ``reported_at`` descending.
+    """
+    statement = (
+        select(TelematicStatusReportModel)
+        .where(TelematicStatusReportModel.telematic_id == telematic_id)
+        .order_by(TelematicStatusReportModel.reported_at.desc())
+        .limit(limit)
+    )
+    if since is not None:
+        statement = statement.where(TelematicStatusReportModel.reported_at >= since)
+    query_result = await db_session.execute(statement)
+    return list(query_result.scalars().all())

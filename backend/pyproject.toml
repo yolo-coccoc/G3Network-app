@@ -237,6 +237,8 @@ type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
     "app.domains.telematics.commands",
+    "app.domains.telematics.health_rule",
+    "app.domains.telematics.ingestion",
     "app.domains.telematics.models",
     "app.domains.telematics.monitoring",
     "app.domains.telematics.repository",
@@ -250,6 +252,7 @@ name = "Other domains use only telemetry's service, types and exceptions"
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.telemetry.activation",
     "app.domains.telemetry.alerting",
     "app.domains.telemetry.detection",
     "app.domains.telemetry.ingestion",

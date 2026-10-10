@@ -22,7 +22,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.domains.telemetry.types import ReportGranularity
+from app.domains.telemetry.types import ReportGranularity, VehicleActivationStatus
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
@@ -491,6 +491,78 @@ class FleetOperatingReportResponse(BaseModel):
     cost_per_kwh_vnd: float = Field(..., ge=0)
     vehicles: list[FleetVehicleOperatingReportRow]
     totals: FleetOperatingReportTotals
+
+
+class VehicleActivationResponse(BaseModel):
+    """Activation of one truck, computed at read time (VEH-05, VH-06).
+
+    Attributes:
+        vehicle_id: Internal ID of the vehicle.
+        vin: VIN of the vehicle.
+        license_plate: License plate of the vehicle.
+        activation_status: ``NO_DEVICE``, ``AWAITING_DATA`` or ``ACTIVATED``.
+        handover_at: When the truck first went to an owner (start of its
+            first ownership period), if known.
+        telematic_id: The device mounted now, if any.
+        telematic_serial: Serial of that device.
+        device_mounted_at: When it was mounted.
+        first_data_at: When the mounted device first delivered data at or
+            after the later of its mounting and the handover.
+        activation_hours: Hours from the handover to ``first_data_at``; `None`
+            when either is unknown or the data came before the handover.
+    """
+
+    vehicle_id: UUID
+    vin: str
+    license_plate: str
+    activation_status: VehicleActivationStatus
+    handover_at: datetime | None
+    telematic_id: UUID | None
+    telematic_serial: str | None
+    device_mounted_at: datetime | None
+    first_data_at: datetime | None
+    activation_hours: float | None
+
+
+class VehicleActivationSummaryResponse(BaseModel):
+    """Activation success over a scope of trucks (VEH-05).
+
+    Attributes:
+        total_count: Live trucks in the scope.
+        no_device_count: Trucks with no device mounted.
+        awaiting_data_count: Trucks with a device that sent nothing yet.
+        activated_count: Trucks whose device delivered data.
+        activation_rate_percent: ``activated_count`` as a share of the trucks
+            with a device (awaiting plus activated), one decimal; `None` when
+            none has a device. The target is at least 98.
+        average_activation_hours: Mean ``activation_hours`` of the activated
+            trucks that have one; `None` when there is none.
+    """
+
+    total_count: int = Field(..., ge=0)
+    no_device_count: int = Field(..., ge=0)
+    awaiting_data_count: int = Field(..., ge=0)
+    activated_count: int = Field(..., ge=0)
+    activation_rate_percent: float | None
+    average_activation_hours: float | None
+
+
+class VehicleActivationListResponse(BaseModel):
+    """The activation summary and a page of trucks (VEH-05).
+
+    Attributes:
+        summary: The counts over the whole filtered scope (not the page).
+        items: Trucks on this page, in the order of the vehicle list.
+        total: Trucks matching the status filter across all pages.
+        page: Normalized page number.
+        page_size: Normalized page size.
+    """
+
+    summary: VehicleActivationSummaryResponse
+    items: list[VehicleActivationResponse]
+    total: int = Field(..., ge=0)
+    page: int = Field(..., ge=1)
+    page_size: int = Field(..., ge=1, le=settings.API_MAX_PAGE_SIZE)
 
 
 class TelemetryLocationPayload(BaseModel):

@@ -1284,6 +1284,42 @@ async def list_users_holding_role(
     return list(query_result.scalars().all())
 
 
+async def list_user_ids_holding_roles_in_organization(
+    db_session: AsyncSession, organization_id: UUID, roles: list[str]
+) -> list[UUID]:
+    """List the active people holding one of the roles in one organization.
+
+    Args:
+        db_session: Current database session.
+        organization_id: The organization whose members are searched.
+        roles: `UserRole` values; a person holding any of them is returned.
+
+    Returns:
+        User IDs of ACTIVE, not-left memberships of the organization that hold
+        one of the roles right now, for accounts that are active and not
+        deleted; each person once.
+    """
+    query_result = await db_session.execute(
+        select(UserModel.user_id)
+        .join(MembershipModel, MembershipModel.user_id == UserModel.user_id)
+        .join(
+            UserRoleAssignmentModel,
+            UserRoleAssignmentModel.membership_id == MembershipModel.membership_id,
+        )
+        .where(
+            MembershipModel.organization_id == organization_id,
+            UserRoleAssignmentModel.role.in_(roles),
+            UserRoleAssignmentModel.revoked_at.is_(None),
+            MembershipModel.status == MembershipStatus.ACTIVE.value,
+            MembershipModel.left_at.is_(None),
+            UserModel.deleted_at.is_(None),
+            UserModel.status == UserStatus.ACTIVE.value,
+        )
+        .distinct()
+    )
+    return list(query_result.scalars().all())
+
+
 async def is_active_internal_sales_user(
     db_session: AsyncSession, user_id: UUID
 ) -> bool:

@@ -67,3 +67,46 @@ class TelematicDeviceHealth:
     is_online: bool
     is_silent: bool
     last_signal_strength_dbm: int | None
+
+
+class TelematicHealthState(str, enum.Enum):
+    """One-word health of a device for the dashboard (DEV-04), computed at read time.
+
+    The first rule that holds wins, in this order.
+
+    Attributes:
+        INACTIVE: Taken out of service by a person; its quiet is expected.
+        NOT_MOUNTED: In stock or removed, or mounted on a deleted vehicle.
+        NO_DATA: Mounted and in service but the truck never reported (a
+            provisioning gap, as in ``silence_rule``).
+        SILENT: No telemetry for ``TELEMATICS_SILENT_THRESHOLD_MINUTES``.
+        ATTENTION: Reporting, but the newest status report names a problem
+            (mobile data not ``ACTIVE``, or a GNSS antenna fault).
+        HEALTHY: Reporting and nothing in the newest status report is wrong.
+    """
+
+    INACTIVE = "INACTIVE"
+    NOT_MOUNTED = "NOT_MOUNTED"
+    NO_DATA = "NO_DATA"
+    SILENT = "SILENT"
+    ATTENTION = "ATTENTION"
+    HEALTHY = "HEALTHY"
+
+
+@dataclass(frozen=True)
+class TelematicMountedDevice:
+    """The live device fitted on a truck, for another domain (VEH-05 activation).
+
+    Attributes:
+        telematic_id: Internal ID of the device.
+        telematic_serial: Serial printed on the device.
+        status: Status set by a person.
+        mounted_at: When it was mounted on the truck (``installed_at``; the
+            ``acquired_at`` of the device for a row mounted before the column
+            was filled).
+    """
+
+    telematic_id: UUID
+    telematic_serial: str
+    status: TelematicStatus
+    mounted_at: datetime

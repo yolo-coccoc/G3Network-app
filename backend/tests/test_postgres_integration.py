@@ -35,10 +35,13 @@ import app.domains.identity.audit_service as identity_audit_service
 import app.domains.identity.bootstrap as identity_bootstrap
 import app.domains.identity.member_service as identity_member_service
 import app.domains.identity.organization_service as identity_organization_service
+import app.domains.identity.repository as identity_repository
+import app.domains.identity.service as identity_service
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
 import app.domains.support.service as support_service
+import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.repository as telemetry_repository
@@ -138,11 +141,15 @@ from app.domains.support.types import (
 )
 from app.domains.telematics.exceptions import TelematicConflictError
 from app.domains.telematics.models import TelematicModel
-from app.domains.telematics.schemas import TelematicCreateRequest
-from app.domains.telematics.types import TelematicStatus
+from app.domains.telematics.schemas import (
+    TelematicCreateRequest,
+    TelematicStatusEnvelope,
+    TelematicStatusMessage,
+)
+from app.domains.telematics.types import TelematicHealthState, TelematicStatus
 from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import TelemetryEnvelope, TelemetryMessage
-from app.domains.telemetry.types import ReportGranularity
+from app.domains.telemetry.types import ReportGranularity, VehicleActivationStatus
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.types import VehicleStatus
 from app.domains.warranties.models import WarrantyModel
@@ -4070,5 +4077,221 @@ async def test_ownership_transfer_moves_battery_closes_fleet_and_warranties_foll
                     WarrantyUpdateRequest(contract_reference="X"),
                     principal=staff,
                 )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_status_reports_health_activation_and_silence_alert_on_postgres(
+    temporary_database: str,
+) -> None:
+    """WP4: status reports are stored and read back as device health, the truck
+    activation follows the mounted device's data, and a silent device alerts
+    the organization's administrators and fleet managers (DEV-03/04/05, VEH-05)."""
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    now = datetime.now(timezone.utc)
+    staff = build_internal_principal()
+    try:
+        async with session_factory() as db:
+            vehicle = await _integration_vehicle(db, license_plate="IT-WP4-ON")
+            vehicle.acquired_at = now - timedelta(days=1)
+            silent_vehicle = VehicleModel(
+                vehicle_id=uuid4(),
+                organization_id=vehicle.organization_id,
+                vehicle_model_id=vehicle.vehicle_model_id,
+                license_plate="IT-WP4-OFF",
+                vin=f"IT{uuid4().hex[:15]}".upper(),
+                year=2026,
+                status=VehicleStatus.ACTIVE,
+                acquired_at=now - timedelta(days=1),
+            )
+            db.add_all([vehicle, silent_vehicle])
+            await db.flush()
+            devices = [
+                TelematicModel(
+                    telematic_id=uuid4(),
+                    telematic_serial=f"IT-TBOX-{uuid4().hex[:12]}",
+                    organization_id=vehicle.organization_id,
+                    acquired_at=now - timedelta(days=1),
+                    vehicle_id=mounted_vehicle_id,
+                    installed_at=now - timedelta(hours=2)
+                    if mounted_vehicle_id
+                    else None,
+                    status=TelematicStatus.ACTIVE,
+                )
+                for mounted_vehicle_id in (
+                    vehicle.vehicle_id,
+                    silent_vehicle.vehicle_id,
+                    None,
+                )
+            ]
+            db.add_all(devices)
+            await db.flush()
+            device, silent_device, stock_device = devices
+            for sent_device, received_at in (
+                (device, now - timedelta(seconds=30)),
+                (
+                    silent_device,
+                    now
+                    - timedelta(
+                        minutes=settings.TELEMATICS_SILENT_THRESHOLD_MINUTES + 5
+                    ),
+                ),
+            ):
+                await telemetry_repository.insert_telemetry(
+                    db,
+                    {
+                        "organization_id": sent_device.organization_id,
+                        "device_message_id": uuid4(),
+                        "telematic_id": sent_device.telematic_id,
+                        "vehicle_id": sent_device.vehicle_id,
+                        "recorded_at": received_at,
+                        "received_at": received_at,
+                        "location": coordinates_to_location(10.8, 106.7),
+                        "soc_percent": 80.0,
+                        "raw_payload": {"source": "postgres-integration"},
+                    },
+                )
+
+            # Two reports: the newest one shows an antenna fault.
+            for reported_at, payload in (
+                (
+                    now - timedelta(days=2),
+                    {
+                        "firmware_version": "1.2.3",
+                        "signal_dbm": -70,
+                        "gnss_status": "FIX",
+                    },
+                ),
+                (
+                    now - timedelta(hours=1),
+                    {
+                        "firmware_version": "1.2.4",
+                        "telemetry_interval_seconds": 10,
+                        "supply_voltage_v": 24.1,
+                        "gnss_status": "ANTENNA_FAULT",
+                        "sim": {
+                            "iccid": "8984049000001234567",
+                            "data_status": "ACTIVE",
+                        },
+                    },
+                ),
+            ):
+                result = await telematics_service.record_status_report(
+                    db,
+                    TelematicStatusEnvelope(
+                        device.telematic_serial,
+                        TelematicStatusMessage.model_validate(
+                            payload | {"timestamp": reported_at.isoformat()}
+                        ),
+                    ),
+                )
+                assert result["processed"] == 1
+            notice = await telematics_service.record_status_report(
+                db,
+                TelematicStatusEnvelope(
+                    device.telematic_serial,
+                    TelematicStatusMessage.model_validate({"status": "offline"}),
+                ),
+            )
+            assert notice["skipped"] == 1
+
+            health = await telematics_service.get_telematic_health(
+                db, device.telematic_id, principal=staff
+            )
+            assert health.health_state is TelematicHealthState.ATTENTION
+            assert health.latest_report is not None
+            assert health.latest_report.firmware_version == "1.2.4"
+            assert float(health.latest_report.supply_voltage_v or 0) == 24.1
+            detail = await telematics_service.get_telematic(
+                db, device.telematic_id, principal=staff
+            )
+            assert detail.firmware_version == "1.2.4"
+            assert detail.telemetry_interval_seconds == 10
+            reports = await telematics_service.list_telematic_status_reports(
+                db, device.telematic_id, principal=staff, since=None, limit=10
+            )
+            assert [report.firmware_version for report in reports.items] == [
+                "1.2.4",
+                "1.2.3",
+            ]
+            summary = await telematics_service.get_device_health_summary(
+                db, principal=staff
+            )
+            assert summary.total_count == 3
+            assert summary.attention_count == 1
+            assert summary.silent_count == 1
+            assert summary.not_mounted_count == 1
+            assert stock_device.vehicle_id is None
+
+            # Activation: the mounted device delivered data after the handover.
+            activation = await telemetry_service.get_vehicle_activation_response(
+                db, vehicle.vehicle_id, principal=staff
+            )
+            assert activation.activation_status is VehicleActivationStatus.ACTIVATED
+            assert activation.telematic_serial == device.telematic_serial
+            assert activation.handover_at is not None
+            activations = await telemetry_service.list_vehicle_activations(
+                db, principal=staff
+            )
+            assert activations.summary.total_count == 2
+            # The silent truck's only sample predates its device's mounting,
+            # so it is still waiting for data.
+            assert activations.summary.activated_count == 1
+            assert activations.summary.awaiting_data_count == 1
+            assert activations.summary.activation_rate_percent == 50.0
+
+            # The silent device alerts the organization's fleet manager, not a
+            # driver or a locked member.
+            people = {}
+            for label, role, membership_status in (
+                ("manager", UserRole.FLEET_MANAGER, MembershipStatus.ACTIVE),
+                ("driver", UserRole.DRIVER, MembershipStatus.ACTIVE),
+                ("locked_admin", UserRole.ORG_ADMIN, MembershipStatus.LOCKED),
+            ):
+                user = UserModel(
+                    phone_number=f"+84{uuid4().hex[:9]}",
+                    full_name=label,
+                    status=UserStatus.ACTIVE.value,
+                )
+                db.add(user)
+                await db.flush()
+                membership = MembershipModel(
+                    organization_id=vehicle.organization_id,
+                    user_id=user.user_id,
+                    status=membership_status.value,
+                )
+                db.add(membership)
+                await db.flush()
+                await identity_repository.insert_role_assignment(
+                    db, membership_record=membership, role=role.value, granted_by=None
+                )
+                people[label] = user.user_id
+            recipients = await identity_service.list_organization_role_holder_user_ids(
+                db,
+                vehicle.organization_id,
+                (UserRole.ORG_ADMIN, UserRole.FLEET_MANAGER),
+            )
+            assert recipients == [people["manager"]]
+
+            await device_health_monitor.check_devices_for_silence(db)
+            manager_unread = await notifications_service.count_unread_notifications(
+                db, principal=build_principal(user_id=people["manager"])
+            )
+            driver_unread = await notifications_service.count_unread_notifications(
+                db, principal=build_principal(user_id=people["driver"])
+            )
+            assert manager_unread.unread_count == 1
+            assert driver_unread.unread_count == 0
+            # A second sweep in the same silence episode does not alert again.
+            await device_health_monitor.check_devices_for_silence(db)
+            again = await notifications_service.count_unread_notifications(
+                db, principal=build_principal(user_id=people["manager"])
+            )
+            assert again.unread_count == 1
+            await db.rollback()
     finally:
         await engine.dispose()

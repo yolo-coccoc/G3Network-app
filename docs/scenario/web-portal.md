@@ -72,7 +72,7 @@ a second table.
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Vehicle list (search, status, model, owner) | `GET /vehicles?q=&status=&vehicle_model_id=&organization_id=` (**built**; the activation summary is computed later, VH-06, WP4) | none |
+| Vehicle list (search, status, model, owner) | `GET /vehicles?q=&status=&vehicle_model_id=&organization_id=` (**built**; the activation is computed in `telemetry`, flow 4: `GET /telemetry/vehicles/activation`) | none |
 | Register a truck: VIN, plate, model, owner, `acquired_at` | `POST /vehicles/` (**built**) | `409` duplicate VIN or plate among live trucks; `422` |
 | Open / edit a truck | `GET /vehicles/{vehicle_id}`, `PATCH /vehicles/{vehicle_id}` (**built**; a typed `status_reason` becomes the history reason) | `404`; `409` |
 | Hand over to a new owner (sale), internal staff | `POST /vehicles/{vehicle_id}/transfer-ownership` `{organization_id, acquired_at, reason}` (**built**, VH-21): one transaction closes the seller's fleet membership, ends the open driving session (`OWNER_CHANGED`) and moves a pack the seller owns; answers the truck plus what ended or moved | `404` truck or buyer; `400` same owner or bad date |
@@ -93,12 +93,17 @@ Tables: `telematics`, `telematic_status_reports`. One live device per truck
 
 | Step | API call | Main error cases |
 |---|---|---|
-| Register a T-Box (serial) and link to a truck | `POST /telematics/` (**built**) | `409` serial exists, or the truck already has a live device; `404` truck |
+| Register a T-Box (serial, IMEI) and link to a truck | `POST /telematics/` (**built**; `installed_at` is set when it is mounted) | `409` serial or IMEI exists, or the truck already has a live device; `404` truck |
 | Device list with online / silent state | `GET /telematics/` (**built**; health computed from newest telemetry) | none |
-| Open, edit, replace device | `GET/PATCH /telematics/{telematic_id}` (**built**) | `409` |
-| Unlink / retire | `DELETE /telematics/{telematic_id}` (**built**, soft delete: the truck keeps it as history) | `404` |
-| Push configuration to one device or a whole fleet (F-J2) | `POST /telematics/{telematic_id}/config`, `POST /telematics/fleets/{fleet_id}/config` (**built**; MQTT publish) | `404`; `502` broker unreachable |
-| Device-offline alert | system raises it into `notifications`; shown in the inbox (flow 12) | not a call |
+| Open, edit, replace device | `GET/PATCH /telematics/{telematic_id}` (**built**; a new `vehicle_vin` mounts it, `null` unmounts it) | `409` |
+| Unlink / retire | `DELETE /telematics/{telematic_id}?reason=` (**built**, soft delete: INACTIVE, unmounted, the truck keeps it as history) | `404` |
+| Device health dashboard: one device | `GET /telematics/{telematic_id}/health` (**built**; state `HEALTHY` / `ATTENTION` / `SILENT` / `NO_DATA` / `NOT_MOUNTED` / `INACTIVE`, silence and online flags, newest status report: firmware, SIM, voltage, signal, storage, GNSS) | `404` |
+| Device health dashboard: list and share of healthy devices | `GET /telematics/health/devices?fleet_id=&organization_id=&health_state=&page=&page_size=`, `GET /telematics/health/summary?fleet_id=&organization_id=` (**built**; `organization_id` is for internal staff) | `404` fleet |
+| Health trend of one device | `GET /telematics/{telematic_id}/status-reports?since=&limit=` (**built**; newest first) | `404` |
+| Push configuration to one device or a whole fleet (F-J2) | `POST /telematics/{telematic_id}/config`, `POST /telematics/fleets/{fleet_id}/config` (**built**; MQTT publish; only a mounted, ACTIVE device receives it, TX-08) | `404`; `409` not mounted or INACTIVE; `502` broker unreachable |
+| Truck activation (VEH-05) | `GET /telemetry/vehicles/{vehicle_id}/activation`, `GET /telemetry/vehicles/activation?activation_status=&organization_id=&page=` (**built**; computed from the device mounted now and its data since the handover; the list carries the success rate and, with `activation_status=AWAITING_DATA`, the trucks still waiting) | `404` |
+| Device-offline alert | system raises it into `notifications` for the truck's organization (once per silence episode) and delivers it to its ORG_ADMIN and FLEET_MANAGER members; shown in the inbox (flow 12) | not a call |
+| T-Box status reports | the device publishes to `g3network/telematics/{serial}/status`; `make telematics-status-dev` stores them (mqtt-spec.md 2.2) | not a call |
 
 ## 5. Fleets (tree, trucks, user limits)
 

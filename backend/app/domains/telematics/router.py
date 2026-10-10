@@ -1,4 +1,4 @@
-"""FastAPI router for Telematic device CRUD and the F-J2 config pushes.
+"""FastAPI router for Telematic device CRUD, the health dashboard and the F-J2 config pushes.
 
 Handlers only translate HTTP to service calls. Domain exceptions are not
 caught here: `app/api/main.py` maps each shared error base once
@@ -9,6 +9,7 @@ push's `FleetNotFoundError` -> 404,
 502) with the same `{"detail": message}` body for every router.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -22,11 +23,15 @@ from app.domains.telematics.schemas import (
     TelematicConfigResponse,
     TelematicCreateRequest,
     TelematicFleetConfigPushResponse,
+    TelematicHealthListResponse,
+    TelematicHealthResponse,
+    TelematicHealthSummaryResponse,
     TelematicListResponse,
     TelematicResponse,
+    TelematicStatusReportListResponse,
     TelematicUpdateRequest,
 )
-from app.domains.telematics.types import TelematicStatus
+from app.domains.telematics.types import TelematicHealthState, TelematicStatus
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -38,6 +43,7 @@ router = APIRouter(tags=["telematics"])
 DEVICE_READERS = require_roles(*roles_for("DEV-01", "DEV-02", "DEV-04"))
 DEVICE_WRITERS = require_roles(*roles_for("DEV-01", "DEV-02"))
 DEVICE_CONFIGURERS = require_roles(*roles_for("DEV-07"))
+DEVICE_HEALTH_READERS = require_roles(*roles_for("DEV-04"))
 
 
 @router.post("/", response_model=TelematicResponse, status_code=status.HTTP_201_CREATED)
@@ -97,6 +103,137 @@ async def list_telematics_endpoint(
         page_size=page_size,
         status_filter=status_filter,
         principal=principal,
+    )
+
+
+@router.get("/health/summary", response_model=TelematicHealthSummaryResponse)
+async def get_device_health_summary_endpoint(
+    fleet_id: UUID | None = Query(None, description="Only this fleet's trucks"),
+    organization_id: UUID | None = Query(
+        None, description="Only this organization's devices (internal staff)"
+    ),
+    principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> TelematicHealthSummaryResponse:
+    """Count devices per health state and give the healthy share (DEV-04).
+
+    Args:
+        fleet_id: Only the devices on this fleet's trucks, if given.
+        organization_id: Only devices of this organization, if given.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The count per state and the share of healthy devices.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is out of reach (404).
+    """
+    return await telematics_service.get_device_health_summary(
+        db_session,
+        principal=principal,
+        fleet_id=fleet_id,
+        organization_id=organization_id,
+    )
+
+
+@router.get("/health/devices", response_model=TelematicHealthListResponse)
+async def list_device_health_endpoint(
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE, ge=1, le=settings.API_MAX_PAGE_SIZE
+    ),
+    fleet_id: UUID | None = Query(None, description="Only this fleet's trucks"),
+    organization_id: UUID | None = Query(
+        None, description="Only this organization's devices (internal staff)"
+    ),
+    health_state: TelematicHealthState | None = Query(None),
+    principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> TelematicHealthListResponse:
+    """List devices with their health state and newest status report (DEV-04).
+
+    Args:
+        page: Page number, starting from 1.
+        page_size: Number of records per page.
+        fleet_id: Only the devices on this fleet's trucks, if given.
+        organization_id: Only devices of this organization, if given.
+        health_state: Only devices in this state, if given.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        A page of device health entries.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is out of reach (404).
+    """
+    return await telematics_service.list_device_health(
+        db_session,
+        principal=principal,
+        page=page,
+        page_size=page_size,
+        fleet_id=fleet_id,
+        organization_id=organization_id,
+        health_state=health_state,
+    )
+
+
+@router.get("/{telematic_id}/health", response_model=TelematicHealthResponse)
+async def get_telematic_health_endpoint(
+    telematic_id: UUID,
+    principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> TelematicHealthResponse:
+    """Get the health of one device: state, silence and its newest status report.
+
+    Args:
+        telematic_id: Internal ID of the device.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The device's health.
+
+    Raises:
+        TelematicNotFoundError: The device does not exist or is soft-deleted
+            (404).
+    """
+    return await telematics_service.get_telematic_health(
+        db_session, telematic_id, principal=principal
+    )
+
+
+@router.get(
+    "/{telematic_id}/status-reports", response_model=TelematicStatusReportListResponse
+)
+async def list_telematic_status_reports_endpoint(
+    telematic_id: UUID,
+    since: datetime | None = Query(
+        None, description="Only reports produced at or after this time"
+    ),
+    limit: int = Query(100, ge=1, le=1000),
+    principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> TelematicStatusReportListResponse:
+    """List a device's status reports, newest first (signal, power, SIM trend).
+
+    Args:
+        telematic_id: Internal ID of the device.
+        since: Only reports produced at or after this time, if given.
+        limit: Maximum number of reports.
+        principal: The authenticated caller.
+        db_session: Database session owned by the HTTP boundary.
+
+    Returns:
+        The reports, newest first.
+
+    Raises:
+        TelematicNotFoundError: The device does not exist or is soft-deleted
+            (404).
+    """
+    return await telematics_service.list_telematic_status_reports(
+        db_session, telematic_id, principal=principal, since=since, limit=limit
     )
 
 
@@ -241,7 +378,8 @@ async def push_telematic_config_endpoint(
     Raises:
         TelematicNotFoundError: The device does not exist or is
             soft-deleted (404).
-        TelematicNotConfigurableError: The device is ``INACTIVE`` (409).
+        TelematicNotConfigurableError: The device is not mounted on a
+            vehicle or is ``INACTIVE`` (409).
         TelematicCommandPublishError: The MQTT publish failed (502).
     """
     return await telematics_service.push_telematic_config(

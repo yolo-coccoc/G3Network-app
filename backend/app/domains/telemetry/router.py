@@ -32,13 +32,19 @@ from app.domains.identity.types import (
 from app.domains.telemetry.schemas import (
     FleetOperatingReportResponse,
     FleetVehicleLiveStatusListResponse,
+    VehicleActivationListResponse,
+    VehicleActivationResponse,
     VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
     VehicleTelemetryHistoryResponse,
     VehicleTelemetryLatestResponse,
 )
-from app.domains.telemetry.types import ReportFormat, ReportGranularity
+from app.domains.telemetry.types import (
+    ReportFormat,
+    ReportGranularity,
+    VehicleActivationStatus,
+)
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
@@ -47,13 +53,89 @@ router = APIRouter(tags=["telemetry"])
 # Who may call what (features.yaml `users`, via `roles_for`): MON-02 live
 # status (a DRIVER reads only the truck they are checked in to, enforced in the
 # service), MON-10 location history, MON-07 battery health, MON-14 reports,
-# FLT-04/FLT-06 fleet views.
+# FLT-04/FLT-06 fleet views, VEH-05 vehicle activation (computed here because
+# `vehicles` may not call `telematics` or `telemetry`).
 LIVE_STATUS_READERS = require_roles(*roles_for("MON-02", "DEV-04"))
 LOCATION_HISTORY_READERS = require_roles(*roles_for("MON-10"))
 BATTERY_HEALTH_READERS = require_roles(*roles_for("MON-07", "MON-08"))
 REPORT_READERS = require_roles(*roles_for("MON-14"))
+ACTIVATION_READERS = require_roles(*roles_for("VEH-05"))
 FLEET_LIVE_READERS = require_roles(*roles_for("FLT-04"))
 FLEET_REPORT_READERS = require_roles(*roles_for("FLT-06", "MON-14"))
+
+
+@router.get(
+    "/vehicles/activation",
+    response_model=VehicleActivationListResponse,
+    summary="List trucks with their computed activation and the success rate",
+)
+async def list_vehicle_activations_endpoint(
+    activation_status: VehicleActivationStatus | None = Query(
+        None, description="Only trucks in this status (AWAITING_DATA = still waiting)"
+    ),
+    organization_id: UUID | None = Query(
+        None, description="Only this organization's trucks (internal staff)"
+    ),
+    page: int = Query(settings.API_DEFAULT_PAGE, ge=1, description="Page number"),
+    page_size: int = Query(
+        settings.API_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=settings.API_MAX_PAGE_SIZE,
+        description="Number of records per page",
+    ),
+    principal: Principal = Depends(ACTIVATION_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleActivationListResponse:
+    """Return the activation summary and a page of trucks (VEH-05).
+
+    Args:
+        activation_status: Only trucks in this status on the page, if given.
+        organization_id: Only trucks of this organization, if given.
+        page: Page number.
+        page_size: Number of records per page.
+        principal: The authenticated caller.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The counts and the success rate over the scope, and the page.
+    """
+    return await telemetry_service.list_vehicle_activations(
+        db,
+        principal=principal,
+        organization_id=organization_id,
+        activation_status=activation_status,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/vehicles/{vehicle_id}/activation",
+    response_model=VehicleActivationResponse,
+    summary="Get the computed activation of a truck",
+)
+async def get_vehicle_activation_endpoint(
+    vehicle_id: UUID,
+    principal: Principal = Depends(ACTIVATION_READERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> VehicleActivationResponse:
+    """Return a truck's activation: device mounted now and data received (VEH-05).
+
+    Args:
+        vehicle_id: Internal ID of the vehicle.
+        principal: The authenticated caller.
+        db: Database session managed by the dependency.
+
+    Returns:
+        The truck's activation.
+
+    Raises:
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted or is out of the caller's reach.
+    """
+    return await telemetry_service.get_vehicle_activation_response(
+        db, vehicle_id, principal=principal
+    )
 
 
 @router.get(

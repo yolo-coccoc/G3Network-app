@@ -13,7 +13,7 @@ is owned by the caller's organization unless staff name another one. The
 cross-domain `resolve_*` functions are unscoped system lookups.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -195,6 +195,62 @@ async def resolve_vehicle_summary_by_id(
     """
     vehicle_record = await vehicle_repository.get_by_id(db_session, vehicle_id)
     return to_vehicle_summary(vehicle_record) if vehicle_record else None
+
+
+async def list_vehicle_summaries(
+    db_session: AsyncSession,
+    *,
+    organization_id: UUID | None,
+    offset: int,
+    limit: int,
+) -> list[VehicleSummary]:
+    """List live vehicles as display DTOs, for another domain's own listing.
+
+    The activation list of ``telemetry`` (VEH-05) walks the trucks of a data
+    scope page by page; the vehicles domain still owns the table.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        organization_id: Data scope (the caller's organization); `None` means
+            every organization.
+        offset: Number of records to skip.
+        limit: Maximum number of records to return.
+
+    Returns:
+        Summaries of live (not soft-deleted) vehicles, newest first.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    vehicle_records = await vehicle_repository.list_all(
+        db_session, offset=offset, limit=limit, organization_id=organization_id
+    )
+    return [to_vehicle_summary(vehicle_record) for vehicle_record in vehicle_records]
+
+
+async def resolve_first_handover_at(
+    db_session: AsyncSession, vehicle_id: UUID
+) -> datetime | None:
+    """Tell when a truck first went to an owner (its handover date, VH-06).
+
+    Read through the ownership periods view (DM-22), so a later sale does not
+    move the date: it is the start of the oldest period.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+
+    Returns:
+        The start of the first ownership period, or `None` if the view has no
+        period for the truck.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    period_rows = await vehicle_repository.list_ownership_periods(
+        db_session, vehicle_id
+    )
+    return period_rows[0][1] if period_rows else None
 
 
 async def create_vehicle(

@@ -21,14 +21,15 @@
 
 | From → To | Calls (public service) | For |
 |---|---|---|
-| `telemetry` → `telematics` | serial → `(telematic_id, vehicle_id)` resolution | F-A1 ingestion |
-| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `resolve_vehicle_summary_by_id` (VIN/plate/status in the fleet live-position list); `mark_vehicle_activated` on a vehicle's first telemetry | F-A6/F-C6 reports, F-E1, F-F2 |
+| `telemetry` → `telematics` | serial → `(telematic_id, vehicle_id)` resolution; `resolve_mounted_device_by_vehicle_id` (the device mounted now, for VEH-05 activation) | F-A1 ingestion, VEH-05 |
+| `telemetry` → `vehicles` | `resolve_vehicle_reference_by_id` (existence + battery capacity); `resolve_vehicle_summary_by_id` (VIN/plate/status in the fleet live-position list); `list_vehicle_summaries` + `resolve_first_handover_at` (the computed VEH-05 activation: the trucks of a scope and their handover date) | F-A6/F-C6 reports, F-E1, VEH-05 |
 | `telemetry` → `notifications` | raise battery / anomaly / SOH alerts | F-A2, F-A4, F-A3 |
 | `telemetry` → `charging_stations` | nearest available station (≥1 `Available` connector) for the alert payload | F-A2 |
 | `telemetry` → `fleet` | `list_active_member_vehicle_ids` (fleet live positions, fleet report rollup), `find_current_fleet_id_by_vehicle` + `list_geofences_containing` (geofence entry/exit alerts) | F-E1, F-A6, F-A5 |
-| `telematics` → `vehicles` | resolve/validate the vehicle mapping (a soft-deleted vehicle maps nothing); `mark_device_assigned` when a device is linked | F-G1, F-F2, F-J1 |
+| `telematics` → `vehicles` | resolve/validate the vehicle mapping (a soft-deleted vehicle maps nothing) | F-G1, F-J1 |
 | `telematics` → `telemetry` | `resolve_last_telemetry_at` (device-health monitor), `resolve_vehicle_live_status` (device health on the API) | F-J1/F-J3 |
-| `telematics` → `notifications` | raise device-offline alerts | F-J1/F-J3 |
+| `telematics` → `notifications` | raise device-offline alerts and deliver them (`create_notification`, `add_notification_recipients`) | DEV-05 |
+| `telematics` → `identity` | `list_organization_role_holder_user_ids` (ORG_ADMIN + FLEET_MANAGER of the truck's organization receive the silence alert) | DEV-05 |
 | `telematics` → `fleet` | `list_active_member_vehicle_ids` (fleet-wide config push) | F-J2 |
 | `charging_stations` → `charging_sessions` | OCPP adapters push normalized session events/measurements, allocate the 1.6J `transactionId`, `resolve_session_by_transaction`, `has_active_session_on_connector`; `resolve_station_energy_total` (all-stations energy endpoint); `resolve_session_command_reference` (the token and transaction ID the gateway sends in a remote start / stop) | F-B2, F-C5, F-H1 |
 | `drivers` → `vehicles` | `resolve_vehicle_reference_by_vin` / `_by_id` (check-in: the truck and its owner) | F-E4 |
@@ -63,5 +64,6 @@ listed in the table above.
 - **`charging_stations`** owns station/EVSE/connector topology and the OCPP gateway (2.0.1 and 1.6J). **`charging_sessions`** only stores normalized events, measurements and session lifecycle; it owns no WebSocket and never calls back into `charging_stations`. Authorization, RFID/driver policy, remote-control logic, pricing, payment and debt are out of MVP scope — record them in `deferred.md` before reopening.
 - **`telematics`'s F-J2 config-push publisher** (`commands/`) publishes over MQTT directly and needs no domain edge for a single device; only the fleet-wide push resolves the fleet's members through `telematics → fleet`.
 - **`fleet`** calls only `vehicles`; `telemetry` and `telematics` call `fleet`. Fleet-wide telemetry views (live positions, the operating rollup) and geofence detection therefore live in `telemetry` (`/telemetry/fleets/{fleet_id}/...`, `telemetry/geofencing.py`) — never add a `fleet → telemetry` call, it would close a cycle.
+- **Vehicle activation (VEH-05)** is computed in `telemetry` (`telemetry/activation.py`, `/telemetry/vehicles/.../activation`), not in `vehicles`: `telemetry` already calls `vehicles` and `telematics`, so a `vehicles -> telemetry` call would close a cycle. The `vehicles` read model carries no activation field.
 - **`support`** is deliberately **not** wired to `telemetry`: vehicle context (VIN, location, error code) is client-supplied at case creation.
 - **`identity`** (auth & RBAC, built in WP2) is the foundational domain: every domain may depend on it, it depends on none. A router authenticates with `identity.dependencies` (`Depends(require_roles(*roles_for(<feature codes>)))`, the roles per feature are `FEATURE_ROLES` in `identity/types.py`); the service takes the `Principal` and passes `principal.data_scope` (the organization, `None` for internal staff) to its repository, which filters by it, so another organization's record is a 404 (ID-50); a service that writes personal-data access rows calls `identity.service.record_data_access`. The edge `X → identity` is allowed for every X without a table row.

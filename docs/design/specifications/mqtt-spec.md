@@ -1,6 +1,6 @@
 # MQTT Specification - Telematic Device Protocol
 
-> Version: 1.2.0  
+> Version: 1.3.0  
 > Created: 2026-07-25  
 > Feature code: F-A1 (Real-time vehicle telemetry ingestion), F-J2 (Remote
 > device configuration - OTA, partial)
@@ -67,9 +67,9 @@ g3network/telematics/{telematic_serial}/status
 **Device health fields — PROVISIONAL (v1.2.0).** The design (`telematic_status_reports`,
 decisions TX-09 and TX-10 in `docs/decisions/decision-log.md`) expects the device to add
 the fields below to its status message, about once a day. The names, units and
-values are our proposal; **the device vendor has not confirmed them**, and
-nothing ingests this topic yet. Update this section once the vendor's real
-format is known.
+values are our proposal; **the device vendor has not confirmed them**.
+The backend already ingests them (`make telematics-status-dev`, rules below);
+update this section once the vendor's real format is known.
 
 ```json
 {
@@ -95,6 +95,27 @@ format is known.
 | `signal_dbm` | integer | dBm | Mobile signal strength |
 | `storage_used_percent` | number | 0-100 | Device storage in use |
 | `gnss_status` | string | `FIX` \| `NO_FIX` \| `ANTENNA_FAULT` | Satellite positioning status |
+
+**How the backend ingests it (DEV-03, v1.3.0).** A separate process
+(`telematics/ingestion/`) subscribes to `g3network/telematics/+/status` with its
+own client id (`MQTT_STATUS_CLIENT_ID`, never the telemetry consumer's), QoS 0,
+one message per transaction, no retry, like telemetry.
+- The device is found by the serial in the **topic** (the payload carries none);
+  an unknown or deleted serial is skipped. A device that is not mounted on a
+  truck still reports.
+- Every field is optional and **tolerant**: unknown keys are ignored; a value of
+  the wrong type or out of range (`supply_voltage_v` 0-999.99, `storage_used_percent`
+  0-100, `signal_dbm` a 16-bit integer) is stored as empty and the rest of the
+  report is still stored; text is cut to the column width and the two status
+  words are upper-cased. A payload that is not a JSON object, or not valid
+  UTF-8/JSON, is logged and dropped.
+- A message with none of the health fields (a Last Will `{"status":"offline"}`
+  or a bare `online`) is **not** a report and is skipped, so it never becomes
+  an empty "newest report".
+- `timestamp` is the report's `reported_at`; when it is missing, naive (no
+  timezone) or unreadable, the receive time is used.
+- Each accepted message appends one row to `telematic_status_reports`
+  (append-only, TX-10); nothing deduplicates repeated reports.
 
 ---
 
@@ -362,6 +383,16 @@ mosquitto_pub -h localhost -p 1883 -q 0 -i TBOX-VN-000123 \
   -m '{"message_uuid":"497f6eca-6276-4993-bfeb-53cbbbba6f08","telematic_serial":"TBOX-VN-000123","recorded_at":"2026-07-25T10:00:00Z","location":{"latitude":10.76,"longitude":106.66},"battery":{"soc":50.0}}'
 ```
 
+### 8.2b. Publish a status report (T-Box simulator)
+
+```bash
+mosquitto_pub -h localhost -p 1883 -q 0 -i TBOX-VN-000123 \
+  -t "g3network/telematics/TBOX-VN-000123/status" \
+  -m '{"firmware_version":"1.2.3","signal_dbm":-78,"supply_voltage_v":24.3,"sim":{"data_status":"ACTIVE"},"gnss_status":"FIX"}'
+```
+
+Then read it back from `GET /api/v1/telematics/{telematic_id}/health`.
+
 ### 8.3. Subscribe to a backend command (verifying F-J2)
 
 ```bash
@@ -383,3 +414,4 @@ in section 2.3.
 | 1.1.0 | 2026-09-17 | F-J2 (partial): implemented `set_telemetry_interval` on the backend command topic; documented its exact payload, QoS, and the missing-ack limitation. |
 | 1.2.0 | 2026-10-04 | Provisional device health fields on the status topic (§2.2), from the database design (TX-09); not confirmed by the vendor, not ingested. |
 | 1.2.1 | 2026-10-09 | The pushed interval is no longer stored on the `telematics` row (TX-09, TX-11); `telematic_status_reports` table exists, ingestion of §2.2 still pending. |
+| 1.3.0 | 2026-10-10 | The status topic is ingested (WP4, TX-13): tolerant parsing of the provisional health fields, serial from the topic, plain online/offline notices skipped. The field names are still the unconfirmed proposal. |

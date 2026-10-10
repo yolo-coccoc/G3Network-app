@@ -1,4 +1,4 @@
-"""Business service for Telematic device CRUD, health, config push and lookup.
+"""Business service for Telematic device CRUD, health, status reports, config push and lookup.
 
 Other domains, especially ``telemetry``, must only use the public functions in
 this module to resolve device-vehicle mappings; they must not access
@@ -8,9 +8,17 @@ input, by ID for the response); a device's read-time health (F-J1) through
 the ``telemetry`` public service; a fleet's vehicles for the fleet-wide
 config push (F-J2) through the ``fleet`` public service. No function here
 commits or rolls back - the caller's entry boundary owns the transaction.
+
+Device health (DEV-04) is always computed when read: the silence flag from the
+vehicle's newest telemetry, the rest from the device's newest status report
+(TX-11). The status reports themselves are written by ``record_status_report``
+(DEV-03, the status-report ingestion process).
 """
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TypedDict
 from uuid import UUID
 
 from aiomqtt import MqttError
@@ -19,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.service as fleet_service
 import app.domains.identity.service as identity_service
+import app.domains.telematics.health_rule as health_rule
 import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telemetry.service as telemetry_service
@@ -32,20 +41,28 @@ from app.domains.telematics.exceptions import (
     TelematicNotFoundError,
     TelematicVehicleNotFoundError,
 )
-from app.domains.telematics.models import TelematicModel
+from app.domains.telematics.models import TelematicModel, TelematicStatusReportModel
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
     TelematicConfigResponse,
     TelematicCreateRequest,
     TelematicFleetConfigPushResponse,
     TelematicFleetConfigPushResult,
+    TelematicHealthListResponse,
+    TelematicHealthResponse,
+    TelematicHealthSummaryResponse,
     TelematicListResponse,
     TelematicResponse,
+    TelematicStatusEnvelope,
+    TelematicStatusReportListResponse,
+    TelematicStatusReportResponse,
     TelematicUpdateRequest,
 )
 from app.domains.telematics.types import (
     TelematicConfigPushOutcome,
     TelematicDeviceHealth,
+    TelematicHealthState,
+    TelematicMountedDevice,
     TelematicStatus,
     TelematicVehicleMapping,
 )
@@ -229,6 +246,68 @@ async def _resolve_device_health(
     )
 
 
+@dataclass(frozen=True)
+class _DeviceView:
+    """What is read about a device besides its own row, in one place.
+
+    Attributes:
+        vehicle_vin: VIN of the live vehicle it is mounted on, else `None`.
+        is_mounted: Whether the device is mounted on a live vehicle.
+        device_health: Read-time health from the vehicle's telemetry.
+        latest_status_report: The newest status report, or `None`.
+    """
+
+    vehicle_vin: str | None
+    is_mounted: bool
+    device_health: TelematicDeviceHealth
+    latest_status_report: TelematicStatusReportModel | None
+
+
+async def _load_device_view(
+    db_session: AsyncSession, telematic_record: TelematicModel
+) -> _DeviceView:
+    """Read the vehicle, health and newest status report of a device.
+
+    A device assigned to a soft-deleted vehicle is treated as not mounted
+    (D11, as in ``resolve_mapping_by_serial``): no VIN and no health.
+
+    Args:
+        db_session: Current database session.
+        telematic_record: Device record, flushed or loaded in this session.
+
+    Returns:
+        The device's view.
+
+    Side Effects:
+        Read-only: one status-report lookup, one vehicle lookup when a
+        vehicle is assigned, then the health lookups of
+        ``_resolve_device_health`` when it is live.
+    """
+    latest_status_report = await telematics_repository.find_latest_status_report(
+        db_session, telematic_record.telematic_id
+    )
+    vehicle_vin = None
+    is_mounted = False
+    device_health = _UNMOUNTED_DEVICE_HEALTH
+    if telematic_record.vehicle_id:
+        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
+            db_session,
+            telematic_record.vehicle_id,
+        )
+        if vehicle_reference is not None:
+            vehicle_vin = vehicle_reference.vin
+            is_mounted = True
+            device_health = await _resolve_device_health(
+                db_session, telematic_record, vehicle_reference.vehicle_id
+            )
+    return _DeviceView(
+        vehicle_vin=vehicle_vin,
+        is_mounted=is_mounted,
+        device_health=device_health,
+        latest_status_report=latest_status_report,
+    )
+
+
 async def build_telematic_response(
     db_session: AsyncSession,
     telematic_record: TelematicModel,
@@ -237,9 +316,7 @@ async def build_telematic_response(
 
     The VIN comes from the vehicles domain's public service and the health
     (F-J1) from the telemetry domain's, since this domain must not access
-    either domain's repository or ORM model directly. A device assigned to
-    a soft-deleted vehicle is treated as not mounted (D11, as in
-    ``resolve_mapping_by_serial``): no VIN, and no health.
+    either domain's repository or ORM model directly.
 
     Args:
         db_session: Current database session.
@@ -252,25 +329,11 @@ async def build_telematic_response(
         use come from the newest status report (TX-11).
 
     Side Effects:
-        Read-only: one status-report lookup, one vehicle lookup when a
-        vehicle is assigned, then the
-        health lookups of ``_resolve_device_health`` when it is live.
+        Read-only, see ``_load_device_view``.
     """
-    vehicle_vin = None
-    device_health = _UNMOUNTED_DEVICE_HEALTH
-    latest_status_report = await telematics_repository.find_latest_status_report(
-        db_session, telematic_record.telematic_id
-    )
-    if telematic_record.vehicle_id:
-        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-            db_session,
-            telematic_record.vehicle_id,
-        )
-        if vehicle_reference is not None:
-            vehicle_vin = vehicle_reference.vin
-            device_health = await _resolve_device_health(
-                db_session, telematic_record, vehicle_reference.vehicle_id
-            )
+    device_view = await _load_device_view(db_session, telematic_record)
+    device_health = device_view.device_health
+    latest_status_report = device_view.latest_status_report
     return TelematicResponse(
         telematic_id=telematic_record.telematic_id,
         telematic_serial=telematic_record.telematic_serial,
@@ -278,7 +341,7 @@ async def build_telematic_response(
         organization_id=telematic_record.organization_id,
         acquired_at=telematic_record.acquired_at,
         vehicle_id=telematic_record.vehicle_id,
-        vehicle_vin=vehicle_vin,
+        vehicle_vin=device_view.vehicle_vin,
         installed_at=telematic_record.installed_at,
         status=telematic_record.status,
         status_reason=telematic_record.status_reason,
@@ -341,6 +404,13 @@ async def create_telematic(
         telematic_create_request.telematic_serial,
     ):
         raise TelematicConflictError("Telematic serial already exists")
+    if (
+        telematic_create_request.imei is not None
+        and await telematics_repository.find_by_imei(
+            db_session, telematic_create_request.imei
+        )
+    ):
+        raise TelematicConflictError("Telematic IMEI already exists")
     vehicle_id = None
     if telematic_create_request.vehicle_vin is not None:
         vehicle_id = await _resolve_vehicle_id_by_vin(
@@ -508,6 +578,14 @@ async def update_telematic(
         )
     ):
         raise TelematicConflictError("Telematic serial already exists")
+    if (
+        requested_values.get("imei") is not None
+        and requested_values["imei"] != telematic_record.imei
+        and await telematics_repository.find_by_imei(
+            db_session, requested_values["imei"]
+        )
+    ):
+        raise TelematicConflictError("Telematic IMEI already exists")
     if "vehicle_vin" in requested_values:
         # exclude_unset keeps an explicit null, so "vehicle_vin" present
         # with None means "unassign"; absent means "leave unchanged".
@@ -627,9 +705,10 @@ async def push_telematic_config(
 
     Raises:
         TelematicNotFoundError: Device does not exist or is soft-deleted.
-        TelematicNotConfigurableError: Device status is ``INACTIVE`` - a
-            device deliberately taken out of service should not silently
-            accept a new operating config.
+        TelematicNotConfigurableError: The device is not mounted on a vehicle
+            or is ``INACTIVE`` (TX-08: only a mounted, ACTIVE device receives
+            configuration) - a device in stock or deliberately taken out of
+            service should not silently accept a new operating config.
         TelematicCommandPublishError: The MQTT broker was unreachable or
             the publish otherwise failed.
 
@@ -641,14 +720,31 @@ async def push_telematic_config(
     )
     if telematic_record is None:
         raise TelematicNotFoundError("Telematic not found")
-    if telematic_record.status is TelematicStatus.INACTIVE:
-        raise TelematicNotConfigurableError(
-            "Telematic is INACTIVE and cannot be configured"
-        )
+    _require_configurable(telematic_record)
     return await _publish_config(
         telematic_record,
         telematic_config_push_request.telemetry_interval_seconds,
     )
+
+
+def _require_configurable(telematic_record: TelematicModel) -> None:
+    """Check TX-08: only a mounted, ACTIVE device receives configuration.
+
+    Args:
+        telematic_record: The device to configure, loaded in this session.
+
+    Raises:
+        TelematicNotConfigurableError: The device is not mounted on a vehicle,
+            or is not ``ACTIVE``.
+    """
+    if telematic_record.vehicle_id is None:
+        raise TelematicNotConfigurableError(
+            "Telematic is not mounted on a vehicle and cannot be configured"
+        )
+    if telematic_record.status is not TelematicStatus.ACTIVE:
+        raise TelematicNotConfigurableError(
+            f"Telematic is {telematic_record.status.value} and cannot be configured"
+        )
 
 
 async def _publish_config(
@@ -895,3 +991,371 @@ async def resolve_telematic_owner_organization_id(
     """
     telematic_record = await telematics_repository.get_by_id(db, telematic_id)
     return telematic_record.organization_id if telematic_record else None
+
+
+async def resolve_mounted_device_by_vehicle_id(
+    db: AsyncSession, vehicle_id: UUID
+) -> TelematicMountedDevice | None:
+    """Find the live device mounted on a truck now (public, for VEH-05 activation).
+
+    Args:
+        db: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+
+    Returns:
+        The mounted device, or `None` when the truck has none (a soft-deleted
+        device is not mounted).
+
+    Side Effects:
+        One read-only query.
+    """
+    telematic_record = await telematics_repository.find_by_vehicle_id(db, vehicle_id)
+    if telematic_record is None:
+        return None
+    return TelematicMountedDevice(
+        telematic_id=telematic_record.telematic_id,
+        telematic_serial=telematic_record.telematic_serial,
+        status=telematic_record.status,
+        mounted_at=telematic_record.installed_at or telematic_record.acquired_at,
+    )
+
+
+class StatusReportResult(TypedDict):
+    """Counters returned after processing one status message.
+
+    Attributes:
+        processed: Reports stored (0 or 1).
+        skipped: 1 when nothing was stored: unknown or deleted device, or a
+            message with no health field (a plain online / offline notice).
+        errors: Always 0 here; a malformed message never reaches the service
+            (the consumer drops it) and a database error is raised.
+    """
+
+    processed: int
+    skipped: int
+    errors: int
+
+
+async def record_status_report(
+    db_session: AsyncSession, envelope: TelematicStatusEnvelope
+) -> StatusReportResult:
+    """Store one T-Box status report (DEV-03, TX-10).
+
+    Rules:
+        The device is found by the serial of the topic; a serial that is
+        unknown or belongs to a deleted device is skipped (the report would
+        have no owner). A device that is not mounted still reports (a unit
+        in stock being provisioned), so only the device must exist. A message
+        with none of the health fields is skipped, so a Last Will
+        ``{"status": "offline"}`` never becomes an empty "newest report". The
+        row's ``reported_at`` is the device's timestamp or the receive time.
+
+    Args:
+        db_session: Session whose transaction is owned by the worker.
+        envelope: Message already validated by the consumer, with the serial.
+
+    Returns:
+        The counters of this one message.
+
+    Raises:
+        Exception: Database errors propagate so the worker rolls back.
+
+    Side Effects:
+        May insert and flush one ``telematic_status_reports`` row; does not
+        commit.
+    """
+    telematic_record = await telematics_repository.find_by_serial(
+        db_session, envelope.telematic_serial
+    )
+    if telematic_record is None:
+        logger.warning(
+            "device not found, status message skipped",
+            extra={"telematic_serial": envelope.telematic_serial},
+        )
+        return {"processed": 0, "skipped": 1, "errors": 0}
+    if not envelope.message.has_health_fields():
+        return {"processed": 0, "skipped": 1, "errors": 0}
+    await telematics_repository.insert_status_report(
+        db_session,
+        envelope.message.to_status_report_values(
+            telematic_record.telematic_id, utc_now()
+        ),
+    )
+    return {"processed": 1, "skipped": 0, "errors": 0}
+
+
+async def list_telematic_status_reports(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+    *,
+    principal: Principal,
+    since: datetime | None,
+    limit: int,
+) -> TelematicStatusReportListResponse:
+    """List a device's status reports, newest first, to see trends (DEV-04).
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
+        since: Only reports produced at or after this time, if given.
+        limit: Maximum number of reports.
+
+    Returns:
+        The reports, newest first.
+
+    Raises:
+        TelematicNotFoundError: The device does not exist, is soft-deleted or
+            is out of the caller's reach.
+    """
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
+    if telematic_record is None:
+        raise TelematicNotFoundError("Telematic not found")
+    status_report_records = await telematics_repository.list_status_reports(
+        db_session, telematic_id, since=since, limit=limit
+    )
+    return TelematicStatusReportListResponse(
+        items=[
+            TelematicStatusReportResponse.model_validate(status_report_record)
+            for status_report_record in status_report_records
+        ],
+        count=len(status_report_records),
+    )
+
+
+async def build_telematic_health_response(
+    db_session: AsyncSession, telematic_record: TelematicModel
+) -> TelematicHealthResponse:
+    """Build the dashboard entry of one device (DEV-04).
+
+    Args:
+        db_session: Current database session.
+        telematic_record: Device record loaded in this session.
+
+    Returns:
+        The device's health: state, silence and online flags, and its newest
+        status report.
+
+    Side Effects:
+        Read-only, see ``_load_device_view``.
+    """
+    device_view = await _load_device_view(db_session, telematic_record)
+    device_health = device_view.device_health
+    latest_status_report = device_view.latest_status_report
+    return TelematicHealthResponse(
+        telematic_id=telematic_record.telematic_id,
+        telematic_serial=telematic_record.telematic_serial,
+        organization_id=telematic_record.organization_id,
+        status=telematic_record.status,
+        vehicle_id=telematic_record.vehicle_id if device_view.is_mounted else None,
+        vehicle_vin=device_view.vehicle_vin,
+        health_state=health_rule.classify_device_health(
+            status=telematic_record.status,
+            is_mounted=device_view.is_mounted,
+            last_seen_at=device_health.last_seen_at,
+            is_silent=device_health.is_silent,
+            sim_data_status=(
+                latest_status_report.sim_data_status if latest_status_report else None
+            ),
+            gnss_status=(
+                latest_status_report.gnss_status if latest_status_report else None
+            ),
+        ),
+        last_seen_at=device_health.last_seen_at,
+        is_online=device_health.is_online,
+        is_silent=device_health.is_silent,
+        latest_report=(
+            TelematicStatusReportResponse.model_validate(latest_status_report)
+            if latest_status_report
+            else None
+        ),
+    )
+
+
+async def get_telematic_health(
+    db_session: AsyncSession, telematic_id: UUID, *, principal: Principal
+) -> TelematicHealthResponse:
+    """Get the dashboard entry of one device inside the caller's reach.
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+        principal: The caller.
+
+    Returns:
+        The device's health.
+
+    Raises:
+        TelematicNotFoundError: The device does not exist, is soft-deleted or
+            is out of the caller's reach.
+    """
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
+    if telematic_record is None:
+        raise TelematicNotFoundError("Telematic not found")
+    return await build_telematic_health_response(db_session, telematic_record)
+
+
+async def _collect_device_health(
+    db_session: AsyncSession,
+    principal: Principal,
+    *,
+    fleet_id: UUID | None,
+    organization_id: UUID | None,
+) -> list[TelematicHealthResponse]:
+    """Compute the health of every device in the caller's scope (DEV-04).
+
+    Args:
+        db_session: Current database session.
+        principal: The caller; a restricted caller sees only their own
+            organization's devices.
+        fleet_id: Only the devices mounted on this fleet's current trucks, if
+            given.
+        organization_id: Only devices of this organization (internal staff;
+            for a restricted caller any other organization gives nothing).
+
+    Returns:
+        One entry per device, newest device first (fleet: membership order).
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is out of reach.
+
+    Side Effects:
+        Read-only. One group of lookups per device, per the
+        no-preemptive-batching rule; the whole scope is read because the
+        summary and the state filter need every device.
+    """
+    scope = principal.data_scope
+    if scope is not None and organization_id not in (None, scope):
+        return []
+    scope = scope if scope is not None else organization_id
+    if fleet_id is None:
+        telematic_records = await telematics_repository.list_in_scope(
+            db_session, organization_id=scope
+        )
+    else:
+        vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
+            db_session, fleet_id, organization_id=principal.data_scope
+        )
+        telematic_records = []
+        for vehicle_id in vehicle_ids:
+            telematic_record = await telematics_repository.find_by_vehicle_id(
+                db_session, vehicle_id
+            )
+            if telematic_record is not None and (
+                scope is None or telematic_record.organization_id == scope
+            ):
+                telematic_records.append(telematic_record)
+    return [
+        await build_telematic_health_response(db_session, telematic_record)
+        for telematic_record in telematic_records
+    ]
+
+
+async def list_device_health(
+    db_session: AsyncSession,
+    *,
+    principal: Principal,
+    page: int,
+    page_size: int,
+    fleet_id: UUID | None = None,
+    organization_id: UUID | None = None,
+    health_state: TelematicHealthState | None = None,
+) -> TelematicHealthListResponse:
+    """List the health of devices as a dashboard page (DEV-04).
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+        page: Page number, starting from 1; clamped by ``normalize_page_window``.
+        page_size: Devices per page; clamped to ``1..API_MAX_PAGE_SIZE``.
+        fleet_id: Only the devices on this fleet's trucks, if given.
+        organization_id: Only devices of this organization, if given.
+        health_state: Only devices in this state, if given.
+
+    Returns:
+        One page of entries and the total matching the filters.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is out of reach.
+    """
+    page_window = normalize_page_window(page, page_size)
+    health_responses = await _collect_device_health(
+        db_session, principal, fleet_id=fleet_id, organization_id=organization_id
+    )
+    if health_state is not None:
+        health_responses = [
+            health_response
+            for health_response in health_responses
+            if health_response.health_state is health_state
+        ]
+    return TelematicHealthListResponse(
+        items=health_responses[
+            page_window.offset : page_window.offset + page_window.page_size
+        ],
+        total=len(health_responses),
+        page=page_window.page,
+        page_size=page_window.page_size,
+    )
+
+
+async def get_device_health_summary(
+    db_session: AsyncSession,
+    *,
+    principal: Principal,
+    fleet_id: UUID | None = None,
+    organization_id: UUID | None = None,
+) -> TelematicHealthSummaryResponse:
+    """Count devices per health state and give the healthy share (DEV-04).
+
+    Args:
+        db_session: Current database session.
+        principal: The caller.
+        fleet_id: Only the devices on this fleet's trucks, if given.
+        organization_id: Only devices of this organization, if given.
+
+    Returns:
+        The count per state, the online count and the healthy share of the
+        devices that should be reporting.
+
+    Raises:
+        FleetNotFoundError: The fleet does not exist or is out of reach.
+    """
+    health_responses = await _collect_device_health(
+        db_session, principal, fleet_id=fleet_id, organization_id=organization_id
+    )
+    counts = {
+        state: sum(
+            1
+            for health_response in health_responses
+            if health_response.health_state is state
+        )
+        for state in TelematicHealthState
+    }
+    expected_count = (
+        counts[TelematicHealthState.HEALTHY]
+        + counts[TelematicHealthState.ATTENTION]
+        + counts[TelematicHealthState.SILENT]
+        + counts[TelematicHealthState.NO_DATA]
+    )
+    return TelematicHealthSummaryResponse(
+        total_count=len(health_responses),
+        healthy_count=counts[TelematicHealthState.HEALTHY],
+        attention_count=counts[TelematicHealthState.ATTENTION],
+        silent_count=counts[TelematicHealthState.SILENT],
+        no_data_count=counts[TelematicHealthState.NO_DATA],
+        not_mounted_count=counts[TelematicHealthState.NOT_MOUNTED],
+        inactive_count=counts[TelematicHealthState.INACTIVE],
+        online_count=sum(
+            1 for health_response in health_responses if health_response.is_online
+        ),
+        healthy_percent=(
+            round(100 * counts[TelematicHealthState.HEALTHY] / expected_count, 1)
+            if expected_count
+            else None
+        ),
+    )

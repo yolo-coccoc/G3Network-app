@@ -35,7 +35,13 @@ curl -s localhost:8000/health        # {"status":"healthy",...}
 same three in the foreground, one per terminal.) Optional fourth service,
 the device-silence monitor (F-J1/F-J3):
 `nohup uv run python -m app.domains.telematics.monitoring.entrypoint > $LOG/monitor.log 2>&1 &`
-(foreground: `make telematics-monitor-dev`).
+(foreground: `make telematics-monitor-dev`). Another optional service is the
+T-Box status-report ingestion (DEV-03, `make telematics-status-dev`,
+`nohup uv run python -m app.domains.telematics.ingestion.entrypoint ...`); the
+telemetry simulator does not publish status messages, so publish one by hand
+with `mosquitto_pub -t g3network/telematics/<serial>/status -m '{"firmware_version":"1.0","signal_dbm":-70}'`
+and read it from `GET /telematics/<id>/health`. The seed scripts that post
+devices still use the old API shape (see the plan's Known issues).
 
 ## 3. Flows (from `backend/`)
 

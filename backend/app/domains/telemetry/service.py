@@ -24,13 +24,16 @@ It orchestrates I/O and delegates the pure work to internal modules:
 - ``time_windows`` validates the query windows and cuts report periods;
 - ``mappers`` builds the HTTP responses and DTOs from ORM rows;
 - ``reports`` computes the F-A6/F-C6 reports and the F-A3 trend;
+- ``activation`` computes the VEH-05 vehicle activation (device mounted now,
+  data received since) at read time;
 - ``alerting`` (backed by the pure ``detection``) raises the F-A2/F-A3/F-A4
   notifications during ingestion;
 - ``geofencing`` raises the F-A5 geofence entry/exit notifications during
   ingestion.
 
 Cross-domain edges owned by this module: ``vehicles`` (existence, battery
-capacity, display data, F-F2 activation), ``telematics`` (serial ->
+capacity, display data, VEH-05 activation: the trucks and their handover
+date), ``telematics`` (serial ->
 vehicle mapping), ``fleet`` (a fleet's current member vehicles for the
 fleet-wide views, planner D7) and ``drivers`` (a driver reads the live data
 of the truck they are checked in to).
@@ -61,6 +64,7 @@ import app.domains.batteries.service as battery_service
 import app.domains.drivers.service as driver_service
 import app.domains.fleet.service as fleet_service
 import app.domains.telematics.service as telematics_service
+import app.domains.telemetry.activation as telemetry_activation
 import app.domains.telemetry.alerting as telemetry_alerting
 import app.domains.telemetry.geofencing as telemetry_geofencing
 import app.domains.telemetry.mappers as telemetry_mappers
@@ -76,6 +80,8 @@ from app.domains.telemetry.schemas import (
     FleetOperatingReportResponse,
     FleetVehicleLiveStatusListResponse,
     TelemetryEnvelope,
+    VehicleActivationListResponse,
+    VehicleActivationResponse,
     VehicleBatteryHealthResponse,
     VehicleEnergyUsageResponse,
     VehicleOperatingReportResponse,
@@ -84,6 +90,7 @@ from app.domains.telemetry.schemas import (
 )
 from app.domains.telemetry.types import (
     ReportGranularity,
+    VehicleActivationStatus,
     VehicleLiveStatusReference,
     VehicleOperatingSummary,
     VehicleTelemetryWindowSummary,
@@ -839,6 +846,95 @@ def serialize_fleet_operating_report_csv(report: FleetOperatingReportResponse) -
         UTC ISO 8601 timestamps.
     """
     return telemetry_reports.serialize_fleet_operating_report_csv(report)
+
+
+async def get_vehicle_activation_response(
+    db: AsyncSession, vehicle_id: UUID, *, principal: Principal
+) -> VehicleActivationResponse:
+    """Get the computed activation of one truck (VEH-05, VH-06).
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        vehicle_id: Internal ID of the vehicle.
+        principal: The caller; a truck of another organization is not found
+            unless the caller is internal.
+
+    Returns:
+        The truck's activation status, handover date, mounted device and first
+        data time.
+
+    Raises:
+        TelemetryNotFoundError: The vehicle does not exist, was soft-deleted
+            or is out of the caller's data reach.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
+    """
+    vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
+    vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
+        db, vehicle_reference.vehicle_id
+    )
+    if vehicle_summary is None:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    return await telemetry_activation.build_vehicle_activation(db, vehicle_summary)
+
+
+async def list_vehicle_activations(
+    db: AsyncSession,
+    *,
+    principal: Principal,
+    organization_id: UUID | None = None,
+    activation_status: VehicleActivationStatus | None = None,
+    page: int = settings.API_DEFAULT_PAGE,
+    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+) -> VehicleActivationListResponse:
+    """List trucks with their computed activation and the success rate (VEH-05).
+
+    The summary covers the whole scope (and the organization filter) whatever
+    the status filter or page; the page lists the trucks still waiting when
+    ``activation_status`` is ``AWAITING_DATA``.
+
+    Args:
+        db: Database session owned by the HTTP boundary.
+        principal: The caller; a restricted caller sees only their
+            organization's trucks.
+        organization_id: Only trucks of this organization (internal staff; for
+            a restricted caller any other organization gives an empty list).
+        activation_status: Only trucks in this status on the page, if given.
+        page: Requested page (1-based), clamped by ``normalize_page_window``.
+        page_size: Requested page size, clamped the same way.
+
+    Returns:
+        The summary and one page of trucks.
+
+    Side Effects:
+        Read-only queries: a few per live truck of the scope, no batching
+        (MVP rule); does not commit or roll back.
+    """
+    scope = principal.data_scope
+    if scope is not None and organization_id not in (None, scope):
+        activations: list[VehicleActivationResponse] = []
+    else:
+        activations = await telemetry_activation.collect_vehicle_activations(
+            db, organization_id=scope if scope is not None else organization_id
+        )
+    summary = telemetry_activation.summarize_activations(activations)
+    if activation_status is not None:
+        activations = [
+            activation
+            for activation in activations
+            if activation.activation_status is activation_status
+        ]
+    page_window = normalize_page_window(page, page_size)
+    return VehicleActivationListResponse(
+        summary=summary,
+        items=activations[
+            page_window.offset : page_window.offset + page_window.page_size
+        ],
+        total=len(activations),
+        page=page_window.page,
+        page_size=page_window.page_size,
+    )
 
 
 class MessageResult(TypedDict):

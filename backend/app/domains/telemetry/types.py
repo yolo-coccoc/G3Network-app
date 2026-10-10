@@ -284,3 +284,22 @@ class VehicleOperatingSummary:
     last_recorded_at: datetime | None
     battery_capacity_kwh: float
     is_default_battery_capacity: bool
+
+
+class VehicleActivationStatus(str, enum.Enum):
+    """Where a truck stands between handover and its first data (VEH-05, VH-06).
+
+    Computed at read time from the device mounted now and the data received
+    from it; never stored, so a truck whose T-Box was removed shows it.
+
+    Attributes:
+        NO_DEVICE: No live device is mounted on the truck.
+        AWAITING_DATA: A device is mounted but has sent no telemetry since it
+            was mounted and the truck was handed over.
+        ACTIVATED: The mounted device has sent telemetry: the data flow is
+            confirmed end to end.
+    """
+
+    NO_DEVICE = "NO_DEVICE"
+    AWAITING_DATA = "AWAITING_DATA"
+    ACTIVATED = "ACTIVATED"

@@ -34,6 +34,9 @@ uv run python -m app.domains.telemetry.ingestion.entrypoint
 # OCPP gateway, 2.0.1 + 1.6J (make charging-ocpp-dev)
 uv run python -m app.domains.charging_stations.ocpp.entrypoint
 
+# T-Box status-report ingestion (make telematics-status-dev)
+uv run python -m app.domains.telematics.ingestion.entrypoint
+
 # Device-health monitor (make telematics-monitor-dev)
 uv run python -m app.domains.telematics.monitoring.entrypoint
 

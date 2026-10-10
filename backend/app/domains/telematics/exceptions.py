@@ -26,7 +26,8 @@ class TelematicConflictError(TelematicError, ConflictError):
 
 
 class TelematicNotConfigurableError(TelematicError, ConflictError):
-    """Device is not in a status that accepts a config push (F-J2)."""
+    """Device is not mounted on a vehicle or not ACTIVE, so it cannot take a
+    config push (F-J2, TX-08)."""
 
 
 class TelematicCommandPublishError(TelematicError, UpstreamUnavailableError):

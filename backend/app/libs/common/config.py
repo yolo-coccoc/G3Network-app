@@ -35,6 +35,12 @@ class Settings(BaseSettings):
         MQTT_WILL_QOS: QoS of the MQTT Last Will.
         MQTT_WILL_RETAIN: Whether to retain the MQTT Last Will.
         TELEMETRY_QUEUE_SIZE: In-memory queue capacity.
+        MQTT_STATUS_REPORT_TOPIC: Topic pattern for the devices' status
+            reports (DEV-04, mqtt-spec.md 2.2).
+        MQTT_STATUS_CLIENT_ID: Client identifier of the status-report
+            consumer; must differ from ``MQTT_CLIENT_ID``.
+        TELEMATICS_STATUS_QUEUE_SIZE: In-memory queue capacity of the
+            status-report consumer.
         TELEMETRY_HISTORY_MAX_RANGE_DAYS: Maximum span allowed between
             start_time/end_time on the telemetry history query (F-A5).
         TELEMETRY_HISTORY_DEFAULT_LIMIT: Default max points returned per
@@ -181,6 +187,13 @@ class Settings(BaseSettings):
     # In-RAM queue between the MQTT consumer and the per-message worker. (A
     # batched ingestion path is deferred: deferred.md item 25.)
     TELEMETRY_QUEUE_SIZE: int = Field(default=10000, ge=1)
+
+    # Status-report ingestion (DEV-03/DEV-04, mqtt-spec.md 2.2): its own
+    # process and client id, because a broker evicts an existing session when a
+    # second connection claims the same id (the telemetry consumer's).
+    MQTT_STATUS_REPORT_TOPIC: str = "g3network/telematics/+/status"
+    MQTT_STATUS_CLIENT_ID: str = "g3network-backend-status"
+    TELEMATICS_STATUS_QUEUE_SIZE: int = Field(default=1000, ge=1)
 
     # Bounds for the telemetry history query (F-A5). No offset/page - a
     # range with more points than the limit is narrowed by the caller

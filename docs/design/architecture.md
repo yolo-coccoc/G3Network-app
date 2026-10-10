@@ -97,12 +97,23 @@ FastAPI registers the following domains:
   `g3network/telematics/{serial}/command`, for one device or for every
   current member of a fleet (sequential, one result per vehicle; the push
   writes nothing, the device confirms the interval in its status report).
-  What a device reports about itself goes to `telematic_status_reports`
-  (table only; ingesting the status topic is WP4, mqtt-spec.md 2.2). Device
-  responses carry read-time health (`last_seen_at`, `is_online`,
-  `is_silent`, `last_signal_strength_dbm`) through
+  What a device reports about itself goes to `telematic_status_reports`: its
+  own ingestion process (`telematics/ingestion/`, `make telematics-status-dev`,
+  its own MQTT client id) reads `g3network/telematics/{serial}/status`, one
+  message per transaction, tolerant of the vendor-unconfirmed fields
+  (mqtt-spec.md 2.2). Device responses carry read-time health (`last_seen_at`,
+  `is_online`, `is_silent`, `last_signal_strength_dbm`) through
   `telemetry.service.resolve_vehicle_live_status`; `is_silent` and the
-  monitor share one rule (`monitoring/silence_rule.py`).
+  monitor share one rule (`monitoring/silence_rule.py`). The health dashboard
+  (DEV-04: `/telematics/health/devices`, `/telematics/health/summary`,
+  `/telematics/{id}/health`, `/telematics/{id}/status-reports`) classifies each
+  device with one pure rule (`health_rule.py`) over the silence flag and the
+  newest status report. The silence alert is written for the truck's owning
+  organization and delivered to its ORG_ADMIN and FLEET_MANAGER members
+  (`identity.service.list_organization_role_holder_user_ids`). Only a mounted,
+  ACTIVE device receives configuration (TX-08). The `telematic_installation_periods`
+  and `telematic_ownership_periods` views are not built (DM-27: no feature
+  reads them; the history is in `telematic_history`).
 - `telemetry`: receiving data via the ingestion service, reading a
   vehicle's latest telemetry (with `received_at` and a read-time
   `is_online`, `TELEMETRY_ONLINE_THRESHOLD_SECONDS`) and history
@@ -287,9 +298,9 @@ FastAPI registers the following domains:
   (fleet views, geofence alerts) and `telematics` (fleet-wide config push)
   call them, never the reverse. F-E2 (KPI dashboard) is deferred.
 
-The API process runs separately via Uvicorn. Telemetry ingestion, the OCPP
-gateway, and the telematics device-health monitor each have their own
-entrypoint, sharing the same database/session configuration.
+The API process runs separately via Uvicorn. Telemetry ingestion, the T-Box
+status-report ingestion, the OCPP gateway, and the telematics device-health
+monitor each have their own entrypoint, sharing the same database/session configuration.
 
 Domain exceptions are mapped to HTTP once: each inherits one base in
 `app/libs/common/errors.py` (`NotFoundError` 404, `ConflictError` 409,
@@ -397,11 +408,14 @@ call each other is in
 │   │   │   ├── telematics/            # Telematic device profile and mapping to vehicles (F-G1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │   ├── commands/          # mqtt_publisher.py: F-J2 config-push publisher (the only MQTT publish path)
+│   │   │   │   ├── health_rule.py     # internal, pure: DEV-04 device health state
+│   │   │   │   ├── ingestion/         # mqtt_consumer.py  message_worker.py  entrypoint.py for "make telematics-status-dev" (DEV-03: T-Box status reports -> telematic_status_reports)
 │   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3);
 │   │   │   │                          # silence_rule.py: pure silence rule shared by the monitor and the API's is_silent
 │   │   │   │
 │   │   │   ├── telemetry/             # Real-time & historical vehicle data (F-A1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   ├── activation.py      # internal, I/O: VEH-05 vehicle activation computed at read time (owns the handover / mounted-device lookups)
 │   │   │   │   ├── time_windows.py    # internal, pure: history/report time-window validation
 │   │   │   │   ├── mappers.py         # internal, pure: ORM row/MQTT message -> responses, F-A4 snapshot
 │   │   │   │   ├── reports.py         # internal, pure: F-A3/F-A6/F-C6 report calculations, fleet rollup, CSV
