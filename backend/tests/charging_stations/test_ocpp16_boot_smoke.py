@@ -155,6 +155,49 @@ async def test_boot_notification_prefers_charge_point_serial_number(
 
 
 @pytest.mark.asyncio
+async def test_boot_notification_accepts_fields_longer_than_the_1_6_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CO-17: a 30-character model or serial is stored, not refused (it fits 100)."""
+    captured: dict[str, Any] = {}
+
+    async def fake_record(db: object, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
+
+    response = await _charge_point().on_boot_notification(
+        charge_point_vendor="Willdigits Technology Co Ltd",
+        charge_point_model="M" * 30,
+        charge_point_serial_number="S" * 140,
+        firmware_version="F" * 120,
+    )
+
+    assert response.status == RegistrationStatus.accepted
+    assert captured["vendor"] == "Willdigits Technology Co Ltd"
+    assert captured["model"] == "M" * 30
+    assert captured["serial_number"] == "S" * 100
+    assert captured["firmware_version"] == "F" * 100
+
+
+@pytest.mark.asyncio
+async def test_boot_notification_without_a_model_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the schema check off, the handler still requires vendor and model."""
+
+    async def fake_record(db: object, **kwargs: Any) -> None:
+        raise AssertionError("nothing may be stored")
+
+    monkeypatch.setattr(ocpp_state_service, "record_charger_boot", fake_record)
+
+    with pytest.raises(ValueError, match="chargePointModel"):
+        await _charge_point().on_boot_notification(
+            charge_point_vendor="V", charge_point_model=""
+        )
+
+
+@pytest.mark.asyncio
 async def test_boot_notification_for_unknown_station_propagates_the_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

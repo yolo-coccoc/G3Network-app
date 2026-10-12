@@ -40,6 +40,17 @@ class ChargingSessionScanRequest(BaseModel):
     connector_number: int | None = Field(default=None, ge=1)
 
 
+class ChargingSessionForceCloseRequest(BaseModel):
+    """Body of a staff force-close of a session the charger never stopped (CE-29).
+
+    Attributes:
+        reason: Why the session is closed (e.g. "charger rebooted mid-session");
+            written to the log with the staff member (deferred.md 101).
+    """
+
+    reason: Reason
+
+
 class ChargingSessionScanResponse(BaseModel):
     """The PENDING session a scan created and the remote start queued for it.
 

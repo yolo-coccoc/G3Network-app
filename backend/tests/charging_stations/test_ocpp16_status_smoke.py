@@ -1,5 +1,6 @@
 """Smoke tests for OCPP 1.6J StatusNotification, connector 0 and the widened status enum."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -241,18 +242,65 @@ async def test_unknown_status_is_rejected_before_any_database_work(
 
 
 @pytest.mark.asyncio
-async def test_timestamp_without_timezone_is_rejected(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_timestamp_without_timezone_is_read_as_utc_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The strict timestamp rule (decision D11) applies to 1.6J too."""
+    """CO-16: a naive status time is stored as UTC and logged, not refused."""
     calls = _patch_service(monkeypatch)
 
-    with pytest.raises(ValueError, match="timezone"):
+    with caplog.at_level(logging.WARNING):
         await _charge_point().on_status_notification(
             connector_id=1,
             error_code="NoError",
             status="Available",
             timestamp="2026-09-24T10:00:00",
+        )
+
+    assert calls["connector"][0]["status_updated_at"] == NOW
+    record = next(
+        r
+        for r in caplog.records
+        if r.getMessage() == "OCPP timestamp without a timezone read as UTC"
+    )
+    assert record.__dict__["action"] == "StatusNotification"
+
+
+@pytest.mark.asyncio
+async def test_long_vendor_texts_are_cut_to_their_columns_not_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CO-17: an ``info`` over the 1.6 limit (50) no longer fails the report."""
+    calls = _patch_service(monkeypatch)
+
+    await _charge_point().on_status_notification(
+        connector_id="2",
+        error_code="E" * 80,
+        status="Faulted",
+        info="i" * 120,
+        vendor_error_code="v" * 150,
+        timestamp="2026-09-24T10:00:00Z",
+    )
+
+    stored = calls["connector"][0]
+    assert calls["resolve"][0]["ocpp_connector_id"] == 2
+    assert stored["error_code"] == "E" * 50
+    assert stored["status_info"] == "i" * 50
+    assert stored["vendor_error_code"] == "v" * 100
+
+
+@pytest.mark.asyncio
+async def test_unreadable_status_timestamp_is_still_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the missing timezone is tolerated; garbage still fails loudly."""
+    calls = _patch_service(monkeypatch)
+
+    with pytest.raises(ValueError):
+        await _charge_point().on_status_notification(
+            connector_id=1,
+            error_code="NoError",
+            status="Available",
+            timestamp="not a time",
         )
 
     assert calls["connector"] == []

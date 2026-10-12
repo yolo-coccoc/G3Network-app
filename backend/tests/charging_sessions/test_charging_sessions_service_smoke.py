@@ -17,6 +17,7 @@ from app.domains.charging_sessions.exceptions import (
 )
 from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
+    QR_TOKEN_ALPHABET,
     QR_TOKEN_LENGTH,
     ChargingSessionListFilter,
     MeterSampleInput,
@@ -51,7 +52,10 @@ async def test_create_pending_session_issues_a_token_that_fits_ocpp16(
         started_by=session.started_by,
     )
 
-    assert 0 < len(reference.id_token) <= QR_TOKEN_LENGTH <= 20
+    assert len(reference.id_token) == QR_TOKEN_LENGTH <= 20
+    # CE-28: no lower-case letter, so a charger that upper-cases it still matches.
+    assert set(reference.id_token) <= set(QR_TOKEN_ALPHABET)
+    assert reference.id_token == reference.id_token.upper()
     assert captured["id_token"] == reference.id_token
     assert captured["vehicle_id"] is None
     assert reference.session_id == session.session_id
@@ -165,7 +169,7 @@ async def test_complete_session_stores_the_declared_closing_reading(
     session = build_charging_session(meter_start_wh=Decimal("1000"))
 
     async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
+        db: AsyncSession, station_id: UUID, transaction_id: str, **_: object
     ) -> ChargingSessionModel:
         return session
 
@@ -199,7 +203,7 @@ async def test_complete_session_refuses_a_repeated_stop_and_a_wrong_gun(
     original_ended_at = session.ended_at
 
     async def get_by_transaction(
-        db: AsyncSession, station_id: UUID, transaction_id: str
+        db: AsyncSession, station_id: UUID, transaction_id: str, **_: object
     ) -> ChargingSessionModel:
         return session
 
@@ -234,7 +238,9 @@ async def test_ingest_meter_values_refuses_a_session_that_is_not_active(
     """A sample for a session that is not ACTIVE is refused, nothing is stored (F-B2)."""
     session = build_charging_session(status=status)
 
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
+    async def get_by_id(
+        db: AsyncSession, session_id: UUID, **_: object
+    ) -> ChargingSessionModel:
         return session
 
     async def fail_if_called(db: AsyncSession, **kwargs: object) -> None:
@@ -259,7 +265,9 @@ async def test_ingest_meter_values_stores_wh_with_the_ocpp_defaults(
     session = build_charging_session()
     inserted: list[dict[str, object]] = []
 
-    async def get_by_id(db: AsyncSession, session_id: UUID) -> ChargingSessionModel:
+    async def get_by_id(
+        db: AsyncSession, session_id: UUID, **_: object
+    ) -> ChargingSessionModel:
         return session
 
     async def insert_measurement(db: AsyncSession, **kwargs: object) -> None:

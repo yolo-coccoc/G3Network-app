@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from ocpp.v16 import call_result
 from ocpp.v16.enums import AuthorizationStatus
 
 import app.domains.charging_sessions.repository as charging_repository
@@ -16,6 +17,7 @@ import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 from app.domains.charging_sessions.exceptions import (
     ChargingSessionNotFoundError,
+    ChargingSessionStateError,
     ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import ChargingSessionModel
@@ -253,19 +255,56 @@ async def test_start_on_connector_zero_is_rejected_before_allocating_an_id(
 
 
 @pytest.mark.asyncio
-async def test_start_with_a_timestamp_without_timezone_opens_no_transaction(
+async def test_start_with_a_timestamp_without_timezone_starts_with_utc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The strict timestamp rule (D11) is checked before any database work."""
+    """CO-16: a naive start time is read as UTC; the session still starts."""
+    record = _patch_start(monkeypatch)
+
+    response = await _charge_point().on_start_transaction(
+        connector_id=1,
+        id_tag="A",
+        meter_start=0,
+        timestamp="2026-09-24T10:00:00",
+    )
+
+    assert response.id_tag_info["status"] == AuthorizationStatus.accepted
+    assert record["ingest"][0]["started_at"] == NOW
+
+
+@pytest.mark.asyncio
+async def test_start_reads_a_float_meter_start_and_a_text_connector_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CO-17: ``12345670.0`` and ``"1"`` no longer fail the library schema."""
+    record = _patch_start(monkeypatch)
+
+    response = await _charge_point().on_start_transaction(
+        connector_id="1",
+        id_tag="ABC",
+        meter_start=12345670.0,
+        timestamp="2026-09-24T10:00:00Z",
+    )
+
+    assert response.id_tag_info["status"] == AuthorizationStatus.accepted
+    assert record["resolve"]["ocpp_connector_id"] == 1
+    assert record["ingest"][0]["meter_start_wh"] == Decimal("12345670.0")
+
+
+@pytest.mark.asyncio
+async def test_start_with_an_unreadable_timestamp_opens_no_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timestamp that is not ISO-8601 is checked before any database work."""
     record = _patch_start(monkeypatch)
     factory = _CountingFactory()
 
-    with pytest.raises(ValueError, match="timezone"):
+    with pytest.raises(ValueError):
         await _charge_point(factory).on_start_transaction(
             connector_id=1,
             id_tag="A",
             meter_start=0,
-            timestamp="2026-09-24T10:00:00",
+            timestamp="soon",
         )
 
     assert factory.entered == 0
@@ -276,7 +315,7 @@ async def test_start_with_a_timestamp_without_timezone_opens_no_transaction(
 
 
 def _patch_stop(
-    monkeypatch: pytest.MonkeyPatch, *, missing: bool = False
+    monkeypatch: pytest.MonkeyPatch, *, missing: bool = False, completed: bool = False
 ) -> list[dict[str, Any]]:
     ingested: list[dict[str, Any]] = []
 
@@ -296,6 +335,8 @@ def _patch_stop(
         )
 
     async def fake_ingest(db: object, **kwargs: Any) -> None:
+        if completed:
+            raise ChargingSessionStateError("already completed")
         ingested.append(kwargs)
 
     monkeypatch.setattr(
@@ -336,16 +377,65 @@ async def test_stop_transaction_finds_the_session_and_stores_meter_stop_and_reas
 
 
 @pytest.mark.asyncio
-async def test_stop_transaction_for_an_unknown_transaction_propagates_the_error(
+@pytest.mark.parametrize("transaction_id", [0, 42])
+async def test_stop_transaction_for_an_unknown_transaction_is_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    transaction_id: int,
+) -> None:
+    """CO-16: transaction 0 (a refused start) or an unknown one is ACKed, not retried."""
+    ingested = _patch_stop(monkeypatch, missing=True)
+
+    with caplog.at_level(logging.WARNING):
+        response = await _charge_point().on_stop_transaction(
+            meter_stop=1,
+            timestamp="2026-09-24T10:30:00Z",
+            transaction_id=transaction_id,
+        )
+
+    assert response == call_result.StopTransaction()
+    assert ingested == []
+    record = next(
+        r
+        for r in caplog.records
+        if r.getMessage() == "Transaction message confirmed without changes"
+    )
+    assert record.__dict__["reason"] == "unknown_transaction"
+
+
+@pytest.mark.asyncio
+async def test_repeated_stop_for_a_completed_session_is_confirmed_unchanged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """CO-16: a stop re-sent after a lost answer gets the same empty confirmation."""
+    _patch_stop(monkeypatch, completed=True)
+
+    with caplog.at_level(logging.WARNING):
+        response = await _charge_point().on_stop_transaction(
+            meter_stop=1500, timestamp="2026-09-24T10:30:00Z", transaction_id=42
+        )
+
+    assert response == call_result.StopTransaction()
+    record = next(
+        r
+        for r in caplog.records
+        if r.getMessage() == "Transaction message confirmed without changes"
+    )
+    assert record.__dict__["reason"] == "session_not_active"
+
+
+@pytest.mark.asyncio
+async def test_stop_with_a_timestamp_without_timezone_completes_with_utc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unknown transaction is a loud error (a CALLERROR), not a silent ACK."""
-    _patch_stop(monkeypatch, missing=True)
+    """CO-16: a naive stop time is read as UTC."""
+    ingested = _patch_stop(monkeypatch)
 
-    with pytest.raises(ChargingSessionNotFoundError):
-        await _charge_point().on_stop_transaction(
-            meter_stop=1, timestamp="2026-09-24T10:30:00Z", transaction_id=42
-        )
+    await _charge_point().on_stop_transaction(
+        meter_stop=1500, timestamp="2026-09-24T10:30:00", transaction_id=42
+    )
+
+    assert ingested[0]["ended_at"] == NOW + timedelta(minutes=30)
 
 
 # --- session service ----------------------------------------------------------------
@@ -380,7 +470,7 @@ async def test_resolve_session_by_transaction_returns_a_reference_or_raises(
     found: list[Any] = [session]
 
     async def get_by_transaction(
-        db: object, station_id: Any, transaction_id: str
+        db: object, station_id: Any, transaction_id: str, **_: object
     ) -> Any:
         return found[0]
 

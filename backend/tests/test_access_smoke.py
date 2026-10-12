@@ -184,7 +184,11 @@ async def test_telematic_of_another_organization_is_not_found(
     scopes: list[UUID | None] = []
 
     async def get_by_id(
-        db: AsyncSession, telematic_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        telematic_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        **_: object,
     ) -> None:
         scopes.append(organization_id)
 
@@ -211,7 +215,11 @@ async def test_fleet_of_another_organization_is_not_found(
     scopes: list[UUID | None] = []
 
     async def get_by_id(
-        db: AsyncSession, fleet_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        fleet_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        **_: object,
     ) -> None:
         scopes.append(organization_id)
 
@@ -232,7 +240,11 @@ async def test_driver_of_another_organization_is_not_found(
     scopes: list[UUID | None] = []
 
     async def get_by_id(
-        db: AsyncSession, driver_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession,
+        driver_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        **_: object,
     ) -> None:
         scopes.append(organization_id)
 
@@ -280,6 +292,7 @@ async def test_support_case_of_another_organization_is_not_found(
         *,
         organization_id: UUID | None = None,
         driver_id: UUID | None = None,
+        **_: object,
     ) -> None:
         seen.append((organization_id, driver_id))
 
@@ -307,6 +320,7 @@ async def test_charging_session_of_another_organization_is_not_found(
         *,
         organization_id: UUID | None = None,
         started_by: UUID | None = None,
+        **_: object,
     ) -> None:
         seen.append((organization_id, started_by))
 
@@ -335,7 +349,7 @@ async def test_a_notification_outside_the_inbox_and_the_organization_is_not_foun
     """A driver reads only their own inbox; staff also their organization's."""
     record = type("NotificationStub", (), {"organization_id": OTHER_ORGANIZATION_ID})()
 
-    async def get_by_id(db: AsyncSession, notification_id: int) -> object:
+    async def get_by_id(db: AsyncSession, notification_id: int, **_: object) -> object:
         return record
 
     async def find_recipient(*_args: object) -> None:

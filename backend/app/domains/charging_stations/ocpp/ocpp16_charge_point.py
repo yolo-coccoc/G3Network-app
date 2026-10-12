@@ -18,10 +18,20 @@ start/stop, unlock, reset, availability, configuration change, trigger
 message; CS-20). Every other action a 1.6J
 charger sends is answered with ``CALLERROR NotImplemented`` by ``python-ocpp``
 (the frame is still stored by the raw message log).
+
+Tolerance for real firmware (CO-16, CO-17): the library's JSON-schema check is
+switched off for ``BootNotification``, ``StatusNotification``,
+``StartTransaction``, ``StopTransaction`` and ``MeterValues``; each handler
+checks the fields it uses and cuts free text to its column. A timestamp without
+a timezone is read as UTC and logged. A ``StopTransaction`` or ``MeterValues``
+for a transaction that is unknown (``0`` included) or already finished is
+confirmed and changes nothing, because a charger re-sends a transaction message
+until it is confirmed.
 """
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Final
 from uuid import UUID, uuid4
 
@@ -33,7 +43,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-from app.domains.charging_sessions.exceptions import ChargingSessionTokenError
+from app.domains.charging_sessions.exceptions import (
+    ChargingSessionNotFoundError,
+    ChargingSessionStateError,
+    ChargingSessionTokenError,
+)
 from app.domains.charging_sessions.types import STOP_REASON_MAX_LENGTH
 from app.domains.charging_stations.ocpp.command_types import (
     CommandResult,
@@ -49,7 +63,7 @@ from app.domains.charging_stations.ocpp.ocpp16_measurements import (
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
     format_ocpp_timestamp,
-    parse_ocpp_timestamp,
+    parse_ocpp_timestamp_assuming_utc,
 )
 from app.domains.charging_stations.ocpp.raw_log import RecordingConnection
 from app.domains.charging_stations.types import (
@@ -66,6 +80,70 @@ logger = logging.getLogger(__name__)
 
 # Subprotocol label this adapter serves; stored with each configuration snapshot.
 OCPP16_PROTOCOL_VERSION: Final[str] = "ocpp1.6"
+# Widths of the columns the free-text boot and status fields are stored in
+# (charging_station_state, charging_connector_state). The 1.6 schema allows
+# less, but its check is switched off (CO-17), so a longer vendor value is cut
+# here instead of failing the message; the raw log keeps the original.
+_DEVICE_TEXT_MAX_LENGTH: Final[int] = 100
+_ERROR_CODE_MAX_LENGTH: Final[int] = 50
+_VENDOR_ERROR_CODE_MAX_LENGTH: Final[int] = 100
+_STATUS_INFO_MAX_LENGTH: Final[int] = 50
+
+
+def _fit_text(value: object, max_length: int) -> str | None:
+    """Turn an optional payload value into text that fits its column.
+
+    Args:
+        value: The field as the charger sent it, or ``None``.
+        max_length: The column width.
+
+    Returns:
+        ``None`` for a missing value, otherwise its text cut to ``max_length``.
+    """
+    if value is None:
+        return None
+    return str(value)[:max_length]
+
+
+def _require_text(value: object, field_name: str, max_length: int) -> str:
+    """Read a required free-text payload field, cut to its column.
+
+    Args:
+        value: The field as the charger sent it.
+        field_name: The OCPP field name, for the error message.
+        max_length: The column width.
+
+    Returns:
+        The text, at most ``max_length`` characters.
+
+    Raises:
+        ValueError: If the field is missing or empty.
+    """
+    text = _fit_text(value, max_length)
+    if not text:
+        raise ValueError(f"{field_name} is required")
+    return text
+
+
+def _to_int(value: object, field_name: str) -> int:
+    """Read an integer payload field that a charger may send as text or float.
+
+    Args:
+        value: The field as the charger sent it (``1``, ``"1"`` or ``1.0``).
+        field_name: The OCPP field name, for the error message.
+
+    Returns:
+        The integer value.
+
+    Raises:
+        ValueError: If the value is not a whole number.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} is not an integer: {value!r}")
+    number = to_decimal(value, field_name)
+    if number != number.to_integral_value():
+        raise ValueError(f"{field_name} is not an integer: {value!r}")
+    return int(number)
 
 
 class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
@@ -142,7 +220,44 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             )
         return self._station_id
 
-    @on(Action.boot_notification)  # type: ignore[untyped-decorator]
+    def _parse_timestamp(self, value: object, action: str) -> datetime:
+        """Parse a 1.6J timestamp, reading one without a timezone as UTC (CO-16).
+
+        Args:
+            value: The ``timestamp`` field as sent.
+            action: The OCPP action name, for the log.
+
+        Returns:
+            The timezone-aware time.
+
+        Raises:
+            ValueError: If the value is not an ISO-8601 timestamp.
+
+        Side Effects:
+            Logs a warning when the charger sent no timezone.
+        """
+        timestamp = parse_ocpp_timestamp_assuming_utc(str(value))
+        if not timestamp.had_timezone:
+            self._log_naive_timestamps(action, 1)
+        return timestamp.value
+
+    def _log_naive_timestamps(self, action: str, count: int) -> None:
+        """Log that a message carried timestamps without a timezone (CO-16).
+
+        Args:
+            action: The OCPP action name.
+            count: How many timestamps were read as UTC.
+        """
+        logger.warning(
+            "OCPP timestamp without a timezone read as UTC",
+            extra={
+                "ocpp_identity": self.id,
+                "action": action,
+                "naive_timestamps": count,
+            },
+        )
+
+    @on(Action.boot_notification, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_boot_notification(
         self,
         charge_point_vendor: str,
@@ -157,7 +272,10 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         Only ``chargePointVendor`` and ``chargePointModel`` are required by the
         1.6 schema; everything else may be absent. An unprovisioned station
         never gets here (the handshake rejects it), so the boot is always
-        ``Accepted``.
+        ``Accepted``. The schema check is off (CO-17): the 1.6 limits (model
+        20, serial 25 characters) are stricter than our columns, and a refused
+        boot would keep the charger out of service; each text is cut to its
+        column instead.
 
         Args:
             charge_point_vendor: Vendor name.
@@ -174,18 +292,31 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ``Accepted`` with the server's current time (the charger syncs its
             clock from it) and the heartbeat interval in seconds.
 
+        Raises:
+            ValueError: If the vendor or the model is missing or empty.
+
         Side Effects:
             Updates the station's device fields in an atomic transaction.
         """
+        vendor = _require_text(
+            charge_point_vendor, "chargePointVendor", _DEVICE_TEXT_MAX_LENGTH
+        )
+        model = _require_text(
+            charge_point_model, "chargePointModel", _DEVICE_TEXT_MAX_LENGTH
+        )
+        serial_number = _fit_text(
+            charge_point_serial_number or charge_box_serial_number,
+            _DEVICE_TEXT_MAX_LENGTH,
+        )
         booted_at = utc_now()
         async with self.session_factory.begin() as db:
             await ocpp_state_service.record_charger_boot(
                 db,
                 station_id=await self._resolve_station_id(db),
-                vendor=charge_point_vendor,
-                model=charge_point_model,
-                serial_number=charge_point_serial_number or charge_box_serial_number,
-                firmware_version=firmware_version,
+                vendor=vendor,
+                model=model,
+                serial_number=serial_number,
+                firmware_version=_fit_text(firmware_version, _DEVICE_TEXT_MAX_LENGTH),
                 booted_at=booted_at,
             )
         return call_result.BootNotification(
@@ -210,10 +341,10 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         """
         return call_result.Heartbeat(current_time=format_ocpp_timestamp(utc_now()))
 
-    @on(Action.status_notification)  # type: ignore[untyped-decorator]
+    @on(Action.status_notification, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_status_notification(
         self,
-        connector_id: int,
+        connector_id: int | str,
         error_code: str,
         status: str,
         timestamp: str | None = None,
@@ -227,7 +358,9 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         connector ``n >= 1`` is gun ``n`` and is stored on the connector
         provisioned as EVSE ``n`` / connector ``1`` (decision D3). The status
         keeps the exact 1.6J label (decision D4), and ``errorCode``,
-        ``vendorErrorCode`` and ``info`` are stored as sent.
+        ``vendorErrorCode`` and ``info`` are stored as sent, cut to their
+        columns: the schema check is off (CO-17), so an ``info`` longer than
+        the 1.6 limit no longer fails the report.
 
         Args:
             connector_id: ``0`` for the whole charger, otherwise the gun number.
@@ -235,7 +368,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             status: OCPP 1.6 ``ChargePointStatus`` label. Arrives as a plain
                 ``str`` at runtime, like the 2.0.1 handler.
             timestamp: Time of the status change; **optional** in 1.6, so the
-                server's receive time is used when it is absent.
+                server's receive time is used when it is absent; read as UTC
+                when it has no timezone (CO-16).
             info: Free-text additional information.
             vendor_error_code: Vendor-specific error code.
             **_: Other optional OCPP fields (``vendor_id``) that are not stored.
@@ -244,8 +378,9 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             A valid empty response for StatusNotification.
 
         Raises:
-            ValueError: If ``status`` is not one of the nine 1.6 statuses, or
-                ``timestamp`` has no timezone.
+            ValueError: If ``status`` is not one of the nine 1.6 statuses,
+                ``connectorId`` is not an integer, or ``timestamp`` is not
+                ISO-8601.
             ChargingStationNotFoundError: If the station is not provisioned.
             ChargingEvseNotFoundError: If the gun's EVSE is not provisioned.
             ChargingConnectorNotFoundError: If the gun's connector is not
@@ -258,18 +393,25 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             connection (the same contract as the other handlers).
         """
         reported_status = ChargingConnectorStatus(status)
+        gun_number = _to_int(connector_id, "connectorId")
         reported_at = (
-            parse_ocpp_timestamp(timestamp) if timestamp is not None else utc_now()
+            self._parse_timestamp(timestamp, "StatusNotification")
+            if timestamp is not None
+            else utc_now()
+        )
+        stored_error_code = _fit_text(error_code, _ERROR_CODE_MAX_LENGTH)
+        stored_vendor_error_code = _fit_text(
+            vendor_error_code, _VENDOR_ERROR_CODE_MAX_LENGTH
         )
         async with self.session_factory.begin() as db:
-            if connector_id == 0:
+            if gun_number == 0:
                 await ocpp_state_service.update_charger_status(
                     db,
                     station_id=await self._resolve_station_id(db),
                     status=reported_status,
                     status_updated_at=reported_at,
-                    error_code=error_code,
-                    vendor_error_code=vendor_error_code,
+                    error_code=stored_error_code,
+                    vendor_error_code=stored_vendor_error_code,
                 )
             else:
                 (
@@ -277,16 +419,16 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     _evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, await self._resolve_station_id(db), connector_id
+                    db, await self._resolve_station_id(db), gun_number
                 )
                 await ocpp_state_service.update_connector_status(
                     db,
                     connector_id=connector_uuid,
                     status=reported_status,
                     status_updated_at=reported_at,
-                    error_code=error_code,
-                    vendor_error_code=vendor_error_code,
-                    status_info=info,
+                    error_code=stored_error_code,
+                    vendor_error_code=stored_vendor_error_code,
+                    status_info=_fit_text(info, _STATUS_INFO_MAX_LENGTH),
                 )
         return call_result.StatusNotification()
 
@@ -329,12 +471,12 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             }
         )
 
-    @on(Action.start_transaction)  # type: ignore[untyped-decorator]
+    @on(Action.start_transaction, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_start_transaction(
         self,
-        connector_id: int,
+        connector_id: int | str,
         id_tag: str,
-        meter_start: int,
+        meter_start: float,
         timestamp: str,
         reservation_id: int | None = None,
         **_: object,
@@ -351,14 +493,19 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         If the connector already has an ``ACTIVE`` session (a charger that
         rebooted mid-session, for example), a structured warning is logged and
         the old session is left untouched: orphan handling waits for real
-        charger logs (decision D14).
+        charger logs (decision D14); staff close it by hand (CE-29).
+
+        The schema check is off (CO-17), so a ``meterStart`` sent as a float
+        (``12345670.0``) or a ``connectorId`` sent as text is read here.
 
         Args:
             connector_id: The gun number (``>= 1``; gun ``n`` is EVSE ``n`` /
                 connector ``1``).
             id_tag: The tag that started the session; never log it (IS-07).
-            meter_start: Meter reading at the start, an integer in Wh.
-            timestamp: Start time (must carry a timezone).
+            meter_start: Meter reading at the start in Wh (integer in 1.6;
+                a float is accepted).
+            timestamp: Start time; read as UTC when it has no timezone
+                (CO-16).
             reservation_id: Reservation that led to this session; not stored.
             **_: Other optional OCPP fields.
 
@@ -367,7 +514,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             ``Invalid`` (transaction ID ``0``) for a token no scan issued.
 
         Raises:
-            ValueError: If ``timestamp`` has no timezone.
+            ValueError: If ``timestamp`` is not ISO-8601, ``connectorId`` is
+                not an integer or ``meterStart`` is not a number.
             ChargingOcppMessageInputError: If ``connector_id`` is ``0``.
             ChargingStationNotFoundError: If the station is not provisioned.
             ChargingEvseNotFoundError: If the gun's EVSE is not provisioned.
@@ -380,7 +528,10 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             transaction; everything rolls back on any error above (the ID
             number is then skipped, which is harmless).
         """
-        started_at = parse_ocpp_timestamp(timestamp)
+        started_at = self._parse_timestamp(timestamp, "StartTransaction")
+        gun_number = _to_int(connector_id, "connectorId")
+        meter_start_wh = to_decimal(meter_start, "meter_start")
+        id_token = str(id_tag)
         station_id: UUID | None = None
         try:
             async with self.session_factory.begin() as db:
@@ -389,7 +540,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     evse_id,
                     connector_uuid,
                 ) = await ocpp_state_service.resolve_ocpp16_topology(
-                    db, await self._resolve_station_id(db), connector_id
+                    db, await self._resolve_station_id(db), gun_number
                 )
                 if await charging_sessions_service.has_active_session_on_connector(
                     db, connector_uuid
@@ -399,7 +550,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                         "active session",
                         extra={
                             "ocpp_identity": self.id,
-                            "ocpp_connector_id": connector_id,
+                            "ocpp_connector_id": gun_number,
                         },
                     )
                 transaction_id = (
@@ -410,14 +561,14 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     station_id=station_id,
                     evse_id=evse_id,
                     connector_id=connector_uuid,
-                    id_token=id_tag,
+                    id_token=id_token,
                     transaction_id=str(transaction_id),
                     started_at=started_at,
-                    meter_start_wh=to_decimal(meter_start, "meter_start"),
+                    meter_start_wh=meter_start_wh,
                 )
         except ChargingSessionTokenError:
             retried_transaction_id = await self._find_transaction_started_by_token(
-                station_id, id_tag
+                station_id, id_token
             )
             if retried_transaction_id is not None:
                 # The charger sent the start again because it never got our
@@ -428,7 +579,7 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 )
             logger.warning(
                 "StartTransaction refused: no scan issued its token",
-                extra={"ocpp_identity": self.id, "ocpp_connector_id": connector_id},
+                extra={"ocpp_identity": self.id, "ocpp_connector_id": gun_number},
             )
             return call_result.StartTransaction(
                 transaction_id=0,
@@ -466,9 +617,9 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
     @on(Action.stop_transaction, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_stop_transaction(
         self,
-        meter_stop: int,
+        meter_stop: float,
         timestamp: str,
-        transaction_id: int,
+        transaction_id: int | str,
         reason: str | None = None,
         id_tag: str | None = None,
         transaction_data: list[OcppPayload] | None = None,
@@ -491,9 +642,17 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         ``reason`` longer than its column (``STOP_REASON_MAX_LENGTH``) is
         truncated (the raw frame in the message log keeps the original).
 
+        The stop is **always confirmed** once it is readable (CO-16): a
+        transaction this charger never had (``0`` after a refused start
+        included) or a session that is already finished (the charger re-sent
+        the stop because our answer was lost, or staff force-closed it, CE-29)
+        changes nothing and is logged as a warning. A CALLERROR would make the
+        charger re-send the stop forever and block its message queue.
+
         Args:
             meter_stop: Meter reading at the end, in Wh.
-            timestamp: Stop time (must carry a timezone).
+            timestamp: Stop time; read as UTC when it has no timezone
+                (CO-16).
             transaction_id: The ID this backend allocated in
                 ``StartTransaction``.
             reason: Why the session stopped (``EmergencyStop``,
@@ -507,46 +666,56 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
             An empty ``StopTransaction`` confirmation.
 
         Raises:
-            ValueError: If a required field is not a number, ``timestamp`` has
-                no timezone, or an energy-register sample cannot be read.
+            ValueError: If a required field is not a number, ``timestamp`` is
+                not ISO-8601, or an energy-register sample cannot be read.
             ChargingStationNotFoundError: If the station is not provisioned.
-            ChargingSessionNotFoundError: If this station has no such
-                transaction.
-            ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
             Stores the samples and completes the session in one atomic
-            transaction; rolls back entirely on any error.
+            transaction; rolls back entirely on any error, and writes nothing
+            for an unknown or finished transaction.
         """
-        stopped_at = parse_ocpp_timestamp(timestamp)
+        stopped_at = self._parse_timestamp(timestamp, "StopTransaction")
         closing_meter_wh = to_decimal(meter_stop, "meter_stop")
-        transaction_key = str(int(transaction_id))
+        transaction_key = str(_to_int(transaction_id, "transactionId"))
         extraction = extract_v16_measurements(transaction_data or [])
-        async with self.session_factory.begin() as db:
-            station_id = await self._resolve_station_id(db)
-            reference = await charging_sessions_service.resolve_session_by_transaction(
-                db, station_id=station_id, transaction_id=transaction_key
+        if extraction.naive_timestamps:
+            self._log_naive_timestamps("StopTransaction", extraction.naive_timestamps)
+        try:
+            async with self.session_factory.begin() as db:
+                station_id = await self._resolve_station_id(db)
+                reference = (
+                    await charging_sessions_service.resolve_session_by_transaction(
+                        db, station_id=station_id, transaction_id=transaction_key
+                    )
+                )
+                await self._store_extraction(db, reference.session_id, extraction)
+                await charging_sessions_service.complete_session(
+                    db,
+                    station_id=reference.station_id,
+                    evse_id=reference.evse_id,
+                    connector_id=reference.connector_id,
+                    transaction_id=transaction_key,
+                    ended_at=stopped_at,
+                    stop_reason=(
+                        str(reason)[:STOP_REASON_MAX_LENGTH] if reason else None
+                    ),
+                    meter_stop_wh=closing_meter_wh,
+                )
+        except (ChargingSessionNotFoundError, ChargingSessionStateError) as error:
+            self._log_unapplied_transaction_message(
+                "StopTransaction", transaction_key, error
             )
-            await self._store_extraction(db, reference.session_id, extraction)
-            await charging_sessions_service.complete_session(
-                db,
-                station_id=reference.station_id,
-                evse_id=reference.evse_id,
-                connector_id=reference.connector_id,
-                transaction_id=transaction_key,
-                ended_at=stopped_at,
-                stop_reason=reason[:STOP_REASON_MAX_LENGTH] if reason else None,
-                meter_stop_wh=closing_meter_wh,
-            )
+            return call_result.StopTransaction()
         self._log_skipped_samples("StopTransaction", extraction)
         return call_result.StopTransaction()
 
     @on(Action.meter_values, skip_schema_validation=True)  # type: ignore[untyped-decorator]
     async def on_meter_values(
         self,
-        connector_id: int,
+        connector_id: int | str,
         meter_value: list[OcppPayload],
-        transaction_id: int | None = None,
+        transaction_id: int | str | None = None,
         **_: object,
     ) -> call_result.MeterValues:
         """Store the readings of a ``MeterValues`` message against its session.
@@ -568,7 +737,11 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
         A message **without** a ``transactionId`` (clock-aligned samples or
         readings outside a transaction) belongs to no session, so nothing is
         stored beyond the raw message log; station-level metering is deferred
-        (``deferred.md`` #77).
+        (``deferred.md`` #77). A message for a transaction this charger never
+        had, or for a session that is already finished (readings sent late
+        from the charger's offline queue, or after a staff force-close), is
+        confirmed and stores nothing (CO-16): 1.6 chargers re-send
+        transaction readings until they are confirmed.
 
         Args:
             connector_id: The gun the readings belong to (not used to find the
@@ -582,19 +755,19 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
 
         Raises:
             KeyError: If a group lacks ``timestamp`` or ``sampled_value``.
-            ValueError: If a timestamp lacks a timezone or an energy-register
-                sample cannot be read.
+            ValueError: If a timestamp is not ISO-8601, ``transactionId`` is
+                not an integer, or an energy-register sample cannot be read.
             ChargingStationNotFoundError: If the station is not provisioned.
-            ChargingSessionNotFoundError: If this station has no such
-                transaction.
-            ChargingSessionStateError: If the session is already completed.
 
         Side Effects:
             Appends the samples in one atomic transaction; rolls back entirely
-            on any error above.
+            on any error above, and writes nothing for an unknown or finished
+            transaction.
         """
         extraction = extract_v16_measurements(meter_value)
         self._log_skipped_samples("MeterValues", extraction)
+        if extraction.naive_timestamps:
+            self._log_naive_timestamps("MeterValues", extraction.naive_timestamps)
         if transaction_id is None:
             logger.debug(
                 "MeterValues without a transactionId is not attributed to a session",
@@ -605,13 +778,46 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                 },
             )
             return call_result.MeterValues()
-        async with self.session_factory.begin() as db:
-            station_id = await self._resolve_station_id(db)
-            reference = await charging_sessions_service.resolve_session_by_transaction(
-                db, station_id=station_id, transaction_id=str(int(transaction_id))
+        transaction_key = str(_to_int(transaction_id, "transactionId"))
+        try:
+            async with self.session_factory.begin() as db:
+                station_id = await self._resolve_station_id(db)
+                reference = (
+                    await charging_sessions_service.resolve_session_by_transaction(
+                        db, station_id=station_id, transaction_id=transaction_key
+                    )
+                )
+                await self._store_extraction(db, reference.session_id, extraction)
+        except (ChargingSessionNotFoundError, ChargingSessionStateError) as error:
+            self._log_unapplied_transaction_message(
+                "MeterValues", transaction_key, error
             )
-            await self._store_extraction(db, reference.session_id, extraction)
         return call_result.MeterValues()
+
+    def _log_unapplied_transaction_message(
+        self, action: str, transaction_key: str, error: Exception
+    ) -> None:
+        """Log a confirmed transaction message that changed nothing (CO-16).
+
+        Args:
+            action: ``StopTransaction`` or ``MeterValues``.
+            transaction_key: The message's ``transactionId`` as text.
+            error: Why it was not applied: the transaction is unknown on this
+                charger, or its session is no longer ``ACTIVE``.
+        """
+        logger.warning(
+            "Transaction message confirmed without changes",
+            extra={
+                "ocpp_identity": self.id,
+                "action": action,
+                "ocpp_transaction_id": transaction_key,
+                "reason": (
+                    "unknown_transaction"
+                    if isinstance(error, ChargingSessionNotFoundError)
+                    else "session_not_active"
+                ),
+            },
+        )
 
     async def _store_extraction(
         self, db: AsyncSession, session_id: UUID, extraction: V16Extraction

@@ -11,8 +11,9 @@ configuration snapshots (each from one ``GET_CONFIGURATION`` command, CS-21).
 Every function runs inside a transaction owned by the gateway's entry boundary
 (the adapter's per-message transaction, or the raw log's own one) and never
 commits or rolls back. OCPP never creates topology: an identity, EVSE or
-connector that was not pre-provisioned is an error. Every timestamp must carry
-a timezone (decision D11 of the OCPP 1.6J planner) and is stored in UTC.
+connector that was not pre-provisioned is an error. Every timestamp passed in
+must carry a timezone and is stored in UTC; the 1.6J adapter has already read
+a charger's timestamp without one as UTC (CO-16).
 """
 
 import json

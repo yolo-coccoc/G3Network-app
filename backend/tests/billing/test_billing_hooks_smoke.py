@@ -97,7 +97,7 @@ async def test_completing_a_session_runs_the_hook_with_the_readings(
     seen: list[SessionEndedEvent] = []
 
     async def get_by_transaction(
-        db: object, station_id: UUID, transaction_id: str
+        db: object, station_id: UUID, transaction_id: str, **_: object
     ) -> Any:
         return session
 
@@ -145,7 +145,7 @@ async def test_a_failing_hook_never_undoes_the_end_of_the_session(
     session = build_charging_session(meter_start_wh=Decimal(1000))
 
     async def get_by_transaction(
-        db: object, station_id: UUID, transaction_id: str
+        db: object, station_id: UUID, transaction_id: str, **_: object
     ) -> Any:
         return session
 

@@ -15,6 +15,7 @@ the DTO ``charging_stations`` receives for its all-stations energy report.
 """
 
 import enum
+import string
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -38,11 +39,18 @@ MEASUREMENT_LOCATION_OUTLET: Final[str] = "Outlet"
 # Widths of the session columns. Public so an adapter that receives a longer
 # vendor value can truncate or refuse it before it reaches the database.
 STOP_REASON_MAX_LENGTH: Final[int] = 30
+# Stop reason of a session internal staff closed because the charger will never
+# send its stop (reboot or power loss mid-session, CE-29). Not an OCPP value.
+STAFF_CLOSED_STOP_REASON: Final[str] = "StaffClosed"
 OCPP_TRANSACTION_ID_MAX_LENGTH: Final[int] = 36
 ID_TOKEN_MAX_LENGTH: Final[int] = 255
 # Length of the single-use token generated at a scan: OCPP 1.6J's idTag is at
 # most 20 characters, so the token must fit it (CE-10).
 QR_TOKEN_LENGTH: Final[int] = 12
+# Characters of that token: upper-case letters and digits only (CE-28). An
+# OCPP 1.6 IdToken is case-insensitive and a charger may upper-case it, so a
+# token without lower-case letters still matches exactly what was issued.
+QR_TOKEN_ALPHABET: Final[str] = string.ascii_uppercase + string.digits
 
 
 class SessionStatus(str, enum.Enum):

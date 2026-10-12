@@ -72,7 +72,7 @@ def _patch_for_measurements(
 ) -> list[dict[str, Any]]:
     inserted: list[dict[str, Any]] = []
 
-    async def get_by_id(db: object, session_id: Any) -> Any:
+    async def get_by_id(db: object, session_id: Any, **_: object) -> Any:
         return session
 
     async def insert_measurement(db: object, **kwargs: Any) -> None:

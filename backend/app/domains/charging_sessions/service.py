@@ -78,7 +78,9 @@ from app.domains.charging_sessions.types import (
     ID_TOKEN_MAX_LENGTH,
     MEASUREMENT_LOCATION_OUTLET,
     OCPP_TRANSACTION_ID_MAX_LENGTH,
+    QR_TOKEN_ALPHABET,
     QR_TOKEN_LENGTH,
+    STAFF_CLOSED_STOP_REASON,
     STOP_REASON_MAX_LENGTH,
     ChargingSessionListFilter,
     EnergySeriesGranularity,
@@ -312,7 +314,11 @@ def _session_started_by_scope(principal: Principal) -> UUID | None:
 
 
 async def _get_charging_session_record(
-    db: AsyncSession, session_id: UUID, principal: Principal | None = None
+    db: AsyncSession,
+    session_id: UUID,
+    principal: Principal | None = None,
+    *,
+    for_update: bool = False,
 ) -> ChargingSessionModel:
     """Load a session aggregate that must exist.
 
@@ -324,6 +330,7 @@ async def _get_charging_session_record(
         session_id: UUID of the session to load.
         principal: The HTTP caller whose data reach limits the lookup; `None`
             for a system caller (OCPP adapters).
+        for_update: Lock the row until the transaction ends (CE-29).
 
     Returns:
         The existing session aggregate.
@@ -333,7 +340,7 @@ async def _get_charging_session_record(
     """
     if principal is None:
         session_record = await charging_session_repository.get_session_by_id(
-            db, session_id
+            db, session_id, for_update=for_update
         )
     else:
         session_record = await charging_session_repository.get_session_by_id(
@@ -341,6 +348,7 @@ async def _get_charging_session_record(
             session_id,
             organization_id=principal.data_scope,
             started_by=_session_started_by_scope(principal),
+            for_update=for_update,
         )
     if session_record is None:
         raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
@@ -399,9 +407,13 @@ async def _get_open_session_by_transaction(
             the session's.
         ChargingSessionStateError: If the session is not ``ACTIVE`` (already
             ``COMPLETED``, or never started).
+
+    Side Effects:
+        Locks the row until the transaction ends: a stop that waits on a staff
+        force-close of the same session (CE-29) then sees ``COMPLETED``.
     """
     session_record = await charging_session_repository.get_session_by_transaction(
-        db, station_id, transaction_id
+        db, station_id, transaction_id, for_update=True
     )
     if session_record is None:
         raise ChargingSessionNotFoundError(
@@ -889,6 +901,8 @@ async def create_pending_session(
 
     The token is sent to the charger in the remote start; the charger echoes it
     in its start message, which is how that message finds this row (CE-11).
+    It is ``QR_TOKEN_LENGTH`` random upper-case letters and digits (CE-28), so a
+    charger that upper-cases the idTag still sends back the same token.
     The checks before a scan (the charger, the wallet minimum, the truck from
     the driving session) and the remote start belong to the start flow in
     ``app/api/charging_session_flow.py``, which calls this function last.
@@ -908,7 +922,9 @@ async def create_pending_session(
         station, organization, user or vehicle fails at flush time with an
         ``IntegrityError``.
     """
-    id_token = secrets.token_urlsafe(QR_TOKEN_LENGTH)[:QR_TOKEN_LENGTH]
+    id_token = "".join(
+        secrets.choice(QR_TOKEN_ALPHABET) for _ in range(QR_TOKEN_LENGTH)
+    )
     session_record = await charging_session_repository.create_pending_session(
         db,
         station_id=station_id,
@@ -1106,31 +1122,116 @@ async def complete_session(
     session_record.stop_reason = stop_reason
     session_record.meter_stop_wh = validated_meter_stop_wh
     _touch_session(session_record)
-    if _session_ended_hooks:
-        # The newest measurement is read only when somebody listens: it is the
-        # fallback and the cross-check of the billing figure (CE-12).
-        last_measured_wh = (
-            await charging_session_repository.find_last_measurement_value(
-                db,
-                session_record.session_id,
-                measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
-                measurement_location=MEASUREMENT_LOCATION_OUTLET,
-            )
-        )
-        await _run_session_ended_hooks(
-            db,
-            SessionEndedEvent(
-                session_id=session_record.session_id,
-                status=SessionStatus.COMPLETED,
-                started_by=session_record.started_by,
-                meter_start_wh=session_record.meter_start_wh,
-                meter_stop_wh=session_record.meter_stop_wh,
-                last_measured_wh=last_measured_wh,
-            ),
-        )
+    await _run_completed_session_hooks(db, session_record)
     return TransactionIngestResult(
         session_id=session_record.session_id, status=session_record.status
     )
+
+
+async def _run_completed_session_hooks(
+    db: AsyncSession, session_record: ChargingSessionModel
+) -> None:
+    """Tell the session-ended hooks (billing) that a session completed.
+
+    Args:
+        db: The caller's async session.
+        session_record: The session just set to ``COMPLETED``.
+
+    Side Effects:
+        Reads the newest outlet energy measurement, then runs every registered
+        hook in the caller's transaction (billing settles the bill, BL-10).
+    """
+    if not _session_ended_hooks:
+        return
+    # The newest measurement is read only when somebody listens: it is the
+    # fallback and the cross-check of the billing figure (CE-12).
+    last_measured_wh = await charging_session_repository.find_last_measurement_value(
+        db,
+        session_record.session_id,
+        measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
+        measurement_location=MEASUREMENT_LOCATION_OUTLET,
+    )
+    await _run_session_ended_hooks(
+        db,
+        SessionEndedEvent(
+            session_id=session_record.session_id,
+            status=SessionStatus.COMPLETED,
+            started_by=session_record.started_by,
+            meter_start_wh=session_record.meter_start_wh,
+            meter_stop_wh=session_record.meter_stop_wh,
+            last_measured_wh=last_measured_wh,
+        ),
+    )
+
+
+async def force_close_session(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    principal: Principal,
+    reason: str,
+) -> ChargingSessionDetailResponse:
+    """Complete an ACTIVE session the charger will never stop (CE-29).
+
+    A charger that reboots or loses power mid-session may never send its stop,
+    which leaves the gun and the driver blocked. Internal staff close it here.
+
+    Rule:
+        1. The session is read under a row lock, so a ``StopTransaction``
+           arriving at the same moment runs before or after this, never
+           interleaved (the later one sees ``COMPLETED``; the charger's stop is
+           then confirmed and ignored, CO-16).
+        2. Only an ``ACTIVE`` session can be closed: a PENDING scan has its own
+           stop (it is abandoned), a finished one is final.
+        3. It completes now with ``stop_reason`` ``StaffClosed`` and **no
+           closing reading**, then the session-ended hooks run as for a normal
+           stop: billing falls back to the newest outlet measurement, or puts
+           the bill ON_HOLD when the charger sent none (CE-12).
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session to close.
+        principal: The staff member closing it; their data reach applies.
+        reason: Why it is closed, as typed by the staff member; logged only
+            (no column holds it, deferred.md 101).
+
+    Returns:
+        The closed session with its read-time summary.
+
+    Raises:
+        ChargingSessionNotFoundError: The session does not exist or is out of
+            the caller's reach (404).
+        ChargingSessionStateError: The session is not ``ACTIVE`` (409).
+
+    Side Effects:
+        Updates the session and runs the session-ended hooks in the caller's
+        transaction; logs a warning with the staff member and the reason.
+    """
+    session_record = await _get_charging_session_record(
+        db, session_id, principal, for_update=True
+    )
+    if session_record.status is not SessionStatus.ACTIVE:
+        raise ChargingSessionStateError(
+            f"Session '{session_id}' is {session_record.status.value}; "
+            "only an ACTIVE session can be force-closed"
+        )
+    session_record.ended_at = utc_now()
+    session_record.status = SessionStatus.COMPLETED
+    session_record.stop_reason = STAFF_CLOSED_STOP_REASON
+    session_record.meter_stop_wh = None
+    _touch_session(session_record)
+    await _run_completed_session_hooks(db, session_record)
+    logger.warning(
+        "Charging session force-closed by staff",
+        extra={
+            "session_id": str(session_id),
+            "station_id": str(session_record.station_id),
+            "ocpp_transaction_id": session_record.ocpp_transaction_id,
+            "closed_by": str(principal.user_id),
+            "close_reason": reason,
+        },
+    )
+    return await _build_charging_session_detail_response(db, session_record)
 
 
 async def ingest_meter_values(

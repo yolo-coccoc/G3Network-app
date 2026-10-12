@@ -38,6 +38,8 @@ async def get_session_by_transaction(
     db: AsyncSession,
     station_id: UUID,
     transaction_id: str,
+    *,
+    for_update: bool = False,
 ) -> ChargingSessionModel | None:
     """Find the aggregate by station and OCPP transaction identity pair.
 
@@ -45,6 +47,9 @@ async def get_session_by_transaction(
         db: The async session owned by the entry boundary.
         station_id: UUID of the station that raised the transaction.
         transaction_id: The transaction identity issued by the station.
+        for_update: Lock the row until the transaction ends and re-read it
+            fresh, so a stop and a staff force-close of one session run one
+            after the other and the second sees ``COMPLETED`` (CE-29).
 
     Returns:
         The matching aggregate, or ``None`` if there isn't one yet.
@@ -52,12 +57,13 @@ async def get_session_by_transaction(
     # Reconnect, unknown-transaction and duplicate resolution are production
     # contracts deferred for later; the repository only provides a primitive
     # lookup for the MVP.
-    query_result = await db.execute(
-        select(ChargingSessionModel).where(
-            ChargingSessionModel.station_id == station_id,
-            ChargingSessionModel.ocpp_transaction_id == transaction_id,
-        )
+    query = select(ChargingSessionModel).where(
+        ChargingSessionModel.station_id == station_id,
+        ChargingSessionModel.ocpp_transaction_id == transaction_id,
     )
+    if for_update:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    query_result = await db.execute(query)
     return query_result.scalar_one_or_none()
 
 
@@ -268,6 +274,7 @@ async def get_session_by_id(
     *,
     organization_id: UUID | None = None,
     started_by: UUID | None = None,
+    for_update: bool = False,
 ) -> ChargingSessionModel | None:
     """Find the aggregate by internal UUID.
 
@@ -278,6 +285,8 @@ async def get_session_by_id(
             is found; `None` means no restriction.
         started_by: Only a session started by this user is found; `None`
             means no restriction (a driver sees only their own scans).
+        for_update: Lock the row until the transaction ends and re-read it
+            fresh (a staff force-close against the charger's own stop, CE-29).
 
     Returns:
         The matching aggregate, or ``None`` if it does not exist or is out of
@@ -290,7 +299,10 @@ async def get_session_by_id(
         conditions.append(ChargingSessionModel.organization_id == organization_id)
     if started_by is not None:
         conditions.append(ChargingSessionModel.started_by == started_by)
-    query_result = await db.execute(select(ChargingSessionModel).where(*conditions))
+    query = select(ChargingSessionModel).where(*conditions)
+    if for_update:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    query_result = await db.execute(query)
     return query_result.scalar_one_or_none()
 
 
@@ -623,7 +635,9 @@ async def get_station_energy_summary(
 
     The energy of a session is the charger's declared stop reading minus its
     start reading (CE-12); a completed session whose stop message carried no
-    reading is left out.
+    reading is left out, and so is one whose stop reading is below its start
+    reading (a meter reset or a faulty charger: billing cannot bill it either,
+    and a negative total would break the report).
 
     Args:
         db: The async session owned by the entry boundary.
@@ -654,6 +668,7 @@ async def get_station_energy_summary(
             ChargingSessionModel.station_id == station_id,
             ChargingSessionModel.status == SessionStatus.COMPLETED,
             ChargingSessionModel.meter_stop_wh.is_not(None),
+            ChargingSessionModel.meter_stop_wh >= ChargingSessionModel.meter_start_wh,
             ChargingSessionModel.ended_at.is_not(None),
             ChargingSessionModel.ended_at >= start_time,
             ChargingSessionModel.ended_at <= end_time,

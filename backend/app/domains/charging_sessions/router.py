@@ -4,19 +4,22 @@ The router only accepts HTTP dependencies and calls the public service; domain
 exceptions are mapped to status codes centrally in ``app/api/main.py``. It does
 not expose raw OCPP payloads or command transport. The start by QR, the stop and
 the receipt need the charger, the wallet and the driving session, which this
-domain may not call, so they live in ``app/api/charging_session_flow.py``.
+domain may not call, so they live in ``app/api/charging_session_flow.py``. The
+one write here is the staff force-close of a session the charger never stopped
+(CE-29): it needs nothing outside this domain and its session-ended hooks.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_session_service
 from app.domains.charging_sessions.schemas import (
     ChargingSessionDetailResponse,
+    ChargingSessionForceCloseRequest,
     ChargingSessionListResponse,
     ChargingSessionMeasurementListResponse,
     ChargingSessionMeterValueListResponse,
@@ -43,6 +46,9 @@ router = APIRouter(tags=["charging-sessions"])
 MY_HISTORY_READERS = require_roles(*roles_for("CHG-04"))
 SESSION_READERS = require_roles(*roles_for("CHG-02", "CHG-03", "CHG-04", "CHG-05"))
 STATION_ENERGY_STAFF = require_roles(*roles_for("STN-14", "CHG-05"), internal_only=True)
+# CE-29: closing a session the charger never stopped is an operations action on
+# the session record (CHG-02), for our own staff only.
+SESSION_CLOSERS = require_roles(*roles_for("CHG-02"), internal_only=True)
 
 
 @dataclass(frozen=True)
@@ -223,6 +229,42 @@ async def get_charging_session_endpoint(
     """
     return await charging_session_service.get_charging_session(
         db, session_id, principal=principal
+    )
+
+
+@router.post(
+    "/charging-sessions/{session_id}/force-close",
+    response_model=ChargingSessionDetailResponse,
+    summary="Close a session the charger never stopped (internal staff)",
+)
+async def force_close_charging_session_endpoint(
+    session_id: UUID,
+    force_close_request: ChargingSessionForceCloseRequest = Body(...),
+    principal: Principal = Depends(SESSION_CLOSERS),
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> ChargingSessionDetailResponse:
+    """Complete an ACTIVE session whose charger will never send its stop (CE-29).
+
+    Args:
+        session_id: UUID of the session to close.
+        force_close_request: Why it is closed (logged with the caller).
+        principal: The authenticated internal staff member.
+        db: The async session whose transaction is owned by the ``get_db``
+            dependency.
+
+    Returns:
+        The session, now ``COMPLETED`` with stop reason ``StaffClosed``; its
+        bill is settled from the last reading or put on hold.
+
+    Raises:
+        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
+        ChargingSessionStateError: The session is not ``ACTIVE`` (HTTP 409).
+    """
+    return await charging_session_service.force_close_session(
+        db,
+        session_id,
+        principal=principal,
+        reason=force_close_request.reason,
     )
 
 

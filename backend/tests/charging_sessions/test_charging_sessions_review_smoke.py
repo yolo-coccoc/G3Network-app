@@ -162,9 +162,18 @@ async def test_a_driver_reads_only_sessions_they_started_in_their_organization(
                 fake_db_session(), uuid4(), principal=principal
             )
 
+    # A read never locks the row (only the staff force-close does, CE-29).
     assert lookups == [
-        {"organization_id": DRIVER.organization_id, "started_by": DRIVER.user_id},
-        {"organization_id": FLEET_MANAGER.organization_id, "started_by": None},
+        {
+            "organization_id": DRIVER.organization_id,
+            "started_by": DRIVER.user_id,
+            "for_update": False,
+        },
+        {
+            "organization_id": FLEET_MANAGER.organization_id,
+            "started_by": None,
+            "for_update": False,
+        },
     ]
 
 

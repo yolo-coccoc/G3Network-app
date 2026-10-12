@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from ocpp.v16 import call_result
 from ocpp.v16.enums import Action
 
 import app.domains.charging_sessions.service as charging_service
@@ -228,12 +229,23 @@ def test_extraction_keeps_payload_order_across_groups() -> None:
     assert [s.value_wh for s in result.energy] == [Decimal(1), Decimal(2)]
 
 
-def test_timestamp_without_timezone_and_missing_keys_fail_loudly() -> None:
-    """The strict timestamp rule (D11) holds, and a malformed group is an error."""
-    with pytest.raises(ValueError, match="timezone"):
-        extract_v16_measurements(
-            [_group({"value": "1"}, timestamp="2026-09-24T10:00:00")]
-        )
+def test_timestamp_without_timezone_is_read_as_utc_and_counted() -> None:
+    """CO-16: a naive group timestamp is taken as UTC and counted for the log."""
+    result = extract_v16_measurements(
+        [
+            _group({"value": "1"}, timestamp="2026-09-24T10:00:00"),
+            _group({"value": "2"}),
+        ]
+    )
+
+    assert [sample.sampled_at for sample in result.energy] == [NOW, NOW]
+    assert result.naive_timestamps == 1
+
+
+def test_unreadable_timestamp_and_missing_keys_fail_loudly() -> None:
+    """A timestamp that is not ISO-8601, or a malformed group, is an error."""
+    with pytest.raises(ValueError):
+        extract_v16_measurements([_group({"value": "1"}, timestamp="yesterday")])
     with pytest.raises(KeyError):
         extract_v16_measurements([{"timestamp": TS}])
     with pytest.raises(KeyError):
@@ -323,21 +335,19 @@ def _patch(
     return calls
 
 
-def test_meter_values_and_stop_transaction_skip_schema_validation_but_others_do_not() -> (
-    None
-):
-    """Only the two handlers that must tolerate vendor values opt out of schema validation."""
+def test_handlers_that_must_tolerate_vendor_values_skip_schema_validation() -> None:
+    """CO-17: Boot, Status, Start, Stop and MeterValues validate their own fields."""
     route_map = _charge_point().route_map
 
-    assert route_map[Action.meter_values]["_skip_schema_validation"] is True
-    assert route_map[Action.stop_transaction]["_skip_schema_validation"] is True
-    for strict in (
+    for tolerant in (
+        Action.meter_values,
+        Action.stop_transaction,
         Action.status_notification,
         Action.start_transaction,
         Action.boot_notification,
-        Action.authorize,
     ):
-        assert route_map[strict]["_skip_schema_validation"] is False
+        assert route_map[tolerant]["_skip_schema_validation"] is True
+    assert route_map[Action.authorize]["_skip_schema_validation"] is False
 
 
 @pytest.mark.asyncio
@@ -405,29 +415,48 @@ async def test_meter_values_without_a_transaction_id_stores_nothing_and_opens_no
 
 
 @pytest.mark.asyncio
-async def test_meter_values_for_a_completed_session_is_refused(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_meter_values_for_a_completed_session_is_confirmed_and_stores_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """COMPLETED stays terminal: a late MeterValues is an error, not a silent rewrite."""
-    _patch(monkeypatch, completed=True)
+    """CO-16: a late reading is ACKed (no retry loop) but never rewrites COMPLETED."""
+    calls = _patch(monkeypatch, completed=True)
 
-    with pytest.raises(ChargingSessionStateError):
-        await _charge_point().on_meter_values(
+    with caplog.at_level(logging.WARNING):
+        response = await _charge_point().on_meter_values(
             connector_id=1, transaction_id=7, meter_value=[_group({"value": "100"})]
         )
+
+    assert response == call_result.MeterValues()
+    assert [name for name, _ in calls] == ["resolve_session"]
+    record = next(
+        r
+        for r in caplog.records
+        if r.getMessage() == "Transaction message confirmed without changes"
+    )
+    assert record.__dict__["reason"] == "session_not_active"
 
 
 @pytest.mark.asyncio
-async def test_meter_values_for_an_unknown_transaction_propagates_the_error(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_meter_values_for_an_unknown_transaction_is_confirmed_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """An unknown transaction is loud (a CALLERROR), not silently ACKed."""
-    _patch(monkeypatch, missing=True)
+    """CO-16: readings for transaction 0 or an unknown one are ACKed, not stored."""
+    calls = _patch(monkeypatch, missing=True)
 
-    with pytest.raises(ChargingSessionNotFoundError):
-        await _charge_point().on_meter_values(
-            connector_id=1, transaction_id=7, meter_value=[_group({"value": "100"})]
+    with caplog.at_level(logging.WARNING):
+        response = await _charge_point().on_meter_values(
+            connector_id=1, transaction_id=0, meter_value=[_group({"value": "100"})]
         )
+
+    assert response == call_result.MeterValues()
+    assert [name for name, _ in calls] == ["resolve_session"]
+    record = next(
+        r
+        for r in caplog.records
+        if r.getMessage() == "Transaction message confirmed without changes"
+    )
+    assert record.__dict__["reason"] == "unknown_transaction"
+    assert record.__dict__["ocpp_transaction_id"] == "0"
 
 
 @pytest.mark.asyncio

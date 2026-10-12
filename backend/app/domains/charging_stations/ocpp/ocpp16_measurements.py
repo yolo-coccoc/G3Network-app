@@ -22,7 +22,8 @@ Rules, in one place:
   (signed data, a non-numeric or non-finite value, or a field longer than its
   column) is **skipped and counted**, never silently dropped and never failing
   the whole message; the caller logs the count.
-* Timestamps must carry a timezone (decision D11).
+* A timestamp without a timezone is read as UTC and counted
+  (``naive_timestamps``, CO-16); the caller logs the count.
 
 Scope: pure functions over the plain-dict payload ``python-ocpp`` delivers; no
 I/O and no database access.
@@ -48,7 +49,7 @@ from app.domains.charging_stations.ocpp.measurement_units import (
 )
 from app.domains.charging_stations.ocpp.parsing import (
     OcppPayload,
-    parse_ocpp_timestamp,
+    parse_ocpp_timestamp_assuming_utc,
 )
 
 # Keys are lowercased for a case-insensitive match.
@@ -70,11 +71,14 @@ class V16Extraction:
         skipped: How many samples could not be stored, by reason
             (``signed_data``, ``non_numeric``, ``non_finite``,
             ``out_of_range``, ``field_too_long``).
+        naive_timestamps: How many ``meterValue`` groups had a timestamp
+            without a timezone, read as UTC (CO-16).
     """
 
     energy: tuple[MeterSampleInput, ...] = ()
     measurements: tuple[MeasurementInput, ...] = ()
     skipped: dict[str, int] = field(default_factory=dict)
+    naive_timestamps: int = 0
 
     @property
     def skipped_count(self) -> int:
@@ -135,19 +139,24 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
             with snake_cased keys (``timestamp``, ``sampled_value``).
 
     Returns:
-        The energy samples, the other measurements, and a count of skipped
-        samples by reason.
+        The energy samples, the other measurements, a count of skipped
+        samples by reason and the number of groups whose timestamp had no
+        timezone (read as UTC).
 
     Raises:
         KeyError: If a group lacks ``timestamp`` or ``sampled_value``.
-        ValueError: If a timestamp lacks a timezone, or an energy-register
+        ValueError: If a timestamp is not ISO-8601, or an energy-register
             sample has an uninterpretable unit or value.
     """
     energy: list[MeterSampleInput] = []
     measurements: list[MeasurementInput] = []
     skipped: Counter[str] = Counter()
+    naive_timestamps = 0
     for group in meter_values:
-        sampled_at = parse_ocpp_timestamp(group["timestamp"])
+        group_timestamp = parse_ocpp_timestamp_assuming_utc(group["timestamp"])
+        sampled_at = group_timestamp.value
+        if not group_timestamp.had_timezone:
+            naive_timestamps += 1
         for sampled_value in group["sampled_value"]:
             measurand = sampled_value.get("measurand") or ENERGY_ACTIVE_IMPORT_REGISTER
             context = sampled_value.get("context") or DEFAULT_MEASUREMENT_CONTEXT
@@ -221,4 +230,5 @@ def extract_v16_measurements(meter_values: list[OcppPayload]) -> V16Extraction:
         energy=tuple(energy),
         measurements=tuple(measurements),
         skipped=dict(skipped),
+        naive_timestamps=naive_timestamps,
     )

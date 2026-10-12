@@ -299,7 +299,7 @@ async def test_command_refuses_a_session_of_another_charger(
     foreign_session = build_charging_session(status=session_status)
     assert foreign_session.station_id != station.station_id
 
-    async def get_session(db: AsyncSession, session_id: UUID) -> Any:
+    async def get_session(db: AsyncSession, session_id: UUID, **_: object) -> Any:
         return foreign_session if session_id == foreign_session.session_id else None
 
     monkeypatch.setattr(charging_session_repository, "get_session_by_id", get_session)
