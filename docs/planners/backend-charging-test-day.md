@@ -131,6 +131,7 @@ Tokens are masked in everything the tools print or write (IS-07).
 
 ### Step 5 — Simulator edge cases and rehearsal
 - [x] 1.6J simulator: answers `RemoteStopTransaction`; charges longer with `--samples N --sample-interval S --energy-step-wh W` and until the app stops it with `--stop-on-remote`; edge flags `--naive-timestamps`, `--uppercase-id-tag`, `--long-texts` (boot fields and status `info` over the 1.6 limits), `--float-meter-start`, `--resend-stop`, `--no-stop`
+- [x] **Closer to a real charger (owner request, 2026-10-12)**: each gun is modelled (plug, status, meter, the car's SoC). A remote start only *authorizes*; the charge starts when the gun is plugged and started (`--start auto|screen`, or the `start` command: pressing start sends no message of its own, it makes the charger send `StartTransaction`). `Authorize` follows `AuthorizeRemoteTxRequests`; an unused authorization expires after `ConnectionTimeOut`; a remote start for a busy or unknown gun, or with no gun under `--remote-start-requires-gun`, is `Rejected`; a `StartTransaction` answered `Invalid` is ended with `StopTransaction(0, DeAuthorized)`; readings follow `MeterValueSampleInterval`; a full car goes `SuspendedEV`. Scripted `session`: `--plug before-scan|after-scan|never`, `--plug-delay`, `--start`, `--end unplug|local|remote|full|power-loss` (`--stop-on-remote` / `--no-stop` are aliases), `--config KEY=VALUE`; a scripted driver follows the gun the scan names. New `--scenario charger`: typed commands `plug`, `unplug`, `start`, `stop`, `card`, `full`, `fault`, `clear`, `status`, `wait`, `power-loss`, `quit`. Not simulated, deferred: network loss with an offline queue and reconnect, clock drift, vendor messages (`deferred.md` 103)
 - [x] Rehearsal (`e2e-sim` skill, 2026-10-12) on a scratch database (`g3network_rehearsal`, API :8765, gateway :9765, `APP_DEBUG=false`; dropped afterwards): results in section 5
 
 ### Step 6 — Wrap-up and runbook
@@ -149,6 +150,17 @@ Tokens are masked in everything the tools print or write (IS-07).
 | D | Two drivers on the two guns at once (`--sessions 2 --stop-on-remote`) | Transactions 4 (gun 1) and 5 (gun 2), both `Remote`, billed separately (4,536 and 6,048 VND); 0 CALLERROR |
 | Console | `status`, `set MeterValueSampleInterval 30`, `set NumberOfConnectors 3` | Live charger and gun status; ACCEPTED for a writable key, REJECTED for a read-only one |
 
+**Simulator realism checks, 2026-10-12** (scratch database, dropped afterwards; 0 unexpected CALLERROR):
+
+| Check | Setup | Result |
+|---|---|---|
+| 1 | `AuthorizeRemoteTxRequests=true`, scan → plug 3 s later → press start → stop on the screen | `Authorize` (Accepted) after the remote start; start only after plug + press; `Local`; 375 VND billed |
+| 2 | `--remote-start-requires-gun`, scan without a gun | Remote start `Rejected`; command REJECTED; session ABANDONED within 2 s |
+| 3 / 3b | `ConnectionTimeOut=5`, never plugged / scan names gun 2 while the driver stood at gun 1 | Authorization expired after 5 s (scan cancelled with `driver_app stop`) / the driver moved to gun 2 and charged there |
+| 4 | Car nearly full (`--start-soc 95 --battery-kwh 1 --end full`) | `SuspendedEV`, then unplugged: `EVDisconnected` |
+| 5 | Plug after the backend's pending window (10 s for the test) | `StartTransaction` → `Invalid` (transaction 0) → `StopTransaction(0, DeAuthorized)` confirmed by the gateway (CO-16), no CALLERROR |
+| 6 | `--scenario charger` driven by typed commands | `plug 2`, scan, `start 2`, `status`, `full 2` (SuspendedEV), `stop 2` (`Local`), `unplug 2`, `card 1 <unknown tag>` (`Authorize` Invalid) |
+
 Gateway log: only warnings (`OCPP timestamp without a timezone read as UTC` ×22, one confirmed repeat stop, a firmware change and a serial mismatch from `--long-texts`); no error. No QR token appears in any log or evidence file.
 
 ## 6. Test-day runbook
@@ -166,7 +178,7 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
 4. **Database:** the day uses its own database, `g3network_testday` (created, migrated and bootstrapped 2026-10-12; the dev database `g3network` is untouched). It holds one rehearsal session from 2026-10-12.
 5. **The real charger is seeded** (2026-10-12) as `$TEST_DAY_CHARGER_ID` (a hard-to-guess ID, because `ws://` has no authentication), label `WD-01`, two `IEC_62196_T2_COMBO` (CCS2) guns, location "G3 test-day station", 3,500 VND/kWh + 8 % VAT. The delivered unit is CCS2 (owner, 2026-10-12), as seeded. To seed another charger: `make charging-ocpp16-seed IDENTITY=<id> STANDARD=<standard> PRICE=<price>`.
 6. **The drivers are seeded** (2026-10-12): `+84999000001` and `+84999000002`, password `CHARGING_TEST_DRIVER_PASSWORD` from the settings file, 10,000,000 VND each. Re-running `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"` (after `source`) tops them back up.
-7. **Rehearsed** 2026-10-12 on this database with the simulator as `$TEST_DAY_CHARGER_ID` (naive timestamps, upper-case idTag, stop from the app): 2.5 kWh billed 9,450 VND, no CALLERROR. Repeat any time with `make charging-ocpp16-sim SCENARIO=session IDENTITY=$TEST_DAY_CHARGER_ID ARGS="--stop-on-remote --samples 600 --sample-interval 5"` in place of the charger.
+7. **Rehearsed** 2026-10-12 on this database with the simulator as `$TEST_DAY_CHARGER_ID` (naive timestamps, upper-case idTag, stop from the app): 2.5 kWh billed 9,450 VND, no CALLERROR. Repeat any time with `make charging-ocpp16-sim SCENARIO=session IDENTITY=$TEST_DAY_CHARGER_ID ARGS="--end remote --sample-interval 5"` in place of the charger, or drive it by hand with `SCENARIO=charger` (`plug 1`, `start 1`, `stop 1`, `unplug 1`).
 8. **Reachability from outside** (gateway running, from the laptop **on mobile data**, ideally the charger SIM's carrier):
    ```bash
    curl -i -N --max-time 5 -H "Connection: Upgrade" -H "Upgrade: websocket" \
@@ -208,6 +220,9 @@ Run `driver_app` directly rather than through `make` (`cd backend && uv run pyth
 4. Stop from the "app": Ctrl+C → `y` (or `driver_app stop <session_id>` from any window). `driver` prints the receipt, the bill and the balance.
 5. Compare the three figures: the charger screen's kWh, the receipt's kWh, and the bill. Photograph the screen.
 6. Repeat once stopping **at the charger** (its stop button) and once by **unplugging** at the car side if allowed: `driver` must end by itself.
+7. **Scan first, plug second:** with the gun unplugged, scan, then plug in. Record how long the charger waits (its `ConnectionTimeOut`, from the configuration) and whether it reports `Preparing` at the scan or only at the plug. Plug in too late once: the scan should end ABANDONED (or the charger refuses the start).
+8. **Scan without a gun:** `driver_app scan --driver 1 --charger <id>` (no `--gun`). Does the charger accept the remote start and let the driver pick the gun on the screen (CO-14)? If it answers `Rejected`, the QR or the app must name the gun: record it as a finding.
+9. **Authorize after the remote start:** note whether an `Authorize` follows each `RemoteStartTransaction` in `console` (it does when `AuthorizeRemoteTxRequests` is `true`), and whether the charge starts by itself once plugged or only after pressing start on the screen.
 
 ### 6.5 Phase 3 — edge cases
 

@@ -622,7 +622,7 @@ call each other is in
 ├── simulator/                      # Vehicle telemetry + OCPP charging simulators and the charging test-day tools (manual testing only)
 │   ├── seed_simulator_devices.py     telematic_simulator.py           # vehicle telemetry over MQTT
 │   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed: location + tariff + charger, also the 1.6J layout; --connector-standard, --price-per-kwh)
-│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session; answers RemoteStart/RemoteStopTransaction and ChangeConfiguration; firmware-quirk flags)
+│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger modelled per gun (plug, authorization, ConnectionTimeOut, SuspendedEV); --scenario boot|status|session (scripted: --plug/--start/--end) |charger (typed commands); firmware-quirk flags
 │   ├── seed_test_drivers.py                                           # test-day drivers: DRIVER role in the internal organization (in-process) + wallet credit (API)
 │   ├── driver_app.py                 station_console.py               # test-day stand-ins over the HTTP API: driver app (scan|watch|stop|sessions), operator console (status|messages|config|set|commands|sessions|force-close)
 │   ├── test_day_common.py                                             # shared by the test-day tools: token masking, evidence log in backend/logs/test-day/ (git-ignored), re-login

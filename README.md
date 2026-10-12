@@ -227,7 +227,8 @@ or behave like awkward firmware:
 
 ```bash
 make charging-ocpp16-seed IDENTITY=WD-TEST-01 STANDARD=IEC_62196_T2_COMBO PRICE=3500
-make charging-ocpp16-sim SCENARIO=session IDENTITY=WD-TEST-01 ARGS="--stop-on-remote --samples 60 --sample-interval 5"
+make charging-ocpp16-sim SCENARIO=session IDENTITY=WD-TEST-01 ARGS="--end remote --sample-interval 5"
+make charging-ocpp16-sim SCENARIO=charger IDENTITY=WD-TEST-01   # type: plug 1, start 1, stop 1, unplug 1, help
 ```
 
 ### Charging test day tools

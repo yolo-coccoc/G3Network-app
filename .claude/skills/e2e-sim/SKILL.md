@@ -106,12 +106,17 @@ until a top-up (BL-25: `POST /wallets/me/top-ups` as the driver, then
 equal CP_TO_CSMS/CSMS_TO_CP frame counts; >0 configuration entries (the
 post-boot `GetConfiguration`).
 
-The 1.6J simulator also answers `RemoteStopTransaction` and
-`ChangeConfiguration`: with `ARGS="--stop-on-remote --samples 60
---sample-interval 5"` it charges until `POST /charging-sessions/{id}/stop`,
-`--sessions 2` runs both guns, and `--naive-timestamps --uppercase-id-tag
---long-texts --float-meter-start --resend-stop --no-stop` reproduce firmware
-quirks and an orphan (CO-16, CO-17). Instead of the curl walk-through above,
+The 1.6J simulator models each gun like a real charger (a remote start only
+authorizes; the charge starts when the gun is plugged and started; `Authorize`
+follows `AuthorizeRemoteTxRequests`; `ConnectionTimeOut` expiry; a refused
+start ends with `StopTransaction(0, DeAuthorized)`; readings every
+`MeterValueSampleInterval`). Scripted: `ARGS="--end remote --sample-interval 5"`
+charges until `POST /charging-sessions/{id}/stop`; `--plug after-scan|never`,
+`--start screen`, `--end local|full|power-loss`, `--remote-start-requires-gun`,
+`--config KEY=VALUE`, `--sessions 2` (both guns); `--naive-timestamps
+--uppercase-id-tag --long-texts --float-meter-start --resend-stop` reproduce
+firmware quirks (CO-16, CO-17). `--scenario charger` is driven by typed
+commands (`plug 1`, `start 1`, `stop 1`, `unplug 1`, `status`, `help`). Instead of the curl walk-through above,
 the charging test-day tools drive the same flow over the API:
 `make charging-test-drivers-seed` (drivers with a credited wallet, no
 invitation code needed), `make driver-app ARGS="scan --driver 1 --charger

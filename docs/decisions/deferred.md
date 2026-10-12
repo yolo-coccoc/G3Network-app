@@ -1992,6 +1992,30 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   existing command loop, plus their tables when a feature needs them; (4) can be a command type
   the gateway handles itself without an OCPP call.
 
+### 103. Simulator: network loss with an offline queue, clock drift, vendor messages
+
+- **Short description**: The OCPP 1.6J simulator (`simulator/ocpp16_charge_point_simulator.py`)
+  models a charger's guns, authorization and charging, but not: (1) a network loss during a
+  charge where the charger keeps charging, queues its transaction messages (`MeterValues`,
+  `StopTransaction`) and re-sends them after it reconnects, with `TransactionMessageAttempts` /
+  `TransactionMessageRetryInterval`; (2) a clock that drifts or starts at a wrong date until the
+  first `BootNotification` / `Heartbeat` answer sets it; (3) vendor messages the gateway does not
+  handle (`DataTransfer`, `FirmwareStatusNotification`, `DiagnosticsStatusNotification`) and other
+  timestamp shapes than the naive one.
+- **Purpose/role in the system**: Rehearse the reliability path (deferred item 27: back-fill,
+  out-of-order, orphan handling) and the gateway's answers to unknown messages before a real
+  charger shows them.
+- **Reason for deferral**: Owner decision 2026-10-12 (points 6 and 7 of the simulator review):
+  what the Willdigits firmware really does offline, how its clock behaves and which vendor
+  messages it sends are unknown until the test day's raw logs; simulating guesses would test the
+  wrong behaviour.
+- **Related planner/feature**: `docs/planners/backend-charging-test-day.md` (Step 5),
+  `docs/planners/backend-ocpp16-charger-integration.md` Step 10, deferred items 27 and 81,
+  STN-03, CHG-02 (`docs/product/features/features.yaml`).
+- **Date recorded**: 2026-10-12
+- **Additional notes**: Build each part from the raw-log evidence of the test day: the
+  re-send order and timing, the clock at boot, and the exact vendor payloads.
+
 ---
 
 ## Update rules
