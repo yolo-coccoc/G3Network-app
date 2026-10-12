@@ -19,9 +19,9 @@ Two layouts are supported:
   (the whole charger) needs no topology row.
 
 Every gun is a 240 kW DC connector, the shape of the Willdigits charger the
-1.6J gateway targets; its plug standard is GB/T DC unless
-``--connector-standard`` names another value of the backend's
-``ConnectorStandard`` (e.g. ``IEC_62196_T2_COMBO`` for CCS2). The tariff price
+1.6J gateway targets; its plug standard is CCS2 (``IEC_62196_T2_COMBO``, the
+delivered unit, confirmed 2026-10-12) unless ``--connector-standard`` names
+another value of the backend's ``ConnectorStandard`` (e.g. ``GBT_DC``). The tariff price
 is ``--price-per-kwh`` (default ``DEFAULT_PRICE_PER_KWH``).
 """
 
@@ -40,7 +40,7 @@ DEFAULT_PRICE_PER_KWH = 3500
 DEFAULT_VAT_RATE_PERCENT = "8"
 # The connector every gun gets; ``standard`` is the default of
 # ``--connector-standard``.
-DEFAULT_CONNECTOR_STANDARD = ConnectorStandard.GBT_DC.value
+DEFAULT_CONNECTOR_STANDARD = ConnectorStandard.IEC_62196_T2_COMBO.value
 CONNECTOR_SPEC = {
     "standard": DEFAULT_CONNECTOR_STANDARD,
     "max_power_kw": 240,
