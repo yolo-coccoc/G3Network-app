@@ -150,6 +150,15 @@ Tokens are masked in everything the tools print or write (IS-07).
 | D | Two drivers on the two guns at once (`--sessions 2 --stop-on-remote`) | Transactions 4 (gun 1) and 5 (gun 2), both `Remote`, billed separately (4,536 and 6,048 VND); 0 CALLERROR |
 | Console | `status`, `set MeterValueSampleInterval 30`, `set NumberOfConnectors 3` | Live charger and gun status; ACCEPTED for a writable key, REJECTED for a read-only one |
 
+**Self-test of the runbook's tests A–I, 2026-10-13** (scratch database, charger connected through `112.137.129.163:9000`): all nine passed, 0 CALLERROR, no backend error. Findings, all fixed the same day and re-verified:
+
+| # | Finding | Fix | Verified |
+|---|---|---|---|
+| 1 | The simulator's meter restarted at `--meter-start` every run (a real register only rises) | Each gun's meter is saved per charger in `backend/logs/simulator-state/<identity>.json` and continued; `--fresh-meter` starts over | Run 2 started at 1067 Wh where run 1 ended |
+| 2 | The charger forgets a scan after `ConnectionTimeOut` (60 s) but the backend kept it PENDING for 300 s | Test-day settings: pending window 60 s, sweep 10 s; runbook Phase 1 sets `ConnectionTimeOut 60` on the charger | Charger expired the scan at 60 s, backend ABANDONED it at 67 s, the app showed it at ~69 s |
+| 3 | `IDENTITY_TOKEN_SECRET_KEY` empty: an API restart logs everyone out | Fixed key in the settings file | No "random key" warning at start-up |
+| 4 | `driver_app` showed "ACTIVE 0 kW" for a full car; `force-close` refused `--charger` | `driver_app` adds the gun's live status (`gun: paused: car full or car paused`, `FAULT <code>`…); `force-close --charger` refuses a session on another charger | Both seen live |
+
 **Simulator realism checks, 2026-10-12** (scratch database, dropped afterwards; 0 unexpected CALLERROR):
 
 | Check | Setup | Result |
@@ -173,7 +182,7 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
 ### 6.1 One-time preparation (the day before)
 
 1. **Code:** B runs the committed `master`; `make setup` once if needed.
-2. **Test-day settings on B** live in `backend/.env.testday.local` (git-ignored, mode 600; done 2026-10-12): `export` lines that override `backend/.env` in the shell that sources them, so daily development keeps the dev database. It sets `DATABASE_URL` (the dedicated `g3network_testday` database), `APP_DEBUG=false` (otherwise SQL, frames and QR tokens are echoed), `IDENTITY_BOOTSTRAP_ADMIN_PHONE` / `_PASSWORD` (the console and the seeds log in as this admin), `CHARGING_TEST_DRIVER_PASSWORD` and `TEST_DAY_CHARGER_ID`. **Every tmux window starts with `source backend/.env.testday.local`.** The gateway listens on `0.0.0.0:9000` (defaults).
+2. **Test-day settings on B** live in `backend/.env.testday.local` (git-ignored, mode 600; done 2026-10-12): `export` lines that override `backend/.env` in the shell that sources them, so daily development keeps the dev database. It sets `DATABASE_URL` (the dedicated `g3network_testday` database), `APP_DEBUG=false` (otherwise SQL, frames and QR tokens are echoed), `IDENTITY_BOOTSTRAP_ADMIN_PHONE` / `_PASSWORD` (the console and the seeds log in as this admin), `CHARGING_TEST_DRIVER_PASSWORD`, `TEST_DAY_CHARGER_ID`, `IDENTITY_TOKEN_SECRET_KEY` (fixed, so an API restart keeps everyone logged in; added 2026-10-13), and `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS=60` with `CHARGING_SESSION_SWEEP_INTERVAL_SECONDS=10` (a scan the charger has not started is given up after 60 s, the charger's `ConnectionTimeOut`, owner decision 2026-10-13). **Every tmux window starts with `source backend/.env.testday.local`.** The gateway listens on `0.0.0.0:9000` (defaults).
 3. **Port forward (done 2026-10-13):** TCP **A:9000 → B:9000** on A's public IP `112.137.129.163`, beside the SSH forward A:10022 → B:22. Nothing else is forwarded: the API stays on B's `localhost`.
 4. **Database:** the day uses its own database, `g3network_testday` (created, migrated and bootstrapped 2026-10-12; the dev database `g3network` is untouched). It holds one rehearsal session from 2026-10-12.
 5. **The real charger is seeded** (2026-10-12) as `$TEST_DAY_CHARGER_ID` (a hard-to-guess ID, because `ws://` has no authentication), label `WD-01`, two `IEC_62196_T2_COMBO` (CCS2) guns, location "G3 test-day station", 3,500 VND/kWh + 8 % VAT. The delivered unit is CCS2 (owner, 2026-10-12), as seeded. To seed another charger: `make charging-ocpp16-seed IDENTITY=<id> STANDARD=<standard> PRICE=<price>`.
@@ -204,11 +213,12 @@ Run `driver_app` directly rather than through `make` (`cd backend && uv run pyth
 
 1. On the charger: change the default HMI password first; set the server URL to **`ws://<A public IP>:9000/ocpp/`** and the Charger ID to `<chargePointId>` (some firmware wants the full URL with the ID at the end).
 2. In `console`: BootNotification, Heartbeat, the post-boot GetConfiguration and StatusNotification for connectors 0, 1, 2 appear. `make station-console ARGS="status --charger <id>"` shows online, vendor, model, firmware, gun statuses. Write down whether the timestamps carry a timezone (a `OCPP timestamp without a timezone read as UTC` warning in the gateway window means they don't).
-3. `make station-console ARGS="config --charger <id>"`: record `SupportedFeatureProfiles`, `AuthorizeRemoteTxRequests`, `MeterValueSampleInterval`, `MeterValuesSampledData`, `StopTxnSampledData`.
+3. `make station-console ARGS="config --charger <id>"`: record `SupportedFeatureProfiles`, `AuthorizeRemoteTxRequests`, `ConnectionTimeOut`, `MeterValueSampleInterval`, `MeterValuesSampledData`, `StopTxnSampledData`.
 4. Set the readings we need, each must answer ACCEPTED:
    `make station-console ARGS="set MeterValueSampleInterval 30 --charger <id>"`,
    `set MeterValuesSampledData Energy.Active.Import.Register,Power.Active.Import,SoC`,
-   `set StopTxnSampledData Energy.Active.Import.Register`.
+   `set StopTxnSampledData Energy.Active.Import.Register`,
+   `set ConnectionTimeOut 60` (the backend gives up an unstarted scan after 60 s; both sides must agree, or the app waits for a scan the charger has already forgotten). If the charger refuses it, set `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` in the settings file to the charger's value and restart the gateway.
 5. **Read the QR code** on the charger's screen with a phone QR reader app; photograph it and write down the raw text (open question 4).
 6. Plug and unplug a gun: the status goes Available → Preparing → Available.
 
