@@ -6,7 +6,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-# Scenario for `make charging-ocpp16-sim`: boot | status | session.
+# Scenario for `make charging-ocpp16-sim`: boot | status | session | charger.
 SCENARIO ?= boot
 # OCPP identity, plug standard and tariff price (dong/kWh before VAT) of
 # `make charging-ocpp16-seed`; IDENTITY is also the identity of
@@ -44,7 +44,7 @@ help:
 	@echo "  make charging-ocpp-seed  - Provision a station/EVSE/connector for the 2.0.1 simulator"
 	@echo "  make charging-ocpp-sim   - Run one OCPP 2.0.1 happy-path charging session"
 	@echo "  make charging-ocpp16-seed [IDENTITY=..] [STANDARD=IEC_62196_T2_COMBO] [PRICE=3500] - Provision an OCPP 1.6J station (one EVSE per gun)"
-	@echo "  make charging-ocpp16-sim [SCENARIO=boot|status|session] [IDENTITY=..] [ARGS=\"--stop-on-remote --samples 60 --sample-interval 5\"] - Run the OCPP 1.6J charge point (default: boot)"
+	@echo "  make charging-ocpp16-sim [SCENARIO=boot|status|session] [IDENTITY=..] [ARGS=\"--end remote --sample-interval 5\"] (SCENARIO=charger: typed commands) - Run the OCPP 1.6J charge point (default: boot)"
 	@echo ""
 	@echo "Charging test day (need the API running; see docs/planners/backend-charging-test-day.md):"
 	@echo "  make charging-test-drivers-seed [ARGS=\"--count 2\"] - Create test drivers (DRIVER role) with a credited wallet"

@@ -875,6 +875,12 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
                 # waits for a RemoteStartTransaction this test never queues.
                 "--id-tag",
                 "SIMTAG001",
+                # Two readings back to back, 250 Wh each (the simulator's
+                # default interval is the charger's 60 s setting).
+                "--sample-interval",
+                "0",
+                "--energy-step-wh",
+                "250",
                 "--linger",
                 "1.5",
             ],
