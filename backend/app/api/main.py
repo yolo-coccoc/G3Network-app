@@ -57,6 +57,7 @@ from app.libs.common.errors import (
     UnauthenticatedError,
     UpstreamUnavailableError,
 )
+from app.libs.common.logging import configure_logging
 from app.libs.db.session import close_db
 
 
@@ -64,8 +65,10 @@ from app.libs.db.session import close_db
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Run the application's startup and shutdown work.
 
-    Startup does nothing: the schema comes from Alembic (``make db-reset``),
-    never from the app.
+    Startup turns on the shared JSON logging, as every other process does at
+    its entrypoint; without it the application's own records below WARNING
+    (the development SMS with its one-time code among them) are dropped. The
+    schema comes from Alembic (``make db-reset``), never from the app.
 
     Args:
         _app: The FastAPI application (unused).
@@ -74,8 +77,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         Control to FastAPI while the application serves requests.
 
     Side Effects:
-        On shutdown, disposes the shared database engine's connection pool.
+        On startup, configures the root logger (idempotent). On shutdown,
+        disposes the shared database engine's connection pool.
     """
+    configure_logging()
     yield
     await close_db()
 

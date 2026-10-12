@@ -1,11 +1,11 @@
-"""PostgreSQL review tests for billing and QR-start races (RV-BL2, RV-BL3).
+"""PostgreSQL review tests for billing and the QR start (RV-BL2, RV-BL3, RV-BL9).
 
-Both defects need two real transactions interleaving, so they run only with
-``RUN_DB_INTEGRATION=1`` on a temporary database built by the
+RV-BL2 and RV-BL3 need two real transactions interleaving; RV-BL9 needs the
+real conditional UPDATE, the session-ended hook and the command table. They run
+only with ``RUN_DB_INTEGRATION=1`` on a temporary database built by the
 ``temporary_database`` fixture of ``test_postgres_integration``. Each test
-asserts the correct behaviour and is marked ``xfail(strict=True)``: the fix
-makes it pass, which strict mode turns into a failure until the marker is
-removed.
+asserts the correct behaviour; while a defect was open its test was marked
+``xfail(strict=True)``, and the marker came off with the fix.
 
 To interleave deterministically, the first transaction stays open while the
 second one runs as a task; the test waits until that task has finished or is
@@ -45,6 +45,7 @@ from app.domains.billing.types import (
 )
 from app.domains.charging_sessions.exceptions import ChargingSessionAlreadyOpenError
 from app.domains.charging_sessions.schemas import ChargingSessionScanRequest
+from app.domains.charging_sessions.types import SessionStatus
 from app.domains.identity.types import Principal, UserRole
 from app.libs.common.config import settings
 from tests import test_postgres_integration as postgres_integration
@@ -254,3 +255,91 @@ async def test_two_concurrent_scans_by_one_person_open_only_one_charge(
 
     assert open_sessions == 1
     assert second_outcome == "refused"
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_pending_scan_abandons_it_and_frees_the_person(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Stopping a scan the charger never started cancels it at once (RV-BL9).
+
+    The session ends ``ABANDONED``, its quoted bill is voided, no
+    ``REMOTE_STOP`` is queued, and the same person can scan again right away
+    instead of waiting for the pending window to run out.
+    """
+    from app.api.startup import register_all_hooks
+
+    register_all_hooks()
+    monkeypatch.setattr(settings, "BILLING_MIN_BALANCE_VND", Decimal(0))
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    owner_id, location_id = await postgres_integration._provision_location(engine)
+    await postgres_integration._provision_station_at(
+        engine, location_id, "REV-CANCEL-A", ["Available"]
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE charging_station_state SET last_seen_at = now()")
+        )
+    (
+        organization_id,
+        user_id,
+    ) = await postgres_integration._provision_organization_and_user(engine)
+    driver = build_principal(
+        roles=frozenset({UserRole.DRIVER}),
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    admin = build_internal_principal()
+    scan_request = ChargingSessionScanRequest(charger_code="REV-CANCEL-A")
+    try:
+        async with session_factory.begin() as db:
+            tariff = await billing_router.create_tariff_endpoint(
+                TariffCreateRequest(name="Default", organization_id=owner_id),
+                principal=admin,
+                db_session=db,
+            )
+            await billing_router.publish_tariff_version_endpoint(
+                tariff.tariff_id,
+                TariffVersionPublishRequest(
+                    price_per_kwh=4500,
+                    vat_rate_percent=Decimal(10),
+                    change_reason="Review price",
+                ),
+                principal=admin,
+                db_session=db,
+            )
+        async with session_factory.begin() as db:
+            scan = await charging_session_flow.scan_charging_session_endpoint(
+                scan_request, principal=driver, db_session=db
+            )
+        async with session_factory.begin() as db:
+            stopped = await charging_session_flow.stop_charging_session_endpoint(
+                scan.session_id, None, principal=driver, db_session=db
+            )
+        async with engine.connect() as connection:
+            session_status, bill_status, remote_stops = (
+                await connection.execute(
+                    text(
+                        "SELECT s.status, b.status, (SELECT count(*) FROM "
+                        "charging_station_commands c WHERE c.session_id = "
+                        "s.session_id AND c.command_type = 'REMOTE_STOP') "
+                        "FROM charging_sessions s JOIN charging_session_bills b "
+                        "USING (session_id) WHERE s.session_id = :s"
+                    ),
+                    {"s": scan.session_id},
+                )
+            ).one()
+        async with session_factory.begin() as db:
+            rescan = await charging_session_flow.scan_charging_session_endpoint(
+                scan_request, principal=driver, db_session=db
+            )
+    finally:
+        await engine.dispose()
+
+    assert stopped.command_id is None
+    assert stopped.status is SessionStatus.ABANDONED
+    assert (session_status, bill_status, remote_stops) == ("ABANDONED", "VOID", 0)
+    assert rescan.status is SessionStatus.PENDING

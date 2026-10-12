@@ -333,6 +333,22 @@ async def stop_charging_session_endpoint(
     session = await charging_session_service.authorize_session_stop(
         db_session, session_id, principal=principal
     )
+    if session.status is SessionStatus.PENDING:
+        # The conditional UPDATE decides against a StartTransaction arriving at
+        # the same moment: if the charger won, the session is ACTIVE now and
+        # the caller must stop it as a running charge.
+        if not await charging_session_service.abandon_pending_session(
+            db_session, session.session_id
+        ):
+            raise ChargingSessionStateError(
+                f"Session '{session.session_id}' was started by the charger "
+                "while it was being cancelled; stop it again"
+            )
+        return ChargingSessionStopResponse(
+            session_id=session.session_id,
+            command_id=None,
+            status=SessionStatus.ABANDONED,
+        )
     reason = (
         stop_request.reason
         if stop_request is not None and stop_request.reason

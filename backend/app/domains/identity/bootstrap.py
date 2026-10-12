@@ -281,7 +281,8 @@ def main() -> None:
         extra={
             "organization_id": str(result.organization_id),
             "head_admin_user_id": str(result.head_admin_user_id),
-            "created": result.created,
+            # Not "created": a reserved LogRecord attribute (the record's time).
+            "created_items": result.created,
         },
     )
 

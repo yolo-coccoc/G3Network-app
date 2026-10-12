@@ -1,15 +1,20 @@
 """
-Shared structured logging configuration for standalone backend processes.
+Shared structured logging configuration for every backend process.
 
 The module converts standard ``logging`` records and the fields in ``extra``
 into single-line JSON, suitable for a container system to collect logs. The
 configuration is idempotent so repeated calls within a lifecycle do not
 attach duplicate handlers.
 
-Used by every standalone entrypoint: the telemetry ingestion worker, the
-telematics device-health monitor and the OCPP gateway. The module
-intentionally uses only the Python standard library; log transport,
-retention and centralized monitoring are out of scope for the MVP.
+Used by every process: the API (in its lifespan) and every standalone
+entrypoint (telemetry ingestion, the telematics monitor, the OCPP gateway...).
+The module intentionally uses only the Python standard library; log
+transport, retention and centralized monitoring are out of scope for the MVP.
+
+A field passed via ``extra`` must not be named like a ``LogRecord`` attribute
+(``message``, ``created``, ``name``...): the logging module raises on it
+whenever the level is enabled (``tests/libs/test_logging_smoke.py`` guards
+this).
 """
 
 import json

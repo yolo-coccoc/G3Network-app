@@ -56,7 +56,10 @@ class LoggingSmsSender:
             message: The message text.
         """
         logger.info(
-            "fake_sms_sent", extra={"phone_number": phone_number, "message": message}
+            # Not "message": it is a reserved LogRecord attribute, and a
+            # reserved key in ``extra`` raises once INFO logging is enabled.
+            "fake_sms_sent",
+            extra={"phone_number": phone_number, "sms_text": message},
         )
 
 
