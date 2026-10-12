@@ -12,7 +12,7 @@ pieces that don't need frequent direct code changes are Dockerized.
 | Component | Tool |
 |---|---|
 | Backend (`api`, and the entrypoints under `telemetry/ingestion`, `telematics/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`, `drivers/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
-| Simulators (`simulator/`) | run from `backend/` with its venv: `uv run python ../simulator/...`, or the `make charging-ocpp*` targets |
+| Simulators (`simulator/`) | run from `backend/` with its venv: `uv run python ../simulator/...`, or the `make charging-ocpp*` targets. The seed scripts and the telemetry simulator log in as the bootstrap HEAD_ADMIN (`simulator/api_client.py`, `IDENTITY_BOOTSTRAP_ADMIN_*` from `backend/.env`): run `make identity-bootstrap` first |
 
 ## Running in Docker (`infra/docker-compose.yml`)
 
@@ -53,11 +53,11 @@ Basic commands:
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
 - `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
-- `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests (needs `make infra-up`)
+- `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests, every `tests/test_postgres_*.py` file (needs `make infra-up`)
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency
-- `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision and run the OCPP 2.0.1 simulator
-- `make charging-ocpp16-seed` / `make charging-ocpp16-sim [SCENARIO=boot|status|session]` — Provision (one EVSE per gun) and run the OCPP 1.6J simulator (default scenario `boot`)
+- `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision (location, tariff, charger) and run the OCPP 2.0.1 simulator
+- `make charging-ocpp16-seed` / `make charging-ocpp16-sim [SCENARIO=boot|status|session]` — Provision (location, tariff, one EVSE per gun) and run the OCPP 1.6J simulator (default scenario `boot`; `session` waits for a QR scan's remote start)
 
 See [README.md](../../README.md) for detailed setup and quick-start
 instructions.
@@ -67,7 +67,7 @@ instructions.
 - There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`); `make setup` copies each to `.env` if missing. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
 - Every backend setting is defined (type, validation, default) in `backend/app/libs/common/config.py` and documented with its default in `backend/.env.example`, grouped by component; only `DATABASE_URL` is required. A new setting goes in both, namespaced by component.
 - OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the heartbeat interval returned at boot (both protocols), the offline threshold behind the derived `is_online`, the timeout for a charger's answer to a gateway request, and the command channel (`CHARGING_OCPP_COMMAND_POLL_SECONDS`, `CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS`: how often the gateway looks for queued commands, and how long a queued command may wait for a connected charger before it ends `NOT_SENT`).
-- Identity settings (`IDENTITY_*`): `IDENTITY_TOKEN_SECRET_KEY` (signs access tokens and keys the one-time-code hash; empty = random per process), token/session lifetimes, login lockout, one-time-code limits (`IDENTITY_OTP_*` per phone, `IDENTITY_INVITES_PER_USER_PER_DAY` per inviter), `IDENTITY_SMS_PROVIDER` / `IDENTITY_EMAIL_PROVIDER` (only the logging fake `log` exists: it writes the SMS, codes included, to the log), `IDENTITY_EMERGENCY_ADMIN_PHONE` (ACC-20) and the `IDENTITY_BOOTSTRAP_*` seed values.
+- Identity settings (`IDENTITY_*`): `IDENTITY_TOKEN_SECRET_KEY` (signs access tokens and keys the one-time-code hash; empty = random per process), token/session lifetimes, login lockout, one-time-code limits (`IDENTITY_OTP_*` per phone, `IDENTITY_INVITES_PER_USER_PER_DAY` per inviter), `IDENTITY_SMS_PROVIDER` / `IDENTITY_EMAIL_PROVIDER` (only the logging fake `log` exists: it writes the SMS, codes included, to the log as `fake_sms_sent` with the text in `sms_text`), `IDENTITY_EMERGENCY_ADMIN_PHONE` (ACC-20) and the `IDENTITY_BOOTSTRAP_*` seed values.
 - QR charging settings: `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (a scan the charger never starts is ABANDONED after this long, default 300), `CHARGING_SESSION_SWEEP_INTERVAL_SECONDS` (how often the gateway's loop sweeps them, default 30) and `BILLING_MIN_BALANCE_VND` (wallet minimum to start a charge, default `0`: always checked, so a negative wallet must top up first, BL-25). `BILLING_SIMULATE_TRANSFERS_ENABLED` switches `POST /payments/vietqr/simulate` on (default off; `.env.example` turns it on for development, BL-26). The sweep runs inside `make charging-ocpp-dev`; there is no separate process.
 - Telemetry ingestion settings: `TELEMETRY_QUEUE_SIZE` and `TELEMETRY_MAX_FUTURE_SKEW_SECONDS` (default 300: a reading dated further ahead of the backend clock is skipped, RV-OP5).
 - `APP_REPORT_TIMEZONE` (default `Asia/Ho_Chi_Minh`) is the calendar for every report or series cut into days/weeks/months/hours; stored and returned timestamps stay UTC.

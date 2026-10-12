@@ -129,6 +129,7 @@
 - The telemetry ingestion MVP keeps its queue/task in RAM. On shutdown, cancel and await the worker immediately, roll back any running transaction, and drop any message still in the queue; it doesn't drain the queue.
 - The telemetry MVP processes **one message per transaction** (`telemetry/ingestion/message_worker.py`), with QoS 0, no retry, and no DLQ: a DB error rolls back that message's transaction, logs the traceback, and stops the worker (the ingestion process then exits non-zero). Batched ingestion is deferred (`deferred.md` item 25).
 - Use structured logging via `extra`; never use an f-string inside a logger call. Use `logger.exception()` for unexpected exceptions.
+- A key in `extra` never names a `LogRecord` attribute (`message`, `created`, `name`, ...): the logging module raises on it once the level is enabled. Every process, the API included (in its lifespan), calls `configure_logging()` from `app.libs.common.logging` at start-up (CV-22; `tests/libs/test_logging_smoke.py`).
 - Never use `except Exception` outside a process/task boundary.
 - The `processed`, `skipped`, `errors`, `dropped` metrics must be clearly defined and must accurately reflect the outcome.
 

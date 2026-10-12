@@ -600,8 +600,9 @@ call each other is in
 │
 ├── simulator/                      # Vehicle telemetry + OCPP charging session simulators (manual smoke testing only)
 │   ├── seed_simulator_devices.py     telematic_simulator.py           # vehicle telemetry over MQTT
-│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed also does the 1.6J layout)
-│   └── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session)
+│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed: location + tariff + charger, also the 1.6J layout)
+│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session; answers RemoteStartTransaction)
+│   └── api_client.py                                                  # login as the bootstrap HEAD_ADMIN + JSON calls, shared by the seeds and telematic_simulator.py
 │
 ├── docs/                           # see docs/README.md for what each folder is
 │   ├── product/                      # WHAT we build: features/ (catalog), inputs/ (business files)

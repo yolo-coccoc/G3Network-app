@@ -249,6 +249,10 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   business audit logs, and application error logs to avoid duplicate logging.
   `/live` and `/ready` could be split when deployed via an orchestrator; avoid
   querying heavy dependencies on every health request.
+- **Update (2026-10-12)**: the JSON logging part is done: the API lifespan
+  now calls `configure_logging()` (CV-22 in
+  [decision-log.md](./decision-log.md)). Request metrics, structured
+  operation logs and a real health/readiness check are still open.
 
 ---
 

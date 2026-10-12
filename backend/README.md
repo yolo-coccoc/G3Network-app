@@ -60,7 +60,7 @@ make format                     # sort imports + format with ruff
 make backend-test-integration   # PostgreSQL integration tests (needs make infra-up)
 ```
 
-The PostgreSQL integration tests in `tests/test_postgres_integration.py` are
+The PostgreSQL integration tests in `tests/test_postgres_*.py` are
 skipped unless `RUN_DB_INTEGRATION=1`, which `make backend-test-integration`
 sets.
 

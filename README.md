@@ -165,6 +165,8 @@ list of deferred items is in
 
 Simulators only generate test data; they are not needed with real devices or
 chargers. All of them talk to the API, so `make backend-dev` must be running.
+The seed scripts and the telemetry simulator log in as the bootstrap
+HEAD_ADMIN, so run `make identity-bootstrap` first (see above).
 
 ### Vehicle telemetry
 
@@ -185,9 +187,12 @@ The simulator publishes location, speed and battery data over MQTT every
 Also needs `make charging-ocpp-dev`.
 
 ```bash
-make charging-ocpp-seed    # once: station SIM-OCPP-001, EVSE 1, connector 1
+make charging-ocpp-seed    # once: location + tariff, station SIM-OCPP-001, EVSE 1, connector 1
 make charging-ocpp-sim     # one Started -> Updated/MeterValues -> Ended session
 ```
+
+The 2.0.1 simulator sends no `idToken`, so the gateway refuses its start and
+no session is stored (only a token issued by a QR scan starts a charge).
 
 A duplicate-code error from the seed means the topology already exists.
 Results can be read through the charging APIs in Swagger.
@@ -198,15 +203,19 @@ Also needs `make charging-ocpp-dev`. Simulates a dual-gun 1.6J charger such
 as the Willdigits DC charger:
 
 ```bash
-make charging-ocpp16-seed                    # once: station SIM-OCPP16-001, one EVSE per gun
+make charging-ocpp16-seed                    # once: location + tariff, station SIM-OCPP16-001, one EVSE per gun
 make charging-ocpp16-sim                     # default scenario: boot (BootNotification + Heartbeats)
 make charging-ocpp16-sim SCENARIO=status     # boot, then status reports incl. faults
-make charging-ocpp16-sim SCENARIO=session    # boot, then a full charging session on gun 1
+make charging-ocpp16-sim SCENARIO=session    # boot, wait for a QR scan, then a charging session on gun 1
 ```
 
-The `session` scenario authorizes, starts a transaction, sends meter values
-(energy in kWh, SoC, power, voltage, current, temperature, `Power.Offered`
-and a vendor-specific measurand) and stops it. The charger's boot info,
+The `session` scenario waits up to 120 s for the gateway's
+`RemoteStartTransaction`: scan the charger as a driver
+(`POST /api/v1/charging-sessions/scan`; the full walk-through is in
+`.claude/skills/e2e-sim/SKILL.md`). It then authorizes with the scan's
+token, starts a transaction, sends meter values (energy in kWh, SoC, power,
+voltage, current, temperature, `Power.Offered` and a vendor-specific
+measurand) and stops it. The charger's boot info,
 statuses, session, measurements and configuration can then be read in
 Swagger. Further options are described in
 `simulator/ocpp16_charge_point_simulator.py`.
