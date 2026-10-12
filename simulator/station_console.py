@@ -23,8 +23,10 @@ Subcommands:
   until the gateway records the charger's answer (or ``--timeout``).
 * ``commands``: recent commands with their outcome.
 * ``force-close <session_id> --reason "..."``: closes a session the charger
-  will never stop (``POST /charging-sessions/{id}/force-close``, D5); needs
-  no charger.
+  will never stop (``POST /charging-sessions/{id}/force-close``, D5). The
+  charger is optional; when ``--charger`` / ``--station-id`` is given, the
+  session must belong to it, so a mistyped ID cannot close another charger's
+  session.
 * ``sessions [--status ACTIVE]``: this charger's sessions (the session list's
   ``station_id`` filter, server side).
 
@@ -544,13 +546,24 @@ def command_force_close(args: argparse.Namespace) -> None:
     """Close a session the charger will never stop (staff, D5/D6).
 
     Args:
-        args: Parsed CLI arguments (session ID, reason).
+        args: Parsed CLI arguments (session ID, reason, optional charger).
 
     Raises:
         ApiError: 404 unknown session (or the endpoint is not deployed), 409
             the session is not ACTIVE, 403 not internal staff.
+        RuntimeError: A charger was named and the session is not on it.
     """
     session = open_session(args)
+    if args.charger or args.station_id:
+        station = resolve_station(session, args)
+        detail = session.call(
+            "session_check", "GET", f"{SESSIONS_PATH}/{args.session_id}"
+        )
+        if str(detail.get("station_id")) != station.station_id:
+            raise RuntimeError(
+                f"Session {args.session_id} is not on charger {station.label}; "
+                "nothing was closed"
+            )
     closed = session.call(
         "force_close",
         "POST",
@@ -734,6 +747,11 @@ def build_parser() -> argparse.ArgumentParser:
         "force-close", parents=[common], help="Close a session the charger never stops."
     )
     force_close.add_argument("session_id")
+    force_target = force_close.add_mutually_exclusive_group()
+    force_target.add_argument(
+        "--charger", help="Optional: refuse unless the session is on this charger."
+    )
+    force_target.add_argument("--station-id", help="Optional: same, by station ID.")
     force_close.add_argument("--reason", required=True, help="1 to 200 characters.")
     force_close.set_defaults(handler=command_force_close)
 

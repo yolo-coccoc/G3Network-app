@@ -73,6 +73,12 @@ the test-day rehearsal (``docs/planners/backend-charging-test-day.md``):
 * ``--float-meter-start`` - ``meterStart`` sent as ``12345.0``.
 * ``--resend-stop`` - StopTransaction sent twice (the answer was "lost").
 
+**Meters persist.** Like a real energy register, each gun's meter never goes
+back: its value is saved per charger identity in
+``backend/logs/simulator-state/<identity>.json`` (git-ignored) when the run
+ends, and the next run continues from it. ``--meter-start`` is only the first
+value of a new charger; ``--fresh-meter`` ignores the saved value.
+
 Any of these flags sends every CALL without the client-side schema check. Not
 simulated (``docs/decisions/deferred.md`` item 103): network loss with an
 offline message queue and reconnect, clock drift, and vendor messages such as
@@ -83,10 +89,12 @@ than hidden.
 
 import argparse
 import asyncio
+import json
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 from ocpp.exceptions import OCPPError
@@ -211,6 +219,10 @@ class SimulatorConfig:
         long_texts: Send boot and status texts longer than the 1.6 limits.
         float_meter_start: Send ``meterStart`` as a float.
         resend_stop: Send StopTransaction twice.
+        meter_state_file: Where each gun's meter is kept between runs, or
+            ``None`` to keep nothing.
+        fresh_meter: Start from ``meter_start_wh`` even when a saved meter
+            exists (the new values are still saved).
     """
 
     url: str
@@ -249,6 +261,8 @@ class SimulatorConfig:
     long_texts: bool = False
     float_meter_start: bool = False
     resend_stop: bool = False
+    meter_state_file: Path | None = None
+    fresh_meter: bool = False
 
     @property
     def is_lenient(self) -> bool:
@@ -321,6 +335,59 @@ class Gun:
     ended: asyncio.Event = field(default_factory=asyncio.Event)
 
 
+def default_meter_state_file(identity: str) -> Path:
+    """Where a charger's meters are kept between runs.
+
+    Args:
+        identity: The charger's OCPP identity.
+
+    Returns:
+        ``backend/logs/simulator-state/<identity>.json`` in this repository
+        (``backend/logs/`` is git-ignored).
+    """
+    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in identity)
+    repo_root = Path(__file__).resolve().parent.parent
+    return repo_root / "backend" / "logs" / "simulator-state" / f"{safe_name}.json"
+
+
+def load_meters(state_file: Path | None) -> dict[int, int]:
+    """Read the saved meter of every gun.
+
+    Args:
+        state_file: The state file, or ``None``.
+
+    Returns:
+        Meter readings (Wh) by gun number; empty when nothing was saved or the
+        file cannot be read.
+    """
+    if state_file is None or not state_file.exists():
+        return {}
+    try:
+        saved = json.loads(state_file.read_text())
+        return {int(gun): int(wh) for gun, wh in saved.get("meters_wh", {}).items()}
+    except (OSError, ValueError, AttributeError):
+        print(f"warning: ignoring unreadable meter state {state_file}")
+        return {}
+
+
+def save_meters(state_file: Path | None, meters: dict[int, int]) -> None:
+    """Save every gun's meter so the next run continues from it.
+
+    Args:
+        state_file: The state file, or ``None`` to save nothing.
+        meters: Meter readings (Wh) by gun number.
+    """
+    if state_file is None:
+        return
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(
+            json.dumps({"meters_wh": {str(gun): wh for gun, wh in meters.items()}})
+        )
+    except OSError as error:
+        print(f"warning: could not save the meters to {state_file}: {error}")
+
+
 def utc_timestamp(*, naive: bool = False) -> str:
     """Build an OCPP UTC timestamp with milliseconds, ending in ``Z``.
 
@@ -373,14 +440,24 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         for key, value in config.config_overrides:
             readonly = self.configuration.get(key, (value, False))[1]
             self.configuration[key] = (value, readonly)
+        saved_meters = (
+            {} if config.fresh_meter else load_meters(config.meter_state_file)
+        )
         self.guns: dict[int, Gun] = {
             number: Gun(
                 number=number,
-                meter_wh=config.meter_start_wh,
+                meter_wh=saved_meters.get(number, config.meter_start_wh),
                 soc_percent=config.start_soc_percent,
             )
             for number in range(1, config.connectors + 1)
         }
+        if saved_meters:
+            print(
+                "METERS continue from the last run: "
+                + ", ".join(
+                    f"gun {n} {wh} Wh" for n, wh in sorted(saved_meters.items())
+                )
+            )
         self.authorizations: list[PendingAuthorization] = []
         self.authorization_arrived = asyncio.Event()
         self.power_lost = asyncio.Event()
@@ -1444,6 +1521,10 @@ async def run(config: SimulatorConfig) -> RunReport:
                     gun.meter_task.cancel()
             listener.cancel()
             await asyncio.gather(listener, return_exceptions=True)
+            save_meters(
+                config.meter_state_file,
+                {gun.number: gun.meter_wh for gun in charge_point.guns.values()},
+            )
         print(f"FINISHED identity={config.identity} scenario={config.scenario}")
         return charge_point.report
 
@@ -1488,7 +1569,25 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         "waiting for a QR scan's remote start",
     )
     parser.add_argument("--remote-start-timeout", type=float, default=120.0)
-    parser.add_argument("--meter-start", type=int, default=1000)
+    parser.add_argument(
+        "--meter-start",
+        type=int,
+        default=1000,
+        help="first meter reading of a new charger (Wh); later runs continue "
+        "from the saved meter",
+    )
+    parser.add_argument(
+        "--fresh-meter",
+        action="store_true",
+        help="start from --meter-start even if a saved meter exists",
+    )
+    parser.add_argument(
+        "--meter-state-file",
+        type=Path,
+        default=None,
+        help="where the meters are kept (default: "
+        "backend/logs/simulator-state/<identity>.json)",
+    )
     parser.add_argument(
         "--meter-stop",
         type=int,
@@ -1591,6 +1690,9 @@ async def main(arguments: Sequence[str] | None = None) -> int:
             id_tag=args.id_tag,
             remote_start_timeout_seconds=args.remote_start_timeout,
             meter_start_wh=args.meter_start,
+            meter_state_file=args.meter_state_file
+            or default_meter_state_file(args.identity),
+            fresh_meter=args.fresh_meter,
             meter_stop_wh=args.meter_stop,
             heartbeats=args.heartbeats,
             heartbeat_interval_seconds=args.heartbeat_interval,

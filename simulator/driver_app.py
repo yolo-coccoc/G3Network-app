@@ -140,14 +140,62 @@ def request_stop(session: ToolSession, session_id: str) -> None:
     print_stop_answer(answer)
 
 
-def format_watch_line(detail: dict[str, Any]) -> str:
+# What a gun's live status means for the driver (the session itself stays
+# ACTIVE through all of these; SuspendedEV/EVSE are pauses, not faults).
+GUN_STATUS_TEXT = {
+    "Preparing": "plugged in, not started",
+    "Charging": "charging",
+    "SuspendedEV": "paused: car full or car paused",
+    "SuspendedEVSE": "paused by the charger",
+    "Finishing": "finished, unplug",
+    "Available": "free",
+    "Faulted": "FAULT",
+    "Unavailable": "out of service",
+}
+
+
+def resolve_gun_status(session: ToolSession, detail: dict[str, Any]) -> str | None:
+    """Read the live status of the session's gun, as the app would show it.
+
+    Args:
+        session: The driver's tool session.
+        detail: ``ChargingSessionDetailResponse`` body.
+
+    Returns:
+        A short text such as ``paused: car full or car paused``, or ``None``
+        when the session has no gun yet or the status cannot be read (a read
+        failure never stops the watch).
+    """
+    connector_id = detail.get("connector_id")
+    if not connector_id or detail.get("status") != "ACTIVE":
+        return None
+    try:
+        board = session.call(
+            "gun_status",
+            "GET",
+            f"/api/v1/charging-stations/{detail['station_id']}/status",
+        )
+    except (ApiError, RuntimeError):
+        return None
+    for connector in board.get("connectors", []):
+        if str(connector.get("connector_id")) == str(connector_id):
+            status = str(connector.get("status"))
+            text = GUN_STATUS_TEXT.get(status, status)
+            if status == "Faulted" and connector.get("error_code"):
+                text = f"FAULT {connector['error_code']}"
+            return text
+    return None
+
+
+def format_watch_line(detail: dict[str, Any], gun_status: str | None = None) -> str:
     """Build the one-line live view of a session.
 
     Args:
         detail: ``ChargingSessionDetailResponse`` body.
+        gun_status: What the gun is doing now (``resolve_gun_status``), if known.
 
     Returns:
-        ``time  status  energy  power  SoC  elapsed``.
+        ``time  status  energy  power  SoC  elapsed  [gun status]``.
     """
     status = str(detail.get("status"))
     energy_wh = to_float(detail.get("energy_delivered_wh"))
@@ -168,6 +216,7 @@ def format_watch_line(detail: dict[str, Any]) -> str:
             "SoC " + ("-" if soc is None else f"{soc:.0f}%"),
             elapsed,
         ]
+        + ([f"gun: {gun_status}"] if gun_status else [])
     )
 
 
@@ -218,7 +267,7 @@ def watch_session(
                 print(f"warning: {error}; retrying")
                 time.sleep(args.interval)
                 continue
-            print(format_watch_line(detail))
+            print(format_watch_line(detail, resolve_gun_status(session, detail)))
             if detail.get("status") in FINAL_STATUSES:
                 break
             time.sleep(args.interval)

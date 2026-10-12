@@ -828,6 +828,7 @@ async def _provision_station(
 @pytest.mark.asyncio
 async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
     temporary_database: str,
+    tmp_path: Path,
 ) -> None:
     """Real gateway + both simulators on a freshly migrated database.
 
@@ -881,6 +882,11 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
                 "0",
                 "--energy-step-wh",
                 "250",
+                # Always start at 1000 Wh, and keep the saved meter out of
+                # the repository's logs folder.
+                "--fresh-meter",
+                "--meter-state-file",
+                str(tmp_path / "meters.json"),
                 "--linger",
                 "1.5",
             ],
