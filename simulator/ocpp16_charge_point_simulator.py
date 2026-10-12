@@ -28,9 +28,26 @@ Scenarios are added one message group at a time as the gateway learns them
   **kWh**, SoC, power, voltage, current, temperature, ``Power.Offered`` and a
   vendor-specific measurand), StopTransaction with the closing meter reading, a
   stop reason and ``transactionData``, Finishing, Available.
+  With ``--samples N --sample-interval S`` it charges longer (the meter rises
+  ``--energy-step-wh`` per sample); with ``--stop-on-remote`` it keeps charging
+  until the gateway's ``RemoteStopTransaction`` (a stop from the app) or until
+  ``--samples`` readings were sent. ``--sessions 2`` runs two sessions at
+  once, each on the gun its remote start names (two drivers, two guns).
 
-Like the 2.0.1 simulator this only generates valid happy-path traffic. It does
-not simulate retries, duplicates, reconnects, delays, or random errors. A
+Real-firmware behaviours the gateway must tolerate (CO-16, CO-17, CE-28), for
+the test-day rehearsal (``docs/planners/backend-charging-test-day.md``):
+
+* ``--naive-timestamps`` - every timestamp without a timezone (local style).
+* ``--uppercase-id-tag`` - the idTag is sent upper-cased.
+* ``--long-texts`` - a model, serial and firmware longer than the 1.6 schema
+  allows, and a long status ``info``.
+* ``--float-meter-start`` - ``meterStart`` sent as ``12345.0``.
+* ``--resend-stop`` - StopTransaction sent twice (the answer was "lost").
+* ``--no-stop`` - the connection drops after charging, with no
+  StopTransaction: an orphan session for the staff force-close (CE-29).
+
+Any of these flags sends every CALL without the client-side schema check.
+Otherwise it does not simulate retries, reconnects, delays or random errors. A
 CALLERROR from the gateway is printed and makes the exit code non-zero, so a
 message the gateway does not handle yet is visible rather than hidden.
 """
@@ -49,6 +66,7 @@ from ocpp.v16.enums import (
     Action,
     ChargePointErrorCode,
     ChargePointStatus,
+    ConfigurationStatus,
     Reason,
     RemoteStartStopStatus,
 )
@@ -112,6 +130,19 @@ class SimulatorConfig:
             CSMS-initiated calls (for example the post-boot
             ``GetConfiguration``) can arrive and be answered.
         timeout_seconds: Timeout for connecting and for each call.
+        sessions: How many sessions the ``session`` scenario runs side by
+            side, each waiting for its own remote start (two guns, two drivers).
+        samples: MeterValues messages sent during the session.
+        sample_interval_seconds: Pause between them.
+        energy_step_wh: How much the meter rises per sample.
+        stop_on_remote: Charge until ``RemoteStopTransaction`` arrives (or the
+            samples run out) instead of stopping after the samples.
+        naive_timestamps: Send every timestamp without a timezone.
+        uppercase_id_tag: Send the idTag upper-cased.
+        long_texts: Send boot and status texts longer than the 1.6 limits.
+        float_meter_start: Send ``meterStart`` as a float.
+        resend_stop: Send StopTransaction twice.
+        no_stop: Drop the connection after charging, with no StopTransaction.
     """
 
     url: str
@@ -130,6 +161,27 @@ class SimulatorConfig:
     configuration: tuple[tuple[str, str, bool], ...] = DEFAULT_CONFIGURATION
     linger_seconds: float = 1.0
     timeout_seconds: float = 5.0
+    sessions: int = 1
+    samples: int = 2
+    sample_interval_seconds: float = 0.0
+    energy_step_wh: int = 250
+    stop_on_remote: bool = False
+    naive_timestamps: bool = False
+    uppercase_id_tag: bool = False
+    long_texts: bool = False
+    float_meter_start: bool = False
+    resend_stop: bool = False
+    no_stop: bool = False
+
+    @property
+    def is_lenient(self) -> bool:
+        """Whether any flag sends what the 1.6 schema would refuse."""
+        return (
+            self.naive_timestamps
+            or self.long_texts
+            or self.float_meter_start
+            or self.uppercase_id_tag
+        )
 
 
 @dataclass(slots=True)
@@ -143,17 +195,18 @@ class RunReport:
     errors: list[str] = field(default_factory=list)
 
 
-def utc_timestamp() -> str:
+def utc_timestamp(*, naive: bool = False) -> str:
     """Build an OCPP UTC timestamp with milliseconds, ending in ``Z``.
+
+    Args:
+        naive: Leave out the timezone (``2026-09-24T10:00:00.000``), as some
+            firmware does.
 
     Returns:
         ISO-8601 timestamp such as ``2026-09-24T10:00:00.000Z``.
     """
-    return (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    return timestamp.replace("+00:00", "" if naive else "Z")
 
 
 class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
@@ -163,8 +216,13 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         id: The charger's identity (its "Charger ID").
         config: Immutable configuration of this run.
         report: Collects CALLERRORs so the process can exit non-zero.
-        remote_start_tags: idTags of the accepted ``RemoteStartTransaction``
-            calls, in arrival order, for the ``session`` scenario.
+        remote_starts: ``(idTag, connectorId)`` of the accepted
+            ``RemoteStartTransaction`` calls, in arrival order, for the
+            ``session`` scenario.
+        remote_stops: One event per running transaction, set when
+            ``RemoteStopTransaction`` arrives for it.
+        configuration: The live key table: ``ChangeConfiguration`` edits it,
+            ``GetConfiguration`` reads it.
     """
 
     def __init__(self, connection: object, config: SimulatorConfig) -> None:
@@ -179,7 +237,70 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         )
         self.config = config
         self.report = RunReport()
-        self.remote_start_tags: asyncio.Queue[str] = asyncio.Queue()
+        self.remote_starts: asyncio.Queue[tuple[str, int | None]] = asyncio.Queue()
+        self.remote_stops: dict[int, asyncio.Event] = {}
+        self.configuration: dict[str, tuple[str, bool]] = {
+            name: (value, readonly) for name, value, readonly in config.configuration
+        }
+
+    def timestamp(self) -> str:
+        """Build a timestamp in this run's style (naive with ``--naive-timestamps``).
+
+        Returns:
+            The current time as an OCPP timestamp.
+        """
+        return utc_timestamp(naive=self.config.naive_timestamps)
+
+    @on(Action.remote_stop_transaction)  # type: ignore[untyped-decorator]
+    async def on_remote_stop_transaction(
+        self, transaction_id: int, **_: object
+    ) -> call_result.RemoteStopTransaction:
+        """Accept a stop from the app for the running transaction.
+
+        Args:
+            transaction_id: The transaction the gateway wants stopped.
+            **_: No other fields are defined.
+
+        Returns:
+            ``Accepted`` for a running transaction, otherwise ``Rejected``.
+        """
+        is_running = transaction_id in self.remote_stops
+        print(
+            f"CSMS asked RemoteStopTransaction transaction_id={transaction_id} "
+            f"-> {'Accepted' if is_running else 'Rejected'}"
+        )
+        if not is_running:
+            return call_result.RemoteStopTransaction(
+                status=RemoteStartStopStatus.rejected
+            )
+        self.remote_stops[transaction_id].set()
+        return call_result.RemoteStopTransaction(status=RemoteStartStopStatus.accepted)
+
+    @on(Action.change_configuration)  # type: ignore[untyped-decorator]
+    async def on_change_configuration(
+        self, key: str, value: str, **_: object
+    ) -> call_result.ChangeConfiguration:
+        """Change one writable key of the table, as the operator console asks.
+
+        Args:
+            key: The configuration key.
+            value: Its new value.
+            **_: No other fields are defined.
+
+        Returns:
+            ``Accepted`` for a writable key, ``Rejected`` for a read-only one,
+            ``NotSupported`` for an unknown one.
+        """
+        current = self.configuration.get(key)
+        if current is None:
+            status = ConfigurationStatus.not_supported
+        elif current[1]:
+            status = ConfigurationStatus.rejected
+        else:
+            self.configuration[key] = (value, False)
+            status = ConfigurationStatus.accepted
+        print(f"CSMS asked ChangeConfiguration {key}={value} -> {status.value}")
+        return call_result.ChangeConfiguration(status=status)
 
     @on(Action.remote_start_transaction)  # type: ignore[untyped-decorator]
     async def on_remote_start_transaction(
@@ -189,15 +310,15 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
 
         Args:
             id_tag: The single-use token the scan issued.
-            connector_id: The gun the scan named, if any (the scenario always
-                charges on gun 1).
+            connector_id: The gun the scan named, if any; the session then
+                charges on that gun.
             **_: Other optional OCPP fields (``chargingProfile``).
 
         Returns:
             ``Accepted``; the ``session`` scenario then starts with this idTag.
         """
         print(f"CSMS asked RemoteStartTransaction connector={connector_id}")
-        self.remote_start_tags.put_nowait(id_tag)
+        self.remote_starts.put_nowait((id_tag, connector_id))
         return call_result.RemoteStartTransaction(status=RemoteStartStopStatus.accepted)
 
     @on(Action.get_configuration)  # type: ignore[untyped-decorator]
@@ -215,10 +336,7 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             All matching configuration keys, and the unknown requested keys in
             ``unknown_key``.
         """
-        table = {
-            name: (value, readonly)
-            for name, value, readonly in self.config.configuration
-        }
+        table = self.configuration
         if not key:
             wanted = list(table)
             unknown: list[str] = []
@@ -256,7 +374,9 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             response: object = await self.call(
                 request,
                 suppress=False,
-                skip_schema_validation=skip_schema_validation,
+                skip_schema_validation=(
+                    skip_schema_validation or self.config.is_lenient
+                ),
             )
         except OCPPError as error:
             description = f"{action} -> CALLERROR {type(error).__name__}: {error}"
@@ -273,13 +393,21 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
             Sends ``1 + heartbeats`` CALLs; each is answered by the gateway or
             reported as a CALLERROR.
         """
-        await self.send_call(
-            call.BootNotification(
+        if self.config.long_texts:
+            # Over the 1.6 limits (model 20, serial 25, firmware 50).
+            boot = call.BootNotification(
+                charge_point_vendor=self.config.vendor,
+                charge_point_model=f"{self.config.model}-LIQUID-COOLED-EDITION",
+                firmware_version=f"{self.config.firmware_version}-" + "B" * 50,
+                charge_point_serial_number="WD-SN-" + "0" * 34,
+            )
+        else:
+            boot = call.BootNotification(
                 charge_point_vendor=self.config.vendor,
                 charge_point_model=self.config.model,
                 firmware_version=self.config.firmware_version,
             )
-        )
+        await self.send_call(boot)
         for index in range(self.config.heartbeats):
             if index:
                 await asyncio.sleep(self.config.heartbeat_interval_seconds)
@@ -310,7 +438,7 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 connector_id=connector_id,
                 error_code=ChargePointErrorCode(error_code),
                 status=ChargePointStatus(status),
-                timestamp=utc_timestamp() if with_timestamp else None,
+                timestamp=self.timestamp() if with_timestamp else None,
                 info=info,
                 vendor_error_code=vendor_error_code,
             )
@@ -345,22 +473,44 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         )
 
     async def run_session_scenario(self) -> None:
-        """Boot, then run one charging session on gun 1.
+        """Boot, then run ``--sessions`` charging sessions side by side.
 
         Side Effects:
-            Sends the boot messages, then (without ``--id-tag``) waits for the
-            gateway's ``RemoteStartTransaction``, then Authorize ->
-            StartTransaction -> StopTransaction with the StatusNotification
-            cycle around them. The transactionId in StopTransaction is the one
-            the gateway returned in StartTransaction; if no remote start
-            arrives in time or StartTransaction fails, the run stops there
-            (a missing remote start is recorded in ``report``).
+            Sends the boot messages, then runs one ``run_one_session`` per
+            session at the same time (two drivers on the two guns).
         """
         await self.run_boot_scenario()
-        await self.send_status(0, "Available")
+        await self.send_status(
+            0,
+            "Available",
+            info=("Charger ready after power-on self test " * 3)
+            if self.config.long_texts
+            else None,
+        )
         for gun in range(1, self.config.connectors + 1):
             await self.send_status(gun, "Available")
+        await asyncio.gather(
+            *(self.run_one_session(index) for index in range(self.config.sessions))
+        )
+
+    async def run_one_session(self, index: int) -> None:
+        """Run one charging session, on the gun the remote start names.
+
+        Args:
+            index: Which of the run's sessions this is (0-based); its gun is
+                ``index + 1`` when the remote start names none.
+
+        Side Effects:
+            Without ``--id-tag``, waits for a ``RemoteStartTransaction``, then
+            Authorize -> StartTransaction -> MeterValues -> StopTransaction
+            with the StatusNotification cycle around them. The transactionId in
+            StopTransaction is the one the gateway returned in
+            StartTransaction; if no remote start arrives in time or
+            StartTransaction fails, this session stops there (a missing remote
+            start is recorded in ``report``).
+        """
         id_tag = self.config.id_tag
+        gun = index + 1
         if id_tag is None:
             print(
                 "WAITING for RemoteStartTransaction: scan "
@@ -368,36 +518,62 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 f"(up to {self.config.remote_start_timeout_seconds:.0f} s)"
             )
             try:
-                id_tag = await asyncio.wait_for(
-                    self.remote_start_tags.get(),
+                id_tag, remote_gun = await asyncio.wait_for(
+                    self.remote_starts.get(),
                     timeout=self.config.remote_start_timeout_seconds,
                 )
             except TimeoutError:
                 self.report.errors.append("no RemoteStartTransaction arrived")
                 print("NO RemoteStartTransaction arrived; session not started")
                 return
+            gun = remote_gun or gun
+        if self.config.uppercase_id_tag:
+            id_tag = id_tag.upper()
         await self.send_call(call.Authorize(id_tag=id_tag))
-        await self.send_status(1, "Preparing")
+        await self.send_status(gun, "Preparing")
         started = await self.send_call(
             call.StartTransaction(
-                connector_id=1,
+                connector_id=gun,
                 id_tag=id_tag,
-                meter_start=self.config.meter_start_wh,
-                timestamp=utc_timestamp(),
+                meter_start=(
+                    float(self.config.meter_start_wh)
+                    if self.config.float_meter_start
+                    else self.config.meter_start_wh
+                ),
+                timestamp=self.timestamp(),
             )
         )
         if not isinstance(started, call_result.StartTransaction):
             return
-        print(f"TRANSACTION assigned transaction_id={started.transaction_id}")
-        await self.send_status(1, "Charging")
-        for energy_kwh, soc in (("1.25", "40"), ("1.45", "90")):
+        print(f"TRANSACTION gun={gun} assigned transaction_id={started.transaction_id}")
+        remote_stop = self.remote_stops.setdefault(
+            started.transaction_id, asyncio.Event()
+        )
+        await self.send_status(gun, "Charging")
+        meter_wh = self.config.meter_start_wh
+        sample = 0
+        while sample < self.config.samples:
+            if sample and self.config.sample_interval_seconds:
+                try:
+                    await asyncio.wait_for(
+                        remote_stop.wait(),
+                        timeout=self.config.sample_interval_seconds,
+                    )
+                except TimeoutError:
+                    pass
+            if remote_stop.is_set():
+                break
+            sample += 1
+            meter_wh += self.config.energy_step_wh
+            soc = str(min(40 + sample * 5, 100))
+            energy_kwh = f"{meter_wh / 1000:.3f}"
             await self.send_call(
                 call.MeterValues(
-                    connector_id=1,
+                    connector_id=gun,
                     transaction_id=started.transaction_id,
                     meter_value=[
                         {
-                            "timestamp": utc_timestamp(),
+                            "timestamp": self.timestamp(),
                             "sampled_value": [
                                 {
                                     "value": energy_kwh,
@@ -439,34 +615,47 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 ),
                 skip_schema_validation=True,
             )
-        await self.send_call(
-            call.StopTransaction(
-                meter_stop=self.config.meter_stop_wh,
-                timestamp=utc_timestamp(),
-                transaction_id=started.transaction_id,
-                reason=Reason.ev_disconnected,
-                id_tag=id_tag,
-                transaction_data=[
-                    {
-                        "timestamp": utc_timestamp(),
-                        "sampled_value": [
-                            {
-                                "value": str(self.config.meter_stop_wh),
-                                "context": "Transaction.End",
-                            },
-                            {
-                                "value": "95",
-                                "measurand": "SoC",
-                                "unit": "Percent",
-                                "context": "Transaction.End",
-                            },
-                        ],
-                    }
-                ],
-            )
+        if self.config.stop_on_remote and not remote_stop.is_set():
+            print("WAITING for RemoteStopTransaction (stop the charge in the app)")
+            await remote_stop.wait()
+        if self.config.no_stop:
+            print("DROPPING the connection without StopTransaction (orphan session)")
+            return
+        # The closing reading: the configured one, or where the meter got to.
+        meter_stop_wh = max(self.config.meter_stop_wh, meter_wh)
+        stop = call.StopTransaction(
+            meter_stop=meter_stop_wh,
+            timestamp=self.timestamp(),
+            transaction_id=started.transaction_id,
+            reason=Reason.remote if remote_stop.is_set() else Reason.ev_disconnected,
+            id_tag=id_tag,
+            transaction_data=[
+                {
+                    "timestamp": self.timestamp(),
+                    "sampled_value": [
+                        {
+                            "value": str(meter_stop_wh),
+                            "context": "Transaction.End",
+                        },
+                        {
+                            "value": "95",
+                            "measurand": "SoC",
+                            "unit": "Percent",
+                            "context": "Transaction.End",
+                        },
+                    ],
+                }
+            ],
         )
-        await self.send_status(1, "Finishing")
-        await self.send_status(1, "Available")
+        await self.send_call(stop)
+        if self.config.resend_stop:
+            # The gateway's answer was "lost" on 4G: a real charger sends the
+            # same stop again and must get the same confirmation (CO-16).
+            print("RESENDING StopTransaction (simulating a lost answer)")
+            await self.send_call(stop)
+        self.remote_stops.pop(started.transaction_id, None)
+        await self.send_status(gun, "Finishing")
+        await self.send_status(gun, "Available")
 
 
 async def run(config: SimulatorConfig) -> RunReport:
@@ -540,6 +729,40 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--heartbeat-interval", type=float, default=1.0)
     parser.add_argument("--linger", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--sessions",
+        type=int,
+        default=1,
+        help="session: sessions to run side by side, each on the gun its "
+        "remote start names (default: the next gun)",
+    )
+    parser.add_argument(
+        "--samples", type=int, default=2, help="session: MeterValues to send"
+    )
+    parser.add_argument(
+        "--sample-interval",
+        type=float,
+        default=0.0,
+        help="session: seconds between MeterValues",
+    )
+    parser.add_argument(
+        "--energy-step-wh", type=int, default=250, help="session: Wh per sample"
+    )
+    parser.add_argument(
+        "--stop-on-remote",
+        action="store_true",
+        help="session: keep charging until the app stops it (RemoteStopTransaction)",
+    )
+    parser.add_argument("--naive-timestamps", action="store_true")
+    parser.add_argument("--uppercase-id-tag", action="store_true")
+    parser.add_argument("--long-texts", action="store_true")
+    parser.add_argument("--float-meter-start", action="store_true")
+    parser.add_argument("--resend-stop", action="store_true")
+    parser.add_argument(
+        "--no-stop",
+        action="store_true",
+        help="session: drop the connection without StopTransaction (orphan)",
+    )
     return parser.parse_args(arguments)
 
 
@@ -569,6 +792,17 @@ async def main(arguments: Sequence[str] | None = None) -> int:
             heartbeat_interval_seconds=args.heartbeat_interval,
             linger_seconds=args.linger,
             timeout_seconds=args.timeout,
+            sessions=args.sessions,
+            samples=args.samples,
+            sample_interval_seconds=args.sample_interval,
+            energy_step_wh=args.energy_step_wh,
+            stop_on_remote=args.stop_on_remote,
+            naive_timestamps=args.naive_timestamps,
+            uppercase_id_tag=args.uppercase_id_tag,
+            long_texts=args.long_texts,
+            float_meter_start=args.float_meter_start,
+            resend_stop=args.resend_stop,
+            no_stop=args.no_stop,
         )
     )
     return 1 if report.errors else 0

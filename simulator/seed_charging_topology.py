@@ -18,24 +18,31 @@ Two layouts are supported:
   ``docs/planners/backend-ocpp16-charger-integration.md``). Connector ``0``
   (the whole charger) needs no topology row.
 
-Every gun is a 240 kW GB/T DC connector, the shape of the Willdigits charger
-the 1.6J gateway targets.
+Every gun is a 240 kW DC connector, the shape of the Willdigits charger the
+1.6J gateway targets; its plug standard is GB/T DC unless
+``--connector-standard`` names another value of the backend's
+``ConnectorStandard`` (e.g. ``IEC_62196_T2_COMBO`` for CCS2). The tariff price
+is ``--price-per-kwh`` (default ``DEFAULT_PRICE_PER_KWH``).
 """
 
 import argparse
 from collections.abc import Mapping
 from typing import Any
 
-from api_client import DEFAULT_API_URL, ApiClient, login_as_bootstrap_admin
+from api_client import ApiClient, login_as_bootstrap_admin, resolve_api_url
+
+from app.domains.charging_stations.types import ConnectorStandard
 
 DEFAULT_IDENTITY = "SIM-OCPP-001"
 DEFAULT_DISPLAY_NAME = "Charging Simulator"
 # Price of the location tariff the seed publishes: whole dong per kWh, VAT %.
 DEFAULT_PRICE_PER_KWH = 3500
 DEFAULT_VAT_RATE_PERCENT = "8"
-# The connector every gun gets.
+# The connector every gun gets; ``standard`` is the default of
+# ``--connector-standard``.
+DEFAULT_CONNECTOR_STANDARD = ConnectorStandard.GBT_DC.value
 CONNECTOR_SPEC = {
-    "standard": "GBT_DC",
+    "standard": DEFAULT_CONNECTOR_STANDARD,
     "max_power_kw": 240,
     "max_voltage_v": 1000,
     "max_current_a": 250,
@@ -125,6 +132,7 @@ def provision_evse(
     identity: str,
     evse_id: int,
     connector_id: int,
+    connector_standard: str = DEFAULT_CONNECTOR_STANDARD,
 ) -> None:
     """Create one EVSE under a station and one connector under that EVSE.
 
@@ -134,6 +142,8 @@ def provision_evse(
         identity: The station's OCPP identity, used to build a unique eMI3 ID.
         evse_id: OCPP EVSE ID to create.
         connector_id: OCPP connector ID to create under the new EVSE.
+        connector_standard: Plug standard of the connector
+            (``ConnectorStandard`` value).
 
     Raises:
         RuntimeError: If a request fails or a response lacks the expected ID.
@@ -145,11 +155,17 @@ def provision_evse(
     evse_uuid = required_id(evse, "evse_id")
     connector = client.post(
         f"/api/v1/charging-evses/{evse_uuid}/connectors",
-        {"ocpp_connector_id": connector_id, **CONNECTOR_SPEC},
+        {
+            "ocpp_connector_id": connector_id,
+            **CONNECTOR_SPEC,
+            "standard": connector_standard,
+        },
     )
     connector_uuid = required_id(connector, "connector_id")
     print(f"Provisioned EVSE: {evse_id} ({evse_uuid})")
-    print(f"Provisioned connector: {connector_id} ({connector_uuid})")
+    print(
+        f"Provisioned connector: {connector_id} {connector_standard} ({connector_uuid})"
+    )
 
 
 def positive_int(value: str) -> int:
@@ -177,14 +193,16 @@ def parse_args() -> argparse.Namespace:
     """Read the CLI parameters for a topology simulator.
 
     Returns:
-        Namespace containing the backend URL, identity, location, price and
-        OCPP IDs.
+        Namespace containing the backend URL, identity, location, price,
+        connector standard and OCPP IDs.
     """
     parser = argparse.ArgumentParser(
         description="Create a location, station, EVSEs, connectors and a tariff "
         "for the OCPP simulator."
     )
-    parser.add_argument("--api-url", default=DEFAULT_API_URL)
+    parser.add_argument(
+        "--api-url", default=None, help="Backend URL; default $G3_API_URL or localhost."
+    )
     parser.add_argument("--identity", default=DEFAULT_IDENTITY)
     parser.add_argument("--display-name", default=DEFAULT_DISPLAY_NAME)
     parser.add_argument(
@@ -194,7 +212,17 @@ def parse_args() -> argparse.Namespace:
         "(with its own tariff).",
     )
     parser.add_argument(
-        "--price-per-kwh", type=positive_int, default=DEFAULT_PRICE_PER_KWH
+        "--price-per-kwh",
+        type=positive_int,
+        default=DEFAULT_PRICE_PER_KWH,
+        help="Tariff price before VAT, whole dong per kWh (only when a "
+        f"location is created; default {DEFAULT_PRICE_PER_KWH}).",
+    )
+    parser.add_argument(
+        "--connector-standard",
+        choices=[standard.value for standard in ConnectorStandard],
+        default=DEFAULT_CONNECTOR_STANDARD,
+        help=f"Plug standard of every gun (default {DEFAULT_CONNECTOR_STANDARD}).",
     )
     parser.add_argument(
         "--protocol",
@@ -226,7 +254,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     """Create the location, tariff, station, EVSEs and connectors in FK order."""
     args = parse_args()
-    client = login_as_bootstrap_admin(args.api_url)
+    client = login_as_bootstrap_admin(resolve_api_url(args.api_url))
     location_id = args.location_id
     if location_id is None:
         location_id = provision_location(client, f"{args.display_name} depot")
@@ -247,10 +275,17 @@ def main() -> None:
     print(f"Provisioned station: {args.identity} ({station_id})")
     if args.protocol == "1.6":
         for gun in range(1, args.connectors + 1):
-            provision_evse(client, station_id, args.identity, gun, 1)
+            provision_evse(
+                client, station_id, args.identity, gun, 1, args.connector_standard
+            )
     else:
         provision_evse(
-            client, station_id, args.identity, args.evse_id, args.connector_id
+            client,
+            station_id,
+            args.identity,
+            args.evse_id,
+            args.connector_id,
+            args.connector_standard,
         )
 
 

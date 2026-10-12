@@ -1041,8 +1041,10 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
         )
         assert (session.meter_start_wh, session.meter_stop_wh) == (1000, 1500)
         assert session.evse_id is not None and session.started_at is not None
-        # Measurements: 1.25 kWh really is 1250 Wh, plus the extra measurands.
-        assert list(energy) == [1250, 1450, 1500]
+        # Measurements: 1.25 kWh really is 1250 Wh (the simulator's meter rises
+        # 250 Wh per sample, so the second sample equals the closing reading),
+        # plus the extra measurands.
+        assert list(energy) == [1250, 1500, 1500]
         assert {
             "SoC",
             "Power.Active.Import",
