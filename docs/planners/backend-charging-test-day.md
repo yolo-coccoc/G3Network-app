@@ -174,7 +174,7 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
 
 1. **Code:** B runs the committed `master`; `make setup` once if needed.
 2. **Test-day settings on B** live in `backend/.env.testday.local` (git-ignored, mode 600; done 2026-10-12): `export` lines that override `backend/.env` in the shell that sources them, so daily development keeps the dev database. It sets `DATABASE_URL` (the dedicated `g3network_testday` database), `APP_DEBUG=false` (otherwise SQL, frames and QR tokens are echoed), `IDENTITY_BOOTSTRAP_ADMIN_PHONE` / `_PASSWORD` (the console and the seeds log in as this admin), `CHARGING_TEST_DRIVER_PASSWORD` and `TEST_DAY_CHARGER_ID`. **Every tmux window starts with `source backend/.env.testday.local`.** The gateway listens on `0.0.0.0:9000` (defaults).
-3. **Port forward:** forward **A:9000 → B:9000** with the same tool as the SSH forward (A:10022 → B:22). Forward nothing else: the API stays on B's `localhost`.
+3. **Port forward (done 2026-10-13):** TCP **A:9000 → B:9000** on A's public IP `112.137.129.163`, beside the SSH forward A:10022 → B:22. Nothing else is forwarded: the API stays on B's `localhost`.
 4. **Database:** the day uses its own database, `g3network_testday` (created, migrated and bootstrapped 2026-10-12; the dev database `g3network` is untouched). It holds one rehearsal session from 2026-10-12.
 5. **The real charger is seeded** (2026-10-12) as `$TEST_DAY_CHARGER_ID` (a hard-to-guess ID, because `ws://` has no authentication), label `WD-01`, two `IEC_62196_T2_COMBO` (CCS2) guns, location "G3 test-day station", 3,500 VND/kWh + 8 % VAT. The delivered unit is CCS2 (owner, 2026-10-12), as seeded. To seed another charger: `make charging-ocpp16-seed IDENTITY=<id> STANDARD=<standard> PRICE=<price>`.
 6. **The drivers are seeded** (2026-10-12): `+84999000001` and `+84999000002`, password `CHARGING_TEST_DRIVER_PASSWORD` from the settings file, 10,000,000 VND each. Re-running `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"` (after `source`) tops them back up.
@@ -186,6 +186,7 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
      -H "Sec-WebSocket-Protocol: ocpp1.6" http://<A public IP>:9000/ocpp/REACHABILITY-TEST
    ```
    `404 Unknown OCPP station identity` = reachable. A timeout or "connection refused" = the forward or a firewall blocks it.
+   **Verified 2026-10-13:** from the laptop on mobile data → `404 Unknown OCPP station identity`; from B through the public IP, the real ID `G3WD-DHR75E` got `101 Switching Protocols`, and a full simulated session (scan → charge → stop from the app → bill) ran through `ws://112.137.129.163:9000/ocpp/` with no CALLERROR. The API and the gateway were stopped afterwards; start them on the morning of the day (6.2). Run the laptop check from a terminal on the laptop itself, not VS Code's Remote-SSH terminal (that one runs on B).
 
 ### 6.2 Morning: start the backend (tmux on B)
 
