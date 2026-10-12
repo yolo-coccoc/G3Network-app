@@ -169,7 +169,7 @@ backend-test:
 
 backend-test-integration:
 	@echo "Running PostgreSQL integration tests (creates and drops a temporary database)..."
-	cd backend && RUN_DB_INTEGRATION=1 uv run pytest tests/test_postgres_integration.py
+	cd backend && RUN_DB_INTEGRATION=1 uv run pytest tests/test_postgres_*.py
 
 # Informational only: no coverage threshold is enforced (yet).
 coverage:

@@ -4,15 +4,14 @@ import asyncio
 import json
 import random
 from datetime import datetime, timezone
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 import aiomqtt
+from api_client import login_as_bootstrap_admin
 
 from app.domains.telemetry.schemas import TelemetryMessage
 
-# Only edit this block to change the API, broker, coordinates, or send interval.
-API_BASE_URL = "http://localhost:8000"
+# Only edit this block to change the broker, coordinates, or send interval.
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 MQTT_USERNAME: str | None = None
@@ -20,27 +19,23 @@ MQTT_PASSWORD: str | None = None
 PUBLISH_INTERVAL_SECONDS = 5
 START_LATITUDE = 10.762622
 START_LONGITUDE = 106.660172
-REQUEST_TIMEOUT_SECONDS = 10
 
 
 def get_telematic_serials() -> list[str]:
     """Get the serials of existing Telematics from the CRUD API.
 
+    Logs in as the bootstrap HEAD_ADMIN (see ``api_client.py``), who sees the
+    devices of every organization.
+
     Returns:
         List of device serials that have not been soft-deleted.
 
     Raises:
-        RuntimeError: When the API is unreachable or returns an error response.
+        RuntimeError: When the login fails, or the API is unreachable or
+            returns an error response.
     """
-    request = Request(
-        f"{API_BASE_URL}/api/v1/telematics/?page=1&page_size=100",
-        method="GET",
-    )
-    try:
-        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as error:
-        raise RuntimeError(f"Failed to get the Telematic list: {error}") from error
+    client = login_as_bootstrap_admin()
+    payload = client.get("/api/v1/telematics/?page=1&page_size=100")
 
     serials = [item["telematic_serial"] for item in payload["items"]]
     if not serials:

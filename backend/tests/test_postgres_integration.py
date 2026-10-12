@@ -871,6 +871,10 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
                 "E2E-16",
                 "--scenario",
                 "session",
+                # The scan above issued this token; without it the simulator
+                # waits for a RemoteStartTransaction this test never queues.
+                "--id-tag",
+                "SIMTAG001",
                 "--linger",
                 "1.5",
             ],

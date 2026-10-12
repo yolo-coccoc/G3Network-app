@@ -1,71 +1,49 @@
-"""Quickly create a set of vehicles and Telematics for the local simulator."""
+"""Quickly create a set of vehicles and Telematics for the local simulator.
 
-import json
-from typing import cast
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+Logs in as the bootstrap HEAD_ADMIN (see ``api_client.py``), creates one truck
+model, then each truck and the T-Box mounted on it. The rows belong to the
+internal organization. Not idempotent: on a database that already has these
+VINs, run ``make db-reset`` (and ``make identity-bootstrap``) first.
+"""
+
+from api_client import login_as_bootstrap_admin
 
 # Only edit this block when you want to generate a different simulator dataset.
-API_BASE_URL = "http://localhost:8000"
 DEVICE_COUNT = 1
 TELEMATIC_SERIAL_PREFIX = "TBOX-SIM-"
 VIN_PREFIX = "SIMULATORVIN"
 LICENSE_PLATE_PREFIX = "SIM-"
-REQUEST_TIMEOUT_SECONDS = 10
-
-
-def post(path: str, payload: dict[str, object]) -> dict[str, object]:
-    """Send a JSON POST to the API and return the JSON response.
-
-    Args:
-        path: Relative API path.
-        payload: JSON request content.
-
-    Returns:
-        JSON response content.
-
-    Raises:
-        RuntimeError: When the API call fails or returns an HTTP error.
-    """
-    request = Request(
-        f"{API_BASE_URL}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            response_data = json.loads(response.read().decode("utf-8"))
-            return cast(dict[str, object], response_data)
-    except (HTTPError, URLError) as error:
-        detail = (
-            error.read().decode("utf-8") if isinstance(error, HTTPError) else str(error)
-        )
-        raise RuntimeError(f"POST {path} failed: {detail}") from error
 
 
 def main() -> None:
-    """Create the vehicle first, then create the Telematic with the matching VIN."""
+    """Create the truck model, then each vehicle and its Telematic by VIN."""
+    client = login_as_bootstrap_admin()
+    vehicle_model = client.post(
+        "/api/v1/vehicle-models/",
+        {
+            "make": "G3Network",
+            "model_name": "E-Truck Simulator",
+            "nominal_battery_capacity_kwh": 282,
+        },
+    )
     for index in range(1, DEVICE_COUNT + 1):
         suffix = f"{index:05d}"
         vin = f"{VIN_PREFIX}{suffix}"
-        vehicle_payload = {
-            "license_plate": f"{LICENSE_PLATE_PREFIX}{index:03d}",
-            "vin": vin,
-            "make": "G3Network",
-            "model": "E-Truck Simulator",
-            "year": 2026,
-            "status": "ACTIVE",
-        }
-        vehicle = post("/api/v1/vehicles/", vehicle_payload)
-        telematic_serial = f"{TELEMATIC_SERIAL_PREFIX}{suffix}"
-        telematic = post(
+        vehicle = client.post(
+            "/api/v1/vehicles/",
+            {
+                "license_plate": f"{LICENSE_PLATE_PREFIX}{index:03d}",
+                "vin": vin,
+                "vehicle_model_id": vehicle_model["vehicle_model_id"],
+                "year": 2026,
+            },
+        )
+        telematic = client.post(
             "/api/v1/telematics/",
             {
-                "telematic_serial": telematic_serial,
+                "telematic_serial": f"{TELEMATIC_SERIAL_PREFIX}{suffix}",
                 "vehicle_vin": vin,
                 "status": "ACTIVE",
-                "firmware_version": "simulator-1.0.0",
             },
         )
         print(

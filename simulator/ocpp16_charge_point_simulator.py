@@ -7,7 +7,9 @@ connectors are numbered 0 (whole charger), 1 and 2.
 
 It also answers CSMS-initiated calls: ``GetConfiguration`` is served from a
 configuration key table modelled on the spec's section 4.3 keys, including
-``SupportedFeatureProfiles`` and read-only entries.
+``SupportedFeatureProfiles`` and read-only entries, and
+``RemoteStartTransaction`` (a QR scan) is accepted and its idTag handed to the
+``session`` scenario.
 
 Scenarios are added one message group at a time as the gateway learns them
 (see ``docs/planners/backend-ocpp16-charger-integration.md``); currently:
@@ -18,8 +20,10 @@ Scenarios are added one message group at a time as the gateway learns them
   (the whole charger) and every gun: a full Available -> Preparing -> Charging
   -> SuspendedEV -> Finishing -> Available cycle on gun 1 (one report without a
   timestamp, which 1.6 allows), then a fault on gun 2 and on the charger.
-* ``session`` - ``boot``, all connectors Available, then a charging session on
-  gun 1: Authorize, Preparing, StartTransaction (the gateway assigns the
+* ``session`` - ``boot``, all connectors Available, then waits for the gateway's
+  ``RemoteStartTransaction`` (scan the charger in the app meanwhile; only a
+  scanned token starts a charge, CE-11) unless ``--id-tag`` names the token,
+  then a charging session on gun 1 with that idTag: Authorize, Preparing, StartTransaction (the gateway assigns the
   transactionId), Charging, two MeterValues messages (an energy reading in
   **kWh**, SoC, power, voltage, current, temperature, ``Power.Offered`` and a
   vendor-specific measurand), StopTransaction with the closing meter reading, a
@@ -46,6 +50,7 @@ from ocpp.v16.enums import (
     ChargePointErrorCode,
     ChargePointStatus,
     Reason,
+    RemoteStartStopStatus,
 )
 from websockets.asyncio.client import connect
 from websockets.typing import Subprotocol
@@ -94,7 +99,10 @@ class SimulatorConfig:
         vendor: ``chargePointVendor`` sent in BootNotification.
         model: ``chargePointModel`` sent in BootNotification.
         firmware_version: ``firmwareVersion`` sent in BootNotification.
-        id_tag: idTag presented in the ``session`` scenario.
+        id_tag: idTag presented in the ``session`` scenario; ``None`` waits
+            for the gateway's ``RemoteStartTransaction`` and uses its idTag.
+        remote_start_timeout_seconds: How long the ``session`` scenario waits
+            for that remote start.
         meter_start_wh: Meter reading (Wh) sent in StartTransaction.
         meter_stop_wh: Meter reading (Wh) sent in StopTransaction.
         heartbeats: How many Heartbeats the ``boot`` scenario sends.
@@ -113,7 +121,8 @@ class SimulatorConfig:
     vendor: str = "Willdigits"
     model: str = "DC-240kW-Dual-CCS2"
     firmware_version: str = "OCPP_L4.05_SIM"
-    id_tag: str = "SIMTAG001"
+    id_tag: str | None = None
+    remote_start_timeout_seconds: float = 120.0
     meter_start_wh: int = 1000
     meter_stop_wh: int = 1500
     heartbeats: int = 1
@@ -154,6 +163,8 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         id: The charger's identity (its "Charger ID").
         config: Immutable configuration of this run.
         report: Collects CALLERRORs so the process can exit non-zero.
+        remote_start_tags: idTags of the accepted ``RemoteStartTransaction``
+            calls, in arrival order, for the ``session`` scenario.
     """
 
     def __init__(self, connection: object, config: SimulatorConfig) -> None:
@@ -168,6 +179,26 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         )
         self.config = config
         self.report = RunReport()
+        self.remote_start_tags: asyncio.Queue[str] = asyncio.Queue()
+
+    @on(Action.remote_start_transaction)  # type: ignore[untyped-decorator]
+    async def on_remote_start_transaction(
+        self, id_tag: str, connector_id: int | None = None, **_: object
+    ) -> call_result.RemoteStartTransaction:
+        """Accept a remote start (a QR scan) and queue its idTag.
+
+        Args:
+            id_tag: The single-use token the scan issued.
+            connector_id: The gun the scan named, if any (the scenario always
+                charges on gun 1).
+            **_: Other optional OCPP fields (``chargingProfile``).
+
+        Returns:
+            ``Accepted``; the ``session`` scenario then starts with this idTag.
+        """
+        print(f"CSMS asked RemoteStartTransaction connector={connector_id}")
+        self.remote_start_tags.put_nowait(id_tag)
+        return call_result.RemoteStartTransaction(status=RemoteStartStopStatus.accepted)
 
     @on(Action.get_configuration)  # type: ignore[untyped-decorator]
     async def on_get_configuration(
@@ -317,21 +348,40 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
         """Boot, then run one charging session on gun 1.
 
         Side Effects:
-            Sends the boot messages, then Authorize -> StartTransaction ->
-            StopTransaction with the StatusNotification cycle around them. The
-            transactionId in StopTransaction is the one the gateway returned in
-            StartTransaction; if StartTransaction fails the run stops there.
+            Sends the boot messages, then (without ``--id-tag``) waits for the
+            gateway's ``RemoteStartTransaction``, then Authorize ->
+            StartTransaction -> StopTransaction with the StatusNotification
+            cycle around them. The transactionId in StopTransaction is the one
+            the gateway returned in StartTransaction; if no remote start
+            arrives in time or StartTransaction fails, the run stops there
+            (a missing remote start is recorded in ``report``).
         """
         await self.run_boot_scenario()
         await self.send_status(0, "Available")
         for gun in range(1, self.config.connectors + 1):
             await self.send_status(gun, "Available")
-        await self.send_call(call.Authorize(id_tag=self.config.id_tag))
+        id_tag = self.config.id_tag
+        if id_tag is None:
+            print(
+                "WAITING for RemoteStartTransaction: scan "
+                f"{self.config.identity} in the app "
+                f"(up to {self.config.remote_start_timeout_seconds:.0f} s)"
+            )
+            try:
+                id_tag = await asyncio.wait_for(
+                    self.remote_start_tags.get(),
+                    timeout=self.config.remote_start_timeout_seconds,
+                )
+            except TimeoutError:
+                self.report.errors.append("no RemoteStartTransaction arrived")
+                print("NO RemoteStartTransaction arrived; session not started")
+                return
+        await self.send_call(call.Authorize(id_tag=id_tag))
         await self.send_status(1, "Preparing")
         started = await self.send_call(
             call.StartTransaction(
                 connector_id=1,
-                id_tag=self.config.id_tag,
+                id_tag=id_tag,
                 meter_start=self.config.meter_start_wh,
                 timestamp=utc_timestamp(),
             )
@@ -395,7 +445,7 @@ class SimulatedChargePoint(ChargePoint):  # type: ignore[misc]
                 timestamp=utc_timestamp(),
                 transaction_id=started.transaction_id,
                 reason=Reason.ev_disconnected,
-                id_tag=self.config.id_tag,
+                id_tag=id_tag,
                 transaction_data=[
                     {
                         "timestamp": utc_timestamp(),
@@ -477,7 +527,13 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--connectors", type=int, default=2)
     parser.add_argument("--scenario", choices=SCENARIOS, default="boot")
     parser.add_argument("--firmware", default="OCPP_L4.05_SIM")
-    parser.add_argument("--id-tag", default="SIMTAG001")
+    parser.add_argument(
+        "--id-tag",
+        default=None,
+        help="session: token to start with; default: wait for the remote start "
+        "of a QR scan and use its token.",
+    )
+    parser.add_argument("--remote-start-timeout", type=float, default=120.0)
     parser.add_argument("--meter-start", type=int, default=1000)
     parser.add_argument("--meter-stop", type=int, default=1500)
     parser.add_argument("--heartbeats", type=int, default=1)
@@ -506,6 +562,7 @@ async def main(arguments: Sequence[str] | None = None) -> int:
             scenario=args.scenario,
             firmware_version=args.firmware,
             id_tag=args.id_tag,
+            remote_start_timeout_seconds=args.remote_start_timeout,
             meter_start_wh=args.meter_start,
             meter_stop_wh=args.meter_stop,
             heartbeats=args.heartbeats,

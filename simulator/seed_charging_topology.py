@@ -1,9 +1,13 @@
 """Provision the minimal charging topology for the local OCPP simulators.
 
-The script calls the station, EVSE, and connector creation APIs in sequence.
-It does not recreate topology that already exists, does not retry, and
-contains no charging business logic; each run should use a new
-``ocpp_identity`` if the database already has that identity.
+Logs in as the bootstrap HEAD_ADMIN (see ``api_client.py``), then creates in
+foreign-key order: a public location (unless ``--location-id`` names one), the
+station, its EVSEs and connectors, and a location tariff so a QR scan can be
+priced (a charger with no tariff in force refuses the scan). The rows belong
+to the internal organization. The script does not recreate topology that
+already exists, does not retry, and contains no charging business logic; each
+run should use a new ``ocpp_identity`` if the database already has that
+identity.
 
 Two layouts are supported:
 
@@ -13,62 +17,29 @@ Two layouts are supported:
   ``--connectors``) becomes EVSE ``n`` holding connector ``1`` (decision D3 of
   ``docs/planners/backend-ocpp16-charger-integration.md``). Connector ``0``
   (the whole charger) needs no topology row.
+
+Every gun is a 240 kW GB/T DC connector, the shape of the Willdigits charger
+the 1.6J gateway targets.
 """
 
 import argparse
-import json
 from collections.abc import Mapping
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
-DEFAULT_API_URL = "http://localhost:8000"
+from api_client import DEFAULT_API_URL, ApiClient, login_as_bootstrap_admin
+
 DEFAULT_IDENTITY = "SIM-OCPP-001"
 DEFAULT_DISPLAY_NAME = "Charging Simulator"
-REQUEST_TIMEOUT_SECONDS = 10
-
-
-def post_json(
-    api_url: str,
-    path: str,
-    payload: Mapping[str, object],
-) -> dict[str, Any]:
-    """Send a JSON POST to the backend and return the response object.
-
-    Args:
-        api_url: Base URL of the backend; a trailing ``/`` is optional.
-        path: Relative API path.
-        payload: JSON object sent in the request body.
-
-    Returns:
-        JSON response as an object.
-
-    Raises:
-        RuntimeError: If the request fails, the response is not a JSON
-            object, or the backend returns an error HTTP status.
-    """
-    request = Request(
-        f"{api_url.rstrip('/')}{path}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            raw_response = json.loads(response.read().decode("utf-8"))
-    except HTTPError as error:
-        detail = error.read().decode("utf-8")
-        raise RuntimeError(
-            f"POST {path} returned HTTP {error.code}: {detail}"
-        ) from error
-    except URLError as error:
-        raise RuntimeError(f"Could not call POST {path}: {error.reason}") from error
-    except json.JSONDecodeError as error:
-        raise RuntimeError(f"POST {path} returned invalid JSON") from error
-
-    if not isinstance(raw_response, dict):
-        raise RuntimeError(f"POST {path} did not return a JSON object")
-    return raw_response
+# Price of the location tariff the seed publishes: whole dong per kWh, VAT %.
+DEFAULT_PRICE_PER_KWH = 3500
+DEFAULT_VAT_RATE_PERCENT = "8"
+# The connector every gun gets.
+CONNECTOR_SPEC = {
+    "standard": "GBT_DC",
+    "max_power_kw": 240,
+    "max_voltage_v": 1000,
+    "max_current_a": 250,
+}
 
 
 def required_id(response: Mapping[str, Any], field_name: str) -> str:
@@ -90,30 +61,91 @@ def required_id(response: Mapping[str, Any], field_name: str) -> str:
     return value
 
 
+def provision_location(client: ApiClient, display_name: str) -> str:
+    """Create a public location for the simulated charger.
+
+    Args:
+        client: Logged-in API client.
+        display_name: Name shown for the place.
+
+    Returns:
+        The new location's internal ID.
+
+    Raises:
+        RuntimeError: If the request fails or the response lacks the ID.
+    """
+    location = client.post(
+        "/api/v1/charging-locations",
+        {
+            "display_name": display_name,
+            "address": "Simulator depot",
+            "latitude": 10.762622,
+            "longitude": 106.660172,
+            "is_public": True,
+        },
+    )
+    location_id = required_id(location, "location_id")
+    print(f"Provisioned location: {display_name} ({location_id})")
+    return location_id
+
+
+def provision_tariff(
+    client: ApiClient, location_id: str, price_per_kwh: int, vat_rate_percent: str
+) -> None:
+    """Create a location tariff and publish its first version, in force now.
+
+    Args:
+        client: Logged-in API client.
+        location_id: The location the tariff prices.
+        price_per_kwh: Price per kWh before VAT, whole dong.
+        vat_rate_percent: VAT rate as a decimal string.
+
+    Raises:
+        RuntimeError: If a request fails or a response lacks the expected ID.
+    """
+    tariff = client.post(
+        "/api/v1/tariffs",
+        {"name": "Simulator tariff", "location_id": location_id},
+    )
+    tariff_id = required_id(tariff, "tariff_id")
+    client.post(
+        f"/api/v1/tariffs/{tariff_id}/versions",
+        {
+            "price_per_kwh": price_per_kwh,
+            "vat_rate_percent": vat_rate_percent,
+            "change_reason": "Simulator seed",
+        },
+    )
+    print(f"Provisioned tariff: {price_per_kwh} VND/kWh + {vat_rate_percent}% VAT")
+
+
 def provision_evse(
-    api_url: str, station_id: str, evse_id: int, connector_id: int
+    client: ApiClient,
+    station_id: str,
+    identity: str,
+    evse_id: int,
+    connector_id: int,
 ) -> None:
     """Create one EVSE under a station and one connector under that EVSE.
 
     Args:
-        api_url: Base URL of the backend.
+        client: Logged-in API client.
         station_id: Internal ID of the station that owns the EVSE.
+        identity: The station's OCPP identity, used to build a unique eMI3 ID.
         evse_id: OCPP EVSE ID to create.
         connector_id: OCPP connector ID to create under the new EVSE.
 
     Raises:
         RuntimeError: If a request fails or a response lacks the expected ID.
     """
-    evse = post_json(
-        api_url,
+    evse = client.post(
         f"/api/v1/charging-stations/{station_id}/evses",
-        {"ocpp_evse_id": evse_id},
+        {"ocpp_evse_id": evse_id, "emi3_evse_id": f"VN*G3N*E{identity}*{evse_id}"},
     )
     evse_uuid = required_id(evse, "evse_id")
-    connector = post_json(
-        api_url,
+    connector = client.post(
         f"/api/v1/charging-evses/{evse_uuid}/connectors",
-        {"ocpp_connector_id": connector_id},
+        {"ocpp_connector_id": connector_id, **CONNECTOR_SPEC},
     )
     connector_uuid = required_id(connector, "connector_id")
     print(f"Provisioned EVSE: {evse_id} ({evse_uuid})")
@@ -145,14 +177,25 @@ def parse_args() -> argparse.Namespace:
     """Read the CLI parameters for a topology simulator.
 
     Returns:
-        Namespace containing the backend URL, identity, and OCPP IDs.
+        Namespace containing the backend URL, identity, location, price and
+        OCPP IDs.
     """
     parser = argparse.ArgumentParser(
-        description="Create a station, EVSE, and connector for the OCPP simulator."
+        description="Create a location, station, EVSEs, connectors and a tariff "
+        "for the OCPP simulator."
     )
     parser.add_argument("--api-url", default=DEFAULT_API_URL)
     parser.add_argument("--identity", default=DEFAULT_IDENTITY)
     parser.add_argument("--display-name", default=DEFAULT_DISPLAY_NAME)
+    parser.add_argument(
+        "--location-id",
+        default=None,
+        help="Existing location to put the charger in; default: create one "
+        "(with its own tariff).",
+    )
+    parser.add_argument(
+        "--price-per-kwh", type=positive_int, default=DEFAULT_PRICE_PER_KWH
+    )
     parser.add_argument(
         "--protocol",
         choices=("2.0.1", "1.6"),
@@ -181,14 +224,22 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Create the station, EVSE, and connector in correct foreign-key order."""
+    """Create the location, tariff, station, EVSEs and connectors in FK order."""
     args = parse_args()
-    station = post_json(
-        args.api_url,
+    client = login_as_bootstrap_admin(args.api_url)
+    location_id = args.location_id
+    if location_id is None:
+        location_id = provision_location(client, f"{args.display_name} depot")
+        provision_tariff(
+            client, location_id, args.price_per_kwh, DEFAULT_VAT_RATE_PERCENT
+        )
+    station = client.post(
         "/api/v1/charging-stations",
         {
+            "location_id": location_id,
             "ocpp_identity": args.identity,
-            "display_name": args.display_name,
+            "registered_serial_number": f"{args.identity}-SN",
+            "max_power_kw": CONNECTOR_SPEC["max_power_kw"],
         },
     )
     station_id = required_id(station, "station_id")
@@ -196,9 +247,11 @@ def main() -> None:
     print(f"Provisioned station: {args.identity} ({station_id})")
     if args.protocol == "1.6":
         for gun in range(1, args.connectors + 1):
-            provision_evse(args.api_url, station_id, gun, 1)
+            provision_evse(client, station_id, args.identity, gun, 1)
     else:
-        provision_evse(args.api_url, station_id, args.evse_id, args.connector_id)
+        provision_evse(
+            client, station_id, args.identity, args.evse_id, args.connector_id
+        )
 
 
 if __name__ == "__main__":
