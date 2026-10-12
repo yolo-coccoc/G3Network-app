@@ -57,7 +57,8 @@ Basic commands:
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency
 - `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision (location, tariff, charger) and run the OCPP 2.0.1 simulator
-- `make charging-ocpp16-seed` / `make charging-ocpp16-sim [SCENARIO=boot|status|session]` — Provision (location, tariff, one EVSE per gun) and run the OCPP 1.6J simulator (default scenario `boot`; `session` waits for a QR scan's remote start)
+- `make charging-ocpp16-seed [IDENTITY=SIM-OCPP16-001] [STANDARD=GBT_DC] [PRICE=3500]` / `make charging-ocpp16-sim [SCENARIO=boot|status|session] [IDENTITY=...] [ARGS="..."]` — Provision (location, tariff at `PRICE` dong/kWh before VAT, one EVSE per gun of plug `STANDARD`) and run the OCPP 1.6J simulator (default scenario `boot`; `session` waits for a QR scan's remote start; `ARGS` passes simulator flags such as `--stop-on-remote --samples N --sample-interval S`)
+- `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"` / `make driver-app ARGS="scan|watch|stop|sessions ..."` / `make station-console ARGS="status|messages|config|set|commands|sessions|force-close ..."` — Charging test-day tools over the HTTP API (need the API; runbook in `docs/planners/backend-charging-test-day.md`): test drivers with a credited wallet, a driver-app stand-in, an operator console. Evidence goes to `backend/logs/test-day/` (git-ignored); `CHARGING_TEST_DRIVER_PASSWORD` overrides the test drivers' default password
 
 See [README.md](../../README.md) for detailed setup and quick-start
 instructions.

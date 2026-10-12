@@ -106,6 +106,19 @@ until a top-up (BL-25: `POST /wallets/me/top-ups` as the driver, then
 equal CP_TO_CSMS/CSMS_TO_CP frame counts; >0 configuration entries (the
 post-boot `GetConfiguration`).
 
+The 1.6J simulator also answers `RemoteStopTransaction` and
+`ChangeConfiguration`: with `ARGS="--stop-on-remote --samples 60
+--sample-interval 5"` it charges until `POST /charging-sessions/{id}/stop`,
+`--sessions 2` runs both guns, and `--naive-timestamps --uppercase-id-tag
+--long-texts --float-meter-start --resend-stop --no-stop` reproduce firmware
+quirks and an orphan (CO-16, CO-17). Instead of the curl walk-through above,
+the charging test-day tools drive the same flow over the API:
+`make charging-test-drivers-seed` (drivers with a credited wallet, no
+invitation code needed), `make driver-app ARGS="scan --driver 1 --charger
+SIM-OCPP16-001"` and `make station-console ARGS="..."` (traffic feed,
+configuration, `force-close` of an orphan); see section 6 of
+`docs/planners/backend-charging-test-day.md`.
+
 **OCPP 2.0.1 session**:
 ```bash
 make -C .. charging-ocpp-seed && make -C .. charging-ocpp-sim

@@ -69,7 +69,7 @@ real-charger logs first.
 | **D8** | ✅ *Confirmed 2026-09-24.* **Raw log = its own hypertable, verbatim frame as `TEXT`**, written **by a wrapper around the WebSocket connection**, in **its own transaction, before the frame is parsed** (inbound) / after it is sent (outbound). Read via SQL only — no API | Log inside each handler → misses unparseable/unhandled frames (exactly the ones the spec wants); `JSONB` → not verbatim; an API → nothing needs it yet |
 | **D9** | ✅ *Confirmed 2026-09-24 (a single table was chosen over the original recommendation, and the follow-up chose a **full merge**).* **One table, `charging_session_measurements`, holds every measurand for both protocols — including the energy register.** The old `charging_session_meter_values` is **replaced**: its rows are copied across and the table is dropped; the 2.0.1 gateway's energy writer switches to the new table with **unchanged behaviour**; the `/meter-values` API keeps its contract as a filter on the energy measurand. The session aggregate (`meter_end_wh`, `energy_delivered_wh`) is still updated by the service, not derived from this table | Original recommendation — energy stays in the old table and only other measurands go to a new one → two places for measurements; 1.6J-only new table with the old one kept for 2.0.1 → energy history split by protocol and `/meter-values` empty for 1.6J sessions |
 | **D10** | ✅ *Confirmed 2026-09-24.* **The only CSMS-initiated call is a post-boot `GetConfiguration`** (no key), sent from a separate task. No HTTP→charger command channel now | Build the command channel now → cross-process design (the gateway is a separate OS process) that needs its own decision (`deferred.md` new item); Phase 1's other probes (`ChangeConfiguration`, `TriggerMessage`) can use an external OCPP test tool (the handover doc suggests SteVe) |
-| **D11** | ✅ *Confirmed 2026-09-24.* **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
+| **D11** | ⛔ *Superseded 2026-10-12 by CO-16 ([decision-log.md](../decisions/decision-log.md); [charging test-day planner](./backend-charging-test-day.md) D1): a naive timestamp is now read as UTC with a warning.* ✅ *Confirmed 2026-09-24.* **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
 | **D12** | ✅ *Confirmed 2026-09-24.* **No TLS/authentication change** in this planner (dev mode per `tech-decisions.md`) | Add `wss://` + Basic Auth now → the vendor has not said what it supports (spec §6.2 #4); implementing the wrong scheme wastes the work |
 | **D13** | ✅ *Confirmed 2026-09-24.* **2.0.1 handlers are not changed** except for (a) the raw-log wrapper, (b) negotiation, (c) `last_seen_at`/protocol version updates, (d) its energy samples are written to the unified measurements table (D9; behaviour identical). *Reopened 2026-10-01 by `docs/planners/done/backend-happy-path-completion.md` (its D1): the 2.0.1 adapter now also handles `BootNotification` and `Heartbeat`; the rest of the parity work stays `deferred.md` #78.* | Give 2.0.1 the new fields too → no 2.0.1 hardware exists; recorded as parity work in `deferred.md` |
 | **D14** | ✅ *Confirmed 2026-09-24.* **Reliability (`deferred.md` #27) is not reopened wholesale.** The 1.6 path avoids the in-memory session map by design (looks the session up by `transactionId`); orphan-session, back-fill and clock policies wait for real logs | Build reconnect/back-fill/orphan cleanup speculatively → the spec says to replace assumptions with real logs before fixing design |
@@ -110,7 +110,9 @@ real-charger logs first.
   lose every sample, and a `StopTransaction` would leave the session open
   forever. `@on(Action.x, skip_schema_validation=True)` turns the check off
   for one handler (Step 7b uses it for `MeterValues` and `StopTransaction`;
-  the handler then validates what it needs itself).
+  the handler then validates what it needs itself). *Since 2026-10-12 it is
+  also off for `BootNotification`, `StatusNotification` and `StartTransaction`
+  (CO-17, [charging test-day planner](./backend-charging-test-day.md) D3).*
 - `ChargePoint.call()` **suppresses a CALLERROR by default** (`suppress=True`
   returns `None`); pass `suppress=False` to have it raise. Found in Step 3
   (the simulator initially reported success for failed calls). Any call this
@@ -590,7 +592,7 @@ Do not add any alerting.
 - `update_connector_status` (repository and service) gained optional keyword-only `error_code`, `vendor_error_code`, `status_info` — a report without them **clears** the old values because the latest report is the truth; new `update_station_charger_status`, `update_charger_status`, and `resolve_ocpp16_topology` (gun `n` → EVSE `n` / connector `1`).
 - `OCPP16ChargePoint.on_status_notification` handles connector `0` and guns `n ≥ 1`. **No mapping function was needed** — the enum values are the 1.6 labels (a simplification versus the original plan's `to_canonical_connector_status_v16`).
 - Simulator: new `status` scenario (charger + every gun through a charging cycle, one report without timestamp, a gun fault and a charger fault).
-- Note: an unknown `status` label is rejected by the library's JSON-schema validation (`FormatViolation`) before the handler runs — still loud, and the handler's own `ValueError` remains as a second guard.
+- Note: an unknown `status` label is rejected by the library's JSON-schema validation (`FormatViolation`) before the handler runs — still loud, and the handler's own `ValueError` remains as a second guard. *Since 2026-10-12 the schema check is off for StatusNotification (CO-17), so the handler's `ValueError` is the only guard; an unknown label is still refused.*
 - Not done, by design: alerting on faults (`deferred.md` #75), invalidating stale statuses when a charger goes offline (`deferred.md` #76), 2.0.1 error details (`deferred.md` #78). `docs/product/feature-list.md` F-C2's note about statuses being "folded into `Occupied`" is now outdated — it is rewritten in Step 11.
 
 **Future:** fault alerting and the vendor 80-code catalog; stale-status invalidation and availability from `is_online` → `deferred.md` #75 and #76 (extends #37/#49).
@@ -630,7 +632,9 @@ feeding the existing session service.
   a new `StartTransaction` arrives is left alone with a structured
   `WARNING` — orphan policy waits for real logs. An unknown
   `transactionId` on Stop raises `ChargingSessionNotFoundError` → `CALLERROR`
-  (loud, like the current MVP).
+  (loud, like the current MVP). *Superseded 2026-10-12 by CO-16 ([charging test-day planner](./backend-charging-test-day.md)
+  D2): a Stop or MeterValues for an unknown or finished transaction is
+  confirmed and changes nothing.*
 - Session response schema gains the three fields.
 
 **Prompt:**
@@ -1057,6 +1061,8 @@ passed.
 **Decisions to take from the findings (each may create a follow-up planner):**
 
 - Timestamp policy (D11) — does the firmware send offsets? clock behaviour?
+  *(Decided ahead of the logs on 2026-10-12: read as UTC with a warning,
+  CO-16; the findings confirm or reopen it.)*
 - Orphan sessions and back-fill policy (C2, C3, D14).
 - Whether stop reasons / vendor error codes surface in `StopTransaction.reason`
   or `vendorErrorCode` (spec §4.7) — needed for the vendor code catalog.
@@ -1203,7 +1209,7 @@ created the new ones (#73–#80, recorded 2026-09-24) and Step 11 verifies them.
 | Non-transaction (station-level, clock-aligned) metering | #77 | Needs the tariff (time-of-use) design |
 | OCPP 2.0.1 parity for the new fields (boot info, stop reason, measurements, idToken) | #78 | No 2.0.1 hardware |
 | Raw-log read API and TimescaleDB retention | #79 | Nothing consumes it yet |
-| Timestamp policy for chargers omitting a timezone | decided in Step 10 | Needs real logs (D11) |
+| Timestamp policy for chargers omitting a timezone | decided 2026-10-12: read as UTC (CO-16) | Step 10 confirms what the firmware sends |
 | Tariff versioning per session, per-gun power/connector standard in the directory | #26 (tariff) / #80 (per-gun) | Billing domain / hardware detail |
 
 Do not reopen these on your own by adding placeholders to the new code.
@@ -1221,7 +1227,8 @@ Do not reopen these on your own by adding placeholders to the new code.
 - **A `CALLERROR` makes the charger retry.** For permanent errors (unknown
   transaction, unknown connector) the charger may retry up to its
   `TransactionMessageAttempts`. Kept loud on purpose for now; revisit with
-  real logs.
+  real logs. *Revisited 2026-10-12 (CO-16): unknown or finished transactions
+  are now confirmed without changes; an unknown connector stays loud.*
 - **Only one unavoidable behaviour change to existing code:** the rename
   `OCPPChargePoint → OCPP201ChargePoint` and moving two helpers; everything
   else for 2.0.1 is additive and covered by the untouched 2.0.1 simulator and

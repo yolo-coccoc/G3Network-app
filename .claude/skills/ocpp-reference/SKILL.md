@@ -49,6 +49,8 @@ Columns filled by both versions in different ways stay off this list (e.g. `char
 - **2.0.1 status has 5 values**, and charging detail lives in `TransactionEvent.chargingState`. `Occupied` ≠ charging.
 - **Security profile 1 = Basic auth with no TLS.** The OCA does not accept 2.x without profile 2 (`wss://`).
 - **Remote start:** 2.0.1 `RequestStartTransaction` needs `idToken` + `remoteStartId`; the station echoes `remoteStartId` to tie the start to the transaction. In 1.6 it's `RemoteStartTransaction` with an `idTag`. This is the launch QR flow (CO-13).
+- **1.6 transaction messages are re-sent until confirmed**, so our 1.6J gateway confirms a `StopTransaction` / `MeterValues` for an unknown or finished transaction and changes nothing (a CALLERROR would block the charger's queue); it reads a timestamp without a timezone as UTC and checks Boot/Status/Start/Stop/MeterValues itself instead of the library schema (CO-16, CO-17). Details in `references/ocpp16-willdigits.md`.
+- **A 1.6 `IdToken` is case-insensitive** and a charger may upper-case it: our QR token is 12 characters of `A-Z0-9` only (CE-28).
 - **Autocharge** = the vehicle's EVCCID (MAC address) as `IdToken type MacAddress`, or `VID:<mac>` in 1.6. The VIN is not in ISO 15118-2.
 - **Size token columns for 2.1:** `id_token` up to 255 chars, and the type a free string.
 - **Never log** raw frames (idTags), the Basic auth password or the Authorization header (IS-07).

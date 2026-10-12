@@ -2574,7 +2574,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-02]
-    sources: [PRD F-G2, Decision CO-01, Decision CO-02, Decision CO-05]
+    sources: [PRD F-G2, Decision CO-01, Decision CO-02, Decision CO-05, Decision CO-16, Decision CO-17]
     old_codes: [F-G2]
     questions:
       - ["Vendor documents still missing: implementation guide, error-code mapping, meter details, TLS/authentication (open question 4).", "Còn thiếu tài liệu từ nhà cung cấp: hướng dẫn tích hợp, bảng mã lỗi, thông tin công tơ, TLS/xác thực (câu hỏi mở 4)."]
@@ -2937,7 +2937,7 @@ features:
     offer: included
     depends_on: [STN-10, CHG-02, ACC-04]
     touches: [charging_stations, identity]
-    sources: [PRD F-H1, Decision CO-12, Decision CO-13, Decision CO-14, Decision CE-10, Decision CE-11]
+    sources: [PRD F-H1, Decision CO-12, Decision CO-13, Decision CO-14, Decision CE-10, Decision CE-11, Decision CE-28]
     questions:
       - ["Vendor to confirm: QR content, choosing the gun on the screen after a remote authorization, AuthorizeRemoteTxRequests (open question 4).", "Nhà cung cấp cần xác nhận: nội dung mã QR, chọn súng trên màn hình sau khi xác thực từ xa, AuthorizeRemoteTxRequests (câu hỏi mở 4)."]
     old_codes: [F-H1]
@@ -2964,13 +2964,14 @@ features:
       - ["All measurements (energy, power, voltage, current, battery %, temperature)", "Mọi chỉ số đo (điện năng, công suất, điện áp, dòng, % pin, nhiệt độ)"]
       - ["Append-only once finished", "Không sửa được sau khi kết thúc"]
       - ["Retry, duplicate and out-of-order handling", "Xử lý gửi lại, trùng lặp và sai thứ tự"]
+      - ["Staff closes a session the charger never stopped (reboot or power loss mid-session)", "Nhân viên đóng phiên mà trụ không bao giờ kết thúc (trụ khởi động lại hoặc mất điện giữa phiên)"]
     surfaces: {backend: done, portal: todo}
     related_tables: [charging_sessions, charging_session_measurements]
     priority: Must
     release: P1.0
     offer: internal
     depends_on: [STN-03]
-    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27, Decision CE-10, Decision CE-12, Decision CE-14, Decision CE-15]
+    sources: [PRD F-B2, Data IN-27, NF-11, deferred.md 27, Decision CE-10, Decision CE-12, Decision CE-14, Decision CE-15, Decision CO-16, Decision CE-29, deferred.md 101]
     old_codes: [F-B2]
 
   - code: CHG-03

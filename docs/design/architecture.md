@@ -190,17 +190,36 @@ FastAPI registers the following domains:
   stored on the station), `Authorize`, `StartTransaction`,
   `StopTransaction` and `MeterValues`; and after each boot the gateway asks
   the charger for `GetConfiguration` in a separate task and stores the
-  answer (`GET /charging-stations/{id}/configuration`). The 2.0.1 adapter
+  answer (`GET /charging-stations/{id}/configuration`). The 1.6J adapter is
+  tolerant of real firmware (CO-16, CO-17): `BootNotification`,
+  `StatusNotification`, `StartTransaction`, `StopTransaction` and
+  `MeterValues` skip the library's JSON-schema check, and each handler checks
+  the fields it uses and cuts free text to its column (a float `meterStart` or
+  a text `connectorId` is read as an integer); a timestamp without a timezone
+  is read as UTC with a warning; a `StopTransaction` or `MeterValues` for an
+  unknown transaction (`0` included) or a session no longer `ACTIVE` is
+  confirmed, changes nothing and is logged (`Transaction message confirmed
+  without changes`); an unknown connector still fails. The 2.0.1 adapter
   handles `BootNotification` (device info and `last_boot_at`, the same
   heartbeat interval), `Heartbeat`, `TransactionEvent`, `MeterValues`
-  and `StatusNotification`.
-  1.6J is verified against a simulator; a real charger has not been connected.
-- `charging_sessions`: a session is created `PENDING` at the QR scan and turned
-  `ACTIVE` by the charger's start message only when it carries that token on
+  and `StatusNotification`, and keeps the strict rule (timezone required).
+  1.6J is verified against a simulator; a real charger has not been connected
+  (the test-day tools in `simulator/` prepare that, [planner](../planners/backend-charging-test-day.md)).
+- `charging_sessions`: a session is created `PENDING` at the QR scan with a
+  single-use 12-character token of upper-case letters and digits (CE-28) and
+  turned `ACTIVE` by the charger's start message only when it carries that token on
   the same charger (CE-10, CE-11; any other token is answered `Invalid` and
   creates no row; `Authorize` follows the same rule in both adapters); the stop
   message completes it and stores the charger's declared `meter_stop_wh`, the
-  billing figure (CE-12). The start by QR (`POST /charging-sessions/scan`), the
+  billing figure (CE-12). A session the charger will never stop (reboot or
+  power loss mid-session) is closed by internal staff with
+  `POST /charging-sessions/{id}/force-close` (body `{reason}`, CHG-02 roles,
+  internal only, `ACTIVE` sessions only; CE-29): it completes now with
+  `stop_reason` `StaffClosed` and no closing reading, so billing falls back to
+  the newest outlet measurement or puts the bill ON_HOLD; the staff member and
+  the reason are only logged (deferred.md 101). The force-close and the stop
+  message both read the session row `FOR UPDATE`, so the later of the two sees
+  `COMPLETED` (a late stop is then confirmed and ignored). The start by QR (`POST /charging-sessions/scan`), the
   stop (`POST /charging-sessions/{id}/stop`) and the receipt
   (`GET /charging-sessions/{id}/receipt`) need the charger, the wallet and the
   driving session, so they live in `app/api/charging_session_flow.py`, above
@@ -226,7 +245,9 @@ FastAPI registers the following domains:
   vendor measurands) lives in `charging_session_measurements`, written by the
   OCPP gateway in one fixed unit per known measurand with the OCPP defaults for
   context and location (CE-14); there is no events table (CE-15). The module
-  also serves F-C5's station energy total and hourly/daily series
+  also serves F-C5's station energy total (stop minus start reading of the
+  completed sessions, leaving out a session whose stop reading is below its
+  start reading) and hourly/daily series
   (energy-register deltas between consecutive outlet readings, each booked in
   the bucket of its later reading, buckets cut in `APP_REPORT_TIMEZONE`), the
   session detail's read-time summary (energy, duration, first/last SoC, newest
@@ -598,11 +619,14 @@ call each other is in
 │   └── db/
 │       └── init/                   # 01-extensions.sql: enables timescaledb, postgis, uuid-ossp on DB init
 │
-├── simulator/                      # Vehicle telemetry + OCPP charging session simulators (manual smoke testing only)
+├── simulator/                      # Vehicle telemetry + OCPP charging simulators and the charging test-day tools (manual testing only)
 │   ├── seed_simulator_devices.py     telematic_simulator.py           # vehicle telemetry over MQTT
-│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed: location + tariff + charger, also the 1.6J layout)
-│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session; answers RemoteStartTransaction)
-│   └── api_client.py                                                  # login as the bootstrap HEAD_ADMIN + JSON calls, shared by the seeds and telematic_simulator.py
+│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed: location + tariff + charger, also the 1.6J layout; --connector-standard, --price-per-kwh)
+│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger (--scenario boot|status|session; answers RemoteStart/RemoteStopTransaction and ChangeConfiguration; firmware-quirk flags)
+│   ├── seed_test_drivers.py                                           # test-day drivers: DRIVER role in the internal organization (in-process) + wallet credit (API)
+│   ├── driver_app.py                 station_console.py               # test-day stand-ins over the HTTP API: driver app (scan|watch|stop|sessions), operator console (status|messages|config|set|commands|sessions|force-close)
+│   ├── test_day_common.py                                             # shared by the test-day tools: token masking, evidence log in backend/logs/test-day/ (git-ignored), re-login
+│   └── api_client.py                                                  # login (bootstrap HEAD_ADMIN or a given phone) + JSON calls, shared by the seeds, the test-day tools and telematic_simulator.py
 │
 ├── docs/                           # see docs/README.md for what each folder is
 │   ├── product/                      # WHAT we build: features/ (catalog), inputs/ (business files)

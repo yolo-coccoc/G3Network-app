@@ -46,7 +46,7 @@ The driver scans the QR code on the charger's screen; the app authorizes them an
 **Needed by:** [CHG-07](#chg-07), [PAY-06](billing.md#pay-06)  
 **Also touches:** `charging_stations`, `identity`  
 **Related tables:** `charging_sessions`, `charging_station_commands`  
-**Sources:** PRD F-H1 · Decision CO-12 · Decision CO-13 · Decision CO-14 · Decision CE-10 · Decision CE-11  
+**Sources:** PRD F-H1 · Decision CO-12 · Decision CO-13 · Decision CO-14 · Decision CE-10 · Decision CE-11 · Decision CE-28  
 **Old codes:** F-H1
 
 **Open questions:**
@@ -71,13 +71,14 @@ Keep an unchangeable record of every session: time, station, gun, power, kWh, st
 - All measurements (energy, power, voltage, current, battery %, temperature)
 - Append-only once finished
 - Retry, duplicate and out-of-order handling
+- Staff closes a session the charger never stopped (reboot or power loss mid-session)
 
 **Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [STN-03](charging_stations.md#stn-03)  
 **Needed by:** [CHG-01](#chg-01), [CHG-03](#chg-03), [CHG-04](#chg-04), [CRB-02](carbon.md#crb-02), [PAY-10](billing.md#pay-10), [PLT-01](platform.md#plt-01), [STN-07](charging_stations.md#stn-07), [STN-14](charging_stations.md#stn-14)  
 **Related tables:** `charging_sessions`, `charging_session_measurements`  
-**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27 · Decision CE-10 · Decision CE-12 · Decision CE-14 · Decision CE-15  
+**Sources:** PRD F-B2 · Data IN-27 · NF-11 · deferred.md 27 · Decision CE-10 · Decision CE-12 · Decision CE-14 · Decision CE-15 · Decision CO-16 · Decision CE-29 · deferred.md 101  
 **Old codes:** F-B2
 
 <a id="chg-03"></a>

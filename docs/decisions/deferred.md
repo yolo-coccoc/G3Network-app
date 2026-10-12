@@ -1974,6 +1974,25 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   deliveries table of item 96: `deliver_notification` already takes the alert context and the
   recipients, so only its caller changes.
 
+### 101. Who force-closed a charging session, in the database
+
+- **Short description**: The staff force-close endpoint (CE-29) closes a session the charger will
+  never stop, but the session has no `ended_by` column (CE-24) and `charging_sessions` has no change
+  history, so the staff member and the reason they typed are only in the application log
+  (`charging_session_force_closed`). The record should keep both: an `ended_by` (or a
+  `closed_by` / `close_reason` pair) on the session, or a row in a staff-action audit table.
+- **Purpose/role in the system**: Lets customer care and billing answer "who closed this session and
+  why" from the data, and shows force-closed sessions in a report without reading logs.
+- **Reason for deferral**: The endpoint is built for the first real-charger test day, where the
+  log is enough and the bill already says how its energy was decided (`LAST_MEASUREMENT` or
+  ON_HOLD). A schema change for one test-day tool was not worth it before the orphan policy
+  (D14 of the 1.6J planner, CE-05, item 27) decides how often sessions get closed this way.
+- **Related planner/feature**: CHG-02 (`docs/product/features/features.yaml`), CE-24, CE-29
+  (`docs/decisions/decision-log.md`), `docs/planners/backend-charging-test-day.md` D5, D6.
+- **Date recorded**: 2026-10-12
+- **Additional notes**: Design it together with the orphan policy: an automatic close needs the same
+  "closed by whom (the system), why" fields.
+
 ---
 
 ## Update rules

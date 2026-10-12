@@ -220,6 +220,32 @@ statuses, session, measurements and configuration can then be read in
 Swagger. Further options are described in
 `simulator/ocpp16_charge_point_simulator.py`.
 
+The seed and the simulator take an identity, and the seed a plug standard
+and a price; the simulator also answers `RemoteStopTransaction` and
+`ChangeConfiguration`, and its flags (passed in `ARGS`) make it charge longer
+or behave like awkward firmware:
+
+```bash
+make charging-ocpp16-seed IDENTITY=WD-TEST-01 STANDARD=IEC_62196_T2_COMBO PRICE=3500
+make charging-ocpp16-sim SCENARIO=session IDENTITY=WD-TEST-01 ARGS="--stop-on-remote --samples 60 --sample-interval 5"
+```
+
+### Charging test day tools
+
+Command-line stand-ins for the driver app and an operator console, used to
+run a session end to end through the HTTP API (needs `make backend-dev`; the
+runbook is section 6 of
+[`docs/planners/backend-charging-test-day.md`](docs/planners/backend-charging-test-day.md)):
+
+```bash
+make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"  # drivers with a credited wallet
+make driver-app ARGS="scan --driver 1 --charger WD-TEST-01"              # scan | watch | stop | sessions
+make station-console ARGS="messages --follow --charger WD-TEST-01"       # status | messages | config | set | commands | sessions | force-close
+```
+
+Every API call of these tools is written, tokens masked, to
+`backend/logs/test-day/` (git-ignored).
+
 ## Connecting a real charging station
 
 Register the station, EVSE and connector in Swagger first, with an OCPP
