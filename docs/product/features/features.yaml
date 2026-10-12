@@ -2542,7 +2542,7 @@ features:
     surfaces: {backend: done, portal: todo}
     related_tables: [charging_stations, charging_evses, charging_connectors, charging_station_state]
     questions:
-      - ["Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 74).", "Đặt trụ INACTIVE chỉ có hiệu lực ở lần bắt tay kết nối kế tiếp; trụ đang kết nối vẫn giữ kết nối đến khi nối lại (deferred.md 74)."]
+      - ["Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 102).", "Đặt trụ INACTIVE chỉ có hiệu lực ở lần bắt tay kết nối kế tiếp; trụ đang kết nối vẫn giữ kết nối đến khi nối lại (deferred.md 102)."]
     priority: Must
     release: P1.0
     offer: internal
@@ -2574,7 +2574,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-02]
-    sources: [PRD F-G2, Decision CO-01, Decision CO-02, Decision CO-05, Decision CO-16, Decision CO-17]
+    sources: [PRD F-G2, Decision CO-01, Decision CO-02, Decision CO-16, Decision CO-17, Decision CO-18]
     old_codes: [F-G2]
     questions:
       - ["Vendor documents still missing: implementation guide, error-code mapping, meter details, TLS/authentication (open question 4).", "Còn thiếu tài liệu từ nhà cung cấp: hướng dẫn tích hợp, bảng mã lỗi, thông tin công tơ, TLS/xác thực (câu hỏi mở 4)."]
@@ -2771,7 +2771,7 @@ features:
     release: P1.0
     offer: internal
     depends_on: [STN-03]
-    sources: [Decision CO-12, deferred.md 74, Decision CS-20]
+    sources: [Decision CO-12, deferred.md 74, Decision CS-20, Decision CS-24, Decision CO-18, deferred.md 102]
 
   - code: STN-11
     name: Secure charger connections

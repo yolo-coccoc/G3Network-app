@@ -443,3 +443,30 @@
   and the added vehicle against it (FL-09), and passes the acting user to `added_by` /
   `removed_by` (NULL when the system closes a period: a sale, VH-12, or a deleted fleet, FL-06).
 - **Resolution (2026-10-09)**: Built in the refactor plan's WP1 chunk 1 (`docs/planners/backend-refactor-implementation.md`): `fleets.organization_id` with `ix_fleets_organization_id` and `uq_fleets_live_organization_code`, `fleet_vehicle_memberships.added_by` / `removed_by`, the same-organization parent check, and `fleet_history` with its trigger (DM-29 in `docs/decisions/decision-log.md`). Still open: the added-vehicle check against the fleet's organization (waits for `vehicles.organization_id`, WP1 later chunk) and the acting user passed to `added_by` / `removed_by` and the change reason (WP2, authentication).
+
+### 74. CSMS remote commands over OCPP and the command channel — Resolved
+
+- **Short description**: Let the backend send commands to a connected charger:
+  `RemoteStartTransaction`/`RemoteStopTransaction`, on-demand
+  `GetConfiguration`/`ChangeConfiguration`, `TriggerMessage`, `Reset`,
+  `UnlockConnector`, `ChangeAvailability`, and, if the charger supports the
+  profile, Smart Charging, firmware/diagnostics and reservation.
+- **Purpose/role in the system**: Scan-to-charge (F-H1), load balancing
+  (F-C7), remote reservation (F-C4), tuning the `MeterValues` interval and
+  recovering stuck guns all need the CSMS to initiate calls.
+- **Reason for deferral**: The OCPP gateway is a separate OS process from the
+  API, so an HTTP request needs a cross-process channel to reach the open
+  socket (a design decision of its own). Which optional OCPP profiles the
+  charger supports is unconfirmed. The 1.6J planner builds only an automatic
+  post-boot `GetConfiguration` (decision D10).
+- **Related planner/feature**: `docs/planners/backend-ocpp16-charger-integration.md`, item 26, F-G2, F-H1, F-C4, F-C7.
+- **Date recorded**: 2026-09-24
+- **Additional notes**: `python-ocpp`'s receive loop is sequential; a call
+  must never be awaited inside a handler (schedule a task). Until this
+  exists, use an external OCPP test tool (e.g. SteVe) for probes that need
+  commands. Several of the spec's acceptance items (8, 9, 12-16) cannot be
+  verified through this backend without it.
+- **Update 2026-10-09 (CS-20 in `docs/decisions/decision-log.md`)**: the table that records every command and its answer, `charging_station_commands`, is now designed (planned). Still deferred here: the cross-process channel from the API to the gateway's open socket, and building the commands themselves.
+- **Update 2026-10-09 (PR-16 in `docs/decisions/decision-log.md`)**: the cross-process channel is decided: the API inserts a `PENDING` row in `charging_station_commands` and the gateway process picks it up, sends the OCPP call and writes the answer back. Still deferred here: the commands other than the ones the QR charging flow needs.
+- **Update 2026-10-10 (CS-24 in `docs/decisions/decision-log.md`)**: the channel and the command senders are built (WP1 chunk 5): `charging_stations/ocpp/command_loop.py` sends REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE for both protocols. Still deferred here: Smart Charging, firmware / diagnostics, reservation, the sessions side of a remote start (WP8) and more than one gateway process.
+- **Resolution (2026-10-12)**: Resolved by the 2026-10-10 build (CS-24) and the QR charging flow (WP8, CE-20 to CE-22, which built the sessions side of a remote start): the API queues a row in `charging_station_commands`, the gateway's `command_loop.py` sends it and records the answer, for REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE on both protocols (`POST /charging-stations/{id}/commands`). Verified against the simulator in the charging test-day rehearsal (`docs/planners/backend-charging-test-day.md`). The rest (Smart Charging, firmware/diagnostics, reservation, closing a connection, several gateway processes) moved to item 102 in `deferred.md`.

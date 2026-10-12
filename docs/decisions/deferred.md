@@ -1515,32 +1515,6 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   item. Also decides whether a reverse proxy/TLS terminator becomes part of
   the infra (currently none, by decision).
 
-### 74. CSMS remote commands over OCPP and the command channel
-
-- **Short description**: Let the backend send commands to a connected charger:
-  `RemoteStartTransaction`/`RemoteStopTransaction`, on-demand
-  `GetConfiguration`/`ChangeConfiguration`, `TriggerMessage`, `Reset`,
-  `UnlockConnector`, `ChangeAvailability`, and, if the charger supports the
-  profile, Smart Charging, firmware/diagnostics and reservation.
-- **Purpose/role in the system**: Scan-to-charge (F-H1), load balancing
-  (F-C7), remote reservation (F-C4), tuning the `MeterValues` interval and
-  recovering stuck guns all need the CSMS to initiate calls.
-- **Reason for deferral**: The OCPP gateway is a separate OS process from the
-  API, so an HTTP request needs a cross-process channel to reach the open
-  socket (a design decision of its own). Which optional OCPP profiles the
-  charger supports is unconfirmed. The 1.6J planner builds only an automatic
-  post-boot `GetConfiguration` (decision D10).
-- **Related planner/feature**: `docs/planners/backend-ocpp16-charger-integration.md`, item 26, F-G2, F-H1, F-C4, F-C7.
-- **Date recorded**: 2026-09-24
-- **Additional notes**: `python-ocpp`'s receive loop is sequential; a call
-  must never be awaited inside a handler (schedule a task). Until this
-  exists, use an external OCPP test tool (e.g. SteVe) for probes that need
-  commands. Several of the spec's acceptance items (8, 9, 12-16) cannot be
-  verified through this backend without it.
-- **Update 2026-10-09 (CS-20 in `docs/decisions/decision-log.md`)**: the table that records every command and its answer, `charging_station_commands`, is now designed (planned). Still deferred here: the cross-process channel from the API to the gateway's open socket, and building the commands themselves.
-- **Update 2026-10-09 (PR-16 in `docs/decisions/decision-log.md`)**: the cross-process channel is decided: the API inserts a `PENDING` row in `charging_station_commands` and the gateway process picks it up, sends the OCPP call and writes the answer back. Still deferred here: the commands other than the ones the QR charging flow needs.
-- **Update 2026-10-10 (CS-24 in `docs/decisions/decision-log.md`)**: the channel and the command senders are built (WP1 chunk 5): `charging_stations/ocpp/command_loop.py` sends REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE for both protocols. Still deferred here: Smart Charging, firmware / diagnostics, reservation, the sessions side of a remote start (WP8) and more than one gateway process.
-
 ### 75. Charger fault alerting and error-code catalog
 
 - **Short description**: Turn `errorCode`/`vendorErrorCode` from
@@ -1842,7 +1816,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   tables (`charging_station_configuration_captures` / `_entries`) and `charging_station_commands`
   already show the current values, their history, and whether a change was applied.
 - **Related planner/feature**: STN-10 (`docs/product/features/features.yaml`), CS-19, CS-20,
-  CS-21, CO-05, deferred.md 74.
+  CS-21, CO-18 (formerly CO-05), deferred.md 74 (resolved).
 - **Date recorded**: 2026-10-09
 - **Additional notes**: Likely shape: a profile (owner, charger model, name) with its wanted
   values in the entries' naming (component + variable + attribute, a 1.6J key as a variable), and
@@ -1992,6 +1966,31 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Date recorded**: 2026-10-12
 - **Additional notes**: Design it together with the orphan policy: an automatic close needs the same
   "closed by whom (the system), why" fields.
+
+### 102. Remaining charger commands: Smart Charging, firmware, diagnostics, reservation; closing a connection; several gateway processes
+
+- **Short description**: The command channel (PR-16, CS-24, item 74 resolved) sends the eight
+  commands the launch needs. Still missing: (1) Smart Charging (`SetChargingProfile`,
+  `ClearChargingProfile`, `GetCompositeSchedule`), (2) firmware update and diagnostics upload
+  (`UpdateFirmware`, `GetDiagnostics`, and handling the charger's `FirmwareStatusNotification` /
+  `DiagnosticsStatusNotification`), (3) reservation (`ReserveNow`, `CancelReservation`), (4) a way
+  for the API to make the gateway close a charger's open connection, so setting a charger
+  INACTIVE takes effect at once instead of at its next handshake, and (5) more than one gateway
+  process (a command is claimed by the process that holds the charger's connection; with several
+  processes, a charger connected to another one must be routed).
+- **Purpose/role in the system**: Load balancing (STN-08), remote firmware maintenance, charger
+  reservation (STN-09), immediate out-of-service (STN-02), and scaling the gateway.
+- **Reason for deferral**: Whether the Willdigits charger supports the Smart Charging,
+  Firmware Management and Reservation profiles is unconfirmed (its `SupportedFeatureProfiles`
+  answer arrives with the first real `GetConfiguration`, test day); one gateway process is enough
+  for the launch's few chargers.
+- **Related planner/feature**: STN-02, STN-08, STN-09, STN-10 (`docs/product/features/features.yaml`),
+  PR-16, CS-24 (`docs/decisions/decision-log.md`), item 74 (`deferred-resolved.md`),
+  `docs/planners/backend-ocpp16-charger-integration.md` Step 10.
+- **Date recorded**: 2026-10-12 (the remainder of item 74)
+- **Additional notes**: (1)-(3) are new `StationCommandType` members and adapter senders in the
+  existing command loop, plus their tables when a feature needs them; (4) can be a command type
+  the gateway handles itself without an OCPP call.
 
 ---
 

@@ -534,7 +534,7 @@ async def start_boot_configuration_command(
     ocpp_message_id: str,
     ocpp_request_id: int | None = None,
 ) -> UUID:
-    """Create the system's own ``GET_CONFIGURATION`` command after a boot (CO-05).
+    """Create the system's own ``GET_CONFIGURATION`` command after a boot (CO-18).
 
     The gateway sends this request itself, so the command is created already
     holding the frame's message ID (it is not queued for the command loop) and

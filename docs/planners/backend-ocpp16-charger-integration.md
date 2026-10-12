@@ -162,11 +162,11 @@ former session meter-values hypertable.
 | BootNotification | CP→CSMS | ✅ Step 4 (`Accepted`, `currentTime`, `interval`) |
 | Heartbeat | CP→CSMS | ✅ Step 4 |
 | StatusNotification | CP→CSMS | ✅ Step 5 (connectors 0/1/2, error codes) |
-| Authorize | CP→CSMS | ✅ Step 6 (accept-all, D7) |
+| Authorize | CP→CSMS | ✅ Step 6 (accept-all, D7) — *since 2026-10-10 only a token a QR scan issued is accepted (CE-23, [decision-log.md](../decisions/decision-log.md))* |
 | StartTransaction / StopTransaction | CP→CSMS | ✅ Step 6 |
 | MeterValues | CP→CSMS | ✅ Step 7b (+ `StopTransaction.transactionData`) |
 | GetConfiguration | CSMS→CP | ✅ Step 8 (post-boot, automatic only) |
-| Everything else (`RemoteStart/Stop`, `ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, Firmware, Reservation, `DataTransfer`, `FirmwareStatusNotification`…) | both | ⛔ deferred (§6); inbound ones get `CALLERROR NotImplemented` and are visible in the raw log |
+| Everything else (`RemoteStart/Stop`, `ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, Firmware, Reservation, `DataTransfer`, `FirmwareStatusNotification`…) | both | ⛔ deferred (§6); inbound ones get `CALLERROR NotImplemented` and are visible in the raw log — *since 2026-10-10 the command channel sends `RemoteStart/Stop`, `ChangeConfiguration`, `GetConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability` (CS-24; deferred.md 74 resolved); Smart Charging, Firmware, Reservation stay deferred (`deferred.md` 102), and inbound `DataTransfer` / `FirmwareStatusNotification` still get `NotImplemented`* |
 
 ### 3.4 Milestones
 
@@ -1201,7 +1201,7 @@ created the new ones (#73–#80, recorded 2026-09-24) and Step 11 verifies them.
 | Deferred piece | `deferred.md` | Why deferred / what unblocks it |
 |---|---|---|
 | Transport security for real chargers (`wss://`, Basic Auth / client cert, VPN/private APN, per-charger credentials) | #73 | Vendor hasn't confirmed support (spec §6.2 #4) — related to NF-05 and `tech-decisions.md` |
-| CSMS remote commands over OCPP + the cross-process command channel (`RemoteStart/Stop`, on-demand `Get/ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, firmware/diagnostics, reservation) | #74 (relates to #26) | Needs an HTTP→gateway-process channel decision; profile support unconfirmed |
+| CSMS remote commands over OCPP + the cross-process command channel (`RemoteStart/Stop`, on-demand `Get/ChangeConfiguration`, `TriggerMessage`, `Reset`, `UnlockConnector`, `ChangeAvailability`, Smart Charging, firmware/diagnostics, reservation) | #74 (relates to #26) — *resolved 2026-10-12: the channel and eight commands were built (CS-24); Smart Charging, firmware/diagnostics and reservation are `deferred.md` 102* | Needs an HTTP→gateway-process channel decision; profile support unconfirmed |
 | Fault alerting and the charger error-code catalog (`errorCode`/`vendorErrorCode` → notifications, tickets, gun blocking, billing suspension of suspect sessions) | #75 | Needs the vendor's 80-code mapping (spec §6.2 #2) |
 | Stale-status invalidation on disconnect; availability derived from `is_online` and connector status | #76 (extends #37, #49) | Business decision on "available" |
 | Reliability path: back-fill, orphan sessions, dedup by `seq_no`, reconnect for 2.0.1 | #27, #32, #66 | Real-charger findings (Step 10) |

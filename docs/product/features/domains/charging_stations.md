@@ -77,7 +77,7 @@ Describe each station's chargers and guns: identities used by the charger, power
 
 **Open questions:**
 
-- Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 74).
+- Setting a charger INACTIVE is enforced at the next connection handshake only; a connected charger stays connected until it reconnects (deferred.md 102).
 
 <a id="stn-03"></a>
 
@@ -103,7 +103,7 @@ Connect chargers over OCPP 1.6J and 2.0.1: boot, heartbeat, status, transactions
 **Depends on:** [STN-02](#stn-02)  
 **Needed by:** [CHG-02](charging_sessions.md#chg-02), [STN-04](#stn-04), [STN-10](#stn-10), [STN-11](#stn-11), [STN-15](#stn-15)  
 **Related tables:** `charging_stations`, `charging_station_state`, `charging_ocpp_messages`, `charging_station_configuration_captures`, `charging_station_configuration_entries`  
-**Sources:** PRD F-G2 · Decision CO-01 · Decision CO-02 · Decision CO-05 · Decision CO-16 · Decision CO-17  
+**Sources:** PRD F-G2 · Decision CO-01 · Decision CO-02 · Decision CO-16 · Decision CO-17 · Decision CO-18  
 **Old codes:** F-G2
 
 **Open questions:**
@@ -299,7 +299,7 @@ Send commands to chargers: start and stop a charge, unlock a connector, reset, c
 **Depends on:** [STN-03](#stn-03)  
 **Needed by:** [CHG-01](charging_sessions.md#chg-01), [STN-09](#stn-09)  
 **Related tables:** `charging_station_commands`  
-**Sources:** Decision CO-12 · deferred.md 74 · Decision CS-20
+**Sources:** Decision CO-12 · deferred.md 74 · Decision CS-20 · Decision CS-24 · Decision CO-18 · deferred.md 102
 
 <a id="stn-11"></a>
 

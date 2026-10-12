@@ -11,7 +11,7 @@ planner (``docs/planners/backend-ocpp16-charger-integration.md``). Currently
 handled: ``BootNotification``, ``Heartbeat``, ``StatusNotification``,
 ``Authorize``, ``StartTransaction``, ``StopTransaction`` and ``MeterValues``.
 After every accepted ``BootNotification`` the adapter itself asks the charger for
-its configuration (``GetConfiguration``, CO-05) and stores the answer as a
+its configuration (``GetConfiguration``, CO-18) and stores the answer as a
 snapshot of its own ``GET_CONFIGURATION`` command. The other requests this
 backend sends are the commands of the command loop (``send_command``: remote
 start/stop, unlock, reset, availability, configuration change, trigger
