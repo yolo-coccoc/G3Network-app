@@ -161,17 +161,12 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
 ### 6.1 One-time preparation (the day before)
 
 1. **Code:** B runs the committed `master`; `make setup` once if needed.
-2. **`backend/.env` on B:**
-   - `APP_DEBUG=false` (it echoes SQL, frames and QR tokens otherwise);
-   - `IDENTITY_BOOTSTRAP_ADMIN_PHONE` / `IDENTITY_BOOTSTRAP_ADMIN_PASSWORD` set (the console and the seeds log in as this admin);
-   - `CHARGING_OCPP_HOST=0.0.0.0`, `CHARGING_OCPP_PORT=9000` (defaults).
+2. **Test-day settings on B** live in `backend/.env.testday.local` (git-ignored, mode 600; done 2026-10-12): `export` lines that override `backend/.env` in the shell that sources them, so daily development keeps the dev database. It sets `DATABASE_URL` (the dedicated `g3network_testday` database), `APP_DEBUG=false` (otherwise SQL, frames and QR tokens are echoed), `IDENTITY_BOOTSTRAP_ADMIN_PHONE` / `_PASSWORD` (the console and the seeds log in as this admin), `CHARGING_TEST_DRIVER_PASSWORD` and `TEST_DAY_CHARGER_ID`. **Every tmux window starts with `source backend/.env.testday.local`.** The gateway listens on `0.0.0.0:9000` (defaults).
 3. **Port forward:** forward **A:9000 → B:9000** with the same tool as the SSH forward (A:10022 → B:22). Forward nothing else: the API stays on B's `localhost`.
-4. **Database:** decide whether the day uses the dev database or a fresh one. A fresh one: `make db-reset` (wipes everything), then `make identity-bootstrap`.
-5. **Seed the real charger** with the `chargePointId` that will be typed into its screen (prefer one that is hard to guess, `ws://` has no authentication):
-   `make charging-ocpp16-seed IDENTITY=<chargePointId> STANDARD=IEC_62196_T2_COMBO PRICE=3500`
-   (`GBT_DC` if the delivered unit is GB/T: check the plug).
-6. **Seed the drivers:** `export CHARGING_TEST_DRIVER_PASSWORD=<a password of your own>` (the default is public, in the source), then `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"`. Keep the variable set in the `driver` window: `driver_app` logs in with it.
-7. **Rehearse** with the simulator under the same identity, before the real charger is on site (section 6.4 with `make charging-ocpp16-sim SCENARIO=session IDENTITY=<chargePointId> ARGS="--stop-on-remote --samples 600 --sample-interval 5"` in place of the charger).
+4. **Database:** the day uses its own database, `g3network_testday` (created, migrated and bootstrapped 2026-10-12; the dev database `g3network` is untouched). It holds one rehearsal session from 2026-10-12.
+5. **The real charger is seeded** (2026-10-12) as `$TEST_DAY_CHARGER_ID` (a hard-to-guess ID, because `ws://` has no authentication), label `WD-01`, two `IEC_62196_T2_COMBO` guns, location "G3 test-day station", 3,500 VND/kWh + 8 % VAT. If the delivered unit is GB/T, change each gun's `standard` with `PATCH /api/v1/charging-connectors/{id}`. To seed another charger: `make charging-ocpp16-seed IDENTITY=<id> STANDARD=<standard> PRICE=<price>`.
+6. **The drivers are seeded** (2026-10-12): `+84999000001` and `+84999000002`, password `CHARGING_TEST_DRIVER_PASSWORD` from the settings file, 10,000,000 VND each. Re-running `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"` (after `source`) tops them back up.
+7. **Rehearsed** 2026-10-12 on this database with the simulator as `$TEST_DAY_CHARGER_ID` (naive timestamps, upper-case idTag, stop from the app): 2.5 kWh billed 9,450 VND, no CALLERROR. Repeat any time with `make charging-ocpp16-sim SCENARIO=session IDENTITY=$TEST_DAY_CHARGER_ID ARGS="--stop-on-remote --samples 600 --sample-interval 5"` in place of the charger.
 8. **Reachability from outside** (gateway running, from the laptop **on mobile data**, ideally the charger SIM's carrier):
    ```bash
    curl -i -N --max-time 5 -H "Connection: Upgrade" -H "Upgrade: websocket" \
