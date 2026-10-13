@@ -1,6 +1,7 @@
 """Shared pieces of the charging test-day tools (planner backend-charging-test-day).
 
-Used by ``seed_test_drivers.py``, ``driver_app.py`` and ``station_console.py``:
+Used by ``seed_test_drivers.py``, ``driver_app.py``, ``station_console.py`` and
+``dashboard.py``:
 
 * the test-driver numbering scheme (driver ``N`` -> phone, default password),
   so the seed and the app stand-in agree without repeating the numbers;

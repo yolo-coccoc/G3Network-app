@@ -61,6 +61,8 @@ def test_the_folder_holds_the_tools_its_guide_describes() -> None:
         "station_console.py",
         "ocpp16_charge_point_simulator.py",
         "seed_charging_topology.py",
+        "dashboard.py",
+        "dashboard.html",
     }
     assert expected <= {path.name for path in TOOLS_DIR.iterdir()}
 
