@@ -123,9 +123,11 @@ the charging test-day tools drive the same flow over the API:
 `make charging-test-drivers-seed` (drivers with a credited wallet, no
 invitation code needed), `make driver-app ARGS="scan --driver 1 --charger
 SIM-OCPP16-001"` and `make station-console ARGS="..."` (traffic feed,
-configuration, `force-close` of an orphan); see section 6 of
+configuration, `force-close` of an orphan), or `dashboard.py` (the same on one
+browser page on `127.0.0.1:8080`, with buttons that drive `--scenario charger`;
+TT-22); see section 6 of
 `docs/planners/backend-charging-test-day.md`. The 1.6J simulator, the charger
-seed and those two tools live in `simulator/charging_test_day/` (standalone,
+seed and those tools live in `simulator/charging_test_day/` (standalone,
 no backend import; laptop use in its `CLAUDE.md`); their evidence files and
 saved meters go to its git-ignored `logs/` (`test-day/`, `simulator-state/`).
 They read their settings from the shell, then `backend/.env`, then the

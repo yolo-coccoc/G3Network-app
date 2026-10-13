@@ -11,6 +11,7 @@ yet, so a charging session can be tested end to end:
 | `station_console.py` | the operator portal (charger status, live OCPP messages, settings, force-close) | HTTP API |
 | `ocpp16_charge_point_simulator.py` | the charger (an OCPP 1.6J dual-gun DC charger) | OCPP 1.6J WebSocket |
 | `seed_charging_topology.py` | provisioning a charger (location, tariff, guns) | HTTP API |
+| `dashboard.py` (+ `dashboard.html`) | all of the above in one browser page, with buttons that drive the simulator | HTTP API (and the simulator as a child process) |
 
 Shared modules: `g3_api.py` (HTTP client and settings), `test_day_common.py`
 (evidence log, token masking, test-driver numbering). Nothing in this folder
@@ -141,6 +142,24 @@ PY station_console.py commands --limit 10
 PY station_console.py sessions --status ACTIVE
 PY station_console.py force-close <session_id> --charger G3WD-DHR75E --reason "..."   # orphan
 ```
+
+### `dashboard.py` (one browser page, TT-22)
+```bash
+PY dashboard.py                     # opens http://localhost:8080/ ; Ctrl+C to quit
+PY dashboard.py --port 8090 --no-browser --sim-identity SIM-LAPTOP-01
+```
+A local server (127.0.0.1 only) that calls the API with the same code and
+settings as the tools above. The page shows the charger picked in its header
+(default `TEST_DAY_CHARGER_ID`; the "Simulator" button switches to the
+simulator's identity): charger and guns, driver 1 and driver 2 panels (scan,
+live kWh/kW/SoC, stop, receipt, bill, wallet), the live OCPP feed (CALLERROR
+rows in red), settings with the four Phase 1 buttons, commands, sessions with
+force-close, and the simulator panel (Start runs `--scenario charger` as a
+child process; Plug in / Press start / Press stop / Unplug / Car full / Fault
+buttons per gun). The simulator refuses `TEST_DAY_CHARGER_ID` and any charger
+online with a real firmware. Evidence: `logs/test-day/dashboard*.jsonl`. You
+(Claude) can call its JSON routes with curl (a POST needs the header
+`X-Test-Day-Dashboard: 1`), but the command-line tools remain the scripted path.
 
 ### `ocpp16_charge_point_simulator.py` (the charger)
 The model: a remote start (the backend's answer to a scan) only **authorizes**;

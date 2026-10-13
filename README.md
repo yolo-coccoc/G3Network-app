@@ -247,6 +247,12 @@ make station-console ARGS="messages --follow --charger WD-TEST-01"       # statu
 Every API call of these tools is written, tokens masked, to
 `simulator/charging_test_day/logs/test-day/` (git-ignored).
 
+`simulator/charging_test_day/dashboard.py` puts the same tools on one browser
+page (`http://localhost:8080/`, local only; TT-22): the charger and its guns,
+two driver panels, the live OCPP feed, settings, commands and force-close, and
+buttons that drive the 1.6J simulator's `charger` scenario. The command-line
+tools stay as the fallback.
+
 The driver app, the operator console, the 1.6J simulator and the charger seed
 live in `simulator/charging_test_day/`, which imports none of the backend's
 code: the folder can be copied to a laptop and run there with Python 3.12 and

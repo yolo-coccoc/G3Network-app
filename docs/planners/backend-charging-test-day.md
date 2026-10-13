@@ -51,6 +51,7 @@ reading the QR content format, the 2.0.1 path (no 2.0.1 hardware).
 | D9 | What the simulated scan sends | **`--charger <code>`** (OCPP identity or registered serial) **or `--qr "<raw text>"`** sent exactly as read; the tool never parses the QR content | Parse URLs in the tool → hides the gap if the real QR does not match (CO-14, open question 4) | ✅ Confirmed 2026-10-12 |
 | D10 | Test server | **The development VM (B)**: only `A:9000 → B:9000` is forwarded to the public IP; the API stays on `localhost`; every tool runs on B over SSH, inside `tmux` | Expose the API port → not needed, and the API would be on the internet | ✅ Confirmed 2026-10-12; the tools may also run on a laptop since D11 (2026-10-13) |
 | D11 | Where the test-day tools run | **A standalone folder, `simulator/charging_test_day/`**, runnable on a laptop with Python 3.12 and its `requirements.txt` only: no backend import, settings from env / `backend/.env` / its own `.env`, evidence in its own `logs/`, full context in its `CLAUDE.md`; the API through an SSH tunnel (`ssh -p 10022 -N -L 8000:127.0.0.1:8000 <user>@112.137.129.163`), the gateway on the public IP → **TT-21** | Keep them importing the backend (`app.libs.common.config`, `ConnectorStandard`) → they only run inside the repository's venv on the VM | ✅ Confirmed 2026-10-13 (owner request) |
+| D12 | One screen for the day | **A browser dashboard in the tools folder**: `dashboard.py` (standard-library server on `127.0.0.1:8080`, calls the API with `g3_api`) + `dashboard.html`: charger and guns, two driver panels, live OCPP feed, settings / commands / sessions + force-close, and buttons that drive the simulator's `charger` scenario; the command-line tools stay as the fallback → **TT-22** | Start `web-portal/` (React…) → its stack and conventions are not decided (TT-20), too much for two days; a static page calling the API → needs CORS in the backend, and the browser would hold the admin token | ✅ Confirmed 2026-10-14 (owner: tools-folder dashboard, all panels, simulator buttons; test day within 2 days) |
 
 ### 2.1 Out of scope (deferred)
 
@@ -101,6 +102,7 @@ and MeterValues always confirmed; Boot/Start/Status validated by the handler.
 | `driver_app.py stop <session_id>` | run once | Stop from any terminal |
 | `station_console.py messages --follow` | live until Ctrl+C | OCPP traffic feed (`/charging-stations/{id}/ocpp-messages`), idTag masked |
 | `station_console.py status \| config \| set <key> <value> \| force-close <id> --reason …` | run once | Connection and connector status, configuration snapshot, `ChangeConfiguration` through the command endpoint, D5 |
+| `dashboard.py` (D12) | live until Ctrl+C | Everything above in one browser page on `http://localhost:8080/`, plus buttons for the charger simulator |
 
 Tokens are masked in everything the tools print or write (IS-07). Since
 Step 7 (D11) every tool except `seed_test_drivers.py` lives in the standalone
@@ -147,6 +149,13 @@ because it writes to the database.
 - [x] New in the folder: `requirements.txt` (`ocpp==2.1.0`, `websockets==16.1.1`, as in `backend/uv.lock`), `.env.example`, `.gitignore` (`.env`, `logs/`, `.venv/`), `CLAUDE.md` (laptop setup, SSH tunnel, rules, test recipes A–R); evidence and saved meters now in the folder's `logs/`
 - [x] A thin `simulator/api_client.py` re-exports `g3_api` for `seed_test_drivers.py`, `seed_simulator_devices.py` and `telematic_simulator.py`, which stay in `simulator/` because they need the backend's code; the `make` targets keep their names and call the new paths; the clean-database E2E test in `test_postgres_integration.py` runs the simulator from its new path
 - [x] Guard: `backend/tests/test_charging_test_day_tools_smoke.py` (no `app` import, the folder's files present, plug standards equal `ConnectorStandard`, pins equal `uv.lock`). `make check` 2026-10-13: 1093 passed, 59 skipped; domain model and feature catalog checks OK
+
+### Step 8 — Browser dashboard (D12, owner request 2026-10-14)
+- [x] `simulator/charging_test_day/dashboard.py`: `ThreadingHTTPServer` on `127.0.0.1` (`--port`, default 8080), JSON routes over the API with the tools' sessions (HEAD_ADMIN lazily, test drivers 1 and 2 with platform `ANDROID`; one lock serializes the calls; evidence `logs/test-day/dashboard*.jsonl`); every answer masked with `mask_secrets`; POST needs the `X-Test-Day-Dashboard` header and every request a local `Host`. Simulator: `--scenario charger` as a child process (`-u`, UTF-8), commands written to its standard input, output buffered for the page; refused for `TEST_DAY_CHARGER_ID` and for a charger online with a non-simulator firmware
+- [x] `dashboard.html`: plain HTML/JavaScript, no external resources, light and dark; polls the charger and the feed every 3 s, lists every 5 s, the simulator every second; a driver panel resumes the driver's open session after a reload
+- [x] Guard: the tools smoke test expects `dashboard.py` and `dashboard.html`
+- [x] `finish-task`: `make check` 1094 passed; `convention-reviewer`: no blocker or major, the minors fixed (POST body length checked, the simulator killed if `terminate` is not enough, its stdin written outside the lock, the real-charger guard compares stations so the serial cannot bypass it, a clear error for a bad sample interval, docstrings); `docs-sync`: README, the `e2e-sim` and `ocpp-reference` skills, the folder's `requirements.txt` comment and `test_day_common` docstring
+- [x] Run 2026-10-14 on B against the test-day API with `SIM-LAPTOP-01`: refusal of `G3WD-DHR75E` (400), plug → scan (driver 1) → start → Charging, `MeterValueSampleInterval=30` ACCEPTED, force-close on the wrong charger refused, stop → COMPLETED `Remote`, bill BILLED `METER_STOP` 2,646 VND; a second charge as driver 2 rendered live in Firefox (headless screenshot) and billed 4,536 VND; idTag masked in the feed and the evidence (`28…`). Before the identity guard existed, the first try started the simulator as `G3WD-DHR75E` for a few seconds (the real charger was offline): its connection facts and configuration capture now show the simulator's, until the real charger boots
 
 ## 5. Evidence
 
@@ -225,6 +234,8 @@ API, the gateway and the driver seed still run on B.
 | `console` | `make station-console ARGS="messages --follow --charger <chargePointId>"` |
 | `driver` | split in two for the two-gun test |
 | `cmd` | one-shot commands |
+
+**Or one browser page instead of the `console` and `driver` windows (D12):** on the laptop, `.venv\Scripts\python dashboard.py` (Windows) or `.venv/bin/python dashboard.py` in the tools folder, through the same SSH tunnel; it opens `http://localhost:8080/`. The command-line tools stay as the fallback.
 
 Run `driver_app` directly rather than through `make` (`cd backend && uv run python ../simulator/charging_test_day/driver_app.py ...`; on a laptop copy, `.venv/bin/python driver_app.py ...`): under `make`, Ctrl+C makes `make` report "Interrupt" even when the charge was left running.
 
