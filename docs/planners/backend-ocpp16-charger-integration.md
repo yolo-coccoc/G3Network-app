@@ -422,7 +422,7 @@ seed-script option that provisions one EVSE per gun (connector 1 each) for a
 1.6 station. Happy path only.
 ```
 
-**Main files:** `simulator/ocpp16_charge_point_simulator.py` (new), `simulator/seed_charging_topology.py`, `Makefile`
+**Main files:** `simulator/ocpp16_charge_point_simulator.py` (new), `simulator/seed_charging_topology.py`, `Makefile` (both scripts are in `simulator/charging_test_day/` since 2026-10-13, TT-21)
 
 **Checks:**
 
@@ -494,7 +494,7 @@ device/liveness fields (planner Step 4, decision D5).
 Every helper needs a full docstring; 1.6 optional fields may be missing.
 ```
 
-**Main files:** `charging_stations/{models,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, `ocpp/raw_log.py`, `config.py`, `.env.example`, migration `0022_…`, `simulator/ocpp16_charge_point_simulator.py`
+**Main files:** `charging_stations/{models,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, `ocpp/raw_log.py`, `config.py`, `.env.example`, migration `0022_…`, `simulator/ocpp16_charge_point_simulator.py` (now `simulator/charging_test_day/`)
 
 **Checks:**
 
@@ -575,7 +575,7 @@ Implement OCPP 1.6J StatusNotification (planner Step 5, decisions D3, D4).
 Do not add any alerting.
 ```
 
-**Main files:** `charging_stations/{models,types,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, migration `0023_…`, `simulator/ocpp16_charge_point_simulator.py`, `simulator/seed_charging_topology.py`
+**Main files:** `charging_stations/{models,types,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, migration `0023_…`, `simulator/ocpp16_charge_point_simulator.py`, `simulator/seed_charging_topology.py` (both now in `simulator/charging_test_day/`)
 
 **Checks:**
 

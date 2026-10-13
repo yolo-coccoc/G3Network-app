@@ -218,7 +218,7 @@ voltage, current, temperature, `Power.Offered` and a vendor-specific
 measurand) and stops it. The charger's boot info,
 statuses, session, measurements and configuration can then be read in
 Swagger. Further options are described in
-`simulator/ocpp16_charge_point_simulator.py`.
+`simulator/charging_test_day/ocpp16_charge_point_simulator.py`.
 
 The seed and the simulator take an identity, and the seed a plug standard
 and a price; the simulator also answers `RemoteStopTransaction` and
@@ -245,7 +245,18 @@ make station-console ARGS="messages --follow --charger WD-TEST-01"       # statu
 ```
 
 Every API call of these tools is written, tokens masked, to
-`backend/logs/test-day/` (git-ignored).
+`simulator/charging_test_day/logs/test-day/` (git-ignored).
+
+The driver app, the operator console, the 1.6J simulator and the charger seed
+live in `simulator/charging_test_day/`, which imports none of the backend's
+code: the folder can be copied to a laptop and run there with Python 3.12 and
+its `requirements.txt`, the API reached through an SSH tunnel and the gateway
+on its public address. Its settings come from the environment, then
+`backend/.env` inside the repository, then the folder's own `.env` (template
+`.env.example`); the laptop setup is in
+[`simulator/charging_test_day/CLAUDE.md`](simulator/charging_test_day/CLAUDE.md).
+The driver seed stays in `simulator/` and runs only next to the backend: it
+writes to the database.
 
 ## Connecting a real charging station
 
@@ -281,7 +292,7 @@ Data is kept. `make infra-reset` (removes the volumes) and `make db-reset`
 ```text
 backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
 infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
-simulator/    Vehicle telemetry and OCPP charging simulators
+simulator/    Vehicle telemetry and OCPP charging simulators; charging_test_day/ holds the standalone test-day tools
 docs/         Product, design, decisions, planners, reports (see docs/README.md)
 .claude/      Rules, skills, agents and hooks for AI coding agents (see CLAUDE.md)
 .githooks/    Pre-commit hook (runs make check)

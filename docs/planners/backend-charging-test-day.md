@@ -2,7 +2,7 @@
 
 > Feature codes: STN-03 (Charger connection, OCPP), CHG-01 (Start charging by
 > QR code), CHG-02 (Charging session record)
-> Status: 🚧 In progress — Steps 0–6 done 2026-10-12; waiting for the real-charger test day (section 6)
+> Status: 🚧 In progress — Steps 0–6 done 2026-10-12, Step 7 (standalone tools folder, D11) done 2026-10-13; waiting for the real-charger test day (section 6)
 > Created: 2026-10-12
 >
 > Inputs: an external review of the repository (2026-10-12: six charging
@@ -47,9 +47,10 @@ reading the QR content format, the 2.0.1 path (no 2.0.1 hardware).
 | D5 | A session the charger will never stop (reboot, power loss mid-session) | **Staff force-close endpoint** `POST /charging-sessions/{id}/force-close`, internal staff only (CHG-02 roles + `internal_only`), `ACTIVE` sessions only (a PENDING scan already has the stop, RV-BL9) → **CE-29** | Wait for the orphan policy (D14 of the 1.6J planner, CE-05) → the gun and the driver stay blocked for good during the test; a manual SQL fix → bypasses the bill and the session-ended hooks | ✅ Confirmed 2026-10-12 |
 | D6 | How a force-closed session is settled | **Use the existing rule.** The session completes with `ended_at` = now, `stop_reason` = `StaffClosed`, **no closing reading**; billing then falls back to the newest outlet measurement (CE-12) → BILLED, or ON_HOLD "no closing reading" when there is none. A late `StopTransaction` afterwards is confirmed and ignored (D2); its `meterStop` stays in the raw log for staff | Always ON_HOLD → needs a new field on the session-ended event and a new billing rule, and staff must release every force-closed bill by hand; the measurement fallback is already the agreed rule for a session without a closing reading | ✅ Confirmed 2026-10-12 (owner: "the recommended choice") |
 | D7 | Test drivers | **A seed script** creates N active users with the `DRIVER` role in the internal organization in-process, the way `make identity-bootstrap` creates the first admin (hashed password, membership, role); their wallets are credited through the staff endpoint `POST /wallets/{user_id}/adjustments`, so the ledger has a proper line | Raw SQL → wrong password hash, a wallet balance without ledger lines; the invitation flow → needs the one-time code from the API log for every account | ✅ Confirmed 2026-10-12 |
-| D8 | How the tools reach the backend | **Only through the HTTP API**, standard library only, in `simulator/`, reusing `api_client.py`; every tool takes `--api-url` | Read or write the database directly → would not test what the app will use | ✅ Confirmed 2026-10-12 |
+| D8 | How the tools reach the backend | **Only through the HTTP API**, standard library only, in `simulator/`, reusing `api_client.py`; every tool takes `--api-url` | Read or write the database directly → would not test what the app will use | ✅ Confirmed 2026-10-12; location and client changed by D11 (2026-10-13) |
 | D9 | What the simulated scan sends | **`--charger <code>`** (OCPP identity or registered serial) **or `--qr "<raw text>"`** sent exactly as read; the tool never parses the QR content | Parse URLs in the tool → hides the gap if the real QR does not match (CO-14, open question 4) | ✅ Confirmed 2026-10-12 |
-| D10 | Test server | **The development VM (B)**: only `A:9000 → B:9000` is forwarded to the public IP; the API stays on `localhost`; every tool runs on B over SSH, inside `tmux` | Expose the API port → not needed, and the API would be on the internet | ✅ Confirmed 2026-10-12 |
+| D10 | Test server | **The development VM (B)**: only `A:9000 → B:9000` is forwarded to the public IP; the API stays on `localhost`; every tool runs on B over SSH, inside `tmux` | Expose the API port → not needed, and the API would be on the internet | ✅ Confirmed 2026-10-12; the tools may also run on a laptop since D11 (2026-10-13) |
+| D11 | Where the test-day tools run | **A standalone folder, `simulator/charging_test_day/`**, runnable on a laptop with Python 3.12 and its `requirements.txt` only: no backend import, settings from env / `backend/.env` / its own `.env`, evidence in its own `logs/`, full context in its `CLAUDE.md`; the API through an SSH tunnel (`ssh -p 10022 -N -L 8000:127.0.0.1:8000 <user>@112.137.129.163`), the gateway on the public IP → **TT-21** | Keep them importing the backend (`app.libs.common.config`, `ConnectorStandard`) → they only run inside the repository's venv on the VM | ✅ Confirmed 2026-10-13 (owner request) |
 
 ### 2.1 Out of scope (deferred)
 
@@ -101,7 +102,10 @@ and MeterValues always confirmed; Boot/Start/Status validated by the handler.
 | `station_console.py messages --follow` | live until Ctrl+C | OCPP traffic feed (`/charging-stations/{id}/ocpp-messages`), idTag masked |
 | `station_console.py status \| config \| set <key> <value> \| force-close <id> --reason …` | run once | Connection and connector status, configuration snapshot, `ChangeConfiguration` through the command endpoint, D5 |
 
-Tokens are masked in everything the tools print or write (IS-07).
+Tokens are masked in everything the tools print or write (IS-07). Since
+Step 7 (D11) every tool except `seed_test_drivers.py` lives in the standalone
+folder `simulator/charging_test_day/`; the driver seed stays in `simulator/`
+because it writes to the database.
 
 ## 4. Steps
 
@@ -124,7 +128,7 @@ Tokens are masked in everything the tools print or write (IS-07).
 - [x] `seed_charging_topology.py --connector-standard` (`--price-per-kwh` already existed); `make charging-ocpp16-seed IDENTITY= STANDARD= PRICE=`
 
 ### Step 3 — `driver_app.py`
-- [x] `scan | watch | stop | sessions` (`make driver-app ARGS=...`), shared helpers in `simulator/test_day_common.py` (masking, evidence log under `backend/logs/test-day/`, git-ignored; re-login on 401); `api_client.py` gained `ApiError`, `login()`, `resolve_api_url()` (`--api-url`, then `G3_API_URL`)
+- [x] `scan | watch | stop | sessions` (`make driver-app ARGS=...`), shared helpers in `simulator/test_day_common.py` (masking, evidence log under `backend/logs/test-day/`, git-ignored; re-login on 401); `api_client.py` gained `ApiError`, `login()`, `resolve_api_url()` (`--api-url`, then `G3_API_URL`). Since Step 7 these are `simulator/charging_test_day/test_day_common.py` and `g3_api.py`, the evidence log is in that folder's `logs/test-day/`
 
 ### Step 4 — `station_console.py`
 - [x] `status | messages [--follow] | config | set | commands | sessions | force-close` (`make station-console ARGS=...`)
@@ -137,6 +141,12 @@ Tokens are masked in everything the tools print or write (IS-07).
 ### Step 6 — Wrap-up and runbook
 - [x] `finish-task`: `make check` passed; `convention-reviewer`: no blocker or major, one minor fixed (the driver seed now warns when it falls back to the public default password); `docs-sync`: architecture.md, dev-environment.md, README, the `e2e-sim` and `ocpp-reference` skills, both scenario files, pointers in the 1.6J planner, CHG-02 backend back to `done`; commits split (code, tools, docs)
 - [x] Section 6 written
+
+### Step 7 — Standalone tools folder (D11, owner request 2026-10-13)
+- [x] `git mv` of `driver_app.py`, `station_console.py`, `test_day_common.py`, `ocpp16_charge_point_simulator.py` and `seed_charging_topology.py` into `simulator/charging_test_day/`; `api_client.py` became its `g3_api.py`: settings from the environment, then `backend/.env` inside the repository, then the folder's `.env`; admin login `G3_ADMIN_PHONE` / `G3_ADMIN_PASSWORD` or `IDENTITY_BOOTSTRAP_ADMIN_*`; new `G3_OCPP_URL` (the simulator's `--url` default) and `TEST_DAY_CHARGER_ID` (default `--charger` / `--identity`). No module imports `app` (the plug standards are written out)
+- [x] New in the folder: `requirements.txt` (`ocpp==2.1.0`, `websockets==16.1.1`, as in `backend/uv.lock`), `.env.example`, `.gitignore` (`.env`, `logs/`, `.venv/`), `CLAUDE.md` (laptop setup, SSH tunnel, rules, test recipes A–R); evidence and saved meters now in the folder's `logs/`
+- [x] A thin `simulator/api_client.py` re-exports `g3_api` for `seed_test_drivers.py`, `seed_simulator_devices.py` and `telematic_simulator.py`, which stay in `simulator/` because they need the backend's code; the `make` targets keep their names and call the new paths; the clean-database E2E test in `test_postgres_integration.py` runs the simulator from its new path
+- [x] Guard: `backend/tests/test_charging_test_day_tools_smoke.py` (no `app` import, the folder's files present, plug standards equal `ConnectorStandard`, pins equal `uv.lock`). `make check` 2026-10-13: 1093 passed, 59 skipped; domain model and feature catalog checks OK
 
 ## 5. Evidence
 
@@ -154,7 +164,7 @@ Tokens are masked in everything the tools print or write (IS-07).
 
 | # | Finding | Fix | Verified |
 |---|---|---|---|
-| 1 | The simulator's meter restarted at `--meter-start` every run (a real register only rises) | Each gun's meter is saved per charger in `backend/logs/simulator-state/<identity>.json` and continued; `--fresh-meter` starts over | Run 2 started at 1067 Wh where run 1 ended |
+| 1 | The simulator's meter restarted at `--meter-start` every run (a real register only rises) | Each gun's meter is saved per charger in `backend/logs/simulator-state/<identity>.json` (since Step 7 `simulator/charging_test_day/logs/simulator-state/`) and continued; `--fresh-meter` starts over | Run 2 started at 1067 Wh where run 1 ended |
 | 2 | The charger forgets a scan after `ConnectionTimeOut` (60 s) but the backend kept it PENDING for 300 s | Test-day settings: pending window 60 s, sweep 10 s; runbook Phase 1 sets `ConnectionTimeOut 60` on the charger | Charger expired the scan at 60 s, backend ABANDONED it at 67 s, the app showed it at ~69 s |
 | 3 | `IDENTITY_TOKEN_SECRET_KEY` empty: an API restart logs everyone out | Fixed key in the settings file | No "random key" warning at start-up |
 | 4 | `driver_app` showed "ACTIVE 0 kW" for a full car; `force-close` refused `--charger` | `driver_app` adds the gun's live status (`gun: paused: car full or car paused`, `FAULT <code>`…); `force-close --charger` refuses a session on another charger | Both seen live |
@@ -178,6 +188,15 @@ Written for the person running the day and the tester at the station. All
 commands run **on the development VM (B)**, from the repository root, inside one
 `tmux` session; the laptop is only an SSH terminal (`ssh -p 10022 <user>@<A's
 public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
+
+Alternative since D11: the tools (driver app, console, simulator, charger
+seed) can run **on the laptop** from a copy of `simulator/charging_test_day/`
+(Python 3.12, its `requirements.txt`, its `.env` from `.env.example`), with
+the API reached through an SSH tunnel
+(`ssh -p 10022 -N -L 8000:127.0.0.1:8000 <user>@112.137.129.163`) and the
+gateway at `ws://112.137.129.163:9000`; setup, rules and test recipes are in
+the folder's [`CLAUDE.md`](../../simulator/charging_test_day/CLAUDE.md). The
+API, the gateway and the driver seed still run on B.
 
 ### 6.1 One-time preparation (the day before)
 
@@ -207,7 +226,7 @@ public IP>`). Reach it over a phone hotspot if the station has no Wi-Fi.
 | `driver` | split in two for the two-gun test |
 | `cmd` | one-shot commands |
 
-Run `driver_app` directly rather than through `make` (`cd backend && uv run python ../simulator/driver_app.py ...`): under `make`, Ctrl+C makes `make` report "Interrupt" even when the charge was left running.
+Run `driver_app` directly rather than through `make` (`cd backend && uv run python ../simulator/charging_test_day/driver_app.py ...`; on a laptop copy, `.venv/bin/python driver_app.py ...`): under `make`, Ctrl+C makes `make` report "Interrupt" even when the charge was left running.
 
 ### 6.3 Phase 1 — connect, no charging
 
@@ -225,7 +244,7 @@ Run `driver_app` directly rather than through `make` (`cd backend && uv run pyth
 ### 6.4 Phase 2 — a real session
 
 1. Plug the gun into the car.
-2. In `driver`: `uv run python ../simulator/driver_app.py scan --driver 1 --charger <chargePointId> --gun 1`
+2. In `driver`: `uv run python ../simulator/charging_test_day/driver_app.py scan --driver 1 --charger <chargePointId> --gun 1`
    (or `--qr "<raw text from step 6.3.5>"` to test the real QR content).
 3. Start on the charger's screen if it asks. `driver` shows PENDING → ACTIVE, then kWh / kW / SoC every 5 s; `console` shows RemoteStartTransaction → StartTransaction → MeterValues.
 4. Stop from the "app": Ctrl+C → `y` (or `driver_app stop <session_id>` from any window). `driver` prints the receipt, the bill and the balance.
@@ -246,7 +265,7 @@ Run `driver_app` directly rather than through `make` (`cd backend && uv run pyth
 
 ### 6.6 Evidence to keep
 
-- `backend/logs/test-day/*.jsonl` (every API call of the tools, tokens masked) and the gateway window's log;
+- `simulator/charging_test_day/logs/test-day/*.jsonl` (every API call of the tools, tokens masked; `logs/test-day/` in the folder's copy when the tools ran on a laptop) and the gateway window's log;
 - the raw OCPP log: `make station-console ARGS="messages --limit 500 --charger <id>"` (or the `charging_ocpp_messages` table);
 - photos: the QR code, the charger screen at the end of each session, the configuration screens;
 - for each finding: time, session ID, what was expected, what happened (the message pair from the raw log), then record it under Step 10 of the [1.6J planner](./backend-ocpp16-charger-integration.md).

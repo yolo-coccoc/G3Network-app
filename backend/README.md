@@ -41,7 +41,7 @@ uv run python -m app.domains.telematics.ingestion.entrypoint
 uv run python -m app.domains.telematics.monitoring.entrypoint
 
 # Simulators live in ../simulator; run them from here so they use this venv
-uv run python ../simulator/seed_charging_topology.py
+uv run python ../simulator/charging_test_day/seed_charging_topology.py
 uv run python ../simulator/charging_session_simulator.py
 ```
 

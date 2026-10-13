@@ -204,7 +204,7 @@ FastAPI registers the following domains:
   heartbeat interval), `Heartbeat`, `TransactionEvent`, `MeterValues`
   and `StatusNotification`, and keeps the strict rule (timezone required).
   1.6J is verified against a simulator; a real charger has not been connected
-  (the test-day tools in `simulator/` prepare that, [planner](../planners/backend-charging-test-day.md)).
+  (the test-day tools in `simulator/charging_test_day/` prepare that, [planner](../planners/backend-charging-test-day.md)).
 - `charging_sessions`: a session is created `PENDING` at the QR scan with a
   single-use 12-character token of upper-case letters and digits (CE-28) and
   turned `ACTIVE` by the charger's start message only when it carries that token on
@@ -621,12 +621,18 @@ call each other is in
 │
 ├── simulator/                      # Vehicle telemetry + OCPP charging simulators and the charging test-day tools (manual testing only)
 │   ├── seed_simulator_devices.py     telematic_simulator.py           # vehicle telemetry over MQTT
-│   ├── seed_charging_topology.py     charging_session_simulator.py    # OCPP 2.0.1 (seed: location + tariff + charger, also the 1.6J layout; --connector-standard, --price-per-kwh)
-│   ├── ocpp16_charge_point_simulator.py                               # OCPP 1.6J charger modelled per gun (plug, authorization, ConnectionTimeOut, SuspendedEV); --scenario boot|status|session (scripted: --plug/--start/--end) |charger (typed commands); firmware-quirk flags
-│   ├── seed_test_drivers.py                                           # test-day drivers: DRIVER role in the internal organization (in-process) + wallet credit (API)
-│   ├── driver_app.py                 station_console.py               # test-day stand-ins over the HTTP API: driver app (scan|watch|stop|sessions), operator console (status|messages|config|set|commands|sessions|force-close)
-│   ├── test_day_common.py                                             # shared by the test-day tools: token masking, evidence log in backend/logs/test-day/ (git-ignored), re-login
-│   └── api_client.py                                                  # login (bootstrap HEAD_ADMIN or a given phone) + JSON calls, shared by the seeds, the test-day tools and telematic_simulator.py
+│   ├── charging_session_simulator.py                                  # OCPP 2.0.1 session (seeded by charging_test_day/seed_charging_topology.py)
+│   ├── seed_test_drivers.py                                           # test-day drivers: DRIVER role in the internal organization (in-process) + wallet credit (API); needs the backend's code and database
+│   ├── api_client.py                                                  # re-exports charging_test_day/g3_api.py for the scripts here that run with the backend (seeds, telematic_simulator.py)
+│   └── charging_test_day/                                             # standalone (TT-21): imports no backend code, runs with Python 3.12 + requirements.txt, can be copied to a laptop
+│       ├── driver_app.py             station_console.py               # stand-ins over the HTTP API: driver app (scan|watch|stop|sessions), operator console (status|messages|config|set|commands|sessions|force-close)
+│       ├── ocpp16_charge_point_simulator.py                           # OCPP 1.6J charger modelled per gun (plug, authorization, ConnectionTimeOut, SuspendedEV); --scenario boot|status|session (scripted: --plug/--start/--end) |charger (typed commands); firmware-quirk flags
+│       ├── seed_charging_topology.py                                  # location + tariff + charger over the API, OCPP 2.0.1 or the 1.6J layout (--protocol, --connector-standard, --price-per-kwh)
+│       ├── g3_api.py                                                  # HTTP client (bootstrap HEAD_ADMIN or a given phone) and settings: environment, then backend/.env inside the repo, then the folder's .env
+│       ├── test_day_common.py                                         # token masking, evidence log, re-login, test-driver numbering (also used by ../seed_test_drivers.py)
+│       ├── requirements.txt          .env.example     .gitignore      # pins ocpp / websockets (= backend/uv.lock); settings template; ignores .env, logs/, .venv/
+│       ├── CLAUDE.md                                                  # how to run the tools from a laptop (SSH tunnel to the API, public gateway, test recipes)
+│       └── logs/                                                      # git-ignored: test-day/*.jsonl evidence (tokens masked), simulator-state/<identity>.json saved meters
 │
 ├── docs/                           # see docs/README.md for what each folder is
 │   ├── product/                      # WHAT we build: features/ (catalog), inputs/ (business files)

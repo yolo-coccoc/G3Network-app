@@ -1994,7 +1994,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 
 ### 103. Simulator: network loss with an offline queue, clock drift, vendor messages
 
-- **Short description**: The OCPP 1.6J simulator (`simulator/ocpp16_charge_point_simulator.py`)
+- **Short description**: The OCPP 1.6J simulator (`simulator/charging_test_day/ocpp16_charge_point_simulator.py`)
   models a charger's guns, authorization and charging, but not: (1) a network loss during a
   charge where the charger keeps charging, queues its transaction messages (`MeterValues`,
   `StopTransaction`) and re-sends them after it reconnects, with `TransactionMessageAttempts` /

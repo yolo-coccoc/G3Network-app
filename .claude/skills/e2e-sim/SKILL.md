@@ -17,7 +17,9 @@ make identity-bootstrap   # internal organization + first HEAD_ADMIN
 ```
 
 Every API route needs a login. The seed scripts and the telemetry simulator
-log in as the bootstrap HEAD_ADMIN (`simulator/api_client.py`), so set
+log in as the bootstrap HEAD_ADMIN (`simulator/api_client.py`, which re-exports
+the client of the standalone test-day folder,
+`simulator/charging_test_day/g3_api.py`), so set
 `IDENTITY_BOOTSTRAP_ADMIN_PHONE` and `IDENTITY_BOOTSTRAP_ADMIN_PASSWORD` in
 `backend/.env` (or export them in the shell that runs the bootstrap and the
 scripts) before this step.
@@ -122,7 +124,16 @@ the charging test-day tools drive the same flow over the API:
 invitation code needed), `make driver-app ARGS="scan --driver 1 --charger
 SIM-OCPP16-001"` and `make station-console ARGS="..."` (traffic feed,
 configuration, `force-close` of an orphan); see section 6 of
-`docs/planners/backend-charging-test-day.md`.
+`docs/planners/backend-charging-test-day.md`. The 1.6J simulator, the charger
+seed and those two tools live in `simulator/charging_test_day/` (standalone,
+no backend import; laptop use in its `CLAUDE.md`); their evidence files and
+saved meters go to its git-ignored `logs/` (`test-day/`, `simulator-state/`).
+They read their settings from the shell, then `backend/.env`, then the
+folder's `.env`; `G3_OCPP_URL` / `TEST_DAY_CHARGER_ID` set the simulator's
+default `--url` / `--identity`. `make charging-ocpp16-sim` always passes
+`--identity` and `--url ws://localhost:9000` (an `ARGS="--url ..."` still
+wins), so the folder's laptop settings never send a local run through the
+public IP.
 
 **OCPP 2.0.1 session**:
 ```bash
