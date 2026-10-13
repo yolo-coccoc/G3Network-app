@@ -1,6 +1,6 @@
 """Provision the minimal charging topology for the local OCPP simulators.
 
-Logs in as the bootstrap HEAD_ADMIN (see ``api_client.py``), then creates in
+Logs in as the bootstrap HEAD_ADMIN (see ``g3_api.py``), then creates in
 foreign-key order: a public location (unless ``--location-id`` names one), the
 station, its EVSEs and connectors, and a location tariff so a QR scan can be
 priced (a charger with no tariff in force refuses the scan). The rows belong
@@ -21,7 +21,7 @@ Two layouts are supported:
 Every gun is a 240 kW DC connector, the shape of the Willdigits charger the
 1.6J gateway targets; its plug standard is CCS2 (``IEC_62196_T2_COMBO``, the
 delivered unit, confirmed 2026-10-12) unless ``--connector-standard`` names
-another value of the backend's ``ConnectorStandard`` (e.g. ``GBT_DC``). The tariff price
+another value of ``CONNECTOR_STANDARDS`` (e.g. ``GBT_DC``). The tariff price
 is ``--price-per-kwh`` (default ``DEFAULT_PRICE_PER_KWH``).
 """
 
@@ -29,18 +29,26 @@ import argparse
 from collections.abc import Mapping
 from typing import Any
 
-from api_client import ApiClient, login_as_bootstrap_admin, resolve_api_url
-
-from app.domains.charging_stations.types import ConnectorStandard
+from g3_api import ApiClient, login_as_bootstrap_admin, resolve_api_url
 
 DEFAULT_IDENTITY = "SIM-OCPP-001"
 DEFAULT_DISPLAY_NAME = "Charging Simulator"
 # Price of the location tariff the seed publishes: whole dong per kWh, VAT %.
 DEFAULT_PRICE_PER_KWH = 3500
 DEFAULT_VAT_RATE_PERCENT = "8"
+# The plug standards the backend accepts (its ``ConnectorStandard`` values,
+# OCPI names). Written out so this folder runs without the backend's code;
+# backend/tests/test_charging_test_day_tools_smoke.py fails if they drift apart.
+CONNECTOR_STANDARDS: tuple[str, ...] = (
+    "IEC_62196_T2_COMBO",
+    "GBT_DC",
+    "CHADEMO",
+    "CHAOJI",
+    "IEC_62196_T1_COMBO",
+)
 # The connector every gun gets; ``standard`` is the default of
-# ``--connector-standard``.
-DEFAULT_CONNECTOR_STANDARD = ConnectorStandard.IEC_62196_T2_COMBO.value
+# ``--connector-standard`` (CCS2, the delivered charger).
+DEFAULT_CONNECTOR_STANDARD = "IEC_62196_T2_COMBO"
 CONNECTOR_SPEC = {
     "standard": DEFAULT_CONNECTOR_STANDARD,
     "max_power_kw": 240,
@@ -143,7 +151,7 @@ def provision_evse(
         evse_id: OCPP EVSE ID to create.
         connector_id: OCPP connector ID to create under the new EVSE.
         connector_standard: Plug standard of the connector
-            (``ConnectorStandard`` value).
+            (a ``CONNECTOR_STANDARDS`` value).
 
     Raises:
         RuntimeError: If a request fails or a response lacks the expected ID.
@@ -220,7 +228,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--connector-standard",
-        choices=[standard.value for standard in ConnectorStandard],
+        choices=CONNECTOR_STANDARDS,
         default=DEFAULT_CONNECTOR_STANDARD,
         help=f"Plug standard of every gun (default {DEFAULT_CONNECTOR_STANDARD}).",
     )

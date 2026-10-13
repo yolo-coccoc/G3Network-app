@@ -16,19 +16,18 @@ Used by ``seed_test_drivers.py``, ``driver_app.py`` and ``station_console.py``:
 The default password is a documented **test** value for a local or test
 database, not a secret; set ``CHARGING_TEST_DRIVER_PASSWORD`` (or pass
 ``--password``) to use another one. Standard library only (plus the shared
-``api_client``).
+``g3_api``).
 """
 
 import io
 import json
-import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from api_client import ApiClient, ApiError
+from g3_api import TOOLS_DIR, ApiClient, ApiError, tool_setting
 
 # Driver N's phone is this prefix plus N on two digits: +84999000001 for
 # driver 1. Nine digits after +84, as the backend's normalization requires
@@ -47,9 +46,10 @@ SECRET_KEYS = frozenset(
     {"id_token", "idtag", "idtoken", "parentidtag", "access_token", "refresh_token"}
 )
 
-# Evidence files go under backend/logs/, which backend/.gitignore already
-# ignores (``logs/``), so a test day's evidence is never committed by accident.
-EVIDENCE_DIR = Path(__file__).resolve().parents[1] / "backend" / "logs" / "test-day"
+# Evidence files go under this folder's logs/, which its .gitignore ignores,
+# so a test day's evidence is never committed by accident and travels with a
+# laptop copy of the folder.
+EVIDENCE_DIR = TOOLS_DIR / "logs" / "test-day"
 
 
 def build_test_driver_phone(
@@ -83,7 +83,7 @@ def resolve_test_driver_password(password: str | None) -> str:
     """
     return (
         password
-        or os.environ.get(TEST_DRIVER_PASSWORD_ENV)
+        or tool_setting(TEST_DRIVER_PASSWORD_ENV)
         or TEST_DRIVER_DEFAULT_PASSWORD
     )
 
@@ -169,7 +169,7 @@ class EvidenceLog:
         Args:
             tool: Name of the tool, e.g. ``driver_app``.
             path: File to append to; ``None`` means
-                ``backend/logs/test-day/<tool>-<UTC date>.jsonl``.
+                ``logs/test-day/<tool>-<UTC date>.jsonl`` in this folder.
         """
         self.tool = tool
         self.path = path or EVIDENCE_DIR / (

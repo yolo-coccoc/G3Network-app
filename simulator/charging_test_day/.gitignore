@@ -1,0 +1,5 @@
+# Settings with passwords, evidence, saved meters and a local virtualenv.
+.env
+logs/
+.venv/
+__pycache__/

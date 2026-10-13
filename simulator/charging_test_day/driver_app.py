@@ -23,11 +23,12 @@ Subcommands:
 * ``sessions``: the driver's own sessions (``GET /charging-sessions/mine``).
 
 Every call is appended as a JSON line to the evidence file (default
-``backend/logs/test-day/driver_app-<UTC date>.jsonl``, git-ignored). The QR
-token and the access tokens are masked everywhere (IS-07). An HTTP error
-prints its status and the backend's message and exits 1. Run from
-``backend/`` with its venv: ``uv run python ../simulator/driver_app.py ...``
-(or ``make driver-app ARGS="..."``).
+``logs/test-day/driver_app-<UTC date>.jsonl`` in this folder, git-ignored). The
+QR token and the access tokens are masked everywhere (IS-07). An HTTP error
+prints its status and the backend's message and exits 1. Without ``--charger``
+or ``--qr`` the scan uses the ``TEST_DAY_CHARGER_ID`` setting. Standalone: run
+it with any Python 3.12 from this folder (``python driver_app.py ...``; see
+``CLAUDE.md``), or on the VM with ``make driver-app ARGS="..."``.
 """
 
 import argparse
@@ -37,7 +38,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from api_client import ApiClient, ApiError, login, resolve_api_url
+from g3_api import ApiClient, ApiError, login, resolve_api_url, tool_setting
 from test_day_common import (
     TEST_DRIVER_PASSWORD_ENV,
     TEST_DRIVER_PHONE_PREFIX,
@@ -387,7 +388,12 @@ def command_scan(args: argparse.Namespace) -> None:
         RuntimeError: The backend is unreachable.
     """
     session = open_session(args)
-    scan_request: dict[str, object] = {"charger_code": args.charger or args.qr}
+    charger_code = args.charger or args.qr or tool_setting("TEST_DAY_CHARGER_ID")
+    if not charger_code:
+        raise RuntimeError(
+            "Name the charger with --charger or --qr (or set TEST_DAY_CHARGER_ID)"
+        )
+    scan_request: dict[str, object] = {"charger_code": charger_code}
     if args.gun is not None:
         scan_request["connector_number"] = args.gun
     scan = session.call("scan", "POST", f"{SESSIONS_PATH}/scan", scan_request)
@@ -535,7 +541,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Evidence file (JSON lines); default "
-        "backend/logs/test-day/driver_app-<date>.jsonl.",
+        "logs/test-day/driver_app-<date>.jsonl in this folder.",
     )
     watching = argparse.ArgumentParser(add_help=False)
     watching.add_argument(
@@ -553,7 +559,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan = commands.add_parser(
         "scan", parents=[common, watching], help="Scan a charger and watch the charge."
     )
-    target = scan.add_mutually_exclusive_group(required=True)
+    target = scan.add_mutually_exclusive_group()
     target.add_argument("--charger", help="Charger code: OCPP identity or serial.")
     target.add_argument("--qr", help="Raw QR text, sent unchanged as charger_code.")
     scan.add_argument(

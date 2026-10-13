@@ -160,7 +160,7 @@ identity-bootstrap:
 
 charging-ocpp-seed:
 	@echo "Provisioning station/EVSE/connector for the OCPP simulator..."
-	cd backend && uv run python ../simulator/seed_charging_topology.py
+	cd backend && uv run python ../simulator/charging_test_day/seed_charging_topology.py
 
 charging-ocpp-sim:
 	@echo "Running the OCPP session happy-path simulator..."
@@ -168,11 +168,11 @@ charging-ocpp-sim:
 
 charging-ocpp16-seed:
 	@echo "Provisioning 1.6J station $(IDENTITY) (one EVSE per gun, $(STANDARD), $(PRICE) VND/kWh)..."
-	cd backend && uv run python ../simulator/seed_charging_topology.py --protocol 1.6 --identity "$(IDENTITY)" --display-name "OCPP 1.6J Simulator" --connector-standard "$(STANDARD)" --price-per-kwh "$(PRICE)"
+	cd backend && uv run python ../simulator/charging_test_day/seed_charging_topology.py --protocol 1.6 --identity "$(IDENTITY)" --display-name "OCPP 1.6J Simulator" --connector-standard "$(STANDARD)" --price-per-kwh "$(PRICE)"
 
 charging-ocpp16-sim:
 	@echo "Running the OCPP 1.6J charge-point simulator $(IDENTITY) (scenario: $(SCENARIO))..."
-	cd backend && uv run python ../simulator/ocpp16_charge_point_simulator.py --scenario $(SCENARIO) --identity "$(IDENTITY)" $(ARGS)
+	cd backend && uv run python ../simulator/charging_test_day/ocpp16_charge_point_simulator.py --scenario $(SCENARIO) --identity "$(IDENTITY)" --url ws://localhost:9000 $(ARGS)
 
 # === CHARGING TEST DAY (docs/planners/backend-charging-test-day.md) ===
 
@@ -181,10 +181,10 @@ charging-test-drivers-seed:
 	cd backend && uv run python ../simulator/seed_test_drivers.py $(ARGS)
 
 driver-app:
-	cd backend && uv run python ../simulator/driver_app.py $(ARGS)
+	cd backend && uv run python ../simulator/charging_test_day/driver_app.py $(ARGS)
 
 station-console:
-	cd backend && uv run python ../simulator/station_console.py $(ARGS)
+	cd backend && uv run python ../simulator/charging_test_day/station_console.py $(ARGS)
 
 # === TESTS AND QUALITY ===
 

@@ -21,7 +21,10 @@ wallet already at or above the target is not debited.
 Limits: the internal organization must exist (run ``make identity-bootstrap``
 first), the API must be running for the wallet step, and the tool never
 deletes anything. Run it from ``backend/`` with its venv
-(``uv run python ../simulator/seed_test_drivers.py``).
+(``uv run python ../simulator/seed_test_drivers.py``): unlike the standalone
+tools in ``charging_test_day/``, it needs the backend's code and database. It
+shares their helpers: importing ``api_client`` first puts that folder on the
+import path, which is why ``test_day_common`` resolves.
 """
 
 import argparse

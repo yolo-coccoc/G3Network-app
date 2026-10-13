@@ -865,7 +865,11 @@ async def test_ocpp16_charging_session_end_to_end_on_a_clean_database(
             subprocess.run,
             [
                 sys.executable,
-                str(simulator_dir / "ocpp16_charge_point_simulator.py"),
+                str(
+                    simulator_dir
+                    / "charging_test_day"
+                    / "ocpp16_charge_point_simulator.py"
+                ),
                 "--url",
                 url,
                 "--identity",

@@ -1,0 +1,5 @@
+# The charger simulator's only third-party libraries (driver_app.py,
+# station_console.py and seed_charging_topology.py use the standard library
+# only). Same versions as backend/uv.lock; a backend smoke test checks it.
+ocpp==2.1.0
+websockets==16.1.1

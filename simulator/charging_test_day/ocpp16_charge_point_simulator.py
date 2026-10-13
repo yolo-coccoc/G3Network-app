@@ -74,8 +74,8 @@ the test-day rehearsal (``docs/planners/backend-charging-test-day.md``):
 * ``--resend-stop`` - StopTransaction sent twice (the answer was "lost").
 
 **Meters persist.** Like a real energy register, each gun's meter never goes
-back: its value is saved per charger identity in
-``backend/logs/simulator-state/<identity>.json`` (git-ignored) when the run
+back: its value is saved per charger identity in this folder's
+``logs/simulator-state/<identity>.json`` (git-ignored) when the run
 ends, and the next run continues from it. ``--meter-start`` is only the first
 value of a new charger; ``--fresh-meter`` ignores the saved value.
 
@@ -97,6 +97,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+from g3_api import TOOLS_DIR, tool_setting
 from ocpp.exceptions import OCPPError
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call, call_result
@@ -342,12 +343,11 @@ def default_meter_state_file(identity: str) -> Path:
         identity: The charger's OCPP identity.
 
     Returns:
-        ``backend/logs/simulator-state/<identity>.json`` in this repository
-        (``backend/logs/`` is git-ignored).
+        ``logs/simulator-state/<identity>.json`` in this folder (``logs/`` is
+        git-ignored).
     """
     safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in identity)
-    repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "backend" / "logs" / "simulator-state" / f"{safe_name}.json"
+    return TOOLS_DIR / "logs" / "simulator-state" / f"{safe_name}.json"
 
 
 def load_meters(state_file: Path | None) -> dict[int, int]:
@@ -1557,8 +1557,18 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         Namespace validated by argparse.
     """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--url", default="ws://localhost:9000")
-    parser.add_argument("--identity", default="SIM-OCPP16-001")
+    parser.add_argument(
+        "--url",
+        default=tool_setting("G3_OCPP_URL", default="ws://localhost:9000"),
+        help="gateway WebSocket base URL (default: G3_OCPP_URL, else "
+        "ws://localhost:9000); the charger connects to <url>/ocpp/<identity>",
+    )
+    parser.add_argument(
+        "--identity",
+        default=tool_setting("TEST_DAY_CHARGER_ID", default="SIM-OCPP16-001"),
+        help="the charger's OCPP identity (default: TEST_DAY_CHARGER_ID, else "
+        "SIM-OCPP16-001)",
+    )
     parser.add_argument("--connectors", type=int, default=2)
     parser.add_argument("--scenario", choices=SCENARIOS, default="boot")
     parser.add_argument("--firmware", default="OCPP_L4.05_SIM")
@@ -1586,7 +1596,7 @@ def _parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="where the meters are kept (default: "
-        "backend/logs/simulator-state/<identity>.json)",
+        "logs/simulator-state/<identity>.json in this folder)",
     )
     parser.add_argument(
         "--meter-stop",

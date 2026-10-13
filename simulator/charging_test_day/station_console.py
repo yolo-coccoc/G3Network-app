@@ -2,9 +2,11 @@
 
 Decision D8 of ``docs/planners/backend-charging-test-day.md``: everything goes
 through the HTTP API (``/api/v1``), logged in as the bootstrap HEAD_ADMIN
-(``IDENTITY_BOOTSTRAP_ADMIN_*`` in ``backend/.env``). The charger is named by
+(``G3_ADMIN_PHONE`` / ``G3_ADMIN_PASSWORD``, or the backend's
+``IDENTITY_BOOTSTRAP_ADMIN_*``; see ``g3_api.py``). The charger is named by
 ``--charger <OCPP identity>`` (resolved through ``GET /charging-stations?q=``,
-exact identity first, then the registered serial) or by ``--station-id``.
+exact identity first, then the registered serial) or by ``--station-id``;
+without either, the ``TEST_DAY_CHARGER_ID`` setting is used.
 
 Subcommands:
 
@@ -31,10 +33,12 @@ Subcommands:
   ``station_id`` filter, server side).
 
 Every call is appended to the evidence file (default
-``backend/logs/test-day/station_console-<UTC date>.jsonl``, git-ignored;
+``logs/test-day/station_console-<UTC date>.jsonl`` in this folder, git-ignored;
 message-feed bodies are not copied there, the backend already stores them).
-An HTTP error prints its status and the backend's message and exits 1. Run
-from ``backend/`` with its venv (or ``make station-console ARGS="..."``).
+An HTTP error prints its status and the backend's message and exits 1.
+Standalone: run it with any Python 3.12 from this folder (``python
+station_console.py ...``; see ``CLAUDE.md``), or on the VM with
+``make station-console ARGS="..."``.
 """
 
 import argparse
@@ -45,7 +49,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
-from api_client import ApiClient, ApiError, login_as_bootstrap_admin, resolve_api_url
+from g3_api import (
+    ApiClient,
+    ApiError,
+    login_as_bootstrap_admin,
+    resolve_api_url,
+    tool_setting,
+)
 from test_day_common import (
     EvidenceLog,
     ToolSession,
@@ -141,16 +151,20 @@ def resolve_station(session: ToolSession, args: argparse.Namespace) -> StationTa
     """
     if args.station_id:
         return StationTarget(args.station_id, args.station_id)
-    if not args.charger:
-        raise RuntimeError("Name the charger with --charger or --station-id")
-    query = urlencode({"q": args.charger, "page_size": MAX_PAGE_SIZE})
+    charger = args.charger or tool_setting("TEST_DAY_CHARGER_ID")
+    if not charger:
+        raise RuntimeError(
+            "Name the charger with --charger or --station-id "
+            "(or set TEST_DAY_CHARGER_ID)"
+        )
+    query = urlencode({"q": charger, "page_size": MAX_PAGE_SIZE})
     page = session.call("resolve_station", "GET", f"{STATIONS_PATH}?{query}")
     items = page.get("items", [])
     for field_name in ("ocpp_identity", "registered_serial_number"):
         for item in items:
-            if item.get(field_name) == args.charger:
+            if item.get(field_name) == charger:
                 return StationTarget(str(item["station_id"]), item["ocpp_identity"])
-    raise RuntimeError(f"No active charging station has the code {args.charger!r}")
+    raise RuntimeError(f"No active charging station has the code {charger!r}")
 
 
 def yes_no(value: object) -> str:
@@ -682,10 +696,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Evidence file (JSON lines); default "
-        "backend/logs/test-day/station_console-<date>.jsonl.",
+        "logs/test-day/station_console-<date>.jsonl in this folder.",
     )
     station = argparse.ArgumentParser(add_help=False)
-    target = station.add_mutually_exclusive_group(required=True)
+    target = station.add_mutually_exclusive_group()
     target.add_argument("--charger", help="OCPP identity (or registered serial).")
     target.add_argument("--station-id", help="Internal station ID.")
 
