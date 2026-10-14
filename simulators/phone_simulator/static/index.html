@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Simulator</title>
+<style>
+  :root {
+    --bg: #e9ecf1; --phone: #ffffff; --text: #1d2330; --muted: #5f6b7a; --line: #e1e5eb;
+    --accent: #0a7c5c; --accent-soft: #e3f4ee; --bad: #cf222e; --bad-bg: #ffebe9;
+    --warn: #9a6700; --warn-bg: #fff8c5; --card: #f6f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e13; --phone: #161b22; --text: #e6edf3; --muted: #8b949e; --line: #30363d;
+      --accent: #2fbf8f; --accent-soft: #10291f; --bad: #f85149; --bad-bg: #2d1416;
+      --warn: #d29922; --warn-bg: #272115; --card: #0d1117;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; justify-content: center; padding: 24px 16px;
+  }
+  .phone {
+    width: 100%; max-width: 400px; min-height: 760px; background: var(--phone);
+    border: 1px solid var(--line); border-radius: 28px; overflow: hidden;
+    display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0, 0, 0, .12);
+  }
+  .bar { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+  .bar b { font-size: 17px; }
+  .screen { flex: 1; padding: 18px 20px; overflow-y: auto; }
+  .nav { display: flex; border-top: 1px solid var(--line); }
+  .nav button { flex: 1; border: 0; background: none; color: var(--muted); padding: 12px; font: inherit; cursor: pointer; }
+  .nav button.active { color: var(--accent); font-weight: 700; }
+  h2 { font-size: 20px; margin: 4px 0 14px; }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+  .big { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .huge { font-size: 54px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  button.main {
+    width: 100%; border: 0; border-radius: 14px; padding: 14px; font: inherit; font-size: 16px;
+    font-weight: 700; cursor: pointer; background: var(--accent); color: #fff; margin: 6px 0;
+  }
+  button.main.secondary { background: var(--accent-soft); color: var(--accent); }
+  button.main.danger { background: var(--bad); }
+  button.main:disabled { opacity: .5; cursor: wait; }
+  button.chip { border: 1px solid var(--line); background: var(--phone); color: var(--text); border-radius: 999px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button.chip.selected { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 10px 0 4px; }
+  input {
+    width: 100%; font: inherit; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--phone); color: var(--text);
+  }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row span:last-child { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .tile .label { font-size: 12px; color: var(--muted); }
+  .tile .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .message { border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; display: none; }
+  .message.error { display: block; background: var(--bad-bg); color: var(--bad); }
+  .message.info { display: block; background: var(--accent-soft); color: var(--accent); }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .pill.ok { background: var(--accent-soft); color: var(--accent); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn); }
+  .pill.bad { background: var(--bad-bg); color: var(--bad); }
+  .history-item { padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .history-item:last-child { border-bottom: 0; }
+  .soc { height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; margin: 8px 0 16px; }
+  .soc > div { height: 100%; background: var(--accent); width: 0; transition: width .6s; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="bar"><b>G3 Charge</b><span class="muted" id="who"></span></div>
+  <div class="screen">
+    <div id="message" class="message"></div>
+    <div id="view"></div>
+  </div>
+  <div class="nav" id="nav" style="display:none">
+    <button data-go="home">Home</button>
+    <button data-go="wallet">Wallet</button>
+    <button data-go="logout">Log out</button>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (text) => String(text ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const vnd = (amount) => amount == null ? "-" : `${Number(amount).toLocaleString("vi-VN")} ₫`;
+  const dateTime = (iso) => iso ? new Date(iso).toLocaleString([], {hour12: false}) : "-";
+  const minutes = (seconds) => seconds == null ? "-" : `${Math.floor(seconds / 60)} min ${String(Math.round(seconds % 60)).padStart(2, "0")} s`;
+  const STATUS_CLASS = {PENDING: "warn", ACTIVE: "ok", COMPLETED: "ok", ABANDONED: "bad"};
+  const STOP_REASONS = {Remote: "stopped in the app", Local: "stopped at the charger", EVDisconnected: "gun unplugged", StaffClosed: "closed by staff"};
+
+  let app = {state: null, timer: null, session: null};
+
+  async function call(method, path, body) {
+    const options = {method, cache: "no-store"};
+    if (method === "POST") {
+      options.headers = {"Content-Type": "application/json"};
+      options.body = JSON.stringify(body || {});
+    }
+    const response = await fetch(path, options);
+    const answer = await response.json().catch(() => ({error: response.statusText}));
+    if (response.status === 401 && path !== "/api/login") { show("login"); throw new Error(answer.error || "log in again"); }
+    if (!response.ok) throw new Error(answer.error || response.statusText);
+    return answer;
+  }
+
+  function message(text, kind = "error") {
+    const box = $("message");
+    box.className = text ? `message ${kind}` : "message";
+    box.textContent = text || "";
+  }
+
+  // The last charger code typed, remembered on this browser only.
+  function lastCode() { try { return localStorage.getItem("phone.lastCode") || ""; } catch (e) { return ""; } }
+
+  function stopTimer() { if (app.timer) { clearInterval(app.timer); app.timer = null; } }
+  function every(ms, fn) { stopTimer(); fn(); app.timer = setInterval(fn, ms); }
+
+  // --- screens -----------------------------------------------------------------
+  const screens = {
+    login() {
+      $("nav").style.display = "none"; $("who").textContent = "";
+      $("view").innerHTML = `
+        <h2>Log in</h2>
+        <p class="muted">Drivers log in with their phone number and password.</p>
+        <label for="phone">Phone number</label><input id="phone" inputmode="tel" value="${esc(app.state?.prefill_phone)}">
+        <label for="password">Password</label><input id="password" type="password" value="${esc(app.state?.prefill_password)}">
+        <button class="main" id="login" style="margin-top:16px">Log in</button>`;
+      $("login").onclick = async () => {
+        try {
+          const profile = await call("POST", "/api/login", {phone: $("phone").value, password: $("password").value});
+          app.state.profile = profile; message(""); show("home");
+        } catch (error) { message(error.message); }
+      };
+    },
+
+    async home() {
+      $("view").innerHTML = '<p class="muted">Loading…</p>';
+      try {
+        const home = await call("GET", "/api/home");
+        const w = home.wallet, open = home.open_charge;
+        $("view").innerHTML = `
+          <h2>Hello, ${esc(app.state.profile?.full_name || "driver")}</h2>
+          <div class="card">
+            <div class="muted">Wallet balance</div>
+            <div class="big">${vnd(w.balance)}</div>
+            <div class="muted">${w.status === "ACTIVE" ? `Minimum to charge: ${vnd(w.minimum_balance_to_charge)}` : `Wallet ${esc(w.status)}`}</div>
+          </div>
+          ${open ? `<div class="card"><span class="pill ${STATUS_CLASS[open.status]}">${esc(open.status)}</span>
+             A charge is ${open.status === "PENDING" ? "waiting to start" : "running"}.
+             <button class="main secondary" id="open">Open it</button></div>` : ""}
+          <button class="main" id="scan">Scan QR to charge</button>
+          <h2 style="margin-top:22px;font-size:17px">Recent charges</h2>
+          <div>${home.recent.length ? home.recent.map((s) => `
+            <div class="history-item" data-id="${s.session_id}" data-status="${s.status}">
+              <span class="pill ${STATUS_CLASS[s.status] || "warn"}">${esc(s.status)}</span>
+              ${dateTime(s.started_at || s.created_at)}
+              <div class="muted">${s.energy_delivered_wh != null ? `${(s.energy_delivered_wh / 1000).toFixed(2)} kWh` : ""} ${s.stop_reason ? "· " + esc(STOP_REASONS[s.stop_reason] || s.stop_reason) : ""}</div>
+            </div>`).join("") : '<p class="muted">No charge yet.</p>'}</div>`;
+        $("scan").onclick = () => show("scan");
+        if (open) $("open").onclick = () => { app.session = {session_id: open.session_id}; show(open.status === "PENDING" ? "waiting" : "charging"); };
+        document.querySelectorAll(".history-item").forEach((item) => item.onclick = () => {
+          app.session = {session_id: item.dataset.id};
+          show(item.dataset.status === "COMPLETED" ? "receipt" : item.dataset.status === "ACTIVE" ? "charging" : "home");
+        });
+      } catch (error) { message(error.message); $("view").innerHTML = ""; }
+    },
+
+    scan() {
+      let gun = null;
+      $("view").innerHTML = `
+        <h2>Scan QR code</h2>
+        <p class="muted">The camera is simulated: type or paste what the charger's QR code holds (its charger code), then choose the gun.</p>
+        <label for="code">QR code content</label><input id="code" placeholder="e.g. SIM-OCPP16-001" value="${esc(lastCode())}">
+        <label>Gun</label>
+        <div style="display:flex;gap:8px" id="guns">
+          <button class="chip selected" data-gun="">Any</button><button class="chip" data-gun="1">Gun 1</button><button class="chip" data-gun="2">Gun 2</button>
+        </div>
+        <button class="main" id="start" style="margin-top:18px">Start charging</button>
+        <button class="main secondary" id="back">Back</button>`;
+      document.querySelectorAll("#guns .chip").forEach((chip) => chip.onclick = () => {
+        document.querySelectorAll("#guns .chip").forEach((c) => c.classList.remove("selected"));
+        chip.classList.add("selected"); gun = chip.dataset.gun ? Number(chip.dataset.gun) : null;
+      });
+      $("back").onclick = () => show("home");
+      $("start").onclick = async () => {
+        $("start").disabled = true;
+        try {
+          try { localStorage.setItem("phone.lastCode", $("code").value.trim()); } catch (e) { /* storage blocked */ }
+          app.session = await call("POST", "/api/scan", {charger_code: $("code").value, gun});
+          message(""); show("waiting");
+        } catch (error) { message(error.message); $("start").disabled = false; }
+      };
+    },
+
+    waiting() {
+      const s = app.session;
+      $("view").innerHTML = `
+        <h2>Starting your charge</h2>
+        <div class="card">
+          <p style="margin-top:0">The charger has been asked to start. <b>Plug the gun into your car</b> if it is not yet.</p>
+          <div class="muted" id="countdown"></div>
+        </div>
+        ${s.quote?.price_per_kwh != null ? `<div class="card"><div class="row"><span>Price</span><span>${vnd(s.quote.price_per_kwh)} / kWh + ${s.quote.vat_rate_percent} % VAT</span></div></div>` : ""}
+        <button class="main secondary" id="cancel">Cancel</button>`;
+      $("cancel").onclick = async () => {
+        try { await call("POST", `/api/charges/${s.session_id}/stop`); } catch (error) { message(error.message); }
+      };
+      every(2000, async () => {
+        if (s.expires_at) {
+          const left = Math.max(0, Math.round((new Date(s.expires_at) - Date.now()) / 1000));
+          $("countdown").textContent = `This request expires in ${minutes(left)}.`;
+        }
+        try {
+          const charge = await call("GET", `/api/charges/${s.session_id}`);
+          if (charge.status === "ACTIVE") show("charging");
+          else if (charge.status === "ABANDONED") {
+            stopTimer(); message("The charge did not start: the gun was not plugged in in time, or the request was cancelled. Nothing was charged.");
+            show("home");
+          }
+        } catch (error) { message(error.message); }
+      });
+    },
+
+    charging() {
+      const s = app.session;
+      $("view").innerHTML = `
+        <h2>Charging</h2>
+        <div class="muted">Battery</div>
+        <div class="huge" id="soc">-</div>
+        <div class="soc"><div id="socbar"></div></div>
+        <div class="grid">
+          <div class="tile"><div class="label">Energy</div><div class="value" id="energy">-</div></div>
+          <div class="tile"><div class="label">Power</div><div class="value" id="power">-</div></div>
+          <div class="tile"><div class="label">Time</div><div class="value" id="elapsed">-</div></div>
+          <div class="tile"><div class="label">Cost so far</div><div class="value" id="cost">-</div></div>
+        </div>
+        <p class="muted" id="reading" style="margin-bottom:0">Waiting for the charger's first reading…</p>
+        <button class="main danger" id="stop" style="margin-top:18px">Stop charging</button>`;
+      $("stop").onclick = async () => {
+        $("stop").disabled = true;
+        try { await call("POST", `/api/charges/${s.session_id}/stop`); message("Stopping… the charger confirms in a moment.", "info"); }
+        catch (error) { message(error.message); $("stop").disabled = false; }
+      };
+      every(3000, async () => {
+        try {
+          const c = await call("GET", `/api/charges/${s.session_id}`);
+          $("soc").textContent = c.soc != null ? `${Math.round(c.soc)} %` : "-";
+          $("socbar").style.width = c.soc != null ? `${c.soc}%` : "0";
+          $("energy").textContent = c.energy_kwh != null ? `${c.energy_kwh.toFixed(2)} kWh` : "-";
+          $("power").textContent = c.power_kw != null ? `${c.power_kw.toFixed(0)} kW` : "-";
+          $("elapsed").textContent = c.started_at ? minutes((Date.now() - new Date(c.started_at)) / 1000) : "-";
+          $("cost").textContent = vnd(c.estimated_cost);
+          if (c.reading_at) $("reading").textContent = `Last reading from the charger: ${new Date(c.reading_at).toLocaleTimeString([], {hour12: false})}`;
+          if (c.status === "COMPLETED") { message(""); show("receipt"); }
+        } catch (error) { message(error.message); }
+      });
+    },
+
+    receipt() {
+      const s = app.session;
+      $("view").innerHTML = '<h2>Receipt</h2><div id="receipt" class="muted">Loading…</div><button class="main" id="done">Done</button>';
+      $("done").onclick = () => show("home");
+      let tries = 0;
+      every(2000, async () => {
+        try {
+          const r = await call("GET", `/api/charges/${s.session_id}/receipt`);
+          $("receipt").className = "";
+          $("receipt").innerHTML = `
+            <div class="card">
+              <div class="big">${vnd(r.total_amount)}</div>
+              <div class="muted">${r.bill_status === "BILLED" ? "Paid from your wallet" : `Bill ${esc(r.bill_status || "being prepared")}`}</div>
+            </div>
+            <div class="card">
+              <div class="row"><span>Place</span><span>${esc(r.location_name || "-")}</span></div>
+              <div class="row"><span>${r.charger_reference ? "Charger · gun" : "Gun"}</span><span>${r.charger_reference ? esc(r.charger_reference) + " · " : ""}${r.gun_number ?? "-"}</span></div>
+              <div class="row"><span>Started</span><span>${dateTime(r.started_at)}</span></div>
+              <div class="row"><span>Ended</span><span>${dateTime(r.ended_at)}</span></div>
+              <div class="row"><span>Duration</span><span>${minutes(r.duration_seconds)}</span></div>
+              <div class="row"><span>Energy</span><span>${r.energy_delivered_wh != null ? (r.energy_delivered_wh / 1000).toFixed(3) + " kWh" : "-"}</span></div>
+              <div class="row"><span>How it ended</span><span>${esc(STOP_REASONS[r.stop_reason] || r.stop_reason || "-")}</span></div>
+            </div>
+            <div class="card">
+              <div class="row"><span>Price</span><span>${vnd(r.price_per_kwh)} / kWh</span></div>
+              <div class="row"><span>Before VAT</span><span>${vnd(r.amount_before_vat)}</span></div>
+              <div class="row"><span>VAT ${r.vat_rate_percent ?? ""} %</span><span>${vnd(r.vat_amount)}</span></div>
+              <div class="row"><span>Total</span><span>${vnd(r.total_amount)}</span></div>
+            </div>`;
+          if (r.bill_status === "BILLED" || ++tries > 15) stopTimer();
+        } catch (error) { message(error.message); stopTimer(); }
+      });
+    },
+
+    async wallet() {
+      $("view").innerHTML = '<p class="muted">Loading…</p>';
+      try {
+        const data = await call("GET", "/api/wallet");
+        $("view").innerHTML = `
+          <h2>Wallet</h2>
+          <div class="card"><div class="muted">Balance</div><div class="big">${vnd(data.wallet.balance)}</div></div>
+          <div class="card">
+            <b>Top up</b>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+              ${[100000, 200000, 500000].map((a) => `<button class="chip" data-amount="${a}">${vnd(a)}</button>`).join("")}
+            </div>
+            <input id="amount" type="number" min="1000" step="1000" value="200000">
+            <button class="main" id="topup">Get VietQR code</button>
+            <div id="qr"></div>
+          </div>
+          <h2 style="font-size:17px">Statement</h2>
+          <div class="card">${data.statement.length ? data.statement.map((t) => `
+            <div class="row"><span>${esc(t.transaction_type)}<br><span class="muted">${dateTime(t.occurred_at)}</span></span>
+            <span>${t.amount > 0 ? "+" : ""}${vnd(t.amount)}<br><span class="muted">${vnd(t.balance_after)}</span></span></div>`).join("") : '<p class="muted">No movement yet.</p>'}</div>`;
+        document.querySelectorAll("[data-amount]").forEach((chip) => chip.onclick = () => { $("amount").value = chip.dataset.amount; });
+        $("topup").onclick = async () => {
+          try {
+            const payment = await call("POST", "/api/wallet/top-up", {amount: Number($("amount").value)});
+            $("qr").innerHTML = `
+              <p>Transfer <b>${vnd(payment.amount)}</b> to ${esc(payment.account_name)} (${esc(payment.account_number)}) with the content <b>${esc(payment.transfer_code)}</b>, or scan this VietQR in your bank app:</p>
+              <pre>${esc(payment.vietqr_payload)}</pre>
+              ${app.state.bank_enabled ? '<button class="main secondary" id="bankpay">Pay with bank app (simulated)</button>'
+                : '<p class="muted">The simulated bank is not set up (PHONE_BANK_ADMIN_* in .env).</p>'}`;
+            if (app.state.bank_enabled) $("bankpay").onclick = async () => {
+              try { await call("POST", "/api/wallet/bank-pay", {transfer_code: payment.transfer_code}); message("Payment received.", "info"); show("wallet"); }
+              catch (error) { message(error.message); }
+            };
+          } catch (error) { message(error.message); }
+        };
+      } catch (error) { message(error.message); $("view").innerHTML = ""; }
+    },
+
+    async logout() {
+      try { await call("POST", "/api/logout"); } catch (error) { /* logged out anyway */ }
+      app.state.profile = null; show("login");
+    },
+  };
+
+  function show(name) {
+    stopTimer();
+    if (name !== "login" && app.state?.profile) {
+      $("nav").style.display = "flex";
+      $("who").textContent = app.state.profile.phone_number || "";
+      document.querySelectorAll(".nav button").forEach((b) => b.classList.toggle("active", b.dataset.go === name));
+    }
+    screens[name]();
+  }
+
+  document.querySelectorAll(".nav button").forEach((b) => b.onclick = () => { message(""); show(b.dataset.go); });
+
+  (async () => {
+    try { app.state = await call("GET", "/api/state"); }
+    catch (error) { message(`The phone simulator cannot start: ${error.message}`); return; }
+    show(app.state.logged_in ? "home" : "login");
+  })();
+</script>
+</body>
+</html>
