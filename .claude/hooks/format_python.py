@@ -1,7 +1,7 @@
 """PostToolUse hook: ruff-format a Python file right after Claude edits it.
 
-Reads the hook payload (JSON) from stdin. Only files under ``backend/`` or
-``simulator/`` are touched, with the same commands as ``make format`` (sort
+Reads the hook payload (JSON) from stdin. Only files under ``backend/`` are
+touched, with the same commands as ``make format`` (sort
 imports, then format). Unused imports are deliberately NOT removed here: an
 agent often adds an import in one edit and its first use in the next.
 The hook never fails the tool call; a ruff problem surfaces in ``make check``.
@@ -27,7 +27,7 @@ def main() -> None:
         relative = path.resolve().relative_to(project_dir.resolve())
     except ValueError:
         return
-    if relative.parts[0] not in ("backend", "simulator"):
+    if relative.parts[0] != "backend":
         return
     backend_dir = project_dir / "backend"
     for ruff_args in (["check", "--select", "I", "--fix", "-q"], ["format", "-q"]):

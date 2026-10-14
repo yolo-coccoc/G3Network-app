@@ -1,4 +1,4 @@
-"""PostgreSQL tests of the charging test-day fixes (CO-16, CO-17, CE-28, CE-29).
+"""PostgreSQL tests of the real-firmware and orphan-session fixes (CO-16, CO-17, CE-28, CE-29).
 
 They drive the OCPP 1.6J adapter's handlers directly (no WebSocket) against a
 real database, so the session lookups, the row locks, the session-ended
@@ -92,7 +92,7 @@ async def _provision_priced_online_charger(
             TariffVersionPublishRequest(
                 price_per_kwh=4000,
                 vat_rate_percent=Decimal(10),
-                change_reason="Test-day price",
+                change_reason="Test price",
             ),
             principal=admin,
             db_session=db,

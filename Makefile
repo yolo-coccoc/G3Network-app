@@ -2,20 +2,9 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev charging-ocpp-seed charging-ocpp-sim charging-ocpp16-seed charging-ocpp16-sim charging-test-drivers-seed driver-app station-console telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
-
-# Scenario for `make charging-ocpp16-sim`: boot | status | session | charger.
-SCENARIO ?= boot
-# OCPP identity, plug standard and tariff price (dong/kWh before VAT) of
-# `make charging-ocpp16-seed`; IDENTITY is also the identity of
-# `make charging-ocpp16-sim`.
-IDENTITY ?= SIM-OCPP16-001
-STANDARD ?= IEC_62196_T2_COMBO
-PRICE ?= 3500
-# Arguments of the test-day tools: `make driver-app ARGS="scan --driver 1 --charger X"`.
-ARGS ?=
 
 # Default: show help
 help:
@@ -39,17 +28,6 @@ help:
 	@echo "  make telematics-status-dev  - Run T-Box status-report ingestion (MQTT consumer + worker)"
 	@echo "  make driving-sessions-autoend-dev - Run the driving-session auto-end worker"
 	@echo "  make identity-bootstrap - Create the internal organization and first HEAD_ADMIN"
-	@echo ""
-	@echo "Simulators (need the API / gateway running):"
-	@echo "  make charging-ocpp-seed  - Provision a station/EVSE/connector for the 2.0.1 simulator"
-	@echo "  make charging-ocpp-sim   - Run one OCPP 2.0.1 happy-path charging session"
-	@echo "  make charging-ocpp16-seed [IDENTITY=..] [STANDARD=IEC_62196_T2_COMBO] [PRICE=3500] - Provision an OCPP 1.6J station (one EVSE per gun)"
-	@echo "  make charging-ocpp16-sim [SCENARIO=boot|status|session] [IDENTITY=..] [ARGS=\"--end remote --sample-interval 5\"] (SCENARIO=charger: typed commands) - Run the OCPP 1.6J charge point (default: boot)"
-	@echo ""
-	@echo "Charging test day (need the API running; see docs/planners/backend-charging-test-day.md):"
-	@echo "  make charging-test-drivers-seed [ARGS=\"--count 2\"] - Create test drivers (DRIVER role) with a credited wallet"
-	@echo "  make driver-app ARGS=\"scan --driver 1 --charger SIM-OCPP16-001\" - Driver app stand-in: scan | watch | stop | sessions"
-	@echo "  make station-console ARGS=\"messages --follow --charger SIM-OCPP16-001\" - Operator console: status | messages | config | set | commands | force-close | sessions"
 	@echo ""
 	@echo "Tests and quality:"
 	@echo "  make backend-test    - Run the smoke tests"
@@ -156,36 +134,6 @@ identity-bootstrap:
 	@echo "Creating the internal organization and the first HEAD_ADMIN (IDENTITY_BOOTSTRAP_* in backend/.env)..."
 	cd backend && uv run python -m app.domains.identity.bootstrap
 
-# === SIMULATORS ===
-
-charging-ocpp-seed:
-	@echo "Provisioning station/EVSE/connector for the OCPP simulator..."
-	cd backend && uv run python ../simulator/charging_test_day/seed_charging_topology.py
-
-charging-ocpp-sim:
-	@echo "Running the OCPP session happy-path simulator..."
-	cd backend && uv run python ../simulator/charging_session_simulator.py
-
-charging-ocpp16-seed:
-	@echo "Provisioning 1.6J station $(IDENTITY) (one EVSE per gun, $(STANDARD), $(PRICE) VND/kWh)..."
-	cd backend && uv run python ../simulator/charging_test_day/seed_charging_topology.py --protocol 1.6 --identity "$(IDENTITY)" --display-name "OCPP 1.6J Simulator" --connector-standard "$(STANDARD)" --price-per-kwh "$(PRICE)"
-
-charging-ocpp16-sim:
-	@echo "Running the OCPP 1.6J charge-point simulator $(IDENTITY) (scenario: $(SCENARIO))..."
-	cd backend && uv run python ../simulator/charging_test_day/ocpp16_charge_point_simulator.py --scenario $(SCENARIO) --identity "$(IDENTITY)" --url ws://localhost:9000 $(ARGS)
-
-# === CHARGING TEST DAY (docs/planners/backend-charging-test-day.md) ===
-
-charging-test-drivers-seed:
-	@echo "Creating the charging test drivers and crediting their wallets..."
-	cd backend && uv run python ../simulator/seed_test_drivers.py $(ARGS)
-
-driver-app:
-	cd backend && uv run python ../simulator/charging_test_day/driver_app.py $(ARGS)
-
-station-console:
-	cd backend && uv run python ../simulator/charging_test_day/station_console.py $(ARGS)
-
 # === TESTS AND QUALITY ===
 
 backend-test:
@@ -203,12 +151,12 @@ coverage:
 
 # Ruff is the only formatter: "--select I --fix" sorts imports, "format" lays out code.
 format:
-	cd backend && uv run ruff check --select I --fix . ../simulator
-	cd backend && uv run ruff format . ../simulator
+	cd backend && uv run ruff check --select I --fix .
+	cd backend && uv run ruff format .
 
 lint:
-	cd backend && uv run ruff check . ../simulator
-	cd backend && uv run ruff format --check . ../simulator
+	cd backend && uv run ruff check .
+	cd backend && uv run ruff format --check .
 	cd backend && uv run lint-imports
 	cd backend && uv run mypy app tests
 
