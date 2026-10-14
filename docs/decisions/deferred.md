@@ -18,7 +18,7 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [deferred-resolved.md](./deferred-resolved.md) (currently
-items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference like
+items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97 and 103), so a reference like
 "`deferred.md` item 10" can be found there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
@@ -47,7 +47,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Reason for deferral**: The MVP focuses on proving the basic flow works, assuming an ideal network. QoS 0 is enough to test the end-to-end flow. Retry and duplicate detection will be added during production rollout.
 - **Related planner/feature**: `backend-telemetry-ingestion.md` (F-A1, F-A5)
 - **Date recorded**: 2026-07-25
-- **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput. When this is revisited, reconsider it together with transport-level security (TLS/mTLS on the MQTT connection, item 36) rather than in isolation — raising QoS alone doesn't improve delivery guarantees without also changing the publisher (currently hardcoded to QoS 0 in `simulator/telematic_simulator.py`) and doesn't address message authenticity/integrity, which is a separate concern from delivery reliability.
+- **Additional notes**: Need to weigh the trade-off between reliability and performance. QoS 1+ will increase latency and reduce throughput. When this is revisited, reconsider it together with transport-level security (TLS/mTLS on the MQTT connection, item 36) rather than in isolation — raising QoS alone doesn't improve delivery guarantees without also changing the publisher (the only one was `simulator/telematic_simulator.py`, hardcoded to QoS 0 and removed on 2026-10-14, TT-23) and doesn't address message authenticity/integrity, which is a separate concern from delivery reliability.
 
 ---
 
@@ -578,6 +578,10 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
     transaction ID should become configuration/CLI arguments with validation.
     When implementing this, keep the simulator deterministic when replay is
     needed and avoid logging sensitive information.
+- **Update 2026-10-14 (TT-23 in `docs/decisions/decision-log.md`)**: the simulator parts
+  (error handling and configuration of `telematic_simulator.py` and `seed_simulator_devices.py`)
+  no longer apply: the whole `simulator/` folder was removed. The backend parts (the telematics
+  list N+1 and the `error_codes` contract) stay deferred here.
 
 ### 31. Operational error handling and observability for the OCPP gateway
 
@@ -1962,7 +1966,7 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
   ON_HOLD). A schema change for one test-day tool was not worth it before the orphan policy
   (D14 of the 1.6J planner, CE-05, item 27) decides how often sessions get closed this way.
 - **Related planner/feature**: CHG-02 (`docs/product/features/features.yaml`), CE-24, CE-29
-  (`docs/decisions/decision-log.md`), `docs/planners/backend-charging-test-day.md` D5, D6.
+  (`docs/decisions/decision-log.md`), charging test-day planner D5, D6 (deleted 2026-10-14, TT-23).
 - **Date recorded**: 2026-10-12
 - **Additional notes**: Design it together with the orphan policy: an automatic close needs the same
   "closed by whom (the system), why" fields.
@@ -1991,30 +1995,6 @@ items 9, 10, 12, 14, 18, 24, 35, 47, 49, 54, 63, 80 and 82-85), so a reference l
 - **Additional notes**: (1)-(3) are new `StationCommandType` members and adapter senders in the
   existing command loop, plus their tables when a feature needs them; (4) can be a command type
   the gateway handles itself without an OCPP call.
-
-### 103. Simulator: network loss with an offline queue, clock drift, vendor messages
-
-- **Short description**: The OCPP 1.6J simulator (`simulator/charging_test_day/ocpp16_charge_point_simulator.py`)
-  models a charger's guns, authorization and charging, but not: (1) a network loss during a
-  charge where the charger keeps charging, queues its transaction messages (`MeterValues`,
-  `StopTransaction`) and re-sends them after it reconnects, with `TransactionMessageAttempts` /
-  `TransactionMessageRetryInterval`; (2) a clock that drifts or starts at a wrong date until the
-  first `BootNotification` / `Heartbeat` answer sets it; (3) vendor messages the gateway does not
-  handle (`DataTransfer`, `FirmwareStatusNotification`, `DiagnosticsStatusNotification`) and other
-  timestamp shapes than the naive one.
-- **Purpose/role in the system**: Rehearse the reliability path (deferred item 27: back-fill,
-  out-of-order, orphan handling) and the gateway's answers to unknown messages before a real
-  charger shows them.
-- **Reason for deferral**: Owner decision 2026-10-12 (points 6 and 7 of the simulator review):
-  what the Willdigits firmware really does offline, how its clock behaves and which vendor
-  messages it sends are unknown until the test day's raw logs; simulating guesses would test the
-  wrong behaviour.
-- **Related planner/feature**: `docs/planners/backend-charging-test-day.md` (Step 5),
-  `docs/planners/backend-ocpp16-charger-integration.md` Step 10, deferred items 27 and 81,
-  STN-03, CHG-02 (`docs/product/features/features.yaml`).
-- **Date recorded**: 2026-10-12
-- **Additional notes**: Build each part from the raw-log evidence of the test day: the
-  re-send order and timing, the clock at boot, and the exact vendor payloads.
 
 ---
 

@@ -1,7 +1,7 @@
 # G3Network Backend
 
 FastAPI backend for the electric truck driver support and fleet management
-MVP. First-time setup, the daily `make` targets, the simulators and the full
+MVP. First-time setup, the daily `make` targets and the full
 feature scope are in the [root README](../README.md); `make help` lists every
 command.
 
@@ -39,10 +39,6 @@ uv run python -m app.domains.telematics.ingestion.entrypoint
 
 # Device-health monitor (make telematics-monitor-dev)
 uv run python -m app.domains.telematics.monitoring.entrypoint
-
-# Simulators live in ../simulator; run them from here so they use this venv
-uv run python ../simulator/charging_test_day/seed_charging_topology.py
-uv run python ../simulator/charging_session_simulator.py
 ```
 
 The OCPP gateway listens on `CHARGING_OCPP_HOST`:`CHARGING_OCPP_PORT`

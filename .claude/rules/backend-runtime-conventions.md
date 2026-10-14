@@ -89,7 +89,7 @@
 ## Time convention
 
 - The entire backend and database use UTC, timezone-aware.
-- "Now" comes from `app.libs.common.clock.utc_now()` — the single source of the current time in `app/` (ORM column defaults, services, repositories, workers). Never use `datetime.utcnow()`, and don't call `datetime.now(timezone.utc)` directly in app code. Tests and the standalone simulators may build timestamps with `datetime.now(timezone.utc)`.
+- "Now" comes from `app.libs.common.clock.utc_now()` — the single source of the current time in `app/` (ORM column defaults, services, repositories, workers). Never use `datetime.utcnow()`, and don't call `datetime.now(timezone.utc)` directly in app code. Tests may build timestamps with `datetime.now(timezone.utc)`.
 - SQLAlchemy timestamps use `DateTime(timezone=True)`.
 - A timestamp coming from the API/MQTT must carry a timezone and be normalized to UTC before being stored.
 - Environment variables must be namespaced by component (`APP_`, `MQTT_`, `DB_`...); don't use a generic name prone to collision like `DEBUG`, `HOST`, or `PORT`.

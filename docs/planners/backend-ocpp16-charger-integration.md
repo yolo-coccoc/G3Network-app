@@ -10,6 +10,13 @@
 > post-boot GetConfiguration capture — **milestone M3 reached** — and the
 > end-to-end regression), and Step 11 (documentation) **done**; **Step 10 —
 > the real-charger bring-up — is waiting for the hardware** (runbook ready)
+> Update 2026-10-14: the charging test day was dropped and the whole
+> `simulator/` folder removed (TT-23 in [decision-log.md](../decisions/decision-log.md)),
+> including this planner's scripted 1.6J simulator (Step 3), the 2.0.1
+> simulator, the charger seed and the cross-process E2E tests (Step 9). The
+> 1.6J adapter stays covered in process by the smoke and PostgreSQL
+> integration tests. A charger for Step 10 is provisioned through the
+> charging-stations API.
 > Created: 2026-09-24
 >
 > Inputs:
@@ -69,7 +76,7 @@ real-charger logs first.
 | **D8** | ✅ *Confirmed 2026-09-24.* **Raw log = its own hypertable, verbatim frame as `TEXT`**, written **by a wrapper around the WebSocket connection**, in **its own transaction, before the frame is parsed** (inbound) / after it is sent (outbound). Read via SQL only — no API | Log inside each handler → misses unparseable/unhandled frames (exactly the ones the spec wants); `JSONB` → not verbatim; an API → nothing needs it yet |
 | **D9** | ✅ *Confirmed 2026-09-24 (a single table was chosen over the original recommendation, and the follow-up chose a **full merge**).* **One table, `charging_session_measurements`, holds every measurand for both protocols — including the energy register.** The old `charging_session_meter_values` is **replaced**: its rows are copied across and the table is dropped; the 2.0.1 gateway's energy writer switches to the new table with **unchanged behaviour**; the `/meter-values` API keeps its contract as a filter on the energy measurand. The session aggregate (`meter_end_wh`, `energy_delivered_wh`) is still updated by the service, not derived from this table | Original recommendation — energy stays in the old table and only other measurands go to a new one → two places for measurements; 1.6J-only new table with the old one kept for 2.0.1 → energy history split by protocol and `/meter-values` empty for 1.6J sessions |
 | **D10** | ✅ *Confirmed 2026-09-24.* **The only CSMS-initiated call is a post-boot `GetConfiguration`** (no key), sent from a separate task. No HTTP→charger command channel now | Build the command channel now → cross-process design (the gateway is a separate OS process) that needs its own decision (`deferred.md` new item); Phase 1's other probes (`ChangeConfiguration`, `TriggerMessage`) can use an external OCPP test tool (the handover doc suggests SteVe) |
-| **D11** | ⛔ *Superseded 2026-10-12 by CO-16 ([decision-log.md](../decisions/decision-log.md); [charging test-day planner](./backend-charging-test-day.md) D1): a naive timestamp is now read as UTC with a warning.* ✅ *Confirmed 2026-09-24.* **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
+| **D11** | ⛔ *Superseded 2026-10-12 by CO-16 ([decision-log.md](../decisions/decision-log.md); charging test-day planner D1, deleted 2026-10-14 with TT-23): a naive timestamp is now read as UTC with a warning.* ✅ *Confirmed 2026-09-24.* **Keep the strict timestamp rule** (must carry a timezone) for now; revisit only with real-charger logs (Step 10) | Accept naive timestamps as UTC now → guessing at vendor behaviour; the raw log (Step 1) makes the real behaviour visible first |
 | **D12** | ✅ *Confirmed 2026-09-24.* **No TLS/authentication change** in this planner (dev mode per `tech-decisions.md`) | Add `wss://` + Basic Auth now → the vendor has not said what it supports (spec §6.2 #4); implementing the wrong scheme wastes the work |
 | **D13** | ✅ *Confirmed 2026-09-24.* **2.0.1 handlers are not changed** except for (a) the raw-log wrapper, (b) negotiation, (c) `last_seen_at`/protocol version updates, (d) its energy samples are written to the unified measurements table (D9; behaviour identical). *Reopened 2026-10-01 by `docs/planners/done/backend-happy-path-completion.md` (its D1): the 2.0.1 adapter now also handles `BootNotification` and `Heartbeat`; the rest of the parity work stays `deferred.md` #78.* | Give 2.0.1 the new fields too → no 2.0.1 hardware exists; recorded as parity work in `deferred.md` |
 | **D14** | ✅ *Confirmed 2026-09-24.* **Reliability (`deferred.md` #27) is not reopened wholesale.** The 1.6 path avoids the in-memory session map by design (looks the session up by `transactionId`); orphan-session, back-fill and clock policies wait for real logs | Build reconnect/back-fill/orphan cleanup speculatively → the spec says to replace assumptions with real logs before fixing design |
@@ -112,7 +119,7 @@ real-charger logs first.
   for one handler (Step 7b uses it for `MeterValues` and `StopTransaction`;
   the handler then validates what it needs itself). *Since 2026-10-12 it is
   also off for `BootNotification`, `StatusNotification` and `StartTransaction`
-  (CO-17, [charging test-day planner](./backend-charging-test-day.md) D3).*
+  (CO-17, charging test-day planner D3, deleted 2026-10-14 with TT-23).*
 - `ChargePoint.call()` **suppresses a CALLERROR by default** (`suppress=True`
   returns `None`); pass `suppress=False` to have it raise. Found in Step 3
   (the simulator initially reported success for failed calls). Any call this
@@ -422,7 +429,7 @@ seed-script option that provisions one EVSE per gun (connector 1 each) for a
 1.6 station. Happy path only.
 ```
 
-**Main files:** `simulator/ocpp16_charge_point_simulator.py` (new), `simulator/seed_charging_topology.py`, `Makefile` (both scripts are in `simulator/charging_test_day/` since 2026-10-13, TT-21)
+**Main files:** `simulator/ocpp16_charge_point_simulator.py` (new), `simulator/seed_charging_topology.py`, `Makefile` (both scripts moved to `simulator/charging_test_day/` on 2026-10-13, TT-21, and were deleted on 2026-10-14, TT-23)
 
 **Checks:**
 
@@ -494,7 +501,7 @@ device/liveness fields (planner Step 4, decision D5).
 Every helper needs a full docstring; 1.6 optional fields may be missing.
 ```
 
-**Main files:** `charging_stations/{models,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, `ocpp/raw_log.py`, `config.py`, `.env.example`, migration `0022_…`, `simulator/ocpp16_charge_point_simulator.py` (now `simulator/charging_test_day/`)
+**Main files:** `charging_stations/{models,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, `ocpp/raw_log.py`, `config.py`, `.env.example`, migration `0022_…`, `simulator/ocpp16_charge_point_simulator.py` (deleted 2026-10-14, TT-23)
 
 **Checks:**
 
@@ -575,7 +582,7 @@ Implement OCPP 1.6J StatusNotification (planner Step 5, decisions D3, D4).
 Do not add any alerting.
 ```
 
-**Main files:** `charging_stations/{models,types,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, migration `0023_…`, `simulator/ocpp16_charge_point_simulator.py`, `simulator/seed_charging_topology.py` (both now in `simulator/charging_test_day/`)
+**Main files:** `charging_stations/{models,types,repository,service,schemas}.py`, `ocpp/ocpp16_charge_point.py`, migration `0023_…`, `simulator/ocpp16_charge_point_simulator.py`, `simulator/seed_charging_topology.py` (both deleted 2026-10-14, TT-23)
 
 **Checks:**
 
@@ -632,8 +639,8 @@ feeding the existing session service.
   a new `StartTransaction` arrives is left alone with a structured
   `WARNING` — orphan policy waits for real logs. An unknown
   `transactionId` on Stop raises `ChargingSessionNotFoundError` → `CALLERROR`
-  (loud, like the current MVP). *Superseded 2026-10-12 by CO-16 ([charging test-day planner](./backend-charging-test-day.md)
-  D2): a Stop or MeterValues for an unknown or finished transaction is
+  (loud, like the current MVP). *Superseded 2026-10-12 by CO-16 (charging test-day planner
+  D2, deleted 2026-10-14 with TT-23): a Stop or MeterValues for an unknown or finished transaction is
   confirmed and changes nothing.*
 - Session response schema gains the three fields.
 
@@ -1086,7 +1093,7 @@ passed.
 
 **Actual result:** ⏳ **Not done — waiting for the real charger and a person on site.** Everything
 that could be prepared without the hardware is ready: the gateway, the simulators and the tests
-(Steps 1–9), the runbook and the nine evidence queries above (each was executed against a real
+(Steps 1–9; the simulators and their E2E tests were deleted on 2026-10-14, TT-23), the runbook and the nine evidence queries above (each was executed against a real
 simulated 1.6J session), and the README section for connecting a real charger. When the unit is
 available, follow the procedure above, run the queries, then record here — with raw-log evidence, not
 paraphrase — what was observed, update the spec summary's confirmation/acceptance tables, and take the

@@ -469,4 +469,31 @@
 - **Update 2026-10-09 (CS-20 in `docs/decisions/decision-log.md`)**: the table that records every command and its answer, `charging_station_commands`, is now designed (planned). Still deferred here: the cross-process channel from the API to the gateway's open socket, and building the commands themselves.
 - **Update 2026-10-09 (PR-16 in `docs/decisions/decision-log.md`)**: the cross-process channel is decided: the API inserts a `PENDING` row in `charging_station_commands` and the gateway process picks it up, sends the OCPP call and writes the answer back. Still deferred here: the commands other than the ones the QR charging flow needs.
 - **Update 2026-10-10 (CS-24 in `docs/decisions/decision-log.md`)**: the channel and the command senders are built (WP1 chunk 5): `charging_stations/ocpp/command_loop.py` sends REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE for both protocols. Still deferred here: Smart Charging, firmware / diagnostics, reservation, the sessions side of a remote start (WP8) and more than one gateway process.
-- **Resolution (2026-10-12)**: Resolved by the 2026-10-10 build (CS-24) and the QR charging flow (WP8, CE-20 to CE-22, which built the sessions side of a remote start): the API queues a row in `charging_station_commands`, the gateway's `command_loop.py` sends it and records the answer, for REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE on both protocols (`POST /charging-stations/{id}/commands`). Verified against the simulator in the charging test-day rehearsal (`docs/planners/backend-charging-test-day.md`). The rest (Smart Charging, firmware/diagnostics, reservation, closing a connection, several gateway processes) moved to item 102 in `deferred.md`.
+- **Resolution (2026-10-12)**: Resolved by the 2026-10-10 build (CS-24) and the QR charging flow (WP8, CE-20 to CE-22, which built the sessions side of a remote start): the API queues a row in `charging_station_commands`, the gateway's `command_loop.py` sends it and records the answer, for REMOTE_START, REMOTE_STOP, UNLOCK_CONNECTOR, RESET, CHANGE_AVAILABILITY, CHANGE_CONFIGURATION, GET_CONFIGURATION and TRIGGER_MESSAGE on both protocols (`POST /charging-stations/{id}/commands`). Verified against the simulator in the charging test-day rehearsal (the planner and the simulator were deleted on 2026-10-14, TT-23). The rest (Smart Charging, firmware/diagnostics, reservation, closing a connection, several gateway processes) moved to item 102 in `deferred.md`.
+
+---
+
+### 103. Simulator: network loss with an offline queue, clock drift, vendor messages — Closed
+
+- **Short description**: The OCPP 1.6J simulator (`simulator/charging_test_day/ocpp16_charge_point_simulator.py`)
+  models a charger's guns, authorization and charging, but not: (1) a network loss during a
+  charge where the charger keeps charging, queues its transaction messages (`MeterValues`,
+  `StopTransaction`) and re-sends them after it reconnects, with `TransactionMessageAttempts` /
+  `TransactionMessageRetryInterval`; (2) a clock that drifts or starts at a wrong date until the
+  first `BootNotification` / `Heartbeat` answer sets it; (3) vendor messages the gateway does not
+  handle (`DataTransfer`, `FirmwareStatusNotification`, `DiagnosticsStatusNotification`) and other
+  timestamp shapes than the naive one.
+- **Purpose/role in the system**: Rehearse the reliability path (deferred item 27: back-fill,
+  out-of-order, orphan handling) and the gateway's answers to unknown messages before a real
+  charger shows them.
+- **Reason for deferral**: Owner decision 2026-10-12 (points 6 and 7 of the simulator review):
+  what the Willdigits firmware really does offline, how its clock behaves and which vendor
+  messages it sends are unknown until the test day's raw logs; simulating guesses would test the
+  wrong behaviour.
+- **Related planner/feature**: `docs/planners/backend-charging-test-day.md` (Step 5),
+  `docs/planners/backend-ocpp16-charger-integration.md` Step 10, deferred items 27 and 81,
+  STN-03, CHG-02 (`docs/product/features/features.yaml`).
+- **Date recorded**: 2026-10-12
+- **Additional notes**: Build each part from the raw-log evidence of the test day: the
+  re-send order and timing, the clock at boot, and the exact vendor payloads.
+- **Resolution (2026-10-14)**: Closed without being built. The owner dropped the charging test day and removed its tooling (TT-23 in `docs/decisions/decision-log.md`), including the scripted OCPP 1.6J simulator this item would have extended and the test-day planner it cites. The rest of `simulator/` was removed the same day, so the repository holds no charger simulator. The backend side stays deferred in items 27 and 81; if a simulator returns and should model an offline queue, clock drift or vendor messages, record a new item then.

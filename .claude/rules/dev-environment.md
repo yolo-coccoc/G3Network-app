@@ -12,8 +12,6 @@ pieces that don't need frequent direct code changes are Dockerized.
 | Component | Tool |
 |---|---|
 | Backend (`api`, and the entrypoints under `telemetry/ingestion`, `telematics/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`, `drivers/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
-| Simulators (`simulator/`) | run from `backend/` with its venv: `uv run python ../simulator/...`, or the `make charging-ocpp*` targets. The seed scripts and the telemetry simulator log in as the bootstrap HEAD_ADMIN (`simulator/api_client.py`, `IDENTITY_BOOTSTRAP_ADMIN_*` from `backend/.env`): run `make identity-bootstrap` first |
-| Charging test-day tools (`simulator/charging_test_day/`) | standalone (TT-21): the same `make` targets or the backend's venv on the development machine, or a copy of the folder with Python 3.12 and its `requirements.txt` only (laptop setup in the folder's `CLAUDE.md`). Settings: environment, then `backend/.env` inside the repository, then the folder's git-ignored `.env` (template `.env.example`): `G3_API_URL`, `G3_OCPP_URL` (the simulator's `--url`), `G3_ADMIN_PHONE` / `G3_ADMIN_PASSWORD` (or `IDENTITY_BOOTSTRAP_ADMIN_*`), `CHARGING_TEST_DRIVER_PASSWORD`, `TEST_DAY_CHARGER_ID` (default `--charger` / `--identity`). `dashboard.py` in the folder serves all of them as one browser page on `127.0.0.1:8080` (TT-22). `seed_test_drivers.py` stays in `simulator/`: it needs the backend's code and database |
 
 ## Running in Docker (`infra/docker-compose.yml`)
 
@@ -57,9 +55,6 @@ Basic commands:
 - `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests, every `tests/test_postgres_*.py` file (needs `make infra-up`)
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency
-- `make charging-ocpp-seed` / `make charging-ocpp-sim` — Provision (location, tariff, charger) and run the OCPP 2.0.1 simulator
-- `make charging-ocpp16-seed [IDENTITY=SIM-OCPP16-001] [STANDARD=IEC_62196_T2_COMBO] [PRICE=3500]` / `make charging-ocpp16-sim [SCENARIO=boot|status|session] [IDENTITY=...] [ARGS="..."]` — Provision (location, tariff at `PRICE` dong/kWh before VAT, one EVSE per gun of plug `STANDARD`) and run the OCPP 1.6J simulator (default scenario `boot`; `session` waits for a QR scan's remote start; `ARGS` passes simulator flags such as `--plug after-scan --start screen --end remote --sample-interval 5`; `SCENARIO=charger` is driven by typed commands: `plug 1`, `start 1`, `stop 1`, `unplug 1`, `help`)
-- `make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"` / `make driver-app ARGS="scan|watch|stop|sessions ..."` / `make station-console ARGS="status|messages|config|set|commands|sessions|force-close ..."` — Charging test-day tools over the HTTP API (need the API; runbook in `docs/planners/backend-charging-test-day.md`): test drivers with a credited wallet, a driver-app stand-in, an operator console. Evidence goes to `simulator/charging_test_day/logs/test-day/` (git-ignored); `CHARGING_TEST_DRIVER_PASSWORD` overrides the test drivers' default password
 
 See [README.md](../../README.md) for detailed setup and quick-start
 instructions.
@@ -77,7 +72,7 @@ instructions.
 ## Claude Code tooling (checked in under `.claude/` and `.mcp.json`)
 
 - **Hooks** (`.claude/settings.json`, scripts in `.claude/hooks/`): every
-  Python file the agent writes under `backend/` or `simulator/` is
+  Python file the agent writes under `backend/` is
   import-sorted and formatted with ruff (unused imports are left alone); edits
   to the generated `docs/design/domain-model/` and
   `docs/product/features/` views are refused (edit the `.dbml` or
@@ -88,8 +83,9 @@ instructions.
 - **Skills** (`.claude/skills/`): `start-feature` (gather → planner from
   `docs/planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
   `domain-model`, `feature-catalog` (the feature catalog's YAML source and
-  its generated checklists/workbook), `ocpp-reference` (OCPP 1.6J and 2.0.1, OCPI, how other CSMSs model things), `e2e-sim` (run the stack with the
-  simulators and check the data), `finish-task`. The order to use them in is
+  its generated checklists/workbook), `ocpp-reference` (OCPP 1.6J and 2.0.1, OCPI, how other CSMSs model things), `e2e-sim` (run the stack, provision
+  through the API and check the data; the repo has no simulators, so device
+  traffic comes from a real device or an external client), `finish-task`. The order to use them in is
   in CLAUDE.md ("How a feature gets built").
 - **MCP servers** (`.mcp.json`, approved via `enabledMcpjsonServers`):
   `postgres` — `postgres-mcp` in `--access-mode=restricted` (read-only

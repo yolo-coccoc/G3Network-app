@@ -1,9 +1,8 @@
 # G3Network
 
 G3Network is a driver assistance and electric truck fleet management system.
-This repo currently holds the backend MVP, the local infrastructure and the
-simulators used to exercise the vehicle telemetry and charging flows. The web
-portal and vehicle app have no source in this repo yet.
+This repo currently holds the backend MVP and the local infrastructure. The
+web portal and vehicle app have no source in this repo yet.
 
 - Command reference: `make help` (the Makefile is the source of truth).
 - AI coding agents: start with [CLAUDE.md](./CLAUDE.md).
@@ -78,7 +77,7 @@ Once per database (after `make db-reset`), set `IDENTITY_BOOTSTRAP_ADMIN_PHONE` 
 
 
 Only the API is needed for plain CRUD work; start the others when you touch
-their flow. The simulators (next section) run in further terminals.
+their flow.
 
 Addresses once everything is up:
 
@@ -161,108 +160,15 @@ commands and reliability (retry/reconnect/TLS), and the frontends. The full
 list of deferred items is in
 [docs/product/future.md](./docs/decisions/deferred.md).
 
-## Running the simulators
+## Device traffic
 
-Simulators only generate test data; they are not needed with real devices or
-chargers. All of them talk to the API, so `make backend-dev` must be running.
-The seed scripts and the telemetry simulator log in as the bootstrap
-HEAD_ADMIN, so run `make identity-bootstrap` first (see above).
-
-### Vehicle telemetry
-
-Also needs `make telemetry-dev`. Create a sample vehicle and telematics device
-once, then start the simulator:
-
-```bash
-cd backend
-uv run python ../simulator/seed_simulator_devices.py
-uv run python ../simulator/telematic_simulator.py
-```
-
-The simulator publishes location, speed and battery data over MQTT every
-5 seconds until you press `Ctrl+C`.
-
-### OCPP 2.0.1 charging session
-
-Also needs `make charging-ocpp-dev`.
-
-```bash
-make charging-ocpp-seed    # once: location + tariff, station SIM-OCPP-001, EVSE 1, connector 1
-make charging-ocpp-sim     # one Started -> Updated/MeterValues -> Ended session
-```
-
-The 2.0.1 simulator sends no `idToken`, so the gateway refuses its start and
-no session is stored (only a token issued by a QR scan starts a charge).
-
-A duplicate-code error from the seed means the topology already exists.
-Results can be read through the charging APIs in Swagger.
-
-### OCPP 1.6J charger
-
-Also needs `make charging-ocpp-dev`. Simulates a dual-gun 1.6J charger such
-as the Willdigits DC charger:
-
-```bash
-make charging-ocpp16-seed                    # once: location + tariff, station SIM-OCPP16-001, one EVSE per gun
-make charging-ocpp16-sim                     # default scenario: boot (BootNotification + Heartbeats)
-make charging-ocpp16-sim SCENARIO=status     # boot, then status reports incl. faults
-make charging-ocpp16-sim SCENARIO=session    # boot, wait for a QR scan, then a charging session on gun 1
-```
-
-The `session` scenario waits up to 120 s for the gateway's
-`RemoteStartTransaction`: scan the charger as a driver
-(`POST /api/v1/charging-sessions/scan`; the full walk-through is in
-`.claude/skills/e2e-sim/SKILL.md`). It then authorizes with the scan's
-token, starts a transaction, sends meter values (energy in kWh, SoC, power,
-voltage, current, temperature, `Power.Offered` and a vendor-specific
-measurand) and stops it. The charger's boot info,
-statuses, session, measurements and configuration can then be read in
-Swagger. Further options are described in
-`simulator/charging_test_day/ocpp16_charge_point_simulator.py`.
-
-The seed and the simulator take an identity, and the seed a plug standard
-and a price; the simulator also answers `RemoteStopTransaction` and
-`ChangeConfiguration`, and its flags (passed in `ARGS`) make it charge longer
-or behave like awkward firmware:
-
-```bash
-make charging-ocpp16-seed IDENTITY=WD-TEST-01 STANDARD=IEC_62196_T2_COMBO PRICE=3500
-make charging-ocpp16-sim SCENARIO=session IDENTITY=WD-TEST-01 ARGS="--end remote --sample-interval 5"
-make charging-ocpp16-sim SCENARIO=charger IDENTITY=WD-TEST-01   # type: plug 1, start 1, stop 1, unplug 1, help
-```
-
-### Charging test day tools
-
-Command-line stand-ins for the driver app and an operator console, used to
-run a session end to end through the HTTP API (needs `make backend-dev`; the
-runbook is section 6 of
-[`docs/planners/backend-charging-test-day.md`](docs/planners/backend-charging-test-day.md)):
-
-```bash
-make charging-test-drivers-seed ARGS="--count 2 --balance-vnd 10000000"  # drivers with a credited wallet
-make driver-app ARGS="scan --driver 1 --charger WD-TEST-01"              # scan | watch | stop | sessions
-make station-console ARGS="messages --follow --charger WD-TEST-01"       # status | messages | config | set | commands | sessions | force-close
-```
-
-Every API call of these tools is written, tokens masked, to
-`simulator/charging_test_day/logs/test-day/` (git-ignored).
-
-`simulator/charging_test_day/dashboard.py` puts the same tools on one browser
-page (`http://localhost:8080/`, local only; TT-22): the charger and its guns,
-two driver panels, the live OCPP feed, settings, commands and force-close, and
-buttons that drive the 1.6J simulator's `charger` scenario. The command-line
-tools stay as the fallback.
-
-The driver app, the operator console, the 1.6J simulator and the charger seed
-live in `simulator/charging_test_day/`, which imports none of the backend's
-code: the folder can be copied to a laptop and run there with Python 3.12 and
-its `requirements.txt`, the API reached through an SSH tunnel and the gateway
-on its public address. Its settings come from the environment, then
-`backend/.env` inside the repository, then the folder's own `.env` (template
-`.env.example`); the laptop setup is in
-[`simulator/charging_test_day/CLAUDE.md`](simulator/charging_test_day/CLAUDE.md).
-The driver seed stays in `simulator/` and runs only next to the backend: it
-writes to the database.
+The repository holds no simulators (all removed on 2026-10-14, TT-23 in the
+[decision log](./docs/decisions/decision-log.md)). Vehicle telemetry comes from
+a real T-Box or any MQTT client that publishes the contract in
+[`mqtt-spec.md`](./docs/design/specifications/mqtt-spec.md) (needs
+`make telemetry-dev` and the vehicle and telematics device provisioned through
+the API); charger traffic comes from a real charger or an OCPP client
+(next section). Results can be read through the APIs in Swagger.
 
 ## Connecting a real charging station
 
@@ -298,7 +204,6 @@ Data is kept. `make infra-reset` (removes the volumes) and `make db-reset`
 ```text
 backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
 infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
-simulator/    Vehicle telemetry and OCPP charging simulators; charging_test_day/ holds the standalone test-day tools
 docs/         Product, design, decisions, planners, reports (see docs/README.md)
 .claude/      Rules, skills, agents and hooks for AI coding agents (see CLAUDE.md)
 .githooks/    Pre-commit hook (runs make check)
