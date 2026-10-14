@@ -1998,6 +1998,25 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97 and 103),
 
 ---
 
+### 104. Web page that monitors the OCPP traffic in and out of the backend
+
+- **Short description**: A simple admin web page that shows, live, the OCPP messages the backend
+  gateway receives from chargers and sends to them (boot, heartbeats with their gaps against the
+  interval, status, transactions, commands and their answers), per charger. The raw messages are
+  already stored in `charging_ocpp_messages`; this is only the page that reads them.
+- **Purpose/role in the system**: Lets staff and developers see what a charger (or the charger
+  simulator) and the backend actually exchange, without SQL or command-line tools.
+- **Reason for deferral**: The owner decided (TT-25) that this monitoring belongs on the server
+  side, not on the charger simulator's own page, and asked to build it later; `web-portal/` has no
+  stack yet (TT-20).
+- **Related planner/feature**: TT-24, TT-25 (`docs/decisions/decision-log.md`),
+  `simulators/charger_simulator/`.
+- **Date recorded**: 2026-10-14
+- **Additional notes**: Frames can hold QR `idTag` tokens; the page must mask them, like the
+  removed operator console did.
+
+---
+
 ## Update rules
 
 1. **When to record an entry**: When a developer or AI agent decides to skip/remove a component for the reason "not needed right now, but will definitely need to be added later".
