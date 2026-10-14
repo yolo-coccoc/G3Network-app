@@ -473,6 +473,9 @@ class ChargingStation:
                     self._queue_stop(gun, "EVDisconnected")
                 else:
                     self._set_status(gun, "Charging")
+                    # A first reading at the start, as real chargers send:
+                    # the app shows the energy and SoC at once.
+                    self._queue_meter_values(gun, "Transaction.Begin")
 
         self._outbox.put_nowait(job)
 
@@ -651,7 +654,7 @@ class ChargingStation:
             interval = self.configuration.int_value("MeterValueSampleInterval")
             if interval > 0 and now - gun.last_sample_at >= interval:
                 gun.last_sample_at = now
-                self._queue_meter_values(gun)
+                self._queue_meter_values(gun, "Sample.Periodic")
 
         for gun in self.guns.values():
             expired = gun.authorized_tag is not None and now >= gun.authorized_until
@@ -663,13 +666,15 @@ class ChargingStation:
             log("   remote start expired: no gun was plugged in (ConnectionTimeOut)")
             self._unassigned = None
 
-    def _queue_meter_values(self, gun: Gun) -> None:
-        """Queue a periodic MeterValues for a gun's transaction.
+    def _queue_meter_values(self, gun: Gun, context: str) -> None:
+        """Queue a MeterValues for a gun's transaction.
 
         Args:
             gun: The gun (with a transaction).
+            context: ``Transaction.Begin`` (right after the start) or
+                ``Sample.Periodic``.
         """
-        sample = self._sample(gun, "MeterValuesSampledData", "Sample.Periodic")
+        sample = self._sample(gun, "MeterValuesSampledData", context)
         number, transaction_id = gun.number, gun.transaction_id
         if not sample["sampled_value"]:
             return
