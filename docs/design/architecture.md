@@ -618,6 +618,7 @@ call each other is in
 │
 ├── simulators/                     # independent, exportable device simulators, one folder each (TT-24)
 │   ├── charger_simulator/          # OCPP 1.6J dual-gun charger + sample car: QR remote start/stop happy path (TT-26), heartbeats, Get/ChangeConfiguration; page on :8090 with plug/unplug/stop; own .env, requirements.txt, README.md
+│   ├── phone_simulator/            # the driver app on a phone-shaped page (TT-27): login, scan, live charge, stop, receipt, wallet + simulated bank; API only, stdlib, own .env; page on :8093
 │   └── charger_monitor/            # runs on the VM, page on :8095: Monitoring (OCPP traffic from the message log) and Configuration (get/change via the command API) tabs; own .env, stdlib only
 ├── infra/
 │   ├── docker-compose.yml          # defines exactly 2 services: db, broker (see dev-environment.md)
