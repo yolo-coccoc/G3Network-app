@@ -7,16 +7,14 @@
 <style>
   :root {
     --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #5f6b7a;
-    --line: #e1e5eb; --accent: #1f6feb; --ok: #1a7f37; --ok-bg: #dafbe1;
+    --line: #e1e5eb; --ok: #1a7f37; --ok-bg: #dafbe1;
     --warn: #9a6700; --warn-bg: #fff8c5; --bad: #cf222e; --bad-bg: #ffebe9;
-    --code-bg: #f6f8fa;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
-      --line: #30363d; --accent: #4493f8; --ok: #3fb950; --ok-bg: #12261e;
+      --line: #30363d; --ok: #3fb950; --ok-bg: #12261e;
       --warn: #d29922; --warn-bg: #272115; --bad: #f85149; --bad-bg: #2d1416;
-      --code-bg: #0d1117;
     }
   }
   * { box-sizing: border-box; }
@@ -43,19 +41,6 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
   .field .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .field .value { font-weight: 600; overflow-wrap: anywhere; }
-  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
-  pre {
-    margin: 6px 0 0; padding: 10px; background: var(--code-bg); border: 1px solid var(--line);
-    border-radius: 6px; font-size: 12.5px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
-  }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  td.num { font-variant-numeric: tabular-nums; }
-  .stats { display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 12px; }
-  .stat .big { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
   #offline { display: none; }
 </style>
 </head>
@@ -83,46 +68,12 @@
       <div class="field"><div class="label">Connections</div><div class="value" id="f-connections">-</div></div>
     </div>
   </section>
-
-  <section class="card">
-    <h2>Startup message <span class="muted">(BootNotification)</span></h2>
-    <p id="boot-summary" class="muted">Not sent yet.</p>
-    <div class="two">
-      <div><div class="muted">Sent by the charger <span id="boot-sent"></span></div><pre id="boot-request">-</pre></div>
-      <div><div class="muted">Answer from the server <span id="boot-answered"></span></div><pre id="boot-response">-</pre></div>
-    </div>
-    <div id="requests" style="margin-top:12px"></div>
-  </section>
-
-  <section class="card">
-    <h2>Heartbeat interval check</h2>
-    <div class="stats">
-      <div class="stat"><div class="muted">Interval</div><div class="big" id="hb-interval">-</div><div class="muted" id="hb-source"></div></div>
-      <div class="stat"><div class="muted">Heartbeats sent</div><div class="big" id="hb-count">0</div></div>
-      <div class="stat"><div class="muted">On time</div><div class="big" id="hb-ontime">-</div></div>
-      <div class="stat"><div class="muted">Next heartbeat in</div><div class="big" id="hb-next">-</div></div>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>#</th><th>Sent</th><th>Gap</th><th>Expected</th><th>Check</th>
-          <th>Round trip</th><th>Server time</th><th>Clock offset</th><th>Answer</th>
-        </tr></thead>
-        <tbody id="hb-rows"><tr><td colspan="9" class="muted">No heartbeat yet.</td></tr></tbody>
-      </table>
-    </div>
-  </section>
 </main>
 
 <script>
   const $ = (id) => document.getElementById(id);
   const time = (iso) => iso ? new Date(iso).toLocaleTimeString([], {hour12: false}) : "-";
   const dateTime = (iso) => iso ? new Date(iso).toLocaleString([], {hour12: false}) : "-";
-  const seconds = (value) => value == null ? "-" : `${value.toFixed(1)} s`;
-  const pretty = (value) => value == null ? "-" : JSON.stringify(value, null, 2);
-  const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-  const CHECK_CLASS = {"on time": "ok", "first": "ok", "late": "bad", "early": "warn"};
-  const ANSWER_CLASS = {"answered": "ok", "pending": "warn", "callerror": "bad", "no answer": "bad"};
 
   function renderConnection(connection) {
     const pill = $("connection");
@@ -154,53 +105,6 @@
     $("f-connections").textContent = conn.connections;
   }
 
-  function renderBoot(data) {
-    const boot = data.boot;
-    if (!boot) return;
-    const answered = boot.answered_at != null;
-    let summary = answered
-      ? `Status ${boot.status}${boot.interval != null ? `, heartbeat interval ${boot.interval} s` : ""}.`
-      : "Sent, waiting for the server's answer…";
-    if (data.boot_attempts > 1) summary += ` (${data.boot_attempts} attempts since power-on)`;
-    $("boot-summary").innerHTML = answered
-      ? `<span class="pill ${boot.status === "Accepted" ? "ok" : "bad"}">${escape(boot.status)}</span> ${escape(summary)}`
-      : escape(summary);
-    $("boot-sent").textContent = `at ${time(boot.sent_at)}`;
-    $("boot-answered").textContent = answered ? `at ${time(boot.answered_at)}` : "";
-    $("boot-request").textContent = pretty(boot.request);
-    $("boot-response").textContent = pretty(boot.response);
-    const requests = data.server_requests;
-    $("requests").innerHTML = requests.length
-      ? `<div class="muted">Requests from the server (not supported by the simulator yet):</div>` +
-        requests.map((r) => `<div>${time(r.at)} · <b>${escape(r.action)}</b> → answered ${escape(r.answer)}</div>`).join("")
-      : "";
-  }
-
-  function renderHeartbeats(data) {
-    const hb = data.heartbeat;
-    const sources = {server: "set by the server at boot", setting: "CHARGER_HEARTBEAT_INTERVAL", fallback: "server left it open"};
-    $("hb-interval").textContent = hb.interval_s == null ? "-" : `${hb.interval_s} s`;
-    $("hb-source").textContent = sources[hb.interval_source] || "";
-    $("hb-count").textContent = hb.count;
-    const judged = hb.recent.filter((r) => r.check !== "first");
-    const onTime = judged.filter((r) => r.check === "on time").length;
-    $("hb-ontime").textContent = judged.length ? `${onTime} / ${judged.length}` : "-";
-    const next = hb.next_at ? Math.max(0, (new Date(hb.next_at) - new Date(data.now)) / 1000) : null;
-    $("hb-next").textContent = next == null ? "-" : `${Math.ceil(next)} s`;
-    if (!hb.recent.length) return;
-    $("hb-rows").innerHTML = hb.recent.slice(0, 30).map((r) => `<tr>
-        <td class="num">${r.number}</td>
-        <td class="num">${time(r.sent_at)}</td>
-        <td class="num">${r.gap_s == null ? "-" : seconds(r.gap_s)}</td>
-        <td class="num">${seconds(r.interval_s)}</td>
-        <td><span class="pill ${CHECK_CLASS[r.check]}">${escape(r.check)}</span></td>
-        <td class="num">${r.round_trip_ms == null ? "-" : `${Math.round(r.round_trip_ms)} ms`}</td>
-        <td class="num">${r.server_time ? time(r.server_time) : "-"}</td>
-        <td class="num">${r.clock_offset_s == null ? "-" : `${r.clock_offset_s >= 0 ? "+" : ""}${r.clock_offset_s.toFixed(2)} s`}</td>
-        <td><span class="pill ${ANSWER_CLASS[r.outcome]}" title="${escape(r.error || "")}">${escape(r.outcome)}</span></td>
-      </tr>`).join("");
-  }
-
   async function refresh() {
     try {
       const response = await fetch("/api/state", {cache: "no-store"});
@@ -209,8 +113,6 @@
       $("offline").style.display = "none";
       renderConnection(data.connection);
       renderWelcome(data);
-      renderBoot(data);
-      renderHeartbeats(data);
     } catch (error) {
       $("offline").style.display = "block";
       $("connection").textContent = "unreachable";

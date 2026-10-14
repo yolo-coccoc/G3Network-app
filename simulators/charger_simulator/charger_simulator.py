@@ -16,8 +16,8 @@ charger does:
    unless none was accepted since power-on.
 
 The web page (``CHARGER_UI_HOST:CHARGER_UI_PORT``, ``http://127.0.0.1:8090/``
-by default) shows the charger, its connection, the startup exchange and the
-heartbeat interval check.
+by default) shows the charger and its connection, as a charger's screen
+would; the OCPP messages go to the console log only.
 
 Run (from this folder, with its venv)::
 
@@ -69,15 +69,12 @@ class PowerState:
         self.heartbeat_interval: float | None = None
 
 
-async def keep_alive(
-    charger: SimulatedCharger, power: PowerState, state: SimulatorState
-) -> None:
+async def keep_alive(charger: SimulatedCharger, power: PowerState) -> None:
     """Boot if needed, then send heartbeats until the connection fails.
 
     Args:
         charger: The charger on the current connection.
         power: Kept across connections (the interval after the boot).
-        state: The live state (the next heartbeat's time, for the page).
 
     Raises:
         TimeoutError: A boot or heartbeat got no answer in time.
@@ -91,7 +88,6 @@ async def keep_alive(
     else:
         log(f"   reconnected: no new boot, heartbeats resume every {interval:g} s")
     while True:
-        state.next_heartbeat_due(interval)
         await asyncio.sleep(interval)
         await charger.heartbeat()
 
@@ -127,10 +123,10 @@ async def run_connection(
     ) as connection:
         log(f"connected (subprotocol {connection.subprotocol})")
         state.connected()
-        charger = SimulatedCharger(settings, connection, state)
+        charger = SimulatedCharger(settings, connection)
         tasks = {
             asyncio.create_task(charger.start(), name="listen"),
-            asyncio.create_task(keep_alive(charger, power, state), name="keep-alive"),
+            asyncio.create_task(keep_alive(charger, power), name="keep-alive"),
         }
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -185,7 +181,7 @@ async def live(settings: ChargerSettings, state: SimulatorState) -> None:
             reason = describe_failure(error)
         except Exception as error:  # noqa: BLE001 - a living charger never exits
             reason = f"unexpected {type(error).__name__}: {error}"
-        if state.snapshot()["connection"]["status"] == "connected":
+        if state.is_connected():
             delay = RECONNECT_FIRST_DELAY_SECONDS
         state.disconnected(reason, delay)
         log(f"!! {reason}; reconnecting in {delay:g} s")

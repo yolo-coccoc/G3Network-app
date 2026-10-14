@@ -28,9 +28,10 @@ and `CHARGER_ID` (the server must know this charger). Every key is explained in
 .venv/bin/python charger_simulator.py       # Windows: .venv\Scripts\python charger_simulator.py
 ```
 
-Then open the page it prints (`http://127.0.0.1:8090/` by default). It shows the
-charger and its connection, the startup message with the server's answer, and
-the heartbeat interval check (each heartbeat's gap compared with the interval).
+Then open the page it prints (`http://127.0.0.1:8090/` by default). Like a
+charger's screen, it shows the charger and its connection. The OCPP messages it
+sends and receives are written to the console only; watching that traffic
+belongs to a monitoring page on the server side.
 
 `--config other.env` runs a second charger with its own settings (give it
 another `CHARGER_ID` and `CHARGER_UI_PORT`).
