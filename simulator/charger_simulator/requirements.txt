@@ -1,0 +1,4 @@
+# The charger simulator's only third-party libraries; same versions as
+# backend/uv.lock.
+ocpp==2.1.0
+websockets==16.1.1
