@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Charger Monitor</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #5f6b7a;
+    --line: #e1e5eb; --accent: #1f6feb; --accent-bg: #ddf4ff;
+    --ok: #1a7f37; --ok-bg: #dafbe1; --warn: #9a6700; --warn-bg: #fff8c5;
+    --bad: #cf222e; --bad-bg: #ffebe9; --code-bg: #f6f8fa;
+    --in: #8250df; --in-bg: #fbefff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
+      --line: #30363d; --accent: #4493f8; --accent-bg: #0c2d4b;
+      --ok: #3fb950; --ok-bg: #12261e; --warn: #d29922; --warn-bg: #272115;
+      --bad: #f85149; --bad-bg: #2d1416; --code-bg: #0d1117;
+      --in: #a371f7; --in-bg: #231a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px; margin-bottom: 16px; min-width: 0;
+  }
+  .muted { color: var(--muted); }
+  .pill {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); }
+  .pill.in { color: var(--in); background: var(--in-bg); }
+  .pill.out { color: var(--accent); background: var(--accent-bg); }
+  .chargers { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .charger {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .charger.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--bad); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 18px; }
+  .field .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .field .value { font-weight: 600; overflow-wrap: anywhere; }
+  pre {
+    margin: 6px 0 0; padding: 10px; background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 6px; font-size: 12.5px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+  td.num, td.time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.payload { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: var(--muted); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr.msg { cursor: pointer; }
+  tr.msg:hover td { background: var(--code-bg); }
+  tr.detail td { background: var(--code-bg); }
+  .stats { display: flex; flex-wrap: wrap; gap: 28px; margin-bottom: 12px; }
+  .stat .big { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+  button.small {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 13px;
+  }
+  #error { display: none; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .tab {
+    border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+    padding: 8px 14px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .hidden { display: none !important; }
+  select {
+    font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--text); min-width: 260px;
+  }
+  button.primary {
+    border: 0; background: var(--accent); color: #fff; border-radius: 6px; padding: 7px 16px;
+    cursor: pointer; font: inherit; font-weight: 600;
+  }
+  button.primary:disabled { opacity: .55; cursor: wait; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .form-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .form-row label { font-size: 13.5px; overflow-wrap: anywhere; }
+  .form-row input {
+    font: inherit; font-size: 13.5px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--card); color: var(--text); width: 100%;
+  }
+  .form-row input:disabled { background: var(--code-bg); color: var(--text); }
+  .form-row input.filled { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .status-line { min-height: 24px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Charger Monitor</h1>
+    <span id="api" class="pill warn">connecting…</span>
+    <span class="muted">OCPP traffic in and out of the backend</span>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="monitoring">Monitoring</button>
+    <button class="tab" data-tab="configuration">Configuration</button>
+  </nav>
+
+  <div id="error" class="card"><span class="pill bad">backend</span> <span id="error-text"></span></div>
+
+  <div id="tab-monitoring">
+
+  <div id="chargers" class="chargers"><span class="muted">Loading chargers…</span></div>
+
+  <div class="two">
+    <section class="card">
+      <h2>Connection</h2>
+      <div class="grid">
+        <div class="field"><div class="label">State</div><div class="value" id="c-online">-</div></div>
+        <div class="field"><div class="label">Last message</div><div class="value" id="c-seen">-</div></div>
+        <div class="field"><div class="label">Last boot</div><div class="value" id="c-boot">-</div></div>
+        <div class="field"><div class="label">Protocol</div><div class="value" id="c-protocol">-</div></div>
+        <div class="field"><div class="label">Vendor / model</div><div class="value" id="c-model">-</div></div>
+        <div class="field"><div class="label">Firmware</div><div class="value" id="c-firmware">-</div></div>
+      </div>
+      <p class="muted" id="c-note" style="margin:12px 0 0"></p>
+    </section>
+
+    <section class="card">
+      <h2>Startup message <span class="muted">(latest BootNotification)</span></h2>
+      <p id="boot-summary" class="muted">-</p>
+      <div class="muted">From the charger <span id="boot-sent"></span></div>
+      <pre id="boot-request">-</pre>
+      <div class="muted" style="margin-top:8px">Answer from the backend <span id="boot-answered"></span></div>
+      <pre id="boot-answer">-</pre>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Heartbeat interval check</h2>
+    <div class="stats">
+      <div class="stat"><div class="muted" id="hb-source">Interval</div><div class="big" id="hb-interval">-</div></div>
+      <div class="stat"><div class="muted">Last heartbeat</div><div class="big" id="hb-last">-</div></div>
+      <div class="stat"><div class="muted">On time</div><div class="big" id="hb-ontime">-</div></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Received</th><th>Gap from previous</th><th>Expected</th><th>Check</th></tr></thead>
+        <tbody id="hb-rows"><tr><td colspan="4" class="muted">No heartbeat yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Traffic</h2>
+    <div class="toolbar">
+      <button id="pause" class="small">Pause</button>
+      <button id="clear" class="small">Clear</button>
+      <span class="muted"><span class="pill in">IN</span> charger → backend &nbsp; <span class="pill out">OUT</span> backend → charger &nbsp; · click a row for the full frame (tokens masked)</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th></th><th>Type</th><th>Action</th><th>Content</th></tr></thead>
+        <tbody id="feed"><tr><td colspan="5" class="muted">No message yet.</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+  </div>
+
+  <div id="tab-configuration" class="hidden">
+    <div class="toolbar">
+      <label for="cfg-charger" class="muted">Charger</label>
+      <select id="cfg-charger"><option value="">Loading chargers…</option></select>
+      <span id="cfg-charger-state"></span>
+    </div>
+    <div class="two">
+      <section class="card">
+        <div class="panel-head">
+          <h2 style="margin:0">Get configuration</h2>
+          <button id="cfg-get" class="primary">Get</button>
+        </div>
+        <p id="cfg-get-status" class="muted status-line">Press Get to ask the charger for its configuration.</p>
+        <div id="cfg-get-form"></div>
+      </section>
+      <section class="card">
+        <div class="panel-head">
+          <h2 style="margin:0">Send configuration</h2>
+          <button id="cfg-send" class="primary">Send</button>
+        </div>
+        <p id="cfg-send-status" class="muted status-line">Fill in only the settings to change; a blank field stays as it is.</p>
+        <div id="cfg-send-form"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const escape = (text) => String(text).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const time = (iso) => iso ? new Date(iso).toLocaleTimeString([], {hour12: false}) : "-";
+  const timeMs = (iso) => {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    return `${d.toLocaleTimeString([], {hour12: false})}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  };
+  const dateTime = (iso) => iso ? new Date(iso).toLocaleString([], {hour12: false}) : "-";
+  const ago = (iso) => {
+    if (!iso) return "-";
+    const s = Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
+    return s < 60 ? `${s} s ago` : s < 3600 ? `${Math.floor(s / 60)} min ${s % 60} s ago` : dateTime(iso);
+  };
+  const pretty = (value) => value == null ? "-" : JSON.stringify(value, null, 2);
+  const CHECK_CLASS = {"on time": "ok", "first": "ok", "late": "bad", "early": "warn", "unknown interval": "warn"};
+  const MAX_ROWS = 300;
+
+  // cursor: the newest message time fetched, kept apart from the shown list so
+  // "Clear" does not reload old messages.
+  const state = {chargers: [], selected: null, started: false, cursor: null, messages: [], actions: {}, paused: false, open: new Set()};
+  try { state.selected = localStorage.getItem("monitor.charger"); } catch (e) { /* storage blocked */ }
+
+  async function api(path) {
+    const response = await fetch(path, {cache: "no-store"});
+    const body = await response.json().catch(() => ({error: response.statusText}));
+    if (!response.ok) throw new Error(body.error || response.statusText);
+    $("api").textContent = "backend API reachable";
+    $("api").className = "pill ok";
+    $("error").style.display = "none";
+    return body;
+  }
+
+  function showError(error) {
+    $("api").textContent = "backend API problem";
+    $("api").className = "pill bad";
+    $("error-text").textContent = error.message;
+    $("error").style.display = "block";
+  }
+
+  // --- chargers -------------------------------------------------------------
+  async function loadChargers() {
+    try {
+      state.chargers = await api("/api/chargers");
+    } catch (error) { showError(error); return; }
+    if (!state.chargers.some((c) => c.station_id === state.selected)) {
+      selectCharger(state.chargers.length ? state.chargers[0].station_id : null);
+    } else if (!state.started) {
+      selectCharger(state.selected);
+    }
+    renderChargers();
+    renderConfigChargers();
+  }
+
+  function renderChargers() {
+    const box = $("chargers");
+    if (!state.chargers.length) { box.innerHTML = '<span class="muted">No charger registered.</span>'; return; }
+    box.innerHTML = state.chargers.map((c) => `
+      <button class="charger ${c.station_id === state.selected ? "selected" : ""}" data-id="${c.station_id}" title="${escape(c.location || "")}">
+        <span class="dot ${c.is_online ? "on" : "off"}"></span>${escape(c.ocpp_identity)}
+      </button>`).join("");
+    box.querySelectorAll("button").forEach((b) => b.onclick = () => selectCharger(b.dataset.id));
+  }
+
+  function selectCharger(stationId) {
+    if (stationId === state.selected && state.started) return;
+    state.selected = stationId;
+    state.started = stationId != null;
+    state.cursor = null;
+    try { if (stationId) localStorage.setItem("monitor.charger", stationId); } catch (e) { /* storage blocked */ }
+    state.messages = []; state.actions = {}; state.open.clear();
+    renderChargers(); renderFeed();
+    refreshDetails(); loadMessages(true);
+  }
+
+  // --- connection, startup, heartbeats -------------------------------------
+  async function refreshDetails() {
+    const id = state.selected;
+    if (!id) return;
+    try {
+      const [connection, startup, heartbeats] = await Promise.all([
+        api(`/api/chargers/${id}/connection`),
+        api(`/api/chargers/${id}/startup`),
+        api(`/api/chargers/${id}/heartbeats`),
+      ]);
+      if (id !== state.selected) return;
+      renderConnection(connection); renderStartup(startup); renderHeartbeats(heartbeats);
+    } catch (error) { showError(error); }
+  }
+
+  function renderConnection(c) {
+    $("c-online").innerHTML = c.is_online ? '<span class="pill ok">online</span>' : '<span class="pill bad">offline</span>';
+    $("c-seen").textContent = ago(c.last_seen_at);
+    $("c-boot").textContent = dateTime(c.last_boot_at);
+    $("c-protocol").textContent = c.ocpp_protocol_version || "-";
+    $("c-model").textContent = c.vendor ? `${c.vendor} / ${c.model || "-"}` : "-";
+    $("c-firmware").textContent = c.firmware_version || "-";
+    $("c-note").textContent = `${c.ocpp_identity}: counted offline after ${c.offline_after_seconds} s without any message.`;
+  }
+
+  function renderStartup(s) {
+    if (!s) {
+      $("boot-summary").textContent = "This charger has not booted yet.";
+      ["boot-request", "boot-answer"].forEach((k) => $(k).textContent = "-");
+      $("boot-sent").textContent = ""; $("boot-answered").textContent = "";
+      return;
+    }
+    const status = s.status || "no answer found";
+    const kind = s.status === "Accepted" ? "ok" : "bad";
+    $("boot-summary").innerHTML = `<span class="pill ${kind}">${escape(status)}</span> ` +
+      escape(s.interval != null ? `heartbeat interval ${s.interval} s` : "");
+    $("boot-sent").textContent = `at ${dateTime(s.request.occurred_at)}`;
+    $("boot-answered").textContent = s.answer ? `at ${timeMs(s.answer.occurred_at)}` : "";
+    $("boot-request").textContent = pretty(s.request.frame);
+    $("boot-answer").textContent = s.answer ? pretty(s.answer.frame) : "-";
+  }
+
+  function renderHeartbeats(h) {
+    $("hb-interval").textContent = h.interval_s != null ? `${h.interval_s} s` : "unknown";
+    $("hb-source").textContent = h.source === "configuration" ? "Interval (from configuration)" : "Interval (from boot)";
+    $("hb-last").textContent = h.recent.length ? ago(h.recent[0].received_at) : "-";
+    const judged = h.recent.filter((r) => r.check === "on time" || r.check === "late" || r.check === "early");
+    const onTime = judged.filter((r) => r.check === "on time").length;
+    $("hb-ontime").textContent = judged.length ? `${onTime} / ${judged.length}` : "-";
+    // The on-time count covers every heartbeat read; the table shows the latest 10.
+    $("hb-rows").innerHTML = h.recent.length ? h.recent.slice(0, 10).map((r) => `<tr>
+        <td class="time">${dateTime(r.received_at)}</td>
+        <td class="num">${r.gap_s == null ? "-" : `${r.gap_s.toFixed(1)} s`}</td>
+        <td class="num">${r.interval_s == null ? "-" : `${r.interval_s} s`}</td>
+        <td><span class="pill ${CHECK_CLASS[r.check] || "warn"}">${escape(r.check)}</span></td>
+      </tr>`).join("") : '<tr><td colspan="4" class="muted">No heartbeat yet.</td></tr>';
+  }
+
+  // --- traffic feed ---------------------------------------------------------
+  async function loadMessages(initial = false) {
+    const id = state.selected;
+    if (!id || (state.paused && !initial)) return;
+    const query = state.cursor && !initial ? `?after=${encodeURIComponent(state.cursor)}` : "";
+    let batch;
+    try { batch = await api(`/api/chargers/${id}/messages${query}`); } catch (error) { showError(error); return; }
+    if (id !== state.selected || !batch.length) return;
+    state.cursor = batch[0].occurred_at;
+    // Oldest first, so a request's action is known before its answer arrives.
+    for (const m of [...batch].reverse()) {
+      if (m.type === "CALL" && m.ocpp_message_id) state.actions[m.ocpp_message_id] = m.action;
+    }
+    const known = new Set(state.messages.map((m) => m.message_id));
+    state.messages = [...batch.filter((m) => !known.has(m.message_id)), ...state.messages].slice(0, MAX_ROWS);
+    renderFeed();
+  }
+
+  function content(m) {
+    if (m.type === "CALLERROR") return m.error || "";
+    const f = m.frame;
+    if (!Array.isArray(f)) return f == null ? "" : String(f);
+    const payload = m.type === "CALL" ? f[3] : f[2];
+    return JSON.stringify(payload);
+  }
+
+  function renderFeed() {
+    const body = $("feed");
+    if (!state.messages.length) { body.innerHTML = '<tr><td colspan="5" class="muted">No message yet.</td></tr>'; return; }
+    body.innerHTML = state.messages.map((m) => {
+      const isIn = m.direction === "CP_TO_CSMS";
+      const action = m.action || (state.actions[m.ocpp_message_id] ? `(${state.actions[m.ocpp_message_id]})` : "-");
+      const typeClass = m.type === "CALLERROR" ? "bad" : m.type === "CALL" ? "warn" : "ok";
+      const row = `<tr class="msg" data-id="${m.message_id}">
+        <td class="time">${timeMs(m.occurred_at)}</td>
+        <td><span class="pill ${isIn ? "in" : "out"}">${isIn ? "IN" : "OUT"}</span></td>
+        <td><span class="pill ${typeClass}">${escape(m.type || "?")}</span></td>
+        <td>${escape(action)}</td>
+        <td class="payload">${escape(content(m))}</td>
+      </tr>`;
+      const detail = state.open.has(m.message_id)
+        ? `<tr class="detail"><td colspan="5"><pre>${escape(pretty(m.frame))}</pre></td></tr>` : "";
+      return row + detail;
+    }).join("");
+    body.querySelectorAll("tr.msg").forEach((tr) => tr.onclick = () => {
+      const id = tr.dataset.id;
+      state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+      renderFeed();
+    });
+  }
+
+  $("pause").onclick = () => {
+    state.paused = !state.paused;
+    $("pause").textContent = state.paused ? "Resume" : "Pause";
+    if (!state.paused) loadMessages();
+  };
+  $("clear").onclick = () => { state.messages = []; state.open.clear(); renderFeed(); };
+
+  // --- configuration tab ----------------------------------------------------
+  const cfg = {selected: null, latest: null, busy: false};
+
+  async function postJson(path, body) {
+    const response = await fetch(path, {
+      method: "POST", cache: "no-store",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    const answer = await response.json().catch(() => ({error: response.statusText}));
+    if (!response.ok) throw new Error(answer.error || response.statusText);
+    return answer;
+  }
+
+  function renderConfigChargers() {
+    const select = $("cfg-charger");
+    if (!state.chargers.length) { select.innerHTML = '<option value="">No charger registered</option>'; return; }
+    if (!cfg.selected || !state.chargers.some((c) => c.station_id === cfg.selected)) {
+      cfg.selected = state.selected || state.chargers[0].station_id;
+      selectConfigCharger(cfg.selected);
+    }
+    select.innerHTML = state.chargers.map((c) =>
+      `<option value="${c.station_id}" ${c.station_id === cfg.selected ? "selected" : ""}>${escape(c.ocpp_identity)} (${c.is_online ? "online" : "offline"})</option>`
+    ).join("");
+    const current = state.chargers.find((c) => c.station_id === cfg.selected);
+    $("cfg-charger-state").innerHTML = current
+      ? (current.is_online ? '<span class="pill ok">online</span>' : '<span class="pill bad">offline: commands will not reach it</span>')
+      : "";
+  }
+
+  function setStatus(id, html) { $(id).innerHTML = html; }
+
+  async function selectConfigCharger(stationId) {
+    cfg.selected = stationId; cfg.latest = null;
+    $("cfg-get-form").innerHTML = "";
+    setStatus("cfg-get-status", "Press Get to ask the charger for its configuration.");
+    setStatus("cfg-send-status", "Loading the settings this charger has…");
+    $("cfg-send-form").innerHTML = "";
+    renderConfigChargers();
+    try {
+      // The newest stored snapshot gives the send form its keys; the charger is not asked.
+      const latest = await api(`/api/chargers/${stationId}/configuration`);
+      if (stationId !== cfg.selected) return;
+      cfg.latest = latest;
+      renderSendForm();
+    } catch (error) {
+      setStatus("cfg-send-status", `<span class="pill bad">error</span> ${escape(error.message)}`);
+    }
+  }
+
+  function renderGetForm(configuration) {
+    $("cfg-get-form").innerHTML = configuration.items.map((item) => `
+      <div class="form-row">
+        <label>${escape(item.key)} ${item.readonly ? '<span class="pill warn">read-only</span>' : ""}</label>
+        <input type="text" value="${escape(item.value ?? "")}" disabled>
+      </div>`).join("") || '<p class="muted">The charger reported no settings.</p>';
+  }
+
+  function renderSendForm() {
+    const writable = (cfg.latest?.items || []).filter((item) => !item.readonly);
+    if (!writable.length) {
+      setStatus("cfg-send-status", "No configuration known yet for this charger: press Get first.");
+      $("cfg-send-form").innerHTML = "";
+      return;
+    }
+    setStatus("cfg-send-status", "Fill in only the settings to change; a blank field stays as it is.");
+    $("cfg-send-form").innerHTML = writable.map((item) => `
+      <div class="form-row">
+        <label for="send-${escape(item.key)}">${escape(item.key)}</label>
+        <input type="text" id="send-${escape(item.key)}" data-key="${escape(item.key)}" placeholder="${escape(item.value ?? "")}">
+      </div>`).join("");
+    $("cfg-send-form").querySelectorAll("input").forEach((input) =>
+      input.oninput = () => input.classList.toggle("filled", input.value.trim() !== ""));
+  }
+
+  function setBusy(busy) {
+    cfg.busy = busy;
+    $("cfg-get").disabled = busy; $("cfg-send").disabled = busy; $("cfg-charger").disabled = busy;
+  }
+
+  async function getConfiguration() {
+    const id = cfg.selected;
+    if (!id || cfg.busy) return;
+    setBusy(true);
+    setStatus("cfg-get-status", "Asking the charger… (up to a minute if it is slow or offline)");
+    try {
+      const configuration = await postJson(`/api/chargers/${id}/configuration/get`, {});
+      if (id !== cfg.selected) return;
+      renderGetForm(configuration);
+      setStatus("cfg-get-status", `<span class="pill ok">received</span> ${configuration.items.length} settings, reported at ${escape(dateTime(configuration.captured_at))}`);
+      cfg.latest = configuration;
+      renderSendForm();
+    } catch (error) {
+      setStatus("cfg-get-status", `<span class="pill bad">failed</span> ${escape(error.message)}`);
+    } finally { setBusy(false); }
+  }
+
+  const ANSWER_CLASS = {Accepted: "ok", RebootRequired: "warn", Rejected: "bad", NotSupported: "bad"};
+
+  async function sendConfiguration() {
+    const id = cfg.selected;
+    if (!id || cfg.busy) return;
+    const changes = {};
+    $("cfg-send-form").querySelectorAll("input").forEach((input) => {
+      if (input.value.trim() !== "") changes[input.dataset.key] = input.value.trim();
+    });
+    if (!Object.keys(changes).length) {
+      setStatus("cfg-send-status", "Nothing to send: fill in at least one setting.");
+      return;
+    }
+    setBusy(true);
+    setStatus("cfg-send-status", `Sending ${Object.keys(changes).length} change(s), one at a time…`);
+    try {
+      const answer = await postJson(`/api/chargers/${id}/configuration/change`, {changes});
+      if (id !== cfg.selected) return;
+      const lines = answer.results.map((r) => {
+        const label = r.answer || r.outcome;
+        const kind = ANSWER_CLASS[r.answer] || (r.outcome === "ACCEPTED" ? "ok" : "bad");
+        return `<div><span class="pill ${kind}">${escape(label)}</span> ${escape(r.key)} = ${escape(r.value)}${r.error ? ` <span class="muted">(${escape(r.error)})</span>` : ""}</div>`;
+      }).join("");
+      if (answer.configuration) {
+        cfg.latest = answer.configuration;
+        renderGetForm(answer.configuration);
+        setStatus("cfg-get-status", `<span class="pill ok">updated</span> read back after the change, at ${escape(dateTime(answer.configuration.captured_at))}`);
+      }
+      renderSendForm();
+      // Keep the values that were not accepted, so they can be corrected.
+      for (const r of answer.results) {
+        if (r.outcome === "ACCEPTED") continue;
+        const input = document.querySelector(`#cfg-send-form input[data-key="${CSS.escape(r.key)}"]`);
+        if (input) { input.value = r.value; input.classList.add("filled"); }
+      }
+      setStatus("cfg-send-status", lines + (answer.configuration_error ? `<div class="muted">Could not read the configuration back: ${escape(answer.configuration_error)}</div>` : ""));
+    } catch (error) {
+      setStatus("cfg-send-status", `<span class="pill bad">failed</span> ${escape(error.message)}`);
+    } finally { setBusy(false); }
+  }
+
+  $("cfg-charger").onchange = (event) => selectConfigCharger(event.target.value);
+  $("cfg-get").onclick = getConfiguration;
+  $("cfg-send").onclick = sendConfiguration;
+
+  // --- tabs -------------------------------------------------------------------
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+    $("tab-monitoring").classList.toggle("hidden", name !== "monitoring");
+    $("tab-configuration").classList.toggle("hidden", name !== "configuration");
+    try { localStorage.setItem("monitor.tab", name); } catch (e) { /* storage blocked */ }
+    history.replaceState(null, "", `#${name}`);
+  }
+  document.querySelectorAll(".tab").forEach((t) => t.onclick = () => showTab(t.dataset.tab));
+  // The address (#monitoring / #configuration) wins over the remembered tab.
+  const TABS = ["monitoring", "configuration"];
+  let firstTab = location.hash.slice(1);
+  if (!TABS.includes(firstTab)) {
+    try { firstTab = localStorage.getItem("monitor.tab"); } catch (e) { firstTab = null; }
+  }
+  if (TABS.includes(firstTab)) showTab(firstTab);
+
+  loadChargers();
+  setInterval(loadChargers, 10000);
+  setInterval(refreshDetails, 5000);
+  setInterval(() => loadMessages(), 2000);
+</script>
+</body>
+</html>
