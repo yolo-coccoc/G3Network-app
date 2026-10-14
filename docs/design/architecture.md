@@ -204,9 +204,10 @@ FastAPI registers the following domains:
   heartbeat interval), `Heartbeat`, `TransactionEvent`, `MeterValues`
   and `StatusNotification`, and keeps the strict rule (timezone required).
   Both adapters are covered in process by the smoke and PostgreSQL
-  integration tests (the repository holds no simulator since 2026-10-14,
-  TT-23 in the [decision log](../decisions/decision-log.md)); a real charger
-  has not been connected.
+  integration tests; a real charger has not been connected. The standalone
+  charger simulator `simulators/charger_simulator/` (TT-24 in the
+  [decision log](../decisions/decision-log.md)) boots and sends heartbeats
+  only, so far.
 - `charging_sessions`: a session is created `PENDING` at the QR scan with a
   single-use 12-character token of upper-case letters and digits (CE-28) and
   turned `ACTIVE` by the charger's start message only when it carries that token on
@@ -615,6 +616,8 @@ call each other is in
 │   ├── README.md
 │   └── .env.example                # every setting with its default; no production Dockerfile at this stage yet
 │
+├── simulators/                     # independent, exportable device simulators, one folder each (TT-24)
+│   └── charger_simulator/          # OCPP 1.6J charger: boot + heartbeats, own web page on :8090; own .env, requirements.txt, README.md
 ├── infra/
 │   ├── docker-compose.yml          # defines exactly 2 services: db, broker (see dev-environment.md)
 │   ├── .env.example
