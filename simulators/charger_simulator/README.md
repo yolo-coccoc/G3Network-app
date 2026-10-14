@@ -1,9 +1,36 @@
 # Charger simulator
 
-A simulated OCPP 1.6J charger. Starting it is like switching a charger on: it
-connects to the central system, sends its startup message
-(`BootNotification`), then a `Heartbeat` every interval, and reconnects by
-itself when the connection drops. It runs until you stop it (Ctrl+C).
+A simulated OCPP 1.6J dual-gun DC charger (240 kW shared by two guns).
+Starting it is like switching a charger on: it connects to the central system,
+sends its startup message (`BootNotification`) and the status of each gun,
+then a `Heartbeat` every interval, and reconnects by itself when the
+connection drops. It runs until you stop it (Ctrl+C).
+
+## Charging (the phone QR flow)
+
+It follows the happy path our backend supports (decision TT-26): a charge is
+started by the phone app's QR scan and stopped from the app, on the charger's
+screen, or by unplugging. On its page (`http://127.0.0.1:8090/`), per gun:
+
+- **Plug in / Unplug** (the physical action), with the car's battery level at
+  plug-in. The car is a sample EV (75 kWh, up to 150 kW) whose battery
+  management drives the charge: full power to 80 %, then less, and nothing at
+  100 % (the gun goes `SuspendedEV`).
+- **Stop** (the charger's screen).
+- Live readings: SoC, power, power offered, voltage, current, stage, energy,
+  charging time, transaction.
+
+What the charger sends: plug in -> `Preparing`; the backend's
+`RemoteStartTransaction` -> `Authorize` -> `StartTransaction` -> `Charging`
+(scan first and plug in within `ConnectionTimeOut`, or plug in first);
+`MeterValues` every `MeterValueSampleInterval` with the measurands in
+`MeterValuesSampledData`; a stop -> `StopTransaction` (`Remote`, `Local` or
+`EVDisconnected`) -> `Finishing`, then `Available` once unplugged. The speed
+buttons (x1, x10, x60) make the charge itself run faster; the OCPP intervals
+stay in real seconds. Not simulated: offline buffering, RFID cards,
+Autocharge, faults and the E-stop.
+
+## Configuration
 
 It reports its configuration when asked (`GetConfiguration`) and applies
 changes (`ChangeConfiguration`): 22 OCPP 1.6 Core keys, listed in

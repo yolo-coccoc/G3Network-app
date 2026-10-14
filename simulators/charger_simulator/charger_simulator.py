@@ -37,7 +37,7 @@ from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
 
-from charger import SimulatedCharger, log
+from charger import SimulatedCharger
 from configuration import ChargerConfiguration
 from settings import (
     DEFAULT_SETTINGS_FILE,
@@ -45,7 +45,8 @@ from settings import (
     SettingsError,
     load_settings,
 )
-from state import SimulatorState
+from state import SimulatorState, log
+from station import ChargingStation
 from web import WebPage
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
@@ -70,18 +71,22 @@ class PowerState:
         booted: Whether a BootNotification was accepted since power-on; until
             then, every new connection boots first.
         configuration: The charger's OCPP configuration keys.
+        station: The charger's guns and charging logic.
     """
 
     def __init__(self) -> None:
         """Start powered on, not yet booted, with the default configuration."""
         self.booted = False
         self.configuration = ChargerConfiguration()
+        self.station = ChargingStation(self.configuration)
 
 
 async def keep_alive(charger: SimulatedCharger, power: PowerState) -> None:
     """Boot if needed, then send heartbeats until the connection fails.
 
-    The wait before each heartbeat re-reads ``HeartbeatInterval`` every
+    After the boot (or a reconnect) every connector's status is announced
+    and the station's queued messages are sent alongside the heartbeats. The
+    wait before each heartbeat re-reads ``HeartbeatInterval`` every
     ``HEARTBEAT_TICK_SECONDS``, so a ``ChangeConfiguration`` takes effect at
     once (a shorter interval can make the next heartbeat due immediately).
 
@@ -103,13 +108,22 @@ async def keep_alive(charger: SimulatedCharger, power: PowerState) -> None:
             "   reconnected: no new boot, heartbeats resume every "
             f"{configuration.heartbeat_interval} s"
         )
+    power.station.announce_statuses()
+    sender = asyncio.create_task(power.station.serve(charger), name="station-sender")
     loop = asyncio.get_running_loop()
     last_sent = loop.time()
-    while True:
-        await asyncio.sleep(HEARTBEAT_TICK_SECONDS)
-        if loop.time() - last_sent >= configuration.heartbeat_interval:
-            last_sent = loop.time()
-            await charger.heartbeat()
+    try:
+        while True:
+            await asyncio.sleep(HEARTBEAT_TICK_SECONDS)
+            if sender.done():
+                sender.result()  # a closed connection ends this connection too
+            if loop.time() - last_sent >= configuration.heartbeat_interval:
+                last_sent = loop.time()
+                await charger.heartbeat()
+    finally:
+        sender.cancel()
+        with suppress(asyncio.CancelledError, ConnectionClosed):
+            await sender
 
 
 async def run_connection(
@@ -143,7 +157,9 @@ async def run_connection(
     ) as connection:
         log(f"connected (subprotocol {connection.subprotocol})")
         state.connected()
-        charger = SimulatedCharger(settings, connection, power.configuration)
+        charger = SimulatedCharger(
+            settings, connection, power.configuration, power.station
+        )
         tasks = {
             asyncio.create_task(charger.start(), name="listen"),
             asyncio.create_task(keep_alive(charger, power), name="keep-alive"),
@@ -184,14 +200,38 @@ def describe_failure(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"
 
 
-async def live(settings: ChargerSettings, state: SimulatorState) -> None:
+async def live(
+    settings: ChargerSettings, state: SimulatorState, power: PowerState
+) -> None:
     """Run the charger until cancelled, reconnecting whenever it drops.
+
+    The station's clock (charging, timers) runs for the whole power-on
+    period, connected or not.
 
     Args:
         settings: The charger's settings.
-        state: The live state.
+        state: The live connection state.
+        power: The charger's configuration and station.
     """
-    power = PowerState()
+    clock = asyncio.create_task(power.station.run(), name="station-clock")
+    try:
+        await reconnect_forever(settings, state, power)
+    finally:
+        clock.cancel()
+        with suppress(asyncio.CancelledError):
+            await clock
+
+
+async def reconnect_forever(
+    settings: ChargerSettings, state: SimulatorState, power: PowerState
+) -> None:
+    """Keep a connection open, reconnecting with a growing delay.
+
+    Args:
+        settings: The charger's settings.
+        state: The live connection state.
+        power: Kept across connections.
+    """
     delay = RECONNECT_FIRST_DELAY_SECONDS
     while True:
         try:
@@ -234,8 +274,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 2
 
     state = SimulatorState(settings)
+    power = PowerState()
     try:
-        page = WebPage(state)
+        page = WebPage(state, power.station)
     except OSError as error:
         print(
             f"web page: cannot listen on {settings.ui_host}:{settings.ui_port} "
@@ -246,7 +287,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     page.start()
     log(f"charger {settings.charger_id} powered on - open {page.url}")
     try:
-        asyncio.run(live(settings, state))
+        asyncio.run(live(settings, state, power))
     except KeyboardInterrupt:
         log(f"charger {settings.charger_id} powered off")
     finally:

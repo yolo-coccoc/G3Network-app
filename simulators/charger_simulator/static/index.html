@@ -7,14 +7,16 @@
 <style>
   :root {
     --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #5f6b7a;
-    --line: #e1e5eb; --ok: #1a7f37; --ok-bg: #dafbe1;
-    --warn: #9a6700; --warn-bg: #fff8c5; --bad: #cf222e; --bad-bg: #ffebe9;
+    --line: #e1e5eb; --accent: #1f6feb; --code-bg: #f6f8fa;
+    --ok: #1a7f37; --ok-bg: #dafbe1; --warn: #9a6700; --warn-bg: #fff8c5;
+    --bad: #cf222e; --bad-bg: #ffebe9; --blue: #0969da; --blue-bg: #ddf4ff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e;
-      --line: #30363d; --ok: #3fb950; --ok-bg: #12261e;
-      --warn: #d29922; --warn-bg: #272115; --bad: #f85149; --bad-bg: #2d1416;
+      --line: #30363d; --accent: #4493f8; --code-bg: #0d1117;
+      --ok: #3fb950; --ok-bg: #12261e; --warn: #d29922; --warn-bg: #272115;
+      --bad: #f85149; --bad-bg: #2d1416; --blue: #4493f8; --blue-bg: #0c2d4b;
     }
   }
   * { box-sizing: border-box; }
@@ -23,22 +25,53 @@
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
   h1 { font-size: 22px; margin: 0; }
-  h2 { font-size: 16px; margin: 0 0 12px; }
+  h2 { font-size: 17px; margin: 0; }
   .card {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 18px; margin-bottom: 16px;
+    padding: 18px; margin-bottom: 16px; min-width: 0;
   }
   .muted { color: var(--muted); }
   .pill {
     display: inline-block; padding: 2px 10px; border-radius: 999px;
-    font-size: 13px; font-weight: 600;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
   }
   .pill.ok { color: var(--ok); background: var(--ok-bg); }
   .pill.warn { color: var(--warn); background: var(--warn-bg); }
   .pill.bad { color: var(--bad); background: var(--bad-bg); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 20px; }
+  .pill.blue { color: var(--blue); background: var(--blue-bg); }
+  .light { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+  .light .lamp { width: 14px; height: 14px; border-radius: 50%; background: var(--blue); }
+  .light.connected .lamp { background: var(--ok); animation: blink 1s steps(2, start) infinite; }
+  .light.charging .lamp { background: var(--ok); }
+  @keyframes blink { to { visibility: hidden; } }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+  button {
+    border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 6px; padding: 6px 14px; cursor: pointer; font: inherit; font-size: 14px;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { color: var(--bad); border-color: var(--bad); font-weight: 600; }
+  button.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  #notice { min-height: 24px; }
+  .guns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 820px) { .guns { grid-template-columns: 1fr; } }
+  .gun-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .group { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+  .group-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  input[type=number] {
+    font: inherit; font-size: 14px; width: 80px; padding: 5px 8px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--card); color: var(--text);
+  }
+  .soc-bar { height: 14px; border-radius: 7px; background: var(--code-bg); border: 1px solid var(--line); overflow: hidden; margin: 6px 0 2px; }
+  .soc-bar > div { height: 100%; background: var(--ok); width: 0%; transition: width .5s; }
+  .readings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 14px; }
+  .reading .label { font-size: 12px; color: var(--muted); }
+  .reading .value { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 18px; }
   .field .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
   .field .value { font-weight: 600; overflow-wrap: anywhere; }
   #offline { display: none; }
@@ -49,19 +82,29 @@
   <header>
     <h1 id="title">Charger Simulator</h1>
     <span id="connection" class="pill warn">starting</span>
+    <span id="light" class="light standby"><span class="lamp"></span><span id="light-text">Standby</span></span>
   </header>
 
   <div id="offline" class="card"><span class="pill bad">simulator not running</span>
     <span class="muted">The page cannot reach the simulator. Start it again; this page reconnects by itself.</span></div>
 
+  <div class="toolbar">
+    <span class="muted">Charging speed (simulator only):</span>
+    <span id="speeds"></span>
+    <span id="notice" class="muted"></span>
+  </div>
+  <div id="unassigned" class="card" style="display:none"></div>
+
+  <div id="guns" class="guns"></div>
+
   <section class="card">
-    <h2>Welcome</h2>
-    <p id="welcome" class="muted">Loading…</p>
+    <h2 style="margin-bottom:12px">Charger</h2>
+    <p id="welcome" class="muted" style="margin-top:0">Loading…</p>
     <div class="grid">
       <div class="field"><div class="label">Charger ID</div><div class="value" id="f-id">-</div></div>
       <div class="field"><div class="label">Vendor / model</div><div class="value" id="f-model">-</div></div>
       <div class="field"><div class="label">Firmware</div><div class="value" id="f-firmware">-</div></div>
-      <div class="field"><div class="label">Serial</div><div class="value" id="f-serial">-</div></div>
+      <div class="field"><div class="label">Max power</div><div class="value" id="f-power">-</div></div>
       <div class="field"><div class="label">Server</div><div class="value" id="f-endpoint">-</div></div>
       <div class="field"><div class="label">Switched on</div><div class="value" id="f-on">-</div></div>
       <div class="field"><div class="label">Connected since</div><div class="value" id="f-since">-</div></div>
@@ -74,50 +117,175 @@
   const $ = (id) => document.getElementById(id);
   const time = (iso) => iso ? new Date(iso).toLocaleTimeString([], {hour12: false}) : "-";
   const dateTime = (iso) => iso ? new Date(iso).toLocaleString([], {hour12: false}) : "-";
+  const STATUS_CLASS = {
+    Available: "blue", Preparing: "warn", Charging: "ok", SuspendedEV: "ok", SuspendedEVSE: "warn",
+    Finishing: "warn", Faulted: "bad", Unavailable: "bad", Reserved: "warn",
+  };
+  const LIGHTS = {standby: "Standby", connected: "Connected / waiting", charging: "Charging"};
+  let built = false;
 
-  function renderConnection(connection) {
-    const pill = $("connection");
-    const labels = {connected: ["connected", "ok"], connecting: ["connecting…", "warn"], disconnected: ["disconnected", "bad"]};
-    const [label, kind] = labels[connection.status] || [connection.status, "warn"];
-    pill.textContent = label;
-    pill.className = `pill ${kind}`;
-    pill.title = connection.detail || "";
+  async function post(path, body = {}) {
+    try {
+      const response = await fetch(path, {
+        method: "POST", cache: "no-store",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+      });
+      const answer = await response.json().catch(() => ({error: response.statusText}));
+      $("notice").innerHTML = response.ok
+        ? `<span class="pill ok">done</span> ${escapeHtml(answer.message)}`
+        : `<span class="pill bad">not possible</span> ${escapeHtml(answer.error || response.statusText)}`;
+    } catch (error) {
+      $("notice").innerHTML = `<span class="pill bad">error</span> ${escapeHtml(error.message)}`;
+    }
+    refresh();
   }
 
-  function renderWelcome(data) {
-    const c = data.charger, conn = data.connection;
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  }
+
+  // The gun cards are built once; each refresh only changes their values, so
+  // typing a start SoC is not interrupted.
+  function buildGuns(guns) {
+    $("guns").innerHTML = guns.map((g) => `
+      <section class="card" id="gun-${g.number}">
+        <div class="gun-head">
+          <h2>Gun ${g.number}</h2>
+          <span class="pill" id="g${g.number}-status">-</span>
+        </div>
+        <div class="muted" id="g${g.number}-note">&nbsp;</div>
+
+        <div class="group">
+          <div class="group-title">Physical (at the car)</div>
+          <div class="row">
+            <label class="muted" for="g${g.number}-soc">Car battery at plug-in</label>
+            <input type="number" id="g${g.number}-soc" min="0" max="99" value="20"> %
+            <button class="primary" id="g${g.number}-plug">Plug in</button>
+            <button id="g${g.number}-unplug">Unplug</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-title">Charger screen</div>
+          <div class="row"><button class="danger" id="g${g.number}-stop">Stop</button>
+            <span class="muted">Starting is done from the phone app (QR scan).</span></div>
+        </div>
+
+        <div class="group">
+          <div class="group-title" id="g${g.number}-car">No car</div>
+          <div class="soc-bar"><div id="g${g.number}-socbar"></div></div>
+          <div class="readings" style="margin-top:8px">
+            <div class="reading"><div class="label">SoC</div><div class="value" id="g${g.number}-socv">-</div></div>
+            <div class="reading"><div class="label">Power</div><div class="value" id="g${g.number}-power">-</div></div>
+            <div class="reading"><div class="label">Offered</div><div class="value" id="g${g.number}-offered">-</div></div>
+            <div class="reading"><div class="label">Voltage</div><div class="value" id="g${g.number}-voltage">-</div></div>
+            <div class="reading"><div class="label">Current</div><div class="value" id="g${g.number}-current">-</div></div>
+            <div class="reading"><div class="label">Stage</div><div class="value" id="g${g.number}-stage">-</div></div>
+            <div class="reading"><div class="label">Energy this charge</div><div class="value" id="g${g.number}-energy">-</div></div>
+            <div class="reading"><div class="label">Charging time</div><div class="value" id="g${g.number}-duration">-</div></div>
+            <div class="reading"><div class="label">Transaction</div><div class="value" id="g${g.number}-tx">-</div></div>
+          </div>
+          <div class="muted" style="margin-top:8px">Meter <span id="g${g.number}-register">-</span></div>
+        </div>
+      </section>`).join("");
+    for (const g of guns) {
+      const n = g.number;
+      $(`g${n}-plug`).onclick = () => post(`/api/guns/${n}/plug`, {start_soc: Number($(`g${n}-soc`).value)});
+      $(`g${n}-unplug`).onclick = () => post(`/api/guns/${n}/unplug`);
+      $(`g${n}-stop`).onclick = () => post(`/api/guns/${n}/stop`);
+    }
+    built = true;
+  }
+
+  function duration(startedIso) {
+    if (!startedIso) return "-";
+    const s = Math.max(0, Math.round((Date.now() - new Date(startedIso)) / 1000));
+    return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s`;
+  }
+
+  function renderGun(g) {
+    const n = g.number;
+    const status = $(`g${n}-status`);
+    status.textContent = g.status;
+    status.className = `pill ${STATUS_CLASS[g.status] || "warn"}`;
+    let note = " ";
+    if (g.starting) note = "Starting the charge…";
+    else if (g.authorization_waiting_s != null) note = `Authorized by the app: plug in within ${Math.ceil(g.authorization_waiting_s)} s`;
+    else if (g.status === "Preparing") note = "Car connected: scan the QR code in the app to start";
+    else if (g.status === "SuspendedEV") note = "The car is full: stop from the app or the screen, or unplug";
+    else if (g.status === "Finishing") note = "Charge finished: unplug the gun";
+    $(`g${n}-note`).textContent = note;
+    const inCharge = g.transaction_id != null;
+    $(`g${n}-plug`).disabled = g.plugged;
+    $(`g${n}-soc`).disabled = g.plugged;
+    $(`g${n}-unplug`).disabled = !g.plugged;
+    $(`g${n}-stop`).disabled = !inCharge;
+    const car = g.car;
+    $(`g${n}-car`).textContent = car ? `${car.name} · ${car.battery_kwh} kWh battery · up to ${car.max_power_kw} kW` : "No car";
+    $(`g${n}-socbar`).style.width = car ? `${car.soc}%` : "0%";
+    $(`g${n}-socv`).textContent = car ? `${car.soc.toFixed(1)} %` : "-";
+    $(`g${n}-power`).textContent = inCharge ? `${g.power_kw.toFixed(1)} kW` : "-";
+    $(`g${n}-offered`).textContent = inCharge ? `${g.offered_kw.toFixed(0)} kW` : "-";
+    $(`g${n}-voltage`).textContent = car ? `${car.voltage_v.toFixed(0)} V` : "-";
+    $(`g${n}-current`).textContent = inCharge ? `${g.current_a.toFixed(0)} A` : "-";
+    $(`g${n}-stage`).textContent = inCharge && car ? car.stage : "-";
+    $(`g${n}-energy`).textContent = g.session_kwh != null ? `${g.session_kwh.toFixed(2)} kWh` : "-";
+    $(`g${n}-duration`).textContent = duration(g.started_at);
+    $(`g${n}-tx`).textContent = g.transaction_id ?? "-";
+    $(`g${n}-register`).textContent = `${g.register_kwh.toFixed(3)} kWh`;
+  }
+
+  function renderSpeeds(station) {
+    $("speeds").innerHTML = station.speeds.map((s) =>
+      `<button class="${s === station.speed ? "selected" : ""}" data-speed="${s}">×${s}</button>`).join(" ");
+    $("speeds").querySelectorAll("button").forEach((b) => b.onclick = () => post("/api/speed", {speed: Number(b.dataset.speed)}));
+  }
+
+  function renderCharger(data) {
+    const c = data.charger, conn = data.connection, station = data.station;
     document.title = `${c.id} · Charger Simulator`;
     $("title").textContent = `Charger ${c.id}`;
-    let text = `Welcome. This charger was switched on at ${dateTime(c.powered_on_at)} and talks OCPP 1.6J to ${c.endpoint}.`;
-    if (conn.status === "disconnected") {
-      text += ` It is offline: ${conn.detail}. Next try at ${time(conn.next_retry_at)}.`;
-    } else if (conn.status === "connecting") {
-      text += " It is connecting now.";
-    }
+    const pill = $("connection");
+    const labels = {connected: ["online", "ok"], connecting: ["connecting…", "warn"], disconnected: ["offline", "bad"]};
+    const [label, kind] = labels[conn.status] || [conn.status, "warn"];
+    pill.textContent = label; pill.className = `pill ${kind}`; pill.title = conn.detail || "";
+    $("light").className = `light ${station.light}`;
+    $("light-text").textContent = LIGHTS[station.light];
+    let text = `Switched on at ${dateTime(c.powered_on_at)}; talks OCPP 1.6J to ${c.endpoint}.`;
+    if (conn.status === "disconnected") text += ` Offline: ${conn.detail}. Next try at ${time(conn.next_retry_at)}.`;
     $("welcome").textContent = text;
     $("f-id").textContent = c.id;
     $("f-model").textContent = `${c.vendor} / ${c.model}`;
     $("f-firmware").textContent = c.firmware;
-    $("f-serial").textContent = c.serial || "not sent";
+    $("f-power").textContent = `${station.max_power_kw} kW, shared by the guns`;
     $("f-endpoint").textContent = c.endpoint;
     $("f-on").textContent = dateTime(c.powered_on_at);
     $("f-since").textContent = dateTime(conn.connected_since);
     $("f-connections").textContent = conn.connections;
+    const waiting = station.unassigned_authorization_s;
+    $("unassigned").style.display = waiting != null ? "block" : "none";
+    if (waiting != null) {
+      $("unassigned").innerHTML = `<span class="pill warn">authorized</span> The app started a charge without choosing a gun: plug a car into either gun within ${Math.ceil(waiting)} s.`;
+    }
   }
 
   async function refresh() {
+    let data;
     try {
       const response = await fetch("/api/state", {cache: "no-store"});
       if (!response.ok) throw new Error(response.statusText);
-      const data = await response.json();
-      $("offline").style.display = "none";
-      renderConnection(data.connection);
-      renderWelcome(data);
+      data = await response.json();
     } catch (error) {
       $("offline").style.display = "block";
       $("connection").textContent = "unreachable";
       $("connection").className = "pill bad";
+      return;
     }
+    $("offline").style.display = "none";
+    if (!built) buildGuns(data.station.guns);
+    renderCharger(data);
+    renderSpeeds(data.station);
+    data.station.guns.forEach(renderGun);
   }
 
   refresh();

@@ -82,10 +82,14 @@ KEY_DEFINITIONS: tuple[KeyDefinition, ...] = (
     KeyDefinition(
         "MeterValuesAlignedData", "measurands", "Energy.Active.Import.Register"
     ),
+    # The spec's measurands (charging-station summary section 4.6): energy,
+    # power and SoC are mandatory; voltage, current, temperature and offered
+    # power should be there too.
     KeyDefinition(
         "MeterValuesSampledData",
         "measurands",
-        "Energy.Active.Import.Register,Power.Active.Import,SoC",
+        "Energy.Active.Import.Register,Power.Active.Import,SoC,Voltage,"
+        "Current.Import,Temperature,Power.Offered",
     ),
     KeyDefinition("MeterValueSampleInterval", "int", "60"),
     KeyDefinition("NumberOfConnectors", "int", "2", readonly=True),
@@ -139,6 +143,29 @@ class ChargerConfiguration:
         """Start from the power-on defaults."""
         self._definitions = {item.key.lower(): item for item in KEY_DEFINITIONS}
         self._values = {item.key: item.default for item in KEY_DEFINITIONS}
+
+    def value(self, key: str) -> str | None:
+        """Return a key's current value.
+
+        Args:
+            key: The key name (any case).
+
+        Returns:
+            The value, or ``None`` for an unknown key.
+        """
+        definition = self._definitions.get(key.lower())
+        return None if definition is None else self._values[definition.key]
+
+    def int_value(self, key: str) -> int:
+        """Return an ``int`` key's current value.
+
+        Args:
+            key: The key name; must be an ``int`` key this charger has.
+
+        Returns:
+            The number.
+        """
+        return int(self._values[self._definitions[key.lower()].key])
 
     @property
     def heartbeat_interval(self) -> int:

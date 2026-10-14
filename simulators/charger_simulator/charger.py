@@ -6,8 +6,11 @@ requests. Each exchange is written to the charger's console log only; the
 OCPP traffic is not shown on the charger's web page.
 
 Supported server requests: ``GetConfiguration`` and ``ChangeConfiguration``
-(``configuration.py``). Any other request is answered with a
-``NotImplemented`` CALLERROR.
+(``configuration.py``), ``RemoteStartTransaction`` and
+``RemoteStopTransaction`` (handed to the station, ``station.py``). Any other
+request is answered with a ``NotImplemented`` CALLERROR. A handler never
+waits for a call of its own (the library would deadlock): the station queues
+the follow-up messages and sends them after the answer.
 """
 
 from __future__ import annotations
@@ -21,9 +24,15 @@ from ocpp.exceptions import OCPPError
 from ocpp.messages import CallError
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint, call, call_result
-from ocpp.v16.enums import Action, ConfigurationStatus, RegistrationStatus
+from ocpp.v16.enums import (
+    Action,
+    ConfigurationStatus,
+    RegistrationStatus,
+    RemoteStartStopStatus,
+)
 from settings import ChargerSettings
-from state import utc_now
+from state import log
+from station import ChargingStation, mask
 from websockets.asyncio.client import ClientConnection
 
 # Seconds to wait for the server's answer to one of our messages.
@@ -35,16 +44,6 @@ FALLBACK_INTERVAL_SECONDS = 60
 
 # Wait before booting again after ``Pending`` / ``Rejected`` with interval 0.
 FALLBACK_BOOT_RETRY_SECONDS = 10
-
-
-def log(text: str) -> None:
-    """Print one console line prefixed with the charger's UTC clock.
-
-    Args:
-        text: The line to print.
-    """
-    now = utc_now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"{now}Z  {text}", flush=True)
 
 
 def frame_parts(raw_frame: str) -> tuple[int | None, str, str]:
@@ -74,6 +73,7 @@ class SimulatedCharger(ChargePoint):  # type: ignore[misc]
     Attributes:
         settings: The charger's settings (boot fields, interval override).
         configuration: The charger's OCPP configuration keys.
+        station: The charger's guns and charging logic.
     """
 
     def __init__(
@@ -81,6 +81,7 @@ class SimulatedCharger(ChargePoint):  # type: ignore[misc]
         settings: ChargerSettings,
         connection: ClientConnection,
         configuration: ChargerConfiguration,
+        station: ChargingStation,
     ) -> None:
         """Bind the library's charge point to one connection.
 
@@ -88,12 +89,50 @@ class SimulatedCharger(ChargePoint):  # type: ignore[misc]
             settings: The charger's settings.
             connection: The open WebSocket connection.
             configuration: The charger's OCPP configuration keys.
+            station: The charger's guns and charging logic.
         """
         super().__init__(
             settings.charger_id, connection, response_timeout=RESPONSE_TIMEOUT_SECONDS
         )
         self.settings = settings
         self.configuration = configuration
+        self.station = station
+
+    @on(Action.remote_start_transaction)  # type: ignore[untyped-decorator]
+    async def on_remote_start_transaction(
+        self, id_tag: str, connector_id: int | None = None, **_: object
+    ) -> call_result.RemoteStartTransaction:
+        """Accept or refuse a remote start (the driver scanned the QR code).
+
+        Args:
+            id_tag: The token the backend issued for the scan.
+            connector_id: The gun the driver chose; ``None`` = any gun.
+            **_: Fields this charger does not use (a charging profile).
+
+        Returns:
+            ``Accepted`` or ``Rejected``.
+        """
+        status = self.station.remote_start(id_tag, connector_id)
+        gun = f"gun {connector_id}" if connector_id else "any gun"
+        log(f"<- RemoteStartTransaction {mask(id_tag)} on {gun}: {status}")
+        return call_result.RemoteStartTransaction(status=RemoteStartStopStatus(status))
+
+    @on(Action.remote_stop_transaction)  # type: ignore[untyped-decorator]
+    async def on_remote_stop_transaction(
+        self, transaction_id: int, **_: object
+    ) -> call_result.RemoteStopTransaction:
+        """Accept or refuse a remote stop (the driver stopped in the app).
+
+        Args:
+            transaction_id: The transaction to stop.
+            **_: Nothing else is defined.
+
+        Returns:
+            ``Accepted``, or ``Rejected`` for an unknown transaction.
+        """
+        status = self.station.remote_stop(transaction_id)
+        log(f"<- RemoteStopTransaction {transaction_id}: {status}")
+        return call_result.RemoteStopTransaction(status=RemoteStartStopStatus(status))
 
     @on(Action.get_configuration)  # type: ignore[untyped-decorator]
     async def on_get_configuration(

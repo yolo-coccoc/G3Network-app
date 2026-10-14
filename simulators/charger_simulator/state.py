@@ -24,6 +24,21 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def log(text: str) -> None:
+    """Print one console line prefixed with the charger's UTC clock.
+
+    Args:
+        text: The line to print.
+    """
+    now = utc_now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    print(f"{now}Z  {text}", flush=True)
+
+
+def iso_now() -> str:
+    """Return the current UTC time as an OCPP timestamp (milliseconds, ``Z``)."""
+    return utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
 def iso(moment: datetime | None) -> str | None:
     """Format a time for the page (ISO 8601, milliseconds, ``Z``).
 
