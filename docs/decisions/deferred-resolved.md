@@ -497,3 +497,23 @@
 - **Additional notes**: Build each part from the raw-log evidence of the test day: the
   re-send order and timing, the clock at boot, and the exact vendor payloads.
 - **Resolution (2026-10-14)**: Closed without being built. The owner dropped the charging test day and removed its tooling (TT-23 in `docs/decisions/decision-log.md`), including the scripted OCPP 1.6J simulator this item would have extended and the test-day planner it cites. The rest of `simulator/` was removed the same day, so the repository holds no charger simulator. The backend side stays deferred in items 27 and 81; if a simulator returns and should model an offline queue, clock drift or vendor messages, record a new item then.
+
+---
+
+### 104. Web page that monitors the OCPP traffic in and out of the backend — Resolved
+
+- **Short description**: A simple admin web page that shows, live, the OCPP messages the backend
+  gateway receives from chargers and sends to them (boot, heartbeats with their gaps against the
+  interval, status, transactions, commands and their answers), per charger. The raw messages are
+  already stored in `charging_ocpp_messages`; this is only the page that reads them.
+- **Purpose/role in the system**: Lets staff and developers see what a charger (or the charger
+  simulator) and the backend actually exchange, without SQL or command-line tools.
+- **Reason for deferral**: The owner decided (TT-25) that this monitoring belongs on the server
+  side, not on the charger simulator's own page, and asked to build it later; `web-portal/` has no
+  stack yet (TT-20).
+- **Related planner/feature**: TT-24, TT-25 (`docs/decisions/decision-log.md`),
+  `simulators/charger_simulator/`.
+- **Date recorded**: 2026-10-14
+- **Additional notes**: Frames can hold QR `idTag` tokens; the page must mask them, like the
+  removed operator console did.
+- **Resolution (2026-10-14)**: Built the same day as `simulators/charger_monitor/`, at the owner's request: a standalone page (standard library only, its own `.env`) that runs on the VM next to the backend and reads the OCPP message log through the HTTP API as an internal staff account, never the database. Per charger it shows the connection, the latest BootNotification and the backend's answer, a heartbeat interval check and a live message feed. Frame text is requested only when a cheap probe without it finds new traffic (each frame read writes an access-audit row), and `idTag` / `idToken` values are masked before anything reaches the browser.

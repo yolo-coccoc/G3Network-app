@@ -18,7 +18,7 @@
 The items below are actual deferral decisions made in the repo, not placeholders.
 Items that were resolved, completed or superseded are moved, with their
 number unchanged, to [deferred-resolved.md](./deferred-resolved.md) (currently
-items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97 and 103), so a reference like
+items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 104), so a reference like
 "`deferred.md` item 10" can be found there.
 
 ### 1. API Gateway / Reverse Proxy (Traefik/Nginx)
@@ -1995,25 +1995,6 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97 and 103),
 - **Additional notes**: (1)-(3) are new `StationCommandType` members and adapter senders in the
   existing command loop, plus their tables when a feature needs them; (4) can be a command type
   the gateway handles itself without an OCPP call.
-
----
-
-### 104. Web page that monitors the OCPP traffic in and out of the backend
-
-- **Short description**: A simple admin web page that shows, live, the OCPP messages the backend
-  gateway receives from chargers and sends to them (boot, heartbeats with their gaps against the
-  interval, status, transactions, commands and their answers), per charger. The raw messages are
-  already stored in `charging_ocpp_messages`; this is only the page that reads them.
-- **Purpose/role in the system**: Lets staff and developers see what a charger (or the charger
-  simulator) and the backend actually exchange, without SQL or command-line tools.
-- **Reason for deferral**: The owner decided (TT-25) that this monitoring belongs on the server
-  side, not on the charger simulator's own page, and asked to build it later; `web-portal/` has no
-  stack yet (TT-20).
-- **Related planner/feature**: TT-24, TT-25 (`docs/decisions/decision-log.md`),
-  `simulators/charger_simulator/`.
-- **Date recorded**: 2026-10-14
-- **Additional notes**: Frames can hold QR `idTag` tokens; the page must mask them, like the
-  removed operator console did.
 
 ---
 

@@ -617,7 +617,8 @@ call each other is in
 │   └── .env.example                # every setting with its default; no production Dockerfile at this stage yet
 │
 ├── simulators/                     # independent, exportable device simulators, one folder each (TT-24)
-│   └── charger_simulator/          # OCPP 1.6J charger: boot + heartbeats, own web page on :8090; own .env, requirements.txt, README.md
+│   ├── charger_simulator/          # OCPP 1.6J charger: boot, heartbeats, Get/ChangeConfiguration; own web page on :8090; own .env, requirements.txt, README.md
+│   └── charger_monitor/            # runs on the VM, page on :8095: Monitoring (OCPP traffic from the message log) and Configuration (get/change via the command API) tabs; own .env, stdlib only
 ├── infra/
 │   ├── docker-compose.yml          # defines exactly 2 services: db, broker (see dev-environment.md)
 │   ├── .env.example
