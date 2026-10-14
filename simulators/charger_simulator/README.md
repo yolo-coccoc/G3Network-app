@@ -5,6 +5,13 @@ connects to the central system, sends its startup message
 (`BootNotification`), then a `Heartbeat` every interval, and reconnects by
 itself when the connection drops. It runs until you stop it (Ctrl+C).
 
+It reports its configuration when asked (`GetConfiguration`) and applies
+changes (`ChangeConfiguration`): 22 OCPP 1.6 Core keys, listed in
+`configuration.py`. An unknown key is answered `NotSupported`; a read-only key
+(`NumberOfConnectors`, `SupportedFeatureProfiles`, `GetConfigurationMaxKeys`)
+or a value of the wrong type is `Rejected`. A new `HeartbeatInterval` takes
+effect at once. The configuration starts from the defaults at every start.
+
 The folder is self-contained: copy it anywhere. It needs Python 3.12 and two
 libraries, and reads only its own `.env`.
 

@@ -8,8 +8,10 @@ charger does:
 1. **Power on:** open the web page, connect to ``CHARGER_SERVER_URL`` +
    ``CHARGER_ID`` with the ``ocpp1.6`` subprotocol, and send
    ``BootNotification`` until it is accepted (OCPP 1.6 section 4.2).
-2. **Alive:** a ``Heartbeat`` every interval (the server's, or
-   ``CHARGER_HEARTBEAT_INTERVAL``).
+2. **Alive:** a ``Heartbeat`` every ``HeartbeatInterval`` seconds (set by
+   the boot answer or ``CHARGER_HEARTBEAT_INTERVAL``, then by any
+   ``ChangeConfiguration``); ``GetConfiguration`` and ``ChangeConfiguration``
+   are answered (``configuration.py``).
 3. **Connection lost** (closed, network down, no answer within 30 s, or the
    handshake refused): reconnect after 5 s, doubling up to 60 s. A reconnect
    is not a reboot: heartbeats resume without a new ``BootNotification``,
@@ -36,6 +38,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from charger import SimulatedCharger, log
+from configuration import ChargerConfiguration
 from settings import (
     DEFAULT_SETTINGS_FILE,
     ChargerSettings,
@@ -55,41 +58,58 @@ OCPP16_SUBPROTOCOL = Subprotocol("ocpp1.6")
 RECONNECT_FIRST_DELAY_SECONDS = 5.0
 RECONNECT_MAX_DELAY_SECONDS = 60.0
 
+# How often the heartbeat loop re-reads HeartbeatInterval, so a change from
+# the server applies at once instead of after the current wait.
+HEARTBEAT_TICK_SECONDS = 0.5
+
 
 class PowerState:
     """What the charger remembers across connections while powered on.
 
     Attributes:
-        heartbeat_interval: Seconds between heartbeats, set by the first
-            accepted boot; ``None`` until then, so the next connection boots.
+        booted: Whether a BootNotification was accepted since power-on; until
+            then, every new connection boots first.
+        configuration: The charger's OCPP configuration keys.
     """
 
     def __init__(self) -> None:
-        """Start powered on but not yet booted."""
-        self.heartbeat_interval: float | None = None
+        """Start powered on, not yet booted, with the default configuration."""
+        self.booted = False
+        self.configuration = ChargerConfiguration()
 
 
 async def keep_alive(charger: SimulatedCharger, power: PowerState) -> None:
     """Boot if needed, then send heartbeats until the connection fails.
 
+    The wait before each heartbeat re-reads ``HeartbeatInterval`` every
+    ``HEARTBEAT_TICK_SECONDS``, so a ``ChangeConfiguration`` takes effect at
+    once (a shorter interval can make the next heartbeat due immediately).
+
     Args:
         charger: The charger on the current connection.
-        power: Kept across connections (the interval after the boot).
+        power: Kept across connections (boot done, configuration).
 
     Raises:
         TimeoutError: A boot or heartbeat got no answer in time.
         OCPPError: The server answered the boot with a CALLERROR.
         ConnectionClosed: The connection closed while sending.
     """
-    interval = power.heartbeat_interval
-    if interval is None:
-        interval = await charger.boot_until_accepted()
-        power.heartbeat_interval = interval
+    configuration = power.configuration
+    if not power.booted:
+        await charger.boot_until_accepted()
+        power.booted = True
     else:
-        log(f"   reconnected: no new boot, heartbeats resume every {interval:g} s")
+        log(
+            "   reconnected: no new boot, heartbeats resume every "
+            f"{configuration.heartbeat_interval} s"
+        )
+    loop = asyncio.get_running_loop()
+    last_sent = loop.time()
     while True:
-        await asyncio.sleep(interval)
-        await charger.heartbeat()
+        await asyncio.sleep(HEARTBEAT_TICK_SECONDS)
+        if loop.time() - last_sent >= configuration.heartbeat_interval:
+            last_sent = loop.time()
+            await charger.heartbeat()
 
 
 async def run_connection(
@@ -123,7 +143,7 @@ async def run_connection(
     ) as connection:
         log(f"connected (subprotocol {connection.subprotocol})")
         state.connected()
-        charger = SimulatedCharger(settings, connection)
+        charger = SimulatedCharger(settings, connection, power.configuration)
         tasks = {
             asyncio.create_task(charger.start(), name="listen"),
             asyncio.create_task(keep_alive(charger, power), name="keep-alive"),

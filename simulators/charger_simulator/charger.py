@@ -3,9 +3,11 @@
 Wraps the ``ocpp`` library's ``ChargePoint``: the charger's own messages
 (``BootNotification``, ``Heartbeat``) and the answers to the server's
 requests. Each exchange is written to the charger's console log only; the
-OCPP traffic is not shown on the charger's web page. No server request is
-supported yet, so each is answered with a ``NotImplemented`` CALLERROR (the
-server's post-boot ``GetConfiguration`` included).
+OCPP traffic is not shown on the charger's web page.
+
+Supported server requests: ``GetConfiguration`` and ``ChangeConfiguration``
+(``configuration.py``). Any other request is answered with a
+``NotImplemented`` CALLERROR.
 """
 
 from __future__ import annotations
@@ -14,10 +16,12 @@ import asyncio
 import json
 from contextlib import suppress
 
+from configuration import ChargerConfiguration
 from ocpp.exceptions import OCPPError
 from ocpp.messages import CallError
-from ocpp.v16 import ChargePoint, call
-from ocpp.v16.enums import RegistrationStatus
+from ocpp.routing import on
+from ocpp.v16 import ChargePoint, call, call_result
+from ocpp.v16.enums import Action, ConfigurationStatus, RegistrationStatus
 from settings import ChargerSettings
 from state import utc_now
 from websockets.asyncio.client import ClientConnection
@@ -27,7 +31,7 @@ RESPONSE_TIMEOUT_SECONDS = 30
 
 # Interval used when the server answers a boot with ``interval`` 0, which 1.6
 # leaves to the charger.
-FALLBACK_INTERVAL_SECONDS = 60.0
+FALLBACK_INTERVAL_SECONDS = 60
 
 # Wait before booting again after ``Pending`` / ``Rejected`` with interval 0.
 FALLBACK_BOOT_RETRY_SECONDS = 10
@@ -64,23 +68,74 @@ def frame_parts(raw_frame: str) -> tuple[int | None, str, str]:
 class SimulatedCharger(ChargePoint):  # type: ignore[misc]
     """The charger on one WebSocket connection.
 
-    A new instance is made for every connection.
+    A new instance is made for every connection; the configuration is the
+    charger's and outlives it.
 
     Attributes:
         settings: The charger's settings (boot fields, interval override).
+        configuration: The charger's OCPP configuration keys.
     """
 
-    def __init__(self, settings: ChargerSettings, connection: ClientConnection) -> None:
+    def __init__(
+        self,
+        settings: ChargerSettings,
+        connection: ClientConnection,
+        configuration: ChargerConfiguration,
+    ) -> None:
         """Bind the library's charge point to one connection.
 
         Args:
             settings: The charger's settings.
             connection: The open WebSocket connection.
+            configuration: The charger's OCPP configuration keys.
         """
         super().__init__(
             settings.charger_id, connection, response_timeout=RESPONSE_TIMEOUT_SECONDS
         )
         self.settings = settings
+        self.configuration = configuration
+
+    @on(Action.get_configuration)  # type: ignore[untyped-decorator]
+    async def on_get_configuration(
+        self, key: list[str] | None = None, **_: object
+    ) -> call_result.GetConfiguration:
+        """Report the configuration: every key, or the ones asked for.
+
+        Args:
+            key: The keys asked for; ``None`` = all of them.
+            **_: Fields this charger does not use.
+
+        Returns:
+            The known keys with their values and read-only flags, and the
+            names of the keys it does not have.
+        """
+        entries, unknown = self.configuration.report(key)
+        log(
+            f"<- GetConfiguration ({', '.join(key) if key else 'all keys'}): "
+            f"sent {len(entries)} key(s)"
+            + (f", unknown {', '.join(unknown)}" if unknown else "")
+        )
+        return call_result.GetConfiguration(
+            configuration_key=entries, unknown_key=unknown or None
+        )
+
+    @on(Action.change_configuration)  # type: ignore[untyped-decorator]
+    async def on_change_configuration(
+        self, key: str, value: str, **_: object
+    ) -> call_result.ChangeConfiguration:
+        """Change one configuration key, if it exists, is writable and valid.
+
+        Args:
+            key: The key to change.
+            value: Its new value.
+            **_: Fields this charger does not use.
+
+        Returns:
+            ``Accepted``, ``Rejected`` or ``NotSupported``.
+        """
+        status = self.configuration.change(key, value)
+        log(f"<- ChangeConfiguration {key}={value!r}: {status}")
+        return call_result.ChangeConfiguration(status=ConfigurationStatus(status))
 
     async def route_message(self, raw_msg: str) -> None:
         """Answer or route one frame from the server.
@@ -106,16 +161,14 @@ class SimulatedCharger(ChargePoint):  # type: ignore[misc]
             return
         await super().route_message(raw_msg)
 
-    async def boot_until_accepted(self) -> float:
+    async def boot_until_accepted(self) -> None:
         """Send BootNotification until the server accepts it.
 
         Per 1.6 section 4.2, after ``Pending`` or ``Rejected`` the charger
         sends no other message and boots again after the returned interval.
-
-        Returns:
-            The heartbeat interval to use, in seconds: the
-            ``CHARGER_HEARTBEAT_INTERVAL`` override, else the server's, else
-            the fallback when the server returned 0.
+        The accepted answer sets ``HeartbeatInterval`` in the configuration:
+        the ``CHARGER_HEARTBEAT_INTERVAL`` setting if given, else the
+        server's interval, else the fallback when the server returned 0.
 
         Raises:
             OCPPError: The server answered the boot with a CALLERROR.
@@ -145,13 +198,14 @@ class SimulatedCharger(ChargePoint):  # type: ignore[misc]
             await asyncio.sleep(retry)
 
         if settings.heartbeat_interval is not None:
-            interval, source = settings.heartbeat_interval, "CHARGER_HEARTBEAT_INTERVAL"
+            interval = round(settings.heartbeat_interval)
+            source = "CHARGER_HEARTBEAT_INTERVAL"
         elif response.interval <= 0:
             interval, source = FALLBACK_INTERVAL_SECONDS, "fallback"
         else:
-            interval, source = float(response.interval), "server"
-        log(f"   heartbeat every {interval:g} s ({source})")
-        return interval
+            interval, source = int(response.interval), "server"
+        self.configuration.set_heartbeat_interval(interval)
+        log(f"   heartbeat every {self.configuration.heartbeat_interval} s ({source})")
 
     async def heartbeat(self) -> None:
         """Send one Heartbeat and log the server's answer.
