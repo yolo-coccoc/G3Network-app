@@ -11,17 +11,17 @@ Live and historical vehicle data, battery and safety alerts, battery health, tri
 - [x] **MON-01** [Vehicle data ingestion](#mon-01) — Backend ✅
 - [ ] **MON-02** [Live vehicle status](#mon-02) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **MON-03** [Driver home screen](#mon-03) — Backend ⬜ · App ⬜
-- [ ] **MON-04** [Tiered battery alerts](#mon-04) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **MON-05** [Battery safety alerts](#mon-05) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **MON-06** [Powertrain and component fault alerts](#mon-06) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **MON-07** [Battery health and cycles](#mon-07) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **MON-04** [Tiered battery alerts](#mon-04) — Backend 🚧 · App ⬜ · Portal ⬜
+- [ ] **MON-05** [Battery safety alerts](#mon-05) — Backend 🚧 · App ⬜ · Portal ⬜
+- [ ] **MON-06** [Powertrain and component fault alerts](#mon-06) — Backend 🚧 · App ⬜ · Portal ⬜
+- [ ] **MON-07** [Battery health and cycles](#mon-07) — Backend 🚧 · App ⬜ · Portal ⬜
 - [ ] **MON-08** [Cell-level battery diagnostics](#mon-08) — Backend ⬜ · Portal ⬜
 - [ ] **MON-09** [Vehicle operating state](#mon-09) — Backend ⬜ · Portal ⬜
-- [ ] **MON-10** [Location history and route replay](#mon-10) — Backend ⬜ · Portal ⬜
+- [ ] **MON-10** [Location history and route replay](#mon-10) — Backend ✅ · Portal ⬜
 - [ ] **MON-11** [Trips](#mon-11) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **MON-12** [Stops and parking log](#mon-12) — Backend ⬜ · Portal ⬜
 - [ ] **MON-13** [Load status and empty-trip detection](#mon-13) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **MON-14** [Vehicle operating report](#mon-14) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **MON-14** [Vehicle operating report](#mon-14) — Backend 🚧 · App ⬜ · Portal ⬜
 - [ ] **MON-15** [Abnormal consumption alert](#mon-15) — Backend ⬜ · Portal ⬜
 - [ ] **MON-16** [Auxiliary load usage](#mon-16) — Backend ⬜ · Portal ⬜
 - [ ] **MON-17** [Alert threshold settings](#mon-17) — Backend ⬜ · Portal ⬜
@@ -133,7 +133,7 @@ Alert the driver at 30% (early), 20% (main) and 10% (critical) battery, with the
 - Nearest available station and distance, frozen at alert time
 - One alert per threshold per trip; works while the app is in the background
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01), [STN-06](charging_stations.md#stn-06), [NTF-01](notifications.md#ntf-01)  
 **Also touches:** `notifications`, `charging_stations`  
@@ -144,6 +144,7 @@ Alert the driver at 30% (early), 20% (main) and 10% (critical) battery, with the
 **Open questions:**
 
 - Thresholds 30/20/10% to be confirmed by driver interviews.
+- Built on the backend: the 30/20/10% crossing alerts with the nearest available station frozen at alert time (F-A2). Not yet: the thresholds are fixed in code (MON-17), and an alert repeats on every new downward crossing instead of once per trip.
 
 <a id="mon-05"></a>
 
@@ -164,13 +165,17 @@ Real-time alerts for high battery temperature, sudden voltage drop, cell/module 
 - Event log with the data snapshot at detection
 - Re-alert or escalate while a condition persists
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01), [MON-17](#mon-17), [NTF-01](notifications.md#ntf-01)  
 **Also touches:** `notifications`  
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-A4 · Data IN-7 · Data IN-8 · Data OUT-4 · deferred.md 43 · deferred.md 44  
 **Old codes:** F-A4
+
+**Open questions:**
+
+- Built on the backend: the high-temperature (≥60 °C) and sudden voltage-drop alerts (F-A4). Not yet: cell/module, imbalance, insulation, contactor and cooling alerts, and re-alerting while a condition persists.
 
 <a id="mon-06"></a>
 
@@ -190,13 +195,17 @@ Alert on motor, auxiliary battery, controller board, brake, tyre (TPMS), light, 
 - Component status signals beyond the battery
 - Fleet board of component faults and trucks needing a workshop
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01), [VEH-06](vehicles.md#veh-06), [NTF-01](notifications.md#ntf-01)  
 **Also touches:** `vehicles`, `notifications`  
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-A4 · Data IN-9 · Data IN-10 · Data IN-16 · Data OUT-4 · Data OUT-27 · deferred.md 42 · deferred.md 45  
 **Old codes:** F-A4
+
+**Open questions:**
+
+- Built on the backend: a device error code raises an anomaly alert with the raw code (F-A4). Not yet: translating codes through the fault code catalog (VEH-06, waiting for the manufacturer's table), component status signals and the fleet fault board.
 
 <a id="mon-07"></a>
 
@@ -216,13 +225,17 @@ Track pack state of health (SOH), charge cycles and capacity fade over time, and
 - SOH alert below a configurable threshold
 - SOH and cycle definitions agreed with the manufacturer
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01)  
 **Needed by:** [FLT-06](fleet.md#flt-06), [MON-08](#mon-08)  
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-A3 · Data IN-4 · Data IN-5 · Prerequisite 1  
 **Old codes:** F-A3
+
+**Open questions:**
+
+- Built on the backend: the daily SOH and cycle-count trend and the SOH alert below a configurable threshold (F-A3). Not yet: the estimated usable capacity, and SOH and cycle definitions agreed with the manufacturer.
 
 <a id="mon-08"></a>
 
@@ -298,7 +311,7 @@ Replay where a truck went over a chosen period on a map; history kept at least 6
 - Points of a period in order, for drawing the route
 - Access is logged (location is personal data)
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01), [ACC-18](identity.md#acc-18)  
 **Needed by:** [SAF-06](safety.md#saf-06)  
@@ -407,7 +420,7 @@ Km per day, kWh used, kWh/km and cost/km per truck, by day, week or month, with 
 - Daily, weekly and monthly breakdown; CSV export
 - Cost from the applicable tariff instead of one flat price
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [MON-01](#mon-01), [VEH-03](vehicles.md#veh-03), [PAY-09](billing.md#pay-09)  
 **Needed by:** [FLT-06](fleet.md#flt-06), [FLT-07](fleet.md#flt-07)  
@@ -415,6 +428,10 @@ Km per day, kWh used, kWh/km and cost/km per truck, by day, week or month, with 
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-A6 · Data OUT-17 · deferred.md 60 · deferred.md 64  
 **Old codes:** F-A6
+
+**Open questions:**
+
+- Built on the backend: distance, energy and rates per truck with a daily, weekly and monthly breakdown and CSV export (F-A6). Not yet: the cost uses one flat configured price per kWh, not the applicable tariff (PAY-09).
 
 <a id="mon-15"></a>
 

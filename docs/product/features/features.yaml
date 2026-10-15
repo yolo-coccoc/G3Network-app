@@ -1453,7 +1453,7 @@ features:
       - ["Detect each threshold crossing within 30 s", "Phát hiện vượt từng ngưỡng trong vòng 30 giây"]
       - ["Nearest available station and distance, frozen at alert time", "Trạm trống gần nhất và khoảng cách, chốt tại thời điểm cảnh báo"]
       - ["One alert per threshold per trip; works while the app is in the background", "Mỗi ngưỡng một cảnh báo trong một chuyến; hoạt động cả khi app chạy nền"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
@@ -1463,6 +1463,7 @@ features:
     old_codes: [F-A2]
     questions:
       - ["Thresholds 30/20/10% to be confirmed by driver interviews.", "Ngưỡng 30/20/10% cần chốt sau khi phỏng vấn tài xế."]
+      - ["Built on the backend: the 30/20/10% crossing alerts with the nearest available station frozen at alert time (F-A2). Not yet: the thresholds are fixed in code (MON-17), and an alert repeats on every new downward crossing instead of once per trip.", "Đã có ở backend: cảnh báo khi pin giảm qua ngưỡng 30/20/10%, kèm trạm trống gần nhất chốt tại thời điểm cảnh báo (F-A2). Chưa có: ngưỡng đang cố định trong mã (MON-17), và cảnh báo lặp lại mỗi lần pin giảm qua ngưỡng chứ chưa phải một lần mỗi chuyến."]
 
   - code: MON-05
     name: Battery safety alerts
@@ -1484,7 +1485,7 @@ features:
       - ["Cell/module, imbalance, insulation, contactor and cooling alerts", "Cảnh báo cell/module, mất cân bằng, cách điện, contactor và làm mát"]
       - ["Event log with the data snapshot at detection", "Nhật ký sự kiện kèm ảnh chụp dữ liệu tại thời điểm phát hiện"]
       - ["Re-alert or escalate while a condition persists", "Nhắc lại hoặc leo thang khi tình trạng còn kéo dài"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
@@ -1492,6 +1493,8 @@ features:
     touches: [notifications]
     sources: [PRD F-A4, Data IN-7, Data IN-8, Data OUT-4, deferred.md 43, deferred.md 44]
     old_codes: [F-A4]
+    questions:
+      - ["Built on the backend: the high-temperature (≥60 °C) and sudden voltage-drop alerts (F-A4). Not yet: cell/module, imbalance, insulation, contactor and cooling alerts, and re-alerting while a condition persists.", "Đã có ở backend: cảnh báo nhiệt độ cao (≥60 °C) và sụt áp đột ngột (F-A4). Chưa có: cảnh báo cell/module, mất cân bằng, cách điện, contactor và làm mát, và nhắc lại khi tình trạng còn kéo dài."]
 
   - code: MON-06
     name: Powertrain and component fault alerts
@@ -1516,7 +1519,7 @@ features:
       - ["Translate fault codes through the catalog: severity, drivability, advice", "Dịch mã lỗi qua bảng mã: mức nghiêm trọng, chạy tiếp được không, hướng xử lý"]
       - ["Component status signals beyond the battery", "Tín hiệu trạng thái các thiết bị ngoài pin"]
       - ["Fleet board of component faults and trucks needing a workshop", "Bảng tổng hợp lỗi thiết bị và xe cần vào xưởng cho đội xe"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
@@ -1524,6 +1527,8 @@ features:
     touches: [vehicles, notifications]
     sources: [PRD F-A4, Data IN-9, Data IN-10, Data IN-16, Data OUT-4, Data OUT-27, deferred.md 42, deferred.md 45]
     old_codes: [F-A4]
+    questions:
+      - ["Built on the backend: a device error code raises an anomaly alert with the raw code (F-A4). Not yet: translating codes through the fault code catalog (VEH-06, waiting for the manufacturer's table), component status signals and the fleet fault board.", "Đã có ở backend: mã lỗi từ thiết bị tạo cảnh báo bất thường kèm mã gốc (F-A4). Chưa có: dịch mã qua bảng mã lỗi (VEH-06, chờ bảng của nhà sản xuất), tín hiệu trạng thái thiết bị và bảng tổng hợp lỗi của đội xe."]
 
   - code: MON-07
     name: Battery health and cycles
@@ -1544,13 +1549,15 @@ features:
       - ["Daily SOH, cycle count and estimated usable capacity", "SOH, số chu kỳ và dung lượng khả dụng ước tính theo ngày"]
       - ["SOH alert below a configurable threshold", "Cảnh báo SOH dưới ngưỡng cấu hình"]
       - ["SOH and cycle definitions agreed with the manufacturer", "Định nghĩa SOH và chu kỳ thống nhất với nhà sản xuất"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Should
     release: P1.0
     offer: tbd
     depends_on: [MON-01]
     sources: [PRD F-A3, Data IN-4, Data IN-5, Prerequisite 1]
     old_codes: [F-A3]
+    questions:
+      - ["Built on the backend: the daily SOH and cycle-count trend and the SOH alert below a configurable threshold (F-A3). Not yet: the estimated usable capacity, and SOH and cycle definitions agreed with the manufacturer.", "Đã có ở backend: xu hướng SOH và số chu kỳ theo ngày, cảnh báo SOH dưới ngưỡng cấu hình (F-A3). Chưa có: dung lượng khả dụng ước tính, và định nghĩa SOH, chu kỳ thống nhất với nhà sản xuất."]
 
   - code: MON-08
     name: Cell-level battery diagnostics
@@ -1624,7 +1631,7 @@ features:
     capabilities:
       - ["Points of a period in order, for drawing the route", "Các điểm trong khoảng thời gian theo thứ tự, để vẽ lộ trình"]
       - ["Access is logged (location is personal data)", "Mọi lần xem đều được ghi nhật ký (vị trí là dữ liệu cá nhân)"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
@@ -1737,7 +1744,7 @@ features:
       - ["Distance, energy and rates per truck over a period", "Quãng đường, năng lượng và các chỉ số theo xe trong một khoảng thời gian"]
       - ["Daily, weekly and monthly breakdown; CSV export", "Chia theo ngày, tuần, tháng; xuất CSV"]
       - ["Cost from the applicable tariff instead of one flat price", "Chi phí theo biểu giá áp dụng thay vì một giá cố định"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: tbd
@@ -1745,6 +1752,8 @@ features:
     touches: [billing]
     sources: [PRD F-A6, Data OUT-17, deferred.md 60, deferred.md 64]
     old_codes: [F-A6]
+    questions:
+      - ["Built on the backend: distance, energy and rates per truck with a daily, weekly and monthly breakdown and CSV export (F-A6). Not yet: the cost uses one flat configured price per kWh, not the applicable tariff (PAY-09).", "Đã có ở backend: quãng đường, năng lượng và các chỉ số theo xe, chia theo ngày, tuần, tháng, xuất CSV (F-A6). Chưa có: chi phí đang tính theo một giá cố định mỗi kWh trong cấu hình, chưa theo biểu giá áp dụng (PAY-09)."]
 
   - code: MON-15
     name: Abnormal consumption alert
@@ -2653,13 +2662,15 @@ features:
       - ["Nearest stations within a radius", "Các trạm gần nhất trong bán kính"]
       - ["Filters: available now, minimum power, connector standard", "Bộ lọc: đang trống, công suất tối thiểu, chuẩn đầu sạc"]
       - ["Available guns count and current price per station", "Số súng trống và giá hiện tại của từng trạm"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
     depends_on: [STN-04]
     sources: [PRD F-D1, Data OUT-5]
     old_codes: [F-D1]
+    questions:
+      - ["Built on the backend: the nearby search with radius, available-now, minimum-power and connector-standard filters and the available-gun count (F-D1). Not yet: the current price in each result (the price is read per charger from billing).", "Đã có ở backend: tìm trạm gần theo bán kính, lọc đang trống, công suất tối thiểu, chuẩn đầu sạc, kèm số súng trống (F-D1). Chưa có: giá hiện tại trong từng kết quả (giá đang lấy riêng theo từng trụ từ phần thanh toán)."]
 
   - code: STN-07
     name: Queue and waiting time
@@ -2868,7 +2879,7 @@ features:
       - ["Total kWh and sessions per station over a period", "Tổng kWh và số phiên theo trạm trong kỳ"]
       - ["Hourly and daily series", "Chuỗi số liệu theo giờ và theo ngày"]
       - ["Ranking of all stations", "Xếp hạng toàn bộ trạm"]
-    surfaces: {backend: todo, portal: todo}
+    surfaces: {backend: done, portal: todo}
     priority: Should
     release: P1.0
     offer: internal
@@ -3897,7 +3908,7 @@ features:
       - ["SLA deadline fixed at creation", "Hạn SLA chốt khi tạo"]
       - ["Customer claims and bug reports as categories", "Khiếu nại và báo lỗi phần mềm là các loại yêu cầu"]
       - ["Data request as a category: a request for a truck owner's driving data is released only with the owner's written approval or an authority's order, and logged", "Yêu cầu dữ liệu là một loại yêu cầu: dữ liệu lái xe của chủ xe chỉ được cung cấp khi chủ xe đồng ý bằng văn bản hoặc có yêu cầu của cơ quan có thẩm quyền, và được ghi nhật ký"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: doing, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included
@@ -3907,6 +3918,7 @@ features:
     old_codes: [F-I1]
     questions:
       - ["Who staffs 24/7 customer care (in-house or outsourced), and which SLA can we commit to?", "Ai trực CSKH 24/7 (nội bộ hay thuê ngoài), và cam kết được SLA nào?"]
+      - ["Built on the backend: tickets with the VIN, position and error code sent by the app, in-app/Zalo/hotline channels, the open → acknowledged → resolved → closed lifecycle and a response SLA fixed at creation (F-I1). Not yet: photos, and the claim, bug-report and data-request categories.", "Đã có ở backend: ticket kèm VIN, vị trí và mã lỗi do app gửi, kênh app/Zalo/hotline, vòng đời mở → đã tiếp nhận → đã xử lý → đóng, hạn SLA phản hồi chốt khi tạo (F-I1). Chưa có: ảnh, và các loại khiếu nại, báo lỗi phần mềm, yêu cầu dữ liệu."]
 
   - code: SUP-02
     name: SOS
@@ -3927,7 +3939,7 @@ features:
       - ["One-tap SOS, works in the background", "SOS một chạm, hoạt động cả khi app chạy nền"]
       - ["Critical alert to the support console immediately", "Cảnh báo nguy cấp tới màn hình CSKH ngay lập tức"]
       - ["Hotline fallback recorded as SOS", "SOS qua hotline được ghi nhận như SOS"]
-    surfaces: {backend: todo, app: todo, portal: todo}
+    surfaces: {backend: done, app: todo, portal: todo}
     priority: Must
     release: P1.0
     offer: included

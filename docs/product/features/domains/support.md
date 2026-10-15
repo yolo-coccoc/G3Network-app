@@ -8,8 +8,8 @@ Support tickets, SOS, the support queue and SLA, and dispatching repair and resc
 
 ## Checklist
 
-- [ ] **SUP-01** [Support tickets](#sup-01) — Backend ⬜ · App ⬜ · Portal ⬜
-- [ ] **SUP-02** [SOS](#sup-02) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **SUP-01** [Support tickets](#sup-01) — Backend 🚧 · App ⬜ · Portal ⬜
+- [ ] **SUP-02** [SOS](#sup-02) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **SUP-03** [Support queue and SLA monitor](#sup-03) — Backend ⬜ · Portal ⬜
 - [ ] **SUP-04** [Repair and rescue partner directory](#sup-04) — Backend ⬜ · Portal ⬜
 - [ ] **SUP-05** [Partner dispatch](#sup-05) — Backend ⬜ · Portal ⬜
@@ -38,7 +38,7 @@ Customers raise a request in the app with the truck's VIN, position and error co
 - Customer claims and bug reports as categories
 - Data request as a category: a request for a truck owner's driving data is released only with the owner's written approval or an authority's order, and logged
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [VEH-01](vehicles.md#veh-01), [DRV-01](drivers.md#drv-01)  
 **Needed by:** [SUP-02](#sup-02), [SUP-03](#sup-03)  
@@ -50,6 +50,7 @@ Customers raise a request in the app with the truck's VIN, position and error co
 **Open questions:**
 
 - Who staffs 24/7 customer care (in-house or outsourced), and which SLA can we commit to?
+- Built on the backend: tickets with the VIN, position and error code sent by the app, in-app/Zalo/hotline channels, the open → acknowledged → resolved → closed lifecycle and a response SLA fixed at creation (F-I1). Not yet: photos, and the claim, bug-report and data-request categories.
 
 <a id="sup-02"></a>
 
@@ -69,7 +70,7 @@ An always-visible SOS button sends the position and active error code to custome
 - Critical alert to the support console immediately
 - Hotline fallback recorded as SOS
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal ⬜
 
 **Depends on:** [SUP-01](#sup-01), [NTF-01](notifications.md#ntf-01)  
 **Needed by:** [SUP-05](#sup-05)  

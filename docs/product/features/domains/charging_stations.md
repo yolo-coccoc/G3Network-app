@@ -13,7 +13,7 @@ Stations and chargers, their live status over OCPP, faults, the station map, que
 - [x] **STN-03** [Charger connection (OCPP)](#stn-03) — Backend ✅
 - [ ] **STN-04** [Live connector status](#stn-04) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **STN-05** [Charger fault alerts](#stn-05) — Backend ⬜ · Portal ⬜
-- [ ] **STN-06** [Station map and search](#stn-06) — Backend ⬜ · App ⬜ · Portal ⬜
+- [ ] **STN-06** [Station map and search](#stn-06) — Backend 🚧 · App ⬜ · Portal ⬜
 - [ ] **STN-07** [Queue and waiting time](#stn-07) — Backend ⬜ · App ⬜
 - [ ] **STN-08** [Station load forecast and balancing](#stn-08) — Backend ⬜ · App ⬜ · Portal ⬜
 - [ ] **STN-09** [Charger reservation](#stn-09) — Backend ⬜ · App ⬜
@@ -21,7 +21,7 @@ Stations and chargers, their live status over OCPP, faults, the station map, que
 - [ ] **STN-11** [Secure charger connections](#stn-11) — Backend ⬜ · Portal ⬜
 - [ ] **STN-12** [Private stations](#stn-12) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **STN-13** [Green generation and storage data](#stn-13) — Backend ⬜ · Portal ⬜
-- [ ] **STN-14** [Station energy output](#stn-14) — Backend ⬜ · Portal ⬜
+- [ ] **STN-14** [Station energy output](#stn-14) — Backend ✅ · Portal ⬜
 - [ ] **STN-15** [Charger message log viewer](#stn-15) — Backend ⬜ · Portal ⬜
 
 ## Features
@@ -184,13 +184,17 @@ Find nearby stations on a map, filtered by availability, power and connector sta
 - Filters: available now, minimum power, connector standard
 - Available guns count and current price per station
 
-**Status:** Backend ⬜ · App ⬜ · Portal ⬜
+**Status:** Backend 🚧 · App ⬜ · Portal ⬜
 
 **Depends on:** [STN-04](#stn-04)  
 **Needed by:** [DRV-05](drivers.md#drv-05), [MON-03](telemetry.md#mon-03), [MON-04](telemetry.md#mon-04), [MON-18](telemetry.md#mon-18), [RTE-02](routing.md#rte-02), [RTE-03](routing.md#rte-03)  
 **Related tables:** — (after the database review)  
 **Sources:** PRD F-D1 · Data OUT-5  
 **Old codes:** F-D1
+
+**Open questions:**
+
+- Built on the backend: the nearby search with radius, available-now, minimum-power and connector-standard filters and the available-gun count (F-D1). Not yet: the current price in each result (the price is read per charger from billing).
 
 <a id="stn-07"></a>
 
@@ -394,7 +398,7 @@ kWh sold per station and per time slot, for time-of-use pricing.
 - Hourly and daily series
 - Ranking of all stations
 
-**Status:** Backend ⬜ · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [CHG-02](charging_sessions.md#chg-02)  
 **Also touches:** `charging_sessions`  
