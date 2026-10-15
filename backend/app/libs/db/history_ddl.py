@@ -20,7 +20,7 @@ from app.libs.db.history import (
     CHANGE_REASON_MAX_LENGTH,
     CHANGE_REASON_SETTING,
     CHANGE_USER_SETTING,
-    UNSPECIFIED_CHANGE_REASON,
+    MISSING_CHANGE_REASON_SQLSTATE,
 )
 
 _SOURCE_COLUMNS_QUERY = """
@@ -140,15 +140,21 @@ def create_history(
     old_values = ", ".join(f"OLD.{_quote(column)}" for column in source_columns)
     connection.execute(
         sa.text(
+            # A change with no reason fails (database.md, hardening D4): the
+            # check sits here, after the trigger's WHEN, so an UPDATE that
+            # changes only untracked columns (a wallet's balance) still passes.
             f"CREATE OR REPLACE FUNCTION {function_name}() RETURNS trigger "
-            "LANGUAGE plpgsql AS $fn$ BEGIN "
+            "LANGUAGE plpgsql AS $fn$ DECLARE reason_text text := "
+            f"nullif(current_setting('{CHANGE_REASON_SETTING}', true), ''); "
+            "BEGIN IF reason_text IS NULL THEN RAISE EXCEPTION "
+            f"'Update of a {source_table} row without a change reason: "
+            "call set_change_context first' "
+            f"USING ERRCODE = '{MISSING_CHANGE_REASON_SQLSTATE}'; END IF; "
             f"INSERT INTO {history} ({copied_columns}, changed_at, changed_by, "
             "change_reason) "
             f"VALUES ({old_values}, now(), "
             f"nullif(current_setting('{CHANGE_USER_SETTING}', true), '')::uuid, "
-            "left(coalesce("
-            f"nullif(current_setting('{CHANGE_REASON_SETTING}', true), ''), "
-            f"'{UNSPECIFIED_CHANGE_REASON}'), {CHANGE_REASON_MAX_LENGTH})); "
+            f"left(reason_text, {CHANGE_REASON_MAX_LENGTH})); "
             "RETURN NULL; END $fn$"
         )
     )

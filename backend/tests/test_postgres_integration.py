@@ -212,7 +212,7 @@ from app.domains.warranties.models import WarrantyModel
 from app.domains.warranties.types import WarrantyStatus, WarrantyType
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
-from app.libs.db.history import UNSPECIFIED_CHANGE_REASON, set_change_context
+from app.libs.db.history import set_change_context
 from tests.builders import build_organization_record
 from tests.principals import ACTOR_USER_ID, build_internal_principal, build_principal
 
@@ -1335,6 +1335,9 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
         )
         async with engine.begin() as connection:
             await connection.execute(
+                text("SELECT set_config('app.change_reason', 'Test removal', true)")
+            )
+            await connection.execute(
                 text(
                     "UPDATE charging_connectors SET deleted_at = now() "
                     "WHERE connector_id = :c"
@@ -2252,7 +2255,7 @@ async def test_tracked_update_writes_history_row_with_actor_and_reason(
 ) -> None:
     """An update of a tracked table copies the old row into its history table
     with the acting user and reason set for the transaction; without a context
-    the trigger records the fallback reason and no actor (DM-29)."""
+    the update is refused (hardening D4)."""
     engine = create_async_engine(temporary_database, poolclass=NullPool)
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -2286,8 +2289,9 @@ async def test_tracked_update_writes_history_row_with_actor_and_reason(
             )
             assert organization_record is not None
             organization_record.address = "1 Nguyen Hue"
-            await db.flush()
-            await db.commit()
+            with pytest.raises(DBAPIError, match="without a change reason"):
+                await db.flush()
+            await db.rollback()
 
         async with session_factory() as db:
             rows = (
@@ -2301,14 +2305,11 @@ async def test_tracked_update_writes_history_row_with_actor_and_reason(
                     {"organization_id": organization.organization_id},
                 )
             ).all()
-        assert [row.status for row in rows] == ["ACTIVE", "SUSPENDED", "SUSPENDED"]
+        assert [row.status for row in rows] == ["ACTIVE", "SUSPENDED"]
         assert rows[0].display_name == "Test Organization"
         assert rows[1].display_name == "Test Organization"
-        assert rows[2].display_name == "Renamed Organization"
-        assert [row.changed_by for row in rows[:2]] == [actor.user_id] * 2
+        assert [row.changed_by for row in rows] == [actor.user_id] * 2
         assert rows[0].change_reason == "Unpaid invoices"
-        assert rows[2].changed_by is None
-        assert rows[2].change_reason == UNSPECIFIED_CHANGE_REASON
     finally:
         await engine.dispose()
 
@@ -2364,11 +2365,13 @@ async def test_vehicle_history_ownership_periods_and_live_uniqueness_on_postgres
             # A deleted vehicle must be INACTIVE; once it is, its plate is free.
             vehicle_record = await db.get(VehicleModel, vehicle.vehicle_id)
             assert vehicle_record is not None
+            await set_change_context(db, changed_by=None, change_reason="Test")
             with pytest.raises(IntegrityError):
                 async with db.begin_nested():
                     vehicle_record.deleted_at = datetime.now(timezone.utc)
                     await db.flush()
             await db.refresh(vehicle_record)
+            await set_change_context(db, changed_by=None, change_reason="Test")
             vehicle_record.status = VehicleStatus.INACTIVE
             vehicle_record.status_reason = "Left the system"
             vehicle_record.deleted_at = datetime.now(timezone.utc)
@@ -2439,9 +2442,11 @@ async def test_battery_installation_periods_and_warranty_links_on_postgres(
 
             # Move to the second truck, then take it out (separate transactions,
             # so each history row carries its own changed_at).
+            await set_change_context(db, changed_by=None, change_reason="Moved")
             battery.vehicle_id = second_vehicle.vehicle_id
             battery.installed_at = installed_on_second
             await db.commit()
+            await set_change_context(db, changed_by=None, change_reason="Taken out")
             battery.vehicle_id = None
             battery.installed_at = None
             await db.commit()

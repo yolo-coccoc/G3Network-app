@@ -8,9 +8,12 @@ row calls ``set_change_context`` first, in the same transaction as the
 UPDATE; the settings vanish when the transaction ends, so a context never
 leaks into the next request on a pooled connection.
 
-Deviation (decision log DM-29): the rule says a change without a reason
-fails. Existing services have no acting user yet, so when no reason was set
-the trigger records ``UNSPECIFIED_CHANGE_REASON`` and a NULL actor instead.
+A tracked UPDATE without a reason fails: the trigger raises (SQLSTATE
+``MISSING_CHANGE_REASON_SQLSTATE``), which rolls the change back. A
+process acting on its own (the OCPP gateway, a worker) passes
+``changed_by=None`` with a fixed reason. (From 2026-10-02 to 2026-10-15 the
+trigger recorded "Unspecified change" instead, DM-29; hardening D4 ended
+that deviation once every path set a reason.)
 """
 
 from uuid import UUID
@@ -25,8 +28,9 @@ from app.libs.common.errors import InvalidInputError
 CHANGE_USER_SETTING = "app.change_user_id"
 CHANGE_REASON_SETTING = "app.change_reason"
 
-# Written by the trigger when the application set no reason.
-UNSPECIFIED_CHANGE_REASON = "Unspecified change"
+# SQLSTATE the trigger raises when a tracked row is updated with no reason
+# set: a custom class-"HC" code, so a caller can tell it from other errors.
+MISSING_CHANGE_REASON_SQLSTATE = "HC001"
 
 # Width of ``change_reason`` in every history table.
 CHANGE_REASON_MAX_LENGTH = 200

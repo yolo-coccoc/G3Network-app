@@ -11,7 +11,7 @@ from app.domains.identity.models import (
     UserModel,
     UserRoleAssignmentModel,
 )
-from app.libs.db.history import UNSPECIFIED_CHANGE_REASON
+from app.libs.db.history import MISSING_CHANGE_REASON_SQLSTATE
 
 
 def _index_names(table_args: tuple[object, ...]) -> set[str]:
@@ -77,6 +77,7 @@ def test_access_audit_log_time_column_is_in_the_primary_key() -> None:
     assert primary_key_columns == {"access_audit_log_id", "occurred_at"}
 
 
-def test_unspecified_change_reason_fits_the_history_column() -> None:
-    """The trigger's fallback reason fits change_reason varchar(200)."""
-    assert 0 < len(UNSPECIFIED_CHANGE_REASON) <= 200
+def test_missing_change_reason_sqlstate_is_a_valid_custom_code() -> None:
+    """The trigger's SQLSTATE is five characters and not a PostgreSQL class."""
+    assert len(MISSING_CHANGE_REASON_SQLSTATE) == 5
+    assert MISSING_CHANGE_REASON_SQLSTATE.isalnum()

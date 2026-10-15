@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -51,7 +52,6 @@ from app.domains.vehicles.schemas import (
 )
 from app.domains.vehicles.types import VehicleStatus
 from app.libs.common.errors import ConflictError, DomainError, InvalidInputError
-from app.libs.db.history import UNSPECIFIED_CHANGE_REASON
 from tests.principals import ACTOR_USER_ID, build_internal_principal, build_principal
 from tests.test_postgres_integration import (
     _insert_vehicle_parents,
@@ -154,7 +154,7 @@ async def test_history_trigger_records_context_and_pooled_connection_forgets_it(
 ) -> None:
     """A tracked vehicle update records the caller and the typed reason; the
     next transaction on the same pooled connection has no context, so its
-    change is recorded with no actor and the fallback reason (DM-29)."""
+    change is refused (hardening D4) and leaves no history row."""
     engine = create_async_engine(temporary_database, pool_size=1, max_overflow=0)
     session_factory = _session_factory(engine)
     try:
@@ -183,19 +183,20 @@ async def test_history_trigger_records_context_and_pooled_connection_forgets_it(
                 principal=customer,
             )
 
-        async with session_factory.begin() as db:
-            second_backend_pid = (
-                await db.execute(text("SELECT pg_backend_pid()"))
-            ).scalar()
-            leftover_reason = (
-                await db.execute(
-                    text("SELECT current_setting('app.change_reason', true)")
-                )
-            ).scalar()
-            vehicle_record = await db.get(VehicleModel, vehicle.vehicle_id)
-            assert vehicle_record is not None
-            vehicle_record.year = 2024
-            await db.flush()
+        with pytest.raises(DBAPIError, match="without a change reason"):
+            async with session_factory.begin() as db:
+                second_backend_pid = (
+                    await db.execute(text("SELECT pg_backend_pid()"))
+                ).scalar()
+                leftover_reason = (
+                    await db.execute(
+                        text("SELECT current_setting('app.change_reason', true)")
+                    )
+                ).scalar()
+                vehicle_record = await db.get(VehicleModel, vehicle.vehicle_id)
+                assert vehicle_record is not None
+                vehicle_record.year = 2024
+                await db.flush()
 
         async with session_factory() as db:
             history_rows = (
@@ -216,7 +217,6 @@ async def test_history_trigger_records_context_and_pooled_connection_forgets_it(
             for row in history_rows
         ] == [
             ("ACTIVE", 2026, ACTOR_USER_ID, "Brake repair"),
-            ("INACTIVE", 2026, None, UNSPECIFIED_CHANGE_REASON),
         ]
     finally:
         await engine.dispose()
