@@ -11,6 +11,10 @@ Serves ``static/index.html`` at ``/`` and a small JSON API the page calls:
 * ``POST /api/chargers/<id>/configuration/get`` - ask the charger for it now.
 * ``POST /api/chargers/<id>/configuration/change`` - body
   ``{"changes": {"<key>": "<value>", ...}}``: change those keys.
+* ``GET /api/admin/chargers`` - chargers with guns and price, and locations.
+* ``POST /api/admin/chargers`` - register a charger (the Chargers tab's form);
+  ``POST /api/admin/chargers/<id>/edit`` - change it;
+  ``POST /api/admin/chargers/<id>/delete`` - delete it.
 
 Each one calls the backend API; the bearer token stays in this process, never
 in the browser. A backend error becomes a ``502`` with ``{"error": ...}`` so
@@ -36,6 +40,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 from api_client import ApiError
+from chargers import ChargerAdmin, FormError
 from configuration import ConfigurationService
 from settings import MonitorSettings
 from traffic import TrafficReader
@@ -87,13 +92,16 @@ def parse_changes(body: Any) -> dict[str, str]:
 
 
 def build_handler(
-    reader: TrafficReader, configurations: ConfigurationService
+    reader: TrafficReader,
+    configurations: ConfigurationService,
+    admin: ChargerAdmin,
 ) -> type[BaseHTTPRequestHandler]:
     """Create the request handler class bound to the monitor's services.
 
     Args:
         reader: Reads the traffic from the backend API.
         configurations: Gets and changes chargers' configuration.
+        admin: Registers, edits and deletes chargers.
 
     Returns:
         A handler class for ``ThreadingHTTPServer``.
@@ -122,6 +130,9 @@ def build_handler(
             if parts == ["api", "chargers"]:
                 self._reply_json(reader.list_chargers)
                 return
+            if parts == ["api", "admin", "chargers"]:
+                self._reply_json(admin.overview)
+                return
             if len(parts) == 4 and parts[:2] == ["api", "chargers"]:
                 station_id, route = parts[2], get_routes.get(parts[3])
                 if route is not None and _is_uuid(station_id):
@@ -131,8 +142,11 @@ def build_handler(
             self._reply(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
 
         def do_POST(self) -> None:  # noqa: N802 - name fixed by http.server
-            """Route one POST request (configuration get / change)."""
+            """Route one POST request (configuration, or the Chargers tab)."""
             parts = [part for part in urlsplit(self.path).path.split("/") if part]
+            if parts[:3] == ["api", "admin", "chargers"]:
+                self._admin_post(parts[3:])
+                return
             if not (
                 len(parts) == 5
                 and parts[:2] == ["api", "chargers"]
@@ -153,6 +167,27 @@ def build_handler(
                         raise BadRequestError("no field was filled in")
                     self._reply_json(lambda: configurations.change(station_id, changes))
             except BadRequestError as error:
+                answer = json.dumps({"error": str(error)}).encode("utf-8")
+                self._reply(HTTPStatus.BAD_REQUEST, "application/json", answer)
+
+        def _admin_post(self, rest: list[str]) -> None:
+            """Run a Chargers-tab action: register, edit or delete.
+
+            Args:
+                rest: The path after ``/api/admin/chargers``.
+            """
+            try:
+                body = self._read_json_body()
+                form = body if isinstance(body, dict) else {}
+                if not rest:
+                    self._reply_json(lambda: admin.register(form))
+                elif len(rest) == 2 and _is_uuid(rest[0]) and rest[1] == "edit":
+                    self._reply_json(lambda: admin.edit(rest[0], form))
+                elif len(rest) == 2 and _is_uuid(rest[0]) and rest[1] == "delete":
+                    self._reply_json(lambda: admin.delete(rest[0]))
+                else:
+                    self._reply(HTTPStatus.NOT_FOUND, "text/plain", b"Not found")
+            except (BadRequestError, FormError) as error:
                 answer = json.dumps({"error": str(error)}).encode("utf-8")
                 self._reply(HTTPStatus.BAD_REQUEST, "application/json", answer)
 
@@ -189,6 +224,8 @@ def build_handler(
             """
             try:
                 status, answer = HTTPStatus.OK, produce()
+            except FormError as error:
+                status, answer = HTTPStatus.BAD_REQUEST, {"error": str(error)}
             except ApiError as error:
                 status = HTTPStatus.BAD_GATEWAY
                 answer = {"error": error.detail, "status": error.status}
@@ -249,6 +286,7 @@ class WebPage:
         settings: MonitorSettings,
         reader: TrafficReader,
         configurations: ConfigurationService,
+        admin: ChargerAdmin,
     ) -> None:
         """Bind the server to the configured address (raises if it is taken).
 
@@ -256,13 +294,14 @@ class WebPage:
             settings: Where to listen.
             reader: Reads the traffic from the backend API.
             configurations: Gets and changes chargers' configuration.
+            admin: Registers, edits and deletes chargers.
 
         Raises:
             OSError: The address or port is not available.
         """
         self._server = ThreadingHTTPServer(
             (settings.ui_host, settings.ui_port),
-            build_handler(reader, configurations),
+            build_handler(reader, configurations, admin),
         )
         self._server.daemon_threads = True
         shown_host = "127.0.0.1" if settings.ui_host == "0.0.0.0" else settings.ui_host

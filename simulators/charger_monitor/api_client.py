@@ -95,6 +95,37 @@ class ApiClient:
         """
         return self._authorized("POST", path, payload)
 
+    def patch(self, path: str, payload: dict[str, object]) -> Any:
+        """Send an authenticated JSON PATCH (a partial update).
+
+        Args:
+            path: Path under the API.
+            payload: The fields to change.
+
+        Returns:
+            The decoded JSON body.
+
+        Raises:
+            ApiError: The backend refused the request or the login, or is
+                unreachable.
+        """
+        return self._authorized("PATCH", path, payload)
+
+    def delete(self, path: str) -> Any:
+        """Send an authenticated DELETE.
+
+        Args:
+            path: Path under the API.
+
+        Returns:
+            The decoded JSON body (``None`` for an empty answer).
+
+        Raises:
+            ApiError: The backend refused the request or the login, or is
+                unreachable.
+        """
+        return self._authorized("DELETE", path, None)
+
     def _authorized(
         self, method: str, path: str, payload: dict[str, object] | None
     ) -> Any:

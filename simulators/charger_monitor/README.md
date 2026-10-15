@@ -11,6 +11,14 @@ A web page for the OCPP chargers connected to the backend, with two tabs:
   command through the backend; the charger's answer (`Accepted`, `Rejected`,
   `NotSupported`, `RebootRequired`) is shown per setting, and the
   configuration is read back afterwards.
+- **Chargers**: the registered chargers (location, guns, price, state) and a
+  form to **register**, **edit** or **delete** one. Registering creates, in
+  order, the location (or uses an existing one), the charger (its OCPP ID is
+  what is typed on the charger's screen), one gun with its plug per gun, and
+  the location's price; each step is reported, and pressing Register again
+  after a failure reuses what was created and finishes the rest. The price
+  belongs to the location: changing it publishes a new tariff version for
+  every charger there.
 
 It runs next to the backend (on the VM) and reads the backend's OCPP message
 log through the HTTP API, logged in as an internal staff account. It needs no

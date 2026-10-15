@@ -11,6 +11,7 @@ staff account. The page (``http://127.0.0.1:8095/`` by default) has two tabs:
 * **Configuration**, per charger: get its configuration (read-only) and send
   changes (one ``ChangeConfiguration`` per filled field), through the
   backend's command channel.
+* **Chargers**: register, edit and delete chargers (location, guns, price).
 
 Needs the backend API running (``make backend-dev``); the OCPP gateway
 (``make charging-ocpp-dev``) is what fills the log.
@@ -31,6 +32,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from api_client import ApiClient, ApiError
+from chargers import ChargerAdmin
 from configuration import ConfigurationService
 from settings import DEFAULT_SETTINGS_FILE, SettingsError, load_settings
 from traffic import TrafficReader
@@ -67,7 +69,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     client = ApiClient(settings)
     reader = TrafficReader(client)
     try:
-        page = WebPage(settings, reader, ConfigurationService(client))
+        page = WebPage(
+            settings, reader, ConfigurationService(client), ChargerAdmin(client)
+        )
     except OSError as error:
         print(
             f"web page: cannot listen on {settings.ui_host}:{settings.ui_port} "

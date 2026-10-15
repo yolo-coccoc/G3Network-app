@@ -106,6 +106,8 @@
   .form-row input:disabled { background: var(--code-bg); color: var(--text); }
   .form-row input.filled { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .status-line { min-height: 24px; margin: 0 0 8px; }
+  .group-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 4px 0 2px; }
+  .form-row select { min-width: 0; width: 100%; }
 </style>
 </head>
 <body>
@@ -119,6 +121,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="monitoring">Monitoring</button>
     <button class="tab" data-tab="configuration">Configuration</button>
+    <button class="tab" data-tab="chargers">Chargers</button>
   </nav>
 
   <div id="error" class="card"><span class="pill bad">backend</span> <span id="error-text"></span></div>
@@ -206,6 +209,59 @@
         <div id="cfg-send-form"></div>
       </section>
     </div>
+  </div>
+  <div id="tab-chargers" class="hidden">
+    <section class="card">
+      <div class="panel-head">
+        <h2 style="margin:0">Registered chargers</h2>
+        <button id="adm-new" class="primary">Register a charger</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Charger</th><th>Location</th><th>Guns</th><th>Price</th><th>State</th><th></th></tr></thead>
+          <tbody id="adm-rows"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p id="adm-list-status" class="muted status-line"></p>
+    </section>
+
+    <section class="card hidden" id="adm-form-card">
+      <div class="panel-head">
+        <h2 style="margin:0" id="adm-form-title">Register a charger</h2>
+        <button id="adm-cancel">Close</button>
+      </div>
+
+      <div class="group-title">Location</div>
+      <div class="form-row"><label for="adm-location">Where it stands</label><select id="adm-location"></select></div>
+      <div id="adm-new-location" class="hidden">
+        <div class="form-row"><label for="adm-loc-name">Location name</label><input id="adm-loc-name" placeholder="G3 test-day station"></div>
+        <div class="form-row"><label for="adm-loc-address">Address</label><input id="adm-loc-address"></div>
+        <div class="form-row"><label for="adm-loc-lat">Latitude</label><input id="adm-loc-lat" type="number" step="any" value="21.0285"></div>
+        <div class="form-row"><label for="adm-loc-lng">Longitude</label><input id="adm-loc-lng" type="number" step="any" value="105.8542"></div>
+        <div class="form-row"><label for="adm-loc-public">Public (drivers can scan)</label><input id="adm-loc-public" type="checkbox" checked style="width:auto"></div>
+      </div>
+
+      <div class="group-title" style="margin-top:14px">Charger</div>
+      <div class="form-row"><label for="adm-identity">OCPP ID (as typed on the charger's screen)</label><input id="adm-identity"></div>
+      <div class="form-row"><label for="adm-serial">Serial number (nameplate)</label><input id="adm-serial"></div>
+      <div class="form-row"><label for="adm-label">Label (up to 16 characters)</label><input id="adm-label" maxlength="16"></div>
+      <div class="form-row"><label for="adm-power">Max power (kW)</label><input id="adm-power" type="number" value="240"></div>
+      <div id="adm-status-rows" class="hidden">
+        <div class="form-row"><label for="adm-status">Status</label><select id="adm-status"><option>ACTIVE</option><option>INACTIVE</option></select></div>
+        <div class="form-row"><label for="adm-reason">Reason (when the status changes)</label><input id="adm-reason" maxlength="200"></div>
+      </div>
+
+      <div class="group-title" style="margin-top:14px">Guns</div>
+      <div id="adm-guns"></div>
+      <button id="adm-add-gun" style="margin-top:8px">Add a gun</button>
+
+      <div class="group-title" style="margin-top:14px">Price at this location <span class="muted">(applies to every charger there; leave empty to keep it)</span></div>
+      <div class="form-row"><label for="adm-price">Price per kWh (VND, before VAT)</label><input id="adm-price" type="number" min="0" step="100"></div>
+      <div class="form-row"><label for="adm-vat">VAT (%)</label><input id="adm-vat" type="number" min="0" max="100" step="0.5"></div>
+
+      <div style="margin-top:16px"><button id="adm-submit" class="primary">Register</button></div>
+      <div id="adm-result" style="margin-top:12px"></div>
+    </section>
   </div>
 </main>
 
@@ -542,17 +598,160 @@
   $("cfg-get").onclick = getConfiguration;
   $("cfg-send").onclick = sendConfiguration;
 
+  // --- chargers tab -----------------------------------------------------------
+  const adm = {data: null, editing: null, busy: false};
+  const PLUG_NAMES = {IEC_62196_T2_COMBO: "CCS2", IEC_62196_T1_COMBO: "CCS1", CHADEMO: "CHAdeMO", GBT_DC: "GB/T DC", CHAOJI: "ChaoJi"};
+  const GUN_DEFAULT = {standard: "IEC_62196_T2_COMBO", max_power_kw: 240, max_voltage_v: 1000, max_current_a: 300};
+  const vndText = (price) => price ? `${Number(price.price_per_kwh).toLocaleString("vi-VN")} ₫/kWh + ${Number(price.vat_rate_percent)} % VAT` : "";
+
+  async function loadAdmin() {
+    $("adm-list-status").textContent = "Loading…";
+    try {
+      adm.data = await api("/api/admin/chargers");
+      $("adm-list-status").textContent = "";
+    } catch (error) { $("adm-list-status").innerHTML = `<span class="pill bad">error</span> ${escape(error.message)}`; return; }
+    $("adm-rows").innerHTML = adm.data.chargers.length ? adm.data.chargers.map((c) => `<tr>
+        <td><b>${escape(c.ocpp_identity)}</b>${c.physical_reference ? `<div class="muted">${escape(c.physical_reference)}</div>` : ""}</td>
+        <td>${escape(c.location_name || "-")}</td>
+        <td>${c.guns.map((g) => `${g.number}: ${escape(PLUG_NAMES[g.standard] || g.standard || "no plug")} ${g.max_power_kw ?? ""} kW`).join("<br>") || '<span class="pill bad">no gun</span>'}</td>
+        <td>${c.price ? escape(vndText(c.price)) : '<span class="pill bad">no price: scans refused</span>'}</td>
+        <td><span class="pill ${c.status === "ACTIVE" ? "ok" : "warn"}">${escape(c.status)}</span> <span class="pill ${c.is_online ? "ok" : "bad"}">${c.is_online ? "online" : "offline"}</span></td>
+        <td style="white-space:nowrap"><button class="small" data-edit="${c.station_id}">Edit</button> <button class="small" data-delete="${c.station_id}">Delete</button></td>
+      </tr>`).join("") : '<tr><td colspan="6" class="muted">No charger registered.</td></tr>';
+    document.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => openForm(adm.data.chargers.find((c) => c.station_id === b.dataset.edit)));
+    document.querySelectorAll("[data-delete]").forEach((b) => b.onclick = () => deleteCharger(adm.data.chargers.find((c) => c.station_id === b.dataset.delete)));
+  }
+
+  function gunRow(gun, index) {
+    const options = adm.data.plug_standards.map((s) => `<option value="${s}" ${s === gun.standard ? "selected" : ""}>${escape(PLUG_NAMES[s] || s)}</option>`).join("");
+    return `<div class="form-row adm-gun" data-evse="${escape(gun.evse_id || "")}" style="grid-template-columns: 60px 1.2fr 1fr 1fr 1fr 70px">
+      <label>Gun ${index + 1}</label>
+      <select class="g-standard">${options}</select>
+      <input class="g-power" type="number" value="${gun.max_power_kw ?? 240}" title="Max kW">
+      <input class="g-voltage" type="number" value="${gun.max_voltage_v ?? 1000}" title="Max V">
+      <input class="g-current" type="number" value="${gun.max_current_a ?? 300}" title="Max A">
+      <button class="small g-remove">Remove</button>
+    </div>`;
+  }
+
+  function renderGuns(guns) {
+    $("adm-guns").innerHTML = '<div class="muted" style="font-size:12px">Plug · max kW · max V · max A</div>' + guns.map(gunRow).join("");
+    document.querySelectorAll(".g-remove").forEach((b, i) => b.onclick = () => {
+      const current = readGuns(); current.splice(i, 1); renderGuns(current);
+    });
+  }
+
+  function readGuns() {
+    return [...document.querySelectorAll(".adm-gun")].map((row) => ({
+      evse_id: row.dataset.evse || null,
+      standard: row.querySelector(".g-standard").value,
+      max_power_kw: Number(row.querySelector(".g-power").value),
+      max_voltage_v: Number(row.querySelector(".g-voltage").value),
+      max_current_a: Number(row.querySelector(".g-current").value),
+    }));
+  }
+
+  function fillLocationSelect(selected, allowNew) {
+    const options = adm.data.locations.map((l) => `<option value="${l.location_id}" ${l.location_id === selected ? "selected" : ""}>${escape(l.display_name)}${l.is_public ? "" : " (private)"}</option>`);
+    if (allowNew) options.push('<option value="__new">New location…</option>');
+    $("adm-location").innerHTML = options.join("");
+    $("adm-location").onchange = locationChanged;
+    locationChanged();
+  }
+
+  function locationChanged() {
+    const value = $("adm-location").value;
+    $("adm-new-location").classList.toggle("hidden", value !== "__new");
+    const location = adm.data.locations.find((l) => l.location_id === value);
+    $("adm-price").value = location?.price ? Number(location.price.price_per_kwh) : "";
+    $("adm-vat").value = location?.price ? Number(location.price.vat_rate_percent) : (value === "__new" ? 8 : "");
+  }
+
+  function openForm(charger) {
+    adm.editing = charger || null;
+    $("adm-form-card").classList.remove("hidden");
+    $("adm-result").innerHTML = "";
+    $("adm-form-title").textContent = charger ? `Edit ${charger.ocpp_identity}` : "Register a charger";
+    $("adm-submit").textContent = charger ? "Save changes" : "Register";
+    $("adm-status-rows").classList.toggle("hidden", !charger);
+    fillLocationSelect(charger ? charger.location_id : (adm.data.locations[0]?.location_id || "__new"), !charger);
+    $("adm-identity").value = charger?.ocpp_identity || "";
+    $("adm-serial").value = charger?.registered_serial_number || "";
+    $("adm-label").value = charger?.physical_reference || "";
+    $("adm-power").value = charger?.max_power_kw ?? 240;
+    $("adm-status").value = charger?.status || "ACTIVE";
+    $("adm-reason").value = "";
+    renderGuns(charger && charger.guns.length ? charger.guns : [GUN_DEFAULT, GUN_DEFAULT]);
+    $("adm-form-card").scrollIntoView({behavior: "smooth"});
+  }
+
+  function formBody() {
+    const body = {
+      ocpp_identity: $("adm-identity").value, registered_serial_number: $("adm-serial").value,
+      physical_reference: $("adm-label").value, max_power_kw: $("adm-power").value === "" ? null : Number($("adm-power").value),
+      guns: readGuns(),
+      price_per_kwh: $("adm-price").value === "" ? null : Number($("adm-price").value),
+      vat_rate_percent: $("adm-vat").value === "" ? null : Number($("adm-vat").value),
+    };
+    if ($("adm-location").value === "__new") {
+      body.new_location = {
+        display_name: $("adm-loc-name").value, address: $("adm-loc-address").value,
+        latitude: Number($("adm-loc-lat").value), longitude: Number($("adm-loc-lng").value), is_public: $("adm-loc-public").checked,
+      };
+    } else { body.location_id = $("adm-location").value; }
+    if (adm.editing) { body.status = $("adm-status").value; body.status_reason = $("adm-reason").value; }
+    return body;
+  }
+
+  function showSteps(answer) {
+    $("adm-result").innerHTML = (answer.ok ? '<span class="pill ok">done</span>' : '<span class="pill bad">stopped</span> Fix the problem and press the button again: finished steps are kept.') +
+      answer.steps.map((s) => `<div><span class="pill ${s.ok ? "ok" : "bad"}">${escape(s.step)}</span> ${escape(s.detail)}</div>`).join("");
+  }
+
+  async function submitForm() {
+    if (adm.busy) return;
+    adm.busy = true; $("adm-submit").disabled = true;
+    $("adm-result").textContent = "Working…";
+    try {
+      const path = adm.editing ? `/api/admin/chargers/${adm.editing.station_id}/edit` : "/api/admin/chargers";
+      const answer = await postJson(path, formBody());
+      showSteps(answer);
+      await loadAdmin(); await loadChargers();
+      if (adm.editing) adm.editing = adm.data.chargers.find((c) => c.station_id === adm.editing.station_id) || null;
+    } catch (error) {
+      $("adm-result").innerHTML = `<span class="pill bad">not sent</span> ${escape(error.message)}`;
+    } finally { adm.busy = false; $("adm-submit").disabled = false; }
+  }
+
+  async function deleteCharger(charger) {
+    if (!charger || !confirm(`Delete charger ${charger.ocpp_identity} and its guns? Its sessions and bills are kept.`)) return;
+    try {
+      const answer = await postJson(`/api/admin/chargers/${charger.station_id}/delete`, {});
+      $("adm-list-status").innerHTML = answer.ok ? `<span class="pill ok">deleted</span> ${escape(charger.ocpp_identity)}`
+        : `<span class="pill bad">not deleted</span> ${escape(answer.steps.at(-1)?.detail || "")}`;
+      if (adm.editing?.station_id === charger.station_id) $("adm-form-card").classList.add("hidden");
+      await loadAdmin(); await loadChargers();
+    } catch (error) { $("adm-list-status").innerHTML = `<span class="pill bad">error</span> ${escape(error.message)}`; }
+  }
+
+  $("adm-new").onclick = () => openForm(null);
+  $("adm-cancel").onclick = () => { $("adm-form-card").classList.add("hidden"); adm.editing = null; };
+  $("adm-add-gun").onclick = () => renderGuns([...readGuns(), GUN_DEFAULT]);
+  $("adm-submit").onclick = submitForm;
+
   // --- tabs -------------------------------------------------------------------
   function showTab(name) {
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
     $("tab-monitoring").classList.toggle("hidden", name !== "monitoring");
     $("tab-configuration").classList.toggle("hidden", name !== "configuration");
+    $("tab-chargers").classList.toggle("hidden", name !== "chargers");
+    if (name === "chargers") loadAdmin();
     try { localStorage.setItem("monitor.tab", name); } catch (e) { /* storage blocked */ }
     history.replaceState(null, "", `#${name}`);
   }
   document.querySelectorAll(".tab").forEach((t) => t.onclick = () => showTab(t.dataset.tab));
   // The address (#monitoring / #configuration) wins over the remembered tab.
-  const TABS = ["monitoring", "configuration"];
+  const TABS = ["monitoring", "configuration", "chargers"];
   let firstTab = location.hash.slice(1);
   if (!TABS.includes(firstTab)) {
     try { firstTab = localStorage.getItem("monitor.tab"); } catch (e) { firstTab = null; }
