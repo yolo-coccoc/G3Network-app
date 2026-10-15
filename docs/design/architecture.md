@@ -563,7 +563,10 @@ call each other is in
 │   │   │   │
 │   │   │   ├── charging_stations/     # Station/EVSE/connector topology and OCPP (F-C1, F-G2)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
-│   │   │   │   │   # service.py/repository.py: topology CRUD, directory and geo searches, configuration read
+│   │   │   │   │   # service.py = what other domains call (owner lookups, QR scan checks, three wrappers); the logic (CV-20 §7.4):
+│   │   │   │   │   # location_service.py (locations, access grants), station_service.py (chargers, status, connection, OCPP log,
+│   │   │   │   │   # configuration, energy report), search_service.py (nearest / nearby), evse_service.py (EVSEs, guns),
+│   │   │   │   │   # command_service.py (command channel); access.py = reach checks and the running-charge guard; mappers.py = responses
 │   │   │   │   ├── ocpp_state_service.py     # internal (ocpp/ only): identity/topology resolution, frame log, boot info, charger/connector status, GetConfiguration captures
 │   │   │   │   ├── ocpp_state_repository.py  # the matching queries
 │   │   │   │   └── ocpp/              # WebSocket server for charging station communication (OCPP 2.0.1 and 1.6J)
