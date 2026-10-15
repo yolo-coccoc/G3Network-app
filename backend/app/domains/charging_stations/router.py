@@ -21,7 +21,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.command_service as command_service
+import app.domains.charging_stations.evse_service as evse_service
+import app.domains.charging_stations.location_service as location_service
+import app.domains.charging_stations.search_service as search_service
+import app.domains.charging_stations.station_service as station_service
 import app.domains.identity.service as identity_service
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
@@ -116,7 +120,7 @@ async def create_charging_station_endpoint(
         ChargingTopologyConflictError: 409 if the OCPP identity already
             exists, even on a soft-deleted station.
     """
-    return await charging_stations_service.create_charging_station(
+    return await station_service.create_charging_station(
         db, station_create_request, principal=principal
     )
 
@@ -167,7 +171,7 @@ async def list_charging_stations_endpoint(
         RequestValidationError: 422 (raised by FastAPI) if a query
             parameter is out of range; the service raises no domain error.
     """
-    return await charging_stations_service.list_charging_stations(
+    return await station_service.list_charging_stations(
         db,
         principal=principal,
         scope=scope,
@@ -217,7 +221,7 @@ async def list_charging_station_status_summaries_endpoint(
     Returns:
         One summary row per charger.
     """
-    return await charging_stations_service.list_charging_station_status_summaries(
+    return await station_service.list_charging_station_status_summaries(
         db,
         principal=principal,
         scope=scope,
@@ -280,7 +284,7 @@ async def list_nearby_charging_stations_endpoint(
         RequestValidationError: 422 (raised by FastAPI) if a query
             parameter is out of range; the service raises no domain error.
     """
-    return await charging_stations_service.list_nearby_charging_stations(
+    return await search_service.list_nearby_charging_stations(
         db,
         latitude=latitude,
         longitude=longitude,
@@ -329,7 +333,7 @@ async def list_station_energy_totals_endpoint(
         ChargingStationReportRangeError: 400 if a bound lacks a timezone or
             ``end_time`` is not after ``start_time``.
     """
-    return await charging_stations_service.list_station_energy_totals(
+    return await station_service.list_station_energy_totals(
         db, start_time=start_time, end_time=end_time, principal=principal
     )
 
@@ -367,7 +371,7 @@ async def get_charging_station_status_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.get_charging_station_status(
+    return await station_service.get_charging_station_status(
         db, station_id, principal=principal
     )
 
@@ -401,7 +405,7 @@ async def create_charging_evse_endpoint(
         ChargingTopologyConflictError: 409 if the EVSE identity already
             exists in the station.
     """
-    return await charging_stations_service.create_charging_evse(
+    return await evse_service.create_charging_evse(
         db, station_id, evse_create_request, principal=principal
     )
 
@@ -438,7 +442,7 @@ async def list_charging_evses_endpoint(
         ChargingStationNotFoundError: 404 if the parent station is not
             active.
     """
-    return await charging_stations_service.list_charging_evses(
+    return await evse_service.list_charging_evses(
         db, station_id, page=page, page_size=page_size, principal=principal
     )
 
@@ -471,7 +475,7 @@ async def create_charging_connector_endpoint(
         ChargingTopologyConflictError: 409 if the connector identity
             already exists in the EVSE.
     """
-    return await charging_stations_service.create_charging_connector(
+    return await evse_service.create_charging_connector(
         db, evse_id, connector_create_request, principal=principal
     )
 
@@ -507,7 +511,7 @@ async def list_charging_connectors_endpoint(
     Raises:
         ChargingEvseNotFoundError: 404 if the parent EVSE is not active.
     """
-    return await charging_stations_service.list_charging_connectors(
+    return await evse_service.list_charging_connectors(
         db, evse_id, page=page, page_size=page_size, principal=principal
     )
 
@@ -536,7 +540,7 @@ async def get_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.get_charging_station(
+    return await station_service.get_charging_station(
         db, station_id, principal=principal
     )
 
@@ -565,7 +569,7 @@ async def get_charging_station_connection_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist, was
             soft-deleted or is out of the caller's reach.
     """
-    return await charging_stations_service.get_charging_station_connection(
+    return await station_service.get_charging_station_connection(
         db, station_id, principal=principal
     )
 
@@ -616,7 +620,7 @@ async def list_charging_station_ocpp_messages_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist.
         ChargingStationReportRangeError: 400 if a time bound has no timezone.
     """
-    response = await charging_stations_service.list_charging_station_ocpp_messages(
+    response = await station_service.list_charging_station_ocpp_messages(
         db,
         station_id,
         principal=principal,
@@ -668,7 +672,7 @@ async def get_charging_station_configuration_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.get_latest_station_configuration(
+    return await station_service.get_latest_station_configuration(
         db, station_id, principal=principal
     )
 
@@ -701,7 +705,7 @@ async def update_charging_station_endpoint(
         ChargingTopologyConflictError: 409 if the new OCPP identity is
             already in use.
     """
-    return await charging_stations_service.update_charging_station(
+    return await station_service.update_charging_station(
         db, station_id, station_update_request, principal=principal
     )
 
@@ -730,7 +734,7 @@ async def soft_delete_charging_station_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist or
             was soft-deleted.
     """
-    return await charging_stations_service.soft_delete_charging_station(
+    return await station_service.soft_delete_charging_station(
         db, station_id, principal=principal
     )
 
@@ -759,9 +763,7 @@ async def get_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_stations_service.get_charging_evse(
-        db, evse_id, principal=principal
-    )
+    return await evse_service.get_charging_evse(db, evse_id, principal=principal)
 
 
 @router.patch(
@@ -792,7 +794,7 @@ async def update_charging_evse_endpoint(
         ChargingTopologyConflictError: 409 if the new identity already
             exists in the station.
     """
-    return await charging_stations_service.update_charging_evse(
+    return await evse_service.update_charging_evse(
         db, evse_id, evse_update_request, principal=principal
     )
 
@@ -821,7 +823,7 @@ async def soft_delete_charging_evse_endpoint(
         ChargingEvseNotFoundError: 404 if the EVSE does not exist or was
             soft-deleted.
     """
-    return await charging_stations_service.soft_delete_charging_evse(
+    return await evse_service.soft_delete_charging_evse(
         db, evse_id, principal=principal
     )
 
@@ -850,7 +852,7 @@ async def get_charging_connector_endpoint(
         ChargingConnectorNotFoundError: 404 if the connector does not exist
             or was soft-deleted.
     """
-    return await charging_stations_service.get_charging_connector(
+    return await evse_service.get_charging_connector(
         db, connector_id, principal=principal
     )
 
@@ -883,7 +885,7 @@ async def update_charging_connector_endpoint(
         ChargingTopologyConflictError: 409 if the new identity already
             exists in the EVSE.
     """
-    return await charging_stations_service.update_charging_connector(
+    return await evse_service.update_charging_connector(
         db, connector_id, connector_update_request, principal=principal
     )
 
@@ -912,7 +914,7 @@ async def soft_delete_charging_connector_endpoint(
         ChargingConnectorNotFoundError: 404 if the connector does not exist
             or was soft-deleted.
     """
-    return await charging_stations_service.soft_delete_charging_connector(
+    return await evse_service.soft_delete_charging_connector(
         db, connector_id, principal=principal
     )
 
@@ -942,7 +944,7 @@ async def create_charging_location_endpoint(
         ChargingTopologyConflictError: 409 if the owner organization does not
             exist.
     """
-    return await charging_stations_service.create_charging_location(
+    return await location_service.create_charging_location(
         db, location_create_request, principal=principal
     )
 
@@ -983,7 +985,7 @@ async def list_charging_locations_endpoint(
     Returns:
         HTTP response with the list of locations.
     """
-    return await charging_stations_service.list_charging_locations(
+    return await location_service.list_charging_locations(
         db,
         principal=principal,
         scope=scope,
@@ -1019,7 +1021,7 @@ async def get_charging_location_endpoint(
     Raises:
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
-    return await charging_stations_service.get_charging_location(
+    return await location_service.get_charging_location(
         db, location_id, principal=principal
     )
 
@@ -1049,7 +1051,7 @@ async def update_charging_location_endpoint(
     Raises:
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
-    return await charging_stations_service.update_charging_location(
+    return await location_service.update_charging_location(
         db, location_id, location_update_request, principal=principal
     )
 
@@ -1079,7 +1081,7 @@ async def soft_delete_charging_location_endpoint(
     Raises:
         ChargingLocationNotFoundError: 404 if it does not exist or was deleted.
     """
-    return await charging_stations_service.soft_delete_charging_location(
+    return await location_service.soft_delete_charging_location(
         db, location_id, status_reason=status_reason, principal=principal
     )
 
@@ -1112,7 +1114,7 @@ async def grant_charging_location_access_endpoint(
         ChargingLocationAccessConflictError: 409 for a grant to the owner, a
             duplicate live grant, or an unknown organization or user.
     """
-    return await charging_stations_service.grant_charging_location_access(
+    return await location_service.grant_charging_location_access(
         db, location_id, access_create_request, principal=principal
     )
 
@@ -1140,7 +1142,7 @@ async def list_charging_location_access_endpoint(
     Raises:
         ChargingLocationNotFoundError: 404 if the location is not active.
     """
-    return await charging_stations_service.list_charging_location_access(
+    return await location_service.list_charging_location_access(
         db, location_id, principal=principal
     )
 
@@ -1174,7 +1176,7 @@ async def revoke_charging_location_access_endpoint(
             grant.
         ChargingLocationAccessConflictError: 409 if it is already revoked.
     """
-    return await charging_stations_service.revoke_charging_location_access(
+    return await location_service.revoke_charging_location_access(
         db, location_id, access_id, access_revoke_request, principal=principal
     )
 
@@ -1207,7 +1209,7 @@ async def create_charging_station_command_endpoint(
         ChargingStationCommandInputError: 400 if a link or parameter the
             command type needs is missing.
     """
-    return await charging_stations_service.create_charging_station_command(
+    return await command_service.create_charging_station_command(
         db, station_id, command_create_request, principal=principal
     )
 
@@ -1245,7 +1247,7 @@ async def list_charging_station_commands_endpoint(
     Raises:
         ChargingStationNotFoundError: 404 if the charger is not active.
     """
-    return await charging_stations_service.list_charging_station_commands(
+    return await command_service.list_charging_station_commands(
         db,
         station_id,
         outcome=outcome,
@@ -1281,7 +1283,7 @@ async def get_charging_station_command_endpoint(
     Raises:
         ChargingStationNotFoundError: 404 if the command is not the charger's.
     """
-    return await charging_stations_service.get_charging_station_command(
+    return await command_service.get_charging_station_command(
         db, station_id, command_id, principal=principal
     )
 
@@ -1313,6 +1315,6 @@ async def cancel_charging_station_command_endpoint(
         ChargingStationCommandConflictError: 409 if a gateway already sent it
             or it is closed.
     """
-    return await charging_stations_service.cancel_charging_station_command(
+    return await command_service.cancel_charging_station_command(
         db, station_id, command_id, principal=principal
     )

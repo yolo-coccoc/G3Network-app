@@ -17,7 +17,7 @@ from websockets.exceptions import ConnectionClosed
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.station_service as station_service
 from app.domains.charging_stations.exceptions import (
     ChargingOcppMessageInputError,
     ChargingStationNotFoundError,
@@ -568,13 +568,13 @@ async def test_latest_configuration_returns_the_newest_capture_or_an_empty_answe
         fake_entries,
     )
 
-    empty = await charging_stations_service.get_latest_station_configuration(
+    empty = await station_service.get_latest_station_configuration(
         fake_db_session(),
         STATION_ID,
         principal=build_internal_principal(),
     )
     state["latest"] = (capture_id, NOW)
-    latest = await charging_stations_service.get_latest_station_configuration(
+    latest = await station_service.get_latest_station_configuration(
         fake_db_session(),
         STATION_ID,
         principal=build_internal_principal(),
@@ -600,7 +600,7 @@ async def test_latest_configuration_of_an_unknown_station_raises_not_found(
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", fake_station)
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.get_latest_station_configuration(
+        await station_service.get_latest_station_configuration(
             fake_db_session(),
             uuid4(),
             principal=build_internal_principal(),

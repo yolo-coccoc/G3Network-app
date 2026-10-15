@@ -20,7 +20,9 @@ import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
+import app.domains.charging_stations.search_service as search_service
 import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.station_service as station_service
 from app.domains.charging_sessions.types import StationEnergyTotal
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
@@ -54,7 +56,7 @@ def test_to_nearby_charging_station_response_decodes_location_and_distance() -> 
     station = build_charging_station_record()
     location = build_charging_location_record()
 
-    response = charging_stations_service.to_nearby_charging_station_response(
+    response = search_service.to_nearby_charging_station_response(
         station,
         location,
         None,
@@ -84,7 +86,7 @@ def test_nearby_response_is_online_follows_last_seen_at() -> None:
         - timedelta(seconds=settings.CHARGING_OFFLINE_TIMEOUT_SECONDS - 1)
     )
 
-    online = charging_stations_service.to_nearby_charging_station_response(
+    online = search_service.to_nearby_charging_station_response(
         station,
         location,
         state,
@@ -93,7 +95,7 @@ def test_nearby_response_is_online_follows_last_seen_at() -> None:
         distance_km=1.0,
         now=now,
     )
-    offline = charging_stations_service.to_nearby_charging_station_response(
+    offline = search_service.to_nearby_charging_station_response(
         station,
         location,
         state,
@@ -153,7 +155,7 @@ async def test_list_nearby_charging_stations_clamps_radius_and_paginates(
         available_connector_count,
     )
 
-    response = await charging_stations_service.list_nearby_charging_stations(
+    response = await search_service.list_nearby_charging_stations(
         fake_db_session(),
         latitude=10.762622,
         longitude=106.660172,
@@ -425,7 +427,7 @@ async def test_station_status_lists_the_charger_and_every_gun(
         charging_stations_repository, "list_connectors_by_station_id", list_connectors
     )
 
-    response = await charging_stations_service.get_charging_station_status(
+    response = await station_service.get_charging_station_status(
         fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 
@@ -454,7 +456,7 @@ async def test_station_status_of_an_unknown_station_is_not_found(
     monkeypatch.setattr(charging_stations_repository, "get_station_by_id", no_station)
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.get_charging_station_status(
+        await station_service.get_charging_station_status(
             fake_db_session(), uuid4(), principal=build_internal_principal()
         )
 
@@ -507,7 +509,7 @@ async def test_station_energy_totals_rank_every_station_highest_first(
         charging_sessions_service, "resolve_station_energy_total", energy_total
     )
 
-    response = await charging_stations_service.list_station_energy_totals(
+    response = await station_service.list_station_energy_totals(
         fake_db_session(),
         start_time=start,
         end_time=end,
@@ -530,14 +532,14 @@ async def test_station_energy_totals_reject_a_naive_or_backward_window() -> None
     aware = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
     with pytest.raises(ChargingStationReportRangeError, match="start_time"):
-        await charging_stations_service.list_station_energy_totals(
+        await station_service.list_station_energy_totals(
             fake_db_session(),
             start_time=datetime(2026, 9, 1),
             end_time=aware,
             principal=build_internal_principal(),
         )
     with pytest.raises(ChargingStationReportRangeError):
-        await charging_stations_service.list_station_energy_totals(
+        await station_service.list_station_energy_totals(
             fake_db_session(),
             start_time=aware,
             end_time=aware,

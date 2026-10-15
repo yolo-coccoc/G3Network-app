@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_session_repository
 import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.command_service as command_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_sessions.types import SessionStatus
 from app.domains.charging_stations.exceptions import (
     ChargingStationCommandConflictError,
@@ -153,7 +153,7 @@ async def test_customer_of_one_organization_cannot_command_another_ones_charger(
     principal = build_principal(roles=frozenset({UserRole.ORG_ADMIN}))
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.create_charging_station_command(
+        await command_service.create_charging_station_command(
             fake_db_session(),
             station.station_id,
             ChargingStationCommandCreateRequest(
@@ -180,7 +180,7 @@ async def test_customer_cannot_read_or_cancel_another_organizations_command(
     monkeypatch.setattr(ocpp_state_repository, "cancel_queued_command", cancel)
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.cancel_charging_station_command(
+        await command_service.cancel_charging_station_command(
             fake_db_session(),
             station.station_id,
             uuid4(),
@@ -208,7 +208,7 @@ async def test_cancel_of_a_command_no_longer_queued_is_refused_with_409(
     monkeypatch.setattr(ocpp_state_repository, "cancel_queued_command", cancel)
 
     with pytest.raises(ChargingStationCommandConflictError):
-        await charging_stations_service.cancel_charging_station_command(
+        await command_service.cancel_charging_station_command(
             fake_db_session(),
             station.station_id,
             claimed.command_id,
@@ -230,7 +230,7 @@ async def test_cancel_of_a_command_of_another_charger_is_a_404(
     monkeypatch.setattr(ocpp_state_repository, "get_station_command_by_id", get_command)
 
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.cancel_charging_station_command(
+        await command_service.cancel_charging_station_command(
             fake_db_session(),
             station.station_id,
             foreign.command_id,
@@ -264,7 +264,7 @@ async def test_unlock_while_a_charge_runs_on_that_gun_is_refused(
     )
 
     with pytest.raises(ChargingStationCommandConflictError):
-        await charging_stations_service.create_charging_station_command(
+        await command_service.create_charging_station_command(
             fake_db_session(),
             station.station_id,
             ChargingStationCommandCreateRequest(
@@ -305,7 +305,7 @@ async def test_command_refuses_a_session_of_another_charger(
     monkeypatch.setattr(charging_session_repository, "get_session_by_id", get_session)
 
     with pytest.raises((InvalidInputError, NotFoundError, ConflictError)):
-        await charging_stations_service.create_charging_station_command(
+        await command_service.create_charging_station_command(
             fake_db_session(),
             station.station_id,
             ChargingStationCommandCreateRequest(
@@ -325,7 +325,7 @@ async def test_command_refuses_a_session_of_another_charger(
 def test_manual_remote_start_token_longer_than_a_1_6_id_tag_is_refused() -> None:
     """A token the 1.6J schema would reject is refused when the command is queued."""
     with pytest.raises(ChargingStationCommandInputError):
-        charging_stations_service._validate_command_parameters(
+        command_service._validate_command_parameters(
             StationCommandType.REMOTE_START,
             evse_id=None,
             session_id=None,

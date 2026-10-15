@@ -18,9 +18,13 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.access as station_access
+import app.domains.charging_stations.command_service as command_service
+import app.domains.charging_stations.evse_service as evse_service
+import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.station_service as station_service
 from app.domains.charging_stations.exceptions import (
     ChargingStationCommandConflictError,
     ChargingStationCommandInputError,
@@ -126,10 +130,10 @@ async def test_list_locations_passes_the_manage_or_the_view_scope(
     )
     customer = build_principal()
 
-    await charging_stations_service.list_charging_locations(
+    await location_service.list_charging_locations(
         fake_db_session(), principal=customer
     )
-    await charging_stations_service.list_charging_locations(
+    await location_service.list_charging_locations(
         fake_db_session(),
         principal=customer,
         scope=StationListScope.VISIBLE,
@@ -148,7 +152,7 @@ async def test_an_expired_grant_no_longer_opens_a_private_location(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """CS-13: a grant past its last valid day gives no view, one ending today does."""
-    today = charging_stations_service._today_in_report_zone()
+    today = station_access.today_in_report_zone()
     grants = {"expired": today - timedelta(days=1), "last_day": today}
 
     async def get_grant(
@@ -164,7 +168,7 @@ async def test_an_expired_grant_no_longer_opens_a_private_location(
 
     results = {}
     for current in grants:
-        results[current] = await charging_stations_service._can_reach_location(
+        results[current] = await station_access.can_reach_location(
             fake_db_session(), private, build_principal(), view=True
         )
 
@@ -191,15 +195,13 @@ async def test_deleting_a_connector_with_a_running_charge_is_refused(
     monkeypatch.setattr(
         charging_stations_repository, "get_connector_by_id", get_connector
     )
-    monkeypatch.setattr(
-        charging_stations_service, "_get_evse_in_reach", always_in_reach
-    )
+    monkeypatch.setattr(station_access, "get_evse_in_reach", always_in_reach)
     monkeypatch.setattr(
         charging_sessions_service, "has_active_session_on_connector", has_active
     )
 
     with pytest.raises(ChargingTopologyConflictError):
-        await charging_stations_service.soft_delete_charging_connector(
+        await evse_service.soft_delete_charging_connector(
             fake_db_session(), connector.connector_id, principal=build_principal()
         )
 
@@ -247,7 +249,7 @@ async def test_connection_read_derives_online_and_compares_the_serial(
     state.ocpp_protocol_version = "ocpp1.6"
     station = _station_fixture(monkeypatch, state=state)
 
-    response = await charging_stations_service.get_charging_station_connection(
+    response = await station_service.get_charging_station_connection(
         fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 
@@ -283,14 +285,14 @@ async def test_message_log_is_for_staff_and_hides_the_frame_by_default(
     monkeypatch.setattr(ocpp_state_repository, "count_ocpp_messages", count_messages)
 
     with pytest.raises(AccessDeniedError):
-        await charging_stations_service.list_charging_station_ocpp_messages(
+        await station_service.list_charging_station_ocpp_messages(
             fake_db_session(), station.station_id, principal=build_principal()
         )
     staff = build_internal_principal()
-    hidden = await charging_stations_service.list_charging_station_ocpp_messages(
+    hidden = await station_service.list_charging_station_ocpp_messages(
         fake_db_session(), station.station_id, principal=staff
     )
-    shown = await charging_stations_service.list_charging_station_ocpp_messages(
+    shown = await station_service.list_charging_station_ocpp_messages(
         fake_db_session(), station.station_id, principal=staff, include_raw_frame=True
     )
 
@@ -324,7 +326,7 @@ async def test_status_counts_guns_and_flags_them_stale_when_the_charger_is_offli
         connectors=guns,
     )
 
-    response = await charging_stations_service.get_charging_station_status(
+    response = await station_service.get_charging_station_status(
         fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 
@@ -351,17 +353,17 @@ def test_command_parameters_are_checked_per_type(
 ) -> None:
     """STN-10: an unknown key or a value outside the type's range is a 400."""
     with pytest.raises(ChargingStationCommandInputError):
-        charging_stations_service._validate_command_parameters(
+        command_service._validate_command_parameters(
             command_type, evse_id=uuid4(), session_id=uuid4(), parameters=parameters
         )
 
 
 def test_command_parameters_get_their_defaults() -> None:
     """A reset without a type is a soft reset; a plain remote stop stores nothing."""
-    reset = charging_stations_service._validate_command_parameters(
+    reset = command_service._validate_command_parameters(
         StationCommandType.RESET, evse_id=None, session_id=None, parameters=None
     )
-    stop = charging_stations_service._validate_command_parameters(
+    stop = command_service._validate_command_parameters(
         StationCommandType.REMOTE_STOP,
         evse_id=None,
         session_id=uuid4(),
@@ -381,7 +383,7 @@ async def test_a_manual_command_needs_a_reason_and_a_connected_charger(
     principal = build_internal_principal()
 
     with pytest.raises(ChargingStationCommandInputError):
-        await charging_stations_service.create_charging_station_command(
+        await command_service.create_charging_station_command(
             fake_db_session(),
             offline.station_id,
             ChargingStationCommandCreateRequest(
@@ -390,7 +392,7 @@ async def test_a_manual_command_needs_a_reason_and_a_connected_charger(
             principal=principal,
         )
     with pytest.raises(ChargingStationOfflineError):
-        await charging_stations_service.create_charging_station_command(
+        await command_service.create_charging_station_command(
             fake_db_session(),
             offline.station_id,
             ChargingStationCommandCreateRequest(
@@ -437,12 +439,12 @@ async def test_only_a_command_still_in_the_queue_can_be_cancelled(
     session = fake_db_session()
     principal = build_internal_principal()
 
-    cancelled = await charging_stations_service.cancel_charging_station_command(
+    cancelled = await command_service.cancel_charging_station_command(
         session, station.station_id, command.command_id, principal=principal
     )
     can_cancel["value"] = False
     with pytest.raises(ChargingStationCommandConflictError):
-        await charging_stations_service.cancel_charging_station_command(
+        await command_service.cancel_charging_station_command(
             session, station.station_id, command.command_id, principal=principal
         )
 

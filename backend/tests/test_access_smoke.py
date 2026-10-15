@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_session_repository
 import app.domains.charging_sessions.service as charging_session_service
+import app.domains.charging_stations.access as station_access
+import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.repository as driver_repository
@@ -462,7 +464,7 @@ async def test_a_foreign_location_is_visible_when_public_or_granted_but_never_ma
     location = build_charging_location_record(organization_id=OTHER_ORGANIZATION_ID)
     location.is_public = is_public
 
-    reachable = await charging_stations_service._can_reach_location(
+    reachable = await station_access.can_reach_location(
         fake_db_session(), location, build_principal(), view=view
     )
 
@@ -476,10 +478,10 @@ async def test_the_owner_and_internal_staff_manage_a_location() -> None:
     location = build_charging_location_record(organization_id=OTHER_ORGANIZATION_ID)
     location.is_public = False
 
-    assert await charging_stations_service._can_reach_location(
+    assert await station_access.can_reach_location(
         fake_db_session(), location, owner, view=False
     )
-    assert await charging_stations_service._can_reach_location(
+    assert await station_access.can_reach_location(
         fake_db_session(), location, build_internal_principal(), view=False
     )
 
@@ -517,7 +519,7 @@ async def test_station_and_location_of_another_organization_are_not_found(
     customer = build_principal()
 
     with pytest.raises(ChargingLocationNotFoundError):
-        await charging_stations_service.get_charging_location(
+        await location_service.get_charging_location(
             fake_db_session(), location.location_id, principal=customer
         )
     with pytest.raises(ChargingStationNotFoundError):

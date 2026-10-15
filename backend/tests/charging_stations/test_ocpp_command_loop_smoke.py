@@ -12,10 +12,10 @@ from ocpp.v16 import call_result as result16
 from ocpp.v201 import call as call201
 from ocpp.v201 import call_result as result201
 
+import app.domains.charging_stations.command_service as command_service
 import app.domains.charging_stations.ocpp.command_loop as command_loop
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
-import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import ChargingStationCommandInputError
 from app.domains.charging_stations.ocpp.command_types import (
     CommandResult,
@@ -498,7 +498,7 @@ def test_a_command_missing_what_its_type_needs_is_refused(
 ) -> None:
     """Required links and parameters are checked when the command is queued."""
     with pytest.raises(ChargingStationCommandInputError):
-        charging_stations_service._validate_command_parameters(
+        command_service._validate_command_parameters(
             command_type,
             evse_id=None,
             session_id=None,
@@ -508,10 +508,10 @@ def test_a_command_missing_what_its_type_needs_is_refused(
 
 def test_defaults_are_filled_and_a_remote_start_gets_its_remote_start_id() -> None:
     """RESET defaults to Soft; a remote start keeps the 2.0.1 remoteStartId (CS-20)."""
-    reset = charging_stations_service._validate_command_parameters(
+    reset = command_service._validate_command_parameters(
         StationCommandType.RESET, evse_id=None, session_id=None, parameters=None
     )
-    start = charging_stations_service._validate_command_parameters(
+    start = command_service._validate_command_parameters(
         StationCommandType.REMOTE_START,
         evse_id=None,
         session_id=uuid4(),

@@ -30,8 +30,14 @@ import app.domains.billing.router as billing_router
 import app.domains.billing.service as billing_service
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_stations.access as station_access
+import app.domains.charging_stations.command_service as command_service
+import app.domains.charging_stations.evse_service as evse_service
+import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
+import app.domains.charging_stations.search_service as search_service
 import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.station_service as station_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -1351,17 +1357,15 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
             nearest = await charging_stations_service.find_nearest_operational_station(
                 db, latitude=10.0, longitude=106.002
             )
-            available_only = (
-                await charging_stations_service.list_nearby_charging_stations(
-                    db,
-                    latitude=10.0,
-                    longitude=106.002,
-                    radius_km=5,
-                    is_available_only=True,
-                    principal=outsider,
-                )
+            available_only = await search_service.list_nearby_charging_stations(
+                db,
+                latitude=10.0,
+                longitude=106.002,
+                radius_km=5,
+                is_available_only=True,
+                principal=outsider,
             )
-            operational = await charging_stations_service.list_nearby_charging_stations(
+            operational = await search_service.list_nearby_charging_stations(
                 db,
                 latitude=10.0,
                 longitude=106.002,
@@ -1374,7 +1378,7 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
             maintenance_detail = await charging_stations_service.get_charging_station(
                 db, maintenance_id, principal=build_internal_principal()
             )
-            free_status = await charging_stations_service.get_charging_station_status(
+            free_status = await station_service.get_charging_station_status(
                 db, free_id, principal=build_internal_principal()
             )
 
@@ -1479,7 +1483,7 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 end_time=t0 + timedelta(days=1),
                 granularity=EnergySeriesGranularity.DAY,
             )
-            totals = await charging_stations_service.list_station_energy_totals(
+            totals = await station_service.list_station_energy_totals(
                 db,
                 start_time=t0,
                 end_time=t0 + timedelta(days=1),
@@ -3044,7 +3048,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
             )
 
         async with session_factory.begin() as db:
-            location = await charging_stations_service.create_charging_location(
+            location = await location_service.create_charging_location(
                 db,
                 ChargingLocationCreateRequest(
                     organization_id=owner_id,
@@ -3056,7 +3060,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 ),
                 principal=build_internal_principal(),
             )
-            station = await charging_stations_service.create_charging_station(
+            station = await station_service.create_charging_station(
                 db,
                 ChargingStationCreateRequest(
                     location_id=location.location_id,
@@ -3067,7 +3071,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 ),
                 principal=build_internal_principal(),
             )
-            evse = await charging_stations_service.create_charging_evse(
+            evse = await evse_service.create_charging_evse(
                 db,
                 station.station_id,
                 ChargingEvseCreateRequest(
@@ -3075,7 +3079,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 ),
                 principal=build_internal_principal(),
             )
-            connector = await charging_stations_service.create_charging_connector(
+            connector = await evse_service.create_charging_connector(
                 db,
                 evse.evse_id,
                 ChargingConnectorCreateRequest(
@@ -3094,7 +3098,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
         async def nearby_total(principal: Principal) -> int:
             """Count the chargers around the pin that the caller may see."""
             async with session_factory() as db:
-                found = await charging_stations_service.list_nearby_charging_stations(
+                found = await search_service.list_nearby_charging_stations(
                     db,
                     latitude=10.0,
                     longitude=106.0,
@@ -3110,13 +3114,13 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
         assert await nearby_total(build_internal_principal()) == 1
 
         async with session_factory.begin() as db:
-            await charging_stations_service.update_charging_location(
+            await location_service.update_charging_location(
                 db,
                 location.location_id,
                 ChargingLocationUpdateRequest.model_validate({"is_public": True}),
                 principal=build_internal_principal(),
             )
-            await charging_stations_service.update_charging_station(
+            await station_service.update_charging_station(
                 db,
                 station.station_id,
                 ChargingStationUpdateRequest.model_validate(
@@ -3125,7 +3129,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 principal=build_internal_principal(),
             )
         async with session_factory() as db:
-            shown = await charging_stations_service.list_nearby_charging_stations(
+            shown = await search_service.list_nearby_charging_stations(
                 db,
                 latitude=10.0,
                 longitude=106.0,
@@ -3134,14 +3138,12 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                 is_operational_only=False,
                 principal=build_internal_principal(),
             )
-            operational_only = (
-                await charging_stations_service.list_nearby_charging_stations(
-                    db,
-                    latitude=10.0,
-                    longitude=106.0,
-                    radius_km=5,
-                    principal=build_internal_principal(),
-                )
+            operational_only = await search_service.list_nearby_charging_stations(
+                db,
+                latitude=10.0,
+                longitude=106.0,
+                radius_km=5,
+                principal=build_internal_principal(),
             )
         # An INACTIVE charger is found only when operational filtering is off.
         assert (shown.total, operational_only.total) == (1, 0)
@@ -3174,7 +3176,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
 
         async with session_factory.begin() as db:
             with pytest.raises(ChargingLocationAccessConflictError):
-                await charging_stations_service.grant_charging_location_access(
+                await location_service.grant_charging_location_access(
                     db,
                     location.location_id,
                     ChargingLocationAccessCreateRequest(
@@ -3182,14 +3184,14 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     ),
                     principal=build_internal_principal(),
                 )
-            grant = await charging_stations_service.grant_charging_location_access(
+            grant = await location_service.grant_charging_location_access(
                 db,
                 location.location_id,
                 ChargingLocationAccessCreateRequest(allowed_organization_id=partner_id),
                 principal=build_internal_principal(),
             )
             with pytest.raises(ChargingLocationAccessConflictError):
-                await charging_stations_service.grant_charging_location_access(
+                await location_service.grant_charging_location_access(
                     db,
                     location.location_id,
                     ChargingLocationAccessCreateRequest(
@@ -3197,14 +3199,14 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
                     ),
                     principal=build_internal_principal(),
                 )
-            await charging_stations_service.revoke_charging_location_access(
+            await location_service.revoke_charging_location_access(
                 db,
                 location.location_id,
                 grant.access_id,
                 ChargingLocationAccessRevokeRequest(revoke_reason="Contract ended"),
                 principal=build_internal_principal(),
             )
-            regrant = await charging_stations_service.grant_charging_location_access(
+            regrant = await location_service.grant_charging_location_access(
                 db,
                 location.location_id,
                 ChargingLocationAccessCreateRequest(allowed_organization_id=partner_id),
@@ -3229,7 +3231,7 @@ async def test_location_station_topology_history_and_cascade_on_postgres(
         assert queued.outcome is StationCommandOutcome.PENDING
 
         async with session_factory.begin() as db:
-            await charging_stations_service.soft_delete_charging_location(
+            await location_service.soft_delete_charging_location(
                 db,
                 location.location_id,
                 status_reason="Site closed",
@@ -5252,7 +5254,7 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
             )
         staff = build_internal_principal()
         async with session_factory.begin() as db:
-            location = await charging_stations_service.create_charging_location(
+            location = await location_service.create_charging_location(
                 db,
                 ChargingLocationCreateRequest(
                     organization_id=owner_id,
@@ -5264,7 +5266,7 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
                 ),
                 principal=staff,
             )
-            station = await charging_stations_service.create_charging_station(
+            station = await station_service.create_charging_station(
                 db,
                 ChargingStationCreateRequest(
                     location_id=location.location_id,
@@ -5275,13 +5277,13 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
                 ),
                 principal=staff,
             )
-            evse = await charging_stations_service.create_charging_evse(
+            evse = await evse_service.create_charging_evse(
                 db,
                 station.station_id,
                 ChargingEvseCreateRequest(ocpp_evse_id=1, emi3_evse_id="VN*G3N*E-WP7"),
                 principal=staff,
             )
-            connector = await charging_stations_service.create_charging_connector(
+            connector = await evse_service.create_charging_connector(
                 db,
                 evse.evse_id,
                 ChargingConnectorCreateRequest(
@@ -5300,13 +5302,13 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
             """Count the locations and chargers a customer's list returns."""
             principal = build_principal(organization_id=organization_id)
             async with session_factory() as db:
-                locations = await charging_stations_service.list_charging_locations(
+                locations = await location_service.list_charging_locations(
                     db,
                     principal=principal,
                     scope=scope,
                     **filters,  # type: ignore[arg-type]
                 )
-                stations = await charging_stations_service.list_charging_stations(
+                stations = await station_service.list_charging_stations(
                     db,
                     principal=principal,
                     scope=scope,
@@ -5323,9 +5325,9 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
         assert await listed(owner_id, managed, search_text="zzz") == (0, 0)
         assert await listed(owner_id, managed, is_public=True) == (0, 0)
 
-        today = charging_stations_service._today_in_report_zone()
+        today = station_access.today_in_report_zone()
         async with session_factory.begin() as db:
-            await charging_stations_service.grant_charging_location_access(
+            await location_service.grant_charging_location_access(
                 db,
                 location.location_id,
                 ChargingLocationAccessCreateRequest(
@@ -5353,7 +5355,7 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
         assert await listed(partner_id, managed) == (0, 0)
         assert await listed(stranger_id, visible) == (0, 0)
         async with session_factory.begin() as db:
-            regrant = await charging_stations_service.grant_charging_location_access(
+            regrant = await location_service.grant_charging_location_access(
                 db,
                 location.location_id,
                 ChargingLocationAccessCreateRequest(
@@ -5409,20 +5411,16 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
         owner_principal = build_principal(organization_id=owner_id)
         partner_principal = build_principal(organization_id=partner_id)
         async with session_factory() as db:
-            connection_facts = (
-                await charging_stations_service.get_charging_station_connection(
-                    db, station.station_id, principal=owner_principal
-                )
+            connection_facts = await station_service.get_charging_station_connection(
+                db, station.station_id, principal=owner_principal
             )
-            status = await charging_stations_service.get_charging_station_status(
+            status = await station_service.get_charging_station_status(
                 db, station.station_id, principal=partner_principal
             )
-            board = (
-                await charging_stations_service.list_charging_station_status_summaries(
-                    db, principal=partner_principal
-                )
+            board = await station_service.list_charging_station_status_summaries(
+                db, principal=partner_principal
             )
-            log = await charging_stations_service.list_charging_station_ocpp_messages(
+            log = await station_service.list_charging_station_ocpp_messages(
                 db,
                 station.station_id,
                 principal=staff,
@@ -5439,7 +5437,7 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
 
         # Commands: a queued one can be cancelled once; the log filters by outcome.
         async with session_factory.begin() as db:
-            queued = await charging_stations_service.create_charging_station_command(
+            queued = await command_service.create_charging_station_command(
                 db,
                 station.station_id,
                 ChargingStationCommandCreateRequest(
@@ -5449,23 +5447,23 @@ async def test_private_visibility_grants_commands_connection_and_status_on_postg
             )
         assert queued.outcome is StationCommandOutcome.PENDING
         async with session_factory.begin() as db:
-            cancelled = await charging_stations_service.cancel_charging_station_command(
+            cancelled = await command_service.cancel_charging_station_command(
                 db, station.station_id, queued.command_id, principal=owner_principal
             )
         assert cancelled.outcome is StationCommandOutcome.NOT_SENT
         assert cancelled.response_status == "Cancelled"
         async with session_factory() as db:
             with pytest.raises(ChargingStationCommandConflictError):
-                await charging_stations_service.cancel_charging_station_command(
+                await command_service.cancel_charging_station_command(
                     db, station.station_id, queued.command_id, principal=owner_principal
                 )
-            pending = await charging_stations_service.list_charging_station_commands(
+            pending = await command_service.list_charging_station_commands(
                 db,
                 station.station_id,
                 principal=owner_principal,
                 outcome=StationCommandOutcome.PENDING,
             )
-            not_sent = await charging_stations_service.list_charging_station_commands(
+            not_sent = await command_service.list_charging_station_commands(
                 db,
                 station.station_id,
                 principal=owner_principal,

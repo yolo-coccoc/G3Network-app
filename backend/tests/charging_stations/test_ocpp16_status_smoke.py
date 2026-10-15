@@ -10,10 +10,10 @@ from uuid import uuid4
 import pytest
 from ocpp.v16.enums import ChargePointErrorCode, ChargePointStatus
 
+import app.domains.charging_stations.mappers as station_mappers
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
 from app.domains.charging_stations.exceptions import (
     ChargingConnectorNotFoundError,
     ChargingOcppMessageInputError,
@@ -522,9 +522,7 @@ def test_connector_response_exposes_status_and_error_fields() -> None:
         status_info="load sharing",
     )
 
-    response = charging_stations_service.to_charging_connector_response(
-        connector, state
-    )
+    response = station_mappers.to_charging_connector_response(connector, state)
 
     assert response.status is ChargingConnectorStatus.SUSPENDED_EVSE
     assert (response.error_code, response.vendor_error_code, response.status_info) == (
@@ -557,7 +555,7 @@ def test_station_response_exposes_the_charger_level_status() -> None:
         charger_vendor_error_code="23",
     )
 
-    response = charging_stations_service.to_charging_station_response(
+    response = station_mappers.to_charging_station_response(
         station,
         build_charging_location_record(),
         state,
