@@ -28,7 +28,8 @@ async def bill_ended_session(
 
     Side Effects:
         Updates the session's bill and, for a completed one, debits the
-        scanning user's wallet.
+        scanning user's wallet; the staff member in ``event.ended_by`` (if
+        any) is recorded as the bill change's actor.
     """
     if event.status is SessionStatus.COMPLETED and event.started_by is not None:
         await billing_service.settle_session_bill(
@@ -38,9 +39,12 @@ async def bill_ended_session(
             meter_start_wh=event.meter_start_wh,
             meter_stop_wh=event.meter_stop_wh,
             last_measured_wh=event.last_measured_wh,
+            changed_by=event.ended_by,
         )
     elif event.status is SessionStatus.ABANDONED:
-        await billing_service.void_session_bill(db_session, event.session_id)
+        await billing_service.void_session_bill(
+            db_session, event.session_id, changed_by=event.ended_by
+        )
 
 
 def register_session_billing_hooks() -> None:

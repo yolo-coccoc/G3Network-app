@@ -148,6 +148,10 @@ class SessionEndedEvent:
         last_measured_wh: The newest outlet energy-register measurement, the
             fallback when the closing reading is missing and the cross-check
             when it is present; ``None`` if the session has none.
+        ended_by: The staff member who acted (a force-close, or a retry of the
+            billing after a failed hook); ``None`` when the charger or the
+            system ended the session. Hooks record it as the actor of the
+            rows they change.
     """
 
     session_id: UUID
@@ -156,6 +160,7 @@ class SessionEndedEvent:
     meter_start_wh: Decimal | None
     meter_stop_wh: Decimal | None
     last_measured_wh: Decimal | None
+    ended_by: UUID | None = None
 
 
 # A callback another part of the application registers to react, inside the

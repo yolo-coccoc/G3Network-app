@@ -1969,7 +1969,9 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
   (`docs/decisions/decision-log.md`), charging test-day planner D5, D6 (deleted 2026-10-14, TT-23).
 - **Date recorded**: 2026-10-12
 - **Additional notes**: Design it together with the orphan policy: an automatic close needs the same
-  "closed by whom (the system), why" fields.
+  "closed by whom (the system), why" fields. Since 2026-10-15 (hardening D2/D4,
+  `docs/planners/backend-hardening.md`) the staff member is recorded as `changed_by` in the
+  session bill's history; the session row itself still does not name them.
 
 ### 102. Remaining charger commands: Smart Charging, firmware, diagnostics, reservation; closing a connection; several gateway processes
 
@@ -1995,6 +1997,25 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
 - **Additional notes**: (1)-(3) are new `StationCommandType` members and adapter senders in the
   existing command loop, plus their tables when a feature needs them; (4) can be a command type
   the gateway handles itself without an OCPP call.
+
+### 105. Automatic retry of a failed session-ended hook (stranded QUOTED bills)
+
+- **Short description**: The billing of a session runs in a session-ended hook inside a savepoint
+  (BL-19); when it raises, the session still ends and the bill stays QUOTED. Today staff re-run it
+  with `POST /charging-sessions/{session_id}/bill/settle`, after finding the bill with the bill
+  list's status filter. An automatic job would find finished sessions whose bill is still QUOTED
+  after a grace period and re-run the hook, and alert staff when it keeps failing.
+- **Purpose/role in the system**: No bill is left unpaid because nobody looked at the list; the
+  wallet and the revenue report stay complete.
+- **Reason for deferral**: A hook fails on a bug or a database fault, so a blind retry repeats the
+  failure; a staff action after the cause is fixed is the safer first step (hardening D2). The
+  failure is logged (`Session-ended hook failed`), and no failure has been seen yet.
+- **Related planner/feature**: PAY-10 (`docs/product/features/features.yaml`), BL-19
+  (`docs/decisions/decision-log.md`), `docs/planners/backend-hardening.md` D2.
+- **Date recorded**: 2026-10-15
+- **Additional notes**: The sweep belongs above the domains (`app/api/`, like
+  `billing_hooks.py`): `billing` cannot read sessions and `charging_sessions` cannot call billing.
+  It could run in the OCPP gateway's loop next to the pending-session sweep, through a hook slot.
 
 ---
 

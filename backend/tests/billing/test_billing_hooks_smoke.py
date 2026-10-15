@@ -1,5 +1,6 @@
 """Smoke tests for billing's wiring to the end of a session and the API gates (WP9)."""
 
+import dataclasses
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
@@ -50,15 +51,20 @@ async def test_the_hook_settles_a_completed_session_and_voids_an_abandoned_one(
     async def settle(db: object, **kwargs: Any) -> None:
         calls.append(("settle", kwargs))
 
-    async def void(db: object, session_id: UUID) -> bool:
-        calls.append(("void", {"session_id": session_id}))
+    async def void(
+        db: object, session_id: UUID, *, changed_by: UUID | None = None
+    ) -> bool:
+        calls.append(("void", {"session_id": session_id, "changed_by": changed_by}))
         return True
 
     monkeypatch.setattr(billing_service, "settle_session_bill", settle)
     monkeypatch.setattr(billing_service, "void_session_bill", void)
     user_id = uuid4()
     completed = _event(SessionStatus.COMPLETED, user_id)
-    abandoned = _event(SessionStatus.ABANDONED, None)
+    staff_user_id = uuid4()
+    abandoned = dataclasses.replace(
+        _event(SessionStatus.ABANDONED, None), ended_by=staff_user_id
+    )
 
     await billing_hooks.bill_ended_session(fake_db_session(), completed)
     await billing_hooks.bill_ended_session(fake_db_session(), abandoned)
@@ -71,9 +77,14 @@ async def test_the_hook_settles_a_completed_session_and_voids_an_abandoned_one(
             "meter_start_wh": Decimal(1000),
             "meter_stop_wh": Decimal(2000),
             "last_measured_wh": Decimal(1900),
+            "changed_by": None,
         },
     )
-    assert calls[1] == ("void", {"session_id": abandoned.session_id})
+    # A staff retry (hardening D2) records the staff member as the actor.
+    assert calls[1] == (
+        "void",
+        {"session_id": abandoned.session_id, "changed_by": staff_user_id},
+    )
 
 
 def test_registering_the_hooks_twice_adds_billing_once(

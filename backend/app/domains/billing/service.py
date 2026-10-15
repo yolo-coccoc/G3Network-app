@@ -194,6 +194,7 @@ async def settle_session_bill(
     meter_start_wh: Decimal | None,
     meter_stop_wh: Decimal | None,
     last_measured_wh: Decimal | None,
+    changed_by: UUID | None = None,
 ) -> SessionBillReference | None:
     """Compute the bill of a completed session and debit the payer's wallet.
 
@@ -206,6 +207,7 @@ async def settle_session_bill(
         meter_start_wh: The charger's start reading.
         meter_stop_wh: The charger's closing reading.
         last_measured_wh: The newest outlet energy measurement.
+        changed_by: The staff member who acted, ``None`` for the charger.
 
     Returns:
         The bill reference, or ``None`` when the session has no bill.
@@ -221,21 +223,25 @@ async def settle_session_bill(
         meter_start_wh=meter_start_wh,
         meter_stop_wh=meter_stop_wh,
         last_measured_wh=last_measured_wh,
+        changed_by=changed_by,
     )
     return None if bill_record is None else to_session_bill_reference(bill_record)
 
 
-async def void_session_bill(db: AsyncSession, session_id: UUID) -> bool:
+async def void_session_bill(
+    db: AsyncSession, session_id: UUID, *, changed_by: UUID | None = None
+) -> bool:
     """Void the QUOTED bill of a scan that never started.
 
     Args:
         db: The async session owned by the entry boundary.
         session_id: The abandoned session.
+        changed_by: The staff member who acted, ``None`` for the system.
 
     Returns:
         ``True`` when a bill was voided.
     """
-    return await bill_service.void_session_bill(db, session_id)
+    return await bill_service.void_session_bill(db, session_id, changed_by=changed_by)
 
 
 async def get_session_bill_response(

@@ -343,3 +343,120 @@ async def test_stopping_a_pending_scan_abandons_it_and_frees_the_person(
     assert stopped.status is SessionStatus.ABANDONED
     assert (session_status, bill_status, remote_stops) == ("ABANDONED", "VOID", 0)
     assert rescan.status is SessionStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_staff_retry_bills_a_completed_session_whose_hook_failed(
+    temporary_database: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bill left QUOTED by a failed hook is billed by the staff retry (D2).
+
+    No session-ended hook is registered here, which is what a failed hook
+    leaves behind: the session is COMPLETED and its bill still QUOTED. The
+    retry bills it, debits the wallet once, records the staff member in the
+    bill's history, and a second retry changes nothing.
+    """
+    monkeypatch.setattr(settings, "BILLING_MIN_BALANCE_VND", Decimal(-1_000_000))
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    owner_id, location_id = await postgres_integration._provision_location(engine)
+    await postgres_integration._provision_station_at(
+        engine, location_id, "REV-RETRY-A", ["Available"]
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE charging_station_state SET last_seen_at = now()")
+        )
+    (
+        organization_id,
+        user_id,
+    ) = await postgres_integration._provision_organization_and_user(engine)
+    (
+        staff_organization_id,
+        staff_user_id,
+    ) = await postgres_integration._provision_organization_and_user(engine)
+    driver = build_principal(
+        roles=frozenset({UserRole.DRIVER}),
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    staff = build_principal(
+        roles=frozenset({UserRole.HEAD_ADMIN}),
+        organization_id=staff_organization_id,
+        user_id=staff_user_id,
+        is_internal=True,
+    )
+    try:
+        async with session_factory.begin() as db:
+            tariff = await billing_router.create_tariff_endpoint(
+                TariffCreateRequest(name="Default", organization_id=owner_id),
+                principal=staff,
+                db_session=db,
+            )
+            await billing_router.publish_tariff_version_endpoint(
+                tariff.tariff_id,
+                TariffVersionPublishRequest(
+                    price_per_kwh=4500,
+                    vat_rate_percent=Decimal(10),
+                    change_reason="Review price",
+                ),
+                principal=staff,
+                db_session=db,
+            )
+        async with session_factory.begin() as db:
+            scan = await charging_session_flow.scan_charging_session_endpoint(
+                ChargingSessionScanRequest(charger_code="REV-RETRY-A"),
+                principal=driver,
+                db_session=db,
+            )
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE charging_sessions s SET status = 'COMPLETED', "
+                    "ocpp_transaction_id = 'RETRY-1', evse_id = e.evse_id, "
+                    "connector_id = c.connector_id, "
+                    "started_at = now() - interval '1 hour', ended_at = now(), "
+                    "meter_start_wh = 1000, meter_stop_wh = 3000 "
+                    "FROM charging_evses e JOIN charging_connectors c "
+                    "USING (evse_id) "
+                    "WHERE s.session_id = :s AND e.station_id = s.station_id"
+                ),
+                {"s": scan.session_id},
+            )
+        async with session_factory.begin() as db:
+            first = await charging_session_flow.settle_charging_session_bill_endpoint(
+                scan.session_id, principal=staff, db_session=db
+            )
+        async with session_factory.begin() as db:
+            second = await charging_session_flow.settle_charging_session_bill_endpoint(
+                scan.session_id, principal=staff, db_session=db
+            )
+        async with engine.connect() as connection:
+            debits = (
+                await connection.execute(
+                    text(
+                        "SELECT count(*) FROM wallet_transactions t JOIN wallets w "
+                        "USING (wallet_id) WHERE w.user_id = :u"
+                    ),
+                    {"u": user_id},
+                )
+            ).scalar_one()
+            history_actor = (
+                await connection.execute(
+                    text(
+                        "SELECT changed_by FROM charging_session_bill_history "
+                        "WHERE session_id = :s"
+                    ),
+                    {"s": scan.session_id},
+                )
+            ).scalar_one()
+    finally:
+        await engine.dispose()
+
+    assert first.status == "BILLED"
+    assert first.total_amount == 9900
+    assert second.status == "BILLED"
+    assert debits == 1
+    assert history_actor == staff_user_id

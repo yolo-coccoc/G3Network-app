@@ -20,11 +20,16 @@ Endpoints (all under ``/charging-sessions``):
 * ``GET /{session_id}/receipt`` - the receipt data of a finished charge
   (CHG-03), with the bill when billing has one;
 * ``GET /{session_id}/bill`` - the bill of a session the caller may read
-  (PAY-10).
+  (PAY-10);
+* ``POST /{session_id}/bill/settle`` - internal staff re-run the billing of a
+  finished session whose bill stayed QUOTED because the session-ended hook
+  failed (hardening D2).
 
 The scan also freezes the price: the tariff in force for the charger and the
 hour is resolved by billing and stored on a QUOTED bill in the same transaction
-(BL-10, PAY-09). The end of the session is billed by a hook, not here (BL-19).
+(BL-10, PAY-09). The end of the session is billed by a hook, not here (BL-19);
+the retry endpoint calls that same hook function, so the rule lives in one
+place.
 """
 
 from datetime import datetime, timedelta
@@ -36,6 +41,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.api.billing_hooks as billing_hooks
 import app.domains.billing.service as billing_service
 import app.domains.charging_sessions.service as charging_session_service
 import app.domains.charging_stations.service as charging_stations_service
@@ -75,6 +81,9 @@ SESSION_RECEIPT_READERS = require_roles(*roles_for("CHG-03"))
 # PAY-10: the bill of a session is read by whoever may read the session (the
 # starter, the organization's staff); the session's own scope decides.
 SESSION_BILL_READERS = require_roles(*roles_for("CHG-03", "CHG-04", "PAY-10"))
+# Re-running a session's billing changes money: our own bill reviewers only,
+# the same people who release or void a held bill.
+SESSION_BILL_SETTLERS = require_roles(*roles_for("PAY-10"), internal_only=True)
 
 # Text stored as the reason of a remote stop the person asked for in the app.
 _APP_STOP_REASON = "Stopped from the app"
@@ -481,4 +490,44 @@ async def get_charging_session_bill_endpoint(
     await charging_session_service.get_charging_session(
         db_session, session_id, principal=principal
     )
+    return await billing_service.get_session_bill_response(db_session, session_id)
+
+
+@router.post(
+    "/charging-sessions/{session_id}/bill/settle",
+    response_model=SessionBillResponse,
+    summary="Bill a finished session again after a billing failure",
+)
+async def settle_charging_session_bill_endpoint(
+    session_id: UUID,
+    principal: Principal = Depends(SESSION_BILL_SETTLERS),
+    db_session: AsyncSession = Depends(get_db, scope="function"),
+) -> SessionBillResponse:
+    """Re-run the billing of a finished session (hardening D2, PAY-10).
+
+    The billing of a session runs in a hook when the session ends; a failing
+    hook is rolled back to its savepoint and only logged, so the session ends
+    with its bill still QUOTED. Staff find such bills with the bill list's
+    status filter and, once the cause is fixed, run the same hook again: a
+    COMPLETED session is billed (or held), an ABANDONED one is voided. Both
+    are idempotent, so a bill that is no longer QUOTED is returned unchanged.
+
+    Args:
+        session_id: UUID of the session.
+        principal: The internal staff member; recorded as the actor.
+        db_session: The async session whose transaction is owned by the
+            ``get_db`` dependency.
+
+    Returns:
+        The bill after the retry.
+
+    Raises:
+        ChargingSessionNotFoundError: Unknown session (404).
+        ChargingSessionStateError: The session has not ended (409).
+        BillNotFoundError: The session has no bill (404).
+    """
+    session_ended_event = await charging_session_service.resolve_session_ended_event(
+        db_session, session_id, principal=principal
+    )
+    await billing_hooks.bill_ended_session(db_session, session_ended_event)
     return await billing_service.get_session_bill_response(db_session, session_id)

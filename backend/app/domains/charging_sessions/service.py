@@ -1129,38 +1129,113 @@ async def complete_session(
 
 
 async def _run_completed_session_hooks(
-    db: AsyncSession, session_record: ChargingSessionModel
+    db: AsyncSession,
+    session_record: ChargingSessionModel,
+    *,
+    ended_by: UUID | None = None,
 ) -> None:
     """Tell the session-ended hooks (billing) that a session completed.
 
     Args:
         db: The caller's async session.
         session_record: The session just set to ``COMPLETED``.
+        ended_by: The staff member who closed it, ``None`` for the charger.
 
     Side Effects:
         Reads the newest outlet energy measurement, then runs every registered
         hook in the caller's transaction (billing settles the bill, BL-10).
     """
-    if not _session_ended_hooks:
-        return
     # The newest measurement is read only when somebody listens: it is the
     # fallback and the cross-check of the billing figure (CE-12).
+    if not _session_ended_hooks:
+        return
+    await _run_session_ended_hooks(
+        db,
+        await _build_completed_event(db, session_record, ended_by=ended_by),
+    )
+
+
+async def _build_completed_event(
+    db: AsyncSession,
+    session_record: ChargingSessionModel,
+    *,
+    ended_by: UUID | None,
+) -> SessionEndedEvent:
+    """Build the session-ended event of a completed session.
+
+    Args:
+        db: The caller's async session.
+        session_record: A ``COMPLETED`` session.
+        ended_by: The staff member who acted, ``None`` for the charger.
+
+    Returns:
+        The event with the readings billing needs.
+
+    Side Effects:
+        Reads the session's newest outlet energy measurement.
+    """
     last_measured_wh = await charging_session_repository.find_last_measurement_value(
         db,
         session_record.session_id,
         measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
         measurement_location=MEASUREMENT_LOCATION_OUTLET,
     )
-    await _run_session_ended_hooks(
-        db,
-        SessionEndedEvent(
-            session_id=session_record.session_id,
-            status=SessionStatus.COMPLETED,
-            started_by=session_record.started_by,
-            meter_start_wh=session_record.meter_start_wh,
-            meter_stop_wh=session_record.meter_stop_wh,
-            last_measured_wh=last_measured_wh,
-        ),
+    return SessionEndedEvent(
+        session_id=session_record.session_id,
+        status=SessionStatus.COMPLETED,
+        started_by=session_record.started_by,
+        meter_start_wh=session_record.meter_start_wh,
+        meter_stop_wh=session_record.meter_stop_wh,
+        last_measured_wh=last_measured_wh,
+        ended_by=ended_by,
+    )
+
+
+async def resolve_session_ended_event(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    principal: Principal,
+) -> SessionEndedEvent:
+    """Rebuild the session-ended event of a finished session (hardening D2).
+
+    A session-ended hook that failed (it runs in a savepoint and only logs)
+    leaves a finished session whose bill is still QUOTED. Staff re-run the
+    billing with this event; the billing functions are idempotent, so a bill
+    that was settled meanwhile is left as it is.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session.
+        principal: The staff member retrying; their data reach applies and
+            they are recorded as the actor (``ended_by``).
+
+    Returns:
+        A ``COMPLETED`` event with the readings, or an ``ABANDONED`` one.
+
+    Raises:
+        ChargingSessionNotFoundError: The session does not exist or is out of
+            the caller's reach (404).
+        ChargingSessionStateError: The session has not ended (409).
+
+    Side Effects:
+        Locks the session row (a stop arriving at the same moment runs before
+        or after) and reads its newest outlet energy measurement.
+    """
+    session_record = await _get_charging_session_record(
+        db, session_id, principal, for_update=True
+    )
+    if session_record.status is SessionStatus.COMPLETED:
+        return await _build_completed_event(
+            db, session_record, ended_by=principal.user_id
+        )
+    if session_record.status is SessionStatus.ABANDONED:
+        return dataclasses.replace(
+            _build_abandoned_event(session_id), ended_by=principal.user_id
+        )
+    raise ChargingSessionStateError(
+        f"Session '{session_id}' is {session_record.status.value}; "
+        "only a finished session can be billed again"
     )
 
 
@@ -1220,7 +1295,7 @@ async def force_close_session(
     session_record.stop_reason = STAFF_CLOSED_STOP_REASON
     session_record.meter_stop_wh = None
     _touch_session(session_record)
-    await _run_completed_session_hooks(db, session_record)
+    await _run_completed_session_hooks(db, session_record, ended_by=principal.user_id)
     logger.warning(
         "Charging session force-closed by staff",
         extra={

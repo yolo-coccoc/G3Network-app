@@ -132,6 +132,7 @@ async def settle_session_bill(
     meter_start_wh: Decimal | None,
     meter_stop_wh: Decimal | None,
     last_measured_wh: Decimal | None,
+    changed_by: UUID | None = None,
 ) -> ChargingSessionBillModel | None:
     """Compute the bill of a completed session and pay it from the wallet.
 
@@ -153,6 +154,9 @@ async def settle_session_bill(
         meter_start_wh: The charger's start reading.
         meter_stop_wh: The charger's closing reading.
         last_measured_wh: The newest outlet energy measurement.
+        changed_by: The staff member who closed the session or retried its
+            billing, recorded in the bill's history; ``None`` when the charger
+            ended it.
 
     Returns:
         The bill, or ``None`` when the session has none (it was created
@@ -195,7 +199,7 @@ async def settle_session_bill(
     if decision.hold_reason is not None:
         await set_change_context(
             db,
-            changed_by=None,
+            changed_by=changed_by,
             change_reason=_fit_reason(f"Held for review: {decision.hold_reason}"),
         )
         bill_record.status = ChargingSessionBillStatus.ON_HOLD.value
@@ -209,7 +213,7 @@ async def settle_session_bill(
         )
         return bill_record
     await set_change_context(
-        db, changed_by=None, change_reason="Billed at the end of the charge"
+        db, changed_by=changed_by, change_reason="Billed at the end of the charge"
     )
     for field_name, value in bill_record_values.items():
         setattr(bill_record, field_name, value)
@@ -220,12 +224,16 @@ async def settle_session_bill(
     return bill_record
 
 
-async def void_session_bill(db: AsyncSession, session_id: UUID) -> bool:
+async def void_session_bill(
+    db: AsyncSession, session_id: UUID, *, changed_by: UUID | None = None
+) -> bool:
     """Void the QUOTED bill of a scan that never started (BL-10).
 
     Args:
         db: The async session owned by the entry boundary.
         session_id: The abandoned session.
+        changed_by: The staff member who retried the billing, recorded in
+            the bill's history; ``None`` when the system gave the scan up.
 
     Returns:
         ``True`` when a QUOTED bill was voided.
@@ -242,7 +250,7 @@ async def void_session_bill(db: AsyncSession, session_id: UUID) -> bool:
     ):
         return False
     await set_change_context(
-        db, changed_by=None, change_reason="The charge never started"
+        db, changed_by=changed_by, change_reason="The charge never started"
     )
     bill_record.status = ChargingSessionBillStatus.VOID.value
     bill_record.status_reason = "The charge never started"
