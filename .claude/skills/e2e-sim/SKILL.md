@@ -1,21 +1,25 @@
 ---
 name: e2e-sim
-description: Run this backend end to end on the local stack (PostgreSQL, EMQX, API, OCPP gateway, ingestion workers), provision data through the API and verify with SQL what landed. The repo has no simulators - telemetry and charger traffic need a real device or a client the owner provides (e.g. mosquitto_pub per mqtt-spec.md). Use when asked to run/start the app, smoke-test a change against real services, reproduce an ingestion/OCPP bug with external traffic, or prove a feature works beyond unit tests.
+description: Run this backend end to end on the local stack (PostgreSQL, EMQX, API, OCPP gateway, ingestion workers), provision data through the API and verify with SQL what landed. Charger and driver-app traffic can come from the standalone simulators in simulators/ (OCPP 1.6J charger, phone page, charger monitor); vehicle telemetry needs a real T-Box or an MQTT client (e.g. mosquitto_pub per mqtt-spec.md). Use when asked to run/start the app, smoke-test a change against real services, reproduce an ingestion/OCPP bug with external traffic, or prove a feature works beyond unit tests.
 ---
 
 # End-to-end run on the local stack
 
-Rewritten on 2026-10-14 when the simulators were removed; not yet run in
-this form (steps 1, 2 and 4 are unchanged from the run verified on
+Rewritten on 2026-10-14 when the old simulators were removed; not yet run
+in this form (steps 1, 2 and 4 are unchanged from the run verified on
 2026-10-12). Run from the repo root unless a step says otherwise. **Step 1
 wipes the local database.**
 
-**The repository holds no simulators** (all removed on 2026-10-14, TT-23 in
-`docs/decisions/decision-log.md`). This skill starts the stack, provisions
-data through the API and checks the database. Vehicle telemetry and charger
-traffic need an external source: a real T-Box or charger, or a client the
-owner provides (an MQTT publisher such as `mosquitto_pub`, an OCPP 1.6J or
-2.0.1 client). Gateway and adapter behaviour without a device is covered in
+This skill starts the stack, provisions data through the API and checks the
+database. **Charger and driver-app traffic** can come from the standalone
+simulators in `simulators/` (TT-24 to TT-27 in
+`docs/decisions/decision-log.md`; how to run them: `simulators/README.md`):
+an OCPP 1.6J charger with two guns and a sample car, a phone page that plays
+the driver app through the API, and a charger monitor. Each reads only its
+own `.env` and imports no backend code. **Vehicle telemetry** has no
+simulator: it needs a real T-Box or an MQTT publisher such as
+`mosquitto_pub`. A real charger or another OCPP 1.6J / 2.0.1 client works
+too. Gateway and adapter behaviour without a device is covered in
 process by `make backend-test` and `make backend-test-integration`.
 
 ## 1. Infrastructure and a clean database
@@ -92,8 +96,9 @@ curl -s localhost:8000/api/v1/telemetry/vehicles/$VID/latest -H "$ADMIN"  # lat/
 ```
 Expected: one row per accepted message; `latest` returns the newest point.
 
-**Charger traffic (F-B2, CHG-01)** — needs a real charger or an OCPP client
-pointed at `ws://localhost:9000/ocpp/<ocpp_identity>` (`ocpp1.6` or
+**Charger traffic (F-B2, CHG-01)** — needs the charger simulator
+(`simulators/charger_simulator/`), a real charger or an OCPP client pointed
+at `ws://localhost:9000/ocpp/<ocpp_identity>` (`ocpp1.6` or
 `ocpp2.0.1`). After it connects:
 ```bash
 Q "select s.ocpp_identity, t.ocpp_protocol_version, t.vendor, t.last_boot_at, t.last_seen_at from charging_station_state t join charging_stations s using (station_id)"

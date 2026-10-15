@@ -17,6 +17,12 @@
 > 1.6J adapter stays covered in process by the smoke and PostgreSQL
 > integration tests. A charger for Step 10 is provisioned through the
 > charging-stations API.
+> Update 2026-10-15: a new standalone OCPP 1.6J charger simulator, a phone
+> simulator and a charger monitor now live in `simulators/` (TT-24 to TT-27 in
+> the decision log; how to run them: [`simulators/README.md`](../../simulators/README.md)).
+> They import no backend code and replace neither this planner's Step 3
+> simulator nor the Step 9 cross-process tests; Step 10 still needs the real
+> charger.
 > Created: 2026-09-24
 >
 > Inputs:

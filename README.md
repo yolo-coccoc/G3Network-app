@@ -111,64 +111,24 @@ bootstrap phase: `make db-migrate` applies it to an empty database,
 
 ## Current backend scope
 
-- **Vehicles**: CRUD and soft delete, a device-activation state machine
-  (`PENDING → DEVICE_ASSIGNED → ACTIVATED`) and a fleet-wide activation
-  summary (`GET /api/v1/vehicles/activation-summary`).
-- **Telematics devices**: CRUD and device-to-vehicle mapping with read-time
-  health (`last_seen_at`, `is_online`, `is_silent`, signal strength); a
-  telemetry publish-interval config push over MQTT to one device
-  (`POST /api/v1/telematics/{id}/config`) or a whole fleet
-  (`POST /api/v1/telematics/fleets/{fleet_id}/config`); a device-health
-  monitor that raises a device-offline alert when a device goes silent.
-- **Telemetry**: MQTT ingestion into TimescaleDB; latest record with an
-  online flag, a bounded time-range history, a daily battery-health trend,
-  SOC-based operating (day/week/month breakdown, CSV) and energy-usage
-  reports per vehicle, and fleet views (member positions, operating rollup)
-  under `/api/v1/telemetry/fleets/{fleet_id}/`.
-- **Alerts and notifications**: battery-level, battery-health (SOH),
-  anomaly (temperature, voltage drop, device error codes), device-offline,
-  geofence entry/exit and SOS alerts, stored as notifications and read by
-  polling (`GET /api/v1/notifications?after_id=`, filterable, newest-first
-  on request), with unread count and mark-as-read.
-- **Charging stations**: Station → EVSE → Connector topology CRUD with
-  directory metadata (location, power rating, connector standard, operating
-  hours, maintenance status, available-connector count), a nearby-station
-  search with an availability filter
-  (`GET /api/v1/charging-stations/nearby`), a per-station connector status
-  view and the charger's latest configuration.
-- **OCPP gateway**: OCPP 2.0.1 and OCPP 1.6J on one port, chosen per
-  connection by the negotiated subprotocol. Every frame is stored verbatim
-  and refreshes the station's liveness (`is_online` derived from
-  `last_seen_at`); connector status (incl. 1.6J error codes) is stored as
-  reported; both protocols record the charger's device info at boot; 1.6J
-  chargers also report their configuration.
-- **Charging sessions**: 2.0.1 `Started → Updated/MeterValues → Ended` and
-  1.6J `StartTransaction → MeterValues → StopTransaction`; read APIs for
-  sessions (with duration, SoC and peak-power summary, filters), events,
-  meter values and all measurements, plus station energy totals and an
-  hourly/daily energy series.
-- **Drivers**: profile CRUD (search, current-vehicle filter) and vehicle
-  assignment with full history.
-- **Fleets**: CRUD and vehicle membership (added/removed by VIN) with
-  history, list filters, and geofences that raise entry/exit alerts.
-- **Support**: support case tickets and SOS intake (in-app or hotline) with
-  a response SLA, list filters, and an SOS alert notification.
-
-Not built yet: identity/RBAC, charging policy, pricing/billing/payment, push
-or multi-channel notification delivery, KPI dashboards, OCPP remote
-commands and reliability (retry/reconnect/TLS), and the frontends. The full
-list of deferred items is in
-[docs/product/future.md](./docs/decisions/deferred.md).
+What each feature's backend has built, and what is still missing, is in the
+[feature catalog](./docs/product/features/README.md); the components, domains
+and directory tree that exist today are in
+[docs/design/architecture.md](./docs/design/architecture.md). Deferred work is
+in [docs/decisions/deferred.md](./docs/decisions/deferred.md).
 
 ## Device traffic
 
-The repository holds no simulators (all removed on 2026-10-14, TT-23 in the
-[decision log](./docs/decisions/decision-log.md)). Vehicle telemetry comes from
-a real T-Box or any MQTT client that publishes the contract in
+Charger and driver-app traffic can come from the standalone simulators in
+[`simulators/`](./simulators/README.md): an OCPP 1.6J charger with two guns
+and a sample car, a phone page that plays the driver app (scan, charge, stop,
+receipt, wallet top-up), and a charger monitor (TT-24 to TT-27 in the
+[decision log](./docs/decisions/decision-log.md)). A real charger connects as
+described in the next section. No simulator plays a T-Box: vehicle telemetry
+comes from a real device or any MQTT client that publishes the contract in
 [`mqtt-spec.md`](./docs/design/specifications/mqtt-spec.md) (needs
 `make telemetry-dev` and the vehicle and telematics device provisioned through
-the API); charger traffic comes from a real charger or an OCPP client
-(next section). Results can be read through the APIs in Swagger.
+the API). Results can be read through the APIs in Swagger.
 
 ## Connecting a real charging station
 
@@ -206,6 +166,7 @@ backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
 infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
 docs/         Product, design, decisions, planners, reports (see docs/README.md)
 .claude/      Rules, skills, agents and hooks for AI coding agents (see CLAUDE.md)
+simulators/   Standalone charger, phone and charger-monitor simulators (see simulators/README.md)
 .githooks/    Pre-commit hook (runs make check)
 .vscode/      Shared VS Code settings
 ```

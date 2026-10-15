@@ -84,8 +84,9 @@ instructions.
   `docs/planners/_TEMPLATE.md` → DBML design → owner confirms), `new-domain`,
   `domain-model`, `feature-catalog` (the feature catalog's YAML source and
   its generated checklists/workbook), `ocpp-reference` (OCPP 1.6J and 2.0.1, OCPI, how other CSMSs model things), `e2e-sim` (run the stack, provision
-  through the API and check the data; the repo has no simulators, so device
-  traffic comes from a real device or an external client), `finish-task`. The order to use them in is
+  through the API and check the data; charger and driver-app traffic can come
+  from the standalone simulators in `simulators/` (TT-24 to TT-27), vehicle
+  telemetry only from a real T-Box or an MQTT client), `finish-task`. The order to use them in is
   in CLAUDE.md ("How a feature gets built").
 - **MCP servers** (`.mcp.json`, approved via `enabledMcpjsonServers`):
   `postgres` — `postgres-mcp` in `--access-mode=restricted` (read-only
