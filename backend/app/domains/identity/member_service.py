@@ -670,10 +670,10 @@ async def _assert_membership_can_end(
             role=UserRole.HEAD_ADMIN.value,
         )
         is not None
-        and await identity_repository.count_active_role_holders(
-            db_session, UserRole.HEAD_ADMIN.value
+        and await account_service.count_other_head_admins_under_lock(
+            db_session, excluding_membership_id=membership_record.membership_id
         )
-        <= 1
+        == 0
     ):
         raise RoleConflictError("The last HEAD_ADMIN cannot be removed")
 
@@ -1060,10 +1060,10 @@ async def revoke_role(
         raise RoleConflictError("The member does not hold this role")
     if (
         role is UserRole.HEAD_ADMIN
-        and await identity_repository.count_active_role_holders(
-            db_session, UserRole.HEAD_ADMIN.value
+        and await account_service.count_other_head_admins_under_lock(
+            db_session, excluding_membership_id=membership_id
         )
-        <= 1
+        == 0
     ):
         raise RoleConflictError("The last HEAD_ADMIN cannot lose the role")
     await identity_repository.revoke_role_assignment(

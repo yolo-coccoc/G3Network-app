@@ -1290,7 +1290,35 @@ async def revoke_all_roles_of_membership(
     await db_session.flush()
 
 
-async def count_active_role_holders(db_session: AsyncSession, role: str) -> int:
+async def lock_role_holder_changes(db_session: AsyncSession, role: str) -> None:
+    """Serialize every change that can remove a usable holder of a role (RV-ID7).
+
+    Takes a transaction-level advisory lock keyed by the role, so two
+    transactions that each remove one of the last two HEAD_ADMINs cannot both
+    count two holders: the second waits for the first to commit, and its
+    count (a new statement under READ COMMITTED) then sees the removal. A row
+    lock would not do, because the change may be on the membership or the
+    account, not on the assignment.
+
+    Args:
+        db_session: Current database session.
+        role: `UserRole` value whose holders are about to be counted.
+
+    Side Effects:
+        Holds the lock until the transaction commits or rolls back.
+    """
+    await db_session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"role-holders:{role}")))
+    )
+
+
+async def count_active_role_holders(
+    db_session: AsyncSession,
+    role: str,
+    *,
+    excluding_membership_id: UUID | None = None,
+    excluding_user_id: UUID | None = None,
+) -> int:
     """Count the live holders of a role who can actually use it (RV-ID7).
 
     A holder counts only when its membership is ACTIVE and not ended and the
@@ -1300,10 +1328,27 @@ async def count_active_role_holders(db_session: AsyncSession, role: str) -> int:
     Args:
         db_session: Current database session.
         role: `UserRole` value.
+        excluding_membership_id: Leave out this membership (the one about to
+            end, be locked or lose the role).
+        excluding_user_id: Leave out every membership of this account (the
+            one about to be locked).
 
     Returns:
-        How many usable memberships hold the role right now.
+        How many usable memberships hold the role right now, apart from the
+        excluded ones.
     """
+    conditions = [
+        UserRoleAssignmentModel.role == role,
+        UserRoleAssignmentModel.revoked_at.is_(None),
+        MembershipModel.status == "ACTIVE",
+        MembershipModel.left_at.is_(None),
+        UserModel.status == "ACTIVE",
+        UserModel.deleted_at.is_(None),
+    ]
+    if excluding_membership_id is not None:
+        conditions.append(MembershipModel.membership_id != excluding_membership_id)
+    if excluding_user_id is not None:
+        conditions.append(UserModel.user_id != excluding_user_id)
     query_result = await db_session.execute(
         select(func.count(UserRoleAssignmentModel.user_role_assignment_id))
         .join(
@@ -1311,14 +1356,7 @@ async def count_active_role_holders(db_session: AsyncSession, role: str) -> int:
             MembershipModel.membership_id == UserRoleAssignmentModel.membership_id,
         )
         .join(UserModel, UserModel.user_id == MembershipModel.user_id)
-        .where(
-            UserRoleAssignmentModel.role == role,
-            UserRoleAssignmentModel.revoked_at.is_(None),
-            MembershipModel.status == "ACTIVE",
-            MembershipModel.left_at.is_(None),
-            UserModel.status == "ACTIVE",
-            UserModel.deleted_at.is_(None),
-        )
+        .where(*conditions)
     )
     return query_result.scalar() or 0
 

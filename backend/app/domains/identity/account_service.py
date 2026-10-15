@@ -1915,7 +1915,9 @@ async def lock_user(
         AccessDeniedError: The caller is not an internal administrator, or a
             CO_ADMIN tries to lock a HEAD_ADMIN or another CO_ADMIN (ID-12).
         UserNotFoundError: The account does not exist.
-        UserConflictError: The account is the caller's own or already locked.
+        UserConflictError: The account is the caller's own or already locked,
+            or it is the last usable HEAD_ADMIN (RV-ID7: two HEAD_ADMINs
+            locking each other at the same time).
     """
     _require_internal_admin(principal)
     user_record = await identity_repository.get_user(db_session, user_id)
@@ -1926,6 +1928,14 @@ async def lock_user(
     if user_record.status == UserStatus.LOCKED.value:
         raise UserConflictError("The account is already locked")
     await _require_may_manage_account(db_session, principal, user_id)
+    if (
+        await _holds_role_anywhere(db_session, user_id, UserRole.HEAD_ADMIN)
+        and await count_other_head_admins_under_lock(
+            db_session, excluding_user_id=user_id
+        )
+        == 0
+    ):
+        raise UserConflictError("The last HEAD_ADMIN cannot be locked")
     await set_change_context(
         db_session, changed_by=principal.user_id, change_reason=reason
     )
@@ -1991,6 +2001,40 @@ async def unlock_user(
         },
     )
     return to_user_response(user_record)
+
+
+async def count_other_head_admins_under_lock(
+    db_session: AsyncSession,
+    *,
+    excluding_membership_id: UUID | None = None,
+    excluding_user_id: UUID | None = None,
+) -> int:
+    """Count the usable HEAD_ADMINs that remain, under the role-holder lock (RV-ID7).
+
+    Every path that can remove a usable HEAD_ADMIN (ending or locking a
+    membership, revoking the role, locking the account) asks this before the
+    change and refuses on zero. The lock stays held until the transaction
+    ends, so a concurrent removal of another HEAD_ADMIN waits and then counts
+    this one's removal.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        excluding_membership_id: The membership about to be removed.
+        excluding_user_id: The account about to be locked.
+
+    Returns:
+        How many usable HEAD_ADMIN memberships remain besides the excluded
+        ones.
+    """
+    await identity_repository.lock_role_holder_changes(
+        db_session, UserRole.HEAD_ADMIN.value
+    )
+    return await identity_repository.count_active_role_holders(
+        db_session,
+        UserRole.HEAD_ADMIN.value,
+        excluding_membership_id=excluding_membership_id,
+        excluding_user_id=excluding_user_id,
+    )
 
 
 async def _require_may_manage_account(

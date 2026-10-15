@@ -141,6 +141,7 @@ class IdentityStore:
         codes: One-time codes, newest last.
         deleted_session_calls: ``(user_id, except_session_id)`` of each
             `delete_sessions_by_user` call.
+        role_holder_locks: Role of each `lock_role_holder_changes` call.
         sms: Recorder standing in for the SMS provider.
     """
 
@@ -155,6 +156,7 @@ class IdentityStore:
         self.credentials: list[UserCredentialModel] = []
         self.codes: list[OneTimeCodeModel] = []
         self.deleted_session_calls: list[tuple[UUID, UUID | None]] = []
+        self.role_holder_locks: list[str] = []
         self.sms = SmsRecorder()
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -492,7 +494,18 @@ class IdentityStore:
             None,
         )
 
-    async def count_active_role_holders(self, _db: object, role: str) -> int:
+    async def lock_role_holder_changes(self, _db: object, role: str) -> None:
+        """Record that the role-holder advisory lock was taken."""
+        self.role_holder_locks.append(role)
+
+    async def count_active_role_holders(
+        self,
+        _db: object,
+        role: str,
+        *,
+        excluding_membership_id: UUID | None = None,
+        excluding_user_id: UUID | None = None,
+    ) -> int:
         """Count live holders of a role whose membership and account are ACTIVE."""
         count = 0
         for assignment in self._live_roles():
@@ -502,6 +515,8 @@ class IdentityStore:
                 assignment.role == role
                 and membership is not None
                 and user is not None
+                and membership.membership_id != excluding_membership_id
+                and user.user_id != excluding_user_id
                 and membership.status == MembershipStatus.ACTIVE.value
                 and membership.left_at is None
                 and user.status == UserStatus.ACTIVE.value
@@ -975,6 +990,55 @@ async def test_the_last_head_admin_guard_counts_only_active_holders(
         await member_service.revoke_role(
             _db(), caller, usable.membership_id, UserRole.HEAD_ADMIN
         )
+
+
+@pytest.mark.asyncio
+async def test_locking_the_account_of_the_last_usable_head_admin_is_refused(
+    store: IdentityStore,
+) -> None:
+    """Two HEAD_ADMINs locking each other cannot leave none (RV-ID7).
+
+    The second lock of the race is the case shown: the caller's own account
+    was just locked, so the target is the only usable HEAD_ADMIN left. The
+    count runs under the role-holder lock.
+    """
+    internal = store.add_organization(is_internal=True)
+    caller_membership = store.add_membership(
+        store.add_user(status=UserStatus.LOCKED),
+        internal,
+        roles=(UserRole.HEAD_ADMIN,),
+    )
+    target = store.add_membership(
+        store.add_user(), internal, roles=(UserRole.HEAD_ADMIN,)
+    )
+    caller = principal_of(caller_membership, internal, UserRole.HEAD_ADMIN)
+
+    with pytest.raises(ConflictError):
+        await account_service.lock_user(_db(), caller, target.user_id, "race")
+    assert store.role_holder_locks == [UserRole.HEAD_ADMIN.value]
+
+
+@pytest.mark.asyncio
+async def test_a_locked_head_admin_membership_can_end_while_a_usable_one_remains(
+    store: IdentityStore,
+) -> None:
+    """Only usable holders other than the one leaving count (RV-ID7)."""
+    internal = store.add_organization(is_internal=True)
+    usable = store.add_membership(
+        store.add_user(), internal, roles=(UserRole.HEAD_ADMIN,)
+    )
+    locked = store.add_membership(
+        store.add_user(),
+        internal,
+        roles=(UserRole.HEAD_ADMIN,),
+        status=MembershipStatus.LOCKED,
+    )
+    caller = principal_of(usable, internal, UserRole.HEAD_ADMIN)
+
+    await member_service.remove_member(_db(), caller, locked.membership_id, "left")
+
+    assert store.memberships[locked.membership_id].left_at is not None
+    assert store.role_holder_locks == [UserRole.HEAD_ADMIN.value]
 
 
 def _self_registered_attacker(

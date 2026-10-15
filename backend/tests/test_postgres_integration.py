@@ -21,7 +21,7 @@ import pytest_asyncio
 import websockets
 from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -5706,5 +5706,37 @@ async def test_sos_routing_channel_switches_and_inbox_seen_read_on_postgres(
             )
             assert driver_counts.unread_count == 0
             await db.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_role_holder_lock_holds_a_second_transaction_until_commit(
+    temporary_database: str,
+) -> None:
+    """RV-ID7: the lock taken before the last-HEAD_ADMIN count serializes removals.
+
+    While one transaction holds it, a second one cannot take it (it would
+    wait; here it gives up after a short lock timeout); once the first
+    commits, the second gets it and its count sees the first one's change.
+    Another role's lock is independent.
+    """
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with session_factory() as first, session_factory() as second:
+            await identity_repository.lock_role_holder_changes(first, "HEAD_ADMIN")
+            await second.execute(text("SET LOCAL lock_timeout = '300ms'"))
+            with pytest.raises(DBAPIError):
+                await identity_repository.lock_role_holder_changes(second, "HEAD_ADMIN")
+            await second.rollback()
+
+            await identity_repository.lock_role_holder_changes(second, "CO_ADMIN")
+            await second.rollback()
+
+            await first.commit()
+            await second.execute(text("SET LOCAL lock_timeout = '300ms'"))
+            await identity_repository.lock_role_holder_changes(second, "HEAD_ADMIN")
+            await second.rollback()
     finally:
         await engine.dispose()
