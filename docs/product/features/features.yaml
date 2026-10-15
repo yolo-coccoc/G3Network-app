@@ -3690,7 +3690,7 @@ features:
       One place where nothing gets lost.
     value_vi: >-
       Một nơi tập trung, không bỏ sót thông báo nào.
-    users: [DRIVER, FLEET_MANAGER, OPERATIONS, CUSTOMER_CARE]
+    users: [DRIVER, FLEET_MANAGER, DISPATCHER, OPERATIONS, CUSTOMER_CARE]
     capabilities:
       - ["List, filter by type, severity and truck", "Danh sách, lọc theo loại, mức độ và xe"]
       - ["Unread count, mark one or all as read", "Số chưa đọc, đánh dấu một hoặc tất cả đã đọc"]

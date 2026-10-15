@@ -4,9 +4,9 @@
 > DRV-04 (driving sessions, trips), MON-01/MON-02/MON-14 (telemetry reads),
 > FLT-02/FLT-03 (fleets), CHG-01/CHG-03 (QR charge, receipt), NTF-01 (inbox),
 > WAR-01 (warranties), and the device-input paths of DEV-03, CHG-02, STN-03
-> Status: 🚧 In progress — Batch A in progress; Batch B waits for the first real
-> device (charger bring-up, 1.6J planner Step 10, or the first T-Box); Batch C
-> waits for frontend work or deployment (`deferred.md` 106)
+> Status: 🚧 In progress — Batch A done (2026-10-15); Batch B waits for the
+> first real device (charger bring-up, 1.6J planner Step 10, or the first
+> T-Box); Batch C waits for frontend work or deployment (`deferred.md` 106)
 > Created: 2026-10-15
 >
 > Inputs: a read-only scan of every backend domain by six agents on
@@ -97,8 +97,18 @@ direct call during the scan.
 
 ## 4. Steps
 
-- [ ] **Step 1 — Batch A**, in commits by area; `make check` after each,
-  `make backend-test-integration` once; decisions D1-D4 into the decision log.
+- [x] **Step 1 — Batch A** (2026-10-15). Commits `08eb91f` (A2, A4-A7, A10
+  role table: DR-17, DR-18), `49c93b1` (A1), `703c1f2` (A3: TM-21) and
+  `400cc1a` (A8, A9, A11 with the explicit `move` flag, A12, A10 inbox-only:
+  FL-17, NT-18). Decisions D1-D4 are TM-21, DR-17, NT-18 and FL-17 in the
+  decision log; new edges in `domain-boundaries.md` (`telemetry` →
+  `vehicles.has_organization_owned_vehicle`, the role-revoked hook in
+  `membership_end_hooks.py`). Review notes kept as they are: a fleet move into a
+  fleet outside a limited manager's reach is already refused by
+  `_get_fleet_record`; telematics device health still reads `last_seen_at`
+  from every owner's rows (no position, system lookup); a truck sold and bought
+  back inside one report window folds the other owner's distance into the
+  odometer check (rare, not handled).
 - [ ] **Step 2 — Batch B**, right before the first real device connects.
 - [ ] **Step 3 — Batch C**, right before frontend work or deployment.
 - [ ] **Step 4 — Verify and document** per batch: convention review, docs
@@ -106,7 +116,17 @@ direct call during the scan.
 
 ## 5. Verification
 
-<Filled in as steps complete.>
+Batch A: `make check` 1,139 passed / 60 skipped; `make backend-test-integration`
+60/60 passed (the shared `_integration_driver` helper now grants DRIVER).
+New smoke tests: `tests/drivers/test_drivers_bugfix_scan_smoke.py` (A2, A4,
+A5, A6, A7), `tests/telemetry/test_telemetry_ownership_smoke.py` (A3, 13
+tests), A1 in `tests/identity/test_identity_review_smoke.py`, A8 in
+`tests/charging_stations/test_charging_stations_wp7_smoke.py`, A9 in
+`tests/charging_sessions/test_qr_start_flow_smoke.py`, A10 in
+`tests/notifications/test_notifications_service_smoke.py`, A11 in
+`tests/fleet/test_fleet_service_smoke.py`, A12 in
+`tests/warranties/test_warranties_service_smoke.py`. Convention review: no
+violation; the boundary rows and three over-long docstring lines were fixed.
 
 ## 6. Deferred / follow-ups
 

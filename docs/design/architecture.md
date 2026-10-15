@@ -138,7 +138,10 @@ FastAPI registers the following domains:
   detectors), `alerting.py` writes the battery/SOH/anomaly notifications
   (it owns the `notifications`/`charging_stations` edges) and
   `geofencing.py` raises `GEOFENCE_ALERT`s (it owns the `fleet` edge used
-  by ingestion). Report days/weeks/months are cut in
+  by ingestion). After a truck is sold, a customer reads only the rows
+  recorded under its own organization: a former owner keeps its period's
+  history and reports, the live view and the battery-health trend are the
+  current owner's (VH-11, TM-21). Report days/weeks/months are cut in
   `APP_REPORT_TIMEZONE`; timestamps stay UTC. Ingestion
   (`telemetry/ingestion/`: MQTT consumer -> in-memory queue -> message
   worker) stores one message per transaction - the alerts and geofence
@@ -353,8 +356,11 @@ FastAPI registers the following domains:
   The old `driver_vehicle_assignments` table and its routes are gone. Depends on
   `vehicles`', `identity`'s and `telemetry`'s public services (`telemetry` calls
   `drivers` back for the "checked in to this truck" test); ending or locking a
-  membership reaches it through a hook wired in `app/api/membership_end_hooks.py`
-  (DR-15). F-A9 (empty-trip detection) is suspended, not built here - see
+  membership, and revoking the DRIVER role, reach it through hooks wired in
+  `app/api/membership_end_hooks.py` (DR-15, DR-18). A check-in needs the DRIVER
+  role; a PORTAL check-in needs the truck in the caller's reach, and a manager's
+  check-in or check-out applies the fleet limit (DR-18). A planned trip starts
+  only on a truck of its own organization (DR-17). F-A9 (empty-trip detection) is suspended, not built here - see
   `deferred.md` item 67.
 - `support`: support case tickets (F-I1) and SOS intake (F-I2). One
   `support_cases` table discriminated by `case_type` rather than two
@@ -622,7 +628,7 @@ call each other is in
 │   │   ├── api/
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
 │   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the get_visible_vehicle_ids dependency of every limited endpoint (FL-13, FL-14)
-│   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers and fleet services (DR-10, DR-15, FL-16)
+│   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock and role revocation to the drivers and fleet services (DR-10, DR-15, FL-16, DR-18)
 │   │   │   ├── billing_hooks.py       # Wires the end of a charging session to billing (BL-19)
 │   │   │   ├── notification_hooks.py  # Wires alert routing to the drivers (driver at the wheel) and fleet (FL-10 visibility) domains (NT-15)
 │   │   │   ├── startup.py             # register_all_hooks: every cross-domain hook, called at start-up by the API, every entrypoint and the identity bootstrap (CV-21)

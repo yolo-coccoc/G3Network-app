@@ -29,7 +29,7 @@ Every alert and message appears in the app and the portal, with unread count and
 
 **Value:** One place where nothing gets lost.
 
-**Users:** Driver, Fleet manager, Operations, Customer care
+**Users:** Driver, Fleet manager, Dispatcher, Operations, Customer care
 
 **Capabilities:**
 
