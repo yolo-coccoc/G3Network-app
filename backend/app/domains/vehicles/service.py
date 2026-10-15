@@ -2,9 +2,10 @@
 
 This module holds the business rules for the vehicle record and the vehicle
 model catalog. Other domains may only call the `resolve_*` functions (which
-return internal DTOs); they never receive the ORM model or HTTP response schema
-of the vehicles domain. None of the functions commit or roll back - the
-caller's entry boundary owns the transaction.
+return internal DTOs) and the `has_*` checks (which return a boolean); they
+never receive the ORM model or HTTP response schema of the vehicles domain.
+None of the functions commit or roll back - the caller's entry boundary owns
+the transaction.
 
 Access (ACC-15): the router-facing functions take the caller's `Principal`
 and pass `principal.data_scope` to the repository, so a vehicle of another
@@ -294,6 +295,36 @@ async def resolve_first_handover_at(
         db_session, vehicle_id
     )
     return period_rows[0][1] if period_rows else None
+
+
+async def has_organization_owned_vehicle(
+    db_session: AsyncSession, vehicle_id: UUID, *, organization_id: UUID
+) -> bool:
+    """Tell whether an organization owns or once owned a truck (VH-10, VH-11).
+
+    Read through the ownership periods view (DM-22), never from
+    ``vehicle_history``. ``telemetry`` uses it so a former owner keeps reading
+    the rows recorded during its own ownership periods after a sale (VH-11).
+    A system lookup: it takes no principal and does not check that the truck
+    is still live.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        vehicle_id: Internal ID of the vehicle.
+        organization_id: The organization to look for among the truck's
+            owners.
+
+    Returns:
+        `True` if the view has at least one ownership period of that
+        organization for the truck (the current one included), else `False`.
+
+    Side Effects:
+        Performs a read-only query only; does not commit or rollback.
+    """
+    period_rows = await vehicle_repository.list_ownership_periods(
+        db_session, vehicle_id, organization_id=organization_id
+    )
+    return bool(period_rows)
 
 
 async def create_vehicle(

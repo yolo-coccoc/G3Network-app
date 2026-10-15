@@ -33,11 +33,13 @@ def _patch_latest_reading(
     """
 
     async def latest_reading(
-        db: AsyncSession, vehicle_id: UUID
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
     ) -> TelemetryModel | None:
         return telemetry
 
-    async def latest_received_at(db: AsyncSession, vehicle_id: UUID) -> datetime | None:
+    async def latest_received_at(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> datetime | None:
         return last_received_at
 
     monkeypatch.setattr(

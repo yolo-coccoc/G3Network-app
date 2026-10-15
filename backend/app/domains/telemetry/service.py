@@ -43,6 +43,21 @@ of the truck they are checked in to).
 Every HTTP-facing read takes the caller's `Principal`: a vehicle or fleet of
 an organization out of the caller's data reach is "not found" (ACC-15).
 
+After a sale (VH-11, D1 of the backend bug-fix planner) each telemetry row
+stays with the organization that owned the truck when it was recorded
+(``telemetry.organization_id``, DM-24 C):
+
+- period reads (history, the operating and energy-usage reports and their
+  CSV, the fleet rollup) filter a customer caller's rows by its data scope,
+  and a former owner still passes the access check for the vehicle-level
+  history and reports (``vehicles.has_organization_owned_vehicle``); internal
+  staff read every owner's rows;
+- live reads (``/latest``, the fleet map) are the current owner's only, and
+  for a customer show only rows recorded under that owner, so a buyer never
+  sees the seller's last position;
+- the battery-health (SOH) trend describes the truck, so it reads every
+  owner's rows, for the current owner and internal staff only.
+
 "Online" (planner D2) is derived at read time from the newest
 ``received_at`` and ``settings.TELEMETRY_ONLINE_THRESHOLD_SECONDS``; it is
 never stored. Report calendars (planner D4) use
@@ -122,7 +137,11 @@ _EMPTY_WINDOW_SUMMARY = VehicleTelemetryWindowSummary(
 
 
 async def _get_vehicle_reference(
-    db: AsyncSession, vehicle_id: UUID, principal: Principal | None = None
+    db: AsyncSession,
+    vehicle_id: UUID,
+    principal: Principal | None = None,
+    *,
+    allow_former_owner: bool = False,
 ) -> VehicleReference:
     """Resolve a vehicle that must exist for a telemetry read to make sense.
 
@@ -133,28 +152,47 @@ async def _get_vehicle_reference(
             its organization (internal staff: all) and, for a manager
             limited to some fleets (FL-10), to the trucks in those fleets;
             `None` for a system caller inside the backend.
+        allow_former_owner: Also let in a customer whose organization owned
+            the truck before but no longer does (VH-11): the period reads
+            (history, reports), whose rows the caller then filters by its
+            data scope. The fleet limit still applies and fails closed: a
+            sold truck is in none of the seller's fleets (VH-12), so a
+            fleet-limited manager of the seller does not reach it.
 
     Returns:
-        The vehicle's cross-domain reference (id, VIN, battery capacity).
+        The vehicle's cross-domain reference (id, VIN, battery capacity,
+        current owner).
 
     Raises:
         TelemetryNotFoundError: If the vehicle does not exist, was
             soft-deleted or is out of the caller's data reach or fleet limit.
+
+    Side Effects:
+        Read-only queries; does not commit or roll back.
     """
     vehicle_reference = await _resolve_vehicle_reference_with_pack_capacity(
         db, vehicle_id
     )
-    if vehicle_reference is None or (
-        principal is not None
-        and not principal.can_access_organization(vehicle_reference.organization_id)
-    ):
+    if vehicle_reference is None:
         raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
-    if principal is not None:
-        visible_vehicle_ids = await fleet_service.resolve_principal_visible_vehicle_ids(
-            db, principal
+    if principal is None:
+        return vehicle_reference
+    if not principal.can_access_organization(vehicle_reference.organization_id):
+        scope = principal.data_scope
+        is_former_owner = (
+            allow_former_owner
+            and scope is not None
+            and await vehicle_service.has_organization_owned_vehicle(
+                db, vehicle_id, organization_id=scope
+            )
         )
-        if visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids:
+        if not is_former_owner:
             raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
+    visible_vehicle_ids = await fleet_service.resolve_principal_visible_vehicle_ids(
+        db, principal
+    )
+    if visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids:
+        raise TelemetryNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
     return vehicle_reference
 
 
@@ -213,7 +251,7 @@ def _calculate_is_online(last_received_at: datetime | None) -> bool:
 
 
 async def _find_latest_telemetry_with_online_flag(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
 ) -> tuple[TelemetryModel, bool] | None:
     """Get a vehicle's newest reading and whether the vehicle is online.
 
@@ -226,19 +264,23 @@ async def _find_latest_telemetry_with_online_flag(
     Args:
         db: Database session owned by the caller's entry boundary.
         vehicle_id: Internal ID of the vehicle.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` reads every owner's rows.
 
     Returns:
         ``(latest_row, is_online)``, or ``None`` if the vehicle has no
-        telemetry.
+        telemetry (under that owner, when one is given).
 
     Side Effects:
         Read-only.
     """
-    telemetry = await telemetry_repository.get_latest_vehicle_telemetry(db, vehicle_id)
+    telemetry = await telemetry_repository.get_latest_vehicle_telemetry(
+        db, vehicle_id, organization_id=organization_id
+    )
     if telemetry is None:
         return None
     last_received_at = await telemetry_repository.find_latest_received_at(
-        db, vehicle_id
+        db, vehicle_id, organization_id=organization_id
     )
     return telemetry, _calculate_is_online(last_received_at)
 
@@ -251,30 +293,43 @@ async def get_latest_vehicle_telemetry_response(
     Args:
         db: Database session owned by the HTTP boundary.
         vehicle_id: Internal ID of the vehicle to query.
-        principal: The caller. Staff roles read any vehicle in their data
-            reach; a caller who is only a DRIVER reads the truck they are
-            checked in to, whichever organization owns it.
+        principal: The caller. Staff roles read any vehicle their
+            organization owns now (a former owner is not let in: the live
+            view is the current owner's only, VH-11); a caller who is only a
+            DRIVER reads the truck they are checked in to, whichever
+            organization owns it (DR-11).
 
     Returns:
         Response schema containing the latest telemetry record, its
-        ``received_at`` and the read-time ``is_online`` flag.
+        ``received_at`` and the read-time ``is_online`` flag. For any caller
+        but internal staff, only rows recorded under the truck's current
+        owner count, so a buyer never sees the seller's last position.
 
     Raises:
         TelemetryNotFoundError: When the vehicle does not exist, is out of
-            the caller's reach or has no telemetry yet.
+            the caller's reach or has no telemetry yet (under its current
+            owner, for a caller other than internal staff).
         AccessDeniedError: A DRIVER-only caller is not checked in to this
             truck (403, also right after a check-out).
     """
     if principal.has_any_role(*LIVE_VIEW_STAFF_ROLES):
-        await _get_vehicle_reference(db, vehicle_id, principal)
+        vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
     else:
-        await _get_vehicle_reference(db, vehicle_id)
+        vehicle_reference = await _get_vehicle_reference(db, vehicle_id)
         if not await driver_service.is_membership_checked_in_to_vehicle(
             db, principal.membership_id, vehicle_id
         ):
             raise AccessDeniedError("You are not checked in to this truck")
 
-    latest = await _find_latest_telemetry_with_online_flag(db, vehicle_id)
+    # The current owner's rows: for a customer staff caller that is its own
+    # data scope (the access check above requires it); a driver on a
+    # borrowed truck reads the owner's rows, not its own organization's.
+    live_organization_id = (
+        None if principal.data_scope is None else vehicle_reference.organization_id
+    )
+    latest = await _find_latest_telemetry_with_online_flag(
+        db, vehicle_id, organization_id=live_organization_id
+    )
     if latest is None:
         raise TelemetryNotFoundError(
             f"No telemetry found for vehicle with id '{vehicle_id}'"
@@ -291,7 +346,7 @@ async def get_latest_vehicle_telemetry_response(
 
 
 async def resolve_vehicle_live_status(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
 ) -> VehicleLiveStatusReference | None:
     """Get a vehicle's newest position and online flag. Public entry point (F-A1).
 
@@ -303,6 +358,10 @@ async def resolve_vehicle_live_status(
     Args:
         db: Async session owned by the caller's entry boundary.
         vehicle_id: Internal ID of the vehicle.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11): the fleet map passes a customer caller's data
+            scope. `None` (the default, every system lookup of another
+            domain) reads every owner's rows.
 
     Returns:
         The vehicle's newest position, ``recorded_at``/``received_at`` of
@@ -313,7 +372,9 @@ async def resolve_vehicle_live_status(
     Side Effects:
         Read-only queries; does not commit or roll back.
     """
-    latest = await _find_latest_telemetry_with_online_flag(db, vehicle_id)
+    latest = await _find_latest_telemetry_with_online_flag(
+        db, vehicle_id, organization_id=organization_id
+    )
     if latest is None:
         return None
     telemetry, is_online = latest
@@ -441,6 +502,9 @@ async def get_vehicle_telemetry_history_response(
             ``settings.TELEMETRY_HISTORY_DEFAULT_LIMIT``. Clamped to
             ``[1, settings.TELEMETRY_HISTORY_MAX_LIMIT]``.
         principal: The caller; a vehicle out of their data reach is not found.
+            A customer reads only the rows recorded while its organization
+            owned the truck, and a former owner still reads its own period
+            (VH-11); internal staff read every owner's rows.
 
     Returns:
         Response with points ordered chronologically (oldest first).
@@ -449,8 +513,8 @@ async def get_vehicle_telemetry_history_response(
         TelemetryInvalidRangeError: If either bound is missing a timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: If the vehicle does not exist or was
-            soft-deleted.
+        TelemetryNotFoundError: If the vehicle does not exist, was
+            soft-deleted or the caller's organization never owned it.
     """
     normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
         start_time, end_time, settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS
@@ -461,7 +525,7 @@ async def get_vehicle_telemetry_history_response(
     )
     resolved_limit = min(max(resolved_limit, 1), settings.TELEMETRY_HISTORY_MAX_LIMIT)
 
-    await _get_vehicle_reference(db, vehicle_id, principal)
+    await _get_vehicle_reference(db, vehicle_id, principal, allow_former_owner=True)
 
     records = await telemetry_repository.get_vehicle_telemetry_history(
         db,
@@ -469,6 +533,7 @@ async def get_vehicle_telemetry_history_response(
         start_time=normalized_start,
         end_time=normalized_end,
         limit=resolved_limit,
+        organization_id=principal.data_scope,
     )
     points = [
         telemetry_mappers.to_vehicle_telemetry_history_point(record)
@@ -493,7 +558,9 @@ async def get_vehicle_battery_health_response(
     has an SOH or cycle-count reading: the day's last reported SOH and
     cycle count, plus an estimated usable capacity when the vehicle's
     nominal capacity is recorded. Days without such a reading are
-    omitted, never interpolated.
+    omitted, never interpolated. The battery's condition follows the truck
+    (VH-11): the trend reads every owner's rows, and only the current owner
+    (and internal staff) may read it; a former owner gets 404.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -557,7 +624,10 @@ async def _resolve_report_context(
         granularity: Period breakdown to add, or ``None`` for the
             whole-window aggregate only.
         principal: The HTTP caller (data reach), or `None` for a system
-            caller inside the backend.
+            caller inside the backend. A customer caller folds only the rows
+            recorded while its organization owned the truck, and a former
+            owner is let in for its own period (VH-11); internal staff and
+            system callers fold every owner's rows.
 
     Returns:
         The validated window, the vehicle reference, the folded summary
@@ -567,8 +637,9 @@ async def _resolve_report_context(
         TelemetryInvalidRangeError: Either bound is missing a timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: The vehicle does not exist or was
-            soft-deleted. Unlike F-C5's station-energy summary (which
+        TelemetryNotFoundError: The vehicle does not exist, was
+            soft-deleted or the caller's organization never owned it.
+            Unlike F-C5's station-energy summary (which
             doesn't own station existence and returns a zero result for
             an unknown station), this function 404s - `telemetry` already
             depends on `vehicles` and already 404s on its other two
@@ -578,12 +649,16 @@ async def _resolve_report_context(
     normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
         start_time, end_time, settings.TELEMETRY_REPORT_MAX_RANGE_DAYS
     )
-    vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
+    vehicle_reference = await _get_vehicle_reference(
+        db, vehicle_id, principal, allow_former_owner=True
+    )
+    owner_organization_id = principal.data_scope if principal is not None else None
     window_summary = await telemetry_repository.get_vehicle_window_summary(
         db,
         vehicle_id=vehicle_id,
         start_time=normalized_start,
         end_time=normalized_end,
+        organization_id=owner_organization_id,
     )
 
     period_summaries: tuple[telemetry_reports.VehicleReportPeriodSummary, ...] = ()
@@ -601,6 +676,7 @@ async def _resolve_report_context(
             end_time=normalized_end,
             granularity=granularity,
             time_zone=settings.APP_REPORT_TIMEZONE,
+            organization_id=owner_organization_id,
         )
         period_summaries = tuple(
             telemetry_reports.VehicleReportPeriodSummary(
@@ -784,7 +860,9 @@ async def list_fleet_vehicle_live_statuses(
     vehicle, no batching (MVP rule). A member soft-deleted after joining
     stays in the list (its membership is still open) with ``None`` vehicle
     fields; a member that never reported has ``None`` position fields and
-    ``is_online`` ``False``.
+    ``is_online`` ``False``. A customer sees only positions recorded under
+    its own organization (VH-11): a truck just bought shows no position until
+    its first reading under the buyer.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -823,7 +901,9 @@ async def list_fleet_vehicle_live_statuses(
         vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
             db, vehicle_id
         )
-        live_status = await resolve_vehicle_live_status(db, vehicle_id)
+        live_status = await resolve_vehicle_live_status(
+            db, vehicle_id, organization_id=principal.data_scope
+        )
         items.append(
             telemetry_mappers.to_fleet_vehicle_live_status_response(
                 vehicle_id, vehicle_summary, live_status
@@ -854,7 +934,9 @@ async def get_fleet_operating_report(
     additive figures to ``reports.build_fleet_operating_report``, which
     sums them before deriving any fleet-wide rate. A member vehicle
     soft-deleted since joining no longer resolves and is left out of the
-    report.
+    report. A customer folds only the rows recorded under its own
+    organization (VH-11), so a truck bought mid-window counts from its
+    handover on; internal staff fold every owner's rows.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -902,6 +984,7 @@ async def get_fleet_operating_report(
             vehicle_id=vehicle_id,
             start_time=normalized_start,
             end_time=normalized_end,
+            organization_id=principal.data_scope,
         )
         operating_summary = telemetry_reports.build_operating_summary(
             telemetry_reports.VehicleReportContext(

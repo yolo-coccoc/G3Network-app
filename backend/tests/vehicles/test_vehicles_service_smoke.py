@@ -491,3 +491,32 @@ async def test_update_vehicle_model_rejects_a_taken_make_and_name(
             VehicleModelUpdateRequest(model_name="EVT-825"),
             principal=build_internal_principal(),
         )
+
+
+@pytest.mark.asyncio
+async def test_has_organization_owned_vehicle_reads_the_ownership_periods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """VH-11: true when the view holds a period of that organization, else false."""
+    former_owner_id, stranger_id = uuid4(), uuid4()
+    asked_scopes: list[UUID | None] = []
+
+    async def ownership_periods(
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
+    ) -> list[tuple[UUID, datetime, datetime | None]]:
+        asked_scopes.append(organization_id)
+        if organization_id != former_owner_id:
+            return []
+        owned_from = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return [(former_owner_id, owned_from, owned_from + timedelta(days=90))]
+
+    monkeypatch.setattr(vehicle_repository, "list_ownership_periods", ownership_periods)
+
+    vehicle_id = uuid4()
+    assert await vehicle_service.has_organization_owned_vehicle(
+        fake_db_session(), vehicle_id, organization_id=former_owner_id
+    )
+    assert not await vehicle_service.has_organization_owned_vehicle(
+        fake_db_session(), vehicle_id, organization_id=stranger_id
+    )
+    assert asked_scopes == [former_owner_id, stranger_id]

@@ -95,7 +95,7 @@ async def test_fleet_live_statuses_page_the_member_list(
         )
 
     async def resolve_live_status(
-        db: AsyncSession, vehicle_id: UUID
+        db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
     ) -> VehicleLiveStatusReference | None:
         if vehicle_id != reporting_id:
             return None

@@ -167,8 +167,9 @@ async def get_latest_vehicle_telemetry_endpoint(
 
     Raises:
         TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
-            soft-deleted, is out of the caller's reach, or has no telemetry
-            yet.
+            soft-deleted, is out of the caller's reach (a former owner
+            included, VH-11), or has no telemetry yet under its current
+            owner.
         AccessDeniedError: HTTP 403 - a driver who is not checked in to this
             truck.
     """
@@ -228,8 +229,9 @@ async def get_vehicle_telemetry_history_endpoint(
         TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
-            was soft-deleted.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted or its owners never included the caller's
+            organization (a former owner reads its own period, VH-11).
     """
     history_response = await telemetry_service.get_vehicle_telemetry_history_response(
         db,
@@ -297,8 +299,9 @@ async def get_vehicle_operating_report_endpoint(
         TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
-            was soft-deleted.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted or its owners never included the caller's
+            organization (a former owner reads its own period, VH-11).
     """
     operating_report = await telemetry_service.get_vehicle_operating_report(
         db,
@@ -354,8 +357,9 @@ async def get_vehicle_battery_health_endpoint(
         TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_BATTERY_HEALTH_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
-            was soft-deleted.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted or is out of the caller's reach (a former owner
+            included: the trend follows the truck, VH-11).
     """
     return await telemetry_service.get_vehicle_battery_health_response(
         db,
@@ -399,8 +403,9 @@ async def get_vehicle_energy_usage_endpoint(
         TelemetryInvalidRangeError: HTTP 400 - a bound has no timezone,
             ``end_time`` is not after ``start_time``, or the span exceeds
             ``settings.TELEMETRY_REPORT_MAX_RANGE_DAYS``.
-        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist or
-            was soft-deleted.
+        TelemetryNotFoundError: HTTP 404 - the vehicle does not exist, was
+            soft-deleted or its owners never included the caller's
+            organization (a former owner reads its own period, VH-11).
     """
     return await telemetry_service.get_vehicle_energy_usage_report(
         db,

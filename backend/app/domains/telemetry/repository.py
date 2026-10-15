@@ -10,6 +10,14 @@ per-period breakdown (F-A6/F-C6), and the daily battery-health trend
 the service passes in (``settings.APP_REPORT_TIMEZONE``) while every
 returned timestamp stays UTC. The repository does not own the transaction: the entry
 boundary passes in the session and decides whether to commit or roll back.
+
+Owner filter (VH-11, DM-24 C): every row stores the organization that owned
+the truck when the reading was recorded. The per-reading reads (latest,
+history, the report folds) take an optional ``organization_id``; the service
+passes a customer caller's data scope, so after a sale each owner reads only
+the rows of its own ownership periods. ``None`` reads every owner's rows
+(internal staff, system lookups, the battery-health trend that follows the
+truck).
 """
 
 import logging
@@ -32,6 +40,22 @@ from app.domains.telemetry.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _owner_filter(organization_id: UUID | None) -> list[ColumnElement[bool]]:
+    """Build the optional "recorded under this owner" condition (VH-11).
+
+    Args:
+        organization_id: Organization whose rows are read, or `None` for
+            every owner's rows.
+
+    Returns:
+        An empty list for `None`, else one condition on
+        ``TelemetryModel.organization_id``, to unpack into a ``where()``.
+    """
+    if organization_id is None:
+        return []
+    return [TelemetryModel.organization_id == organization_id]
 
 
 async def insert_telemetry(
@@ -75,13 +99,15 @@ async def insert_telemetry(
 
 
 async def get_latest_vehicle_telemetry(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
 ) -> TelemetryModel | None:
     """Get the latest telemetry record for a vehicle.
 
     Args:
         db: Current database session.
         vehicle_id: Internal ID of the vehicle.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` reads every owner's rows.
 
     Returns:
         The record with the largest `recorded_at`, or None if there is no
@@ -89,7 +115,7 @@ async def get_latest_vehicle_telemetry(
     """
     query_result = await db.execute(
         select(TelemetryModel)
-        .where(TelemetryModel.vehicle_id == vehicle_id)
+        .where(TelemetryModel.vehicle_id == vehicle_id, *_owner_filter(organization_id))
         .order_by(TelemetryModel.recorded_at.desc())
         .limit(1)
     )
@@ -128,7 +154,7 @@ async def get_previous_vehicle_telemetry(
 
 
 async def find_latest_received_at(
-    db: AsyncSession, vehicle_id: UUID
+    db: AsyncSession, vehicle_id: UUID, *, organization_id: UUID | None = None
 ) -> datetime | None:
     """Get the newest backend receive time among a vehicle's telemetry rows.
 
@@ -140,13 +166,15 @@ async def find_latest_received_at(
     Args:
         db: Current database session.
         vehicle_id: Internal ID of the vehicle.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` reads every owner's rows.
 
     Returns:
         The largest `received_at`, or None if the vehicle never reported.
     """
     query_result = await db.execute(
         select(TelemetryModel.received_at)
-        .where(TelemetryModel.vehicle_id == vehicle_id)
+        .where(TelemetryModel.vehicle_id == vehicle_id, *_owner_filter(organization_id))
         .order_by(TelemetryModel.received_at.desc())
         .limit(1)
     )
@@ -220,6 +248,7 @@ async def get_vehicle_telemetry_history(
     start_time: datetime,
     end_time: datetime,
     limit: int,
+    organization_id: UUID | None = None,
 ) -> list[TelemetryModel]:
     """Get telemetry records for a vehicle within a time range (F-A5).
 
@@ -232,6 +261,8 @@ async def get_vehicle_telemetry_history(
             UTC by the service.
         limit: Maximum number of records to return, already clamped by the
             service.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` reads every owner's rows.
 
     Returns:
         Records ordered by ``recorded_at`` ascending (chronological, for
@@ -248,6 +279,7 @@ async def get_vehicle_telemetry_history(
             TelemetryModel.vehicle_id == vehicle_id,
             TelemetryModel.recorded_at >= start_time,
             TelemetryModel.recorded_at <= end_time,
+            *_owner_filter(organization_id),
         )
         .order_by(TelemetryModel.recorded_at.asc())
         .limit(limit)
@@ -270,6 +302,7 @@ def _plausible_odometer_distance(
     *,
     granularity: ReportGranularity | None = None,
     time_zone: str | None = None,
+    organization_id: UUID | None = None,
 ) -> Subquery:
     """Build the per-reading distance steps of a window from the odometer.
 
@@ -287,6 +320,8 @@ def _plausible_odometer_distance(
         granularity: When given, also label each step with its calendar
             period (``period_start``), cut like the period summaries do.
         time_zone: IANA zone of the periods; required with ``granularity``.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` reads every owner's rows.
 
     Returns:
         A subquery with ``distance_km`` and, with ``granularity``,
@@ -324,6 +359,7 @@ def _plausible_odometer_distance(
             TelemetryModel.recorded_at >= start_time,
             TelemetryModel.recorded_at <= end_time,
             TelemetryModel.odometer_km.is_not(None),
+            *_owner_filter(organization_id),
         )
         .subquery()
     )
@@ -352,6 +388,7 @@ async def get_vehicle_window_summary(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    organization_id: UUID | None = None,
 ) -> VehicleTelemetryWindowSummary:
     """Fold one vehicle's telemetry deltas over a time window (F-A6/F-C6).
 
@@ -372,6 +409,8 @@ async def get_vehicle_window_summary(
             normalized to UTC by the service.
         end_time: Inclusive upper bound, already validated and normalized
             to UTC by the service.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` folds every owner's rows.
 
     Returns:
         The folded summary. An empty window (no rows) yields zeroed sums
@@ -405,6 +444,7 @@ async def get_vehicle_window_summary(
             TelemetryModel.vehicle_id == vehicle_id,
             TelemetryModel.recorded_at >= start_time,
             TelemetryModel.recorded_at <= end_time,
+            *_owner_filter(organization_id),
         )
         .subquery()
     )
@@ -439,7 +479,9 @@ async def get_vehicle_window_summary(
         first_recorded_at,
         last_recorded_at,
     ) = query_result.one()
-    distance_steps = _plausible_odometer_distance(vehicle_id, start_time, end_time)
+    distance_steps = _plausible_odometer_distance(
+        vehicle_id, start_time, end_time, organization_id=organization_id
+    )
     distance_km = (
         await db.execute(
             select(func.coalesce(func.sum(distance_steps.c.distance_km), 0.0))
@@ -464,6 +506,7 @@ async def list_vehicle_period_summaries(
     end_time: datetime,
     granularity: ReportGranularity,
     time_zone: str,
+    organization_id: UUID | None = None,
 ) -> dict[datetime, VehicleTelemetryWindowSummary]:
     """Fold one vehicle's telemetry deltas per calendar period (F-A6 breakdown).
 
@@ -484,6 +527,8 @@ async def list_vehicle_period_summaries(
         granularity: Calendar period to group by (its value is the
             ``date_trunc`` field).
         time_zone: IANA zone the periods are cut in.
+        organization_id: Only rows recorded while this organization owned the
+            truck (VH-11); `None` folds every owner's rows.
 
     Returns:
         One summary per period that holds at least one reading, keyed by
@@ -526,6 +571,7 @@ async def list_vehicle_period_summaries(
             TelemetryModel.vehicle_id == vehicle_id,
             TelemetryModel.recorded_at >= start_time,
             TelemetryModel.recorded_at <= end_time,
+            *_owner_filter(organization_id),
         )
         .subquery()
     )
@@ -556,6 +602,7 @@ async def list_vehicle_period_summaries(
         end_time,
         granularity=granularity,
         time_zone=time_zone,
+        organization_id=organization_id,
     )
     distance_by_period = {
         distance_period_start: float(period_distance_km)
@@ -604,7 +651,9 @@ async def list_vehicle_battery_health_days(
     per day, the value of the latest reading that reported it (TimescaleDB
     ``last(value, time)`` with ``FILTER (WHERE value IS NOT NULL)``, so a
     final reading without SOH doesn't blank out an earlier one). Reuses
-    ``ix_telemetry_vehicle_time`` for the range filter.
+    ``ix_telemetry_vehicle_time`` for the range filter. Deliberately takes no
+    owner filter: the battery's condition follows the truck across a sale
+    (VH-11), so the trend reads every owner's rows.
 
     Args:
         db: Current database session.
