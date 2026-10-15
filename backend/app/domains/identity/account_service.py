@@ -390,6 +390,57 @@ async def _consume_one_time_code(
     return code_record
 
 
+async def _resolve_pending_invitation_organization_id(
+    db_session: AsyncSession, user_id: UUID
+) -> UUID | None:
+    """Find the organization a self-requested invitation code must be issued for.
+
+    Since ID-52 an `INVITE` code is tied to one organization and accepting it
+    activates only that membership, while only the newest code of a phone is
+    ever checked. A code the person asks for themselves (the app's "send me
+    the code again") must therefore carry the organization of a pending
+    invitation, or it would be refused and would also kill the inviter's code.
+    The choice: the only pending invitation; with several, the organization
+    of the newest unexpired invitation code when that invitation is still
+    pending; otherwise the newest pending invitation.
+
+    Args:
+        db_session: Current database session.
+        user_id: The invited person.
+
+    Returns:
+        The organization ID, or `None` when the person has no pending
+        invitation.
+
+    Side Effects:
+        With several pending invitations, locks the person's newest
+        invitation code row until the transaction ends.
+    """
+    invited_memberships = await identity_repository.list_invited_memberships_by_user(
+        db_session, user_id
+    )
+    if not invited_memberships:
+        return None
+    if len(invited_memberships) == 1:
+        return invited_memberships[0].organization_id
+    pending_organization_ids = {
+        membership_record.organization_id for membership_record in invited_memberships
+    }
+    latest_code_record = await identity_repository.find_latest_one_time_code_for_user(
+        db_session, user_id=user_id, purpose=OneTimeCodePurpose.INVITE.value
+    )
+    if (
+        latest_code_record is not None
+        and latest_code_record.expires_at > utc_now()
+        and latest_code_record.organization_id in pending_organization_ids
+    ):
+        return latest_code_record.organization_id
+    newest_membership = max(
+        invited_memberships, key=lambda membership_record: membership_record.created_at
+    )
+    return newest_membership.organization_id
+
+
 async def send_one_time_code(
     db_session: AsyncSession, send_request: OneTimeCodeSendRequest
 ) -> OneTimeCodeSendResponse:
@@ -399,7 +450,9 @@ async def send_one_time_code(
     not the phone number has an account, and nothing is sent when it has not,
     so the endpoint cannot be used to find out who is registered. A sign-up
     for a number that already has an account is reported (`409`, the app then
-    goes to login).
+    goes to login). An invitation code is issued for the organization of the
+    person's pending invitation (`_resolve_pending_invitation_organization_id`);
+    an invited account with no pending invitation gets the same silent answer.
 
     Args:
         db_session: Session owned by the entry boundary.
@@ -419,6 +472,7 @@ async def send_one_time_code(
     purpose = send_request.purpose
     if purpose not in _PUBLIC_CODE_PURPOSES:
         raise OneTimeCodePurposeError("This code needs a login")
+    organization_id: UUID | None = None
     phone_number = send_request.phone_number
     user_record = await identity_repository.find_live_user_by_phone(
         db_session, phone_number
@@ -444,6 +498,11 @@ async def send_one_time_code(
         if user_record is None or user_record.status != UserStatus.INVITED.value:
             return silent_response
         user_id = user_record.user_id
+        organization_id = await _resolve_pending_invitation_organization_id(
+            db_session, user_id
+        )
+        if organization_id is None:
+            return silent_response
 
     code_record = await issue_one_time_code(
         db_session,
@@ -451,6 +510,7 @@ async def send_one_time_code(
         phone_number=phone_number,
         user_id=user_id,
         issued_by=None,
+        organization_id=organization_id,
     )
     return OneTimeCodeSendResponse(expires_at=code_record.expires_at)
 

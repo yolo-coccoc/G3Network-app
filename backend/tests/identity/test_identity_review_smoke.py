@@ -15,6 +15,7 @@ The services run unchanged; only the module functions of
 `IdentityStore`, which keeps rows in plain Python collections. No database.
 """
 
+import re
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from typing import Any
@@ -48,6 +49,7 @@ from app.domains.identity.models import (
 )
 from app.domains.identity.schemas import (
     AdminHandoverRequest,
+    InvitationAcceptRequest,
     MemberInviteRequest,
     MembershipReasonRequest,
     OneTimeCodeSendRequest,
@@ -55,6 +57,7 @@ from app.domains.identity.schemas import (
     PhoneChangeConfirmRequest,
     PhoneChangeRequest,
     RefreshRequest,
+    TokenResponse,
     UserLockRequest,
 )
 from app.domains.identity.security import (
@@ -1265,3 +1268,137 @@ async def test_internal_admin_can_cancel_a_pending_first_admin_invitation(
         await store.find_active_org_admin_assignment(None, customer.organization_id)
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# A1 (backend-bugfix-scan.md): an invitation code the person asks for
+# themselves through the public `POST /auth/otp/send`
+# ---------------------------------------------------------------------------
+
+
+def _last_code_sent_to(identity_store: IdentityStore, phone_number: str) -> str:
+    """Return the six-digit code of the newest SMS sent to a phone number."""
+    texts = [text for phone, text in _sent(identity_store) if phone == phone_number]
+    code_match = re.search(r"\b\d{6}\b", texts[-1])
+    assert code_match is not None
+    return code_match.group(0)
+
+
+def _stub_session_start(
+    identity_store: IdentityStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Let `accept_invitation` run without the session and credential tables.
+
+    The store does not model credential inserts or login sessions; the tests
+    only check which membership the code activates, so the new credential is
+    kept in the store and the session start returns a fixed token pair.
+    """
+
+    async def insert_credential(
+        _db: object, *, user_id: UUID, secret_hash: str
+    ) -> None:
+        """Keep the new password credential in the store."""
+        identity_store.credentials.append(
+            UserCredentialModel(
+                user_credential_id=uuid4(),
+                user_id=user_id,
+                credential_type="PASSWORD",
+                secret_hash=secret_hash,
+                created_at=utc_now(),
+            )
+        )
+
+    async def start_session(_db: object, **_values: object) -> TokenResponse:
+        """Return a fixed token pair instead of opening a session."""
+        return TokenResponse(
+            access_token="access",
+            refresh_token="refresh",
+            expires_in=60,
+            session_id=uuid4(),
+            memberships=[],
+        )
+
+    monkeypatch.setattr(identity_repository, "insert_credential", insert_credential)
+    monkeypatch.setattr(account_service, "_start_session_for_login", start_session)
+
+
+async def _request_invitation_code(phone_number: str) -> None:
+    """Ask for an invitation code the way the app does, without a login."""
+    await account_service.send_one_time_code(
+        _db(),
+        OneTimeCodeSendRequest(
+            phone_number=phone_number, purpose=OneTimeCodePurpose.INVITE
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_self_requested_invitation_code_can_be_accepted(
+    store: IdentityStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code from `otp/send` (purpose INVITE) joins the inviting organization."""
+    monkeypatch.setattr(settings, "IDENTITY_OTP_RESEND_COOLDOWN_SECONDS", 0)
+    _stub_session_start(store, monkeypatch)
+    organization, org_admin = _self_registered_attacker(store)
+    member_response = await member_service.invite_member(
+        _db(),
+        org_admin,
+        organization.organization_id,
+        MemberInviteRequest(
+            phone_number="0907777777", full_name="New Driver", roles=[UserRole.DRIVER]
+        ),
+    )
+
+    await _request_invitation_code("0907777777")
+    await account_service.accept_invitation(
+        _db(),
+        InvitationAcceptRequest(
+            phone_number="0907777777",
+            code=_last_code_sent_to(store, "+84907777777"),
+            password="a-long-new-password",
+            platform=SessionPlatform.ANDROID,
+        ),
+        None,
+    )
+
+    assert store.codes[-1].organization_id == organization.organization_id
+    membership = store.memberships[member_response.membership_id]
+    assert membership.status == MembershipStatus.ACTIVE.value
+    assert store.users[member_response.user_id].status == UserStatus.ACTIVE.value
+
+
+@pytest.mark.asyncio
+async def test_a_self_requested_invitation_code_follows_the_newest_invitation(
+    store: IdentityStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With two pending invitations the code is for the newest invitation code."""
+    monkeypatch.setattr(settings, "IDENTITY_OTP_RESEND_COOLDOWN_SECONDS", 0)
+    first_organization, first_admin = _self_registered_attacker(store)
+    second_organization, second_admin = _self_registered_attacker(store)
+    for organization, org_admin in (
+        (first_organization, first_admin),
+        (second_organization, second_admin),
+    ):
+        await member_service.invite_member(
+            _db(),
+            org_admin,
+            organization.organization_id,
+            MemberInviteRequest(phone_number="0907777777", full_name="New Driver"),
+        )
+
+    await _request_invitation_code("0907777777")
+
+    assert store.codes[-1].organization_id == second_organization.organization_id
+
+
+@pytest.mark.asyncio
+async def test_a_self_requested_invitation_code_is_silent_without_an_invitation(
+    store: IdentityStore,
+) -> None:
+    """An invited account whose invitation was withdrawn gets no SMS."""
+    store.add_user(status=UserStatus.INVITED, phone_number="+84907777777")
+
+    await _request_invitation_code("0907777777")
+
+    assert _sent(store) == []
+    assert store.codes == []
