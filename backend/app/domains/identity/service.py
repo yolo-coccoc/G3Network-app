@@ -18,6 +18,7 @@ import app.domains.identity.audit_service as audit_service
 import app.domains.identity.member_service as member_service
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
+import app.domains.identity.security as identity_security
 from app.domains.identity.exceptions import (
     OrganizationConflictError,
     OrganizationNotFoundError,
@@ -444,3 +445,15 @@ def register_membership_end_hook(hook: MembershipEndHook) -> None:
         ``app/api/membership_end_hooks.py``).
     """
     member_service.register_membership_end_hook(hook)
+
+
+def require_token_secret() -> None:
+    """Refuse to start the API without a usable token signing key (hardening D1).
+
+    Called once at the API's start-up so a missing key stops the process
+    before it serves a request, instead of failing the first login.
+
+    Raises:
+        RuntimeError: If `IDENTITY_TOKEN_SECRET_KEY` is missing or too short.
+    """
+    identity_security.require_token_secret()

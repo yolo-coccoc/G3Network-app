@@ -1,11 +1,16 @@
 """Shared pytest fixtures for the smoke tests."""
 
+import secrets
+from collections.abc import Iterator
+
 import pytest
 
 import app.domains.batteries.service as battery_service
 import app.domains.charging_sessions.service as charging_session_service
+import app.domains.identity.security as identity_security
 import app.domains.identity.service as identity_service
 from app.domains.identity.types import Principal
+from app.libs.common.config import settings
 
 
 @pytest.fixture
@@ -61,3 +66,19 @@ def no_session_ended_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
     itself.
     """
     monkeypatch.setattr(charging_session_service, "_session_ended_hooks", [])
+
+
+@pytest.fixture(autouse=True, scope="session")
+def token_secret_key() -> Iterator[None]:
+    """Give the test process a token signing key (hardening D1).
+
+    The key is required, and a developer's ``backend/.env`` may not hold one
+    yet; a random key per test run is enough, because no token outlives it.
+    """
+    original_key = settings.IDENTITY_TOKEN_SECRET_KEY
+    if len(original_key) < identity_security.TOKEN_SECRET_MIN_LENGTH:
+        settings.IDENTITY_TOKEN_SECRET_KEY = secrets.token_urlsafe(48)
+    identity_security._master_key.cache_clear()
+    yield
+    settings.IDENTITY_TOKEN_SECRET_KEY = original_key
+    identity_security._master_key.cache_clear()

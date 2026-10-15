@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 import app.api.startup as startup
+import app.domains.identity.service as identity_service
 from app.api.charging_session_flow import router as charging_session_flow_router
 from app.api.vehicle_transfer import router as vehicle_transfer_router
 from app.domains.batteries.router import battery_models_router
@@ -67,7 +68,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     Startup turns on the shared JSON logging, as every other process does at
     its entrypoint; without it the application's own records below WARNING
-    (the development SMS with its one-time code among them) are dropped. The
+    (the development SMS with its one-time code among them) are dropped. It
+    then refuses to start without a token signing key (hardening D1). The
     schema comes from Alembic (``make db-reset``), never from the app.
 
     Args:
@@ -76,11 +78,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     Yields:
         Control to FastAPI while the application serves requests.
 
+    Raises:
+        RuntimeError: If `IDENTITY_TOKEN_SECRET_KEY` is missing or too short.
+
     Side Effects:
         On startup, configures the root logger (idempotent). On shutdown,
         disposes the shared database engine's connection pool.
     """
     configure_logging()
+    identity_service.require_token_secret()
     yield
     await close_db()
 

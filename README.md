@@ -38,7 +38,9 @@ make setup
 `make setup` is safe to re-run. It:
 
 1. creates `backend/.env` and `infra/.env` from their `.env.example` files
-   (an existing `.env` is never overwritten);
+   (an existing `.env` is never overwritten), and writes a generated
+   `IDENTITY_TOKEN_SECRET_KEY` into `backend/.env` when it is empty (the API
+   refuses to start without one);
 2. runs `uv sync` in `backend/` — runtime dependencies plus the `dev`
    dependency group (ruff, mypy, pytest, import-linter, pytest-cov);
 3. points git at `.githooks/`, so every commit runs `make check`;
@@ -52,6 +54,8 @@ Manual equivalent, if you prefer to run the steps yourself:
 ```bash
 cp backend/.env.example backend/.env
 cp infra/.env.example infra/.env
+# then set IDENTITY_TOKEN_SECRET_KEY in backend/.env to the output of:
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 make backend-install     # uv sync
 make install-hooks
 make infra-up

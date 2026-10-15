@@ -148,8 +148,9 @@ class Settings(BaseSettings):
         CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: Maximum span of the F-C5
             station energy time-series query.
         IDENTITY_TOKEN_SECRET_KEY: Secret that signs access tokens and keys
-            the hash of one-time codes; leave empty in development to get a
-            random per-process key (tokens then die with the process).
+            the hash of one-time codes; required in every environment (at
+            least 32 characters, checked when the API starts; `make setup`
+            generates one).
         IDENTITY_ACCESS_TOKEN_TTL_SECONDS: Lifetime of an access token; the
             refresh token renews it.
         IDENTITY_SESSION_DRIVER_APP_DAYS: Idle lifetime of an Android / iOS
@@ -387,8 +388,8 @@ class Settings(BaseSettings):
     CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS: int = Field(default=31, ge=1)
 
     # Identity (WP2): sessions, passwords, one-time codes. The secret has no
-    # default on purpose (no default credentials in source): when empty, the
-    # security module draws a random key at start-up and logs a warning.
+    # default on purpose (no default credentials in source); the API refuses
+    # to start while it is empty or shorter than 32 characters (hardening D1).
     IDENTITY_TOKEN_SECRET_KEY: str = ""
     IDENTITY_ACCESS_TOKEN_TTL_SECONDS: int = Field(default=900, ge=60)
     IDENTITY_SESSION_DRIVER_APP_DAYS: int = Field(default=90, ge=1)

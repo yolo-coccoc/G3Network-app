@@ -8,14 +8,14 @@ are synchronous and CPU-bound where noted; services run the slow ones with
 Limitations: access tokens are signed ``<session_id>.<expiry>.<signature>``
 strings (not JWT) that the server validates against the session row, so a
 logout takes effect at once. The signing key comes from
-`IDENTITY_TOKEN_SECRET_KEY`; when it is empty a random key is drawn per
-process, which is acceptable only for development.
+`IDENTITY_TOKEN_SECRET_KEY`, which every environment must set (at least
+`TOKEN_SECRET_MIN_LENGTH` characters): a random per-process key would log
+everybody out on each restart and break as soon as two API workers run.
 """
 
 import base64
 import hashlib
 import hmac
-import logging
 import re
 import secrets
 from datetime import datetime
@@ -25,7 +25,10 @@ from uuid import UUID
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
-logger = logging.getLogger(__name__)
+# Shortest accepted `IDENTITY_TOKEN_SECRET_KEY`: 32 characters of a
+# `secrets.token_urlsafe` value carry about 190 bits, well above the 128-bit
+# floor for an HMAC key; a shorter value is a typo or a placeholder.
+TOKEN_SECRET_MIN_LENGTH = 32
 
 # scrypt cost: N=2**14, r=8, p=1 needs about 16 MiB and ~50 ms, inside
 # hashlib's default memory limit.
@@ -57,21 +60,34 @@ def _b64decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + padding)
 
 
+def require_token_secret() -> None:
+    """Refuse to run without a usable signing key (hardening D1).
+
+    Raises:
+        RuntimeError: If `IDENTITY_TOKEN_SECRET_KEY` is shorter than
+            `TOKEN_SECRET_MIN_LENGTH` characters (an empty one included).
+    """
+    if len(settings.IDENTITY_TOKEN_SECRET_KEY) < TOKEN_SECRET_MIN_LENGTH:
+        raise RuntimeError(
+            "IDENTITY_TOKEN_SECRET_KEY must be at least "
+            f"{TOKEN_SECRET_MIN_LENGTH} characters: run `make setup`, or set "
+            'the output of `python3 -c "import secrets; '
+            'print(secrets.token_urlsafe(48))"` in backend/.env'
+        )
+
+
 @lru_cache
 def _master_key() -> bytes:
     """Return the process-wide secret key behind tokens and code hashes.
 
     Returns:
-        The configured secret as bytes, or a random key when none is
-        configured (a warning is logged once).
+        The configured secret as bytes.
+
+    Raises:
+        RuntimeError: If the secret is missing or too short.
     """
-    if settings.IDENTITY_TOKEN_SECRET_KEY:
-        return settings.IDENTITY_TOKEN_SECRET_KEY.encode("utf-8")
-    logger.warning(
-        "IDENTITY_TOKEN_SECRET_KEY is empty: using a random key for this "
-        "process; every restart invalidates all access tokens"
-    )
-    return secrets.token_bytes(32)
+    require_token_secret()
+    return settings.IDENTITY_TOKEN_SECRET_KEY.encode("utf-8")
 
 
 def _derived_key(purpose: str) -> bytes:

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+import app.domains.identity.security as identity_security
 from app.domains.identity.security import (
     create_access_token,
     generate_one_time_code,
@@ -18,6 +19,7 @@ from app.domains.identity.security import (
     verify_password,
 )
 from app.libs.common.clock import utc_now
+from app.libs.common.config import settings
 
 
 def test_password_hash_round_trip_and_wrong_password() -> None:
@@ -93,3 +95,27 @@ def test_invalid_phone_number_is_rejected() -> None:
         normalize_phone_number("abc")
     with pytest.raises(ValueError):
         normalize_phone_number("+123")
+
+
+@pytest.mark.parametrize("configured_key", ["", "too-short-placeholder"])
+def test_require_token_secret_rejects_a_missing_or_short_key(
+    monkeypatch: pytest.MonkeyPatch, configured_key: str
+) -> None:
+    """With no usable key the process refuses to sign anything (hardening D1)."""
+    monkeypatch.setattr(settings, "IDENTITY_TOKEN_SECRET_KEY", configured_key)
+
+    with pytest.raises(RuntimeError, match="IDENTITY_TOKEN_SECRET_KEY"):
+        identity_security.require_token_secret()
+
+
+def test_require_token_secret_accepts_a_long_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key of the minimum length passes the start-up check."""
+    monkeypatch.setattr(
+        settings,
+        "IDENTITY_TOKEN_SECRET_KEY",
+        "k" * identity_security.TOKEN_SECRET_MIN_LENGTH,
+    )
+
+    identity_security.require_token_secret()

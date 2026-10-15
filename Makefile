@@ -54,6 +54,16 @@ help:
 setup:
 	@test -f backend/.env || { cp backend/.env.example backend/.env && echo "✓ Created backend/.env from backend/.env.example"; }
 	@test -f infra/.env || { cp infra/.env.example infra/.env && echo "✓ Created infra/.env from infra/.env.example"; }
+	@# The API refuses to start without a token signing key (hardening D1):
+	@# generate one into backend/.env when the line is missing or empty.
+	@python3 -c "import pathlib, re, secrets; \
+	path = pathlib.Path('backend/.env'); text = path.read_text(); \
+	pattern = re.compile(r'^IDENTITY_TOKEN_SECRET_KEY=(.*)$$', re.M); found = pattern.search(text); \
+	ok = found is not None and len(found.group(1).strip()) >= 32; \
+	line = 'IDENTITY_TOKEN_SECRET_KEY=' + secrets.token_urlsafe(48); \
+	text = text if ok else (pattern.sub(line, text, count=1) if found else text.rstrip(chr(10)) + chr(10) + line + chr(10)); \
+	path.write_text(text); \
+	print('✓ IDENTITY_TOKEN_SECRET_KEY is set in backend/.env' if ok else '✓ Generated IDENTITY_TOKEN_SECRET_KEY in backend/.env')"
 	cd backend && uv sync
 	git config core.hooksPath .githooks
 	$(COMPOSE) up -d
