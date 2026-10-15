@@ -409,8 +409,7 @@ FastAPI registers the following domains:
   by `app/api/fleet_visibility.py` (FL-13, FL-14); outside the limit is a 404,
   and the driver profile list is not limited. Truck-less notifications and
   support cases stay visible, other truck-less rows are hidden, and a
-  caller's own charging sessions and bills always pass (FL-15, assumed,
-  awaiting the owner's confirmation). The organization administrator and
+  caller's own charging sessions and bills always pass (FL-15). The organization administrator and
   internal staff are never limited; deleting a fleet ends the assignments
   pointing at it (`unassigned_by` NULL), and so does ending the membership
   (a membership-end hook wired in `app/api/membership_end_hooks.py`; a lock
@@ -695,7 +694,7 @@ convention will be written once the first task for that part starts.
   catalog in `identity/types.py`. The per-manager fleet limit (FL-10) covers
   every endpoint a limited manager can reach except the driver profile list
   (FL-14); its rule for rows with no truck (FL-15) awaits the owner's
-  confirmation ([backend-hardening.md](../planners/backend-hardening.md) D5).
+  confirmation ([backend-hardening.md](../planners/done/backend-hardening.md) D5).
   `drivers` has no empty-trip detection (F-A9, suspended).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query

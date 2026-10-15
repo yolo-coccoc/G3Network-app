@@ -77,9 +77,8 @@ async def get_by_id(
 def _vehicle_limit_condition(vehicle_ids: frozenset[UUID]) -> ColumnElement[bool]:
     """Build the fleet-limit condition (FL-10) shared by every case query.
 
-    A case about no truck stays visible to a limited caller (hardening D5,
-    awaiting the owner's confirmation): it concerns the whole organization,
-    not a fleet.
+    A case about no truck stays visible to a limited caller (FL-15): it
+    concerns the whole organization, not a fleet.
 
     Args:
         vehicle_ids: The trucks the caller may see.

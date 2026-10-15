@@ -96,10 +96,6 @@ Limit a fleet manager or dispatcher to some fleets (and everything below them); 
 **Related tables:** `fleet_user_assignments`  
 **Sources:** Decision FL-03 · Decision FL-13 · Decision FL-14 · Decision FL-15 · Decision FL-16
 
-**Open questions:**
-
-- Rows with no truck (D5, FL-15, assumed): notifications and support cases about no truck stay visible to a limited manager; truck-less charging sessions and bills (except the manager's own), packs in stock, unmounted devices, their warranties, charger warranties and trips with no truck are hidden. Owner to confirm.
-
 <a id="flt-04"></a>
 
 ### FLT-04 Fleet list and live map

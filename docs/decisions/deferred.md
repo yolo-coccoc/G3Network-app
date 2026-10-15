@@ -1970,7 +1970,7 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
 - **Date recorded**: 2026-10-12
 - **Additional notes**: Design it together with the orphan policy: an automatic close needs the same
   "closed by whom (the system), why" fields. Since 2026-10-15 (hardening D2/D4,
-  `docs/planners/backend-hardening.md`) the staff member is recorded as `changed_by` in the
+  `docs/planners/done/backend-hardening.md`) the staff member is recorded as `changed_by` in the
   session bill's history; the session row itself still does not name them.
 
 ### 102. Remaining charger commands: Smart Charging, firmware, diagnostics, reservation; closing a connection; several gateway processes
@@ -2011,11 +2011,35 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
   failure; a staff action after the cause is fixed is the safer first step (hardening D2). The
   failure is logged (`Session-ended hook failed`), and no failure has been seen yet.
 - **Related planner/feature**: PAY-10 (`docs/product/features/features.yaml`), BL-19
-  (`docs/decisions/decision-log.md`), `docs/planners/backend-hardening.md` D2.
+  (`docs/decisions/decision-log.md`), `docs/planners/done/backend-hardening.md` D2.
 - **Date recorded**: 2026-10-15
 - **Additional notes**: The sweep belongs above the domains (`app/api/`, like
   `billing_hooks.py`): `billing` cannot read sessions and `charging_sessions` cannot call billing.
   It could run in the OCPP gateway's loop next to the pending-session sweep, through a hook slot.
+
+### 106. Production deployment setup (VPS)
+
+- **Short description**: Everything needed to run the backend outside development: a container
+  image or service units for the API, the OCPP gateway and the ingestion/monitoring workers; a
+  production compose file or equivalent for PostgreSQL (TimescaleDB, PostGIS) and EMQX; TLS and a
+  reverse proxy for the API and `wss://` for chargers; production settings and secrets (its own
+  `IDENTITY_TOKEN_SECRET_KEY`, database and broker credentials, real SMS / e-mail / bank providers
+  instead of the logging fakes); backups and monitoring; and the switch of the migration policy:
+  freeze `0001_baseline_schema` and add an immutable migration per later change (`database.md`).
+- **Purpose/role in the system**: Lets real customers, trucks and chargers use the system on a VPS,
+  with a production database that is separate from the development and test databases and is
+  never rebuilt with `make db-reset`.
+- **Reason for deferral**: The backend is still in the development and test phase (local machine and
+  the test VM); the owner deferred the production setup on 2026-10-15. Platform choices are still
+  open: CI/CD (open question 1) and secrets management (open question 2) in
+  `docs/decisions/decision-log.md`.
+- **Related planner/feature**: `.claude/rules/repo-conventions.md` (no `backend/Dockerfile` or
+  `infra/docker-compose.prod.yml` until a task asks), `.claude/rules/database.md` (freezing the
+  baseline), items 2, 27, 31, 73 and 99 (security and reliability work due before production),
+  `docs/planners/done/backend-hardening.md`.
+- **Date recorded**: 2026-10-15
+- **Additional notes**: Before the first real data, check the refactor planner's "Next steps" for
+  the items marked as due before deployment (real providers, webhook replay window, rate limits).
 
 ---
 

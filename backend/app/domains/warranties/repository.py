@@ -82,8 +82,7 @@ def _visible_to(vehicle_ids: frozenset[UUID]) -> ColumnElement[bool]:
     A fleet-limited manager sees a warranty only through a truck of their
     fleets: the truck's own warranty, or that of the battery or T-Box fitted
     to it now. A charger, a pack in stock or an unmounted device is on no
-    truck, so its warranty is hidden (fail closed; hardening D5, awaiting
-    the owner's confirmation).
+    truck, so its warranty is hidden (fail closed; FL-15).
 
     Args:
         vehicle_ids: The trucks the caller's fleet limit allows.

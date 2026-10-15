@@ -2,13 +2,13 @@
 
 > Feature code: FLT-03 (Fleet manager scope), PAY-10 (session bills), ACC-01 /
 > ACC-13 (accounts, administrator roles); no new feature
-> Status: 🚧 In progress — Steps 1-5 done and committed (2026-10-15), Step 6 done except the owner's confirmation of D5 (assumed); the planner moves to `done/` once D5 is confirmed
+> Status: ✅ Done (2026-10-15) — Steps 1-6 committed; D5 confirmed by the owner on 2026-10-15. Left out: the driver profile list stays unlimited (a profile has no fleet), the automatic bill retry (`deferred.md` 105)
 > Created: 2026-10-15
 >
 > Inputs: "Next steps (debugging phase)" of
-> [backend-refactor-implementation.md](./backend-refactor-implementation.md#next-steps-debugging-phase)
+> [backend-refactor-implementation.md](../backend-refactor-implementation.md#next-steps-debugging-phase)
 > (items 2, 4, 9, 10 and RV-ID7), decisions DM-29, FL-10, FL-13, BL-19, ID-51 in
-> [decision-log.md](../decisions/decision-log.md). The owner approved this
+> [decision-log.md](../../decisions/decision-log.md). The owner approved this
 > batch on 2026-10-15 ("go ahead" to the recommendation).
 
 ## 1. Goal
@@ -31,7 +31,7 @@ RV-ID10 (owner decisions).
 | D2 | A completed session whose bill stayed QUOTED (a failed session-ended hook) | A staff action `POST /charging-sessions/{session_id}/bill/settle` (internal bill reviewers) in `app/api/charging_session_flow.py` re-runs the idempotent settle (COMPLETED) or void (ABANDONED); staff find such bills with the bill list's status filter | An automatic sweep: the hook failed on a bug or a database fault, so retrying blindly repeats it; recorded in `deferred.md` | ✅ 2026-10-15 |
 | D3 | Two simultaneous removals of the last two usable HEAD_ADMINs (RV-ID7) | A transaction-level advisory lock (`pg_advisory_xact_lock`) taken before the usable-holder count, on every path that can remove a usable HEAD_ADMIN: end or lock a membership, revoke the role, lock the account (which had no guard) | `SELECT ... FOR UPDATE` on the assignment rows: does not serialize a change of the membership's or the account's status | ✅ 2026-10-15 |
 | D4 | History trigger without a reason (DM-29) | Every UPDATE path already sets a reason (inventory 2026-10-15), so the trigger raises again when none is set (ends the DM-29 deviation); a staff force-close and a vehicle transfer pass the acting user on to the bill and trip they close | Keep the `Unspecified change` fallback | ✅ 2026-10-15 |
-| D5 | Rows with no truck under the fleet limit | Notifications and support cases with no truck stay visible to a limited manager (alert routing already delivers them to every manager); every other truck-less row (charging sessions and their bills, warranties on chargers, packs and devices in stock) is hidden, like truck-less trips | Hide every truck-less row: a limited manager would lose an SOS sent without a VIN | ❓ Assumed, owner to confirm |
+| D5 | Rows with no truck under the fleet limit | Notifications and support cases with no truck stay visible to a limited manager (alert routing already delivers them to every manager); every other truck-less row (charging sessions and their bills, warranties on chargers, packs and devices in stock) is hidden, like truck-less trips | Hide every truck-less row: a limited manager would lose an SOS sent without a VIN | ✅ 2026-10-15 (owner) |
 | D6 | Fleet assignments of a membership that ends | Closed by a new membership-end hook when the membership ENDS; a LOCK leaves them open, because no open row means "whole organization" and an unlock would widen the person's reach | Close on lock too | ✅ 2026-10-15 |
 
 ### 2.1 Out of scope (deferred)
@@ -124,19 +124,19 @@ outside the limit.
   passed by the routers of notifications, support, charging sessions (and the
   session flow's bill and receipt), billing (bill list), batteries,
   warranties, telematics, vehicles and trips (§3.3); outside the limit is a
-  404. D5 applied as assumed (truck-less notifications and support cases
+  404. D5 applied (truck-less notifications and support cases
   visible, other truck-less rows hidden, a limited manager must plan a trip
   with a truck, a caller's own charging sessions and bills always pass). D6:
   `fleet.service.handle_membership_end` registered in
   `app/api/membership_end_hooks.py` (closes open assignments on END, not on
   LOCK); `assign_fleet_to_membership` refuses an ended membership (404).
-  Decisions FL-14, FL-15 (⏳), FL-16; new `domain-boundaries.md` edge
+  Decisions FL-14, FL-15, FL-16; new `domain-boundaries.md` edge
   `membership_end_hooks.py` → `fleet`. Evidence: smoke tests per area (§5)
   and the PostgreSQL test `test_every_fleet_limited_list_runs_on_postgresql`
   (`tests/test_postgres_operations_review.py`).
 - [x] **Step 6 — Verify and document**: `make check`,
   `make backend-test-integration`, convention review, docs sync (2026-10-15;
-  results in §5). Open: the owner's confirmation of D5.
+  results in §5). D5 confirmed by the owner on 2026-10-15.
 
 ## 5. Verification
 
@@ -175,5 +175,5 @@ outside the limit.
 - `deferred.md` 105 — automatic retry of a failed session-ended hook (D2).
 - `deferred.md` 101 — note added: the staff member of a force-close is now in
   the bill's history; the session row still does not name them.
-- Owner to confirm D5 (FL-15 in the decision log, question on FLT-03 in the
-  feature catalog).
+- `deferred.md` 106 — production deployment setup (the owner deferred it on
+  2026-10-15).
