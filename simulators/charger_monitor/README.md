@@ -1,5 +1,7 @@
 # Charger monitor
 
+How the three simulators fit together, and the test-day checklist: [../README.md](../README.md).
+
 A web page for the OCPP chargers connected to the backend, with two tabs:
 
 - **Monitoring**: for each charger, its connection, the startup message

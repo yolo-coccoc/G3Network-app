@@ -1,5 +1,7 @@
 # Charger simulator
 
+How the three simulators fit together, and the test-day checklist: [../README.md](../README.md).
+
 A simulated OCPP 1.6J dual-gun DC charger (240 kW shared by two guns).
 Starting it is like switching a charger on: it connects to the central system,
 sends its startup message (`BootNotification`) and the status of each gun,

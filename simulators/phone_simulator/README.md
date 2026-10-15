@@ -1,5 +1,7 @@
 # Phone simulator
 
+How the three simulators fit together, and the test-day checklist: [../README.md](../README.md).
+
 The driver's mobile app, on a page shaped like a phone. It plays one driver's
 phone against the backend's HTTP API, the same calls the real app will make:
 
