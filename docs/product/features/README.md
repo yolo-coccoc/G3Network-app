@@ -24,7 +24,7 @@ A feature is done when every surface it needs is done. A cell shows
 | [MON — Vehicle & battery monitoring](domains/telemetry.md) | 19 | 1 | 4/18 | 0/10 | 0/16 |
 | [RTE — Range & route planning](domains/routing.md) | 7 | 0 | 0/6 | 0/5 | 0/1 |
 | [DRV — Drivers](domains/drivers.md) | 7 | 0 | 3/7 | 0/5 | 0/5 |
-| [FLT — Fleet management](domains/fleet.md) | 8 | 0 | 4/8 | — | 0/8 |
+| [FLT — Fleet management](domains/fleet.md) | 8 | 0 | 5/8 | — | 0/8 |
 | [STN — Charging network](domains/charging_stations.md) | 15 | 1 | 7/15 | 0/6 | 0/12 |
 | [CHG — Charging sessions](domains/charging_sessions.md) | 8 | 1 | 5/8 | 0/3 | 0/5 |
 | [POL — Charging policy & warranty](domains/policy.md) | 6 | 0 | 0/6 | 0/2 | 0/5 |
@@ -36,7 +36,7 @@ A feature is done when every surface it needs is done. A cell shows
 | [CRB — Carbon & green transition](domains/carbon.md) | 11 | 0 | 0/11 | 0/2 | 0/7 |
 | [PLT — Platform, data & compliance](domains/platform.md) | 7 | 0 | 0/7 | — | 0/4 |
 | [TMS — Transport management integration (Phase 2)](domains/tms.md) | 6 | 0 | 0/6 | 0/1 | 0/4 |
-| **Total** | **178** | **9** | **60/176** | **0/64** | **0/138** |
+| **Total** | **178** | **9** | **61/176** | **0/64** | **0/138** |
 
 ## Domains and releases
 

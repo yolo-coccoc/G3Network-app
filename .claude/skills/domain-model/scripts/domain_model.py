@@ -620,15 +620,13 @@ def _build_history_table(
             meaning=(
                 "Why the row was changed, set by the application for the "
                 "transaction: typed by the person for an administrative "
-                "decision, a fixed text for a routine action. When the "
-                "application sets none, the trigger records 'Unspecified "
-                "change' (DM-29)."
+                "decision, a fixed text for a routine action. An update "
+                "with no reason set fails."
             ),
             vi_meaning=(
                 "Lý do thay đổi dòng, do ứng dụng đặt cho giao dịch: người "
                 "dùng nhập với quyết định quản trị, văn bản cố định với thao "
-                "tác thường lệ. Nếu ứng dụng không đặt, trigger ghi "
-                "'Unspecified change' (DM-29)."
+                "tác thường lệ. Cập nhật không có lý do sẽ bị từ chối."
             ),
             example="Customer moved to a new office",
             is_planned=False,

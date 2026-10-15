@@ -10,7 +10,7 @@ Groups of trucks inside an organization, their managers, the live fleet map, geo
 
 - [ ] **FLT-01** [Fleets and fleet hierarchy](#flt-01) — Backend ✅ · Portal ⬜
 - [ ] **FLT-02** [Fleet vehicle membership](#flt-02) — Backend ✅ · Portal ⬜
-- [ ] **FLT-03** [Fleet manager scope](#flt-03) — Backend 🚧 · Portal ⬜
+- [ ] **FLT-03** [Fleet manager scope](#flt-03) — Backend ✅ · Portal ⬜
 - [ ] **FLT-04** [Fleet list and live map](#flt-04) — Backend ✅ · Portal ⬜
 - [ ] **FLT-05** [Geofences and zone alerts](#flt-05) — Backend ✅ · Portal ⬜
 - [ ] **FLT-06** [Fleet KPI dashboard](#flt-06) — Backend ⬜ · Portal ⬜
@@ -88,17 +88,17 @@ Limit a fleet manager or dispatcher to some fleets (and everything below them); 
 - Assign fleets to a member's fleet-level roles
 - Assignment covers every fleet below
 
-**Status:** Backend 🚧 · Portal ⬜
+**Status:** Backend ✅ · Portal ⬜
 
 **Depends on:** [FLT-01](#flt-01), [ACC-13](identity.md#acc-13)  
 **Needed by:** [ACC-15](identity.md#acc-15)  
-**Also touches:** `identity`  
+**Also touches:** `identity`, `vehicles`, `telemetry`, `telematics`, `drivers`, `notifications`, `support`, `charging_sessions`, `billing`, `batteries`, `warranties`  
 **Related tables:** `fleet_user_assignments`  
-**Sources:** Decision FL-03
+**Sources:** Decision FL-03 · Decision FL-13 · Decision FL-14 · Decision FL-15 · Decision FL-16
 
 **Open questions:**
 
-- The fleet limit is applied to fleets, telemetry, vehicle, driver-session and trip lists and to alert recipients, not yet to the organization notification list, support cases, charging sessions, bills, batteries, warranties or detail-by-ID endpoints (see Known issues in the refactor plan).
+- Rows with no truck (D5, FL-15, assumed): notifications and support cases about no truck stay visible to a limited manager; truck-less charging sessions and bills (except the manager's own), packs in stock, unmounted devices, their warranties, charger warranties and trips with no truck are hidden. Owner to confirm.
 
 <a id="flt-04"></a>
 

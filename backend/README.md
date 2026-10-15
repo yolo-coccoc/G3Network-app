@@ -64,8 +64,10 @@ sets.
 
 `make setup` copies `.env.example` to `.env`. Every setting is defined, typed
 and validated in `app/libs/common/config.py`; `.env.example` documents each
-one, grouped by component, with its default. Only `DATABASE_URL` is required,
-and it must never be placed in source code.
+one, grouped by component, with its default. Only `DATABASE_URL` has no
+default, and it must never be placed in source code. The API also refuses to
+start without an `IDENTITY_TOKEN_SECRET_KEY` of at least 32 characters, which
+`make setup` generates into `.env` when it is empty.
 
 ## API documentation
 

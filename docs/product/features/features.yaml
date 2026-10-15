@@ -2352,16 +2352,16 @@ features:
     capabilities:
       - ["Assign fleets to a member's fleet-level roles", "Giao đội xe cho vai trò cấp đội xe của thành viên"]
       - ["Assignment covers every fleet below", "Phạm vi được giao bao gồm mọi đội cấp dưới"]
-    surfaces: {backend: doing, portal: todo}
+    surfaces: {backend: done, portal: todo}
     related_tables: [fleet_user_assignments]
     questions:
-      - ["The fleet limit is applied to fleets, telemetry, vehicle, driver-session and trip lists and to alert recipients, not yet to the organization notification list, support cases, charging sessions, bills, batteries, warranties or detail-by-ID endpoints (see Known issues in the refactor plan).", "Giới hạn đội xe đã áp dụng cho đội xe, dữ liệu xe, danh sách xe, phiên lái, chuyến đi và người nhận cảnh báo; chưa áp dụng cho danh sách thông báo của tổ chức, ca hỗ trợ, phiên sạc, hóa đơn, pin, bảo hành và các API chi tiết theo ID (xem Known issues trong kế hoạch refactor)."]
+      - ["Rows with no truck (D5, FL-15, assumed): notifications and support cases about no truck stay visible to a limited manager; truck-less charging sessions and bills (except the manager's own), packs in stock, unmounted devices, their warranties, charger warranties and trips with no truck are hidden. Owner to confirm.", "Dữ liệu không gắn xe (D5, FL-15, đang giả định): thông báo và ca hỗ trợ không gắn xe vẫn hiện với quản lý bị giới hạn đội; phiên sạc và hóa đơn không gắn xe (trừ của chính người đó), pin trong kho, thiết bị chưa lắp, bảo hành của chúng, bảo hành trụ sạc và chuyến đi không có xe bị ẩn. Chờ chủ dự án xác nhận."]
     priority: Must
     release: P1.0
     offer: tbd
     depends_on: [FLT-01, ACC-13]
-    touches: [identity]
-    sources: [Decision FL-03]
+    touches: [identity, vehicles, telemetry, telematics, drivers, notifications, support, charging_sessions, billing, batteries, warranties]
+    sources: [Decision FL-03, Decision FL-13, Decision FL-14, Decision FL-15, Decision FL-16]
 
   - code: FLT-04
     name: Fleet list and live map

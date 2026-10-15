@@ -290,7 +290,7 @@ Every earlier version of a row of `organizations`: a copy of the whole row, take
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (organizations.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. An update with no reason set fails. | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -402,7 +402,7 @@ Every earlier version of a row of `users`: a copy of the whole row, taken just b
 | `deleted_at` | timestamptz | yes |  |  | Value before the change (users.deleted_at). | `NULL` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. An update with no reason set fails. | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -487,7 +487,7 @@ Every earlier version of a row of `memberships`: a copy of the whole row, taken 
 | `updated_at` | timestamptz | yes |  |  | Value before the change (memberships.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. An update with no reason set fails. | `Customer moved to a new office` |
 
 **Indexes**
 
@@ -733,7 +733,7 @@ Every earlier version of a row of `organization_settings`: a copy of the whole r
 | `updated_at` | timestamptz | yes |  |  | Value before the change (organization_settings.updated_at). | `2026-09-10T07:15:00Z` |
 | `changed_at` | timestamptz | no |  |  | When this version of the row was replaced. | `2026-09-10T07:15:00Z` |
 | `changed_by` | uuid | yes | FK | [users](#users).user_id (on delete restrict) | User who made the change; NULL when the system made it. | `9b2e7d4a-1c3f-4a8e-b6d2-5e0f1a9c3d22` |
-| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. When the application sets none, the trigger records 'Unspecified change' (DM-29). | `Customer moved to a new office` |
+| `change_reason` | varchar(200) | no |  |  | Why the row was changed, set by the application for the transaction: typed by the person for an administrative decision, a fixed text for a routine action. An update with no reason set fails. | `Customer moved to a new office` |
 
 **Indexes**
 

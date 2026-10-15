@@ -219,8 +219,9 @@ FastAPI registers the following domains:
   `POST /charging-sessions/{id}/force-close` (body `{reason}`, CHG-02 roles,
   internal only, `ACTIVE` sessions only; CE-29): it completes now with
   `stop_reason` `StaffClosed` and no closing reading, so billing falls back to
-  the newest outlet measurement or puts the bill ON_HOLD; the staff member and
-  the reason are only logged (deferred.md 101). The force-close and the stop
+  the newest outlet measurement or puts the bill ON_HOLD; the staff member is
+  recorded as `changed_by` in the bill's history, while the session row names
+  neither them nor the reason, which is only logged (deferred.md 101). The force-close and the stop
   message both read the session row `FOR UPDATE`, so the later of the two sees
   `COMPLETED` (a late stop is then confirmed and ignored). The start by QR (`POST /charging-sessions/scan`), the
   stop (`POST /charging-sessions/{id}/stop`) and the receipt
@@ -239,7 +240,12 @@ FastAPI registers the following domains:
   `charging_sessions.service` (`register_session_ended_hook`), filled by
   `app/api/billing_hooks.py` in every process, the OCPP gateway included
   (`app/api/startup.register_all_hooks`, BL-19, CV-21): a completed session is billed and the wallet
-  debited in the stop message's transaction, an abandoned one voids its bill. A PENDING row ends
+  debited in the stop message's transaction, an abandoned one voids its bill. A
+  hook that fails is rolled back to its savepoint and leaves the bill QUOTED;
+  internal bill reviewers re-run it with
+  `POST /charging-sessions/{id}/bill/settle` (in the session flow:
+  `resolve_session_ended_event`, then the same `billing_hooks` function; BL-29),
+  and an automatic retry is deferred (deferred.md 105). A PENDING row ends
   `ABANDONED` when its remote start is refused / times out / is not sent (the
   gateway's command loop, in the same step as the command's outcome) or when
   the scan is older than `CHARGING_PENDING_SESSION_TIMEOUT_SECONDS` (swept by
@@ -274,7 +280,8 @@ FastAPI registers the following domains:
   `/tariffs`, `/tariffs/{id}/versions`, `/tariffs/in-force`,
   `/charging-session-bills`, `/wallets/me`, `/wallets/{user_id}`,
   `/payments/{id}`, `/payments/vietqr/notifications` (public, shared-secret
-  header), and `GET /charging-sessions/{id}/bill` in the session flow.
+  header), and `GET /charging-sessions/{id}/bill` and the staff retry
+  `POST /charging-sessions/{id}/bill/settle` in the session flow.
 - `notifications`: a generic, backend-storage notification table (F-A2)
   polled via `GET /api/v1/notifications?after_id=` (ascending cursor;
   `order=desc` returns the newest page instead), filterable by vehicle,
@@ -313,7 +320,12 @@ FastAPI registers the following domains:
   leave, grant/revoke, ORG_ADMIN handover), legal documents and consent, and
   the access audit log. Sessions are rows of `user_sessions` with an opaque
   hashed refresh token; the access token is an HMAC-signed short-lived string
-  checked against the session row (no JWT, standard library only). Other
+  checked against the session row (no JWT, standard library only), signed
+  with `IDENTITY_TOKEN_SECRET_KEY`, without which the API refuses to start
+  (IS-12). Removing a usable HEAD_ADMIN (ending or locking the membership,
+  revoking the role, locking the account) is refused when no other usable
+  one would remain, counted under a transaction-level advisory lock (ID-51,
+  ID-53). Other
   domains authenticate a request with `identity.dependencies`
   (`get_current_principal`, `require_roles`) and apply the data rule with
   `principal.can_access_organization`. SMS and e-mail go behind
@@ -389,11 +401,20 @@ FastAPI registers the following domains:
   `resolve_visible_vehicle_ids` compute the visible set (assigned fleets plus
   all descendants, and the trucks in them); the fleet service, the telemetry
   and telematics fleet views, and per-vehicle telemetry apply it directly,
-  while the vehicle, driving-session and trip lists get it through the
+  while every other endpoint a limited manager can reach (vehicles, driving
+  sessions, trips, telematics, batteries, warranties, charging sessions and
+  their bills and receipts, the bill list, support cases, the organization
+  notification view) gets it through the
   `identity.dependencies.get_visible_vehicle_ids` request dependency, filled
-  by `app/api/fleet_visibility.py` (FL-13). The organization administrator and
+  by `app/api/fleet_visibility.py` (FL-13, FL-14); outside the limit is a 404,
+  and the driver profile list is not limited. Truck-less notifications and
+  support cases stay visible, other truck-less rows are hidden, and a
+  caller's own charging sessions and bills always pass (FL-15, assumed,
+  awaiting the owner's confirmation). The organization administrator and
   internal staff are never limited; deleting a fleet ends the assignments
-  pointing at it (`unassigned_by` NULL).
+  pointing at it (`unassigned_by` NULL), and so does ending the membership
+  (a membership-end hook wired in `app/api/membership_end_hooks.py`; a lock
+  leaves them open, FL-16).
   Depends one-directionally on `vehicles` to resolve/validate a VIN on
   membership add/remove (both by VIN) and to enrich F-E1's vehicle list
   (`vin`/`license_plate`/`status`, via a `VehicleSummary` DTO; null for a
@@ -476,6 +497,11 @@ extensions:
   `WHERE vehicle_id IS NOT NULL AND deleted_at IS NULL`); a device's serial and
   IMEI are unique among devices not deleted.
 - `uuid-ossp` for the local database.
+- Change history: each tracked table has a `<singular>_history` table filled
+  by an `AFTER UPDATE` trigger (`app/libs/db/history_ddl.py`) with the actor
+  and the reason the application set for the transaction
+  (`app/libs/db/history.set_change_context`); a tracked update with no reason
+  is refused (SQLSTATE `HC001`, DM-30).
 
 The schema is a single Alembic migration, `0001_baseline_schema`. During the
 bootstrap phase (no data worth keeping) a schema change edits that migration
@@ -593,19 +619,19 @@ call each other is in
 │   │   │
 │   │   ├── api/
 │   │   │   ├── main.py                # FastAPI app that merges routers from every domains/*/router.py; run via "make backend-dev" (host, not a container)
-│   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the vehicle, driving-session and trip lists (FL-13)
-│   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers service (DR-10, DR-15)
+│   │   │   ├── fleet_visibility.py    # Wires the fleet limit (FL-10) of a fleet manager to the get_visible_vehicle_ids dependency of every limited endpoint (FL-13, FL-14)
+│   │   │   ├── membership_end_hooks.py # Wires identity's membership end/lock to the drivers and fleet services (DR-10, DR-15, FL-16)
 │   │   │   ├── billing_hooks.py       # Wires the end of a charging session to billing (BL-19)
 │   │   │   ├── notification_hooks.py  # Wires alert routing to the drivers (driver at the wheel) and fleet (FL-10 visibility) domains (NT-15)
 │   │   │   ├── startup.py             # register_all_hooks: every cross-domain hook, called at start-up by the API, every entrypoint and the identity bootstrap (CV-21)
-│   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt, bill across charging_stations, billing, drivers, charging_sessions (CE-20)
+│   │   │   ├── charging_session_flow.py # QR charge: scan, stop, receipt, bill and the staff bill retry across charging_stations, billing, drivers, charging_sessions (CE-20, BL-29)
 │   │   │   └── vehicle_transfer.py    # Truck ownership transfer: one transaction across vehicles, fleet, drivers, batteries (VH-12, VH-21)
 │   │   │
 │   │   └── libs/
 │   │       ├── common/                 # shared, NO business logic: config, logging, errors (domain-exception bases),
 │   │       │                           # clock (utc_now), pagination (normalize_page_window), geo,
 │   │       │                           # reason (non-blank free-text reason type), payload_guard (refuses NaN/NUL in device JSON)
-│   │       └── db/                     # SQLAlchemy base, session, enums (enum_values), Alembic migrations
+│   │       └── db/                     # SQLAlchemy base, session, enums (enum_values), change history (history_ddl, history), Alembic migrations
 │   │
 │   ├── tests/                      # one package per domain (tests/<domain>/test_*_smoke.py) plus tests/libs/;
 │   │                               # shared builders.py/fakes.py; cross-cutting tests at the top level
@@ -666,10 +692,10 @@ convention will be written once the first task for that part starts.
 ## Not yet in the MVP
 
 - The permission-granting step (ID-44): the role table is a copy of the
-  catalog in `identity/types.py`. The per-manager fleet limit (FL-10) is
-  applied to fleets, telemetry, vehicle, driving-session and trip lists and
-  to alert recipients, not to every list (Known issues in
-  [the refactor plan](../planners/backend-refactor-implementation.md)).
+  catalog in `identity/types.py`. The per-manager fleet limit (FL-10) covers
+  every endpoint a limited manager can reach except the driver profile list
+  (FL-14); its rule for rows with no truck (FL-15) awaits the owner's
+  confirmation ([backend-hardening.md](../planners/backend-hardening.md) D5).
   `drivers` has no empty-trip detection (F-A9, suspended).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query
