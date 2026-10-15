@@ -19,7 +19,11 @@ import app.domains.charging_stations.repository as stations_repository
 import app.domains.charging_stations.service as stations_service
 import app.domains.drivers.service as driver_service
 from app.domains.billing.exceptions import InsufficientBalanceError, WalletBlockedError
-from app.domains.billing.types import TariffQuote
+from app.domains.billing.types import (
+    ChargingSessionBillStatus,
+    SessionBillReference,
+    TariffQuote,
+)
 from app.domains.charging_sessions.exceptions import (
     ChargingConnectorBusyError,
     ChargingSessionAlreadyOpenError,
@@ -526,6 +530,42 @@ async def test_receipt_shows_the_place_and_energy_and_leaves_the_bill_null_until
     assert receipt.energy_delivered_wh == Decimal(60000)
     assert (receipt.location_name, receipt.gun_number) == ("Depot", 2)
     assert receipt.bill_status is None and receipt.total_amount is None
+
+    # A bill held for review keeps its figures, but the receipt shows no
+    # amount until it is BILLED (the hold may end in a void).
+    for bill_status, expected_total in (
+        (ChargingSessionBillStatus.ON_HOLD, None),
+        (ChargingSessionBillStatus.BILLED, 29700),
+    ):
+        bill_reference = SessionBillReference(
+            status=bill_status,
+            price_per_kwh=Decimal(450),
+            vat_rate_percent=Decimal(10),
+            energy_wh=Decimal(60000),
+            amount_before_vat=Decimal(27000),
+            vat_amount=Decimal(2700),
+            billed_at=None,
+        )
+
+        async def held_or_billed(
+            db: object,
+            session_id: UUID,
+            *,
+            _bill: SessionBillReference = bill_reference,
+        ) -> SessionBillReference:
+            return _bill
+
+        monkeypatch.setattr(
+            billing_service, "find_session_bill_reference", held_or_billed
+        )
+        receipt = await flow.get_charging_session_receipt_endpoint(
+            session.session_id,
+            principal=DRIVER,
+            visible_vehicle_ids=None,
+            db_session=fake_db_session(),
+        )
+        assert receipt.bill_status == bill_status.value
+        assert receipt.total_amount == expected_total
 
     session.status = SessionStatus.ACTIVE
     with pytest.raises(ChargingSessionStateError):

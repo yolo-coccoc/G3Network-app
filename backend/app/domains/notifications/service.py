@@ -65,8 +65,9 @@ from app.libs.common.clock import utc_now
 logger = logging.getLogger(__name__)
 
 # Roles that read the notifications of a whole organization (NTF-01); a
-# DRIVER-only caller reads only what was delivered to them.
-NOTIFICATION_STAFF_ROLES = roles_for("NTF-01") - {UserRole.DRIVER}
+# DRIVER-only or DISPATCHER-only caller reads only what was delivered to them
+# (a dispatcher holds NTF-01 to open the alerts routed to them, bug-fix D3).
+NOTIFICATION_STAFF_ROLES = roles_for("NTF-01") - {UserRole.DRIVER, UserRole.DISPATCHER}
 
 
 def to_notification_response(

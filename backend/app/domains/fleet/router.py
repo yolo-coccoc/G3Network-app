@@ -319,7 +319,7 @@ async def soft_delete_fleet_endpoint(
     status_code=status.HTTP_201_CREATED,
     response_model=FleetMembershipResponse,
     summary="Add a vehicle to a fleet",
-    description="Add a vehicle to a fleet by VIN. The vehicle must not already be actively in another fleet.",
+    description="Add a vehicle to a fleet by VIN. A vehicle actively in another fleet is refused (409) unless `move` is true, which moves it here (FL-17).",
 )
 async def add_vehicle_to_fleet_endpoint(
     fleet_id: UUID,

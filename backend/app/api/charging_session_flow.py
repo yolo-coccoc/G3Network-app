@@ -51,6 +51,7 @@ from app.domains.billing.exceptions import (
     WalletBlockedError,
 )
 from app.domains.billing.schemas import SessionBillResponse
+from app.domains.billing.types import ChargingSessionBillStatus
 from app.domains.charging_sessions.exceptions import (
     ChargingConnectorBusyError,
     ChargingSessionAlreadyOpenError,
@@ -404,7 +405,8 @@ async def get_charging_session_receipt_endpoint(
 
     Returns:
         Place, times, energy and the bill (``null`` fields until billing has
-        one).
+        one; the amounts stay ``null`` until the bill is BILLED, so a bill
+        held for review shows its status and price only).
 
     Raises:
         ChargingSessionNotFoundError: Unknown session or out of reach (404).
@@ -425,11 +427,19 @@ async def get_charging_session_receipt_endpoint(
         db_session, session.station_id, session.evse_id
     )
     bill = await billing_service.find_session_bill_reference(db_session, session_id)
+    # Money is shown only for a BILLED bill: a bill held for review keeps the
+    # figures it computed, but staff may still release it with others or void
+    # it, so the driver must not read them as the price paid.
+    billed = (
+        bill
+        if bill is not None and bill.status is ChargingSessionBillStatus.BILLED
+        else None
+    )
     total_amount = (
-        bill.amount_before_vat + bill.vat_amount
-        if bill is not None
-        and bill.amount_before_vat is not None
-        and bill.vat_amount is not None
+        billed.amount_before_vat + billed.vat_amount
+        if billed is not None
+        and billed.amount_before_vat is not None
+        and billed.vat_amount is not None
         else None
     )
     return ChargingSessionReceiptResponse(
@@ -453,12 +463,12 @@ async def get_charging_session_receipt_endpoint(
         price_per_kwh=int(bill.price_per_kwh) if bill else None,
         vat_rate_percent=bill.vat_rate_percent if bill else None,
         amount_before_vat=(
-            int(bill.amount_before_vat)
-            if bill and bill.amount_before_vat is not None
+            int(billed.amount_before_vat)
+            if billed and billed.amount_before_vat is not None
             else None
         ),
         vat_amount=(
-            int(bill.vat_amount) if bill and bill.vat_amount is not None else None
+            int(billed.vat_amount) if billed and billed.vat_amount is not None else None
         ),
         total_amount=None if total_amount is None else int(total_amount),
         billed_at=bill.billed_at if bill else None,

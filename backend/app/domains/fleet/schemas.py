@@ -131,10 +131,23 @@ class FleetListResponse(BaseModel):
 
 
 class FleetVehicleAddRequest(BaseModel):
-    """HTTP request data for adding a vehicle to a fleet."""
+    """HTTP request data for adding a vehicle to a fleet.
+
+    Attributes:
+        vehicle_vin: VIN of the vehicle to add.
+        move: Move the vehicle here when it is in another fleet of the same
+            organization (its membership there is closed in the same
+            transaction); without it, a vehicle in another fleet is a
+            conflict. A fleet-limited manager can move only a vehicle they
+            can see, i.e. from one of their own fleets (FLT-02, bug-fix D4).
+    """
 
     vehicle_vin: str = Field(
         ..., min_length=17, max_length=17, description="VIN of the vehicle to add"
+    )
+    move: bool = Field(
+        default=False,
+        description="Move the vehicle from its current fleet instead of refusing",
     )
 
 

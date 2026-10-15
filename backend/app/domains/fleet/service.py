@@ -744,7 +744,11 @@ async def add_vehicle_to_fleet(
 
     Rule:
         The target vehicle must not already be actively assigned to a
-        *different* fleet (raises rather than silently stealing it).
+        *different* fleet (raises rather than silently stealing it), unless
+        the request asks to ``move`` it: then its membership there is closed
+        and the new one opened in the same transaction. A fleet-limited
+        manager reaches only the trucks of their own fleets, so they can move
+        a truck between those and nowhere else (FL-10, bug-fix D4).
         Adding a vehicle already actively in *this* fleet is a no-op that
         returns the existing membership.
 
@@ -764,10 +768,11 @@ async def add_vehicle_to_fleet(
         FleetVehicleOrganizationMismatchError: When the vehicle belongs to
             another organization than the fleet (FL-09).
         FleetMembershipConflictError: When the vehicle is already actively
-            in a different fleet.
+            in a different fleet and no move was asked.
 
     Side Effects:
-        Inserts a new membership row; does not commit or rollback on its own.
+        Inserts a new membership row (and closes the old one on a move, with
+        the caller as ``removed_by``); does not commit or rollback on its own.
     """
     fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
 
@@ -804,12 +809,23 @@ async def add_vehicle_to_fleet(
     existing_membership = await fleet_repository.find_active_membership_by_vehicle(
         db_session, vehicle_reference.vehicle_id
     )
+    now = utc_now()
     if existing_membership is not None:
         if existing_membership.fleet_id == fleet_id:
             return to_membership_response(existing_membership, vehicle_reference.vin)
-        raise FleetMembershipConflictError(
-            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' is "
-            "already assigned to another fleet"
+        if not fleet_vehicle_add_request.move:
+            raise FleetMembershipConflictError(
+                f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' is "
+                "already assigned to another fleet"
+            )
+        # The source fleet is the vehicle's organization's (FL-09), so it is in
+        # the caller's reach; a limited manager got here only because the truck
+        # is visible to them, i.e. it sits in one of their own fleets.
+        await fleet_repository.close_membership(
+            db_session,
+            existing_membership,
+            removed_at=now,
+            removed_by=principal.user_id,
         )
 
     try:
@@ -817,7 +833,7 @@ async def add_vehicle_to_fleet(
             db_session,
             fleet_id=fleet_id,
             vehicle_id=vehicle_reference.vehicle_id,
-            added_at=utc_now(),
+            added_at=now,
             added_by=principal.user_id,
         )
     except IntegrityError as error:

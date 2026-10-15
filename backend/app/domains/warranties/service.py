@@ -229,7 +229,12 @@ async def _ensure_no_overlap(
     Raises:
         WarrantyConflictError: Another ACTIVE warranty of the same type
             covers the object in an overlapping period.
+
+    Side Effects:
+        Locks the object's coverage of this type until the transaction ends,
+        so a concurrent create or edit waits and then sees this one's row.
     """
+    await warranty_repository.lock_object_coverage(db_session, object_id, warranty_type)
     overlapping = await warranty_repository.find_overlapping(
         db_session,
         {_LINK_COLUMN[object_kind]: object_id},

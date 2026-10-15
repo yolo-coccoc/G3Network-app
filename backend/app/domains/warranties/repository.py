@@ -160,6 +160,35 @@ async def get_by_id(
     return query_result.scalar_one_or_none()
 
 
+async def lock_object_coverage(
+    db_session: AsyncSession, object_id: UUID, warranty_type: str
+) -> None:
+    """Serialize the overlap check of one object's coverage of one type.
+
+    Takes a transaction-level advisory lock keyed by the object and the
+    warranty type, so two transactions that each add or move a period on the
+    same object cannot both find "no overlap" and both write: the second
+    waits for the first to commit, then its check (a new statement under READ
+    COMMITTED) sees the first one's row. No constraint can do this here (no
+    exclusion constraint in the baseline).
+
+    Args:
+        db_session: Current database session.
+        object_id: Internal ID of the covered truck, pack, device or charger.
+        warranty_type: ``STANDARD`` / ``EXTENDED``.
+
+    Side Effects:
+        Holds the lock until the transaction commits or rolls back.
+    """
+    await db_session.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtext(f"warranty-coverage:{object_id}:{warranty_type}")
+            )
+        )
+    )
+
+
 async def find_overlapping(
     db_session: AsyncSession,
     object_links: dict[str, UUID],

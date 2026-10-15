@@ -34,13 +34,14 @@ from app.domains.fleet.schemas import (
     FleetVehicleAddRequest,
     GeofencePolygonGeoJson,
 )
+from app.domains.identity.types import UserRole
 from app.domains.vehicles.types import (
     VehicleReference,
     VehicleStatus,
     VehicleSummary,
 )
 from tests.builders import build_fleet_record, build_membership_record, fake_db_session
-from tests.principals import build_internal_principal
+from tests.principals import build_internal_principal, build_principal
 
 pytestmark = pytest.mark.usefixtures("own_organization_for_new_records")
 
@@ -1122,3 +1123,92 @@ async def test_create_fleet_rejects_parent_of_another_organization(
             ),
             principal=build_internal_principal(),
         )
+
+
+@pytest.mark.asyncio
+async def test_limited_manager_moves_a_truck_between_their_own_fleets_only_on_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug-fix D4: a truck in another of the manager's fleets moves when asked."""
+    target_fleet = build_fleet_record()
+    vehicle_id = uuid4()
+    manager = build_principal(
+        roles=frozenset({UserRole.FLEET_MANAGER}),
+        organization_id=target_fleet.organization_id,
+    )
+    vehicle_reference = VehicleReference(
+        organization_id=target_fleet.organization_id,
+        vehicle_id=vehicle_id,
+        vin="1HGBH41JXMN109186",
+        battery_capacity_kwh=None,
+    )
+    current = build_membership_record(fleet_id=uuid4(), vehicle_id=vehicle_id)
+    inserted = build_membership_record(
+        fleet_id=target_fleet.fleet_id, vehicle_id=vehicle_id
+    )
+    closed: list[UUID | None] = []
+
+    async def get_by_id(
+        db: AsyncSession, fleet_id: UUID, **_scope: object
+    ) -> FleetModel:
+        return target_fleet
+
+    async def resolve_vin(db: AsyncSession, vin: str) -> VehicleReference:
+        return vehicle_reference
+
+    async def visible(db: AsyncSession, principal: object) -> frozenset[UUID]:
+        return frozenset({vehicle_id})
+
+    async def visible_fleets(db: AsyncSession, principal: object) -> frozenset[UUID]:
+        return frozenset({target_fleet.fleet_id, current.fleet_id})
+
+    async def active_membership(
+        db: AsyncSession, vehicle_id: UUID
+    ) -> FleetVehicleMembershipModel:
+        return current
+
+    async def close_membership(
+        db: AsyncSession,
+        membership_record: FleetVehicleMembershipModel,
+        *,
+        removed_at: datetime,
+        removed_by: UUID | None = None,
+    ) -> FleetVehicleMembershipModel:
+        closed.append(removed_by)
+        return membership_record
+
+    async def insert_membership(
+        db: AsyncSession, **kwargs: object
+    ) -> FleetVehicleMembershipModel:
+        return inserted
+
+    monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(fleet_service, "resolve_principal_visible_vehicle_ids", visible)
+    monkeypatch.setattr(
+        fleet_service, "resolve_principal_visible_fleet_ids", visible_fleets
+    )
+    monkeypatch.setattr(
+        fleet_repository, "find_active_membership_by_vehicle", active_membership
+    )
+    monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
+    monkeypatch.setattr(fleet_repository, "insert_membership", insert_membership)
+
+    with pytest.raises(FleetMembershipConflictError):
+        await fleet_service.add_vehicle_to_fleet(
+            fake_db_session(),
+            target_fleet.fleet_id,
+            FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
+            principal=manager,
+        )
+    response = await fleet_service.add_vehicle_to_fleet(
+        fake_db_session(),
+        target_fleet.fleet_id,
+        FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin, move=True),
+        principal=manager,
+    )
+
+    assert closed == [manager.user_id]
+    assert response.fleet_vehicle_membership_id == inserted.fleet_vehicle_membership_id

@@ -450,3 +450,53 @@ async def test_only_a_command_still_in_the_queue_can_be_cancelled(
 
     assert cancelled.outcome is StationCommandOutcome.NOT_SENT
     assert cancelled.response_status == "Cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_queued_remote_start_abandons_its_pending_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CE-10: the driver of a cancelled QR start is free to scan again at once."""
+    station = _station_fixture(monkeypatch, state=None)
+    session_id = uuid4()
+    command = SimpleNamespace(
+        command_id=uuid4(),
+        station_id=station.station_id,
+        evse_id=uuid4(),
+        session_id=session_id,
+        command_type="REMOTE_START",
+        parameters={"id_token": "QRTOKEN"},
+        requested_by=None,
+        reason=None,
+        requested_at=utc_now(),
+        ocpp_message_id=None,
+        outcome=StationCommandOutcome.PENDING.value,
+        response_status=None,
+        answered_at=None,
+    )
+    abandoned: list[UUID] = []
+
+    async def get_command(db: AsyncSession, command_id: UUID) -> Any:
+        return command
+
+    async def cancel(db: AsyncSession, command_id: UUID, **kwargs: Any) -> bool:
+        command.outcome = StationCommandOutcome.NOT_SENT.value
+        command.response_status = kwargs["response_status"]
+        return True
+
+    async def abandon(db: AsyncSession, abandoned_session_id: UUID) -> bool:
+        abandoned.append(abandoned_session_id)
+        return True
+
+    monkeypatch.setattr(ocpp_state_repository, "get_station_command_by_id", get_command)
+    monkeypatch.setattr(ocpp_state_repository, "cancel_queued_command", cancel)
+    monkeypatch.setattr(charging_sessions_service, "abandon_pending_session", abandon)
+
+    await command_service.cancel_charging_station_command(
+        fake_db_session(),
+        station.station_id,
+        command.command_id,
+        principal=build_internal_principal(),
+    )
+
+    assert abandoned == [session_id]

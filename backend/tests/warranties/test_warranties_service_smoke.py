@@ -206,3 +206,44 @@ async def test_get_and_list_warranties_apply_the_fleet_limit(
     )
 
     assert received_vehicle_ids == [visible_vehicle_ids] * 3
+
+
+@pytest.mark.asyncio
+async def test_the_overlap_check_runs_under_the_object_coverage_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug-fix A12: two concurrent creates cannot both pass the overlap check."""
+    vehicle_id = uuid4()
+    calls: list[str] = []
+
+    async def vehicle(db: AsyncSession, requested_id: UUID) -> VehicleReference:
+        return VehicleReference(
+            organization_id=uuid4(),
+            vehicle_id=requested_id,
+            vin="1HGBH41JXMN109186",
+            battery_capacity_kwh=None,
+        )
+
+    async def lock(db: AsyncSession, object_id: UUID, warranty_type: str) -> None:
+        calls.append(f"lock {object_id} {warranty_type}")
+
+    async def overlapping(db: AsyncSession, *_args: object, **_kwargs: object) -> None:
+        calls.append("check")
+        raise WarrantyConflictError("stop here")
+
+    monkeypatch.setattr(vehicle_service, "resolve_vehicle_reference_by_id", vehicle)
+    monkeypatch.setattr(warranty_repository, "lock_object_coverage", lock)
+    monkeypatch.setattr(warranty_repository, "find_overlapping", overlapping)
+
+    with pytest.raises(WarrantyConflictError):
+        await warranty_service.create_warranty(
+            fake_db_session(),
+            WarrantyCreateRequest(
+                vehicle_id=vehicle_id,
+                starts_on=date(2026, 1, 1),
+                ends_on=date(2027, 1, 1),
+            ),
+            principal=build_internal_principal(),
+        )
+
+    assert calls == [f"lock {vehicle_id} STANDARD", "check"]

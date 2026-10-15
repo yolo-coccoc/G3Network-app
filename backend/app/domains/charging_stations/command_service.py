@@ -341,7 +341,10 @@ async def cancel_charging_station_command(
         Only a queued command (``PENDING`` with no message ID) can be cancelled;
         it is closed as ``NOT_SENT`` with ``response_status`` "Cancelled" and is
         never sent. One conditional ``UPDATE`` decides, so a gateway that claims
-        the command at the same moment wins and the cancel is refused.
+        the command at the same moment wins and the cancel is refused. A
+        cancelled ``REMOTE_START`` of a QR scan also abandons its ``PENDING``
+        session, as the gateway does for a start that was never sent (CE-10):
+        the driver is free to scan again and the quoted bill is voided.
 
     Args:
         db: Async session owned by the HTTP boundary.
@@ -357,6 +360,10 @@ async def cancel_charging_station_command(
             charger is out of the caller's reach.
         ChargingStationCommandConflictError: The command was already sent or
             closed.
+
+    Side Effects:
+        Updates the command; for a remote start, abandons its session in the
+        caller's transaction (the session-ended hooks run).
     """
     command = await get_charging_station_command(
         db, station_id, command_id, principal=principal
@@ -369,6 +376,13 @@ async def cancel_charging_station_command(
         )
     cancelled = await ocpp_state_repository.get_station_command_by_id(db, command_id)
     assert cancelled is not None, "the command was just cancelled"
+    if (
+        cancelled.command_type == StationCommandType.REMOTE_START.value
+        and cancelled.session_id is not None
+    ):
+        await charging_sessions_service.abandon_pending_session(
+            db, cancelled.session_id
+        )
     return to_charging_station_command_response(cancelled)
 
 

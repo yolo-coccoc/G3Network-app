@@ -7,7 +7,7 @@ import pytest
 
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
-from app.domains.identity.types import Principal, UserRole
+from app.domains.identity.types import Principal, UserRole, roles_for
 from app.domains.notifications.exceptions import (
     NotificationFilterError,
     NotificationNotFoundError,
@@ -387,3 +387,10 @@ async def test_fleet_limited_manager_reads_another_trucks_notification_only_if_d
         visible_vehicle_ids=frozenset(),
     )
     assert response.notification_id == 7
+
+
+def test_a_dispatcher_may_open_the_inbox_but_not_the_organization_view() -> None:
+    """Bug-fix D3: DISPATCHER reads the alerts routed to them, nothing more."""
+    assert UserRole.DISPATCHER in roles_for("NTF-01")
+    assert UserRole.DISPATCHER not in notifications_service.NOTIFICATION_STAFF_ROLES
+    assert UserRole.FLEET_MANAGER in notifications_service.NOTIFICATION_STAFF_ROLES
