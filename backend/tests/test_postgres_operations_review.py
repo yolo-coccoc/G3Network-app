@@ -701,3 +701,127 @@ async def test_inbox_never_shows_or_marks_another_organizations_alert_guard(
         assert (recipient_b.seen_at, recipient_b.read_at) == (None, None)
     finally:
         await _dispose(session_factory)
+
+
+@pytest.mark.asyncio
+async def test_every_fleet_limited_list_runs_on_postgresql(
+    temporary_database: str,  # noqa: F811
+) -> None:
+    """FL-10 (hardening Step 5): each list query with a fleet limit is valid SQL.
+
+    The limit predicates (sub-selects on packs and devices for warranties, the
+    own-or-visible-truck OR for sessions and bills, the truck-less rule of
+    notifications and support cases) are built per domain; a limited manager
+    of an empty organization runs every one and gets nothing back.
+    """
+    import app.domains.batteries.service as battery_service
+    import app.domains.billing.bill_service as bill_service
+    import app.domains.charging_sessions.service as charging_session_service
+    import app.domains.support.service as support_service
+    import app.domains.telematics.service as telematic_service
+    import app.domains.warranties.service as warranty_service
+
+    engine = create_async_engine(temporary_database, poolclass=NullPool)
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    organization_id, user_id = await _provision_organization_and_user(engine)
+    manager = build_principal(
+        roles=frozenset({UserRole.FLEET_MANAGER}),
+        organization_id=organization_id,
+        user_id=user_id,
+    )
+    visible_vehicle_ids = frozenset({uuid4()})
+    try:
+        async with session_factory() as db:
+            item_lists: list[list[object]] = [
+                list(
+                    (
+                        await warranty_service.list_warranties(
+                            db,
+                            principal=manager,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await battery_service.list_batteries(
+                            db,
+                            principal=manager,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await telematic_service.list_telematics(
+                            db,
+                            principal=manager,
+                            page=1,
+                            page_size=10,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await telematic_service.list_device_health(
+                            db,
+                            principal=manager,
+                            page=1,
+                            page_size=10,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await charging_session_service.list_charging_sessions(
+                            db,
+                            principal=manager,
+                            page=1,
+                            page_size=10,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await bill_service.list_session_bills(
+                            db,
+                            principal=manager,
+                            page=1,
+                            page_size=10,
+                            organization_id=None,
+                            started_by=None,
+                            status=None,
+                            created_from=None,
+                            created_to=None,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+                list(
+                    (
+                        await support_service.list_support_cases(
+                            db,
+                            principal=manager,
+                            visible_vehicle_ids=visible_vehicle_ids,
+                        )
+                    ).items
+                ),
+            ]
+            notification_page = await notifications_service.list_notifications(
+                db,
+                principal=manager,
+                after_id=0,
+                limit=10,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+            item_lists.append(list(notification_page.notifications))
+            await db.rollback()
+    finally:
+        await engine.dispose()
+
+    assert item_lists == [[]] * 8

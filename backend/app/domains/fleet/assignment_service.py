@@ -181,8 +181,9 @@ async def assign_fleet_to_membership(
         The new open assignment.
 
     Raises:
-        FleetUserAssignmentMembershipNotFoundError: Unknown membership, or one
-            out of the caller's data reach.
+        FleetUserAssignmentMembershipNotFoundError: Unknown membership, one
+            that has ended (the person left), or one out of the caller's data
+            reach.
         FleetNotFoundError: Unknown or deleted fleet, or one out of reach.
         FleetUserAssignmentOrganizationMismatchError: The fleet belongs to
             another organization than the membership.
@@ -196,6 +197,12 @@ async def assign_fleet_to_membership(
     membership_reference = await _resolve_membership_in_reach(
         db_session, membership_id, principal
     )
+    # An ended membership's assignments are closed when it ends (hardening
+    # D6); a new one would be a limit on nobody, left open forever.
+    if membership_reference.left_at is not None:
+        raise FleetUserAssignmentMembershipNotFoundError(
+            f"Membership '{membership_id}' not found"
+        )
     fleet_record = await fleet_repository.get_by_id(
         db_session, fleet_id, organization_id=principal.data_scope
     )

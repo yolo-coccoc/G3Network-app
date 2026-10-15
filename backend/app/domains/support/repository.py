@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, case, func, not_, select
+from sqlalchemy import and_, case, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -40,6 +40,7 @@ async def get_by_id(
     *,
     organization_id: UUID | None = None,
     driver_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseModel | None:
     """Find a support case by ID, excluding soft-deleted records.
 
@@ -50,6 +51,9 @@ async def get_by_id(
             found; `None` means no restriction.
         driver_id: Only a case raised by this driver is found; `None` means
             no restriction.
+        vehicle_ids: Fleet limit of the caller (FL-10): only a case about
+            one of these trucks, or about no truck (D5), is found; `None`
+            means no restriction.
 
     Returns:
         The support case record, or None if not found or out of scope.
@@ -62,10 +66,30 @@ async def get_by_id(
         conditions.append(SupportCaseModel.organization_id == organization_id)
     if driver_id is not None:
         conditions.append(SupportCaseModel.driver_id == driver_id)
+    if vehicle_ids is not None:
+        conditions.append(_vehicle_limit_condition(vehicle_ids))
     query_result = await db_session.execute(
         select(SupportCaseModel).where(and_(*conditions))
     )
     return query_result.scalar_one_or_none()
+
+
+def _vehicle_limit_condition(vehicle_ids: frozenset[UUID]) -> ColumnElement[bool]:
+    """Build the fleet-limit condition (FL-10) shared by every case query.
+
+    A case about no truck stays visible to a limited caller (owner decision
+    D5): it concerns the whole organization, not a fleet.
+
+    Args:
+        vehicle_ids: The trucks the caller may see.
+
+    Returns:
+        "The case's truck is one of these, or the case names no truck".
+    """
+    return or_(
+        SupportCaseModel.vehicle_id.in_(vehicle_ids),
+        SupportCaseModel.vehicle_id.is_(None),
+    )
 
 
 def _case_list_conditions(
@@ -104,6 +128,8 @@ def _case_list_conditions(
         conditions.append(
             SupportCaseModel.organization_id == case_list_filter.organization_id
         )
+    if case_list_filter.vehicle_ids is not None:
+        conditions.append(_vehicle_limit_condition(case_list_filter.vehicle_ids))
 
     if case_list_filter.is_awaiting_response is not None:
         terminal_statuses = [

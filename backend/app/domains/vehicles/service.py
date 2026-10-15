@@ -392,15 +392,32 @@ async def get_vehicle(
     Raises:
         VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
     """
+    _ensure_vehicle_visible(vehicle_id, visible_vehicle_ids)
     vehicle_record = await vehicle_repository.get_by_id(
         db_session, vehicle_id, organization_id=principal.data_scope
     )
-    if not vehicle_record or (
-        visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids
-    ):
+    if not vehicle_record:
         raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
     return to_vehicle_response(vehicle_record)
+
+
+def _ensure_vehicle_visible(
+    vehicle_id: UUID, visible_vehicle_ids: frozenset[UUID] | None
+) -> None:
+    """Treat a truck outside the caller's fleet limit as missing (FL-10).
+
+    Args:
+        vehicle_id: Internal ID of the vehicle.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows; `None`
+            means no limit.
+
+    Raises:
+        VehicleNotFoundError: The truck is outside the limit (404, never
+            403, so IDs cannot be probed).
+    """
+    if visible_vehicle_ids is not None and vehicle_id not in visible_vehicle_ids:
+        raise VehicleNotFoundError(f"Vehicle with id '{vehicle_id}' not found")
 
 
 async def list_vehicles(
@@ -478,6 +495,7 @@ async def update_vehicle(
     vehicle_update_request: VehicleUpdateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> VehicleResponse:
     """Partially update a vehicle after checking the unique fields.
 
@@ -487,6 +505,8 @@ async def update_vehicle(
         vehicle_update_request: Field data to update.
         principal: The caller; a vehicle of another organization is not found
             unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a truck outside the set is not found. `None` means no limit.
 
     Returns:
         Response for the updated vehicle.
@@ -501,6 +521,7 @@ async def update_vehicle(
         actor and the request's ``status_reason`` (a typed reason for a
         status decision) or else ``VEHICLE_EDITED_REASON``. Does not commit.
     """
+    _ensure_vehicle_visible(vehicle_id, visible_vehicle_ids)
     vehicle_record = await vehicle_repository.get_by_id(
         db_session, vehicle_id, organization_id=principal.data_scope
     )
@@ -579,6 +600,7 @@ async def soft_delete_vehicle(
     *,
     principal: Principal,
     reason: str | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> None:
     """Soft-delete a vehicle: it leaves the system and becomes INACTIVE.
 
@@ -594,6 +616,8 @@ async def soft_delete_vehicle(
             unless the caller is internal.
         reason: Why the vehicle leaves the system; defaults to
             ``VEHICLE_DELETED_REASON``.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a truck outside the set is not found. `None` means no limit.
 
     Raises:
         VehicleNotFoundError: When the vehicle does not exist or has been soft-deleted.
@@ -603,6 +627,7 @@ async def soft_delete_vehicle(
         UPDATE (history reason = the reason, actor = the caller); does not
         commit.
     """
+    _ensure_vehicle_visible(vehicle_id, visible_vehicle_ids)
     delete_reason = reason or VEHICLE_DELETED_REASON
     vehicle_record = await vehicle_repository.update_fields(
         db_session,
@@ -708,6 +733,7 @@ async def list_vehicle_ownership_periods(
     vehicle_id: UUID,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> VehicleOwnershipPeriodListResponse:
     """List the periods in which organizations owned a truck (VH-10).
 
@@ -719,6 +745,8 @@ async def list_vehicle_ownership_periods(
         db_session: Current database session.
         vehicle_id: Internal ID of the vehicle.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a truck outside the set is not found. `None` means no limit.
 
     Returns:
         The periods, oldest first; the owner now has ``owned_until`` null.
@@ -727,6 +755,7 @@ async def list_vehicle_ownership_periods(
         VehicleNotFoundError: The vehicle does not exist, is soft-deleted or
             is out of the caller's reach.
     """
+    _ensure_vehicle_visible(vehicle_id, visible_vehicle_ids)
     vehicle_record = await vehicle_repository.get_by_id(
         db_session, vehicle_id, organization_id=principal.data_scope
     )

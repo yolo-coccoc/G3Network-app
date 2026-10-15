@@ -88,6 +88,8 @@ class SupportCaseListFilter:
         channel: Only cases from this channel.
         driver_id: Only cases raised by this driver.
         organization_id: Only cases of this organization (the data scope).
+        vehicle_ids: The caller's fleet limit (FL-10): only cases about these
+            trucks, plus every case about no truck (D5); `None` means no limit.
         is_awaiting_response: ``True``: only cases nobody has responded to
             yet that are not terminal; ``False``: only the others.
         is_sla_breached: ``True``: only cases whose response SLA is breached
@@ -102,5 +104,6 @@ class SupportCaseListFilter:
     channel: SupportCaseChannel | None = None
     driver_id: UUID | None = None
     organization_id: UUID | None = None
+    vehicle_ids: frozenset[UUID] | None = None
     is_awaiting_response: bool | None = None
     is_sla_breached: bool | None = None

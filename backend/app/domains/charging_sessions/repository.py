@@ -268,12 +268,34 @@ async def abandon_pending_sessions_created_before(
     return list(result.scalars().all())
 
 
+def _fleet_limit_condition(
+    vehicle_ids: frozenset[UUID], caller_user_id: UUID | None
+) -> ColumnElement[bool]:
+    """Build the fleet-limit condition of a limited caller (FL-10).
+
+    Args:
+        vehicle_ids: The trucks the caller's fleet limit allows.
+        caller_user_id: The caller, whose own sessions always pass; `None`
+            lets only the trucks through.
+
+    Returns:
+        "On one of these trucks, or started by the caller". A session with no
+        truck matches only when the caller started it (hardening D5).
+    """
+    on_visible_truck = ChargingSessionModel.vehicle_id.in_(vehicle_ids)
+    if caller_user_id is None:
+        return on_visible_truck
+    return or_(ChargingSessionModel.started_by == caller_user_id, on_visible_truck)
+
+
 async def get_session_by_id(
     db: AsyncSession,
     session_id: UUID,
     *,
     organization_id: UUID | None = None,
     started_by: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
+    caller_user_id: UUID | None = None,
     for_update: bool = False,
 ) -> ChargingSessionModel | None:
     """Find the aggregate by internal UUID.
@@ -285,6 +307,11 @@ async def get_session_by_id(
             is found; `None` means no restriction.
         started_by: Only a session started by this user is found; `None`
             means no restriction (a driver sees only their own scans).
+        vehicle_ids: Fleet limit of the caller (FL-10): only a session on one
+            of these trucks, or one ``caller_user_id`` started, is found;
+            `None` means no limit.
+        caller_user_id: The caller, whose own sessions pass the fleet limit;
+            read only when ``vehicle_ids`` is given.
         for_update: Lock the row until the transaction ends and re-read it
             fresh (a staff force-close against the charger's own stop, CE-29).
 
@@ -299,6 +326,8 @@ async def get_session_by_id(
         conditions.append(ChargingSessionModel.organization_id == organization_id)
     if started_by is not None:
         conditions.append(ChargingSessionModel.started_by == started_by)
+    if vehicle_ids is not None:
+        conditions.append(_fleet_limit_condition(vehicle_ids, caller_user_id))
     query = select(ChargingSessionModel).where(*conditions)
     if for_update:
         query = query.with_for_update().execution_options(populate_existing=True)
@@ -337,6 +366,10 @@ def _session_list_conditions(
         conditions.append(ChargingSessionModel.started_at >= filters.started_from)
     if filters.started_to is not None:
         conditions.append(ChargingSessionModel.started_at < filters.started_to)
+    if filters.vehicle_ids is not None:
+        conditions.append(
+            _fleet_limit_condition(filters.vehicle_ids, filters.caller_user_id)
+        )
     return conditions
 
 

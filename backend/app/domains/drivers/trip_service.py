@@ -301,6 +301,7 @@ async def _check_plan_targets(
     *,
     planned_driver_id: UUID | None,
     planned_vehicle_id: UUID | None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> UUID | None:
     """Check the driver and truck a manager puts on a plan.
 
@@ -309,6 +310,8 @@ async def _check_plan_targets(
         principal: The planning manager.
         planned_driver_id: Driver profile to assign, if any.
         planned_vehicle_id: Truck to assign, if any.
+        visible_vehicle_ids: Trucks the manager's fleet limit allows (FL-10);
+            a truck outside it is not found. `None` means no limit.
 
     Returns:
         The truck's owner organization when a truck is given, else `None`.
@@ -325,6 +328,11 @@ async def _check_plan_targets(
             raise DriverNotFoundError(f"Driver with id '{planned_driver_id}' not found")
     if planned_vehicle_id is None:
         return None
+    if (
+        visible_vehicle_ids is not None
+        and planned_vehicle_id not in visible_vehicle_ids
+    ):
+        raise TripVehicleNotFoundError(f"Vehicle '{planned_vehicle_id}' not found")
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
         db_session, planned_vehicle_id
     )
@@ -397,6 +405,7 @@ async def plan_trip(
     trip_plan_request: TripPlanRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripResponse:
     """Plan a trip: A to B, planned times, optionally a driver and a truck (DR-12).
 
@@ -406,6 +415,10 @@ async def plan_trip(
         principal: The planning manager; the trip belongs to their
             organization (the truck's owner when internal staff plan for a
             customer).
+        visible_vehicle_ids: The caller's fleet limit (FL-10); a truck
+            outside it is not found, and a limited manager must name a truck
+            (a trip with no truck is outside every limit, D5). `None` means no
+            limit.
 
     Returns:
         The new PLANNED trip.
@@ -414,13 +427,21 @@ async def plan_trip(
         AccessDeniedError: The caller is not a manager.
         DriverNotFoundError: The driver is not in the caller's reach.
         TripVehicleNotFoundError: The truck does not exist or is out of reach.
+        TripInvalidPlanError: A fleet-limited manager planned no truck (the
+            trip would be hidden from them at once).
     """
     _require_manager(principal)
+    if visible_vehicle_ids is not None and trip_plan_request.planned_vehicle_id is None:
+        raise TripInvalidPlanError(
+            "Choose one of your fleets' trucks: a trip with no truck is outside "
+            "your fleet limit"
+        )
     vehicle_organization_id = await _check_plan_targets(
         db_session,
         principal,
         planned_driver_id=trip_plan_request.planned_driver_id,
         planned_vehicle_id=trip_plan_request.planned_vehicle_id,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     organization_id = (
         vehicle_organization_id
@@ -449,7 +470,10 @@ async def plan_trip(
 
 
 async def _load_visible_trip(
-    db_session: AsyncSession, trip_id: UUID, principal: Principal
+    db_session: AsyncSession,
+    trip_id: UUID,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripModel:
     """Load a trip the caller may read.
 
@@ -459,6 +483,8 @@ async def _load_visible_trip(
         principal: The caller. A manager reads the trips of their data
             scope; a DRIVER-only caller reads the trips assigned to or run by
             their own profile.
+        visible_vehicle_ids: The manager's fleet limit (FL-10), applied like
+            in the trip list; `None` means no limit.
 
     Returns:
         The trip.
@@ -469,7 +495,10 @@ async def _load_visible_trip(
     """
     if principal.has_any_role(*TRIP_MANAGER_ROLES):
         trip_record = await driver_repository.get_trip_by_id(
-            db_session, trip_id, organization_id=principal.data_scope
+            db_session,
+            trip_id,
+            organization_id=principal.data_scope,
+            vehicle_ids=visible_vehicle_ids,
         )
     else:
         driver_record = await _find_own_driver(db_session, principal)
@@ -486,7 +515,11 @@ async def _load_visible_trip(
 
 
 async def get_trip(
-    db_session: AsyncSession, trip_id: UUID, *, principal: Principal
+    db_session: AsyncSession,
+    trip_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripResponse:
     """Get one trip with its plan, actuals and figures.
 
@@ -494,6 +527,8 @@ async def get_trip(
         db_session: Current database session.
         trip_id: Internal ID of the trip.
         principal: The caller (see `_load_visible_trip`).
+        visible_vehicle_ids: The caller's fleet limit (FL-10); a trip or a
+            truck outside it is not found. `None` means no limit.
 
     Returns:
         The trip.
@@ -501,7 +536,9 @@ async def get_trip(
     Raises:
         TripNotFoundError: The trip does not exist or is not visible.
     """
-    trip_record = await _load_visible_trip(db_session, trip_id, principal)
+    trip_record = await _load_visible_trip(
+        db_session, trip_id, principal, visible_vehicle_ids
+    )
     return await build_trip_response(db_session, trip_record)
 
 
@@ -592,6 +629,7 @@ async def update_trip(
     trip_update_request: TripUpdateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripResponse:
     """Reroute or reassign a planned trip (the manager's decision, DR-12).
 
@@ -600,6 +638,8 @@ async def update_trip(
         trip_id: Internal ID of the trip.
         trip_update_request: The new plan fields and the reason.
         principal: The manager.
+        visible_vehicle_ids: The caller's fleet limit (FL-10); a trip or a
+            truck outside it is not found. `None` means no limit.
 
     Returns:
         The updated trip.
@@ -616,7 +656,9 @@ async def update_trip(
         reason (a fixed text when none is sent).
     """
     _require_manager(principal)
-    trip_record = await _load_visible_trip(db_session, trip_id, principal)
+    trip_record = await _load_visible_trip(
+        db_session, trip_id, principal, visible_vehicle_ids
+    )
     if trip_record.status != TripStatus.PLANNED.value:
         raise TripStateConflictError("Only a planned trip can be changed")
     update_values = {
@@ -637,6 +679,7 @@ async def update_trip(
         principal,
         planned_driver_id=update_values.get("planned_driver_id"),
         planned_vehicle_id=update_values.get("planned_vehicle_id"),
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     previous_driver_id = trip_record.planned_driver_id
     if update_values:
@@ -664,6 +707,7 @@ async def cancel_trip(
     reason: str,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripResponse:
     """Cancel a planned trip (the manager's decision, DR-12).
 
@@ -672,6 +716,8 @@ async def cancel_trip(
         trip_id: Internal ID of the trip.
         reason: Why; kept as the status reason and the change reason.
         principal: The manager.
+        visible_vehicle_ids: The caller's fleet limit (FL-10); a trip or a
+            truck outside it is not found. `None` means no limit.
 
     Returns:
         The CANCELLED trip.
@@ -682,7 +728,9 @@ async def cancel_trip(
         TripStateConflictError: The trip is already running, done or cancelled.
     """
     _require_manager(principal)
-    trip_record = await _load_visible_trip(db_session, trip_id, principal)
+    trip_record = await _load_visible_trip(
+        db_session, trip_id, principal, visible_vehicle_ids
+    )
     if trip_record.status != TripStatus.PLANNED.value:
         raise TripStateConflictError("Only a planned trip can be cancelled")
     cancelled_trip = await driver_repository.update_trip_fields(

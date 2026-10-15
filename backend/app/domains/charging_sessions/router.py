@@ -30,7 +30,7 @@ from app.domains.charging_sessions.types import (
     EnergySeriesGranularity,
     SessionStatus,
 )
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
 from app.libs.db.session import get_db
@@ -158,6 +158,7 @@ async def list_charging_sessions_endpoint(
     ),
     page_query: _PageQuery = Depends(_page_query),
     principal: Principal = Depends(SESSION_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionListResponse:
     """List sessions newest first, optionally filtered (F-B2).
@@ -175,6 +176,8 @@ async def list_charging_sessions_endpoint(
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` when the caller is not limited.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -199,6 +202,7 @@ async def list_charging_sessions_endpoint(
         started_from=started_from,
         started_to=started_to,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -210,6 +214,7 @@ async def list_charging_sessions_endpoint(
 async def get_charging_session_endpoint(
     session_id: UUID,
     principal: Principal = Depends(SESSION_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionDetailResponse:
     """Get the session aggregate and its read-time summary by internal UUID.
@@ -217,6 +222,8 @@ async def get_charging_session_endpoint(
     Args:
         session_id: UUID of the session to view.
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` when the caller is not limited.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -225,10 +232,14 @@ async def get_charging_session_endpoint(
         maximum import power, computed from its measurements.
 
     Raises:
-        ChargingSessionNotFoundError: The session does not exist (HTTP 404).
+        ChargingSessionNotFoundError: The session does not exist or is out of
+            the caller's reach (HTTP 404).
     """
     return await charging_session_service.get_charging_session(
-        db, session_id, principal=principal
+        db,
+        session_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -277,6 +288,7 @@ async def list_charging_session_meter_values_endpoint(
     session_id: UUID,
     page_query: _PageQuery = Depends(_page_query),
     principal: Principal = Depends(SESSION_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeterValueListResponse:
     """Get the session's canonical Wh meter samples in ascending time order.
@@ -286,6 +298,8 @@ async def list_charging_session_meter_values_endpoint(
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` when the caller is not limited.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -301,6 +315,7 @@ async def list_charging_session_meter_values_endpoint(
         page=page_query.page,
         page_size=page_query.page_size,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -319,6 +334,7 @@ async def list_charging_session_measurements_endpoint(
     ),
     page_query: _PageQuery = Depends(_page_query),
     principal: Principal = Depends(SESSION_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionMeasurementListResponse:
     """Get the session's measurements of every measurand, in ascending time order.
@@ -331,6 +347,8 @@ async def list_charging_session_measurements_endpoint(
         page_query: The page and page size (``page``/``page_size`` query
             parameters).
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` when the caller is not limited.
         db: The async session whose transaction is owned by the ``get_db``
             dependency.
 
@@ -347,6 +365,7 @@ async def list_charging_session_measurements_endpoint(
         page=page_query.page,
         page_size=page_query.page_size,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

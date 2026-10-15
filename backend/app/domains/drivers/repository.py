@@ -744,6 +744,7 @@ async def get_trip_by_id(
     *,
     organization_id: UUID | None = None,
     driver_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> TripModel | None:
     """Find a trip by ID inside a scope.
 
@@ -753,6 +754,8 @@ async def get_trip_by_id(
         organization_id: Only a trip of this organization; `None` means any.
         driver_id: Only a trip assigned to or run by this driver; `None` means
             any.
+        vehicle_ids: Only a trip on these trucks (the caller's fleet limit,
+            FL-10, same rule as the list); `None` means no limit.
 
     Returns:
         The trip, or None if it does not exist or is out of scope.
@@ -762,8 +765,33 @@ async def get_trip_by_id(
         conditions.append(TripModel.organization_id == organization_id)
     if driver_id is not None:
         conditions.append(_trip_driver_condition(driver_id))
+    if vehicle_ids is not None:
+        conditions.append(_trip_vehicle_condition(vehicle_ids))
     query_result = await db_session.execute(select(TripModel).where(and_(*conditions)))
     return query_result.scalar_one_or_none()
+
+
+def _trip_vehicle_condition(vehicle_ids: frozenset[UUID]) -> ColumnElement[bool]:
+    """Build the fleet-limit condition of a trip (FL-10).
+
+    A trip is on one of the trucks when it was planned for one of them, or
+    run in a driving session on one of them; a trip with neither (a plan with
+    no truck yet) is outside every limit.
+
+    Args:
+        vehicle_ids: The trucks the caller may see.
+
+    Returns:
+        The condition.
+    """
+    return or_(
+        TripModel.planned_vehicle_id.in_(vehicle_ids),
+        TripModel.driving_session_id.in_(
+            select(DrivingSessionModel.driving_session_id).where(
+                DrivingSessionModel.vehicle_id.in_(vehicle_ids)
+            )
+        ),
+    )
 
 
 def _trip_list_conditions(
@@ -792,16 +820,7 @@ def _trip_list_conditions(
     """
     conditions: list[ColumnElement[bool]] = []
     if vehicle_ids is not None:
-        conditions.append(
-            or_(
-                TripModel.planned_vehicle_id.in_(vehicle_ids),
-                TripModel.driving_session_id.in_(
-                    select(DrivingSessionModel.driving_session_id).where(
-                        DrivingSessionModel.vehicle_id.in_(vehicle_ids)
-                    )
-                ),
-            )
-        )
+        conditions.append(_trip_vehicle_condition(vehicle_ids))
     # A trip is placed on the board by its plan, or by its start when it has
     # no plan (a personal trip).
     trip_time = func.coalesce(TripModel.planned_start_at, TripModel.started_at)

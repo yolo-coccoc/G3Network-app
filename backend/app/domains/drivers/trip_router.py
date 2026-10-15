@@ -48,6 +48,7 @@ TRIP_USERS = require_roles(*roles_for("MON-11"))
 async def plan_trip_endpoint(
     trip_plan_request: TripPlanRequest,
     principal: Principal = Depends(TRIP_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TripResponse:
     """Plan a trip.
@@ -55,6 +56,7 @@ async def plan_trip_endpoint(
     Args:
         trip_plan_request: The plan.
         principal: The authenticated manager.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -65,7 +67,10 @@ async def plan_trip_endpoint(
         TripVehicleNotFoundError: 404 when the truck is not in the caller's reach.
     """
     return await trip_service.plan_trip(
-        db_session, trip_plan_request, principal=principal
+        db_session,
+        trip_plan_request,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -174,6 +179,7 @@ async def list_trips_endpoint(
 async def get_trip_endpoint(
     trip_id: UUID,
     principal: Principal = Depends(TRIP_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TripResponse:
     """Get one trip.
@@ -181,6 +187,7 @@ async def get_trip_endpoint(
     Args:
         trip_id: Internal ID of the trip.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -189,7 +196,12 @@ async def get_trip_endpoint(
     Raises:
         TripNotFoundError: 404 when the trip is not in the caller's reach.
     """
-    return await trip_service.get_trip(db_session, trip_id, principal=principal)
+    return await trip_service.get_trip(
+        db_session,
+        trip_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
 
 
 @router.patch(
@@ -202,6 +214,7 @@ async def update_trip_endpoint(
     trip_id: UUID,
     trip_update_request: TripUpdateRequest,
     principal: Principal = Depends(TRIP_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TripResponse:
     """Change a planned trip.
@@ -210,6 +223,7 @@ async def update_trip_endpoint(
         trip_id: Internal ID of the trip.
         trip_update_request: The new plan fields and the reason.
         principal: The authenticated manager.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -220,7 +234,11 @@ async def update_trip_endpoint(
         TripStateConflictError: 409 when the trip is not PLANNED.
     """
     return await trip_service.update_trip(
-        db_session, trip_id, trip_update_request, principal=principal
+        db_session,
+        trip_id,
+        trip_update_request,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -234,6 +252,7 @@ async def cancel_trip_endpoint(
     trip_id: UUID,
     trip_cancel_request: TripCancelRequest,
     principal: Principal = Depends(TRIP_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TripResponse:
     """Cancel a planned trip.
@@ -242,6 +261,7 @@ async def cancel_trip_endpoint(
         trip_id: Internal ID of the trip.
         trip_cancel_request: Why.
         principal: The authenticated manager.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -252,7 +272,11 @@ async def cancel_trip_endpoint(
         TripStateConflictError: 409 when the trip is not PLANNED.
     """
     return await trip_service.cancel_trip(
-        db_session, trip_id, trip_cancel_request.reason, principal=principal
+        db_session,
+        trip_id,
+        trip_cancel_request.reason,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

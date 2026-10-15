@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.identity.service as identity_service
 import app.domains.vehicles.repository as vehicle_repository
 import app.domains.vehicles.service as vehicle_service
-from app.domains.identity.types import OrganizationReference, Principal
+from app.domains.identity.types import OrganizationReference, Principal, UserRole
 from app.domains.vehicles.exceptions import VehicleConflictError, VehicleNotFoundError
 from app.domains.vehicles.models import VehicleModel, VehicleModelModel
 from app.domains.vehicles.schemas import (
@@ -384,3 +384,41 @@ async def test_vehicle_back_to_active_clears_status_reason(
 
     assert "status_reason" in written_values
     assert written_values["status_reason"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["update", "soft_delete", "ownership_periods"])
+async def test_fleet_limited_manager_gets_404_for_a_truck_outside_their_fleets(
+    action: str,
+) -> None:
+    """FL-10: editing, deleting or reading the owners of a hidden truck is a 404.
+
+    The limit is checked before any query, so a fake session is enough.
+    """
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+    hidden_vehicle_id = uuid4()
+    visible_vehicle_ids = frozenset({uuid4()})
+
+    with pytest.raises(VehicleNotFoundError):
+        if action == "update":
+            await vehicle_service.update_vehicle(
+                fake_db_session(),
+                hidden_vehicle_id,
+                VehicleUpdateRequest(year=2025),
+                principal=manager,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        elif action == "soft_delete":
+            await vehicle_service.soft_delete_vehicle(
+                fake_db_session(),
+                hidden_vehicle_id,
+                principal=manager,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        else:
+            await vehicle_service.list_vehicle_ownership_periods(
+                fake_db_session(),
+                hidden_vehicle_id,
+                principal=manager,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )

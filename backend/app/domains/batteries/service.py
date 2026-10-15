@@ -478,6 +478,7 @@ async def _get_battery_record(
     principal: Principal,
     *,
     for_update: bool = False,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> BatteryModel:
     """Load a live battery inside the caller's data reach.
 
@@ -487,12 +488,17 @@ async def _get_battery_record(
         principal: The caller.
         for_update: Lock the row until the transaction ends (fitting and
             removing queue up on one pack, RV-AS3).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a pack not fitted to one of them, a pack in stock included, is
+            not found (D5). `None` (no limit, every internal writer) skips
+            the check.
 
     Returns:
         The battery record.
 
     Raises:
-        BatteryNotFoundError: Missing, removed or owned by another organization.
+        BatteryNotFoundError: Missing, removed, owned by another organization
+            or outside the caller's fleet limit.
     """
     battery_record = await battery_repository.get_by_id(
         db_session,
@@ -500,13 +506,20 @@ async def _get_battery_record(
         organization_id=principal.data_scope,
         for_update=for_update,
     )
-    if battery_record is None:
+    if battery_record is None or (
+        visible_vehicle_ids is not None
+        and battery_record.vehicle_id not in visible_vehicle_ids
+    ):
         raise BatteryNotFoundError(f"Battery with id '{battery_id}' not found")
     return battery_record
 
 
 async def get_battery(
-    db_session: AsyncSession, battery_id: UUID, *, principal: Principal
+    db_session: AsyncSession,
+    battery_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> BatteryResponse:
     """Get a battery by ID inside the caller's data reach.
 
@@ -514,6 +527,9 @@ async def get_battery(
         db_session: Current database session.
         battery_id: Internal ID of the battery.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a pack not fitted to one of them is not found. `None` means no
+            limit.
 
     Returns:
         Response for the battery.
@@ -522,7 +538,12 @@ async def get_battery(
         BatteryNotFoundError: Missing, removed or out of reach.
     """
     return to_battery_response(
-        await _get_battery_record(db_session, battery_id, principal)
+        await _get_battery_record(
+            db_session,
+            battery_id,
+            principal,
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
     )
 
 
@@ -538,6 +559,7 @@ async def list_batteries(
     vehicle_id: UUID | None = None,
     is_installed: bool | None = None,
     owner_organization_id: UUID | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> BatteryListResponse:
     """Get a paginated list of batteries inside the caller's data reach.
 
@@ -553,6 +575,9 @@ async def list_batteries(
         vehicle_id: Only the battery fitted to this truck, if given.
         is_installed: Fitted (True) or in stock (False), if given.
         owner_organization_id: Only batteries owned by this organization.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            only packs fitted to them are listed, packs in stock are hidden
+            (D5). `None` means no limit.
 
     Returns:
         Paginated list response.
@@ -573,6 +598,7 @@ async def list_batteries(
         vehicle_id=vehicle_id,
         is_installed=is_installed,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     total = await battery_repository.count(
         db_session,
@@ -583,6 +609,7 @@ async def list_batteries(
         vehicle_id=vehicle_id,
         is_installed=is_installed,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     return BatteryListResponse(
         items=[
@@ -927,7 +954,11 @@ async def transfer_battery_ownership(
 
 
 async def list_battery_installation_periods(
-    db_session: AsyncSession, battery_id: UUID, *, principal: Principal
+    db_session: AsyncSession,
+    battery_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> BatteryInstallationPeriodListResponse:
     """List the trucks a battery has been fitted to (VH-16).
 
@@ -937,6 +968,9 @@ async def list_battery_installation_periods(
         db_session: Current database session.
         battery_id: Internal ID of the battery.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a pack not fitted to one of them now is not found, so its earlier
+            trucks stay hidden too. `None` means no limit.
 
     Returns:
         The periods, oldest first; the current one has ``installed_until`` null.
@@ -944,7 +978,9 @@ async def list_battery_installation_periods(
     Raises:
         BatteryNotFoundError: Missing, removed or out of reach.
     """
-    await _get_battery_record(db_session, battery_id, principal)
+    await _get_battery_record(
+        db_session, battery_id, principal, visible_vehicle_ids=visible_vehicle_ids
+    )
     period_rows = await battery_repository.list_installation_periods(
         db_session, battery_id
     )

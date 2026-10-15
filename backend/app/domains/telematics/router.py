@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telematics.service as telematics_service
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.domains.telematics.schemas import (
     TelematicConfigPushRequest,
@@ -51,6 +51,7 @@ DEVICE_HEALTH_READERS = require_roles(*roles_for("DEV-04"))
 async def create_telematic_endpoint(
     telematic_create_request: TelematicCreateRequest,
     principal: Principal = Depends(DEVICE_WRITERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Create a Telematic device, optionally assigned to a vehicle by VIN.
@@ -58,6 +59,7 @@ async def create_telematic_endpoint(
     Args:
         telematic_create_request: Request data for creating the device.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -73,6 +75,7 @@ async def create_telematic_endpoint(
         db_session,
         telematic_create_request,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -84,6 +87,7 @@ async def list_telematics_endpoint(
     ),
     status_filter: TelematicStatus | None = Query(None, alias="status"),
     principal: Principal = Depends(DEVICE_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicListResponse:
     """List devices that have not been soft-deleted.
@@ -93,6 +97,7 @@ async def list_telematics_endpoint(
         page_size: Number of records per page.
         status_filter: Status filter (query parameter ``status``), if any.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -104,6 +109,7 @@ async def list_telematics_endpoint(
         page_size=page_size,
         status_filter=status_filter,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -114,6 +120,7 @@ async def get_device_health_summary_endpoint(
         None, description="Only this organization's devices (internal staff)"
     ),
     principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicHealthSummaryResponse:
     """Count devices per health state and give the healthy share (DEV-04).
@@ -122,6 +129,7 @@ async def get_device_health_summary_endpoint(
         fleet_id: Only the devices on this fleet's trucks, if given.
         organization_id: Only devices of this organization, if given.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -133,6 +141,7 @@ async def get_device_health_summary_endpoint(
     return await telematics_service.get_device_health_summary(
         db_session,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
         fleet_id=fleet_id,
         organization_id=organization_id,
     )
@@ -150,6 +159,7 @@ async def list_device_health_endpoint(
     ),
     health_state: TelematicHealthState | None = Query(None),
     principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicHealthListResponse:
     """List devices with their health state and newest status report (DEV-04).
@@ -161,6 +171,7 @@ async def list_device_health_endpoint(
         organization_id: Only devices of this organization, if given.
         health_state: Only devices in this state, if given.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -172,6 +183,7 @@ async def list_device_health_endpoint(
     return await telematics_service.list_device_health(
         db_session,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
         page=page,
         page_size=page_size,
         fleet_id=fleet_id,
@@ -184,6 +196,7 @@ async def list_device_health_endpoint(
 async def get_telematic_health_endpoint(
     telematic_id: UUID,
     principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicHealthResponse:
     """Get the health of one device: state, silence and its newest status report.
@@ -191,6 +204,7 @@ async def get_telematic_health_endpoint(
     Args:
         telematic_id: Internal ID of the device.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -201,7 +215,10 @@ async def get_telematic_health_endpoint(
             (404).
     """
     return await telematics_service.get_telematic_health(
-        db_session, telematic_id, principal=principal
+        db_session,
+        telematic_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -215,6 +232,7 @@ async def list_telematic_status_reports_endpoint(
     ),
     limit: int = Query(100, ge=1, le=1000),
     principal: Principal = Depends(DEVICE_HEALTH_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicStatusReportListResponse:
     """List a device's status reports, newest first (signal, power, SIM trend).
@@ -224,6 +242,7 @@ async def list_telematic_status_reports_endpoint(
         since: Only reports produced at or after this time, if given.
         limit: Maximum number of reports.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -234,7 +253,12 @@ async def list_telematic_status_reports_endpoint(
             (404).
     """
     return await telematics_service.list_telematic_status_reports(
-        db_session, telematic_id, principal=principal, since=since, limit=limit
+        db_session,
+        telematic_id,
+        principal=principal,
+        since=since,
+        limit=limit,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -242,6 +266,7 @@ async def list_telematic_status_reports_endpoint(
 async def get_telematic_endpoint(
     telematic_id: UUID,
     principal: Principal = Depends(DEVICE_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Get the details of a device.
@@ -249,6 +274,7 @@ async def get_telematic_endpoint(
     Args:
         telematic_id: Internal ID of the device.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -259,7 +285,10 @@ async def get_telematic_endpoint(
             soft-deleted (404).
     """
     return await telematics_service.get_telematic(
-        db_session, telematic_id, principal=principal
+        db_session,
+        telematic_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -268,6 +297,7 @@ async def update_telematic_endpoint(
     telematic_id: UUID,
     telematic_update_request: TelematicUpdateRequest,
     principal: Principal = Depends(DEVICE_WRITERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicResponse:
     """Partially update a device.
@@ -276,6 +306,7 @@ async def update_telematic_endpoint(
         telematic_id: Internal ID of the device.
         telematic_update_request: Request data for updating the device.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -294,6 +325,7 @@ async def update_telematic_endpoint(
         telematic_id,
         telematic_update_request,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -302,6 +334,7 @@ async def soft_delete_telematic_endpoint(
     telematic_id: UUID,
     reason: Reason | None = Query(None, description="Why the device is removed"),
     principal: Principal = Depends(DEVICE_WRITERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> None:
     """Soft-delete a device.
@@ -310,6 +343,7 @@ async def soft_delete_telematic_endpoint(
         telematic_id: Internal ID of the device.
         reason: Why the device is removed (kept as the status reason).
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Raises:
@@ -317,7 +351,11 @@ async def soft_delete_telematic_endpoint(
             soft-deleted (404).
     """
     await telematics_service.soft_delete_telematic(
-        db_session, telematic_id, principal=principal, reason=reason
+        db_session,
+        telematic_id,
+        principal=principal,
+        reason=reason,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -361,6 +399,7 @@ async def push_telematic_config_endpoint(
     telematic_id: UUID,
     telematic_config_push_request: TelematicConfigPushRequest,
     principal: Principal = Depends(DEVICE_CONFIGURERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TelematicConfigResponse:
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
@@ -369,6 +408,7 @@ async def push_telematic_config_endpoint(
         telematic_id: Internal ID of the device.
         telematic_config_push_request: Desired telemetry publish interval.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -386,4 +426,5 @@ async def push_telematic_config_endpoint(
         telematic_id,
         telematic_config_push_request,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )

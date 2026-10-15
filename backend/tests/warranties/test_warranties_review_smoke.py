@@ -96,6 +96,7 @@ def _install_scoped_warranty_repository(
         warranty_id: UUID,
         *,
         organization_id: UUID | None = None,
+        vehicle_ids: frozenset[UUID] | None = None,
     ) -> WarrantyModel | None:
         """Return the row when it is in scope."""
         return warranty_record if _visible(warranty_id, organization_id) else None

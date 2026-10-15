@@ -21,6 +21,7 @@ import app.api.charging_session_flow as flow
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.service as billing_service
 import app.domains.charging_sessions.repository as charging_repository
+import app.domains.charging_sessions.router as charging_router
 import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.service as stations_service
 from app.domains.billing.exceptions import InsufficientBalanceError
@@ -167,11 +168,15 @@ async def test_a_driver_reads_only_sessions_they_started_in_their_organization(
         {
             "organization_id": DRIVER.organization_id,
             "started_by": DRIVER.user_id,
+            "vehicle_ids": None,
+            "caller_user_id": None,
             "for_update": False,
         },
         {
             "organization_id": FLEET_MANAGER.organization_id,
             "started_by": None,
+            "vehicle_ids": None,
+            "caller_user_id": None,
             "for_update": False,
         },
     ]
@@ -195,14 +200,60 @@ async def test_the_bill_and_receipt_of_a_session_out_of_reach_are_not_found(
 
     with pytest.raises(ChargingSessionNotFoundError):
         await flow.get_charging_session_bill_endpoint(
-            uuid4(), principal=DRIVER, db_session=fake_db_session()
+            uuid4(),
+            principal=DRIVER,
+            visible_vehicle_ids=None,
+            db_session=fake_db_session(),
         )
     with pytest.raises(ChargingSessionNotFoundError):
         await flow.get_charging_session_receipt_endpoint(
-            uuid4(), principal=DRIVER, db_session=fake_db_session()
+            uuid4(),
+            principal=DRIVER,
+            visible_vehicle_ids=None,
+            db_session=fake_db_session(),
         )
 
     assert billing_calls == []
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_gets_404_for_a_session_on_a_truck_outside_their_fleets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FL-10: the session and its bill are read under the caller's fleet limit.
+
+    The repository receives the visible trucks and the caller (whose own
+    sessions pass); a session it does not find is a 404 and its bill is never
+    read.
+    """
+    lookups: list[dict[str, object]] = []
+    _serve_session(monkeypatch, None, lookups)
+    visible_trucks = frozenset({uuid4()})
+
+    async def bill(db: object, session_id: UUID) -> Any:
+        """Fail: the bill of a session out of reach must not be read."""
+        raise AssertionError("the bill was read for a session out of reach")
+
+    monkeypatch.setattr(billing_service, "get_session_bill_response", bill)
+
+    with pytest.raises(ChargingSessionNotFoundError):
+        await charging_router.get_charging_session_endpoint(
+            uuid4(),
+            principal=FLEET_MANAGER,
+            visible_vehicle_ids=visible_trucks,
+            db=fake_db_session(),
+        )
+    with pytest.raises(ChargingSessionNotFoundError):
+        await flow.get_charging_session_bill_endpoint(
+            uuid4(),
+            principal=FLEET_MANAGER,
+            visible_vehicle_ids=visible_trucks,
+            db_session=fake_db_session(),
+        )
+
+    assert [
+        (lookup["vehicle_ids"], lookup["caller_user_id"]) for lookup in lookups
+    ] == [(visible_trucks, FLEET_MANAGER.user_id)] * 2
 
 
 # --- Defects found in the review (strict xfail) -------------------------------

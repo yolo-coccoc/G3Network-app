@@ -17,7 +17,9 @@ cases of their organization (internal staff: all); a caller who is only a
 DRIVER sees just the cases raised by their own driver profile, which every
 case they create carries. A truck of another organization can be named only
 by internal staff, by someone with that organization's reach, or by the driver
-checked in to it (an SOS must work on a borrowed truck).
+checked in to it (an SOS must work on a borrowed truck). A fleet-limited
+manager (FL-10) sees and names only the trucks of their fleets, plus every
+case about no truck (D5).
 """
 
 from datetime import timedelta
@@ -154,6 +156,7 @@ async def _resolve_case_context(
     vehicle_vin: str | None,
     driver_id: UUID | None,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None,
 ) -> tuple[UUID | None, str | None, UUID | None, UUID | None]:
     """Resolve an optional VIN/driver ID into internal IDs, validating both.
 
@@ -165,6 +168,9 @@ async def _resolve_case_context(
             caller without a support-staff role may name only their own
             profile.
         principal: The caller (data scope).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a VIN of another truck is reported as not found, unless the
+            caller is checked in to it. `None` means no limit.
 
     Returns:
         A tuple of `(vehicle_id, vin, driver_id, vehicle_organization_id)`.
@@ -175,7 +181,8 @@ async def _resolve_case_context(
 
     Raises:
         SupportVehicleNotFoundError: When a VIN was supplied but doesn't
-            resolve to a vehicle.
+            resolve to a vehicle in the caller's reach (their organization
+            and fleet limit, or the truck they are checked in to).
         SupportDriverNotFoundError: When a driver ID was supplied but
             doesn't resolve to a driver.
     """
@@ -187,7 +194,13 @@ async def _resolve_case_context(
             db_session, vehicle_vin
         )
         if vehicle_reference is None or not (
-            principal.can_access_organization(vehicle_reference.organization_id)
+            (
+                principal.can_access_organization(vehicle_reference.organization_id)
+                and (
+                    visible_vehicle_ids is None
+                    or vehicle_reference.vehicle_id in visible_vehicle_ids
+                )
+            )
             or await driver_service.is_membership_checked_in_to_vehicle(
                 db_session, principal.membership_id, vehicle_reference.vehicle_id
             )
@@ -231,6 +244,7 @@ async def _insert_case(
     subject: str,
     sla_response_minutes: int,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None,
 ) -> SupportCaseResponse:
     """Validate a new case's context, insert it as OPEN and build its response.
 
@@ -249,6 +263,8 @@ async def _insert_case(
             `response_due_at` is now plus this many minutes.
         principal: The caller; the case belongs to the named truck's owner,
             else to the caller's organization (internal staff may name one).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            `None` if no limit; another truck's VIN is not found.
 
     Returns:
         Response for the newly created case.
@@ -269,6 +285,7 @@ async def _insert_case(
         vehicle_vin=case_create_request.vehicle_vin,
         driver_id=case_create_request.driver_id,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     # The vehicle's owner wins over a caller-supplied organization: the case
     # belongs to whoever owns the truck now. Without a truck it belongs to the
@@ -311,6 +328,7 @@ async def create_support_ticket(
     support_ticket_create_request: SupportTicketCreateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseResponse:
     """Create a new support ticket (F-I1) with the ticket response SLA.
 
@@ -319,6 +337,8 @@ async def create_support_ticket(
         support_ticket_create_request: Request data that has passed
             Pydantic validation.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            `None` if no limit; another truck's VIN is not found.
 
     Returns:
         Response for the newly created ticket.
@@ -337,6 +357,7 @@ async def create_support_ticket(
         subject=support_ticket_create_request.subject,
         sla_response_minutes=settings.SUPPORT_TICKET_RESPONSE_SLA_MINUTES,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -384,6 +405,7 @@ async def create_support_sos(
     support_sos_create_request: SupportSosCreateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseResponse:
     """Create a new SOS report (F-I2) and raise its ``SOS_ALERT``.
 
@@ -392,6 +414,8 @@ async def create_support_sos(
         support_sos_create_request: Request data that has passed Pydantic
             validation (an ``IN_APP`` SOS always carries a location).
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            `None` if no limit; another truck's VIN is not found.
 
     Returns:
         Response for the newly created SOS case.
@@ -421,6 +445,7 @@ async def create_support_sos(
         subject=f"SOS - {support_sos_create_request.category.value}",
         sla_response_minutes=settings.SUPPORT_SOS_RESPONSE_SLA_MINUTES,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
     vehicle_label = support_case_response.vehicle_vin or "unknown vehicle"
@@ -481,7 +506,10 @@ async def _own_driver_id(db_session: AsyncSession, principal: Principal) -> UUID
 
 
 async def _get_case_in_reach(
-    db_session: AsyncSession, case_id: UUID, principal: Principal
+    db_session: AsyncSession,
+    case_id: UUID,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None,
 ) -> SupportCaseModel:
     """Load a live case the caller may act on, or raise "not found".
 
@@ -489,6 +517,9 @@ async def _get_case_in_reach(
         db_session: Current database session.
         case_id: Internal ID of the support case.
         principal: The caller (data scope).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            a case about another truck is not found, one about no truck is
+            (D5). `None` means no limit.
 
     Returns:
         The case record.
@@ -502,6 +533,7 @@ async def _get_case_in_reach(
         case_id,
         organization_id=principal.data_scope,
         driver_id=_driver_scope(principal, await _own_driver_id(db_session, principal)),
+        vehicle_ids=visible_vehicle_ids,
     )
     if not case_record:
         raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")
@@ -513,6 +545,7 @@ async def get_support_case(
     case_id: UUID,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseResponse:
     """Get an active support case by ID inside the caller's data reach.
 
@@ -521,6 +554,8 @@ async def get_support_case(
         case_id: Internal ID of the support case.
         principal: The caller; a case of another organization (or, for a
             DRIVER-only caller, of another driver) is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a case about another truck is not found. `None` means no limit.
 
     Returns:
         Response for the support case.
@@ -529,7 +564,9 @@ async def get_support_case(
         SupportCaseNotFoundError: When the case does not exist or has been
             soft-deleted.
     """
-    case_record = await _get_case_in_reach(db_session, case_id, principal)
+    case_record = await _get_case_in_reach(
+        db_session, case_id, principal, visible_vehicle_ids
+    )
     return await build_support_case_response(db_session, case_record)
 
 
@@ -547,6 +584,7 @@ async def list_support_cases(
     driver_id_filter: UUID | None = None,
     awaiting_response_filter: bool | None = None,
     sla_breached_filter: bool | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseListResponse:
     """Get a paginated list of active support cases, newest first.
 
@@ -568,6 +606,9 @@ async def list_support_cases(
         sla_breached_filter: ``True`` keeps only cases whose
             ``is_sla_breached`` is true (no response past the deadline, or a
             late response); ``False`` the others.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            cases about other trucks are left out, those about no truck stay
+            (D5). `None` means no limit.
 
     Returns:
         Paginated support case list response.
@@ -582,6 +623,7 @@ async def list_support_cases(
         channel=channel_filter,
         driver_id=driver_scope or driver_id_filter,
         organization_id=principal.data_scope,
+        vehicle_ids=visible_vehicle_ids,
         is_awaiting_response=awaiting_response_filter,
         is_sla_breached=sla_breached_filter,
     )
@@ -657,6 +699,7 @@ async def update_support_case(
     support_case_update_request: SupportCaseUpdateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SupportCaseResponse:
     """Partially update a support case.
 
@@ -665,6 +708,8 @@ async def update_support_case(
         case_id: Internal ID of the support case.
         support_case_update_request: Field data to update.
         principal: The caller (data scope).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a case about another truck is not found. `None` means no limit.
 
     Returns:
         Response for the updated support case.
@@ -675,7 +720,9 @@ async def update_support_case(
         SupportCaseStateError: When the case is already CLOSED or
             CANCELLED - a terminal case accepts no further update.
     """
-    case_record = await _get_case_in_reach(db_session, case_id, principal)
+    case_record = await _get_case_in_reach(
+        db_session, case_id, principal, visible_vehicle_ids
+    )
 
     if is_terminal_status(case_record.status):
         raise SupportCaseStateError(
@@ -711,6 +758,7 @@ async def soft_delete_support_case(
     case_id: UUID,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> dict[str, str]:
     """Soft-delete a support case.
 
@@ -718,6 +766,8 @@ async def soft_delete_support_case(
         db_session: Current database session.
         case_id: Internal ID of the support case.
         principal: The caller (data scope).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a case about another truck is not found. `None` means no limit.
 
     Returns:
         Success deletion message.
@@ -726,7 +776,7 @@ async def soft_delete_support_case(
         SupportCaseNotFoundError: When the case does not exist or has been
             soft-deleted.
     """
-    await _get_case_in_reach(db_session, case_id, principal)
+    await _get_case_in_reach(db_session, case_id, principal, visible_vehicle_ids)
     case_record = await support_repository.soft_delete(db_session, case_id)
     if not case_record:
         raise SupportCaseNotFoundError(f"Support case with id '{case_id}' not found")

@@ -202,6 +202,7 @@ async def get_vehicle_endpoint(
 async def list_vehicle_ownership_periods_endpoint(
     vehicle_id: UUID,
     principal: Principal = Depends(VEHICLE_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleOwnershipPeriodListResponse:
     """List the ownership periods of a vehicle.
@@ -209,6 +210,7 @@ async def list_vehicle_ownership_periods_endpoint(
     Args:
         vehicle_id: Internal ID of the vehicle.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -218,7 +220,10 @@ async def list_vehicle_ownership_periods_endpoint(
         VehicleNotFoundError: The vehicle does not exist or is out of reach (404).
     """
     return await vehicle_service.list_vehicle_ownership_periods(
-        db_session, vehicle_id, principal=principal
+        db_session,
+        vehicle_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -232,6 +237,7 @@ async def update_vehicle_endpoint(
     vehicle_id: UUID,
     vehicle_update_request: VehicleUpdateRequest,
     principal: Principal = Depends(VEHICLE_WRITERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> VehicleResponse:
     """Partially update a vehicle.
@@ -240,6 +246,7 @@ async def update_vehicle_endpoint(
         vehicle_id: Internal ID of the vehicle.
         vehicle_update_request: Request data for updating the vehicle.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -254,6 +261,7 @@ async def update_vehicle_endpoint(
         vehicle_id,
         vehicle_update_request,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -267,6 +275,7 @@ async def soft_delete_vehicle_endpoint(
     vehicle_id: UUID,
     reason: Reason | None = Query(None, description="Why the vehicle is removed"),
     principal: Principal = Depends(VEHICLE_WRITERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> dict[str, str]:
     """Soft-delete a vehicle (it leaves the system and becomes INACTIVE).
@@ -275,6 +284,7 @@ async def soft_delete_vehicle_endpoint(
         vehicle_id: Internal ID of the vehicle.
         reason: Why the vehicle is removed (kept as the status reason).
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -284,7 +294,11 @@ async def soft_delete_vehicle_endpoint(
         VehicleNotFoundError: The vehicle does not exist or is soft-deleted (404).
     """
     await vehicle_service.soft_delete_vehicle(
-        db_session, vehicle_id, principal=principal, reason=reason
+        db_session,
+        vehicle_id,
+        principal=principal,
+        reason=reason,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     return {"message": VEHICLE_DELETED_MESSAGE}
 

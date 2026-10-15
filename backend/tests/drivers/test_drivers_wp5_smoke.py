@@ -21,8 +21,11 @@ from app.domains.drivers.exceptions import (
     DriverRoleMissingError,
     DriverTooFarFromVehicleError,
     TripInProgressConflictError,
+    TripInvalidPlanError,
     TripNotCheckedInError,
+    TripNotFoundError,
     TripStateConflictError,
+    TripVehicleNotFoundError,
 )
 from app.domains.drivers.models import DriverModel, DrivingSessionModel, TripModel
 from app.domains.drivers.schemas import (
@@ -747,3 +750,74 @@ async def test_membership_end_hooks_run_registered_callbacks_once(
         reason="Why",
     )
     assert calls == [(membership_id, MembershipEndKind.LOCKED, "Why")]
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_cannot_plan_a_trip_on_a_truck_outside_their_fleets() -> (
+    None
+):
+    """FL-10: a truck outside the manager's fleets is not found when planning."""
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+
+    with pytest.raises(TripVehicleNotFoundError):
+        await trip_service.plan_trip(
+            fake_db_session(),
+            TripPlanRequest(
+                origin_name="A",
+                destination_name="B",
+                planned_start_at=utc_now() + timedelta(hours=1),
+                planned_vehicle_id=uuid4(),
+            ),
+            principal=manager,
+            visible_vehicle_ids=frozenset({uuid4()}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_trip_detail_reads_the_trip_under_the_managers_fleet_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FL-10: the detail applies the same truck limit as the trip list (404)."""
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+    visible_vehicle_ids = frozenset({uuid4()})
+    lookups: list[dict[str, Any]] = []
+
+    async def get_trip_by_id(
+        _db: AsyncSession, _trip_id: UUID, **scope: Any
+    ) -> TripModel | None:
+        lookups.append(scope)
+        return None
+
+    monkeypatch.setattr(driver_repository, "get_trip_by_id", get_trip_by_id)
+
+    with pytest.raises(TripNotFoundError):
+        await trip_service.get_trip(
+            fake_db_session(),
+            uuid4(),
+            principal=manager,
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
+    assert lookups == [
+        {
+            "organization_id": manager.data_scope,
+            "vehicle_ids": visible_vehicle_ids,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_must_put_a_truck_on_a_planned_trip() -> None:
+    """D5: a trip with no truck is outside every limit, so planning one is refused."""
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+
+    with pytest.raises(TripInvalidPlanError):
+        await trip_service.plan_trip(
+            fake_db_session(),
+            TripPlanRequest(
+                origin_name="A",
+                destination_name="B",
+                planned_start_at=utc_now() + timedelta(hours=1),
+            ),
+            principal=manager,
+            visible_vehicle_ids=frozenset({uuid4()}),
+        )

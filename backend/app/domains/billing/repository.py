@@ -16,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import column, func, select, table, update
+from sqlalchemy import column, func, or_, select, table, update
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +29,14 @@ from app.domains.billing.models import (
     WalletTransactionModel,
 )
 
-# The columns of `charging_sessions` a bill's scope and payer are read from.
+# The columns of `charging_sessions` a bill's scope, payer and truck (the fleet
+# limit, FL-10) are read from.
 _sessions = table(
     "charging_sessions",
     column("session_id", PG_UUID(as_uuid=True)),
     column("organization_id", PG_UUID(as_uuid=True)),
     column("started_by", PG_UUID(as_uuid=True)),
+    column("vehicle_id", PG_UUID(as_uuid=True)),
 )
 
 
@@ -373,6 +375,8 @@ async def list_bills(
     created_to: datetime | None,
     offset: int,
     limit: int,
+    vehicle_ids: frozenset[UUID] | None = None,
+    caller_user_id: UUID | None = None,
 ) -> tuple[Sequence[tuple[ChargingSessionBillModel, UUID, UUID]], int]:
     """List session bills with filters, newest first, and the total count.
 
@@ -387,6 +391,11 @@ async def list_bills(
         created_to: Only bills created before this time.
         offset: Rows to skip.
         limit: Rows to return.
+        vehicle_ids: Fleet limit of the caller (FL-10): only bills of sessions
+            on these trucks, plus the ones ``caller_user_id`` scanned; a
+            session with no truck is hidden otherwise. ``None`` means no limit.
+        caller_user_id: The caller, whose own sessions' bills pass the fleet
+            limit; read only when ``vehicle_ids`` is given.
 
     Returns:
         ``(bill, payer organization, scanning user)`` rows and the total.
@@ -403,6 +412,13 @@ async def list_bills(
         conditions.append(ChargingSessionBillModel.created_at >= created_from)
     if created_to is not None:
         conditions.append(ChargingSessionBillModel.created_at < created_to)
+    if vehicle_ids is not None:
+        on_visible_truck = _sessions.c.vehicle_id.in_(vehicle_ids)
+        conditions.append(
+            on_visible_truck
+            if caller_user_id is None
+            else or_(_sessions.c.started_by == caller_user_id, on_visible_truck)
+        )
     joined = ChargingSessionBillModel.session_id == _sessions.c.session_id
     total = (
         await db.execute(

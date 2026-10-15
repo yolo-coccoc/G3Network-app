@@ -64,7 +64,7 @@ from app.domains.charging_sessions.schemas import (
 )
 from app.domains.charging_sessions.types import SessionStatus
 from app.domains.charging_stations.types import StationCommandType
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -387,6 +387,7 @@ async def stop_charging_session_endpoint(
 async def get_charging_session_receipt_endpoint(
     session_id: UUID,
     principal: Principal = Depends(SESSION_RECEIPT_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> ChargingSessionReceiptResponse:
     """Build the receipt data of a ``COMPLETED`` session (CHG-03).
@@ -395,6 +396,9 @@ async def get_charging_session_receipt_endpoint(
         session_id: UUID of the session.
         principal: The authenticated caller; a session out of their reach is
             not found.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if
+            none; a session on a truck outside it is not found, unless the
+            caller started it.
         db_session: The async session whose transaction is owned by the
             ``get_db`` dependency.
 
@@ -407,7 +411,10 @@ async def get_charging_session_receipt_endpoint(
         ChargingSessionStateError: The session has not finished (409).
     """
     session = await charging_session_service.get_charging_session(
-        db_session, session_id, principal=principal
+        db_session,
+        session_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     if session.status is not SessionStatus.COMPLETED:
         raise ChargingSessionStateError(
@@ -466,17 +473,20 @@ async def get_charging_session_receipt_endpoint(
 async def get_charging_session_bill_endpoint(
     session_id: UUID,
     principal: Principal = Depends(SESSION_BILL_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SessionBillResponse:
     """Get the bill of a session the caller may read (PAY-10).
 
     The session is read first with the caller's own scope (the person who
-    started it, their organization's staff, internal staff), so a bill is
-    visible to exactly the people who see the session.
+    started it, their organization's staff, internal staff) and fleet limit
+    (FL-10), so a bill is visible to exactly the people who see the session.
 
     Args:
         session_id: UUID of the session.
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows; `None`
+            when the caller is not limited.
         db_session: The async session whose transaction is owned by the
             ``get_db`` dependency.
 
@@ -488,7 +498,10 @@ async def get_charging_session_bill_endpoint(
         BillNotFoundError: The session has no bill (404).
     """
     await charging_session_service.get_charging_session(
-        db_session, session_id, principal=principal
+        db_session,
+        session_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     return await billing_service.get_session_bill_response(db_session, session_id)
 

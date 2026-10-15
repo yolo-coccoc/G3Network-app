@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, and_, func, null, select, update
+from sqlalchemy import Select, and_, func, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -110,6 +110,7 @@ def _list_query(
     severity: NotificationSeverity | None,
     user_id: UUID | None,
     unread_only: bool,
+    vehicle_ids: frozenset[UUID] | None,
 ) -> Select[Any]:
     """Build the select shared by the list queries.
 
@@ -124,6 +125,9 @@ def _list_query(
         severity: Only notifications of this severity, if given.
         user_id: Only notifications delivered to this person, if given.
         unread_only: With ``user_id``, only those the person has not read.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any: only
+            notifications about these trucks, plus every notification about
+            no truck (D5: truck-less alerts reach every manager anyway).
 
     Returns:
         A select of ``(notification, seen_at, read_at)`` with the filters
@@ -159,6 +163,13 @@ def _list_query(
         query = query.where(NotificationModel.notification_type == notification_type)
     if severity is not None:
         query = query.where(NotificationModel.severity == severity)
+    if vehicle_ids is not None:
+        query = query.where(
+            or_(
+                NotificationModel.vehicle_id.in_(vehicle_ids),
+                NotificationModel.vehicle_id.is_(None),
+            )
+        )
     return query
 
 
@@ -173,6 +184,7 @@ async def list_after_id(
     severity: NotificationSeverity | None = None,
     user_id: UUID | None = None,
     unread_only: bool = False,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[NotificationRow]:
     """List notifications newer than a cursor, oldest first.
 
@@ -187,6 +199,8 @@ async def list_after_id(
         severity: Only notifications of this severity, if given.
         user_id: Only notifications delivered to this person, if given.
         unread_only: With ``user_id``, only those the person has not read.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any: only these
+            trucks' notifications plus those about no truck.
 
     Returns:
         ``(notification, seen_at, read_at)`` ordered by ``notification_id``
@@ -199,6 +213,7 @@ async def list_after_id(
         severity=severity,
         user_id=user_id,
         unread_only=unread_only,
+        vehicle_ids=vehicle_ids,
     )
     query_result = await db.execute(
         query.where(NotificationModel.notification_id > after_id)
@@ -219,6 +234,7 @@ async def list_newest(
     severity: NotificationSeverity | None = None,
     user_id: UUID | None = None,
     unread_only: bool = False,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[NotificationRow]:
     """List the newest notifications, newest first.
 
@@ -233,6 +249,8 @@ async def list_newest(
         severity: Only notifications of this severity, if given.
         user_id: Only notifications delivered to this person, if given.
         unread_only: With ``user_id``, only those the person has not read.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any: only these
+            trucks' notifications plus those about no truck.
 
     Returns:
         ``(notification, seen_at, read_at)`` ordered by ``notification_id``
@@ -246,6 +264,7 @@ async def list_newest(
         severity=severity,
         user_id=user_id,
         unread_only=unread_only,
+        vehicle_ids=vehicle_ids,
     )
     if before_id is not None:
         query = query.where(NotificationModel.notification_id < before_id)

@@ -3623,7 +3623,10 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             )
             async with session_factory.begin() as db:
                 quoted = await charging_session_flow.get_charging_session_bill_endpoint(
-                    scan.session_id, principal=driver, db_session=db
+                    scan.session_id,
+                    principal=driver,
+                    db_session=db,
+                    visible_vehicle_ids=None,
                 )
             assert (quoted.status.value, quoted.price_per_kwh) == ("QUOTED", 4500)
             assert quoted.total_amount is None and not quoted.is_paid
@@ -3743,7 +3746,10 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             async with session_factory.begin() as db:
                 receipt = (
                     await charging_session_flow.get_charging_session_receipt_endpoint(
-                        scan.session_id, principal=driver, db_session=db
+                        scan.session_id,
+                        principal=driver,
+                        visible_vehicle_ids=None,
+                        db_session=db,
                     )
                 )
                 history = await charging_sessions_service.list_my_charging_sessions(
@@ -3765,7 +3771,10 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             # The wallet paid the bill once: top-up, then the session bill.
             async with session_factory.begin() as db:
                 bill = await charging_session_flow.get_charging_session_bill_endpoint(
-                    scan.session_id, principal=driver, db_session=db
+                    scan.session_id,
+                    principal=driver,
+                    db_session=db,
+                    visible_vehicle_ids=None,
                 )
                 wallet = await billing_router.get_my_wallet_endpoint(
                     principal=driver, db_session=db
@@ -3783,6 +3792,7 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                     created_to=None,
                     principal=billing_staff,
                     db_session=db,
+                    visible_vehicle_ids=None,
                 )
             assert (bill.status.value, bill.is_paid) == ("BILLED", True)
             assert bill.energy_source == "METER_STOP"
@@ -3808,7 +3818,10 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             assert await session_status(rejected_scan.session_id) == "ABANDONED"
             async with session_factory.begin() as db:
                 voided = await charging_session_flow.get_charging_session_bill_endpoint(
-                    rejected_scan.session_id, principal=driver, db_session=db
+                    rejected_scan.session_id,
+                    principal=driver,
+                    db_session=db,
+                    visible_vehicle_ids=None,
                 )
             assert voided.status.value == "VOID"
 
@@ -3839,7 +3852,10 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
             assert late["idTagInfo"]["status"] == "Invalid"
             async with session_factory.begin() as db:
                 swept = await charging_session_flow.get_charging_session_bill_endpoint(
-                    idle_scan.session_id, principal=driver, db_session=db
+                    idle_scan.session_id,
+                    principal=driver,
+                    db_session=db,
+                    visible_vehicle_ids=None,
                 )
             assert swept.status.value == "VOID"
 

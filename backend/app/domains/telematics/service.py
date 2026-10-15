@@ -144,7 +144,11 @@ async def resolve_serial_by_id(
 
 
 async def _resolve_vehicle_id_by_vin(
-    db_session: AsyncSession, vehicle_vin: str, principal: Principal
+    db_session: AsyncSession,
+    vehicle_vin: str,
+    principal: Principal,
+    *,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> UUID:
     """Resolve the VIN sent on a device create/update into a live vehicle ID.
 
@@ -153,14 +157,18 @@ async def _resolve_vehicle_id_by_vin(
         vehicle_vin: VIN of the vehicle the device should be assigned to.
         principal: The caller; a vehicle of an organization out of the
             caller's reach does not exist for them.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a truck outside them does not exist for the caller. `None`
+            means no limit.
 
     Returns:
         Internal ID of the live vehicle carrying that VIN.
 
     Raises:
         TelematicVehicleNotFoundError: No live (non-soft-deleted) vehicle
-            has that VIN, or it belongs to an organization out of reach
-            (D10, deferred.md item 83).
+            has that VIN, it belongs to an organization out of reach
+            (D10, deferred.md item 83), or it is outside the caller's fleet
+            limit.
 
     Side Effects:
         One read-only query through the vehicles public service.
@@ -168,8 +176,13 @@ async def _resolve_vehicle_id_by_vin(
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
         db_session, vehicle_vin
     )
-    if vehicle_reference is None or not principal.can_access_organization(
-        vehicle_reference.organization_id
+    if (
+        vehicle_reference is None
+        or not principal.can_access_organization(vehicle_reference.organization_id)
+        or (
+            visible_vehicle_ids is not None
+            and vehicle_reference.vehicle_id not in visible_vehicle_ids
+        )
     ):
         raise TelematicVehicleNotFoundError(
             f"Vehicle with VIN '{vehicle_vin}' not found"
@@ -367,6 +380,7 @@ async def create_telematic(
     telematic_create_request: TelematicCreateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicResponse:
     """Create a device, optionally assigning it to the vehicle named by VIN.
 
@@ -381,13 +395,16 @@ async def create_telematic(
         telematic_create_request: Validated create request.
         principal: The caller; the device is owned by the caller's
             organization unless internal staff name another one.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            the device cannot be mounted on another truck. `None` means no
+            limit.
 
     Returns:
         The HTTP response for the new device.
 
     Raises:
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
-            vehicle in the caller's reach.
+            vehicle in the caller's reach or fleet limit.
         OrganizationNotFoundError: ``organization_id`` matches no
             organization in the caller's reach.
         TelematicConflictError: The serial or IMEI is already used by a
@@ -414,7 +431,10 @@ async def create_telematic(
     vehicle_id = None
     if telematic_create_request.vehicle_vin is not None:
         vehicle_id = await _resolve_vehicle_id_by_vin(
-            db_session, telematic_create_request.vehicle_vin, principal
+            db_session,
+            telematic_create_request.vehicle_vin,
+            principal,
+            visible_vehicle_ids=visible_vehicle_ids,
         )
         if await telematics_repository.find_by_vehicle_id(db_session, vehicle_id):
             raise TelematicConflictError(
@@ -445,11 +465,48 @@ async def create_telematic(
     return await build_telematic_response(db_session, telematic_record)
 
 
+async def _get_telematic_record(
+    db_session: AsyncSession,
+    telematic_id: UUID,
+    principal: Principal,
+    *,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
+) -> TelematicModel:
+    """Load a live device inside the caller's data reach and fleet limit.
+
+    Args:
+        db_session: Current database session.
+        telematic_id: Internal ID of the device.
+        principal: The caller; a device of another organization is not found
+            unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them, an unmounted one included,
+            is not found (fail closed, D5). `None` means no limit.
+
+    Returns:
+        The device record.
+
+    Raises:
+        TelematicNotFoundError: The device does not exist, is soft-deleted,
+            belongs to another organization or is outside the fleet limit.
+    """
+    telematic_record = await telematics_repository.get_by_id(
+        db_session, telematic_id, organization_id=principal.data_scope
+    )
+    if telematic_record is None or (
+        visible_vehicle_ids is not None
+        and telematic_record.vehicle_id not in visible_vehicle_ids
+    ):
+        raise TelematicNotFoundError("Telematic not found")
+    return telematic_record
+
+
 async def get_telematic(
     db_session: AsyncSession,
     telematic_id: UUID,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicResponse:
     """Get the details of a device inside the caller's data reach.
 
@@ -458,18 +515,20 @@ async def get_telematic(
         telematic_id: Internal ID of the device.
         principal: The caller; a device of another organization is not found
             unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found. `None` means
+            no limit.
 
     Returns:
         The HTTP response for the device.
 
     Raises:
-        TelematicNotFoundError: The device does not exist or is soft-deleted.
+        TelematicNotFoundError: The device does not exist, is soft-deleted or
+            is out of the caller's reach.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    telematic_record = await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if not telematic_record:
-        raise TelematicNotFoundError("Telematic not found")
     return await build_telematic_response(db_session, telematic_record)
 
 
@@ -480,6 +539,7 @@ async def list_telematics(
     page: int,
     page_size: int,
     status_filter: TelematicStatus | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicListResponse:
     """Get a paginated list of devices that are not soft-deleted.
 
@@ -492,6 +552,9 @@ async def list_telematics(
         page_size: Maximum number of devices per page; clamped to
             ``1..API_MAX_PAGE_SIZE``.
         status_filter: Only list devices in this status, if given.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            only devices mounted on them are listed, unmounted ones are
+            hidden (D5). `None` means no limit.
 
     Returns:
         Paginated device list carrying the normalized page and page size.
@@ -509,6 +572,7 @@ async def list_telematics(
         limit=page_window.page_size,
         status_filter=status_filter,
         organization_id=principal.data_scope,
+        vehicle_ids=visible_vehicle_ids,
     )
     return TelematicListResponse(
         items=[
@@ -516,7 +580,10 @@ async def list_telematics(
             for telematic_record in telematic_records
         ],
         total=await telematics_repository.count(
-            db_session, status_filter, organization_id=principal.data_scope
+            db_session,
+            status_filter,
+            organization_id=principal.data_scope,
+            vehicle_ids=visible_vehicle_ids,
         ),
         page=page_window.page,
         page_size=page_window.page_size,
@@ -529,6 +596,7 @@ async def update_telematic(
     telematic_update_request: TelematicUpdateRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicResponse:
     """Partially update a device, re-resolving its vehicle when a VIN is sent.
 
@@ -545,14 +613,18 @@ async def update_telematic(
         telematic_update_request: Validated partial update.
         principal: The caller; a device of another organization is not found
             unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found, and it cannot
+            be moved to a truck outside them. `None` means no limit.
 
     Returns:
         The HTTP response for the updated device.
 
     Raises:
-        TelematicNotFoundError: The device does not exist or is soft-deleted.
+        TelematicNotFoundError: The device does not exist, is soft-deleted or
+            is out of the caller's reach.
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
-            vehicle.
+            vehicle in the caller's reach.
         TelematicConflictError: The new serial or IMEI is already used by a
             device still in the system, or the new vehicle is already
             assigned to another live device.
@@ -564,11 +636,9 @@ async def update_telematic(
         now when the device is mounted on a different vehicle and cleared
         when it is unmounted. Does not commit.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    telematic_record = await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if not telematic_record:
-        raise TelematicNotFoundError("Telematic not found")
     requested_values = telematic_update_request.model_dump(exclude_unset=True)
     if (
         "telematic_serial" in requested_values
@@ -591,7 +661,12 @@ async def update_telematic(
         # with None means "unassign"; absent means "leave unchanged".
         vehicle_vin = requested_values.pop("vehicle_vin")
         vehicle_id = (
-            await _resolve_vehicle_id_by_vin(db_session, vehicle_vin, principal)
+            await _resolve_vehicle_id_by_vin(
+                db_session,
+                vehicle_vin,
+                principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
             if vehicle_vin is not None
             else None
         )
@@ -638,6 +713,7 @@ async def soft_delete_telematic(
     *,
     principal: Principal,
     reason: str | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> None:
     """Soft-delete a device: it leaves the system (DM-25).
 
@@ -653,21 +729,22 @@ async def soft_delete_telematic(
             unless the caller is internal.
         reason: Why the device leaves; defaults to
             ``TELEMATIC_DELETED_REASON``.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found. `None` means
+            no limit.
 
     Raises:
-        TelematicNotFoundError: The device does not exist or is already
-            soft-deleted.
+        TelematicNotFoundError: The device does not exist, is already
+            soft-deleted or is out of the caller's reach.
 
     Side Effects:
         Sets ``deleted_at``, ``status``, ``status_reason``, clears the vehicle
         and flushes (history reason ``TELEMATIC_DELETED_REASON``); does not
         commit.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    telematic_record = await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if not telematic_record:
-        raise TelematicNotFoundError("Telematic not found")
     await telematics_repository.soft_delete(
         db_session,
         telematic_record,
@@ -682,6 +759,7 @@ async def push_telematic_config(
     telematic_config_push_request: TelematicConfigPushRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicConfigResponse:
     """Push a telemetry publish-interval config to a device over MQTT (F-J2).
 
@@ -698,13 +776,17 @@ async def push_telematic_config(
         telematic_config_push_request: Desired telemetry publish interval.
         principal: The caller; a device of another organization is not found
             unless the caller is internal.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found. `None` means
+            no limit.
 
     Returns:
         The pushed configuration, echoing the exact command topic so an
         operator can verify delivery with ``mosquitto_sub`` against it.
 
     Raises:
-        TelematicNotFoundError: Device does not exist or is soft-deleted.
+        TelematicNotFoundError: Device does not exist, is soft-deleted or is
+            out of the caller's reach.
         TelematicNotConfigurableError: The device is not mounted on a vehicle
             or is ``INACTIVE`` (TX-08: only a mounted, ACTIVE device receives
             configuration) - a device in stock or deliberately taken out of
@@ -715,11 +797,9 @@ async def push_telematic_config(
     Side Effects:
         Publishes one MQTT message. Writes nothing.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    telematic_record = await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if telematic_record is None:
-        raise TelematicNotFoundError("Telematic not found")
     _require_configurable(telematic_record)
     return await _publish_config(
         telematic_record,
@@ -1091,6 +1171,7 @@ async def list_telematic_status_reports(
     principal: Principal,
     since: datetime | None,
     limit: int,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicStatusReportListResponse:
     """List a device's status reports, newest first, to see trends (DEV-04).
 
@@ -1101,6 +1182,9 @@ async def list_telematic_status_reports(
             unless the caller is internal.
         since: Only reports produced at or after this time, if given.
         limit: Maximum number of reports.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found. `None` means
+            no limit.
 
     Returns:
         The reports, newest first.
@@ -1109,11 +1193,9 @@ async def list_telematic_status_reports(
         TelematicNotFoundError: The device does not exist, is soft-deleted or
             is out of the caller's reach.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if telematic_record is None:
-        raise TelematicNotFoundError("Telematic not found")
     status_report_records = await telematics_repository.list_status_reports(
         db_session, telematic_id, since=since, limit=limit
     )
@@ -1176,7 +1258,11 @@ async def build_telematic_health_response(
 
 
 async def get_telematic_health(
-    db_session: AsyncSession, telematic_id: UUID, *, principal: Principal
+    db_session: AsyncSession,
+    telematic_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicHealthResponse:
     """Get the dashboard entry of one device inside the caller's reach.
 
@@ -1184,6 +1270,9 @@ async def get_telematic_health(
         db_session: Current database session.
         telematic_id: Internal ID of the device.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a device not mounted on one of them is not found. `None` means
+            no limit.
 
     Returns:
         The device's health.
@@ -1192,11 +1281,9 @@ async def get_telematic_health(
         TelematicNotFoundError: The device does not exist, is soft-deleted or
             is out of the caller's reach.
     """
-    telematic_record = await telematics_repository.get_by_id(
-        db_session, telematic_id, organization_id=principal.data_scope
+    telematic_record = await _get_telematic_record(
+        db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )
-    if telematic_record is None:
-        raise TelematicNotFoundError("Telematic not found")
     return await build_telematic_health_response(db_session, telematic_record)
 
 
@@ -1206,6 +1293,7 @@ async def _collect_device_health(
     *,
     fleet_id: UUID | None,
     organization_id: UUID | None,
+    visible_vehicle_ids: frozenset[UUID] | None,
 ) -> list[TelematicHealthResponse]:
     """Compute the health of every device in the caller's scope (DEV-04).
 
@@ -1217,6 +1305,11 @@ async def _collect_device_health(
             given.
         organization_id: Only devices of this organization (internal staff;
             for a restricted caller any other organization gives nothing).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            without ``fleet_id`` only devices mounted on them are read, so an
+            unmounted device is hidden (D5). With ``fleet_id`` the fleet
+            service already applies the same limit to the fleet's trucks.
+            `None` means no limit.
 
     Returns:
         One entry per device, newest device first (fleet: membership order).
@@ -1235,7 +1328,7 @@ async def _collect_device_health(
     scope = scope if scope is not None else organization_id
     if fleet_id is None:
         telematic_records = await telematics_repository.list_in_scope(
-            db_session, organization_id=scope
+            db_session, organization_id=scope, vehicle_ids=visible_vehicle_ids
         )
     else:
         vehicle_ids = await fleet_service.list_active_member_vehicle_ids(
@@ -1265,6 +1358,7 @@ async def list_device_health(
     fleet_id: UUID | None = None,
     organization_id: UUID | None = None,
     health_state: TelematicHealthState | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicHealthListResponse:
     """List the health of devices as a dashboard page (DEV-04).
 
@@ -1276,6 +1370,8 @@ async def list_device_health(
         fleet_id: Only the devices on this fleet's trucks, if given.
         organization_id: Only devices of this organization, if given.
         health_state: Only devices in this state, if given.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` means no limit.
 
     Returns:
         One page of entries and the total matching the filters.
@@ -1285,7 +1381,11 @@ async def list_device_health(
     """
     page_window = normalize_page_window(page, page_size)
     health_responses = await _collect_device_health(
-        db_session, principal, fleet_id=fleet_id, organization_id=organization_id
+        db_session,
+        principal,
+        fleet_id=fleet_id,
+        organization_id=organization_id,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     if health_state is not None:
         health_responses = [
@@ -1309,6 +1409,7 @@ async def get_device_health_summary(
     principal: Principal,
     fleet_id: UUID | None = None,
     organization_id: UUID | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> TelematicHealthSummaryResponse:
     """Count devices per health state and give the healthy share (DEV-04).
 
@@ -1317,6 +1418,8 @@ async def get_device_health_summary(
         principal: The caller.
         fleet_id: Only the devices on this fleet's trucks, if given.
         organization_id: Only devices of this organization, if given.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` means no limit.
 
     Returns:
         The count per state, the online count and the healthy share of the
@@ -1326,7 +1429,11 @@ async def get_device_health_summary(
         FleetNotFoundError: The fleet does not exist or is out of reach.
     """
     health_responses = await _collect_device_health(
-        db_session, principal, fleet_id=fleet_id, organization_id=organization_id
+        db_session,
+        principal,
+        fleet_id=fleet_id,
+        organization_id=organization_id,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
     counts = {
         state: sum(

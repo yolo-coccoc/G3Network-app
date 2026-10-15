@@ -12,6 +12,7 @@ import app.domains.notifications.service as notifications_service
 import app.domains.support.repository as support_repository
 import app.domains.support.service as support_service
 import app.domains.vehicles.service as vehicles_public_service
+from app.domains.identity.types import UserRole
 from app.domains.notifications.types import (
     NotificationReference,
     NotificationSeverity,
@@ -39,7 +40,11 @@ from app.domains.support.types import (
 from app.domains.vehicles.types import VehicleReference
 from app.libs.common.config import settings
 from tests.builders import build_support_case_record, fake_db_session
-from tests.principals import build_internal_principal, build_principal
+from tests.principals import (
+    DEFAULT_ORGANIZATION_ID,
+    build_internal_principal,
+    build_principal,
+)
 
 pytestmark = pytest.mark.usefixtures("own_organization_for_new_records")
 
@@ -607,3 +612,102 @@ async def test_create_support_sos_without_a_vehicle_belongs_to_the_callers_organ
     )
 
     assert inserted["organization_id"] == principal.organization_id
+
+
+# A customer fleet manager without ORG_ADMIN: the fleet limit applies (FL-10).
+FLEET_MANAGER_ROLES = frozenset({UserRole.FLEET_MANAGER})
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_cannot_open_a_case_on_a_truck_outside_their_fleets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A VIN of the caller's own organization but outside their fleets is
+    reported like an unknown VIN (FL-10)."""
+
+    async def resolve_vin(db: AsyncSession, vehicle_vin: str) -> VehicleReference:
+        return VehicleReference(
+            organization_id=DEFAULT_ORGANIZATION_ID,
+            vehicle_id=uuid4(),
+            vin=vehicle_vin,
+            battery_capacity_kwh=None,
+        )
+
+    async def not_checked_in(*_args: object) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
+    )
+    monkeypatch.setattr(
+        driver_service, "is_membership_checked_in_to_vehicle", not_checked_in
+    )
+
+    with pytest.raises(SupportVehicleNotFoundError):
+        await support_service.create_support_ticket(
+            fake_db_session(),
+            SupportTicketCreateRequest(
+                organization_id=None,
+                vehicle_vin="1HGBH41JXMN109186",
+                driver_id=None,
+                category=SupportCaseCategory.TECHNICAL,
+                subject="Truck will not start",
+                description=None,
+                error_code=None,
+                latitude=None,
+                longitude=None,
+            ),
+            principal=build_principal(roles=FLEET_MANAGER_ROLES),
+            visible_vehicle_ids=frozenset({uuid4()}),
+        )
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_does_not_see_a_case_on_a_truck_outside_their_fleets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The list filter and the single-case lookup both carry the fleet limit (FL-10)."""
+    visible_vehicle_ids = frozenset({uuid4()})
+    seen: dict[str, object] = {}
+
+    async def list_all(
+        db: AsyncSession, case_list_filter: SupportCaseListFilter, **kwargs: object
+    ) -> list[SupportCaseModel]:
+        seen["list"] = case_list_filter.vehicle_ids
+        return []
+
+    async def count(
+        db: AsyncSession, case_list_filter: SupportCaseListFilter, **kwargs: object
+    ) -> int:
+        seen["count"] = case_list_filter.vehicle_ids
+        return 0
+
+    async def get_by_id(
+        db: AsyncSession, case_id: UUID, **scope: object
+    ) -> SupportCaseModel | None:
+        # The repository finds nothing outside the limit; the service maps
+        # that to the same 404 as an unknown case.
+        seen["get"] = scope["vehicle_ids"]
+        return None
+
+    monkeypatch.setattr(support_repository, "list_all", list_all)
+    monkeypatch.setattr(support_repository, "count", count)
+    monkeypatch.setattr(support_repository, "get_by_id", get_by_id)
+    principal = build_principal(roles=FLEET_MANAGER_ROLES)
+
+    await support_service.list_support_cases(
+        fake_db_session(), principal=principal, visible_vehicle_ids=visible_vehicle_ids
+    )
+    with pytest.raises(SupportCaseNotFoundError):
+        await support_service.get_support_case(
+            fake_db_session(),
+            uuid4(),
+            principal=principal,
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
+
+    assert seen == {
+        "list": visible_vehicle_ids,
+        "count": visible_vehicle_ids,
+        "get": visible_vehicle_ids,
+    }

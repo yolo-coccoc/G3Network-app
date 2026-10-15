@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.warranties.service as warranty_service
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.domains.warranties.schemas import (
     WarrantyCreateRequest,
@@ -106,6 +106,7 @@ async def list_warranties_endpoint(
         description="Only warranties of objects this organization owns",
     ),
     principal: Principal = Depends(WARRANTY_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> WarrantyListResponse:
     """Get a paginated list of warranties.
@@ -122,6 +123,7 @@ async def list_warranties_endpoint(
         expiring_within_days: Expiring-soon filter.
         owner_organization_id: Owner filter (query parameter ``organization_id``).
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -140,6 +142,7 @@ async def list_warranties_endpoint(
         warranty_type=warranty_type,
         expiring_within_days=expiring_within_days,
         owner_organization_id=owner_organization_id,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -152,6 +155,7 @@ async def list_warranties_endpoint(
 async def get_warranty_endpoint(
     warranty_id: UUID,
     principal: Principal = Depends(WARRANTY_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> WarrantyResponse:
     """Get a warranty by ID.
@@ -159,6 +163,7 @@ async def get_warranty_endpoint(
     Args:
         warranty_id: Internal ID of the warranty.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -168,7 +173,10 @@ async def get_warranty_endpoint(
         WarrantyNotFoundError: Missing, removed or out of reach (404).
     """
     return await warranty_service.get_warranty(
-        db_session, warranty_id, principal=principal
+        db_session,
+        warranty_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

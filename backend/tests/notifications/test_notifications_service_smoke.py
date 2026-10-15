@@ -7,6 +7,7 @@ import pytest
 
 import app.domains.notifications.repository as notification_repository
 import app.domains.notifications.service as notifications_service
+from app.domains.identity.types import Principal, UserRole
 from app.domains.notifications.exceptions import (
     NotificationFilterError,
     NotificationNotFoundError,
@@ -217,6 +218,7 @@ async def test_list_notifications_desc_ignores_the_cursor_and_passes_filters(
         "organization_id": None,
         "user_id": user_id,
         "unread_only": True,
+        "vehicle_ids": None,
         "vehicle_id": vehicle_id,
         "notification_type": NotificationType.SOS_ALERT,
         "severity": NotificationSeverity.CRITICAL,
@@ -301,3 +303,87 @@ async def test_mark_all_notifications_read_returns_the_marked_count(
 
     assert response.marked_count == 3
     assert seen == {"user_id": user_id, "read_at": read_at}
+
+
+def _fleet_manager() -> Principal:
+    """Build a customer FLEET_MANAGER of the notifications' organization (FL-10)."""
+    return build_principal(
+        roles=frozenset({UserRole.FLEET_MANAGER}), organization_id=ORGANIZATION_ID
+    )
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_organization_view_is_narrowed_to_their_trucks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The organization view gets the fleet limit; the caller's inbox does not (FL-10)."""
+    visible_vehicle_ids = frozenset({uuid4()})
+    seen: list[object] = []
+
+    async def list_after_id(
+        db: object, **kwargs: object
+    ) -> list[notification_repository.NotificationRow]:
+        seen.append(kwargs["vehicle_ids"])
+        return []
+
+    monkeypatch.setattr(notification_repository, "list_after_id", list_after_id)
+
+    for mine_only in (False, True):
+        await notifications_service.list_notifications(
+            fake_db_session(),
+            after_id=0,
+            limit=10,
+            mine_only=mine_only,
+            principal=_fleet_manager(),
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
+
+    assert seen == [visible_vehicle_ids, None]
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_manager_reads_another_trucks_notification_only_if_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another truck's alert is a 404 unless it reached the caller's inbox (FL-10)."""
+    notification = _notification(7)
+    delivered: list[NotificationRecipientModel | None] = [None]
+
+    async def get_by_id(db: object, notification_id: int) -> NotificationModel:
+        return notification
+
+    async def find_recipient(
+        db: object, notification_id: int, user_id: object
+    ) -> NotificationRecipientModel | None:
+        return delivered[0]
+
+    monkeypatch.setattr(notification_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(notification_repository, "find_recipient", find_recipient)
+
+    with pytest.raises(NotificationNotFoundError):
+        await notifications_service.get_notification(
+            fake_db_session(),
+            7,
+            principal=_fleet_manager(),
+            visible_vehicle_ids=frozenset({uuid4()}),
+        )
+
+    delivered[0] = _recipient(read_at=None)
+    response = await notifications_service.get_notification(
+        fake_db_session(),
+        7,
+        principal=_fleet_manager(),
+        visible_vehicle_ids=frozenset({uuid4()}),
+    )
+    assert response.notification_id == 7
+
+    # A truck-less alert stays readable for every manager (D5).
+    delivered[0] = None
+    notification.vehicle_id = None
+    response = await notifications_service.get_notification(
+        fake_db_session(),
+        7,
+        principal=_fleet_manager(),
+        visible_vehicle_ids=frozenset(),
+    )
+    assert response.notification_id == 7

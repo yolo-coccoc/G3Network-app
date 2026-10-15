@@ -277,6 +277,12 @@ class ChargingSessionListFilter:
             (UTC, inclusive).
         started_to: Only sessions with ``started_at < started_to`` (UTC,
             exclusive).
+        vehicle_ids: Fleet limit of the caller (FL-10): only sessions on
+            these trucks, plus the ones ``caller_user_id`` started; a session
+            with no truck is hidden otherwise (hardening D5). ``None`` means
+            no limit, an empty set leaves only the caller's own sessions.
+        caller_user_id: The caller, whose own sessions always pass the fleet
+            limit; read only when ``vehicle_ids`` is given.
     """
 
     station_id: UUID | None = None
@@ -287,6 +293,8 @@ class ChargingSessionListFilter:
     status: SessionStatus | None = None
     started_from: datetime | None = None
     started_to: datetime | None = None
+    vehicle_ids: frozenset[UUID] | None = None
+    caller_user_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

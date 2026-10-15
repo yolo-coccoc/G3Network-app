@@ -337,6 +337,7 @@ def _build_battery_conditions(
     vehicle_id: UUID | None,
     is_installed: bool | None,
     owner_organization_id: UUID | None,
+    vehicle_ids: frozenset[UUID] | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by ``list_all`` and ``count``.
 
@@ -348,6 +349,9 @@ def _build_battery_conditions(
         vehicle_id: Only the battery fitted to this truck.
         is_installed: True for fitted packs, False for packs in stock.
         owner_organization_id: Only batteries owned by this organization.
+        vehicle_ids: Fleet limit of the caller (FL-10): only packs fitted to
+            these trucks, so a pack in stock is hidden (D5); `None` means no
+            limit.
 
     Returns:
         Conditions to AND together: always "not removed", plus the filters.
@@ -367,6 +371,8 @@ def _build_battery_conditions(
         conditions.append(BatteryModel.vehicle_id.is_not(None))
     if is_installed is False:
         conditions.append(BatteryModel.vehicle_id.is_(None))
+    if vehicle_ids is not None:
+        conditions.append(BatteryModel.vehicle_id.in_(vehicle_ids))
     if search:
         pattern = f"%{escape_like_pattern(search)}%"
         conditions.append(BatteryModel.serial_number.ilike(pattern, escape="\\"))
@@ -385,6 +391,7 @@ async def list_all(
     vehicle_id: UUID | None = None,
     is_installed: bool | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[BatteryModel]:
     """Get a page of live batteries, newest first.
 
@@ -399,6 +406,7 @@ async def list_all(
         vehicle_id: Only the battery fitted to this truck, if given.
         is_installed: Fitted (True) or in stock (False), if given.
         owner_organization_id: Only batteries of this owner, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         List of battery records.
@@ -411,6 +419,7 @@ async def list_all(
         vehicle_id=vehicle_id,
         is_installed=is_installed,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
     query_result = await db_session.execute(
         select(BatteryModel)
@@ -432,6 +441,7 @@ async def count(
     vehicle_id: UUID | None = None,
     is_installed: bool | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the live batteries matching the filters.
 
@@ -444,6 +454,7 @@ async def count(
         vehicle_id: Only the battery fitted to this truck, if given.
         is_installed: Fitted (True) or in stock (False), if given.
         owner_organization_id: Only batteries of this owner, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Number of matching batteries.
@@ -456,6 +467,7 @@ async def count(
         vehicle_id=vehicle_id,
         is_installed=is_installed,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
     query_result = await db_session.execute(
         select(func.count(BatteryModel.battery_id)).where(and_(*conditions))

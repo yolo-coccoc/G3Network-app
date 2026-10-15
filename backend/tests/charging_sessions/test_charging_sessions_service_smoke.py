@@ -6,6 +6,8 @@ from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.charging_sessions.repository as charging_repository
@@ -23,8 +25,9 @@ from app.domains.charging_sessions.types import (
     MeterSampleInput,
     SessionStatus,
 )
+from app.domains.identity.types import UserRole
 from tests.builders import build_charging_session, fake_db_session
-from tests.principals import build_internal_principal
+from tests.principals import build_internal_principal, build_principal
 
 NOW = datetime(2026, 10, 1, 9, 0, tzinfo=timezone.utc)
 
@@ -382,3 +385,71 @@ async def test_list_charging_sessions_keeps_a_page_size_below_the_default(
     assert seen == {"offset": 3, "limit": 3}
     assert (response.total, response.page, response.page_size) == (7, 2, 3)
     assert [item.session_id for item in response.items] == [session.session_id]
+
+
+@pytest.mark.asyncio
+async def test_a_fleet_limited_session_list_passes_the_visible_trucks_and_the_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FL-10: the list filter carries the caller's visible trucks and user ID."""
+    seen: list[ChargingSessionListFilter] = []
+
+    async def list_sessions(
+        db: AsyncSession,
+        *,
+        filters: ChargingSessionListFilter,
+        offset: int,
+        limit: int,
+    ) -> list[ChargingSessionModel]:
+        seen.append(filters)
+        return []
+
+    async def count_sessions(
+        db: AsyncSession, filters: ChargingSessionListFilter
+    ) -> int:
+        return 0
+
+    monkeypatch.setattr(charging_repository, "list_sessions", list_sessions)
+    monkeypatch.setattr(charging_repository, "count_sessions", count_sessions)
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+    visible_trucks = frozenset({uuid4()})
+
+    await charging_service.list_charging_sessions(
+        fake_db_session(),
+        page=1,
+        page_size=20,
+        principal=manager,
+        visible_vehicle_ids=visible_trucks,
+    )
+
+    assert [(f.vehicle_ids, f.caller_user_id) for f in seen] == [
+        (visible_trucks, manager.user_id)
+    ]
+
+
+def test_the_fleet_limit_keeps_the_callers_own_sessions_and_hides_truckless_ones() -> (
+    None
+):
+    """Hardening D5: on a visible truck OR started by the caller; nothing else."""
+    truck_id = uuid4()
+    caller_id = uuid4()
+    conditions = charging_repository._session_list_conditions(
+        ChargingSessionListFilter(
+            vehicle_ids=frozenset({truck_id}), caller_user_id=caller_id
+        )
+    )
+
+    sql = str(
+        select(ChargingSessionModel)
+        .where(*conditions)
+        .compile(
+            dialect=postgresql.dialect(),  # type: ignore[no-untyped-call]
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert (
+        f"charging_sessions.started_by = '{caller_id}' "
+        f"OR charging_sessions.vehicle_id IN ('{truck_id}')"
+    ) in sql
+    assert "vehicle_id IS NULL" not in sql

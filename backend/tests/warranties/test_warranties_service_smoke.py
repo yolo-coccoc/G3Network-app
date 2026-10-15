@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.vehicles.service as vehicle_service
 import app.domains.warranties.repository as warranty_repository
 import app.domains.warranties.service as warranty_service
+from app.domains.identity.types import UserRole
 from app.domains.vehicles.types import VehicleReference
 from app.domains.warranties.exceptions import (
     WarrantyConflictError,
     WarrantyLimitsInvalidError,
+    WarrantyNotFoundError,
     WarrantyObjectNotFoundError,
 )
 from app.domains.warranties.models import WarrantyModel
@@ -23,7 +25,7 @@ from app.domains.warranties.types import (
     WarrantyType,
 )
 from tests.builders import fake_db_session
-from tests.principals import build_internal_principal
+from tests.principals import build_internal_principal, build_principal
 
 
 def build_warranty_record(
@@ -123,7 +125,7 @@ async def test_void_warranty_is_final_and_expiry_is_computed(
     voided = build_warranty_record(status=WarrantyStatus.VOIDED)
 
     async def get_by_id(
-        db: AsyncSession, warranty_id: UUID, *, organization_id: UUID | None = None
+        db: AsyncSession, warranty_id: UUID, **_scope: object
     ) -> WarrantyModel:
         return voided
 
@@ -145,3 +147,62 @@ async def test_void_warranty_is_final_and_expiry_is_computed(
         warranty_service.to_warranty_response(build_warranty_record()).is_expired
         is False
     )
+
+
+def test_fleet_limit_predicate_reaches_trucks_their_packs_and_devices_only() -> None:
+    """The limit matches a truck, its fitted pack and T-Box; never a charger (D5)."""
+    predicate_sql = str(
+        warranty_repository._visible_to(frozenset({uuid4()})).compile(
+            compile_kwargs={"render_postcompile": True}
+        )
+    )
+
+    assert "warranties.vehicle_id IN" in predicate_sql
+    assert "FROM batteries" in predicate_sql
+    assert "batteries.vehicle_id IN" in predicate_sql
+    assert "FROM telematics" in predicate_sql
+    assert "telematics.vehicle_id IN" in predicate_sql
+    assert "station_id" not in predicate_sql
+
+
+@pytest.mark.asyncio
+async def test_get_and_list_warranties_apply_the_fleet_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail and list hand the limited manager's trucks to the repository."""
+    received_vehicle_ids: list[object] = []
+
+    async def get_by_id(
+        db: AsyncSession, warranty_id: UUID, **scope: object
+    ) -> WarrantyModel | None:
+        received_vehicle_ids.append(scope["vehicle_ids"])
+        return None
+
+    async def list_all(db: AsyncSession, **filters: object) -> list[WarrantyModel]:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return []
+
+    async def count(db: AsyncSession, **filters: object) -> int:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return 0
+
+    monkeypatch.setattr(warranty_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(warranty_repository, "list_all", list_all)
+    monkeypatch.setattr(warranty_repository, "count", count)
+    visible_vehicle_ids = frozenset({uuid4()})
+    principal = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+
+    with pytest.raises(WarrantyNotFoundError):
+        await warranty_service.get_warranty(
+            fake_db_session(),
+            uuid4(),
+            principal=principal,
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
+    await warranty_service.list_warranties(
+        fake_db_session(),
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+
+    assert received_vehicle_ids == [visible_vehicle_ids] * 3

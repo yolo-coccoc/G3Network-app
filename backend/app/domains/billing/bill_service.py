@@ -444,6 +444,7 @@ async def list_session_bills(
     status: ChargingSessionBillStatus | None,
     created_from: datetime | None,
     created_to: datetime | None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> SessionBillListResponse:
     """List session bills inside the caller's reach, newest first.
 
@@ -458,6 +459,10 @@ async def list_session_bills(
         status: Only this bill status.
         created_from: Only bills created (scanned) at or after this time.
         created_to: Only bills created before this time.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            only bills of sessions on them, plus the caller's own, are listed
+            (a session with no truck is hidden, hardening D5). `None` means
+            no limit.
 
     Returns:
         A page of bills.
@@ -473,6 +478,8 @@ async def list_session_bills(
         created_to=created_to,
         offset=window.offset,
         limit=window.page_size,
+        vehicle_ids=visible_vehicle_ids,
+        caller_user_id=principal.user_id if visible_vehicle_ids is not None else None,
     )
     return SessionBillListResponse(
         items=[

@@ -318,6 +318,7 @@ async def _get_charging_session_record(
     session_id: UUID,
     principal: Principal | None = None,
     *,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
     for_update: bool = False,
 ) -> ChargingSessionModel:
     """Load a session aggregate that must exist.
@@ -330,6 +331,10 @@ async def _get_charging_session_record(
         session_id: UUID of the session to load.
         principal: The HTTP caller whose data reach limits the lookup; `None`
             for a system caller (OCPP adapters).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            a session on another truck, or with no truck, is not found unless
+            the caller started it (hardening D5). `None` means no limit; read
+            only with a ``principal``.
         for_update: Lock the row until the transaction ends (CE-29).
 
     Returns:
@@ -348,6 +353,10 @@ async def _get_charging_session_record(
             session_id,
             organization_id=principal.data_scope,
             started_by=_session_started_by_scope(principal),
+            vehicle_ids=visible_vehicle_ids,
+            caller_user_id=(
+                principal.user_id if visible_vehicle_ids is not None else None
+            ),
             for_update=for_update,
         )
     if session_record is None:
@@ -582,7 +591,11 @@ async def _build_charging_session_detail_response(
 
 
 async def get_charging_session(
-    db: AsyncSession, session_id: UUID, *, principal: Principal
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> ChargingSessionDetailResponse:
     """Get the session aggregate and its read-time summary (F-B2).
 
@@ -590,6 +603,9 @@ async def get_charging_session(
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the aggregate to view.
         principal: The caller; a session out of their reach is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a session on another truck or with no truck is not found unless
+            the caller started it (hardening D5). `None` means no limit.
 
     Returns:
         The session response plus ``duration_seconds``,
@@ -603,7 +619,9 @@ async def get_charging_session(
         Performs one aggregate query and four measurement queries; does not
         commit or roll back.
     """
-    session_record = await _get_charging_session_record(db, session_id, principal)
+    session_record = await _get_charging_session_record(
+        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
+    )
     return await _build_charging_session_detail_response(db, session_record)
 
 
@@ -621,6 +639,7 @@ async def list_charging_sessions(
     status: SessionStatus | None = None,
     started_from: datetime | None = None,
     started_to: datetime | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> ChargingSessionListResponse:
     """Get the most recent sessions matching optional filters (F-B2).
 
@@ -643,6 +662,10 @@ async def list_charging_sessions(
             must carry a timezone.
         started_to: Only sessions with ``started_at < started_to``; must
             carry a timezone and, with ``started_from``, be after it.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            only sessions on them, plus the ones the caller started, are
+            listed (a session with no truck is hidden, hardening D5). `None`
+            means no limit.
 
     Returns:
         The list of sessions and pagination metadata; the items keep the
@@ -686,6 +709,8 @@ async def list_charging_sessions(
         status=status,
         started_from=normalized_from,
         started_to=normalized_to,
+        vehicle_ids=visible_vehicle_ids,
+        caller_user_id=principal.user_id if visible_vehicle_ids is not None else None,
     )
     return await _build_page_response(
         ChargingSessionListResponse,
@@ -779,6 +804,7 @@ async def list_charging_session_meter_values(
     principal: Principal,
     page: int,
     page_size: int,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> ChargingSessionMeterValueListResponse:
     """Get paginated energy-register samples for the ``/meter-values`` endpoint.
 
@@ -786,6 +812,8 @@ async def list_charging_session_meter_values(
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the session whose meter to view.
         principal: The caller; a session out of their reach is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            as in ``get_charging_session``; `None` means no limit.
         page: The page, starting at one.
         page_size: The page size.
 
@@ -799,7 +827,9 @@ async def list_charging_session_meter_values(
         Performs one session lookup and two measurement queries
         (items/count).
     """
-    await _get_charging_session_record(db, session_id, principal)
+    await _get_charging_session_record(
+        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
+    )
     return await _build_page_response(
         ChargingSessionMeterValueListResponse,
         page=page,
@@ -824,6 +854,7 @@ async def list_charging_session_measurements(
     measurand: str | None,
     page: int,
     page_size: int,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> ChargingSessionMeasurementListResponse:
     """Get paginated measurements (any measurand) for the monitoring endpoint.
 
@@ -831,6 +862,8 @@ async def list_charging_session_measurements(
         db: The async session owned by the HTTP boundary.
         session_id: UUID of the session whose measurements to view.
         principal: The caller; a session out of their reach is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            as in ``get_charging_session``; `None` means no limit.
         measurand: Return only this measurand, or all of them if ``None``.
         page: The page, starting at one.
         page_size: The page size.
@@ -845,7 +878,9 @@ async def list_charging_session_measurements(
         Performs one session lookup and two measurement queries (items and
         count).
     """
-    await _get_charging_session_record(db, session_id, principal)
+    await _get_charging_session_record(
+        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
+    )
     return await _build_page_response(
         ChargingSessionMeasurementListResponse,
         page=page,

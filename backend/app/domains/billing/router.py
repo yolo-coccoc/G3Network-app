@@ -49,7 +49,7 @@ from app.domains.billing.schemas import (
     WalletTransactionResponse,
 )
 from app.domains.billing.types import ChargingSessionBillStatus, TariffStatus
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import (
     ALWAYS_ALLOWED_ROLES,
     Principal,
@@ -416,6 +416,7 @@ async def list_session_bills_endpoint(
     created_from: datetime | None = Query(None, alias="from"),
     created_to: datetime | None = Query(None, alias="to"),
     principal: Principal = Depends(BILL_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> SessionBillListResponse:
     """List session bills.
@@ -429,6 +430,8 @@ async def list_session_bills_endpoint(
         created_from: Only bills scanned at or after this time (``from``).
         created_to: Only bills scanned before this time (``to``).
         principal: The authenticated caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            `None` when the caller is not limited.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -444,6 +447,7 @@ async def list_session_bills_endpoint(
         status=status_filter,
         created_from=created_from,
         created_to=created_to,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

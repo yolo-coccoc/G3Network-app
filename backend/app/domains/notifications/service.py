@@ -298,6 +298,7 @@ async def list_notifications(
     mine_only: bool = False,
     unread_only: bool = False,
     order: NotificationListOrder = NotificationListOrder.ASC,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> NotificationListResponse:
     """List notifications for a polling client or a notification centre.
 
@@ -325,6 +326,11 @@ async def list_notifications(
         order: ``ASC`` (default, the polling contract): oldest first after
             the cursor. ``DESC``: the newest ``limit`` notifications, newest
             first.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            `None` means no limit. Applied to the organization view only:
+            notifications about other trucks are left out, those about no
+            truck stay (D5). The caller's own inbox is not filtered, since
+            routing already decided what reached them.
 
     Returns:
         The notifications, plus ``latest_notification_id``: the highest ID
@@ -346,6 +352,7 @@ async def list_notifications(
             "unread_only needs mine_only: read state is per person"
         )
     user_id = principal.user_id if is_inbox else None
+    vehicle_ids = None if is_inbox else visible_vehicle_ids
     if not is_inbox:
         scope = principal.data_scope
         if scope is not None and organization_id not in (None, scope):
@@ -364,6 +371,7 @@ async def list_notifications(
             severity=severity,
             user_id=user_id,
             unread_only=unread_only,
+            vehicle_ids=vehicle_ids,
         )
     else:
         rows = await notification_repository.list_after_id(
@@ -376,6 +384,7 @@ async def list_notifications(
             severity=severity,
             user_id=user_id,
             unread_only=unread_only,
+            vehicle_ids=vehicle_ids,
         )
     shown_at = utc_now()
     if is_inbox and order is NotificationListOrder.DESC:
@@ -454,7 +463,11 @@ async def mark_notification_read(
 
 
 async def get_notification(
-    db: AsyncSession, notification_id: int, *, principal: Principal
+    db: AsyncSession,
+    notification_id: int,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> NotificationResponse:
     """Get one notification by ID if it is in the caller's reach.
 
@@ -464,6 +477,10 @@ async def get_notification(
         principal: The caller. Allowed when the notification was delivered to
             them, or when they hold a staff role and the notification belongs
             to their organization (internal staff: any).
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            `None` means no limit. A limited caller reaches an organization
+            notification only when it is about one of these trucks or about
+            no truck (D5); one delivered to them stays readable either way.
 
     Returns:
         The notification response.
@@ -482,6 +499,15 @@ async def get_notification(
             and principal.can_access_organization(notification_record.organization_id)
         )
     )
+    if (
+        in_organization_reach
+        and visible_vehicle_ids is not None
+        and notification_record.vehicle_id is not None
+        and notification_record.vehicle_id not in visible_vehicle_ids
+    ):
+        # Outside the fleet limit the organization view does not reach it;
+        # the inbox check below still lets a recipient read their own alert.
+        in_organization_reach = False
     if not in_organization_reach and (
         await notification_repository.find_recipient(
             db, notification_id, principal.user_id

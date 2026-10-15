@@ -66,7 +66,7 @@ from app.domains.fleet.schemas import (
 )
 from app.domains.fleet.types import GeofenceReference
 from app.domains.identity.exceptions import AccessDeniedError
-from app.domains.identity.types import Principal
+from app.domains.identity.types import MembershipEndKind, Principal
 from app.domains.vehicles.types import VehicleStatus, VehicleSummary
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
@@ -1777,3 +1777,51 @@ async def close_membership_of_sold_vehicle(
         removed_by=None,
     )
     return membership_record.fleet_id
+
+
+async def handle_membership_end(
+    db_session: AsyncSession,
+    *,
+    membership_id: UUID,
+    kind: MembershipEndKind,
+    acting_user_id: UUID,
+    reason: str,
+) -> None:
+    """Close a membership's fleet limits when the person leaves (hardening D6).
+
+    Registered with the identity domain's membership-end hook by
+    ``app/api/membership_end_hooks.py``, so it runs inside the same
+    transaction as the removal or the leave.
+
+    Rules:
+        An ENDED membership has every open ``fleet_user_assignments`` row
+        closed, with the acting user as ``unassigned_by``. A LOCK leaves them
+        open: no open row means "the whole organization", so closing them on
+        a lock would widen the person's reach when the lock is lifted, and a
+        locked membership cannot act anyway.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        membership_id: The membership that ended or was locked.
+        kind: Whether it ended or was locked.
+        acting_user_id: Who did it.
+        reason: Why; not stored (an assignment has no reason column, and the
+            membership keeps it as its own ``status_reason``).
+
+    Side Effects:
+        Updates the open assignments in the caller's transaction; does
+        nothing for a lock or a membership with no assignment.
+    """
+    if kind is not MembershipEndKind.ENDED:
+        return
+    open_assignments = await fleet_repository.list_open_assignments_by_membership(
+        db_session, membership_id
+    )
+    ended_at = utc_now()
+    for assignment_record in open_assignments:
+        await fleet_repository.close_assignment(
+            db_session,
+            assignment_record,
+            unassigned_at=ended_at,
+            unassigned_by=acting_user_id,
+        )

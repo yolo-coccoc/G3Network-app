@@ -14,14 +14,16 @@ import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.batteries.exceptions import (
     BatteryConflictError,
+    BatteryNotFoundError,
     BatteryVehicleNotFoundError,
 )
 from app.domains.batteries.models import BatteryModel, BatteryModelModel
 from app.domains.batteries.schemas import BatteryInstallRequest
 from app.domains.batteries.types import BatteryStatus
+from app.domains.identity.types import UserRole
 from app.domains.vehicles.types import VehicleReference
 from tests.builders import fake_db_session
-from tests.principals import build_internal_principal
+from tests.principals import build_internal_principal, build_principal
 
 
 def build_battery_record(
@@ -254,3 +256,77 @@ async def test_pack_capacity_prefers_the_installed_battery_over_the_model(
     )
     assert fallback is not None
     assert fallback.battery_capacity_kwh == 200.0
+
+
+@pytest.mark.asyncio
+async def test_get_battery_hides_a_pack_off_the_fleet_limited_trucks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A limited manager sees a pack on their trucks only; one in stock is 404 (D5)."""
+    visible_vehicle_id = uuid4()
+    records = {
+        "visible": build_battery_record(vehicle_id=visible_vehicle_id),
+        "other_truck": build_battery_record(vehicle_id=uuid4()),
+        "in_stock": build_battery_record(),
+    }
+    by_id = {record.battery_id: record for record in records.values()}
+
+    async def get_by_id(
+        db: AsyncSession, battery_id: UUID, **_scope: object
+    ) -> BatteryModel:
+        return by_id[battery_id]
+
+    monkeypatch.setattr(battery_repository, "get_by_id", get_by_id)
+    visible_vehicle_ids = frozenset({visible_vehicle_id})
+    principal = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+
+    response = await battery_service.get_battery(
+        fake_db_session(),
+        records["visible"].battery_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+    assert response.battery_id == records["visible"].battery_id
+    for hidden_key in ("other_truck", "in_stock"):
+        with pytest.raises(BatteryNotFoundError):
+            await battery_service.get_battery(
+                fake_db_session(),
+                records[hidden_key].battery_id,
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        with pytest.raises(BatteryNotFoundError):
+            await battery_service.list_battery_installation_periods(
+                fake_db_session(),
+                records[hidden_key].battery_id,
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+
+
+@pytest.mark.asyncio
+async def test_list_batteries_passes_the_fleet_limit_to_page_and_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The list and its total both filter on the limited manager's trucks."""
+    received_vehicle_ids: list[object] = []
+
+    async def list_all(db: AsyncSession, **filters: object) -> list[BatteryModel]:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return []
+
+    async def count(db: AsyncSession, **filters: object) -> int:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return 0
+
+    monkeypatch.setattr(battery_repository, "list_all", list_all)
+    monkeypatch.setattr(battery_repository, "count", count)
+    visible_vehicle_ids = frozenset({uuid4()})
+
+    await battery_service.list_batteries(
+        fake_db_session(),
+        principal=build_principal(roles=frozenset({UserRole.FLEET_MANAGER})),
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+
+    assert received_vehicle_ids == [visible_vehicle_ids, visible_vehicle_ids]

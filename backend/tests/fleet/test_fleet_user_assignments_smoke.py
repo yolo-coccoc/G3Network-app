@@ -5,6 +5,7 @@ deletion ending assignments run against PostgreSQL in
 ``tests/test_postgres_integration.py``.
 """
 
+import dataclasses
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -19,11 +20,16 @@ import app.domains.identity.service as identity_service
 from app.domains.fleet.exceptions import (
     FleetNotFoundError,
     FleetUserAssignmentConflictError,
+    FleetUserAssignmentMembershipNotFoundError,
     FleetUserAssignmentOrganizationMismatchError,
 )
 from app.domains.fleet.models import FleetModel, FleetUserAssignmentModel
 from app.domains.identity.exceptions import AccessDeniedError
-from app.domains.identity.types import MembershipPersonReference, UserRole
+from app.domains.identity.types import (
+    MembershipEndKind,
+    MembershipPersonReference,
+    UserRole,
+)
 from tests.builders import build_fleet_record, fake_db_session
 from tests.principals import (
     DEFAULT_ORGANIZATION_ID,
@@ -313,4 +319,79 @@ async def test_limited_manager_cannot_delete_a_fleet_that_is_given_to_someone(
     with pytest.raises(AccessDeniedError):
         await fleet_service.soft_delete_fleet(
             fake_db_session(), fleet.fleet_id, principal=principal
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "expect_closed"),
+    [(MembershipEndKind.ENDED, True), (MembershipEndKind.LOCKED, False)],
+)
+async def test_ending_a_membership_closes_its_fleet_limits_but_a_lock_does_not(
+    monkeypatch: pytest.MonkeyPatch, kind: MembershipEndKind, expect_closed: bool
+) -> None:
+    """Hardening D6: a lock keeps the limit, since no row means the whole organization."""
+    membership_id = uuid4()
+    acting_user_id = uuid4()
+    open_assignment = _assignment(uuid4(), membership_id)
+
+    async def list_open(
+        _db: AsyncSession, _membership_id: UUID
+    ) -> list[FleetUserAssignmentModel]:
+        return [open_assignment]
+
+    async def close_assignment(
+        _db: AsyncSession,
+        assignment_record: FleetUserAssignmentModel,
+        *,
+        unassigned_at: datetime,
+        unassigned_by: UUID | None,
+    ) -> FleetUserAssignmentModel:
+        assignment_record.unassigned_at = unassigned_at
+        assignment_record.unassigned_by = unassigned_by
+        return assignment_record
+
+    monkeypatch.setattr(
+        fleet_repository, "list_open_assignments_by_membership", list_open
+    )
+    monkeypatch.setattr(fleet_repository, "close_assignment", close_assignment)
+
+    await fleet_service.handle_membership_end(
+        fake_db_session(),
+        membership_id=membership_id,
+        kind=kind,
+        acting_user_id=acting_user_id,
+        reason="Left the company",
+    )
+
+    assert (open_assignment.unassigned_at is not None) is expect_closed
+    assert open_assignment.unassigned_by == (acting_user_id if expect_closed else None)
+
+
+@pytest.mark.asyncio
+async def test_a_fleet_cannot_be_given_to_a_membership_that_has_ended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hardening D6: a person who left gets no new limit (404 membership)."""
+    ended_membership = dataclasses.replace(
+        _membership_reference(DEFAULT_ORGANIZATION_ID),
+        membership_status="ACTIVE",
+        left_at=datetime.now(timezone.utc),
+    )
+
+    async def resolve_membership(
+        _db: AsyncSession, _membership_id: UUID
+    ) -> MembershipPersonReference:
+        return ended_membership
+
+    monkeypatch.setattr(
+        identity_service, "resolve_membership_person_reference", resolve_membership
+    )
+
+    with pytest.raises(FleetUserAssignmentMembershipNotFoundError):
+        await assignment_service.assign_fleet_to_membership(
+            fake_db_session(),
+            ended_membership.membership_id,
+            uuid4(),
+            principal=build_internal_principal(),
         )

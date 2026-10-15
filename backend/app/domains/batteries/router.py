@@ -25,7 +25,11 @@ from app.domains.batteries.schemas import (
     BatteryUpdateRequest,
 )
 from app.domains.batteries.types import BatteryChemistry, BatteryStatus
-from app.domains.identity.dependencies import get_current_principal, require_roles
+from app.domains.identity.dependencies import (
+    get_current_principal,
+    get_visible_vehicle_ids,
+    require_roles,
+)
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.config import settings
 from app.libs.common.reason import Reason
@@ -109,6 +113,7 @@ async def list_batteries_endpoint(
         None, alias="organization_id", description="Filter by owning organization"
     ),
     principal: Principal = Depends(BATTERY_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> BatteryListResponse:
     """Get a paginated list of batteries.
@@ -124,6 +129,7 @@ async def list_batteries_endpoint(
         owner_organization_id: Only batteries of this owner (query parameter
             ``organization_id``).
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -140,6 +146,7 @@ async def list_batteries_endpoint(
         vehicle_id=vehicle_id,
         is_installed=is_installed,
         owner_organization_id=owner_organization_id,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -152,6 +159,7 @@ async def list_batteries_endpoint(
 async def get_battery_endpoint(
     battery_id: UUID,
     principal: Principal = Depends(BATTERY_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> BatteryResponse:
     """Get a battery by ID.
@@ -159,6 +167,7 @@ async def get_battery_endpoint(
     Args:
         battery_id: Internal ID of the battery.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -168,7 +177,10 @@ async def get_battery_endpoint(
         BatteryNotFoundError: Missing, removed or out of reach (404).
     """
     return await battery_service.get_battery(
-        db_session, battery_id, principal=principal
+        db_session,
+        battery_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -315,6 +327,7 @@ async def remove_battery_from_vehicle_endpoint(
 async def list_battery_installation_periods_endpoint(
     battery_id: UUID,
     principal: Principal = Depends(BATTERY_READERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> BatteryInstallationPeriodListResponse:
     """List the installation periods of a battery.
@@ -322,6 +335,7 @@ async def list_battery_installation_periods_endpoint(
     Args:
         battery_id: Internal ID of the battery.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -331,7 +345,10 @@ async def list_battery_installation_periods_endpoint(
         BatteryNotFoundError: Missing, removed or out of reach (404).
     """
     return await battery_service.list_battery_installation_periods(
-        db_session, battery_id, principal=principal
+        db_session,
+        battery_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

@@ -24,11 +24,18 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.domains.warranties.models import WarrantyModel
 from app.libs.db.history import set_change_context
 
-# Only the columns the ownership predicate reads. The tables belong to the
-# vehicles, batteries, telematics and charging_stations domains.
+# Only the columns the ownership and fleet-limit predicates read. The tables
+# belong to the vehicles, batteries, telematics and charging_stations domains.
 _VEHICLES = table("vehicles", column("vehicle_id"), column("organization_id"))
-_BATTERIES = table("batteries", column("battery_id"), column("organization_id"))
-_TELEMATICS = table("telematics", column("telematic_id"), column("organization_id"))
+_BATTERIES = table(
+    "batteries", column("battery_id"), column("organization_id"), column("vehicle_id")
+)
+_TELEMATICS = table(
+    "telematics",
+    column("telematic_id"),
+    column("organization_id"),
+    column("vehicle_id"),
+)
 _STATIONS = table("charging_stations", column("station_id"), column("location_id"))
 _LOCATIONS = table(
     "charging_locations", column("location_id"), column("organization_id")
@@ -69,6 +76,35 @@ def _owned_by(organization_id: UUID) -> ColumnElement[bool]:
     )
 
 
+def _visible_to(vehicle_ids: frozenset[UUID]) -> ColumnElement[bool]:
+    """Build the predicate "the covered object is on one of these trucks" (FL-10).
+
+    A fleet-limited manager sees a warranty only through a truck of their
+    fleets: the truck's own warranty, or that of the battery or T-Box fitted
+    to it now. A charger, a pack in stock or an unmounted device is on no
+    truck, so its warranty is hidden (fail closed, owner decision D5).
+
+    Args:
+        vehicle_ids: The trucks the caller's fleet limit allows.
+
+    Returns:
+        A condition on the warranty's truck, battery and T-Box links.
+    """
+    return or_(
+        WarrantyModel.vehicle_id.in_(vehicle_ids),
+        WarrantyModel.battery_id.in_(
+            select(_BATTERIES.c.battery_id).where(
+                _BATTERIES.c.vehicle_id.in_(vehicle_ids)
+            )
+        ),
+        WarrantyModel.telematic_id.in_(
+            select(_TELEMATICS.c.telematic_id).where(
+                _TELEMATICS.c.vehicle_id.in_(vehicle_ids)
+            )
+        ),
+    )
+
+
 async def insert(db_session: AsyncSession, values: dict[str, Any]) -> WarrantyModel:
     """Insert a warranty record.
 
@@ -94,6 +130,7 @@ async def get_by_id(
     warranty_id: UUID,
     *,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> WarrantyModel | None:
     """Find a live warranty by ID.
 
@@ -102,6 +139,9 @@ async def get_by_id(
         warranty_id: Internal ID of the warranty.
         organization_id: Data scope: only a warranty whose covered object this
             organization owns is found; `None` means no restriction.
+        vehicle_ids: Fleet limit of the caller (FL-10): only a warranty of
+            one of these trucks, or of the battery or T-Box fitted to one, is
+            found; `None` means no limit.
 
     Returns:
         The record, or None if not found, entered by mistake or out of scope.
@@ -112,6 +152,8 @@ async def get_by_id(
     ]
     if organization_id is not None:
         conditions.append(_owned_by(organization_id))
+    if vehicle_ids is not None:
+        conditions.append(_visible_to(vehicle_ids))
     query_result = await db_session.execute(
         select(WarrantyModel).where(and_(*conditions))
     )
@@ -168,6 +210,7 @@ def _build_list_conditions(
     warranty_type: str | None,
     ending_between: tuple[date, date] | None,
     owner_organization_id: UUID | None,
+    vehicle_ids: frozenset[UUID] | None,
 ) -> list[ColumnElement[bool]]:
     """Build the WHERE conditions shared by ``list_all`` and ``count``.
 
@@ -182,6 +225,7 @@ def _build_list_conditions(
         ending_between: ``(from, to)`` inclusive range of ``ends_on``.
         owner_organization_id: Only warranties whose object this organization
             owns (a filter the caller chose, on top of the data scope).
+        vehicle_ids: Fleet limit of the caller (FL-10); `None` means no limit.
 
     Returns:
         Conditions to AND together: always "not entered by mistake".
@@ -191,6 +235,8 @@ def _build_list_conditions(
         conditions.append(_owned_by(organization_id))
     if owner_organization_id is not None:
         conditions.append(_owned_by(owner_organization_id))
+    if vehicle_ids is not None:
+        conditions.append(_visible_to(vehicle_ids))
     if vehicle_id is not None:
         conditions.append(WarrantyModel.vehicle_id == vehicle_id)
     if battery_id is not None:
@@ -223,6 +269,7 @@ async def list_all(
     warranty_type: str | None = None,
     ending_between: tuple[date, date] | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[WarrantyModel]:
     """Get a page of live warranties, the ones ending soonest first.
 
@@ -240,6 +287,7 @@ async def list_all(
         ending_between: Inclusive range of ``ends_on``, if any.
         owner_organization_id: Only warranties whose object this organization
             owns, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         List of warranty records.
@@ -254,6 +302,7 @@ async def list_all(
         warranty_type=warranty_type,
         ending_between=ending_between,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
     query_result = await db_session.execute(
         select(WarrantyModel)
@@ -277,6 +326,7 @@ async def count(
     warranty_type: str | None = None,
     ending_between: tuple[date, date] | None = None,
     owner_organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count the live warranties matching the filters.
 
@@ -292,6 +342,7 @@ async def count(
         ending_between: Inclusive range of ``ends_on``, if any.
         owner_organization_id: Only warranties whose object this organization
             owns, if given.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Number of matching warranties.
@@ -306,6 +357,7 @@ async def count(
         warranty_type=warranty_type,
         ending_between=ending_between,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=vehicle_ids,
     )
     query_result = await db_session.execute(
         select(func.count(WarrantyModel.warranty_id)).where(and_(*conditions))

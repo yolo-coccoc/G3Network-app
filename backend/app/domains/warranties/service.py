@@ -169,7 +169,11 @@ async def _resolve_object_owner_organization_id(
 
 
 async def _get_warranty_record(
-    db_session: AsyncSession, warranty_id: UUID, principal: Principal
+    db_session: AsyncSession,
+    warranty_id: UUID,
+    principal: Principal,
+    *,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> WarrantyModel:
     """Load a live warranty inside the caller's data reach.
 
@@ -177,16 +181,24 @@ async def _get_warranty_record(
         db_session: Current database session.
         warranty_id: Internal ID of the warranty.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a warranty not on one of them (a charger, a pack in stock, an
+            unmounted device included, D5) is not found. `None` (no limit,
+            every internal writer) skips the check.
 
     Returns:
         The warranty record.
 
     Raises:
-        WarrantyNotFoundError: Missing, entered by mistake, or its object
-            belongs to an organization the caller cannot reach.
+        WarrantyNotFoundError: Missing, entered by mistake, its object
+            belongs to an organization the caller cannot reach, or it is
+            outside the caller's fleet limit.
     """
     warranty_record = await warranty_repository.get_by_id(
-        db_session, warranty_id, organization_id=principal.data_scope
+        db_session,
+        warranty_id,
+        organization_id=principal.data_scope,
+        vehicle_ids=visible_vehicle_ids,
     )
     if warranty_record is None:
         raise WarrantyNotFoundError(f"Warranty with id '{warranty_id}' not found")
@@ -300,7 +312,11 @@ async def create_warranty(
 
 
 async def get_warranty(
-    db_session: AsyncSession, warranty_id: UUID, *, principal: Principal
+    db_session: AsyncSession,
+    warranty_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> WarrantyResponse:
     """Get a warranty by ID inside the caller's data reach.
 
@@ -308,6 +324,9 @@ async def get_warranty(
         db_session: Current database session.
         warranty_id: Internal ID of the warranty.
         principal: The caller.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a warranty not on one of them is not found. `None` means no
+            limit.
 
     Returns:
         Response for the warranty.
@@ -316,7 +335,12 @@ async def get_warranty(
         WarrantyNotFoundError: Missing, entered by mistake or out of reach.
     """
     return to_warranty_response(
-        await _get_warranty_record(db_session, warranty_id, principal)
+        await _get_warranty_record(
+            db_session,
+            warranty_id,
+            principal,
+            visible_vehicle_ids=visible_vehicle_ids,
+        )
     )
 
 
@@ -334,6 +358,7 @@ async def list_warranties(
     warranty_type: WarrantyType | None = None,
     expiring_within_days: int | None = None,
     owner_organization_id: UUID | None = None,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> WarrantyListResponse:
     """Get a paginated list of warranties, the ones ending soonest first.
 
@@ -353,6 +378,10 @@ async def list_warranties(
             today up to this many days ahead (an expiring-soon list).
         owner_organization_id: Only warranties of objects this organization
             owns, if given.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
+            only warranties of these trucks and of the battery or T-Box fitted
+            to them are listed; charger warranties and those of packs or
+            devices on no truck are hidden (D5). `None` means no limit.
 
     Returns:
         Paginated list response.
@@ -381,6 +410,7 @@ async def list_warranties(
         warranty_type=warranty_type_value,
         ending_between=ending_between,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     total = await warranty_repository.count(
         db_session,
@@ -393,6 +423,7 @@ async def list_warranties(
         warranty_type=warranty_type_value,
         ending_between=ending_between,
         owner_organization_id=owner_organization_id,
+        vehicle_ids=visible_vehicle_ids,
     )
     return WarrantyListResponse(
         items=[

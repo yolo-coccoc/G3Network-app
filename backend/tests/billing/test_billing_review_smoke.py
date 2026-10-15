@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.dialects import postgresql
 
 import app.domains.billing.bill_service as bill_service
 import app.domains.billing.ledger_service as ledger_service
@@ -264,6 +265,78 @@ async def test_a_customer_bill_list_stays_in_its_own_organization(
     )
 
     assert captured["organization_id"] == accountant.organization_id
+
+
+class _StatementRecorder:
+    """Fake database that records the statements it runs and finds nothing.
+
+    Attributes:
+        statements: Every statement passed to ``execute``, in order.
+    """
+
+    def __init__(self) -> None:
+        """Start with no recorded statement."""
+        self.statements: list[Any] = []
+
+    async def execute(self, statement: Any) -> Any:
+        """Record the statement and answer an empty result.
+
+        Args:
+            statement: The SQLAlchemy statement.
+
+        Returns:
+            A result whose count is zero and whose rows are empty.
+        """
+        self.statements.append(statement)
+        return _EmptyResult()
+
+
+class _EmptyResult:
+    """Query result with no rows (count zero)."""
+
+    def scalar_one(self) -> int:
+        """Return a zero count."""
+        return 0
+
+    def all(self) -> list[Any]:
+        """Return no rows."""
+        return []
+
+
+@pytest.mark.asyncio
+async def test_a_fleet_limited_bill_list_keeps_own_bills_and_hides_truckless_ones() -> (
+    None
+):
+    """FL-10, hardening D5: only bills on a visible truck or the caller's own."""
+    truck_id = uuid4()
+    manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
+    recorder = _StatementRecorder()
+
+    await bill_service.list_session_bills(
+        recorder,  # type: ignore[arg-type]
+        principal=manager,
+        page=1,
+        page_size=20,
+        organization_id=None,
+        started_by=None,
+        status=None,
+        created_from=None,
+        created_to=None,
+        visible_vehicle_ids=frozenset({truck_id}),
+    )
+
+    assert len(recorder.statements) == 2  # the count, then the page
+    for statement in recorder.statements:
+        sql = str(
+            statement.compile(
+                dialect=postgresql.dialect(),  # type: ignore[no-untyped-call]
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        assert (
+            f"charging_sessions.started_by = '{manager.user_id}' "
+            f"OR charging_sessions.vehicle_id IN ('{truck_id}')"
+        ) in sql
 
 
 # --- Price rules (guards) -----------------------------------------------------

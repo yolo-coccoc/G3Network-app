@@ -95,7 +95,8 @@ def test_register_all_hooks_fills_every_hook_slot(
         billing_hooks.bill_ended_session
     ]
     assert member_service._membership_end_hooks == [
-        driver_service.handle_membership_end
+        driver_service.handle_membership_end,
+        fleet_service.handle_membership_end,
     ]
     assert (
         identity_dependencies._visible_vehicle_resolver
@@ -114,7 +115,7 @@ def test_register_all_hooks_twice_registers_each_hook_once(
     startup.register_all_hooks()
 
     assert len(charging_session_service._session_ended_hooks) == 1
-    assert len(member_service._membership_end_hooks) == 1
+    assert len(member_service._membership_end_hooks) == 2
 
 
 def test_every_process_module_calls_register_all_hooks() -> None:

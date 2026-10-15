@@ -517,7 +517,10 @@ async def test_receipt_shows_the_place_and_energy_and_leaves_the_bill_null_until
     monkeypatch.setattr(billing_service, "find_session_bill_reference", no_bill)
 
     receipt = await flow.get_charging_session_receipt_endpoint(
-        session.session_id, principal=DRIVER, db_session=fake_db_session()
+        session.session_id,
+        principal=DRIVER,
+        visible_vehicle_ids=None,
+        db_session=fake_db_session(),
     )
 
     assert receipt.energy_delivered_wh == Decimal(60000)
@@ -527,7 +530,10 @@ async def test_receipt_shows_the_place_and_energy_and_leaves_the_bill_null_until
     session.status = SessionStatus.ACTIVE
     with pytest.raises(ChargingSessionStateError):
         await flow.get_charging_session_receipt_endpoint(
-            session.session_id, principal=DRIVER, db_session=fake_db_session()
+            session.session_id,
+            principal=DRIVER,
+            visible_vehicle_ids=None,
+            db_session=fake_db_session(),
         )
 
 

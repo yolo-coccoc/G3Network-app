@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.notifications.service as notification_service
 import app.domains.notifications.settings_service as notification_settings_service
-from app.domains.identity.dependencies import require_roles
+from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.domains.notifications.schemas import (
     NotificationListResponse,
@@ -92,6 +92,7 @@ async def list_notifications_endpoint(
         ),
     ),
     principal: Principal = Depends(NOTIFICATION_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationListResponse:
     """Return notifications for a polling client or a notification centre.
@@ -112,6 +113,8 @@ async def list_notifications_endpoint(
         severity: Severity filter, if any.
         order: ``asc`` (polling) or ``desc`` (newest first).
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none;
+            narrows the organization view, not the caller's own inbox.
         db: Database session managed by the dependency.
 
     Returns:
@@ -130,6 +133,7 @@ async def list_notifications_endpoint(
         severity=severity,
         order=order,
         principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -210,6 +214,7 @@ async def mark_all_notifications_seen_endpoint(
 async def get_notification_endpoint(
     notification_id: int,
     principal: Principal = Depends(NOTIFICATION_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db: AsyncSession = Depends(get_db, scope="function"),
 ) -> NotificationResponse:
     """Return one notification by ID.
@@ -217,16 +222,22 @@ async def get_notification_endpoint(
     Args:
         notification_id: Internal ID of the notification.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none;
+            another truck's notification not delivered to the caller is a 404.
         db: Database session managed by the dependency.
 
     Returns:
         The notification.
 
     Raises:
-        NotificationNotFoundError: The notification does not exist (HTTP 404).
+        NotificationNotFoundError: The notification does not exist or is out
+            of the caller's reach (HTTP 404).
     """
     return await notification_service.get_notification(
-        db, notification_id, principal=principal
+        db,
+        notification_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 

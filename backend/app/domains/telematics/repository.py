@@ -206,6 +206,7 @@ async def list_all(
     limit: int,
     status_filter: TelematicStatus | None = None,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[TelematicModel]:
     """Get a page of devices, newest first, excluding soft-deleted ones.
 
@@ -215,6 +216,9 @@ async def list_all(
         limit: Maximum number of records to return.
         status_filter: Only return devices in this status, if given.
         organization_id: Data scope; `None` means every organization.
+        vehicle_ids: Fleet limit of the caller (FL-10): only devices mounted
+            on these trucks, so an unmounted device is left out (D5); `None`
+            means no limit.
 
     Returns:
         List of device records.
@@ -230,6 +234,8 @@ async def list_all(
         statement = statement.where(TelematicModel.status == status_filter)
     if organization_id is not None:
         statement = statement.where(TelematicModel.organization_id == organization_id)
+    if vehicle_ids is not None:
+        statement = statement.where(TelematicModel.vehicle_id.in_(vehicle_ids))
     query_result = await db_session.execute(statement)
     return list(query_result.scalars().all())
 
@@ -238,12 +244,15 @@ async def list_in_scope(
     db_session: AsyncSession,
     *,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> list[TelematicModel]:
     """Get every device that has not been soft-deleted, for the health dashboard.
 
     Args:
         db_session: Current database session.
         organization_id: Data scope; `None` means every organization.
+        vehicle_ids: Fleet limit of the caller (FL-10): only devices mounted
+            on these trucks; `None` means no limit.
 
     Returns:
         All matching devices, newest first. Unbounded: the MVP's device count
@@ -257,6 +266,8 @@ async def list_in_scope(
     )
     if organization_id is not None:
         statement = statement.where(TelematicModel.organization_id == organization_id)
+    if vehicle_ids is not None:
+        statement = statement.where(TelematicModel.vehicle_id.in_(vehicle_ids))
     query_result = await db_session.execute(statement)
     return list(query_result.scalars().all())
 
@@ -265,6 +276,7 @@ async def count(
     db_session: AsyncSession,
     status_filter: TelematicStatus | None = None,
     organization_id: UUID | None = None,
+    vehicle_ids: frozenset[UUID] | None = None,
 ) -> int:
     """Count devices that have not been soft-deleted.
 
@@ -272,6 +284,7 @@ async def count(
         db_session: Current database session.
         status_filter: Only count devices in this status, if given.
         organization_id: Data scope; `None` means every organization.
+        vehicle_ids: Fleet limit of the caller (FL-10), if any.
 
     Returns:
         Number of matching devices.
@@ -285,6 +298,8 @@ async def count(
         statement = statement.where(TelematicModel.status == status_filter)
     if organization_id is not None:
         statement = statement.where(TelematicModel.organization_id == organization_id)
+    if vehicle_ids is not None:
+        statement = statement.where(TelematicModel.vehicle_id.in_(vehicle_ids))
     query_result = await db_session.execute(statement)
     return int(query_result.scalar_one())
 

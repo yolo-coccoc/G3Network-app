@@ -234,7 +234,7 @@ async def test_health_summary_counts_states_and_healthy_share(
     now = datetime.now(timezone.utc)
 
     async def list_in_scope(
-        db_session: AsyncSession, *, organization_id: UUID | None = None
+        db_session: AsyncSession, **_scope: object
     ) -> list[TelematicModel]:
         return [healthy, silent, stock]
 

@@ -13,6 +13,7 @@ import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.service as telemetry_public_service
 import app.domains.vehicles.service as vehicles_public_service
+from app.domains.identity.types import UserRole
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
     TelematicConflictError,
@@ -32,7 +33,7 @@ from app.domains.vehicles.types import (
 )
 from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
-from tests.principals import build_internal_principal
+from tests.principals import build_internal_principal, build_principal
 
 UNKNOWN_VIN = "1HGBH41JXMN999999"
 
@@ -653,3 +654,165 @@ async def test_resolve_mapping_by_serial_returns_mapping_for_live_vehicle(
         )
         == telematic_vehicle_mapping
     )
+
+
+@pytest.mark.asyncio
+async def test_fleet_limited_caller_gets_not_found_for_a_device_off_their_trucks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detail, health, reports, config push and delete 404 off the limit (D5)."""
+    visible_device = build_telematic_record(uuid4())
+    other_truck_device = build_telematic_record(uuid4())
+    unmounted_device = build_telematic_record(uuid4())
+    unmounted_device.vehicle_id = None
+    by_id = {
+        device.telematic_id: device
+        for device in (visible_device, other_truck_device, unmounted_device)
+    }
+
+    async def get_by_id(
+        db: AsyncSession, telematic_id: UUID, **_scope: object
+    ) -> TelematicModel:
+        return by_id[telematic_id]
+
+    async def resolve_id(db: AsyncSession, vehicle_id: UUID) -> None:
+        return None
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", get_by_id)
+    monkeypatch.setattr(
+        vehicles_public_service, "resolve_vehicle_reference_by_id", resolve_id
+    )
+    visible_vehicle_ids = frozenset({cast(UUID, visible_device.vehicle_id)})
+    principal = build_principal(
+        roles=frozenset({UserRole.FLEET_MANAGER, UserRole.OPERATIONS})
+    )
+
+    detail = await telematics_service.get_telematic(
+        fake_db_session(),
+        visible_device.telematic_id,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+    assert detail.telematic_id == visible_device.telematic_id
+    for hidden_device in (other_truck_device, unmounted_device):
+        hidden_id = hidden_device.telematic_id
+        with pytest.raises(TelematicNotFoundError):
+            await telematics_service.get_telematic(
+                fake_db_session(),
+                hidden_id,
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        with pytest.raises(TelematicNotFoundError):
+            await telematics_service.get_telematic_health(
+                fake_db_session(),
+                hidden_id,
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        with pytest.raises(TelematicNotFoundError):
+            await telematics_service.list_telematic_status_reports(
+                fake_db_session(),
+                hidden_id,
+                principal=principal,
+                since=None,
+                limit=10,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        with pytest.raises(TelematicNotFoundError):
+            await telematics_service.push_telematic_config(
+                fake_db_session(),
+                hidden_id,
+                TelematicConfigPushRequest(telemetry_interval_seconds=60),
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+        with pytest.raises(TelematicNotFoundError):
+            await telematics_service.soft_delete_telematic(
+                fake_db_session(),
+                hidden_id,
+                principal=principal,
+                visible_vehicle_ids=visible_vehicle_ids,
+            )
+
+
+@pytest.mark.asyncio
+async def test_device_list_and_health_dashboard_filter_on_the_fleet_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The device page, its total and the whole-scope health read take the limit."""
+    received_vehicle_ids: list[object] = []
+
+    async def list_all(db: AsyncSession, **filters: object) -> list[TelematicModel]:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return []
+
+    async def count(
+        db: AsyncSession,
+        status_filter: TelematicStatus | None = None,
+        **filters: object,
+    ) -> int:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return 0
+
+    async def list_in_scope(
+        db: AsyncSession, **filters: object
+    ) -> list[TelematicModel]:
+        received_vehicle_ids.append(filters["vehicle_ids"])
+        return []
+
+    monkeypatch.setattr(telematics_repository, "list_all", list_all)
+    monkeypatch.setattr(telematics_repository, "count", count)
+    monkeypatch.setattr(telematics_repository, "list_in_scope", list_in_scope)
+    visible_vehicle_ids = frozenset({uuid4()})
+    principal = build_principal(
+        roles=frozenset({UserRole.FLEET_MANAGER, UserRole.OPERATIONS})
+    )
+
+    await telematics_service.list_telematics(
+        fake_db_session(),
+        principal=principal,
+        page=1,
+        page_size=10,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+    await telematics_service.get_device_health_summary(
+        fake_db_session(), principal=principal, visible_vehicle_ids=visible_vehicle_ids
+    )
+
+    assert received_vehicle_ids == [visible_vehicle_ids] * 3
+
+
+@pytest.mark.asyncio
+async def test_update_telematic_refuses_to_mount_on_a_truck_off_the_fleet_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A limited caller cannot move a visible device onto a truck they cannot see."""
+    telematic_record = build_telematic_record(uuid4())
+    updated_values: dict[str, object] = {}
+    _patch_update_dependencies(monkeypatch, telematic_record, updated_values)
+
+    async def truck_off_the_limit(db: AsyncSession, vin: str) -> VehicleReference:
+        return VehicleReference(
+            organization_id=uuid4(),
+            vehicle_id=uuid4(),
+            vin=vin,
+            battery_capacity_kwh=None,
+        )
+
+    monkeypatch.setattr(
+        vehicles_public_service,
+        "resolve_vehicle_reference_by_vin",
+        truck_off_the_limit,
+    )
+
+    with pytest.raises(TelematicVehicleNotFoundError):
+        await telematics_service.update_telematic(
+            fake_db_session(),
+            telematic_record.telematic_id,
+            TelematicUpdateRequest.model_validate({"vehicle_vin": UNKNOWN_VIN}),
+            principal=build_internal_principal(),
+            visible_vehicle_ids=frozenset({cast(UUID, telematic_record.vehicle_id)}),
+        )
+
+    assert updated_values == {}

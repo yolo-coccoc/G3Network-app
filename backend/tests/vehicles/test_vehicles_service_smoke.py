@@ -155,13 +155,18 @@ async def test_soft_delete_vehicle_endpoint_keeps_confirmation_body(
         *,
         principal: Principal,
         reason: str | None = None,
+        visible_vehicle_ids: frozenset[UUID] | None = None,
     ) -> None:
         return None
 
     monkeypatch.setattr(vehicle_service, "soft_delete_vehicle", soft_delete_vehicle)
 
     response_body = await vehicle_router.soft_delete_vehicle_endpoint(
-        uuid4(), None, build_principal(), fake_db_session()
+        uuid4(),
+        None,
+        principal=build_principal(),
+        visible_vehicle_ids=None,
+        db_session=fake_db_session(),
     )
 
     assert response_body == {"message": "Vehicle deleted successfully"}
