@@ -39,6 +39,7 @@ def _empty_every_hook_slot(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(charging_session_service, "_session_ended_hooks", [])
     monkeypatch.setattr(member_service, "_membership_end_hooks", [])
+    monkeypatch.setattr(member_service, "_role_revoked_hooks", [])
     monkeypatch.setattr(identity_dependencies, "_visible_vehicle_resolver", None)
     monkeypatch.setattr(recipient_service, "_vehicle_audience_hooks", None)
 
@@ -85,8 +86,8 @@ def _calls_register_all_hooks(path: Path) -> bool:
 def test_register_all_hooks_fills_every_hook_slot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """After the call, billing, membership end, fleet visibility and alert
-    routing are all wired."""
+    """After the call, billing, membership end, role revocation, fleet
+    visibility and alert routing are all wired."""
     _empty_every_hook_slot(monkeypatch)
 
     startup.register_all_hooks()
@@ -98,6 +99,7 @@ def test_register_all_hooks_fills_every_hook_slot(
         driver_service.handle_membership_end,
         fleet_service.handle_membership_end,
     ]
+    assert member_service._role_revoked_hooks == [driver_service.handle_role_revoked]
     assert (
         identity_dependencies._visible_vehicle_resolver
         is fleet_service.resolve_principal_visible_vehicle_ids
@@ -116,6 +118,7 @@ def test_register_all_hooks_twice_registers_each_hook_once(
 
     assert len(charging_session_service._session_ended_hooks) == 1
     assert len(member_service._membership_end_hooks) == 2
+    assert len(member_service._role_revoked_hooks) == 1
 
 
 def test_every_process_module_calls_register_all_hooks() -> None:

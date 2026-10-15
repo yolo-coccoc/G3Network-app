@@ -103,7 +103,10 @@ async def transfer_vehicle_ownership_endpoint(
     )
     ended_driving_session_id = (
         await driver_service.end_open_session_on_ownership_change(
-            db_session, vehicle_id, ended_at=transfer_result.acquired_at
+            db_session,
+            vehicle_id,
+            ended_at=transfer_result.acquired_at,
+            changed_by=principal.user_id,
         )
     )
     moved_battery_id = await battery_service.transfer_installed_battery_with_vehicle(

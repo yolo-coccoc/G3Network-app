@@ -38,6 +38,7 @@ from app.domains.drivers.exceptions import (
     TripInvalidPlanError,
     TripNotCheckedInError,
     TripNotFoundError,
+    TripOrganizationMismatchError,
     TripStateConflictError,
     TripVehicleNotFoundError,
 )
@@ -787,7 +788,11 @@ async def start_trip(
 
     The driver may be one the plan did not name, and the truck may differ from
     the planned one: both are allowed and flagged in the response. A plan that
-    names another driver is not the caller's trip (404).
+    names another driver is not the caller's trip (404). The truck must belong
+    to the trip's organization (the session's `organization_id`, the truck's
+    owner at check-in): a trip runs only on a truck of its own organization
+    (DR-11, D2), so a driver on a borrowed truck starts a personal trip
+    instead.
 
     Args:
         db_session: Current database session.
@@ -804,6 +809,8 @@ async def start_trip(
         TripStateConflictError: The trip is not PLANNED.
         TripNotCheckedInError: The driver is not checked in.
         TripInProgressConflictError: The session already has a trip running.
+        TripOrganizationMismatchError: The driver is checked in to a truck of
+            another organization than the trip's.
 
     Side Effects:
         Reads the truck's T-Box sample (telemetry) for the start position,
@@ -822,6 +829,11 @@ async def start_trip(
     if trip_record.status != TripStatus.PLANNED.value:
         raise TripStateConflictError("Only a planned trip can be started")
     open_session = await _require_open_session(db_session, driver_record)
+    if open_session.organization_id != trip_record.organization_id:
+        raise TripOrganizationMismatchError(
+            "The trip belongs to another organization than the truck; "
+            "start a personal trip instead"
+        )
 
     now = utc_now()
     reading = await driver_service.read_recent_truck_reading(

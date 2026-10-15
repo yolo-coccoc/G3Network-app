@@ -35,6 +35,7 @@ from app.domains.identity.types import (
     Principal,
     PushTargetReference,
     RoleHolderReference,
+    RoleRevokedHook,
     UserRole,
 )
 from app.libs.common.clock import utc_now
@@ -445,6 +446,22 @@ def register_membership_end_hook(hook: MembershipEndHook) -> None:
         ``app/api/membership_end_hooks.py``).
     """
     member_service.register_membership_end_hook(hook)
+
+
+def register_role_revoked_hook(hook: RoleRevokedHook) -> None:
+    """Register a callback run when a member's role is revoked.
+
+    Args:
+        hook: Async callable taking the database session and the keyword
+            arguments ``membership_id``, ``role`` (`UserRole`) and
+            ``acting_user_id``; it runs in the same transaction as the
+            revocation.
+
+    Side Effects:
+        Adds the hook to a process-wide list (done once at start-up by
+        ``app/api/membership_end_hooks.py``).
+    """
+    member_service.register_role_revoked_hook(hook)
 
 
 def require_token_secret() -> None:

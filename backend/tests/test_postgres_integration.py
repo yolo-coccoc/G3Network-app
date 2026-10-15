@@ -161,6 +161,7 @@ from app.domains.identity.models import (
     MembershipModel,
     OrganizationModel,
     UserModel,
+    UserRoleAssignmentModel,
     UserSessionModel,
 )
 from app.domains.identity.schemas import (
@@ -1581,7 +1582,7 @@ async def _integration_vehicle(db: AsyncSession, *, license_plate: str) -> Vehic
 async def _integration_driver(
     db: AsyncSession, *, license_number: str, organization_id: UUID | None = None
 ) -> DriverModel:
-    """Insert an organization (unless given), a user, a membership and a driver profile.
+    """Insert an organization (unless given), a user, a DRIVER membership and a profile.
 
     Args:
         db: Session of the caller's transaction.
@@ -1607,6 +1608,15 @@ async def _integration_driver(
         status=MembershipStatus.ACTIVE.value,
     )
     db.add(membership)
+    await db.flush()
+    # A check-in needs the DRIVER role on the membership (bug-fix A5).
+    db.add(
+        UserRoleAssignmentModel(
+            organization_id=organization_id,
+            membership_id=membership.membership_id,
+            role=UserRole.DRIVER.value,
+        )
+    )
     await db.flush()
     return await driver_repository.insert(
         db,

@@ -10,7 +10,9 @@ Limitations: the DRIVER role is granted without checking for a driver profile
 (the `drivers` domain depends on identity, not the reverse). Ending or locking
 a membership calls the hooks registered with `register_membership_end_hook`
 (the drivers domain closes the person's driver profile and open driving
-session that way, DR-10; wired in ``app/api/membership_end_hooks.py``).
+session that way, DR-10; wired in ``app/api/membership_end_hooks.py``), and
+revoking a role calls those registered with `register_role_revoked_hook` (the
+drivers domain ends the open driving session of a person who loses DRIVER).
 """
 
 import logging
@@ -50,6 +52,7 @@ from app.domains.identity.types import (
     OneTimeCodePurpose,
     OrganizationStatus,
     Principal,
+    RoleRevokedHook,
     SessionIdentity,
     UserRole,
     UserStatus,
@@ -64,6 +67,11 @@ logger = logging.getLogger(__name__)
 # locked (DR-10). Registered once at application start-up through
 # `register_membership_end_hook`; identity itself imports no other domain.
 _membership_end_hooks: list[MembershipEndHook] = []
+
+# Callbacks run, in the caller's transaction, after a member lost a role
+# (a revoked DRIVER ends the open driving session). Registered once at
+# start-up through `register_role_revoked_hook`, like the membership-end hooks.
+_role_revoked_hooks: list[RoleRevokedHook] = []
 
 
 def register_membership_end_hook(hook: MembershipEndHook) -> None:
@@ -107,6 +115,47 @@ async def _run_membership_end_hooks(
             kind=kind,
             acting_user_id=acting_user_id,
             reason=reason,
+        )
+
+
+def register_role_revoked_hook(hook: RoleRevokedHook) -> None:
+    """Register a callback for the revocation of a member's role.
+
+    Args:
+        hook: Async callable taking the database session and the keyword
+            arguments ``membership_id``, ``role`` (`UserRole`) and
+            ``acting_user_id``. It runs in the same transaction; an
+            exception rolls the revocation back.
+
+    Side Effects:
+        Appends to a module-level list; registering the same hook twice is
+        ignored.
+    """
+    if hook not in _role_revoked_hooks:
+        _role_revoked_hooks.append(hook)
+
+
+async def _run_role_revoked_hooks(
+    db_session: AsyncSession,
+    *,
+    membership_id: UUID,
+    role: UserRole,
+    acting_user_id: UUID,
+) -> None:
+    """Run every registered role-revoked hook, in registration order.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        membership_id: The membership that lost the role.
+        role: The revoked role.
+        acting_user_id: Who revoked it.
+    """
+    for hook in _role_revoked_hooks:
+        await hook(
+            db_session,
+            membership_id=membership_id,
+            role=role,
+            acting_user_id=acting_user_id,
         )
 
 
@@ -1044,6 +1093,11 @@ async def revoke_role(
         OrgAdminProtectedError: The role is ORG_ADMIN (use the handover).
         RoleConflictError: The member does not hold the role, or it is the
             last HEAD_ADMIN.
+
+    Side Effects:
+        Closes the role assignment, then runs the role-revoked hooks (a
+        revoked DRIVER ends the open driving session) in the same
+        transaction; does not commit or roll back.
     """
     membership_record = await _load_reachable_membership(
         db_session, principal, membership_id
@@ -1071,6 +1125,12 @@ async def revoke_role(
         assignment_record,
         revoked_at=utc_now(),
         revoked_by=principal.user_id,
+    )
+    await _run_role_revoked_hooks(
+        db_session,
+        membership_id=membership_id,
+        role=role,
+        acting_user_id=principal.user_id,
     )
 
 

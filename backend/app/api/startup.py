@@ -28,9 +28,9 @@ import app.libs.db.model_registry  # noqa: F401
 def register_all_hooks() -> None:
     """Register every cross-domain hook in this process.
 
-    Fills the identity membership-end hooks (DR-10), the fleet visibility
-    resolver (FL-13), the notification routing hooks (NT-15) and the
-    session-ended hooks (BL-19).
+    Fills the identity membership-end and role-revoked hooks (DR-10), the
+    fleet visibility resolver (FL-13), the notification routing hooks (NT-15)
+    and the session-ended hooks (BL-19).
 
     Side Effects:
         Sets the process-wide hook slots of the identity, notifications and

@@ -54,7 +54,11 @@ class DriverMembershipLockedError(DriverError, InvalidInputError):
 
 
 class DriverRoleMissingError(DriverError, InvalidInputError):
-    """Raised when a profile is created for a membership without the DRIVER role."""
+    """Raised when a membership without the DRIVER role gets a profile or checks in.
+
+    Both creating a driver profile and checking in need the role (DR-10,
+    bug-fix A5).
+    """
 
 
 class DriverTooFarFromVehicleError(DriverError, InvalidInputError):
@@ -87,6 +91,14 @@ class TripNotCheckedInError(TripError, ConflictError):
 
 class TripInProgressConflictError(TripError, ConflictError):
     """Raised when the driving session already has a trip in progress."""
+
+
+class TripOrganizationMismatchError(TripError, ConflictError):
+    """Raised when a planned trip is started on a truck of another organization.
+
+    The driving session belongs to the truck's owner, so the trip would store
+    that organization's positions on the planner's trip (DR-11, D2).
+    """
 
 
 class TripInvalidPlanError(TripError, InvalidInputError):

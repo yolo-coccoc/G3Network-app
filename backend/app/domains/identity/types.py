@@ -57,6 +57,12 @@ class MembershipEndKind(str, enum.Enum):
 # in ``app/api/membership_end_hooks.py`` instead of being imported here.
 MembershipEndHook = Callable[..., Awaitable[None]]
 
+# A callback run, in the same transaction, after a member lost a role. Called
+# as ``hook(db_session, membership_id=..., role=..., acting_user_id=...)`` with
+# ``role`` a `UserRole`; wired in ``app/api/membership_end_hooks.py`` like the
+# membership-end hooks (a revoked DRIVER ends the open driving session).
+RoleRevokedHook = Callable[..., Awaitable[None]]
+
 
 class MembershipStatus(str, enum.Enum):
     """Standing of a person in one organization only."""
@@ -388,9 +394,13 @@ FEATURE_ROLES: dict[str, frozenset[UserRole]] = {
     "PAY-11": frozenset({UserRole.ACCOUNTANT, UserRole.DRIVER}),
     "PAY-12": frozenset({UserRole.SALES, UserRole.DRIVER}),
     "PAY-13": frozenset({UserRole.HEAD_ADMIN, UserRole.ACCOUNTANT}),
+    # DISPATCHER receives the geofence, check-in and trip alerts (NTF-06
+    # routing), so it must be able to open its own inbox (owner decision D3
+    # of docs/planners/backend-bugfix-scan.md, 2026-10-15).
     "NTF-01": frozenset(
         {
             UserRole.DRIVER,
+            UserRole.DISPATCHER,
             UserRole.FLEET_MANAGER,
             UserRole.OPERATIONS,
             UserRole.CUSTOMER_CARE,

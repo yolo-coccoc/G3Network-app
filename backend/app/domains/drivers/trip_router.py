@@ -311,6 +311,8 @@ async def start_trip_endpoint(
         TripStateConflictError: 409 when the trip is not PLANNED.
         TripNotCheckedInError: 409 when the driver is not checked in.
         TripInProgressConflictError: 409 when a trip already runs.
+        TripOrganizationMismatchError: 409 when the truck the driver is
+            checked in to belongs to another organization than the trip.
     """
     return await trip_service.start_trip(
         db_session, trip_id, trip_start_request, principal=principal

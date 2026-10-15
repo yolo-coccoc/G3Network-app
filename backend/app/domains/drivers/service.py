@@ -868,6 +868,7 @@ async def check_in_driver(
     check_in_request: DrivingSessionCheckInRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> DrivingSessionResponse:
     """Check a driver in to a truck (DR-07, DR-10; DRV-02, DRV-04).
 
@@ -875,9 +876,16 @@ async def check_in_driver(
     the shift record, with its start and end.
 
     Rules:
-        The driver must be ACTIVE, not deleted, with an unexpired licence, and
-        the membership and the user must be ACTIVE. A driver from another
-        organization may drive the truck; the response only warns. A QR or APP
+        The driver must be ACTIVE, not deleted, with an unexpired licence, the
+        membership must hold the DRIVER role, and the membership and the user
+        must be ACTIVE. A driver checking themselves in by QR or from the app
+        may take a truck of another organization (DR-07, DR-11); the response
+        only warns. A managed check-in - a manager acting for another driver,
+        or any PORTAL check-in, the manager's own profile included - needs the
+        truck in the caller's reach (its organization, internal staff keep
+        theirs) and inside the caller's fleet limit (FL-10), otherwise the
+        truck is not found: the portal has no phone position to prove the
+        caller stands at the truck. A QR or APP
         check-in carries the phone position and is refused when it is farther
         than ``settings.DRIVERS_CHECKIN_MAX_DISTANCE_M`` from the truck's last
         T-Box position; a truck with no recent position cannot be checked, so
@@ -894,11 +902,13 @@ async def check_in_driver(
         check_in_request: Driver, truck code (VIN or plate), method and the
             phone position.
         principal: The caller. Without a driver in the request the caller's
-            own profile checks in (the truck may belong to another
+            own profile checks in (by QR or APP the truck may belong to another
             organization: a driver scans any truck, DR-07); a manager may
             check in another driver of their organization, then the truck
             must be in the manager's reach too, and only a manager may use
             the PORTAL method.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` when
+            the caller is not limited; applied to a managed check-in only.
 
     Returns:
         The open session; `ended_sessions` lists the ones this check-in ended
@@ -910,8 +920,12 @@ async def check_in_driver(
         AccessDeniedError: A non-manager named another driver or used PORTAL.
         DriverCheckInLocationRequiredError: A QR or APP check-in without the
             phone position.
-        DriverVehicleNotFoundError: When the code does not resolve to a vehicle.
+        DriverVehicleNotFoundError: When the code does not resolve to a
+            vehicle, or a managed check-in names a truck outside the caller's
+            reach or fleet limit.
         DriverNotEligibleError: When the driver may not check in.
+        DriverRoleMissingError: When the driver's membership does not hold
+            the DRIVER role.
         DriverTooFarFromVehicleError: The phone is too far from the truck.
         DrivingSessionConflictError: When a concurrent check-in won the race.
 
@@ -935,10 +949,23 @@ async def check_in_driver(
     vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_code(
         db_session, check_in_request.truck_code
     )
-    acts_for_another = driver_record.membership_id != principal.membership_id
+    # A manager acting for someone, or anyone using the portal (no phone
+    # position proves they stand at the truck), works inside their own reach
+    # and fleet limit. Only a driver's own QR/APP check-in may borrow a truck
+    # of another organization (DR-11).
+    is_managed_check_in = (
+        driver_record.membership_id != principal.membership_id
+        or check_in_request.check_in_method == CheckInMethod.PORTAL
+    )
     if vehicle_reference is None or (
-        acts_for_another
-        and not principal.can_access_organization(vehicle_reference.organization_id)
+        is_managed_check_in
+        and (
+            not principal.can_access_organization(vehicle_reference.organization_id)
+            or (
+                visible_vehicle_ids is not None
+                and vehicle_reference.vehicle_id not in visible_vehicle_ids
+            )
+        )
     ):
         raise DriverVehicleNotFoundError(
             f"Vehicle '{check_in_request.truck_code}' not found"
@@ -958,6 +985,12 @@ async def check_in_driver(
         or person.user_status != UserStatus.ACTIVE.value
     ):
         raise DriverNotEligibleError("The driver's membership or account is not ACTIVE")
+    if not await identity_service.membership_holds_role(
+        db_session, driver_record.membership_id, UserRole.DRIVER
+    ):
+        raise DriverRoleMissingError(
+            "The membership does not hold the DRIVER role; it cannot check in"
+        )
 
     driver_open_session = await driver_repository.find_open_session_by_driver(
         db_session, driver_record.driver_id
@@ -1055,6 +1088,7 @@ async def check_out_driver(
     check_out_request: DrivingSessionCheckOutRequest,
     *,
     principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
 ) -> DrivingSessionResponse:
     """End a driver's open driving session (`CHECKED_OUT`).
 
@@ -1064,6 +1098,10 @@ async def check_out_driver(
         principal: The caller; without a driver in the request the caller's
             own profile checks out, a manager may check out another driver of
             their organization.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` when
+            the caller is not limited. A manager acting for another driver
+            may only end a session on a truck inside it; a driver's own
+            check-out is never limited.
 
     Returns:
         The closed session.
@@ -1072,7 +1110,8 @@ async def check_out_driver(
         DriverNotFoundError: When the driver does not exist in the caller's
             reach.
         AccessDeniedError: A non-manager named another driver.
-        DrivingSessionNotFoundError: When the driver has no open session.
+        DrivingSessionNotFoundError: When the driver has no open session, or
+            a manager's fleet limit excludes the session's truck.
 
     Side Effects:
         A trip still in progress in the session is closed as COMPLETED with
@@ -1084,7 +1123,12 @@ async def check_out_driver(
     open_session = await driver_repository.find_open_session_by_driver(
         db_session, driver_record.driver_id
     )
-    if open_session is None:
+    acts_for_another = driver_record.membership_id != principal.membership_id
+    if open_session is None or (
+        acts_for_another
+        and visible_vehicle_ids is not None
+        and open_session.vehicle_id not in visible_vehicle_ids
+    ):
         raise DrivingSessionNotFoundError(
             f"Driver with id '{driver_record.driver_id}' has no open session"
         )
@@ -1328,7 +1372,11 @@ async def find_user_id_by_driver_id(
 
 
 async def end_open_session_on_ownership_change(
-    db_session: AsyncSession, vehicle_id: UUID, *, ended_at: datetime
+    db_session: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    ended_at: datetime,
+    changed_by: UUID | None,
 ) -> UUID | None:
     """End the open driving session of a truck that was sold (VH-12).
 
@@ -1340,13 +1388,16 @@ async def end_open_session_on_ownership_change(
         db_session: Database session owned by the entry boundary.
         vehicle_id: Internal ID of the sold truck.
         ended_at: Effective date of the sale.
+        changed_by: The staff member who recorded the sale; written as the
+            actor of the trip this closes (``trip_history``).
 
     Returns:
         The ID of the session that was ended, or `None` when nobody was
         checked in to the truck.
 
     Side Effects:
-        Stamps ``ended_at`` and ``end_cause``; does not commit or roll back.
+        Stamps ``ended_at`` and ``end_cause`` and closes the trip still
+        running in the session; does not commit or roll back.
     """
     open_session = await driver_repository.find_open_session_by_vehicle(
         db_session, vehicle_id
@@ -1359,7 +1410,7 @@ async def end_open_session_on_ownership_change(
         # A sale dated before the check-in must not give a negative duration.
         ended_at=max(ended_at, open_session.started_at),
         end_cause=DrivingSessionEndCause.OWNER_CHANGED,
-        changed_by=None,
+        changed_by=changed_by,
     )
     return open_session.driving_session_id
 
@@ -1420,6 +1471,59 @@ async def handle_membership_end(
             status_reason=reason or MEMBERSHIP_ENDED_STATUS_REASON,
             changed_by=acting_user_id,
         )
+
+
+async def handle_role_revoked(
+    db_session: AsyncSession,
+    *,
+    membership_id: UUID,
+    role: UserRole,
+    acting_user_id: UUID,
+) -> None:
+    """End a person's open driving session when their DRIVER role is revoked.
+
+    Registered with the identity domain's role-revoked hook by
+    ``app/api/membership_end_hooks.py``, so it runs inside the same
+    transaction as the revocation. Check-in requires the DRIVER role, so a
+    session left open would let a person without it keep driving.
+
+    Rules:
+        Only the DRIVER role matters; any other role is ignored. The open
+        session ends `DRIVER_REMOVED` (and its running trip closes). The
+        profile is left alone: it stores facts that outlive the role (a
+        former driver's history stays), and check-in refuses it until the
+        role is granted again.
+
+    Args:
+        db_session: Session owned by the entry boundary.
+        membership_id: The membership that lost the role.
+        role: The revoked role.
+        acting_user_id: Who revoked it; the actor of the trip this closes.
+
+    Side Effects:
+        Updates the session and its running trip in the caller's
+        transaction; does nothing when the membership has no profile or no
+        open session.
+    """
+    if role != UserRole.DRIVER:
+        return
+    driver_record = await driver_repository.find_by_membership_id(
+        db_session, membership_id
+    )
+    if driver_record is None:
+        return
+    open_session = await driver_repository.find_open_session_by_driver(
+        db_session, driver_record.driver_id
+    )
+    if open_session is None:
+        return
+    await _end_session(
+        db_session,
+        open_session,
+        ended_at=max(utc_now(), open_session.started_at),
+        end_cause=DrivingSessionEndCause.DRIVER_REMOVED,
+        changed_by=acting_user_id,
+    )
 
 
 async def end_idle_driving_sessions(

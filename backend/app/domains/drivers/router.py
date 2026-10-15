@@ -278,6 +278,7 @@ async def soft_delete_driver_endpoint(
 async def check_in_driver_endpoint(
     check_in_request: DrivingSessionCheckInRequest,
     principal: Principal = Depends(DRIVING_SESSION_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionResponse:
     """Check a driver in to a truck.
@@ -285,6 +286,8 @@ async def check_in_driver_endpoint(
     Args:
         check_in_request: Driver, truck code, method and phone position.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none;
+            applied when a manager acts for a driver or uses the portal.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
@@ -292,12 +295,17 @@ async def check_in_driver_endpoint(
 
     Raises:
         DriverNotFoundError: 404 when the driver does not exist.
-        DriverVehicleNotFoundError: 404 when the truck code is unknown.
+        DriverVehicleNotFoundError: 404 when the truck code is unknown, or
+            outside the caller's reach or fleet limit for a managed check-in.
         DriverNotEligibleError: 400 when the driver may not check in.
+        DriverRoleMissingError: 400 when the driver lacks the DRIVER role.
         DriverTooFarFromVehicleError: 400 when the phone is far from the truck.
     """
     return await driver_service.check_in_driver(
-        db_session, check_in_request, principal=principal
+        db_session,
+        check_in_request,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
@@ -310,6 +318,7 @@ async def check_in_driver_endpoint(
 async def check_out_driver_endpoint(
     check_out_request: DrivingSessionCheckOutRequest,
     principal: Principal = Depends(DRIVING_SESSION_USERS),
+    visible_vehicle_ids: frozenset[UUID] | None = Depends(get_visible_vehicle_ids),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DrivingSessionResponse:
     """End a driver's open driving session.
@@ -317,16 +326,22 @@ async def check_out_driver_endpoint(
     Args:
         check_out_request: The driver checking out.
         principal: The authenticated caller.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none;
+            applied when a manager acts for another driver.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
         The closed driving session.
 
     Raises:
-        DrivingSessionNotFoundError: 404 when the driver has no open session.
+        DrivingSessionNotFoundError: 404 when the driver has no open session,
+            or its truck is outside the manager's fleet limit.
     """
     return await driver_service.check_out_driver(
-        db_session, check_out_request, principal=principal
+        db_session,
+        check_out_request,
+        principal=principal,
+        visible_vehicle_ids=visible_vehicle_ids,
     )
 
 
