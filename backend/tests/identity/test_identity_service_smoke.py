@@ -8,11 +8,12 @@ import pytest
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.identity.account_service as account_service
 import app.domains.identity.audit_service as audit_service
 import app.domains.identity.member_service as member_service
+import app.domains.identity.one_time_code_service as one_time_code_service
 import app.domains.identity.organization_service as organization_service
 import app.domains.identity.repository as identity_repository
+import app.domains.identity.session_service as login_session_service
 from app.api.main import domain_error_handler
 from app.domains.identity.dependencies import require_roles
 from app.domains.identity.exceptions import (
@@ -155,7 +156,7 @@ async def test_login_with_unknown_phone_is_a_plain_401_and_audited(
     )
 
     with pytest.raises(InvalidCredentialsError):
-        await account_service.login(
+        await login_session_service.login(
             _flush_session(),
             LoginRequest(
                 phone_number="0901234567",
@@ -186,13 +187,13 @@ async def test_repeated_wrong_passwords_lock_logins_for_a_while(
     )
 
     with pytest.raises(InvalidCredentialsError):
-        await account_service.login(_flush_session(), login_request, None)
+        await login_session_service.login(_flush_session(), login_request, None)
     with pytest.raises(InvalidCredentialsError):
-        await account_service.login(_flush_session(), login_request, None)
+        await login_session_service.login(_flush_session(), login_request, None)
     assert state_record.login_locked_until is not None
     assert state_record.login_locked_until > utc_now() + timedelta(minutes=1)
     with pytest.raises(LoginLockedError):
-        await account_service.login(_flush_session(), login_request, None)
+        await login_session_service.login(_flush_session(), login_request, None)
 
     actions = [event["action"] for event in audit_events]
     assert AccessAuditAction.LOGIN_LOCKED in actions
@@ -203,7 +204,7 @@ async def test_repeated_wrong_passwords_lock_logins_for_a_while(
 async def test_phone_change_code_cannot_be_requested_without_a_login() -> None:
     """The public code endpoint refuses the PHONE_CHANGE purpose."""
     with pytest.raises(OneTimeCodePurposeError):
-        await account_service.send_one_time_code(
+        await one_time_code_service.send_one_time_code(
             _flush_session(),
             OneTimeCodeSendRequest(
                 phone_number="0901234567", purpose=OneTimeCodePurpose.PHONE_CHANGE
@@ -222,7 +223,7 @@ async def test_password_reset_code_for_an_unknown_phone_is_silent(
 
     monkeypatch.setattr(identity_repository, "find_live_user_by_phone", no_user)
 
-    response = await account_service.send_one_time_code(
+    response = await one_time_code_service.send_one_time_code(
         _flush_session(),
         OneTimeCodeSendRequest(
             phone_number="0901234567", purpose=OneTimeCodePurpose.PASSWORD_RESET
@@ -244,7 +245,7 @@ async def test_sign_up_code_for_a_registered_phone_is_a_conflict(
     monkeypatch.setattr(identity_repository, "find_live_user_by_phone", existing_user)
 
     with pytest.raises(UserConflictError):
-        await account_service.send_one_time_code(
+        await one_time_code_service.send_one_time_code(
             _flush_session(),
             OneTimeCodeSendRequest(
                 phone_number="0901234567", purpose=OneTimeCodePurpose.SIGN_UP

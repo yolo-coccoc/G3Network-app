@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.identity.account_service as account_service
+import app.domains.identity.one_time_code_service as one_time_code_service
 import app.domains.identity.repository as identity_repository
 from app.domains.identity.exceptions import (
     AccessDeniedError,
@@ -437,7 +438,7 @@ async def _notify_invited_person(
         OneTimeCodeRateLimitError: A code was sent to this number too recently,
             or the inviter or the number is over its daily limit.
     """
-    await account_service.issue_one_time_code(
+    await one_time_code_service.issue_one_time_code(
         db_session,
         purpose=(
             OneTimeCodePurpose.INVITE

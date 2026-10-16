@@ -19,7 +19,7 @@ from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.identity.account_service as account_service
+import app.domains.identity.session_service as login_session_service
 from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import (
     ClientContext,
@@ -73,7 +73,7 @@ async def get_session_identity(
         SessionInvalidError: 401 when the token is missing, forged, expired or
             its session ended.
     """
-    return await account_service.authenticate_session(
+    return await login_session_service.authenticate_session(
         db_session, None if credentials is None else credentials.credentials
     )
 
@@ -98,7 +98,7 @@ async def get_current_principal(
         AccessDeniedError: 403, no active membership in the organization.
         OrganizationInactiveError: 403, the organization is suspended/closed.
     """
-    return await account_service.resolve_principal(db_session, session_identity)
+    return await login_session_service.resolve_principal(db_session, session_identity)
 
 
 # Resolver of the trucks a fleet-limited caller may see (FL-10), registered at

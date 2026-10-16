@@ -218,13 +218,16 @@ forbidden_modules = [
     "app.domains.identity.member_service",
     "app.domains.identity.membership_router",
     "app.domains.identity.models",
+    "app.domains.identity.one_time_code_service",
     "app.domains.identity.organization_router",
     "app.domains.identity.organization_service",
+    "app.domains.identity.passwords",
     "app.domains.identity.providers",
     "app.domains.identity.repository",
     "app.domains.identity.router",
     "app.domains.identity.schemas",
     "app.domains.identity.security",
+    "app.domains.identity.session_service",
 ]
 allow_indirect_imports = true
 

@@ -52,9 +52,11 @@ import app.domains.identity.account_service as identity_account_service
 import app.domains.identity.audit_service as identity_audit_service
 import app.domains.identity.bootstrap as identity_bootstrap
 import app.domains.identity.member_service as identity_member_service
+import app.domains.identity.one_time_code_service as one_time_code_service
 import app.domains.identity.organization_service as identity_organization_service
 import app.domains.identity.repository as identity_repository
 import app.domains.identity.service as identity_service
+import app.domains.identity.session_service as login_session_service
 import app.domains.notifications.delivery as notification_delivery
 import app.domains.notifications.providers as notification_providers
 import app.domains.notifications.repository as notification_repository
@@ -4213,7 +4215,7 @@ async def test_identity_login_flow_roles_lockout_and_handover(
         """Log in as the router would: commit recorded failures, then raise."""
         async with session_factory() as db:
             try:
-                tokens = await identity_account_service.login(
+                tokens = await login_session_service.login(
                     db,
                     LoginRequest(
                         phone_number=phone_number,
@@ -4231,10 +4233,10 @@ async def test_identity_login_flow_roles_lockout_and_handover(
     async def principal_of(tokens: TokenResponse) -> Principal:
         """Authenticate an access token the way the dependencies do."""
         async with session_factory() as db:
-            identity = await identity_account_service.authenticate_session(
+            identity = await login_session_service.authenticate_session(
                 db, tokens.access_token
             )
-            principal = await identity_account_service.resolve_principal(db, identity)
+            principal = await login_session_service.resolve_principal(db, identity)
             await db.commit()
             return principal
 
@@ -4272,7 +4274,7 @@ async def test_identity_login_flow_roles_lockout_and_handover(
         async with session_factory() as db:
             wrong_code = "000000" if sms.last_code() != "000000" else "111111"
             with pytest.raises(InvalidOneTimeCodeError):
-                await identity_account_service.accept_invitation(
+                await login_session_service.accept_invitation(
                     db,
                     InvitationAcceptRequest(
                         phone_number="+84900000002",
@@ -4292,7 +4294,7 @@ async def test_identity_login_flow_roles_lockout_and_handover(
             )
         assert failed_attempts == 1
         async with session_factory() as db:
-            accepted = await identity_account_service.accept_invitation(
+            accepted = await login_session_service.accept_invitation(
                 db,
                 InvitationAcceptRequest(
                     phone_number="+84900000002",
@@ -4338,7 +4340,7 @@ async def test_identity_login_flow_roles_lockout_and_handover(
 
         # A password reset by code clears the lockout and ends the old session.
         async with session_factory() as db:
-            await identity_account_service.send_one_time_code(
+            await one_time_code_service.send_one_time_code(
                 db,
                 OneTimeCodeSendRequest(
                     phone_number="+84900000002",
@@ -4363,13 +4365,13 @@ async def test_identity_login_flow_roles_lockout_and_handover(
 
         # Refreshing replaces the refresh token; the old one is dead.
         async with session_factory() as db:
-            refreshed = await identity_account_service.refresh_session(
+            refreshed = await login_session_service.refresh_session(
                 db, RefreshRequest(refresh_token=new_tokens.refresh_token)
             )
             await db.commit()
         async with session_factory() as db:
             with pytest.raises(SessionInvalidError):
-                await identity_account_service.refresh_session(
+                await login_session_service.refresh_session(
                     db, RefreshRequest(refresh_token=new_tokens.refresh_token)
                 )
         admin = await principal_of(refreshed)
@@ -4387,7 +4389,7 @@ async def test_identity_login_flow_roles_lockout_and_handover(
                 ),
             )
         async with session_factory() as db:
-            manager_tokens = await identity_account_service.accept_invitation(
+            manager_tokens = await login_session_service.accept_invitation(
                 db,
                 InvitationAcceptRequest(
                     phone_number="+84900000003",

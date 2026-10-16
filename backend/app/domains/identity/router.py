@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.identity.account_service as account_service
+import app.domains.identity.one_time_code_service as one_time_code_service
+import app.domains.identity.session_service as login_session_service
 from app.domains.identity.dependencies import (
     get_client_context,
     get_current_principal,
@@ -110,7 +112,7 @@ async def send_one_time_code_endpoint(
     Returns:
         When the code expires.
     """
-    return await account_service.send_one_time_code(db_session, send_request)
+    return await one_time_code_service.send_one_time_code(db_session, send_request)
 
 
 @auth_router.post(
@@ -135,7 +137,7 @@ async def sign_up_endpoint(
         Tokens of the new session.
     """
     async with persist_recorded_failure(db_session):
-        return await account_service.sign_up(
+        return await login_session_service.sign_up(
             db_session, sign_up_request, client_context
         )
 
@@ -161,7 +163,7 @@ async def accept_invitation_endpoint(
         Tokens of the new session.
     """
     async with persist_recorded_failure(db_session):
-        return await account_service.accept_invitation(
+        return await login_session_service.accept_invitation(
             db_session, accept_request, client_context
         )
 
@@ -191,7 +193,9 @@ async def login_endpoint(
         Access and refresh tokens and the person's memberships.
     """
     async with persist_recorded_failure(db_session):
-        return await account_service.login(db_session, login_request, client_context)
+        return await login_session_service.login(
+            db_session, login_request, client_context
+        )
 
 
 @auth_router.post(
@@ -212,7 +216,7 @@ async def refresh_session_endpoint(
     Returns:
         A new token pair; the old refresh token stops working.
     """
-    return await account_service.refresh_session(db_session, refresh_request)
+    return await login_session_service.refresh_session(db_session, refresh_request)
 
 
 @auth_router.post(
@@ -237,7 +241,7 @@ async def logout_endpoint(
     Returns:
         An empty 204 response.
     """
-    await account_service.logout(
+    await login_session_service.logout(
         db_session,
         session_identity,
         all_devices=logout_request.all_devices,
@@ -260,7 +264,7 @@ async def get_me_endpoint(
     Returns:
         The caller's description.
     """
-    return await account_service.get_me(db_session, session_identity)
+    return await login_session_service.get_me(db_session, session_identity)
 
 
 @auth_router.patch("/me", response_model=UserResponse, summary="Edit my profile")
@@ -304,7 +308,7 @@ async def switch_organization_endpoint(
     Returns:
         The caller's description in that organization.
     """
-    return await account_service.switch_organization(
+    return await login_session_service.switch_organization(
         db_session, session_identity, switch_request.organization_id
     )
 
@@ -325,7 +329,7 @@ async def list_sessions_endpoint(
     Returns:
         The sessions, most recently used first.
     """
-    return await account_service.list_sessions(db_session, session_identity)
+    return await login_session_service.list_sessions(db_session, session_identity)
 
 
 @auth_router.delete(
@@ -348,7 +352,7 @@ async def end_session_endpoint(
     Returns:
         An empty 204 response.
     """
-    await account_service.end_session(db_session, session_identity, session_id)
+    await login_session_service.end_session(db_session, session_identity, session_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -372,7 +376,7 @@ async def set_push_token_endpoint(
     Returns:
         An empty 204 response.
     """
-    await account_service.set_push_token(
+    await login_session_service.set_push_token(
         db_session, session_identity, token_request.push_token
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -396,7 +400,7 @@ async def clear_push_token_endpoint(
     Returns:
         An empty 204 response.
     """
-    await account_service.set_push_token(db_session, session_identity, None)
+    await login_session_service.set_push_token(db_session, session_identity, None)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

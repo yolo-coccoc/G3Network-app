@@ -28,7 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.identity.account_service as account_service
 import app.domains.identity.audit_service as audit_service
 import app.domains.identity.member_service as member_service
+import app.domains.identity.one_time_code_service as one_time_code_service
+import app.domains.identity.passwords as identity_passwords
 import app.domains.identity.repository as identity_repository
+import app.domains.identity.session_service as login_session_service
 from app.domains.identity.exceptions import (
     AccessDeniedError,
     CurrentPasswordIncorrectError,
@@ -684,11 +687,20 @@ def store(monkeypatch: pytest.MonkeyPatch) -> Iterator[IdentityStore]:
     """
     identity_store = IdentityStore()
     identity_store.install(monkeypatch)
-    monkeypatch.setattr(member_service, "set_change_context", _no_change_context)
-    monkeypatch.setattr(account_service, "set_change_context", _no_change_context)
+    # The identity area modules each import these helpers themselves.
+    for module in (
+        member_service,
+        account_service,
+        login_session_service,
+        one_time_code_service,
+        identity_passwords,
+    ):
+        if hasattr(module, "set_change_context"):
+            monkeypatch.setattr(module, "set_change_context", _no_change_context)
+        if hasattr(module, "get_sms_sender"):
+            monkeypatch.setattr(module, "get_sms_sender", lambda: identity_store.sms)
     monkeypatch.setattr(audit_service, "record_account_event", _no_audit_event)
     monkeypatch.setattr(member_service, "_membership_end_hooks", [])
-    monkeypatch.setattr(account_service, "get_sms_sender", lambda: identity_store.sms)
     yield identity_store
 
 
@@ -733,7 +745,7 @@ async def test_refresh_token_is_not_accepted_as_a_bearer_token(
     _session_record, refresh_token = store.add_session(user_record, None)
 
     with pytest.raises(SessionInvalidError):
-        await account_service.authenticate_session(_db(), refresh_token)
+        await login_session_service.authenticate_session(_db(), refresh_token)
 
 
 @pytest.mark.asyncio
@@ -748,7 +760,7 @@ async def test_access_token_is_not_accepted_as_a_refresh_token(
     )
 
     with pytest.raises(SessionInvalidError):
-        await account_service.refresh_session(
+        await login_session_service.refresh_session(
             _db(), RefreshRequest(refresh_token=access_token)
         )
 
@@ -763,14 +775,16 @@ async def test_access_token_of_a_logged_out_session_is_rejected(
     access_token = create_access_token(
         session_record.user_session_id, utc_now() + timedelta(minutes=5)
     )
-    session_identity = await account_service.authenticate_session(_db(), access_token)
+    session_identity = await login_session_service.authenticate_session(
+        _db(), access_token
+    )
 
-    await account_service.logout(
+    await login_session_service.logout(
         _db(), session_identity, all_devices=False, client_context=None
     )
 
     with pytest.raises(SessionInvalidError):
-        await account_service.authenticate_session(_db(), access_token)
+        await login_session_service.authenticate_session(_db(), access_token)
 
 
 @pytest.mark.asyncio
@@ -785,7 +799,7 @@ async def test_access_token_of_a_locked_account_is_rejected(
     )
 
     with pytest.raises(SessionInvalidError):
-        await account_service.authenticate_session(_db(), access_token)
+        await login_session_service.authenticate_session(_db(), access_token)
 
 
 @pytest.mark.asyncio
@@ -796,16 +810,16 @@ async def test_refresh_rotation_makes_the_old_refresh_token_unusable(
     user_record = store.add_user()
     _session_record, first_refresh_token = store.add_session(user_record, None)
 
-    token_response = await account_service.refresh_session(
+    token_response = await login_session_service.refresh_session(
         _db(), RefreshRequest(refresh_token=first_refresh_token)
     )
 
     assert token_response.refresh_token != first_refresh_token
     with pytest.raises(SessionInvalidError):
-        await account_service.refresh_session(
+        await login_session_service.refresh_session(
             _db(), RefreshRequest(refresh_token=first_refresh_token)
         )
-    await account_service.refresh_session(
+    await login_session_service.refresh_session(
         _db(), RefreshRequest(refresh_token=token_response.refresh_token)
     )
 
@@ -1115,7 +1129,7 @@ async def test_sign_up_code_is_sent_to_an_invited_number_without_a_password(
     """An INVITED account with no password does not block the owner's sign-up."""
     store.add_user(status=UserStatus.INVITED, phone_number="+84907777777")
 
-    await account_service.send_one_time_code(
+    await one_time_code_service.send_one_time_code(
         _db(),
         OneTimeCodeSendRequest(
             phone_number="0907777777", purpose=OneTimeCodePurpose.SIGN_UP
@@ -1319,12 +1333,14 @@ def _stub_session_start(
         )
 
     monkeypatch.setattr(identity_repository, "insert_credential", insert_credential)
-    monkeypatch.setattr(account_service, "_start_session_for_login", start_session)
+    monkeypatch.setattr(
+        login_session_service, "_start_session_for_login", start_session
+    )
 
 
 async def _request_invitation_code(phone_number: str) -> None:
     """Ask for an invitation code the way the app does, without a login."""
-    await account_service.send_one_time_code(
+    await one_time_code_service.send_one_time_code(
         _db(),
         OneTimeCodeSendRequest(
             phone_number=phone_number, purpose=OneTimeCodePurpose.INVITE
@@ -1350,7 +1366,7 @@ async def test_a_self_requested_invitation_code_can_be_accepted(
     )
 
     await _request_invitation_code("0907777777")
-    await account_service.accept_invitation(
+    await login_session_service.accept_invitation(
         _db(),
         InvitationAcceptRequest(
             phone_number="0907777777",
