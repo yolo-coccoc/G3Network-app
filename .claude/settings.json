@@ -14,6 +14,7 @@
       "Bash(make backend-test)",
       "Bash(make domain-model-check)",
       "Bash(make feature-catalog-check)",
+      "Bash(make portal-check)",
       "Bash(make db-check)",
       "Bash(make help)",
       "Bash(make coverage)",
@@ -46,6 +47,12 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_python.py\" 2>/dev/null || true",
             "timeout": 90,
             "statusMessage": "ruff format"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/format_portal.py\" 2>/dev/null || true",
+            "timeout": 90,
+            "statusMessage": "prettier"
           }
         ]
       }

@@ -2,7 +2,7 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check portal-install portal-dev portal-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 # The web portal is one self-contained pnpm workspace in web-portal/ (TT-31).
@@ -35,17 +35,22 @@ help:
 	@echo "  make driving-sessions-autoend-dev - Run the driving-session auto-end worker"
 	@echo "  make identity-bootstrap - Create the internal organization and first HEAD_ADMIN"
 	@echo ""
+	@echo "Web portal (web-portal/):"
+	@echo "  make portal-install  - Install the portal's dependencies (pnpm, frozen lockfile)"
+	@echo "  make portal-dev      - Run the portal dev server (http://localhost:5173, /api proxied to :8000)"
+	@echo ""
 	@echo "Tests and quality:"
 	@echo "  make backend-test    - Run the smoke tests"
 	@echo "  make backend-test-integration - Run the PostgreSQL integration tests (needs infra-up)"
 	@echo "  make coverage        - Smoke tests with a coverage report (terminal + backend/htmlcov/)"
-	@echo "  make format          - Sort imports and format (ruff)"
+	@echo "  make format          - Sort imports and format (ruff for the backend, Prettier for the portal)"
 	@echo "  make lint            - Ruff lint + format check, import-linter, mypy (app + tests)"
 	@echo "  make domain-model-check - DBML design source matches the models; generated views are current"
 	@echo "  make feature-catalog-check - feature catalog source follows its rules; generated views are current"
 	@echo "  make api-client      - Regenerate web-portal/packages/api-client from the backend's OpenAPI document (after an API change)"
 	@echo "  make api-client-check - the committed API client matches the backend; type-checks it"
-	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check + api-client-check (the pre-commit gate)"
+	@echo "  make portal-check    - Portal: Prettier check, ESLint, tsc, Vitest, api-client-check"
+	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check + portal-check (the pre-commit gate)"
 	@echo "  make audit           - Check locked dependencies for known vulnerabilities (pip-audit)"
 	@echo "  make install-hooks   - Make git run .githooks/pre-commit (make check) before every commit"
 	@echo ""
@@ -153,6 +158,15 @@ identity-bootstrap:
 	@echo "Creating the internal organization and the first HEAD_ADMIN (IDENTITY_BOOTSTRAP_* in backend/.env)..."
 	cd backend && uv run python -m app.domains.identity.bootstrap
 
+# === WEB PORTAL ===
+
+portal-install:
+	$(PNPM) install --frozen-lockfile
+
+portal-dev:
+	@echo "Portal: http://localhost:5173 (start the API with 'make backend-dev')"
+	$(PNPM) dev
+
 # === TESTS AND QUALITY ===
 
 backend-test:
@@ -172,6 +186,7 @@ coverage:
 format:
 	cd backend && uv run ruff check --select I --fix .
 	cd backend && uv run ruff format .
+	$(PNPM) format
 
 lint:
 	cd backend && uv run ruff check .
@@ -189,8 +204,6 @@ domain-model-check:
 feature-catalog-check:
 	uv run --project backend --with pyyaml --with openpyxl python .claude/skills/feature-catalog/scripts/feature_catalog.py check
 
-# The gate the pre-commit hook runs. The PostgreSQL integration tests are not
-# part of it (they need the database); run backend-test-integration for schema work.
 # Regenerates the portal's typed API client (web-portal-scaffold.md D6): dumps
 # the OpenAPI document without running the server, then generates the types.
 # Run after any backend route or schema change; commit both files.
@@ -213,7 +226,18 @@ api-client-check:
 	fi
 	$(PNPM) --filter @g3/api-client typecheck
 
-check: lint backend-test domain-model-check feature-catalog-check api-client-check
+# The portal's part of the gate (web-portal-scaffold.md D9): formatting, lint
+# (import boundaries, i18n, no hand-picked colors), types, unit tests, and the
+# generated client's freshness. Playwright is not part of it (D10).
+portal-check: api-client-check
+	$(PNPM) format:check
+	$(PNPM) lint
+	$(PNPM) typecheck
+	$(PNPM) test
+
+# The gate the pre-commit hook runs. The PostgreSQL integration tests are not
+# part of it (they need the database); run backend-test-integration for schema work.
+check: lint backend-test domain-model-check feature-catalog-check portal-check
 	@echo "✓ All checks passed"
 
 # Audits every locked package (runtime + dev groups) against the PyPA advisory

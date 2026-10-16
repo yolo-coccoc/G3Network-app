@@ -2,7 +2,8 @@
 # Pre-commit gate for this repo: there is no CI yet and commits go straight to
 # master, so every commit must pass `make check` (ruff lint + format check,
 # import-linter, mypy, the smoke tests, the domain-model and feature-catalog
-# checks, and the generated API client's freshness check).
+# checks, and the web portal's checks: Prettier, ESLint, tsc, Vitest and the
+# generated API client's freshness).
 # Enable once per clone with `make install-hooks`.
 # Bypass a single commit only deliberately: `git commit --no-verify`.
 exec make check

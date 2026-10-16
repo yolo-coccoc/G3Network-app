@@ -1,0 +1,5 @@
+# Generated or tool-owned files: never reformatted (web-portal-scaffold.md D6).
+dist/
+pnpm-lock.yaml
+packages/api-client/openapi.json
+packages/api-client/src/schema.d.ts
