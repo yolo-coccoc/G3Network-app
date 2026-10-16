@@ -5,10 +5,12 @@
 .PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
-# pnpm through corepack at the version pinned in package.json (TT-29); no
-# global `corepack enable` needed, and no download prompt in scripts.
-PNPM := COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm
-API_CLIENT_DIR := packages/api-client
+# The frontend's pnpm workspace lives in frontend/ (TT-30). pnpm runs through
+# corepack at the version pinned in frontend/package.json (TT-29), so every
+# pnpm command runs from inside frontend/; no global `corepack enable`, and no
+# download prompt in scripts.
+PNPM := cd frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm
+API_CLIENT_DIR := frontend/packages/api-client
 
 # Default: show help
 help:
@@ -41,7 +43,7 @@ help:
 	@echo "  make lint            - Ruff lint + format check, import-linter, mypy (app + tests)"
 	@echo "  make domain-model-check - DBML design source matches the models; generated views are current"
 	@echo "  make feature-catalog-check - feature catalog source follows its rules; generated views are current"
-	@echo "  make api-client      - Regenerate packages/api-client from the backend's OpenAPI document (after an API change)"
+	@echo "  make api-client      - Regenerate frontend/packages/api-client from the backend's OpenAPI document (after an API change)"
 	@echo "  make api-client-check - the committed API client matches the backend; type-checks it"
 	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check + api-client-check (the pre-commit gate)"
 	@echo "  make audit           - Check locked dependencies for known vulnerabilities (pip-audit)"
@@ -201,13 +203,13 @@ api-client:
 api-client-check:
 	@tmp_dir=$$(mktemp -d) && trap 'rm -rf "$$tmp_dir"' EXIT && \
 	(cd backend && uv run python -m app.api.openapi_export "$$tmp_dir/openapi.json") && \
-	OPENAPI_INPUT="$$tmp_dir/openapi.json" OPENAPI_OUTPUT="$$tmp_dir/schema.d.ts" \
-		$(PNPM) --silent --filter @g3/api-client generate > /dev/null && \
+	(export OPENAPI_INPUT="$$tmp_dir/openapi.json" OPENAPI_OUTPUT="$$tmp_dir/schema.d.ts" && \
+		$(PNPM) --silent --filter @g3/api-client generate > /dev/null) && \
 	if cmp -s "$$tmp_dir/openapi.json" $(API_CLIENT_DIR)/openapi.json && \
 		cmp -s "$$tmp_dir/schema.d.ts" $(API_CLIENT_DIR)/src/schema.d.ts; then \
 		echo "OK: the API client matches the backend's OpenAPI document"; \
 	else \
-		echo "✗ packages/api-client is stale: run 'make api-client' and commit the result"; exit 1; \
+		echo "✗ $(API_CLIENT_DIR) is stale: run 'make api-client' and commit the result"; exit 1; \
 	fi
 	$(PNPM) --filter @g3/api-client typecheck
 
