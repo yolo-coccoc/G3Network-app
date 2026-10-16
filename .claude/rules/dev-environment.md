@@ -52,10 +52,11 @@ Basic commands:
 - `make telematics-monitor-dev` — Device-health (silence) monitor
 - `make driving-sessions-autoend-dev` — Driving-session auto-end worker (`DRIVERS_*` settings)
 - `make identity-bootstrap` — Create the internal organization and the first HEAD_ADMIN from `IDENTITY_BOOTSTRAP_*` (idempotent; run once per database)
+- `make portal-install` / `make portal-dev` — Install the web portal's workspace (frozen lockfile) / run its dev server on http://localhost:5173, with `/api` proxied to the API on :8000 (`make backend-dev`)
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
-- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`; `make api-client-check`: the committed `web-portal/packages/api-client` matches the backend's OpenAPI document and type-checks); `make api-client` regenerates it after any backend route or schema change (commit both files); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
+- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`; `make portal-check`: the portal's Prettier check, ESLint, `tsc -b` and Vitest, plus `make api-client-check`: the committed `web-portal/packages/api-client` matches the backend's OpenAPI document and type-checks); `make api-client` regenerates it after any backend route or schema change (commit both files); `make format` fixes formatting (ruff and Prettier); `make install-hooks` makes git run `make check` before each commit
 - `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests, every `tests/test_postgres_*.py` file (needs `make infra-up`)
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency
@@ -77,7 +78,9 @@ instructions.
 
 - **Hooks** (`.claude/settings.json`, scripts in `.claude/hooks/`): every
   Python file the agent writes under `backend/` is
-  import-sorted and formatted with ruff (unused imports are left alone); edits
+  import-sorted and formatted with ruff (unused imports are left alone); every
+  file it writes under `web-portal/` is formatted with the portal's Prettier
+  (generated files are skipped through `.prettierignore`); edits
   to the generated `docs/design/domain-model/` and
   `docs/product/features/` views are refused (edit the `.dbml` or
   `features.yaml` and regenerate).

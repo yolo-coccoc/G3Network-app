@@ -112,14 +112,18 @@ src/
 ## 5. Import rules
 
 Direction: `routes → features → shared → api-client` (and `app` may use all
-of them). Enforced by `eslint-plugin-boundaries` in the lint step; a
-violation fails `make check`.
+of them). Enforced by `eslint-plugin-boundaries` in the lint step
+(`eslint.config.js`); a violation fails `make check`, and so does a file
+under `src/` outside these layers (only `src/main.tsx`, the entry, is
+exempt).
 
 - `shared` never imports `features` or `routes`.
 - A feature imports another feature only through its `index.ts`, and only
   when the backend has the same edge (domain-boundaries.md): if `vehicles`
   may not call `telemetry` in the backend, `features/vehicles` does not
   import `features/telemetry` either — compose them in the route file.
+  Each allowed edge is one policy in `eslint.config.js`, added in the same
+  change as the first import that needs it.
 - Nothing outside `shared/api` creates a fetch client or reads tokens.
 - `packages/api-client` is imported for types and the client only; generated
   files are never edited.
@@ -179,8 +183,8 @@ in code, only as i18n keys (§10).
   in development use Chrome or Firefox, which accept it on
   `http://localhost`; Safari does not.
 - **Regenerating the client**: after any backend route or schema change, run
-  the make target that exports the OpenAPI document and regenerates
-  `packages/api-client` (named in the scaffold planner); the gate fails when
+  `make api-client` (exports the OpenAPI document and regenerates
+  `packages/api-client`); the gate fails when
   the committed client is stale.
 - **Errors**: domain errors arrive as `{"detail": "<English text>"}` with the
   status of their base class (backend-coding-conventions.md §6); FastAPI
@@ -239,8 +243,8 @@ in code, only as i18n keys (§10).
   are mocked from fixtures typed by `packages/api-client`, so screenshots are
   deterministic and need no backend.
 - The portal's checks (format, lint incl. boundaries, type check, Vitest,
-  client freshness) are part of `make check`, so the pre-commit hook runs
-  them; the Playwright run has its own make target (scaffold planner).
+  client freshness) are `make portal-check`, part of `make check`, so the
+  pre-commit hook runs them; the Playwright run has its own make target (scaffold planner).
 
 ## 12. Workflow and finishing a portal task
 

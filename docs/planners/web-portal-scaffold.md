@@ -3,7 +3,7 @@
 > Feature codes: ACC-04 (Login and sessions), ACC-14 (Feature access control),
 > VEH-01 (Vehicle registry) — portal surface; plus the shell every later
 > portal feature uses.
-> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Steps 1–2 done
+> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Steps 1–3 done
 > Created: 2026-10-16
 >
 > Inputs: TT-28, CV-24, CV-25, IS-13 and open questions 12–14 in
@@ -169,10 +169,55 @@ web-portal/
   a body-less refresh sent the cookie back and got a new one; ANDROID login
   → token in the body, no cookie. `make api-client` regenerated the client
   (`refresh_token?: string | null`).
-- [ ] **Step 3 — Portal workspace and gate (D1, D2, D8, D9).** Vite app,
+- [x] **Step 3 — Portal workspace and gate (D1, D2, D8, D9).** Vite app,
   strict TS, ESLint (boundaries, i18n, hooks) + Prettier, Vitest, the make
   targets, `make setup`, the agent format hook. Evidence: `make check`
-  passes; a deliberate boundary violation fails lint.
+  passes; a deliberate boundary violation fails lint. Done 2026-10-16.
+  Versions (D2, exact pins): react / react-dom 19.3.1, vite 8.3.4,
+  @vitejs/plugin-react 6.1.2, vitest 5.0.5, eslint 10.12.0, @eslint/js
+  10.0.1, typescript-eslint 8.71.2, eslint-plugin-boundaries 7.2.0,
+  eslint-plugin-i18next 6.1.5, eslint-plugin-react-hooks 7.1.1,
+  eslint-plugin-react-refresh 0.5.7, prettier 3.9.10, globals 17.13.0,
+  @types/node 22.20.5 (the Node 22 line, not the latest 26.x). **eslint is
+  10.12.0, not the `latest` 10.13.0**: 10.13.0 was published the same day,
+  inside pnpm 12's minimum release age, and pnpm offered to write an
+  exclusion into `pnpm-workspace.yaml`; we keep that supply-chain guard on
+  and take the newest release it accepts. TypeScript stays 5.9.3 (Step 1).
+  Settled while building: TypeScript as in Vite's template, a solution
+  `tsconfig.json` referencing `tsconfig.app.json` (`src/`, `vite/client`
+  types) and `tsconfig.node.json` (`vite.config.ts`), checked with `tsc -b`;
+  Vitest is configured inside `vite.config.ts` (`src/**/*.test.{ts,tsx}`,
+  Node environment) and runs with `--passWithNoTests` until Step 4 writes
+  the first tests; jsdom and Testing Library are added in Step 4, when a
+  hook test needs them. No `.prettierrc`: Prettier's defaults, with
+  `.prettierignore` keeping the generated client and the lockfile out.
+  `eslint.config.js`: `strictTypeChecked`, react-hooks and react-refresh;
+  `boundaries/dependencies` with `default: "disallow"` (elements `app`,
+  `routes`, `feature` = `src/features/*`, `shared` = `src/shared/*`;
+  `src/main.tsx` is ignored, it only mounts `app/App`;
+  `boundaries/no-unknown-files` refuses any other file in `src/`); a
+  feature imports another only by a per-edge policy added when the backend
+  has that edge; `@g3/api-client` (values) and `openapi-fetch` only in
+  `src/shared/api`; hex/rgb/hsl literals, `style` props and CSS imports
+  only in `src/shared/ui`; `i18next/no-literal-string` in `jsx-only` mode,
+  checking JSX text and the attributes that show text (`title`, `label`,
+  `placeholder`, `okText`...), not props such as `type="primary"`. Make:
+  `portal-install`, `portal-dev`, `portal-check` (api-client-check, Prettier
+  check, ESLint, `tsc -b`, Vitest) in `check`; `make format` also runs
+  Prettier; `make setup` already installs the workspace (Step 1).
+  `src/app/App.tsx` renders nothing until Steps 4–5. Agent hook:
+  `.claude/hooks/format_portal.py` runs the portal's Prettier on every file
+  written under `web-portal/` (skips generated files through
+  `.prettierignore`). Evidence: `make check` passes (1156 backend tests,
+  portal: Prettier, ESLint, `tsc -b`, Vitest, client freshness); `vite build`
+  builds; `make portal-dev` serves `index.html` and `/src/main.tsx` and
+  proxies `/api/v1/auth/me` to :8000 (502 with the API stopped). Probe files
+  (removed afterwards) were refused: feature → feature, shared → feature,
+  routes → a feature's internal file (routes → the feature's `index.ts`
+  passed), a stray `src/stray.ts`, `createApiClient` from a feature, a hex
+  color, a `style` prop, Vietnamese text in JSX and in `title=`; a stray
+  file makes `make portal-check` exit 2. The hook reformatted a messy probe
+  file and left `schema.d.ts` untouched.
 - [ ] **Step 4 — Shared foundation.** Theme tokens (D14), i18n setup with
   vi/en catalogs (D7), API client with token refresh (D5) and error mapping
   (D15), formatters, status map, StatusTag, DataTable, ReasonDialog,
