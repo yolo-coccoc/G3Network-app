@@ -13,6 +13,7 @@ from app.domains.identity.schemas import (
     SignUpRequest,
 )
 from app.domains.identity.types import (
+    FEATURE_ROLES,
     INTERNAL_ONLY_ROLES,
     ROLE_FEATURES,
     Principal,
@@ -54,6 +55,24 @@ def test_principal_roles_and_features() -> None:
     assert not principal.has_any_role(UserRole.SALES)
     assert "ACC-09" in principal.features
     assert principal.features == features_of_roles(principal.roles)
+
+
+def test_features_of_roles_lists_what_the_routers_allow() -> None:
+    """The feature list joins identity features and every router's feature (ID-50).
+
+    A role named in a feature's `FEATURE_ROLES` entry gets it; the three
+    always-allowed roles get every such feature, since `roles_for` lets them
+    call it; a role gets no feature it cannot call.
+    """
+    dispatcher = features_of_roles(frozenset({UserRole.DISPATCHER}))
+    org_admin = features_of_roles(frozenset({UserRole.ORG_ADMIN}))
+
+    assert "FLT-04" in dispatcher
+    assert "ACC-16" in dispatcher
+    assert "VEH-01" not in dispatcher
+    assert set(FEATURE_ROLES) <= org_admin
+    assert "ACC-23" in org_admin
+    assert "ACC-01" not in org_admin
 
 
 def test_every_role_has_a_feature_entry_and_admin_roles_are_internal_only() -> None:

@@ -244,13 +244,14 @@ ORGANIZATION_CREATOR_ROLES = frozenset(
 
 # Keys are the feature codes of `docs/product/features/features.yaml` that the
 # identity domain serves; a role holds a feature when it is in the `users`
-# list of that feature. The per-role list of every other domain's features is
-# decided in the permission-granting step (ID-44), so only these exist today.
-# Until subscription plans exist (BL-16) a customer organization gets every
-# feature of its roles, and an internal user the whole role: features = role.
+# list of that feature. Every other domain's features come from `FEATURE_ROLES`
+# below; `features_of_roles` joins both. The final per-role lists are decided in
+# the permission-granting step (ID-44). Until subscription plans exist (BL-16) a
+# customer organization gets every feature of its roles, and an internal user
+# the whole role: features = role.
 ROLE_FEATURES: dict[UserRole, frozenset[str]] = {
     UserRole.HEAD_ADMIN: frozenset(
-        {"ACC-01", "ACC-03", "ACC-13", "ACC-18", "ACC-20", "ACC-22"}
+        {"ACC-01", "ACC-03", "ACC-13", "ACC-18", "ACC-20", "ACC-22", "ACC-23"}
     ),
     UserRole.CO_ADMIN: frozenset(
         {
@@ -263,10 +264,20 @@ ROLE_FEATURES: dict[UserRole, frozenset[str]] = {
             "ACC-17",
             "ACC-18",
             "ACC-22",
+            "ACC-23",
         }
     ),
     UserRole.ORG_ADMIN: frozenset(
-        {"ACC-04", "ACC-05", "ACC-06", "ACC-09", "ACC-12", "ACC-13", "ACC-17"}
+        {
+            "ACC-04",
+            "ACC-05",
+            "ACC-06",
+            "ACC-09",
+            "ACC-12",
+            "ACC-13",
+            "ACC-17",
+            "ACC-23",
+        }
     ),
     UserRole.SALES: frozenset({"ACC-01", "ACC-02", "ACC-08"}),
     UserRole.ACCOUNTANT: frozenset(),
@@ -453,15 +464,26 @@ def roles_for(*feature_codes: str) -> frozenset[UserRole]:
 def features_of_roles(roles: frozenset[UserRole]) -> frozenset[str]:
     """Return the feature codes a set of roles grants (ACC-14).
 
+    The list is what the routers enforce, so a client can show exactly what
+    the caller may use (web-portal-conventions.md §7): the identity features
+    of each role (`ROLE_FEATURES`) plus every other domain's feature whose
+    `FEATURE_ROLES` entry names one of the roles or that `ALWAYS_ALLOWED_ROLES`
+    opens (`roles_for` lets those roles call every feature, ID-50). An
+    internal-only endpoint can still refuse a customer's ORG_ADMIN; the list
+    says which features a role may use, not the data or the organization kind.
+
     Args:
         roles: The roles a member holds.
 
     Returns:
-        The union of the features of every role.
+        The feature codes of every role.
     """
     features: set[str] = set()
     for role in roles:
         features |= ROLE_FEATURES[role]
+    for feature_code, feature_roles in FEATURE_ROLES.items():
+        if roles & (feature_roles | ALWAYS_ALLOWED_ROLES):
+            features.add(feature_code)
     return frozenset(features)
 
 
