@@ -35,8 +35,9 @@ First time on a clone: `make setup` — creates `backend/.env` and
 `infra/.env` from the examples (never overwrites; fills in an empty
 `IDENTITY_TOKEN_SECRET_KEY` with a generated key), runs `uv sync` (runtime
 deps plus the `dev` dependency group) and `pnpm install` (the frontend
-workspace; needs Node 22, `.nvmrc`, and uses pnpm through corepack at the
-version pinned in the root `package.json`), enables the git hook, starts the
+workspace in `frontend/`; needs Node 22, `frontend/.nvmrc`, and uses pnpm
+through corepack at the version pinned in `frontend/package.json`, so run
+pnpm from inside `frontend/`), enables the git hook, starts the
 infrastructure, waits for PostgreSQL, applies the migration and runs
 `make check`. Safe to re-run.
 
@@ -54,7 +55,7 @@ Basic commands:
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
-- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`; `make api-client-check`: the committed `packages/api-client` matches the backend's OpenAPI document and type-checks); `make api-client` regenerates it after any backend route or schema change (commit both files); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
+- `make check` — The full local gate (`make lint` = ruff check + format check, import-linter, mypy on `app` and `tests`; smoke tests; `make domain-model-check`; `make feature-catalog-check`; `make api-client-check`: the committed `frontend/packages/api-client` matches the backend's OpenAPI document and type-checks); `make api-client` regenerates it after any backend route or schema change (commit both files); `make format` fixes formatting; `make install-hooks` makes git run `make check` before each commit
 - `make backend-test` — Smoke tests only; `make backend-test-integration` — PostgreSQL integration tests, every `tests/test_postgres_*.py` file (needs `make infra-up`)
 - `make coverage` — Smoke tests with a coverage report (terminal + `backend/htmlcov/`; no threshold enforced)
 - `make audit` — `pip-audit` (via `uvx`) of every locked dependency

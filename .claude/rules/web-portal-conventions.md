@@ -1,6 +1,6 @@
 # Web portal conventions
 
-> Read this file before any task under `web-portal/` or `packages/`. Screen
+> Read this file before any task under `frontend/`. Screen
 > design rules live in [web-portal-ui.md](./web-portal-ui.md); both apply
 > together. Why each choice was made: TT-28, TT-29, CV-24, CV-25, IS-13 in the
 > [decision log](../../docs/decisions/decision-log.md). The portal has no
@@ -29,7 +29,7 @@ code is never copied).
 
 | Concern | Choice |
 |---|---|
-| Language, UI, build | TypeScript (`strict`), React, Vite; pnpm (through corepack, version pinned in the root `package.json`) |
+| Language, UI, build | TypeScript (`strict`), React, Vite; pnpm (through corepack, version pinned in `frontend/package.json`) |
 | UI library | Ant Design v6 (TT-29), themed only through design tokens (`shared/ui/theme.ts`); ProComponents only where they clearly save work; no Tailwind, no shadcn/ui |
 | Server data | TanStack Query |
 | Routing | TanStack Router, file-based, automatic code splitting |
@@ -45,12 +45,17 @@ A library outside this table is a new component: ask first (PR-03).
 
 ## 3. Workspace layout
 
-pnpm workspaces at the repository root (`package.json`, `pnpm-workspace.yaml`,
-`pnpm-lock.yaml`):
+All frontend code lives in **one folder, `frontend/`**, next to `backend/`
+(TT-30); nothing frontend-related sits at the repository root. `frontend/` is
+the pnpm workspace root, and every path in the rest of this file is relative
+to it. Run pnpm from inside `frontend/` (corepack reads the pinned version
+from its `package.json`); the Make targets do this for you.
 
 ```text
-web-portal/              the portal (Vite app)
-packages/api-client/     generated types + the typed fetch client; never edited by hand
+frontend/
+  package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc   workspace root
+  web-portal/              the portal (Vite app)
+  packages/api-client/     generated types + the typed fetch client; never edited by hand
 ```
 
 `packages/` holds plain TypeScript with no browser-only or React code, so a
@@ -58,7 +63,7 @@ future mobile app can use it whatever its stack (open question 12). The
 message catalogs stay inside the portal (`src/shared/i18n/locales/`) until a
 second client needs them; then they move to `packages/i18n/` (TT-29).
 
-## 4. `web-portal/src/` structure
+## 4. `frontend/web-portal/src/` structure
 
 ```text
 src/

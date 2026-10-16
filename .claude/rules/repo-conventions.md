@@ -2,9 +2,9 @@
 
 > Read this file when committing, opening a PR, deferring/removing a
 > component, or considering adding a new dependency/infra piece. Currently
-> only `backend/` and `infra/` have active source; the rules below apply to
-> any part that has source, including `web-portal/`/`vehicle-app/` once they
-> start having code.
+> `backend/`, `infra/` and `frontend/` (the pnpm workspace, TT-30) have active
+> source; the rules below apply to any part that has source, including the
+> mobile app once it starts having code.
 
 - Commit messages follow **Conventional Commits**: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`.
   - Example: `feat(policy): add charging violation reconciliation endpoint (F-B3)`
@@ -23,7 +23,7 @@
   read them before creating a new file or directory. Don't create a file or
   directory before a concrete task needs it: no empty directories for a
   future domain (`identity`, `policy`, `billing`, `scoring`), no placeholder
-  for `web-portal/` or `vehicle-app/`, no `backend/Dockerfile`,
+  for a mobile app, no `backend/Dockerfile`,
   `infra/docker-compose.prod.yml`, `scripts/` or root `.env.example` until a
   task asks for one.
 - **One fact, one home** in the docs: progress per feature lives only in the
