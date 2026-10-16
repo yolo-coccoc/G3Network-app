@@ -361,7 +361,7 @@
           [t("Licence", "Bằng lái"), `${esc(driver.license_class)} · ${esc(t("expires", "hết hạn"))} ${fmt.date(driver.license_expires_on)}`],
         ])}${canDispatch() ? `<div class="row mt">${ui.btn(t("End check-in", "Kết thúc nhận xe"), { action: "end-checkin", sm: true, icon: "logout" })}</div>` : ""}`
       : `${driving ? ui.callout("danger", esc(t("Driving with nobody checked in. The fleet manager was alerted (DRV-02).", "Xe đang chạy nhưng chưa có tài xế nhận xe. Quản lý đội đã được cảnh báo (DRV-02)."))) : `<p class="muted small">${esc(t("Nobody is checked in to this truck.", "Chưa có tài xế nhận xe này."))}</p>`}
-         ${canDispatch() && v.status === "ACTIVE" ? `<div class="row mt">${ui.btn(t("Check in a driver", "Gán tài xế nhận xe"), { action: "checkin", sm: true, kind: "primary", icon: "id" })}</div>` : ""}`;
+         ${canDispatch() && v.status === "ACTIVE" && v.live ? `<div class="row mt">${ui.btn(t("Check in a driver", "Gán tài xế nhận xe"), { action: "checkin", sm: true, kind: "primary", icon: "id" })}</div>` : ""}`;
 
     return `
       <div class="grid cols-5">
@@ -494,7 +494,8 @@
 
   function batteryTab(v) {
     const battery = db.battery(v.battery_id);
-    const bm = battery ? db.find("battery_models", battery.battery_model_id) : null;
+    if (!battery) return ui.card({ title: t("Battery", "Pin"), body: ui.empty(t("No battery pack is fitted to this truck.", "Xe chưa được lắp pin.")) });
+    const bm = db.find("battery_models", battery.battery_model_id);
     const soh = db.sohSeries(v.vehicle_id, 180);
     const lo = Math.floor(Math.min(90, ...soh.map((p) => p.soh_percent)) - 1);
     const a = cellAnalysis(v);
@@ -739,6 +740,8 @@
       const hours = ["2", "8", "24"].includes(ctx.query.hours) ? Number(ctx.query.hours) : 8;
       const key = `${v.vehicle_id}|${hours}`;
       if (auditedRouteKey !== key) { G3.audit("VIEW", "LOCATION_HISTORY", v.license_plate, null); auditedRouteKey = key; }
+      // Leaving the replay (another tab or page) makes the next opening count again.
+      G3.onLeave(() => setTimeout(() => { if (!location.hash.includes(`/vehicles/${v.vehicle_id}`) || !location.hash.includes("tab=route")) auditedRouteKey = null; }, 0));
       const route = replayRoute(v, hours);
       if (route.length > 1) bindReplay(root, v, route, hours);
     } else {

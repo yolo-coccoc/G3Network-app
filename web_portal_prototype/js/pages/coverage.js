@@ -46,7 +46,7 @@
           rows,
           columns: [
             { label: t("Code", "Mã"), render: (f) => `<span class="mono">${esc(f.code)}</span>` },
-            { label: t("Feature", "Tính năng"), render: (f) => `<b>${esc(t(f.name, f.name_vi))}</b><span class="sub">${esc(f.what)}</span>` },
+            { label: t("Feature", "Tính năng"), render: (f) => `<b>${esc(t(f.name, f.name_vi))}</b><span class="sub">${esc(t(f.what, f.what_vi || f.what))}</span>` },
             { label: t("Users", "Người dùng"), render: (f) => f.users.filter((u) => u !== "SYSTEM").map((u) => ui.tag(G3.roleLabel(u))).join(" ") },
             { label: t("Release", "Phát hành"), render: (f) => `${esc(f.release)}<span class="sub">${esc(f.priority)}</span>` },
             { label: "Backend", render: (f) => ui.badge(f.backend === "done" ? "COMPLETED" : f.backend === "doing" ? "IN_PROGRESS" : "PLANNED", null, f.backend) },

@@ -163,6 +163,17 @@ window.G3 = window.G3 || {};
     LOGOUT: ["Logout", "Đăng xuất"],
     PASSWORD_CHANGED: ["Password changed", "Đổi mật khẩu"],
     PHONE_CHANGED: ["Phone changed", "Đổi số điện thoại"],
+    // plans and subscriptions (PAY-02, PAY-03)
+    PUBLIC: ["Public", "Công khai"],
+    PRIVATE: ["Private", "Riêng"],
+    DEFAULT: ["Default", "Mặc định"],
+    MONTHLY: ["Monthly", "Hằng tháng"],
+    SCHEDULED: ["Scheduled", "Đã lên lịch"],
+    ENDED: ["Ended", "Đã kết thúc"],
+    SUPERSEDED: ["Superseded", "Đã thay thế"],
+    RETIRED: ["Retired", "Ngừng sử dụng"],
+    FINAL: ["Final", "Chính thức"],
+    PROVISIONAL: ["Provisional", "Tạm tính"],
     // risk (POL-04)
     LOW: ["Low", "Thấp"],
     MEDIUM: ["Medium", "Trung bình"],

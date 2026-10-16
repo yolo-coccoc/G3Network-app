@@ -89,6 +89,7 @@
   const yes = (title) => `<span style="color:var(--ok)" title="${esc(title || "")}">${ui.icon("check", 16)}</span>`;
   const no = (title) => `<span class="muted" title="${esc(title || "")}">—</span>`;
   const locked = (title) => `<span style="color:var(--danger)" title="${esc(title || "")}">${ui.icon("lock", 15)}</span>`;
+  const millions = (v) => (v >= 1e9 ? fmt.num(v / 1e9, 1) + t("B", " tỷ") : fmt.num(v / 1e6, 0) + t("M", "tr"));
   const money = (value) => `<span class="num" style="color:var(${value < 0 ? "--danger" : "--ok"})">${value > 0 ? "+" : ""}${fmt.vnd(value)}</span>`;
 
   /** Tabs, segmented controls and filter inputs write their value into the URL query. */
@@ -216,11 +217,10 @@
       columns: [
         { label: t("Code", "Mã"), render: (f) => `<b class="mono">${esc(f.code)}</b>` },
         { label: t("Feature", "Tính năng"), render: (f) => `<b>${esc(tx(f.name))}</b><span class="sub">${esc(lab(f.unit))}</span>` },
-        { label: t("List price", "Giá niêm yết"), align: "right", render: (f) => `<b>${fmt.vnd(currentVersion(f).price_vnd)}</b>` },
+        { label: t("List price", "Giá niêm yết"), align: "right", cls: "nowrap", render: (f) => `<b>${fmt.vnd(currentVersion(f).price_vnd)}</b>` },
         { label: t("Since", "Từ ngày"), render: (f) => fmt.date(currentVersion(f).effective_from) },
         { label: t("Next change", "Thay đổi kế tiếp"), render: (f) => { const s = scheduledVersion(f); return s ? `${pill("SCHEDULED", "info")}<span class="sub">${fmt.vnd(s.price_vnd)} · ${fmt.date(s.effective_from)}</span>` : '<span class="muted">—</span>'; } },
-        { label: t("In plans", "Có trong gói"), render: (f) => { const names = db.plans.filter((p) => p.features.includes(f.code)).map((p) => ui.tag(p.name)); return names.length ? `<div class="row" style="gap:4px">${names.join("")}</div>` : ADD_ON_CODES.includes(f.code) ? `<span class="tag">${esc(t("Add-on only", "Chỉ bán thêm"))}</span>` : "—"; } },
-        { label: "", render: (f) => (canSell ? actBtn(t("Change price", "Đổi giá"), "change-price", f.code, { sm: true, icon: "edit" }) : "") },
+        { label: t("In plans", "Có trong gói"), render: (f) => { const names = db.plans.filter((p) => p.features.includes(f.code)).map((p) => p.name); return names.length ? `<span class="tag" title="${esc(names.join(", "))}">${names.length} ${esc(t(names.length === 1 ? "plan" : "plans", "gói"))}</span>${ADD_ON_CODES.includes(f.code) ? ` <span class="tag">${esc(t("add-on", "mua thêm"))}</span>` : ""}` : ADD_ON_CODES.includes(f.code) ? `<span class="tag">${esc(t("Add-on only", "Chỉ bán thêm"))}</span>` : "—"; } },
       ],
     });
     const versions = priceVersions(selected).slice().reverse();
@@ -247,12 +247,13 @@
       const subscribers = db.subscriptions.filter((s) => s.plan_id === p.plan_id);
       return `<div class="card kpi">
         <div class="row between"><b style="font-size:15px">${esc(p.name)}</b>${pill(p.visibility, p.visibility === "PUBLIC" ? "info" : p.visibility === "PRIVATE" ? "violet" : "muted")}</div>
-        <div class="value">${p.price_vnd_truck_month ? fmt.num(p.price_vnd_truck_month) : t("Free", "Miễn phí")}${p.price_vnd_truck_month ? `<small>₫ ${esc(lab("TRUCK_MONTH"))}</small>` : ""}</div>
+        <div class="value">${p.price_vnd_truck_month ? fmt.vnd(p.price_vnd_truck_month) : t("Free", "Miễn phí")}</div>
+        <div class="small muted">${p.price_vnd_truck_month ? esc(lab("TRUCK_MONTH")) : "&nbsp;"}</div>
         <div class="foot">${list ? `${esc(t("List value", "Giá trị niêm yết"))} ${fmt.vnd(list)}${discount > 0 ? ` · <span class="trend-up">−${fmt.pct(discount)}</span>` : ""}` : esc(t("No per-truck price", "Không tính theo xe"))}</div>
         <div class="small muted" style="margin-top:8px;min-height:38px">${esc(tx(p.description))}${p.private_organization_id ? ` · <b>${ui.orgName(p.private_organization_id)}</b>` : ""}</div>
         <div class="row" style="gap:4px;margin-top:8px">${p.features.map((c) => ui.tag(c)).join("")}</div>
         <div class="divider" style="margin:10px 0"></div>
-        <div class="small">${ui.icon("building", 13)} ${subscribers.length} ${esc(t("subscribers", "khách hàng"))} · ${fmt.num(sum(subscribers, (s) => trucksOf(s.organization_id)))} ${esc(t("trucks", "xe"))}</div>
+        <div class="small">${ui.icon("building", 13)} ${subscribers.length} ${esc(t(subscribers.length === 1 ? "subscriber" : "subscribers", "khách hàng"))} · ${fmt.num(sum(subscribers, (s) => trucksOf(s.organization_id)))} ${esc(t("trucks", "xe"))}</div>
       </div>`;
     }).join("");
     const matrix = ui.table({
@@ -333,7 +334,7 @@
     return `${head}
       ${sub.features_locked ? ui.callout("danger", `<b>${esc(t("Plan features are locked", "Tính năng của gói đang bị khóa"))}</b> — ${esc(sub.status_reason || "")}. ${esc(t("Pay the overdue invoice to unlock them; charging and the wallet keep working.", "Thanh toán hóa đơn quá hạn để mở khóa; sạc và ví vẫn hoạt động."))} ${G3.canSee("invoices") ? `<a href="#/invoices?status=OVERDUE">${esc(t("Open invoices", "Mở hóa đơn"))} →</a>` : ""}`, "lock") + '<div class="mt"></div>' : sub.status === "OVERDUE" ? ui.callout("warn", esc(t("An invoice is overdue. Features may be locked if it stays unpaid.", "Có hóa đơn quá hạn. Tính năng có thể bị khóa nếu chưa thanh toán."))) + '<div class="mt"></div>' : ""}
       <div class="grid cols-4">
-        ${ui.kpi({ label: t("Plan", "Gói"), icon: "layers", value: esc(plan.name), foot: `${lab(plan.visibility)} · ${t("since", "từ")} ${fmt.date(sub.starts_on)}` })}
+        ${ui.kpi({ label: t("Plan", "Gói"), icon: "layers", value: `<span style="font-size:20px">${esc(plan.name)}</span>`, foot: `${lab(plan.visibility)} · ${t("since", "từ")} ${fmt.date(sub.starts_on)}` })}
         ${ui.kpi({ label: t("Trucks billed", "Xe tính phí"), icon: "truck", value: trucks.length, foot: `${trucks.filter((v) => v.status === "ACTIVE").length} ${t("active", "hoạt động")} · ${trucks.filter((v) => v.status !== "ACTIVE").length} ${t("inactive", "ngừng")}` })}
         ${ui.kpi({ label: t("Monthly cost", "Chi phí hàng tháng"), icon: "receipt", value: fmt.vndShort(monthly), foot: `${t("excl. VAT 8%", "chưa gồm VAT 8%")} · ${fmt.vndShort(monthly * 1.08)} ${t("incl.", "gồm VAT")}` })}
         ${ui.kpi({ label: t("Renewal", "Gia hạn"), icon: "clock", value: sub.ends_on ? fmt.date(sub.ends_on) : t("Open-ended", "Không thời hạn"), tone: sub.ends_on && daysUntil(sub.ends_on) <= 30 ? "warn" : undefined, foot: sub.ends_on ? `${daysUntil(sub.ends_on)} ${t("days left", "ngày còn lại")}${daysUntil(sub.ends_on) <= 30 ? " · " + t("reminder sent", "đã gửi nhắc") : ""}` : "" })}
@@ -622,7 +623,7 @@
       if (!s) return "—";
       const loc = db.location(s.location_id);
       const v = db.vehicle(s.vehicle_id);
-      return `<b>${esc(loc ? loc.name : s.station_id)}</b>${v ? ` · ${esc(v.license_plate)}` : ""} · ${fmt.kwh(s.energy_kwh)}<span class="sub">${esc(t("Session", "Phiên"))} #${esc(s.ocpp_transaction_id)} · ${fmt.num(s.price_vnd_kwh)} ₫/kWh${row.reason ? " · " + esc(row.reason) : ""}</span>`;
+      return `<b>${esc(loc ? loc.name : s.station_id)}</b><span class="sub">${v ? `${esc(v.license_plate)} · ` : ""}${fmt.kwh(s.energy_kwh)} · ${fmt.num(s.price_vnd_kwh)} ₫/kWh · #${esc(s.ocpp_transaction_id)}${row.reason ? " · " + esc(row.reason) : ""}</span>`;
     }
     if (row.transaction_type === "TOP_UP") return `<b class="mono">${esc(row.reference || "VietQR")}</b><span class="sub">${esc(t("Bank transfer · credited automatically", "Chuyển khoản · ghi có tự động"))}</span>`;
     return `${esc(row.reason || "—")}<span class="sub">${ui.userName(row.user_id)}</span>`;
@@ -665,16 +666,16 @@
       rows: shown,
       empty: t("No transaction matches", "Không có giao dịch phù hợp"),
       columns: [
-        { label: t("Time", "Thời gian"), render: (x) => `${fmt.dateTime(x.created_at)}<span class="sub">${fmt.ago(x.created_at)}</span>` },
-        { label: t("Type", "Loại"), render: (x) => ui.badge(x.transaction_type, TX_TONES[x.transaction_type]) },
+        { label: t("Time", "Thời gian"), cls: "nowrap", render: (x) => `${fmt.date(x.created_at)}<span class="sub">${fmt.time(x.created_at)} · ${fmt.ago(x.created_at)}</span>` },
+        { label: t("Type", "Loại"), cls: "nowrap", render: (x) => ui.badge(x.transaction_type, TX_TONES[x.transaction_type]) },
         { label: t("Details", "Chi tiết"), render: txDetails },
-        { label: t("Amount", "Số tiền"), align: "right", render: (x) => `<b>${money(x.amount_vnd)}</b>` },
-        { label: t("Balance after", "Số dư sau"), align: "right", render: (x) => `<span style="${x.balance_after_vnd < 0 ? "color:var(--danger)" : ""}">${fmt.vnd(x.balance_after_vnd)}</span>` },
+        { label: t("Amount", "Số tiền"), align: "right", cls: "nowrap", render: (x) => `<b>${money(x.amount_vnd)}</b>` },
+        { label: t("Balance after", "Số dư sau"), align: "right", cls: "nowrap", render: (x) => `<span style="${x.balance_after_vnd < 0 ? "color:var(--danger)" : ""}">${fmt.vnd(x.balance_after_vnd)}</span>` },
         internal ? { label: "", render: (x) => (x.transaction_type === "SESSION_BILL" && !refunded.has(x.session_id) ? actBtn(t("Refund", "Hoàn tiền"), "refund", x.wallet_transaction_id, { sm: true }) : x.transaction_type === "SESSION_BILL" ? `<span class="tag">${esc(t("Refunded", "Đã hoàn"))}</span>` : "") } : null,
       ].filter(Boolean),
     });
 
-    const chartRows = txs.slice(0, 24).reverse();
+    const chartRows = txs.slice(0, 16).reverse();
     const balanceChart = chartRows.length > 1
       ? ui.lineChart({ labels: chartRows.map((x) => { const d = new Date(x.created_at); return `${d.getDate()}/${d.getMonth() + 1}`; }), series: [{ name: t("Balance", "Số dư"), values: chartRows.map((x) => x.balance_after_vnd), area: true, color: ui.PALETTE[1] }], height: 170, unit: " ₫" })
       : ui.empty();
@@ -1010,7 +1011,7 @@
         { name: t("Subscription", "Thuê bao"), values: chartPeriods.map((p) => sum(invoices.filter((i) => i.period === p), (i) => i.subscription_vnd)), color: ui.PALETTE[1] },
         { name: "VAT", values: chartPeriods.map((p) => sum(invoices.filter((i) => i.period === p), (i) => i.vat_vnd)), color: "#94a3b8" },
       ],
-      height: 200, unit: " ₫",
+      height: 200, unit: " ₫", yFormat: millions,
     });
     const statusCounts = ["ISSUED", "PAID", "OVERDUE"].map((s) => [s, invoices.filter((i) => i.status === s)]);
     return `<div class="grid side">
@@ -1035,12 +1036,12 @@
             rowAttrs: (i) => `data-invoice="${esc(i.invoice_id)}" style="cursor:pointer"`,
             columns: [
               { label: t("Invoice", "Hóa đơn"), render: (i) => `<b class="mono">${esc(i.invoice_number)}</b><span class="sub mono">${einvoiceSymbol(i.period)} · ${einvoiceNo(i.invoice_id)}</span>` },
-              internal ? { label: t("Customer", "Khách hàng"), render: (i) => `<b>${ui.orgName(i.organization_id)}</b>` } : null,
+              internal ? { label: t("Customer", "Khách hàng"), cls: "nowrap", render: (i) => `<b>${ui.orgName(i.organization_id)}</b>` } : null,
               { label: t("Period", "Kỳ"), render: (i) => esc(i.period) },
-              { label: t("Energy", "Điện năng"), align: "right", render: (i) => `${fmt.num(i.energy_kwh)} kWh<span class="sub">${fmt.vnd(i.energy_vnd)}</span>` },
-              { label: t("Subscription", "Thuê bao"), align: "right", render: (i) => fmt.vnd(i.subscription_vnd) },
-              { label: "VAT 8%", align: "right", render: (i) => fmt.vnd(i.vat_vnd) },
-              { label: t("Total", "Tổng"), align: "right", render: (i) => `<b>${fmt.vnd(i.total_vnd)}</b>` },
+              { label: t("Energy", "Điện năng"), align: "right", cls: "nowrap", render: (i) => `${fmt.num(i.energy_kwh)} kWh<span class="sub">${fmt.vnd(i.energy_vnd)}</span>` },
+              { label: t("Subscription", "Thuê bao"), align: "right", cls: "nowrap", render: (i) => fmt.vnd(i.subscription_vnd) },
+              { label: "VAT 8%", align: "right", cls: "nowrap", render: (i) => fmt.vnd(i.vat_vnd) },
+              { label: t("Total", "Tổng"), align: "right", cls: "nowrap", render: (i) => `<b>${fmt.vnd(i.total_vnd)}</b>` },
               { label: t("Status", "Trạng thái"), render: (i) => ui.badge(i.status) },
               { label: t("Due", "Hạn"), render: (i) => `<span style="${i.status === "OVERDUE" ? "color:var(--danger);font-weight:600" : ""}">${fmt.date(invoiceDue(i))}</span>` },
               { label: t("Lookup code", "Mã tra cứu"), render: (i) => `<span class="mono">${esc(i.lookup_code)}</span>` },
@@ -1080,13 +1081,13 @@
       rows: shown,
       empty: t("No session matches", "Không có phiên phù hợp"),
       columns: [
-        { label: t("Session", "Phiên"), render: (s) => `${fmt.dateTime(s.started_at)}<span class="sub mono">#${esc(s.ocpp_transaction_id)}</span>` },
+        { label: t("Session", "Phiên"), cls: "nowrap", render: (s) => `${fmt.dateTime(s.started_at)}<span class="sub mono">#${esc(s.ocpp_transaction_id)}</span>` },
         { label: t("Station", "Trạm"), render: (s) => esc((db.location(s.location_id) || {}).name || s.station_id) },
         { label: t("Truck", "Xe"), render: (s) => `<b>${esc((db.vehicle(s.vehicle_id) || {}).license_plate || "—")}</b>` },
         { label: t("Buyer", "Người mua"), render: (s) => { const d = db.driver(s.driver_id); const o = db.org(s.organization_id); return `${d ? esc(d.full_name) : esc(o.short_name)}<span class="sub">${esc(o.short_name)} · ${esc(t("Tax code", "MST"))} ${esc(o.tax_code)}</span>`; } },
         { label: "kWh", align: "right", render: (s) => fmt.num(s.energy_kwh, 1) },
-        { label: t("Amount incl. VAT", "Tiền gồm VAT"), align: "right", render: (s) => `<b>${fmt.vnd(s.cost_vnd)}</b><span class="sub">VAT ${fmt.vnd(s.cost_vnd - s.cost_vnd / (1 + VAT_RATE))}</span>` },
-        { label: t("E-invoice", "HĐĐT"), render: (s) => (s.bill_status === "ON_HOLD" ? ui.badge("ON_HOLD") : `<span class="mono">${einvoiceSymbol(periodOf(s.started_at)).replace("TGN", "TGL")} · ${einvoiceNo(s.session_id)}</span><span class="sub mono">${esc(t("lookup", "tra cứu"))} ${lookupCode(s.session_id)}</span>`) },
+        { label: t("Amount incl. VAT", "Tiền gồm VAT"), align: "right", cls: "nowrap", render: (s) => `<b>${fmt.vnd(s.cost_vnd)}</b><span class="sub">VAT ${fmt.vnd(s.cost_vnd - s.cost_vnd / (1 + VAT_RATE))}</span>` },
+        { label: t("E-invoice", "HĐĐT"), cls: "nowrap", render: (s) => (s.bill_status === "ON_HOLD" ? ui.badge("ON_HOLD") : `<span class="mono">${einvoiceSymbol(periodOf(s.started_at)).replace("TGN", "TGL")} · ${einvoiceNo(s.session_id)}</span><span class="sub mono">${esc(t("lookup", "tra cứu"))} ${lookupCode(s.session_id)}</span>`) },
         { label: t("Status", "Trạng thái"), render: (s) => (s.bill_status === "ON_HOLD" ? ui.badge("PENDING", "warn", t("Waiting for the bill", "Chờ chốt hóa đơn")) : ui.badge("ISSUED")) },
       ],
     });
@@ -1134,7 +1135,7 @@
         ${ui.card({
           title: t("Energy vs subscription revenue", "Doanh thu điện và thuê bao"), sub: t("6 months, excl. VAT", "6 tháng, chưa VAT"),
           actions: ui.legend([[t("Charging · fleet invoices", "Sạc · hóa đơn đội xe"), ui.PALETTE[0]], [t("Charging · app/retail", "Sạc · app/bán lẻ"), "#5fd3a5"], [t("Subscriptions", "Thuê bao"), ui.PALETTE[1]]]),
-          body: ui.barChart({ labels: series.map((r) => r.period), stacked: true, height: 240, unit: " ₫", series: [
+          body: ui.barChart({ labels: series.map((r) => r.period), stacked: true, height: 240, unit: " ₫", yFormat: millions, series: [
             { name: t("Charging · fleet", "Sạc · đội xe"), values: series.map((r) => r.fleet_energy_vnd), color: ui.PALETTE[0] },
             { name: t("Charging · retail", "Sạc · bán lẻ"), values: series.map((r) => r.retail_energy_vnd), color: "#5fd3a5" },
             { name: t("Subscriptions", "Thuê bao"), values: series.map((r) => r.subscription_vnd), color: ui.PALETTE[1] },
@@ -1627,7 +1628,7 @@
         ${ui.card({
           title: t("Scope 2 emissions vs diesel baseline", "Phát thải Scope 2 so với đường cơ sở diesel"), sub: "tCO₂e",
           actions: ui.segmented([["month", t("Month", "Tháng")], ["quarter", t("Quarter", "Quý")], ["year", t("Year", "Năm")]], mode, "period"),
-          body: `${carbonChart(agg)}<div class="mt">${ui.legend([[t("Scope 2 · grid", "Scope 2 · lưới điện"), CARBON_COLORS.grid], [t("Scope 2 · renewable", "Scope 2 · tái tạo"), CARBON_COLORS.renewable], [t("Diesel baseline (dashed)", "Đường cơ sở diesel (nét đứt)"), CARBON_COLORS.diesel]])}</div>`,
+          body: `${carbonChart(agg, 300)}<div class="mt">${ui.legend([[t("Scope 2 · grid", "Scope 2 · lưới điện"), CARBON_COLORS.grid], [t("Scope 2 · renewable", "Scope 2 · tái tạo"), CARBON_COLORS.renewable], [t("Diesel baseline (dashed)", "Đường cơ sở diesel (nét đứt)"), CARBON_COLORS.diesel]])}</div>`,
         })}
         ${ui.card({
           title: t("Inventory boundaries & methodology", "Ranh giới kiểm kê & phương pháp"), sub: "CRB-07",
@@ -1652,13 +1653,12 @@
           rows: agg.slice().reverse(),
           columns: [
             { label: t("Period", "Kỳ"), render: (r) => `<b>${esc(mode === "month" ? r.month : r.label)}</b>` },
-            { label: t("Distance", "Quãng đường"), align: "right", render: (r) => fmt.km(r.distance_km) },
-            { label: t("Energy", "Điện năng"), align: "right", render: (r) => `${fmt.num(r.energy_kwh / 1000, 1)} MWh` },
-            { label: t("Renewable", "Tái tạo"), align: "right", render: (r) => fmt.pct(r.renewable_share * 100, 1) },
+            { label: t("Distance", "Quãng đường"), align: "right", cls: "nowrap", render: (r) => fmt.km(r.distance_km) },
+            { label: t("Energy", "Điện năng"), align: "right", cls: "nowrap", render: (r) => `${fmt.num(r.energy_kwh / 1000, 1)} MWh<span class="sub">${fmt.pct(r.renewable_share * 100, 1)} ${esc(t("renewable", "tái tạo"))}</span>` },
             { label: "Scope 1", align: "right", render: () => fmt.num(0, 1) },
             { label: t("Scope 2 grid", "Scope 2 lưới"), align: "right", render: (r) => fmt.num(r.scope2_grid_t, 1) },
             { label: t("Scope 2 renewable", "Scope 2 tái tạo"), align: "right", render: (r) => fmt.num(r.scope2_renewable_t, 1) },
-            { label: t("Diesel baseline", "Đường cơ sở diesel"), align: "right", render: (r) => fmt.num(r.diesel_baseline_t, 1) },
+            { label: t("Diesel baseline", "Cơ sở diesel"), align: "right", render: (r) => fmt.num(r.diesel_baseline_t, 1) },
             { label: t("Avoided", "Giảm được"), align: "right", render: (r) => `<b style="color:var(--ok)">${fmt.num(r.avoided_t, 1)}</b>` },
             { label: "gCO₂e/km", align: "right", render: (r) => fmt.num(gPerKm(r), 0) },
             { label: t("Status", "Trạng thái"), render: (r) => (r.has_current ? pill("PROVISIONAL", "warn") : pill("FINAL", "ok")) },
@@ -1726,34 +1726,38 @@
   function carbonFactors() {
     const log = carbonRows(null).slice().reverse();
     const current = periodOf(Date.now());
-    return `<div class="grid side">
-        ${ui.card({
-          title: t("Emission factor registry", "Danh mục hệ số phát thải"), sub: "CRB-01", flush: true,
-          actions: ui.btn(t("New version", "Thêm phiên bản"), { icon: "plus", sm: true, kind: "primary", action: "new-factor" }),
-          body: ui.table({
-            rows: FACTORS,
-            columns: [
-              { label: t("Factor", "Hệ số"), render: (f) => `<b>${esc(lab(f.source))}</b><span class="sub mono">${esc(f.factor_id)} · v${f.version}</span>` },
-              { label: t("Value", "Giá trị"), align: "right", render: (f) => `<b>${fmt.num(f.value, f.value < 1 ? 4 : 2)}</b><span class="sub">${esc(f.unit)}</span>` },
-              { label: t("Data year", "Năm dữ liệu"), render: (f) => f.year },
-              { label: t("Legal / scientific reference", "Căn cứ pháp lý / khoa học"), render: (f) => `<span class="small">${esc(tx(f.reference))}</span>` },
-              { label: t("Effective", "Hiệu lực"), render: (f) => fmt.date(f.effective_from) },
-              { label: t("Status", "Trạng thái"), render: (f) => pill(f.status, f.status === "ACTIVE" ? "ok" : "muted") },
-            ],
-          }),
-        })}
+    return `${ui.card({
+        title: t("Emission factor registry", "Danh mục hệ số phát thải"), sub: "CRB-01", flush: true,
+        actions: ui.btn(t("New version", "Thêm phiên bản"), { icon: "plus", sm: true, kind: "primary", action: "new-factor" }),
+        body: ui.table({
+          rows: FACTORS,
+          columns: [
+            { label: t("Factor", "Hệ số"), render: (f) => `<b>${esc(lab(f.source))}</b><span class="sub mono nowrap">${esc(f.factor_id)} · v${f.version}</span>` },
+            { label: t("Value", "Giá trị"), align: "right", cls: "nowrap", render: (f) => `<b>${fmt.num(f.value, f.value < 1 ? 4 : 2)}</b><span class="sub">${esc(f.unit)}</span>` },
+            { label: t("Data year", "Năm dữ liệu"), render: (f) => f.year },
+            { label: t("Legal / scientific reference", "Căn cứ pháp lý / khoa học"), render: (f) => `<span class="small">${esc(tx(f.reference))}</span>` },
+            { label: t("Effective", "Hiệu lực"), cls: "nowrap", render: (f) => fmt.date(f.effective_from) },
+            { label: t("Status", "Trạng thái"), render: (f) => pill(f.status, f.status === "ACTIVE" ? "ok" : "muted") },
+          ],
+        }),
+      })}
+      <div class="grid cols-2 mt">
         ${ui.card({
           title: t("Versions applied per period", "Phiên bản áp dụng theo kỳ"), flush: true,
           body: ui.table({
             rows: log,
             columns: [
               { label: t("Period", "Kỳ"), render: (r) => `<b>${esc(r.month)}</b>` },
-              { label: t("Grid", "Lưới"), render: () => '<span class="mono small">EF-GRID-2023 v2</span>' },
-              { label: t("Life-cycle", "Vòng đời"), render: () => '<span class="mono small">LCA-SOLAR v1</span>' },
-              { label: t("Run", "Tính lúc"), render: (r) => (r.month === current ? pill("PROVISIONAL", "warn") : pill("FINAL", "ok")) },
+              { label: t("Grid", "Lưới"), cls: "nowrap", render: () => '<span class="mono small">EF-GRID-2023 v2</span>' },
+              { label: t("Life-cycle", "Vòng đời"), cls: "nowrap", render: () => '<span class="mono small">LCA-SOLAR v1</span>' },
+              { label: t("Run", "Lần tính"), render: (r) => (r.month === current ? pill("PROVISIONAL", "warn") : pill("FINAL", "ok")) },
             ],
-          }) + `<div class="small muted" style="padding:10px 16px">${esc(t("A new factor version never rewrites a final period silently: recalculation is a new run, logged next to the old one.", "Phiên bản hệ số mới không âm thầm ghi đè kỳ đã chốt: tính lại là một lần chạy mới, lưu cạnh lần cũ."))}</div>`,
+          }),
         })}
+        <div class="stack">
+          ${ui.callout("info", esc(t("A new factor version never rewrites a final period silently: recalculation is a new run, logged next to the old one, and customers see which version their report used.", "Phiên bản hệ số mới không âm thầm ghi đè kỳ đã chốt: tính lại là một lần chạy mới, lưu cạnh lần cũ, và khách hàng thấy báo cáo của mình dùng phiên bản nào.")))}
+          ${ui.card({ title: t("Grid factor over time", "Hệ số lưới theo thời gian"), sub: "tCO₂e/MWh", body: ui.hBars({ labels: FACTORS.filter((f) => f.source === "GRID").map((f) => `${f.year} · v${f.version}`), series: [{ values: FACTORS.filter((f) => f.source === "GRID").map((f) => f.value), color: CARBON_COLORS.grid }], yFormat: (v) => fmt.num(v, 4) }) })}
+        </div>
       </div>`;
   }
 

@@ -210,8 +210,8 @@
     return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
   }
   function axisFmt(v) {
-    if (Math.abs(v) >= 1e9) return G3.fmt.num(v / 1e9, 1) + t("B", " tỷ");
-    if (Math.abs(v) >= 1e6) return G3.fmt.num(v / 1e6, 1) + t("M", "tr");
+    if (Math.abs(v) >= 1e9) return G3.fmt.num(v / 1e9, Math.abs(v) >= 1e10 ? 0 : 1) + t("B", " tỷ");
+    if (Math.abs(v) >= 1e6) return G3.fmt.num(v / 1e6, Math.abs(v) >= 1e7 ? 0 : 1) + t("M", "tr");
     if (Math.abs(v) >= 1e4) return G3.fmt.num(v / 1e3, 0) + "k";
     return G3.fmt.num(v, v % 1 ? 1 : 0);
   }
@@ -221,7 +221,7 @@
    * series: [{ name, values: number[], color?, area?, dashed? }], labels: string[]
    */
   ui.lineChart = function ({ series, labels, height = 220, yMin, yMax, yFormat, unit = "" }) {
-    const W = 640, H = height, L = 44, R = 12, T = 12, B = 26;
+    const W = 640, H = height, L = 52, R = 12, T = 12, B = 26;
     const all = series.flatMap((s) => s.values.filter((v) => v !== null && v !== undefined));
     const lo = yMin !== undefined ? yMin : Math.min(0, ...all);
     const hi = yMax !== undefined ? yMax : niceMax(Math.max(...all, 1));
@@ -235,7 +235,7 @@
       out += `<line class="grid-line" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${esc(fmt(v))}</text>`;
     }
     const step = Math.max(1, Math.ceil(n / 8));
-    labels.forEach((label, i) => { if ((i % step === 0 && n - 1 - i >= step / 2) || i === n - 1) out += `<text x="${x(i)}" y="${H - 7}" text-anchor="middle">${esc(label)}</text>`; });
+    labels.forEach((label, i) => { if ((i % step === 0 && n - 1 - i >= step / 2) || i === n - 1) out += `<text x="${x(i)}" y="${H - 7}" text-anchor="${i === n - 1 && n > 1 ? "end" : i === 0 ? "start" : "middle"}">${esc(label)}</text>`; });
     series.forEach((s, si) => {
       const color = s.color || ui.PALETTE[si % ui.PALETTE.length];
       const pts = s.values.map((v, i) => (v === null || v === undefined ? null : [x(i), y(v)])).filter(Boolean);
@@ -259,10 +259,13 @@
    */
   ui.barChart = function ({ series, labels, height = 220, stacked = false, yFormat, unit = "", horizontal = false }) {
     if (horizontal) return ui.hBars({ series, labels, unit, yFormat });
-    const W = 640, H = height, L = 44, R = 12, T = 12, B = 26;
+    const W = 640, H = height, L = 52, R = 12, T = 12, B = 26;
     const n = labels.length;
     const totals = labels.map((_, i) => (stacked ? series.reduce((a, s) => a + (s.values[i] || 0), 0) : Math.max(...series.map((s) => s.values[i] || 0))));
-    const hi = niceMax(Math.max(...totals, 1));
+    const top = Math.max(...totals, 1);
+    // Small whole-number counts get whole-number ticks (4 gridlines).
+    const counts = series.every((s) => s.values.every((v) => Number.isInteger(v || 0)));
+    const hi = counts && top <= 8 ? (top <= 4 ? 4 : 8) : niceMax(top);
     const fmt = yFormat || axisFmt;
     const y = (v) => T + (1 - v / hi) * (H - T - B);
     const band = (W - L - R) / n;
@@ -411,8 +414,14 @@
     root.querySelectorAll("[data-map-wrap]").forEach((wrap) => {
       const svg = wrap.querySelector("svg");
       let vb = [0, 0, MAP_W, MAP_H];
-      // --k counter-scales markers and labels so they keep their on-screen size when zoomed.
-      const apply = () => { svg.setAttribute("viewBox", vb.map((v) => v.toFixed(1)).join(" ")); svg.style.setProperty("--k", Math.min(1.2, vb[2] / MAP_W).toFixed(3)); };
+      // --k counter-scales markers and labels so they keep their on-screen size when
+      // zoomed, and on maps narrower than the 1000-unit drawing.
+      const apply = () => {
+        svg.setAttribute("viewBox", vb.map((v) => v.toFixed(1)).join(" "));
+        const width = svg.getBoundingClientRect().width || MAP_W;
+        svg.style.setProperty("--k", (Math.min(1.2, vb[2] / MAP_W) * Math.min(2.4, Math.max(0.8, MAP_W / width))).toFixed(3));
+      };
+      apply();
       const zoom = (factor, cx = vb[0] + vb[2] / 2, cy = vb[1] + vb[3] / 2) => {
         const w = Math.min(MAP_W * 1.2, Math.max(120, vb[2] * factor));
         const h = (w / MAP_W) * MAP_H;

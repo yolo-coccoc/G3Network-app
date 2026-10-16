@@ -31,6 +31,11 @@
   const orgOf = (m) => db.org(m.organization_id);
   const isLeft = (m) => !!m.left_at;
   const PHONE_RE = /^0\d{9}$/;
+  /** The core mock draws invited_at and joined_at independently; an invitation always precedes joining. */
+  function invitedAt(m) {
+    if (m.joined_at && m.invited_at > m.joined_at) return new Date(new Date(m.joined_at).getTime() - ((hashOf(m.membership_id) % 9) + 1) * DAY).toISOString();
+    return m.invited_at;
+  }
 
   /** Labels for values the core has no label for. */
   const LOCAL_LABELS = {
@@ -161,13 +166,15 @@
     const last = lastLogin(user);
     if (!last) return [];
     const base = new Date(last).getTime();
-    const usual = DEVICES[Math.floor(r() * DEVICES.length)];
+    const isDriver = db.memberships.some((m) => m.user_id === user.user_id && m.roles.includes("DRIVER"));
+    const pool = DEVICES.filter((d) => isDriver || !d.startsWith("G3 Driver"));
+    const usual = pool[Math.floor(r() * pool.length)];
     for (let k = 0; k < 12; k++) {
       const at = base - k * (r() * 3 + 0.4) * DAY;
       const roll = r();
       const action = k === 0 ? "LOGIN_SUCCESS" : roll < 0.12 ? "LOGIN_FAILED" : roll < 0.3 ? "LOGOUT" : "LOGIN_SUCCESS";
       const newDevice = k === 4 && action === "LOGIN_SUCCESS";
-      rows.push({ action, occurred_at: new Date(at).toISOString(), ip_address: `${newDevice ? "171.244" : "113.161"}.${Math.floor(r() * 250) + 1}.${Math.floor(r() * 250) + 1}`, device: newDevice ? DEVICES[(DEVICES.indexOf(usual) + 2) % DEVICES.length] : usual, is_new_device: newDevice });
+      rows.push({ action, occurred_at: new Date(at).toISOString(), ip_address: `${newDevice ? "171.244" : "113.161"}.${Math.floor(r() * 250) + 1}.${Math.floor(r() * 250) + 1}`, device: newDevice ? pool[(pool.indexOf(usual) + 2) % pool.length] : usual, is_new_device: newDevice });
     }
     db.access_audit_logs.filter((a) => a.user_id === user.user_id && a.data_type === "ACCOUNT").forEach((a) => rows.push({ action: a.action, occurred_at: a.occurred_at, ip_address: a.ip_address, device: a.device, is_new_device: false }));
     return rows.sort((a, b) => (a.occurred_at < b.occurred_at ? 1 : -1));
@@ -480,9 +487,8 @@
         ${ui.kpi({ label: t("New in 90 days", "Mới trong 90 ngày"), icon: "plus", value: recent, foot: t("onboarded by sales", "do kinh doanh khởi tạo") })}
         ${ui.kpi({ label: mine ? t("My customers", "Khách hàng của tôi") : t("Without account manager", "Chưa có người phụ trách"), icon: "user", value: mine ? mine.length : unassigned.length, tone: !mine && unassigned.length ? "warn" : undefined, foot: `${all.filter((o) => o.kind === "PARTNER").length} ${t("partners", "đối tác")}` })}
       </div>
-      <div class="grid side mt">
-        ${ui.card({
-          title: t("Organization registry", "Danh mục tổ chức"), sub: `${rows.length} / ${all.length}`, flush: true,
+      ${ui.card({
+          cls: "mt", title: t("Organization registry", "Danh mục tổ chức"), sub: `${rows.length} / ${all.length}`, flush: true,
           body: `<div class="toolbar">${ui.search("q", query.q, t("Name or tax code", "Tên hoặc mã số thuế"))}
             ${ui.select("kind", [["", t("All kinds", "Mọi phân loại")], ...["CUSTOMER", "PARTNER", "INTERNAL"].map((k) => [k, G3.label(k)])], query.kind || "")}
             ${ui.select("status", [["", t("All statuses", "Mọi trạng thái")], ...["ACTIVE", "SUSPENDED", "CLOSED"].map((k) => [k, G3.label(k)])], query.status || "")}
@@ -491,9 +497,8 @@
             ${ui.table({
               rows, href: (o) => `/organizations/${o.organization_id}`, empty: t("No organization matches", "Không có tổ chức phù hợp"),
               columns: [
-                { label: t("Organization", "Tổ chức"), render: (o) => `<b>${esc(o.short_name)}</b><span class="sub">${esc(o.name)}</span>` },
-                { label: t("Legal form", "Loại hình"), render: (o) => esc(G3.label(o.legal_form)) },
-                { label: t("Tax code", "Mã số thuế"), render: (o) => `<span class="mono" ${o.legal_form === "INDIVIDUAL" ? `title="${esc(t("Citizen ID: personal data, masked", "Số CCCD: dữ liệu cá nhân, được che"))}"` : ""}>${esc(o.legal_form === "INDIVIDUAL" ? maskId(o.tax_code) : o.tax_code || "—")}</span>` },
+                { label: t("Organization", "Tổ chức"), render: (o) => `<b class="nowrap">${esc(o.short_name)}</b><span class="sub">${esc(o.name)}</span>` },
+                { label: t("Tax code · legal form", "Mã số thuế · loại hình"), render: (o) => `<span class="mono" ${o.legal_form === "INDIVIDUAL" ? `title="${esc(t("Citizen ID: personal data, masked", "Số CCCD: dữ liệu cá nhân, được che"))}"` : ""}>${esc(o.legal_form === "INDIVIDUAL" ? maskId(o.tax_code) : o.tax_code || "—")}</span><span class="sub">${esc(G3.label(o.legal_form))}</span>` },
                 { label: t("Kind", "Phân loại"), render: (o) => ui.badge(o.kind, KIND_TONES[o.kind]) },
                 { label: t("Status", "Trạng thái"), render: (o) => `${ui.badge(o.status)}${o.status_reason ? `<span class="sub">${esc(o.status_reason)}</span>` : ""}` },
                 { label: t("Account manager", "Người phụ trách"), render: (o) => (o.kind === "CUSTOMER" ? (o.account_manager_user_id ? ui.userName(o.account_manager_user_id) : `<span class="badge warn plain">${esc(t("None", "Chưa có"))}</span>`) : '<span class="muted">—</span>') },
@@ -503,7 +508,7 @@
               ],
             })}`,
         })}
-        <div class="stack">
+      <div class="grid cols-2 mt">
           ${ui.card({
             title: t("Customers per account manager", "Khách hàng theo người phụ trách"), sub: "ACC-02",
             body: bySales.map(({ u, orgs }) => `<div class="mb"><div class="row between"><b>${esc(u.full_name)}</b><span class="pill-count">${orgs.length} · ${orgs.reduce((a, o) => a + orgVehicles(o.organization_id).length, 0)} ${esc(t("trucks", "xe"))}</span></div><div class="small muted" style="margin-top:4px">${orgs.map((o) => `<a href="#/organizations/${o.organization_id}">${esc(o.short_name)}</a>`).join(" · ") || esc(t("No customer yet", "Chưa có khách hàng"))}</div></div>`).join("") + (unassigned.length ? ui.callout("warn", esc(t(`${unassigned.length} customer(s) without an account manager.`, `${unassigned.length} khách hàng chưa có người phụ trách.`))) : ""),
@@ -517,7 +522,6 @@
               <li>${esc(t("Account manager assigned", "Giao người phụ trách"))}</li></ol>
               <div class="divider"></div>${ui.btn(t("Start onboarding", "Bắt đầu khởi tạo"), { icon: "plus", kind: "primary", action: "onboard", sm: true })}`,
           })}
-        </div>
       </div>`;
     },
     mount(root, { query }) {
@@ -679,7 +683,7 @@
                   { label: t("Person", "Người dùng"), render: (m) => personCell(db.user(m.user_id)) },
                   { label: t("Roles", "Vai trò"), render: (m) => roleTags(m.roles) },
                   { label: t("Status", "Trạng thái"), render: (m) => ui.badge(m.status) },
-                  { label: t("Joined", "Tham gia"), render: (m) => (m.joined_at ? fmt.date(m.joined_at) : `<span class="muted">${esc(t("invited", "đã mời"))} ${fmt.date(m.invited_at)}</span>`) },
+                  { label: t("Joined", "Tham gia"), render: (m) => (m.joined_at ? fmt.date(m.joined_at) : `<span class="muted">${esc(t("invited", "đã mời"))} ${fmt.date(invitedAt(m))}</span>`) },
                 ],
               })}${staff.length > 8 ? `<div class="card-body small muted">+${staff.length - 8} ${esc(t("more", "người khác"))}</div>` : ""}`,
           })}
@@ -722,7 +726,7 @@
           })}
           ${!org.is_internal ? ui.card({
             title: t("Organization administrator", "Quản trị tổ chức"),
-            body: admin ? `${personCell(db.user(admin.user_id), db.user(admin.user_id).phone_number)}<div class="mt">${ui.badge(admin.status)}</div>` : ui.callout("warn", esc(t("No organization admin: our co-administrator appoints a new one (Members screen).", "Chưa có quản trị tổ chức: đồng quản trị của chúng ta chỉ định người mới (màn hình Thành viên)."))),
+            body: admin ? `<div class="row between"><div><b>${esc(db.user(admin.user_id).full_name)}</b><div class="small muted mono">${esc(db.user(admin.user_id).phone_number)}</div></div>${ui.badge(admin.status)}</div>` : ui.callout("warn", esc(t("No organization admin: our co-administrator appoints a new one (Members screen).", "Chưa có quản trị tổ chức: đồng quản trị của chúng ta chỉ định người mới (màn hình Thành viên)."))),
           }) : ""}
         </div>
       </div>`;
@@ -926,7 +930,7 @@
     });
     memberChanges.filter((c) => c.membership_id === m.membership_id).forEach((c) => events.push({ at: c.at, by: c.by, text: c.fields.map(([f, a, b]) => `${f}: ${a === null ? "—" : lbl(a)} → ${b === null ? "—" : f === "left_at" ? fmt.date(b) : lbl(b)}`).join(", ") + ` · ${c.reason}`, tone: "warn" }));
     fleetLimitHistory.filter((c) => c.membership_id === m.membership_id).forEach((c) => events.push({ at: c.at, by: c.by, text: t("Fleet limit: ", "Giới hạn đội xe: ") + (c.fleet_ids.map((id) => (db.fleet(id) || {}).name).join(", ") || t("whole organization", "toàn tổ chức")), tone: "info" }));
-    events.push({ at: m.invited_at, by: (inviteMeta[m.membership_id] || {}).invited_by || createdBy(user), text: t("Invited", "Được mời"), tone: "info" });
+    events.push({ at: invitedAt(m), by: (inviteMeta[m.membership_id] || {}).invited_by || createdBy(user), text: t("Invited", "Được mời"), tone: "info" });
     if (m.joined_at) events.push({ at: m.joined_at, by: m.user_id, text: t("Joined with OTP", "Tham gia bằng OTP"), tone: "ok" });
     events.sort((a, b) => (a.at < b.at ? 1 : -1));
     ui.modal({
@@ -1070,7 +1074,7 @@
             { label: t("Roles", "Vai trò"), render: (m) => roleTags(m.roles) },
             { label: t("Fleet limit", "Giới hạn đội xe"), render: (m) => fleetLimitText(m) },
             { label: t("Status", "Trạng thái"), render: (m) => `${isLeft(m) ? badge("LEFT", "muted") : ui.badge(m.status)}${m.status_reason ? `<span class="sub">${esc(m.status_reason)}</span>` : ""}` },
-            { label: t("Invited", "Ngày mời"), render: (m) => fmt.date(m.invited_at) },
+            { label: t("Invited", "Ngày mời"), render: (m) => fmt.date(invitedAt(m)) },
             { label: status === "LEFT" ? t("Joined / left", "Tham gia / rời") : t("Joined", "Tham gia"), render: (m) => `${m.joined_at ? fmt.date(m.joined_at) : '<span class="muted">—</span>'}${m.left_at ? `<span class="sub">${esc(t("left", "rời"))} ${fmt.date(m.left_at)}</span>` : ""}` },
             { label: "", align: "right", render: (m) => ui.btn("", { sm: true, kind: "ghost", icon: "menu", action: "member-menu", attrs: `data-id="${m.membership_id}" title="${esc(t("Actions", "Thao tác"))}"` }) },
           ],
@@ -1345,7 +1349,7 @@
               { label: t("Status", "Trạng thái"), render: (u) => `${ui.badge(u.status)}${u.status_reason ? `<span class="sub">${esc(u.status_reason)}</span>` : ""}` },
               { label: t("Organizations", "Tổ chức"), render: (u) => { const ms = userMemberships(u); return `<span class="row" style="gap:4px">${ms.slice(0, 2).map((m) => ui.tag(db.org(m.organization_id).short_name)).join("")}${ms.length > 2 ? `<span class="small muted">+${ms.length - 2}</span>` : ""}</span>`; } },
               { label: t("Last login", "Đăng nhập gần nhất"), render: (u) => (lastLogin(u) ? `${fmt.ago(lastLogin(u))}${isLongInactive(u) ? ` <span class="badge warn plain">${esc(t("inactive", "lâu không dùng"))}</span>` : ""}` : `<span class="muted">${esc(t("never", "chưa"))}</span>`) },
-              { label: t("Created by", "Người tạo"), render: (u) => `${ui.userName(createdBy(u))}<span class="sub">${fmt.date(u.created_at)}</span>` },
+              { label: t("Created by", "Người tạo"), render: (u) => `<span class="nowrap">${ui.userName(createdBy(u))}</span><span class="sub">${fmt.date(u.created_at)}</span>` },
               { label: "", align: "right", render: (u) => `<span class="row" style="justify-content:flex-end;gap:4px;flex-wrap:nowrap">${ui.btn("", { sm: true, kind: "ghost", icon: "clock", action: "history", attrs: `data-id="${u.user_id}" title="${esc(t("Login history", "Lịch sử đăng nhập"))}"` })}${ui.btn("", { sm: true, kind: "ghost", icon: "key", action: "reset", attrs: `data-id="${u.user_id}" title="${esc(t("Reset password", "Đặt lại mật khẩu"))}"` })}${canLockUser(u) ? ui.btn("", { sm: true, kind: "ghost", icon: u.status === "LOCKED" ? "unlock" : "lock", action: "lock", attrs: `data-id="${u.user_id}" title="${esc(u.status === "LOCKED" ? t("Unlock account", "Mở khóa tài khoản") : t("Lock account", "Khóa tài khoản"))}"` }) : ""}</span>` },
             ],
           })}
@@ -1425,6 +1429,8 @@
     settingChanges.forEach((c) => out.push({ at: c.at, by: c.by, type: "SETTING", label: c.label, fields: c.fields, reason: c.reason }));
     return out.sort((a, b) => (a.at < b.at ? 1 : -1));
   }
+  const CHANGE_FIELDS = { status: ["Status", "Trạng thái"], phone_number: ["Phone number", "Số điện thoại"], left_at: ["Left the organization", "Rời tổ chức"], full_name: ["Full name", "Họ tên"], email: ["E-mail", "E-mail"], password_reset: ["Password reset", "Đặt lại mật khẩu"], telemetry_interval_seconds: ["Send interval", "Chu kỳ gửi"], driving_session_auto_end_minutes: ["Session auto-end (min)", "Tự kết thúc phiên (phút)"], report_timezone: ["Report time zone", "Múi giờ báo cáo"] };
+  const changeFieldName = (f) => (CHANGE_FIELDS[f] ? t(CHANGE_FIELDS[f][0], CHANGE_FIELDS[f][1]) : f);
   function changeValue(f) {
     const [, , , key] = f;
     return (v) => (v === null || v === undefined ? '<span class="muted">—</span>' : key ? orgFieldValue(key, v) : /^\d{4}-\d\d-\d\dT/.test(String(v)) ? fmt.dateTime(v) : esc(lbl(v)));
@@ -1473,12 +1479,10 @@
           ${ui.table({
             rows: rows.slice(0, 120), empty: t("No entry matches", "Không có bản ghi phù hợp"),
             columns: [
-              { label: t("When", "Thời điểm"), render: (a) => `${fmt.dateTime(a.occurred_at)}<span class="sub">${fmt.ago(a.occurred_at)}</span>` },
-              { label: t("Who", "Người dùng"), render: (a) => { const u = db.user(a.user_id); const m = db.memberships.find((x) => x.user_id === a.user_id && x.organization_id === a.organization_id); return u ? `<b>${esc(u.full_name)}</b><span class="sub">${esc(m ? m.roles.map(G3.roleLabel).join(", ") : "")}</span>` : ui.userName(null); } },
-              { label: t("Organization", "Tổ chức"), render: (a) => ui.orgName(a.organization_id) },
+              { label: t("When", "Thời điểm"), render: (a) => `<span class="nowrap">${fmt.dateTime(a.occurred_at)}</span><span class="sub">${fmt.ago(a.occurred_at)}</span>` },
+              { label: t("Who · organization", "Người dùng · tổ chức"), render: (a) => { const u = db.user(a.user_id); return u ? `<b class="nowrap">${esc(u.full_name)}</b><span class="sub">${ui.orgName(a.organization_id)}</span>` : ui.userName(null); } },
               { label: t("Action", "Thao tác"), render: (a) => ui.badge(a.action, ACTION_TONES[a.action]) },
-              { label: t("Data type", "Loại dữ liệu"), render: (a) => esc(lbl(a.data_type)) },
-              { label: t("Subject", "Đối tượng"), render: (a) => esc(a.subject || "—") },
+              { label: t("Data · subject", "Dữ liệu · đối tượng"), render: (a) => `<span class="nowrap">${esc(lbl(a.data_type))}</span>${a.subject ? `<span class="sub">${esc(a.subject)}</span>` : ""}` },
               { label: t("Reason / ticket", "Lý do / mã yêu cầu"), render: (a) => (a.reason ? `<span class="small">${esc(a.reason)}</span>` : '<span class="muted">—</span>') },
               { label: "IP", render: (a) => `<span class="mono">${esc(a.ip_address)}</span>` },
               { label: t("Device", "Thiết bị"), render: (a) => `<span class="small">${esc(a.device)}</span>` },
@@ -1497,7 +1501,7 @@
           columns: [
             { label: t("When", "Thời điểm"), render: (c) => `${fmt.dateTime(c.at)}<span class="sub">${fmt.ago(c.at)}</span>` },
             { label: t("Record", "Bản ghi"), render: (c) => `${ui.tag(lbl(c.type))} ${c.href ? `<a href="#${c.href}">${esc(c.label)}</a>` : esc(c.label)}` },
-            { label: t("What changed", "Thay đổi"), render: (c) => c.fields.map((f) => { const val = changeValue(f); return f[1] === null && f[2] === null ? `<b>${esc(f[0])}</b>` : `<div class="small"><b>${esc(f[0])}</b>: <span style="text-decoration:line-through;color:var(--text-3)">${val(f[1])}</span> → ${val(f[2])}</div>`; }).join("") },
+            { label: t("What changed", "Thay đổi"), render: (c) => c.fields.map((f) => { const val = changeValue(f); return f[1] === null && f[2] === null ? `<b>${esc(f[0])}</b>` : `<div class="small"><b>${esc(changeFieldName(f[0]))}</b>: <span style="text-decoration:line-through;color:var(--text-3)">${val(f[1])}</span> → ${val(f[2])}</div>`; }).join("") },
             { label: t("Reason", "Lý do"), render: (c) => (c.reason ? `<span class="small">${esc(c.reason)}</span>` : '<span class="muted">—</span>') },
             { label: t("By", "Người thực hiện"), render: (c) => ui.userName(c.by) },
           ],
@@ -1576,20 +1580,19 @@
     const sub = subOf(org.organization_id);
     const smsAddOn = sub && sub.add_ons.find((a) => a.code === "SMS");
     const editable = scope.has("ORG_ADMIN", "HEAD_ADMIN") && (scope.isInternal() || scope.org().organization_id === org.organization_id);
-    const sw = (type, channel, on, locked) => `<label class="switch" title="${esc(locked || "")}"><input type="checkbox" data-ch="${channel}" data-type="${type}" ${on ? "checked" : ""} ${locked || !editable ? "disabled" : ""}><span></span></label>`;
-    const always = `<label class="switch" title="${esc(t("Always on", "Luôn bật"))}"><input type="checkbox" checked disabled><span></span></label>`;
-    const rows = SERVICES.map(([key, name, types]) => `<tr><td colspan="7" style="background:var(--surface-2)"><b>${esc(t(name[0], name[1]))}</b></td></tr>${types.map((type) => `<tr>
+    const sw = (type, channel, on, locked) => `<label class="switch" style="display:inline-block" title="${esc(locked || "")}"><input type="checkbox" data-ch="${channel}" data-type="${type}" ${on ? "checked" : ""} ${locked || !editable ? "disabled" : ""}><span></span></label>`;
+    const always = `<label class="switch" style="display:inline-block" title="${esc(t("Always on", "Luôn bật"))}"><input type="checkbox" checked disabled><span></span></label>`;
+    const rows = SERVICES.map(([, name, types]) => `<tr><td colspan="6" style="background:var(--surface-2)"><b>${esc(t(name[0], name[1]))}</b></td></tr>${types.map((type) => `<tr>
       <td><b>${esc(G3.label(type))}</b><span class="sub">${roleTags(RECIPIENTS[type])}${INTERNAL_COPY[type] ? ` <span class="small muted">+ G3 ${esc(G3.roleLabel(INTERNAL_COPY[type]))}</span>` : ""}</span></td>
       <td>${always}</td><td>${always}</td>
       <td>${sw(type, "push", ch[type].push || type === "SOS_ALERT", type === "SOS_ALERT" ? t("SOS push cannot be turned off", "Không tắt được thông báo đẩy SOS") : "")}</td>
       <td>${sw(type, "sms", smsAddOn && ch[type].sms, !smsAddOn ? t("Needs the SMS add-on", "Cần gói SMS bổ sung") : "")}</td>
-      <td>${sw(type, "email", ch[type].email)}</td>
-      <td class="small muted">${key === "billing" ? esc(t("finance", "tài chính")) : ""}</td></tr>`).join("")}`).join("");
+      <td>${sw(type, "email", ch[type].email)}</td></tr>`).join("")}`).join("");
     return `<div class="grid side">
       ${ui.card({
         title: t("Notification channels", "Kênh thông báo"), sub: esc(org.short_name), flush: true,
         actions: editable ? ui.btn(t("Reset to defaults", "Khôi phục mặc định"), { sm: true, kind: "ghost", icon: "refresh", action: "channels-reset" }) : "",
-        body: `<div class="table-wrap"><table class="tbl"><thead><tr><th>${esc(t("Alert · who receives it", "Cảnh báo · người nhận"))}</th><th>${esc(t("In app", "Trong app"))}</th><th>${esc(t("Portal", "Cổng web"))}</th><th>${esc(t("Push", "Đẩy"))}</th><th>SMS</th><th>E-mail</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`,
+        body: `<div class="table-wrap"><table class="tbl"><thead><tr><th>${esc(t("Alert · who receives it", "Cảnh báo · người nhận"))}</th><th>${esc(t("In app", "Trong app"))}</th><th>${esc(t("Portal", "Cổng web"))}</th><th>${esc(t("Push", "Đẩy"))}</th><th>SMS</th><th>E-mail</th></tr></thead><tbody>${rows}</tbody></table></div>`,
       })}
       <div class="stack">
         ${ui.card({ title: t("How delivery works", "Cách gửi thông báo"), sub: "NTF-05 · NTF-06", body: `<ul class="small" style="margin:0;padding-left:18px;line-height:1.7">
@@ -1651,10 +1654,10 @@
     { scope: "FLEET", target: "flt-tcx-caimep", key: "soc_main", value: 25, by: uidOf("ops"), at: isoAgo(9 * DAY), reason: "Tuyến Cái Mép xa trạm sạc dự phòng" },
   ];
   const thresholdHistory = [
-    { at: isoAgo(9 * DAY), by: uidOf("ops"), text: "Đội Depot Cái Mép · Pin yếu: 20% → 25%", reason: "Tuyến Cái Mép xa trạm sạc dự phòng" },
-    { at: isoAgo(18 * DAY), by: uidOf("ops"), text: "Tri-Ring EVT-825 · Nhiệt độ pin cao: 50 °C → 48 °C", reason: "Khuyến nghị CATL cho pin 423 kWh" },
-    { at: isoAgo(41 * DAY), by: uidOf("ops"), text: "Mặc định · Chênh áp cell: 100 mV → 80 mV", reason: "Theo báo cáo phân tích lỗi cell tháng 8" },
-    { at: isoAgo(75 * DAY), by: uidOf("head"), text: "Mặc định · Sức khỏe pin: 85% → 90%", reason: "Đồng bộ với điều khoản bảo hành pin" },
+    { at: isoAgo(9 * DAY), by: uidOf("ops"), text: ["Fleet Depot Cái Mép · Low battery: 20% → 25%", "Đội Depot Cái Mép · Pin yếu: 20% → 25%"], reason: "Tuyến Cái Mép xa trạm sạc dự phòng" },
+    { at: isoAgo(18 * DAY), by: uidOf("ops"), text: ["Tri-Ring EVT-825 · Pack temperature high: 50 °C → 48 °C", "Tri-Ring EVT-825 · Nhiệt độ pin cao: 50 °C → 48 °C"], reason: "Khuyến nghị CATL cho pin 423 kWh" },
+    { at: isoAgo(41 * DAY), by: uidOf("ops"), text: ["Default · Cell voltage spread: 100 mV → 80 mV", "Mặc định · Chênh áp cell: 100 mV → 80 mV"], reason: "Theo báo cáo phân tích lỗi cell tháng 8" },
+    { at: isoAgo(75 * DAY), by: uidOf("head"), text: ["Default · Battery health: 85% → 90%", "Mặc định · Sức khỏe pin: 85% → 90%"], reason: "Đồng bộ với điều khoản bảo hành pin" },
   ];
   const targetName = (o) => (o.scope === "MODEL" ? (db.model(o.target) || {}).name : `${(db.fleet(o.target) || {}).name} · ${ui.orgName((db.fleet(o.target) || {}).organization_id)}`);
   function thresholdsTab() {
@@ -1707,7 +1710,7 @@
             ],
           }),
         })}
-        ${ui.card({ title: t("History of changes", "Lịch sử thay đổi ngưỡng"), body: `<ul class="timeline">${thresholdHistory.map((h) => `<li><b>${esc(h.text)}</b><div class="small">${esc(h.reason)}</div><div class="when">${fmt.dateTime(h.at)} · ${ui.userName(h.by)}</div></li>`).join("")}</ul>` })}
+        ${ui.card({ title: t("History of changes", "Lịch sử thay đổi ngưỡng"), body: `<ul class="timeline">${thresholdHistory.map((h) => `<li><b>${esc(Array.isArray(h.text) ? t(h.text[0], h.text[1]) : h.text)}</b><div class="small">${esc(h.reason)}</div><div class="when">${fmt.dateTime(h.at)} · ${ui.userName(h.by)}</div></li>`).join("")}</ul>` })}
       </div></div>`;
   }
 
@@ -1961,7 +1964,6 @@
             columns: [
               { label: t("Device", "Thiết bị"), render: (d) => `<b class="mono">${esc(d.telematic_serial)}</b><span class="sub">${esc(d.firmware_version)}</span>` },
               { label: t("Truck", "Xe"), render: (d) => ui.vehicleCell(db.vehicle(d.vehicle_id)) },
-              { label: t("Configured", "Cấu hình"), align: "right", render: () => `${s.telemetry_interval_seconds} s` },
               { label: t("Reported", "Thiết bị báo"), align: "right", render: (d) => (d.reported_interval_seconds ? `${d.reported_interval_seconds} s` : "—") },
               { label: t("Result", "Kết quả"), render: (d) => { const st = deviceState(d, s.telemetry_interval_seconds); return badge(st, st === "APPLIED" ? "ok" : st === "MISMATCH" ? "warn" : "danger") + (st === "MISMATCH" && d.firmware_version === "v2.2.8" ? `<span class="sub">${esc(t("firmware update needed", "cần cập nhật firmware"))}</span>` : ""); } },
               { label: t("Health", "Tình trạng"), render: (d) => ui.badge(d.health) },
@@ -1999,7 +2001,7 @@
         title: t("Settings", "Cấu hình"),
         sub: esc(scope.isInternal() ? t("Each tab belongs to the team that owns it.", "Mỗi thẻ thuộc về bộ phận phụ trách.") : t(`${scope.org().name} · settings of your organization`, `${scope.org().name} · cấu hình của tổ chức bạn`)),
         features: current ? current.features : [],
-        actions: current && current.org && scope.isInternal() ? ui.select("org", [["", t("Choose an organization…", "Chọn tổ chức…")], ...db.organizations.filter((o) => !o.is_internal).map((o) => [o.organization_id, o.short_name])], (contextOrg(query) || {}).organization_id || "") : "",
+        actions: current && current.org && scope.isInternal() ? ui.select("org", [["", t("Choose an organization…", "Chọn tổ chức…")], ...db.organizations.filter((o) => !o.is_internal).map((o) => [o.organization_id, o.short_name])], (contextOrg(query) || (current.key === "devices" ? db.org("org-tcx") : {})).organization_id || "") : "",
       });
       if (!current) return headHtml + ui.empty();
       let body;

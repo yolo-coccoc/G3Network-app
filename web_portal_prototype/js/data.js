@@ -97,6 +97,10 @@
       last_login_at: extra.status === "INVITED" ? null : ago(int(5, 60 * 24 * 6) * MIN),
     };
     users.push(user);
+    // Invited after the organization was created, joined a few days after the invitation.
+    const org = organizations.find((o) => o.organization_id === organizationId);
+    const orgAgeDays = Math.max(2, Math.round((NOW - new Date(org.created_at).getTime()) / DAY));
+    const invitedAt = NOW - int(1, orgAgeDays - 1) * DAY;
     const membership = {
       membership_id: uid("mbr"),
       user_id: user.user_id,
@@ -105,8 +109,8 @@
       status_reason: null,
       roles: roles.slice(),
       fleet_ids: extra.fleet_ids || [],
-      invited_at: ago(int(40, 320) * DAY),
-      joined_at: user.status === "INVITED" ? null : ago(int(20, 300) * DAY),
+      invited_at: iso(invitedAt),
+      joined_at: user.status === "INVITED" ? null : iso(Math.min(NOW - HOUR, invitedAt + int(0, 4) * DAY + int(1, 20) * HOUR)),
       left_at: null,
     };
     memberships.push(membership);
@@ -217,7 +221,8 @@
       const vin = `LZT${model.code.replace("EVT-", "")}${String.fromCharCode(65 + int(0, 25))}${int(1, 9)}R${String(260000 + vehicleNo * 37).padStart(7, "0")}`.slice(0, 17).padEnd(17, "0");
       const handover = inStock ? null : NOW - int(20, 200) * DAY;
       const road = ROADS[pick(ORG_ROADS[orgId])];
-      const pos = pointOnRoad(road, rand());
+      const roadF = rand(); // the live tick moves the truck on from this point of its road
+      const pos = pointOnRoad(road, roadF);
 
       // operating state mix
       const roll = rand();
@@ -243,8 +248,8 @@
         created_at: iso((handover || NOW - 25 * DAY) - 10 * DAY),
         live: inStock && vehicleNo % 2 === 0 ? null : {
           soc_percent: soc,
-          lat: pos.lat + between(-0.004, 0.004),
-          lon: pos.lon + between(-0.004, 0.004),
+          lat: pos.lat,
+          lon: pos.lon,
           heading: pos.heading,
           speed_kmh: state === "DRIVING" ? int(28, 72) : 0,
           state,
@@ -255,7 +260,7 @@
           pack_current_a: state === "CHARGING" ? -int(180, 420) : state === "DRIVING" ? int(40, 260) : 0,
           road: road.name,
           road_index: ROADS.indexOf(road),
-          road_f: rand(),
+          road_f: roadF,
         },
         soh_percent: Math.round(between(93.5, 99.4) * 10) / 10,
         cycle_count: int(80, 640),
@@ -507,6 +512,7 @@
   }));
   function priceAt(locationId, ms) {
     const tariff = tariffs.find((x) => x.location_id === locationId);
+    if (!tariff) return 4450; // a station created in the UI has no tariff yet: the normal grid price
     const d = new Date(ms);
     const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     const slot = tariff.slots.find((s) => hm >= s.from && hm < s.to) || tariff.slots[0];
@@ -615,7 +621,7 @@
   note("BATTERY_ALERT", "CRITICAL", "veh-015", 4, `Battery 9% on ${plate("veh-015")} — nearest station G3 Phú Mỹ, 6.2 km`, `Pin 9% trên xe ${plate("veh-015")} — trạm gần nhất G3 Phú Mỹ, 6,2 km`, { payload: { level: "CRITICAL", soc: 9, station: "G3 Phú Mỹ", distance_km: 6.2 } });
   note("SOS_ALERT", "CRITICAL", "veh-018", 11, `SOS from driver on ${plate("veh-018")} near Dĩ An`, `SOS từ tài xế xe ${plate("veh-018")} gần Dĩ An`);
   note("ANOMALY_ALERT", "CRITICAL", "veh-013", 26, `High battery temperature 58 °C on ${plate("veh-013")}`, `Nhiệt độ pin cao 58 °C trên xe ${plate("veh-013")}`, { payload: { anomaly: "HIGH_BATTERY_TEMPERATURE", value: 58 } });
-  note("BATTERY_ALERT", "WARNING", "veh-003", 38, `Battery 18% on ${plate("veh-003")} — G3 Cát Lái 4.1 km`, `Pin 18% trên xe ${plate("veh-003")} — G3 Cát Lái 4,1 km`, { payload: { level: "MAIN", soc: 18 } });
+  note("BATTERY_ALERT", "WARNING", "veh-003", 38, `Battery 18% on ${plate("veh-003")} — G3 Cát Lái 4.1 km`, `Pin 18% trên xe ${plate("veh-003")} — G3 Cát Lái 4,1 km`, { payload: { level: "MAIN", soc: 18, station: "G3 Cát Lái", distance_km: 4.1 } });
   note("NO_DRIVER_CHECK_IN_ALERT", "WARNING", "veh-009", 52, `${plate("veh-009")} is driving with nobody checked in`, `Xe ${plate("veh-009")} đang chạy nhưng chưa có tài xế nhận xe`);
   note("GEOFENCE_ALERT", "INFO", "veh-006", 64, `${plate("veh-006")} entered Cảng Cái Mép`, `Xe ${plate("veh-006")} vào vùng Cảng Cái Mép`, { payload: { transition: "ENTER", geofence: "Cảng Cái Mép" } });
   note("DEVICE_OFFLINE_ALERT", "WARNING", "veh-007", 95, `T-Box on ${plate("veh-007")} silent for 3 h`, `T-Box xe ${plate("veh-007")} mất tín hiệu 3 giờ`);
@@ -735,16 +741,25 @@
     { wallet_id: "wal-ind", organization_id: "org-ind", owner_kind: "USER", owner_name: "Nguyễn Văn Tâm", balance_vnd: 2400000, status: "ACTIVE" },
   ];
   const wallet_transactions = [];
-  wallets.forEach((w) => {
-    let balance = w.balance_vnd;
-    const sessions = charging_sessions.filter((s) => s.organization_id === w.organization_id && s.bill_status === "BILLED").slice(0, 14);
+  // Each wallet's history runs forwards: charging bills are paid from the balance
+  // and a VietQR top-up arrives when it runs low. The final balance becomes the
+  // wallet's. Đồng Nai Xanh stopped topping up, so its wallet ends negative (BLOCKED).
+  wallets.forEach((w, wi) => {
+    const sessions = charging_sessions.filter((x) => x.organization_id === w.organization_id && x.bill_status === "BILLED").slice(0, 14).reverse();
     const rows = [];
-    sessions.forEach((s, i) => {
-      rows.push({ wallet_transaction_id: uid("wtx"), wallet_id: w.wallet_id, transaction_type: "SESSION_BILL", amount_vnd: -s.cost_vnd, session_id: s.session_id, created_at: s.ended_at });
-      if (i % 5 === 2) rows.push({ wallet_transaction_id: uid("wtx"), wallet_id: w.wallet_id, transaction_type: "TOP_UP", amount_vnd: pick([20000000, 50000000, 10000000]), reference: "VietQR " + int(100000, 999999), created_at: iso(new Date(s.ended_at).getTime() - 2 * HOUR) });
+    let running = [12000000, 6000000, 3000000, 2500000][wi];
+    sessions.forEach((x, i) => {
+      const lowMark = w.status === "BLOCKED" ? -Infinity : 1500000;
+      if (running - x.cost_vnd < lowMark || (w.wallet_id === "wal-tcx" && i % 4 === 3)) {
+        const amount = w.wallet_id === "wal-ind" ? 5000000 : w.wallet_id === "wal-tcx" ? 20000000 : 10000000;
+        running += amount;
+        rows.push({ wallet_transaction_id: uid("wtx"), wallet_id: w.wallet_id, transaction_type: "TOP_UP", amount_vnd: amount, reference: "G3NAP" + int(10000, 99999), created_at: iso(new Date(x.ended_at).getTime() - 2 * HOUR), balance_after_vnd: running });
+      }
+      running -= x.cost_vnd;
+      rows.push({ wallet_transaction_id: uid("wtx"), wallet_id: w.wallet_id, transaction_type: "SESSION_BILL", amount_vnd: -x.cost_vnd, session_id: x.session_id, created_at: x.ended_at, balance_after_vnd: running });
     });
-    rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
-    rows.forEach((r) => { r.balance_after_vnd = balance; balance -= r.amount_vnd; });
+    w.balance_vnd = running;
+    rows.reverse();
     wallet_transactions.push(...rows);
   });
   const invoices = [];
@@ -856,6 +871,7 @@
   function cellSnapshot(vehicleId) {
     const v = vehicles.find((x) => x.vehicle_id === vehicleId);
     const battery = batteries.find((b) => b.battery_id === v.battery_id);
+    if (!battery) return []; // no pack fitted
     const model = battery_models.find((m) => m.battery_model_id === battery.battery_model_id);
     const cells = Math.min(model.cells, 192);
     const vals = seededSeries(vehicleId + "cells", cells, 3.29, 0.03);
@@ -871,7 +887,8 @@
     const points = [];
     const steps = hours * 12;
     const endF = v.live.road_f;
-    const startF = Math.max(0, endF - 0.7);
+    // Come from the far side when the truck sits near the start of its road, so the replay always covers distance.
+    const startF = endF >= 0.35 ? Math.max(0, endF - 0.7) : Math.min(1, endF + 0.7);
     for (let i = 0; i <= steps; i++) {
       const f = startF + (endF - startF) * (i / steps);
       const p = pointOnRoad(road, f);
@@ -898,11 +915,13 @@
   const DIESEL_KG_PER_KM = 0.92;
   function carbonMonthly(orgId, months = 6) {
     const trucks = vehicles.filter((v) => (!orgId || v.organization_id === orgId) && v.live && v.organization_id !== "org-g3").length;
+    // Deterministic per organization and month: the page may call this many times.
+    const noise = seededSeries("carbon" + (orgId || "all"), months * 3, 0.5, 1).map((v) => Math.min(1, Math.max(0, v)));
     return Array.from({ length: months }, (_, i) => {
       const d = new Date(NOW); d.setDate(1); d.setMonth(d.getMonth() - (months - 1 - i));
-      const km = Math.round(trucks * between(4800, 6100));
-      const kwh = Math.round(km * between(1.12, 1.24));
-      const renewableShare = between(0.14, 0.31);
+      const km = Math.round(trucks * (4800 + 1300 * noise[i * 3]));
+      const kwh = Math.round(km * (1.12 + 0.12 * noise[i * 3 + 1]));
+      const renewableShare = 0.14 + 0.17 * noise[i * 3 + 2];
       const gridT = (kwh * (1 - renewableShare) / 1000) * GRID_FACTOR_T_PER_MWH;
       const renewT = (kwh * renewableShare / 1000) * 0.041;
       const dieselT = (km * DIESEL_KG_PER_KM) / 1000;

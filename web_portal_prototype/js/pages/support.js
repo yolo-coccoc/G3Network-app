@@ -90,7 +90,8 @@
     .sup-sos.live{animation:sup-pulse 1.6s ease-in-out infinite}
     @keyframes sup-pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.45)}50%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
     .tbl tr[data-sos] td:first-child{box-shadow:inset 3px 0 0 var(--danger)}
-    .sup-subject{display:block;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-3);font-size:12px}
+    .sup-ellipsis{display:block;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sup-subject{display:block;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text-3);font-size:12px}
     .sup-steps{display:flex;margin:4px 0 2px}
     .sup-step{flex:1;text-align:center;position:relative;font-size:12px;color:var(--text-3)}
     .sup-step i{display:block;width:20px;height:20px;border-radius:50%;margin:0 auto 5px;background:var(--surface-3);border:2px solid var(--border-strong);position:relative;z-index:1}
@@ -213,7 +214,16 @@
       acknowledged_at: null, resolved_at: null, assignee_user_id: null, partner_organization_id: null, notes: [],
     });
   }
-  seedCase("sos-live", "SOS", "BREAKDOWN", "HOTLINE", "veh-008", 1.5, ["SOS by hotline: truck lost power on QL51", "SOS qua tổng đài: xe mất nguồn trên QL51"], { error_code: "P1A0B" });
+  (function stopSosTruck() {
+    // The hotline SOS is about a truck that lost power: park it on its road so the
+    // live tick (which moves DRIVING trucks along road_f) keeps it at the reported spot.
+    const v = db.vehicle("veh-008");
+    if (!v || !v.live || db.support_cases.some((c) => c.seed_key === "sos-live")) return;
+    const p = db.pointOnRoad(db.ROADS[v.live.road_index], v.live.road_f);
+    Object.assign(v.live, { lat: p.lat, lon: p.lon, state: "PARKED", speed_kmh: 0, is_online: true, pack_current_a: 0 });
+  })();
+  const sosRoad = db.vehicle("veh-008") && db.vehicle("veh-008").live ? db.vehicle("veh-008").live.road : "QL51";
+  seedCase("sos-live", "SOS", "BREAKDOWN", "HOTLINE", "veh-008", 1.5, [`SOS by hotline: truck lost power on ${sosRoad}`, `SOS qua tổng đài: xe mất nguồn trên ${sosRoad}`], { error_code: "P1A0B" });
   seedCase("near-breach", "TICKET", "TECHNICAL", "ZALO", "veh-002", 228, ["Regenerative braking weaker than usual", "Phanh tái sinh yếu hơn bình thường"]);
   seedCase("breached", "TICKET", "TECHNICAL", "HOTLINE", "veh-016", 270, ["Dashboard screen reboots while driving", "Màn hình táp-lô tự khởi động lại khi chạy"]);
   seedCase("data-request", "TICKET", "DATA_REQUEST", "HOTLINE", "veh-012", 50, ["Traffic police request: route and speed on 14/10, 06:00–09:00", "CSGT đề nghị cung cấp lộ trình và tốc độ ngày 14/10, 06:00–09:00"], { reporter: "Phòng CSGT Công an tỉnh Đồng Nai", phone: "0251382217" });
@@ -328,6 +338,24 @@
   }
 
   /* ---------- Map overlays (partners, incidents) on top of ui.map ---------- */
+  /** ui.mountMaps counter-scales markers (--k) as if the map were ~1000 px wide; on the
+      smaller maps of this file markers would shrink, so --k is corrected for the real width. */
+  function keepMarkerSize(root, mapId) {
+    const wrap = root.querySelector(`[data-map-wrap=${mapId}]`);
+    const svg = wrap && wrap.querySelector("svg");
+    if (!svg) return;
+    const fix = () => {
+      const width = svg.getBoundingClientRect().width;
+      const vbWidth = Number((svg.getAttribute("viewBox") || "").split(" ")[2]) || ui.MAP_SIZE.width;
+      if (!width) return;
+      const k = (Math.min(1.2, vbWidth / ui.MAP_SIZE.width) * Math.min(2.4, ui.MAP_SIZE.width / width)).toFixed(3);
+      if (svg.style.getPropertyValue("--k") !== k) svg.style.setProperty("--k", k);
+    };
+    const observer = new MutationObserver(fix);
+    observer.observe(svg, { attributes: true, attributeFilter: ["viewBox"] });
+    G3.onLeave(() => observer.disconnect());
+    fix();
+  }
   function withOverlay(mapHtml, extra) {
     const i = mapHtml.lastIndexOf("</svg>");
     return mapHtml.slice(0, i) + extra + mapHtml.slice(i);
@@ -642,12 +670,12 @@
     return [
       { label: t("Case", "Yêu cầu"), render: (c) => `<b>${esc(c.support_case_id)}</b>${c.case_type === "SOS" ? " " + ui.badge("SOS") : ""}<span class="sup-subject" title="${esc(tx(c.subject))}">${esc(tx(c.subject))}</span>` },
       { label: t("Category · channel", "Phân loại · kênh"), render: (c) => `${esc(catLabel(c.category))}<span class="sub">${esc(label(c.channel))}</span>` },
-      { label: t("Truck", "Xe"), render: (c) => (db.vehicle(c.vehicle_id) ? ui.vehicleCell(db.vehicle(c.vehicle_id)) : '<span class="muted">—</span>') },
+      { label: t("Truck", "Xe"), cls: "nowrap", render: (c) => { const v = db.vehicle(c.vehicle_id); return v ? `<b title="${esc(v.vin)}">${esc(v.license_plate)}</b><span class="sub mono" title="${esc(v.vin)}">…${esc(v.vin.slice(-6))}</span>` : '<span class="muted">—</span>'; } },
       internal ? { label: t("Organization", "Tổ chức"), cls: "nowrap", render: (c) => ui.orgName(c.organization_id) } : null,
-      { label: t("Reporter", "Người báo"), cls: "nowrap", render: (c) => `${esc(c.reporter_name)}<span class="sub">${esc(c.reporter_phone || "")}</span>` },
+      { label: t("Reporter", "Người báo"), render: (c) => `<span class="sup-ellipsis" title="${esc(c.reporter_name)}">${esc(c.reporter_name)}</span><span class="sub">${esc(c.reporter_phone || "")}</span>` },
       { label: t("Status", "Trạng thái"), render: (c) => badge(c.status) },
       { label: t("Response SLA", "SLA phản hồi"), cls: "nowrap", render: slaCell },
-      { label: t("Assignee", "Người xử lý"), cls: "nowrap", render: (c) => (c.assignee_user_id ? ui.userName(c.assignee_user_id) : `<span class="muted">${esc(t("Unassigned", "Chưa phân công"))}</span>`) },
+      { label: t("Assignee", "Người xử lý"), render: (c) => (c.assignee_user_id ? ui.userName(c.assignee_user_id) : `<span class="muted">${esc(t("Unassigned", "Chưa phân công"))}</span>`) },
     ].filter(Boolean);
   }
 
@@ -710,7 +738,7 @@
     const met = [["BREAKDOWN", 94], ["ACCIDENT", 100], ["BATTERY", 91], ["TECHNICAL", 88], ["CHARGING", 96], ["BILLING", 99]];
     const team = db.memberships.filter((m) => m.organization_id === "org-g3" && m.roles.some((x) => ["CUSTOMER_CARE", "OPERATIONS"].includes(x)));
     return `<div class="grid cols-3 mt">
-      ${ui.card({ title: t("Cases per day by channel", "Yêu cầu theo ngày và kênh"), sub: `${days} ${t("days", "ngày")}`, actions: ui.legend(vol.map((s) => [s.name, s.color])), body: ui.barChart({ labels, series: vol, stacked: true, height: 210 }) })}
+      ${ui.card({ title: t("Cases per day", "Yêu cầu theo ngày"), sub: t(`by channel, ${days} days`, `theo kênh, ${days} ngày`), actions: ui.legend(vol.map((s) => [s.name, s.color])), body: ui.barChart({ labels, series: vol, stacked: true, height: 210 }) })}
       ${ui.card({ title: t("Response SLA met (30 d)", "Tỷ lệ đạt SLA phản hồi (30 ngày)"), sub: "SUP-03", body: ui.hBars({ labels: met.map(([k]) => catLabel(k)), series: [{ values: met.map(([, v]) => v), color: ui.PALETTE[0] }], unit: "%" }) + `<div class="small muted mt">${esc(t("SOS call-back within 5 min: 97% (63 of 65).", "SOS gọi lại trong 5 phút: 97% (63/65)."))}</div>` })}
       ${ui.card({ title: t("Workload", "Khối lượng công việc"), sub: t("open cases per agent", "yêu cầu đang mở theo nhân viên"), flush: true, body: ui.table({ rows: team, columns: [
         { label: t("Agent", "Nhân viên"), render: (m) => `${ui.userName(m.user_id)}<span class="sub">${esc(m.roles.map(G3.roleLabel).join(", "))}</span>` },
@@ -818,10 +846,13 @@
     const model = db.model(v.vehicle_model_id);
     const drv = c.driver_id ? db.driver(c.driver_id) : v.driver_id ? db.driver(v.driver_id) : null;
     const live = visible && v.live ? v.live : null;
-    const route = live ? db.routeHistory(v.vehicle_id, 2) : null;
+    // The mock route is generated along the truck's road; shift it so it ends where the truck is now.
+    const rawRoute = live ? db.routeHistory(v.vehicle_id, 2) : [];
+    const last = rawRoute[rawRoute.length - 1];
+    const route = last ? rawRoute.map((r) => ({ ...r, lat: r.lat + live.lat - last.lat, lon: r.lon + live.lon - last.lon })) : null;
     let overlay = pos ? incidentMarker(pos, `${c.support_case_id} · ${t("reported here", "vị trí báo")} ${fmt.time(c.created_at)}`) : "";
     if (c.dispatch && scope.isInternal()) { const p = profile(c.dispatch.partner_organization_id); if (p) overlay += partnerMarker(p, { selected: true }); }
-    const map = pos ? withOverlay(ui.map({ vehicles: live ? [v] : [], route, selectedVehicleId: v.vehicle_id, height: 270, legend: false, id: "case-map" }), overlay) : ui.empty(t("No position was sent with this case", "Yêu cầu không kèm vị trí"));
+    const map = pos ? withOverlay(ui.map({ vehicles: live ? [v] : [], route, selectedVehicleId: v.vehicle_id, height: 300, legend: false, id: "case-map" }), overlay) : ui.empty(t("No position was sent with this case", "Yêu cầu không kèm vị trí"));
     const vehicleLink = G3.canSee("vehicle-detail") ? `<a href="#/vehicles/${v.vehicle_id}"><b>${esc(v.license_plate)}</b></a>` : `<b>${esc(v.license_plate)}</b>`;
     return ui.card({
       title: t("Vehicle context", "Thông tin xe"), sub: t("attached automatically · MON-02", "gắn tự động · MON-02"),
@@ -833,21 +864,24 @@
           [t("Owner", "Chủ xe"), ui.orgName(v.organization_id)],
           [t("Driver", "Tài xế"), drv ? `${esc(drv.full_name)} <span class="muted small">${esc(drv.phone_number)}</span>` : ui.driverName(null)],
           [t("Fault code", "Mã lỗi"), c.error_code ? `<b class="mono">${esc(c.error_code)}</b><div class="small muted">${esc(errorText(c.error_code))}</div>` : `<span class="muted">${esc(t("none reported", "không có"))}</span>`],
+        ])}</div>
+        <div>${ui.kv([
           [t("Reported at", "Vị trí khi báo"), pos ? `${esc(placeText(pos))}<div class="small muted mono">${fmt.num(pos.lat, 5)}, ${fmt.num(pos.lon, 5)}</div>` : null],
           [t("Battery now", "Pin hiện tại"), live ? `<span data-live-soc="${v.vehicle_id}">${ui.soc(live.soc_percent)}</span>` : null],
           [t("Live status", "Trạng thái"), live ? `<span data-live-state="${v.vehicle_id}">${ui.vehicleState(v)}</span> <span class="small muted" data-live-speed="${v.vehicle_id}">${live.is_online && live.state === "DRIVING" ? Math.round(live.speed_kmh) + " km/h" : ""}</span>` : `<span class="muted small">${esc(visible ? t("no live data", "chưa có dữ liệu") : t("not in your scope", "ngoài phạm vi xem"))}</span>`],
           [t("Last data", "Dữ liệu cuối"), live ? `<span data-live-ago="${v.vehicle_id}">${fmt.ago(live.received_at)}</span>` : null],
         ])}</div>
-        <div>${map}${route ? `<div class="small muted" style="margin-top:6px">${esc(t("Blue line: the last 2 h of route (MON-10). Red pin: where the case was reported.", "Đường xanh: lộ trình 2 giờ gần nhất (MON-10). Ghim đỏ: vị trí khi báo."))}</div>` : ""}</div>
-      </div>`,
+      </div>
+      <div class="mt">${map}${route ? `<div class="small muted" style="margin-top:6px">${esc(t("Blue line: the last 2 h of route (MON-10). Red pin: where the case was reported.", "Đường xanh: lộ trình 2 giờ gần nhất (MON-10). Ghim đỏ: vị trí khi báo."))}</div>` : ""}</div>`,
     });
   }
 
   function reporterCard(c) {
     const phone = String(c.reporter_phone || "").replace(/\D/g, "");
+    const name = c.reporter_name && c.reporter_name !== "—" ? c.reporter_name : t("Name not given", "Chưa rõ tên");
     return ui.card({
       title: t("Reporter", "Người báo"),
-      body: `<div class="row" style="gap:12px;flex-wrap:nowrap"><span class="avatar" style="width:40px;height:40px">${esc(ui.initials(c.reporter_name || "?"))}</span><div class="grow" style="min-width:0"><b>${esc(c.reporter_name)}</b><div class="small muted">${esc(c.driver_id ? t("Driver checked in to the truck", "Tài xế đang nhận xe") : t("Caller", "Người gọi"))} · ${esc(c.reporter_phone || "—")}</div></div></div>
+      body: `<div class="row" style="gap:12px;flex-wrap:nowrap"><span class="avatar" style="width:40px;height:40px">${esc(ui.initials(name))}</span><div class="grow" style="min-width:0"><b>${esc(name)}</b><div class="small muted">${esc(c.driver_id ? t("Driver checked in to the truck", "Tài xế đang nhận xe") : t("Caller", "Người gọi"))} · ${esc(c.reporter_phone || "—")}</div></div></div>
         <div class="row mt">${phone ? ui.btn(t("Call", "Gọi"), { href: `tel:${phone}`, icon: "phone", kind: "primary", sm: true }) : ""}${phone ? ui.btn("Zalo", { href: `https://zalo.me/${phone}`, icon: "send", sm: true, attrs: 'target="_blank" rel="noopener"' }) : ""}</div>`,
     });
   }
@@ -1074,7 +1108,8 @@
     const wrapZoom = () => {
       const wrap = root.querySelector("[data-map-wrap=case-map]");
       const pos = casePosition(c);
-      if (wrap && wrap.zoomTo && pos) wrap.zoomTo(pos.lat, pos.lon, 300);
+      if (wrap && wrap.zoomTo && pos) wrap.zoomTo(pos.lat, pos.lon, 360);
+      keepMarkerSize(root, "case-map");
     };
     setTimeout(wrapZoom, 0);
     everySecond(() => {
@@ -1179,18 +1214,14 @@
     </div>`;
 
     const columns = [
-      { label: t("Partner", "Đối tác"), render: (r) => `<b>${esc(r.org.short_name)}</b><span class="sub">${esc(r.org.name)} · ${esc(t("Tax", "MST"))} ${esc(r.org.tax_code)}</span>` },
-      { label: t("Type", "Loại"), render: (r) => (r.p ? badge(r.p.partner_type, r.p.partner_type === "RESCUE" ? "danger" : "accent") : '<span class="muted">—</span>') },
-      { label: t("Service area", "Khu vực"), render: (r) => (r.p ? `${r.p.service_area.map((x) => ui.tag(x)).join(" ")}<span class="sub">${esc(t("radius", "bán kính"))} ${radiusKm(r.p)} km</span>` : "—") },
-      { label: t("Capabilities", "Năng lực"), render: (r) => (r.p ? `<div class="row" style="gap:4px;max-width:260px">${r.p.capabilities.map((x) => ui.tag(capLabel(x))).join("")}</div>` : "—") },
-      { label: t("Hours", "Giờ làm việc"), render: (r) => (r.p ? `${esc(r.p.opening_hours)}<span class="sub" style="color:var(--${isOpenNow(r.p.opening_hours) ? "ok" : "warn"})">${esc(isOpenNow(r.p.opening_hours) ? t("open now", "đang mở") : t("closed now", "đang đóng"))}</span>` : "—") },
-      { label: t("SLA", "SLA"), align: "right", render: (r) => (r.p ? `${r.p.sla_minutes} ${esc(t("min", "phút"))}` : "—") },
-      { label: t("Rating", "Đánh giá"), render: (r) => (r.p ? `${stars(r.p.rating)} <b class="num">${fmt.num(r.p.rating, 1)}</b>` : "—") },
-      { label: t("Cases", "Số ca"), align: "right", render: (r) => (r.p ? `${r.p.cases}<span class="sub">${db.support_cases.filter((c) => c.partner_organization_id === r.org.organization_id && isActive(c)).length} ${esc(t("open", "đang mở"))}</span>` : "—") },
-      { label: t("Revenue share", "Chia doanh thu"), align: "right", render: (r) => (r.p ? `${r.p.revenue_share_percent}%<span class="sub">≈ ${fmt.vndShort(Math.round(r.p.cases / 6) * 4500000 * r.p.revenue_share_percent / 100)} / 30 ${esc(t("d", "ngày"))}</span>` : "—") },
-      { label: t("Hotline", "Đường dây nóng"), render: (r) => (r.p ? `<a href="tel:${esc(r.p.hotline.replace(/\D/g, ""))}" class="nowrap">${esc(r.p.hotline)}</a>` : "—") },
-      { label: t("Status", "Trạng thái"), render: (r) => `${ui.badge(r.org.status)}${r.org.status_reason ? `<span class="sub">${esc(r.org.status_reason)}</span>` : ""}` },
-      { label: "", render: (r) => `<div class="row" style="gap:4px;flex-wrap:nowrap">${ui.btn("", { icon: "edit", sm: true, kind: "ghost", action: "edit", attrs: `data-org="${r.org.organization_id}" title="${esc(t("Edit profile", "Sửa hồ sơ"))}"` })}${ui.btn("", { icon: r.org.status === "ACTIVE" ? "lock" : "unlock", sm: true, kind: "ghost", action: "toggle-status", attrs: `data-org="${r.org.organization_id}" title="${esc(r.org.status === "ACTIVE" ? t("Suspend", "Tạm ngưng") : t("Reactivate", "Kích hoạt lại"))}"` })}</div>` },
+      { label: t("Partner", "Đối tác"), cls: "nowrap", render: (r) => `<b title="${esc(r.org.name)}">${esc(r.org.short_name)}</b> ${r.p ? badge(r.p.partner_type, r.p.partner_type === "RESCUE" ? "danger" : "accent") : ""}${r.org.status !== "ACTIVE" ? " " + ui.badge(r.org.status) : ""}<span class="sub">${r.p ? `<a href="tel:${esc(r.p.hotline.replace(/\D/g, ""))}">${esc(r.p.hotline)}</a> · ` : ""}${esc(t("Tax", "MST"))} ${esc(r.org.tax_code)}</span>${r.org.status_reason ? `<span class="sub" style="white-space:normal;max-width:240px">${esc(r.org.status_reason)}</span>` : ""}` },
+      { label: t("Service area", "Khu vực"), render: (r) => (r.p ? `<span class="small" style="display:block;min-width:140px">${esc(r.p.service_area.join(", "))}</span><span class="sub">${esc(t("radius", "bán kính"))} ${radiusKm(r.p)} km</span>` : "—") },
+      { label: t("Capabilities", "Năng lực"), render: (r) => (r.p ? `<div class="row" style="gap:4px;max-width:210px">${r.p.capabilities.map((x) => ui.tag(capLabel(x))).join("")}</div>` : "—") },
+      { label: t("Hours · SLA", "Giờ · SLA"), cls: "nowrap", render: (r) => (r.p ? `${esc(r.p.opening_hours)} · <span style="color:var(--${isOpenNow(r.p.opening_hours) ? "ok" : "warn"})">${esc(isOpenNow(r.p.opening_hours) ? t("open", "đang mở") : t("closed", "đang đóng"))}</span><span class="sub">${esc(t("arrives within", "đến trong"))} ${r.p.sla_minutes} ${esc(t("min", "phút"))}</span>` : "—") },
+      { label: t("Rating", "Đánh giá"), cls: "nowrap", render: (r) => (r.p ? `${stars(r.p.rating)} <b class="num">${fmt.num(r.p.rating, 1)}</b>` : "—") },
+      { label: t("Cases", "Số ca"), align: "right", cls: "nowrap", render: (r) => (r.p ? `${r.p.cases}<span class="sub">${db.support_cases.filter((c) => c.partner_organization_id === r.org.organization_id && isActive(c)).length} ${esc(t("open", "đang mở"))}</span>` : "—") },
+      { label: t("Revenue share", "Chia doanh thu"), align: "right", cls: "nowrap", render: (r) => (r.p ? `${r.p.revenue_share_percent}%<span class="sub" title="${esc(t("estimated share to G3, last 30 days", "ước tính phần của G3, 30 ngày qua"))}">≈ ${fmt.vndShort(Math.round(r.p.cases / 6) * 4500000 * r.p.revenue_share_percent / 100)}</span>` : "—") },
+      { label: "", render: (r) => `<div style="display:flex;flex-direction:column;gap:2px">${ui.btn("", { icon: "edit", sm: true, kind: "ghost", action: "edit", attrs: `data-org="${r.org.organization_id}" title="${esc(t("Edit profile", "Sửa hồ sơ"))}"` })}${ui.btn("", { icon: r.org.status === "ACTIVE" ? "lock" : "unlock", sm: true, kind: "ghost", action: "toggle-status", attrs: `data-org="${r.org.organization_id}" title="${esc(r.org.status === "ACTIVE" ? t("Suspend", "Tạm ngưng") : t("Reactivate", "Kích hoạt lại"))}"` })}</div>` },
     ];
     const toolbar = `<div class="toolbar">${ui.search("q", query.q, t("Name or hotline", "Tên hoặc số điện thoại"))}
       ${ui.select("type", [["", t("All types", "Mọi loại")], ["RESCUE", label("RESCUE")], ["WORKSHOP", label("WORKSHOP")]], query.type || "")}
@@ -1203,14 +1234,14 @@
     const mapCard = ui.card({
       title: t("Partner network", "Mạng lưới đối tác"), sub: t("service radius and open road incidents", "bán kính phục vụ và sự cố đang mở"), flush: true,
       actions: ui.legend([[label("RESCUE"), "#dc2626"], [label("WORKSHOP"), "#2563eb"]]),
-      body: withOverlay(ui.map({ height: 430, legend: false, id: "partners-map" }), overlay),
+      body: withOverlay(ui.map({ height: 540, legend: false, id: "partners-map" }), overlay),
     });
 
     const own = sp ? ratings.filter((r) => r.partner === selected.organization_id).sort((a, b) => (a.at < b.at ? 1 : -1)) : [];
     const months = Array.from({ length: 6 }, (_, i) => { const d = new Date(db.NOW); d.setDate(1); d.setMonth(d.getMonth() - (5 - i)); return d; });
     const monthly = months.map((d) => { const xs = own.filter((r) => { const x = new Date(r.at); return x.getMonth() === d.getMonth() && x.getFullYear() === d.getFullYear(); }); return xs.length ? Math.round((xs.reduce((a, r) => a + r.stars, 0) / xs.length) * 10) / 10 : null; });
     const ratingCard = sp ? ui.card({
-      title: t(`Ratings · ${selected.short_name}`, `Đánh giá · ${selected.short_name}`), sub: t("after each case", "sau mỗi ca"),
+      title: t("Ratings", "Đánh giá"), sub: esc(selected.short_name),
       actions: ui.btn(t("Rate a case", "Đánh giá ca"), { icon: "plus", sm: true, action: "rate", attrs: `data-org="${selected.organization_id}"` }),
       body: `<div class="row between"><div><span class="sup-big">${fmt.num(sp.rating, 1)}</span> <span class="muted">/ 5</span></div>${stars(sp.rating)}</div>
         ${ui.lineChart({ labels: months.map((d) => `${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`), series: [{ name: t("Average", "Trung bình"), values: monthly, area: true, color: "#f59e0b" }], height: 150, yMin: 1, yMax: 5 })}
@@ -1273,7 +1304,11 @@
       { label: "revenue_share_percent", csv: (o) => (profile(o.organization_id) || {}).revenue_share_percent }, { label: "hotline", csv: (o) => (profile(o.organization_id) || {}).hotline },
     ], partnerOrgs()));
     const sp = profile(query.p);
-    if (sp) setTimeout(() => { const wrap = root.querySelector("[data-map-wrap=partners-map]"); if (wrap && wrap.zoomTo) wrap.zoomTo(sp.lat, sp.lon, 700); }, 0);
+    setTimeout(() => {
+      const wrap = root.querySelector("[data-map-wrap=partners-map]");
+      if (sp && wrap && wrap.zoomTo) wrap.zoomTo(sp.lat, sp.lon, 700);
+      keepMarkerSize(root, "partners-map");
+    }, 0);
   }
 
   G3.page({
@@ -1346,7 +1381,7 @@
       ${ui.kpi({ label: t("Processes healthy", "Tiến trình ổn định"), icon: "activity", value: `${healthy}<small>/ ${procs.length}</small>`, tone: healthy < procs.length ? "warn" : "ok", foot: `${procs.length - healthy} ${t("need attention", "cần chú ý")}` })}
       ${ui.kpi({ label: t("Ingestion delay p95", "Độ trễ nhận dữ liệu p95"), icon: "clock", value: `<span data-live-delay>${fmt.num(liveDelay(), 1)}</span>`, unit: "s", foot: t("alert above 10 s", "cảnh báo khi trên 10 s") })}
       ${ui.kpi({ label: t("Telemetry / min", "Bản ghi / phút"), icon: "signal", value: `<span data-live-rate>${fmt.num(2410 + Math.round(40 * Math.sin(Date.now() / 9000)))}</span>`, foot: `${db.vehicles.filter((v) => v.live && v.live.is_online).length} ${t("trucks sending", "xe đang gửi")} · ${silentDevices} ${t("silent", "im lặng")}` })}
-      ${ui.kpi({ label: t("API uptime (30 d)", "Thời gian hoạt động API (30 ngày)"), icon: "power", value: "99,96", unit: "%", foot: t("target 99.5%", "mục tiêu 99,5%") })}
+      ${ui.kpi({ label: t("API uptime (30 d)", "Thời gian hoạt động API (30 ngày)"), icon: "power", value: fmt.num(99.96, 2), unit: "%", foot: t("target 99.5%", "mục tiêu 99,5%") })}
       ${ui.kpi({ label: t("Interruptions (7 d)", "Gián đoạn (7 ngày)"), icon: "alert", value: log.length, tone: log.some((x) => !x.ended) ? "danger" : undefined, foot: `${log.filter((x) => !x.ended).length} ${t("ongoing", "đang diễn ra")}` })}
     </div>
     ${ui.card({
@@ -1354,7 +1389,7 @@
       body: ui.table({ rows: procs, columns: [
         { label: t("Process", "Tiến trình"), render: (p) => `<b>${esc(p.label)}</b><span class="sub mono">${esc(p.name)}</span>` },
         { label: t("Status", "Trạng thái"), render: (p) => ui.badge(p.status) },
-        { label: t("Uptime", "Đã chạy"), render: (p) => uptime(p.uptime_hours) },
+        { label: t("Uptime", "Đã chạy"), cls: "nowrap", render: (p) => uptime(p.uptime_hours) },
         { label: t("Key metric", "Chỉ số chính"), render: (p) => `<b>${esc(processMetric(p)[0])}</b><span class="sub">${esc(processMetric(p)[1])}</span>` },
         { label: t("Last heartbeat", "Heartbeat cuối"), render: (p, i) => `<span data-hb="${esc(p.name)}">${esc(t("just now", "vừa xong"))}</span>` },
         { label: t("Run locally", "Chạy cục bộ"), render: (p) => `<div class="row" style="gap:4px;flex-wrap:nowrap"><code>${esc(p.make)}</code>${ui.btn("", { icon: "file", sm: true, kind: "ghost", action: "copy", attrs: `data-cmd="${esc(p.make)}" title="${esc(t("Copy", "Sao chép"))}"` })}</div>` },
@@ -1362,7 +1397,7 @@
     })}
     <div class="grid side mt">
       ${ui.card({ title: t("Ingestion delay, last 24 h", "Độ trễ nhận dữ liệu, 24 giờ qua"), sub: t("MQTT receive → stored", "nhận MQTT → lưu"), actions: ui.legend([["p50", ui.PALETTE[0]], ["p95", ui.PALETTE[2]], [t("alert threshold", "ngưỡng cảnh báo"), "#dc2626"]]),
-        body: ui.lineChart({ labels: hours.map((d) => `${String(d.getHours()).padStart(2, "0")}:00`), series: [{ name: "p50", values: p50, color: ui.PALETTE[0], area: true }, { name: "p95", values: p95, color: ui.PALETTE[2] }, { name: t("threshold", "ngưỡng"), values: hours.map(() => 10), color: "#dc2626", dashed: true }], height: 230, unit: " s", yMax: 16 }) + `<div class="small muted">${esc(t("The spike 5 h ago is the broker restart in the log below.", "Đỉnh 5 giờ trước là lần khởi động lại broker trong nhật ký bên dưới."))}</div>` })}
+        body: ui.lineChart({ labels: hours.map((d) => `${String(d.getHours()).padStart(2, "0")}:00`), series: [{ name: "p50", values: p50, color: ui.PALETTE[0], area: true }, { name: "p95", values: p95, color: ui.PALETTE[2] }, { name: t("threshold", "ngưỡng"), values: hours.map(() => 10), color: "#dc2626", dashed: true }], height: 300, unit: " s", yMax: 16 }) + `<div class="small muted">${esc(t("The spike 5 h ago is the broker restart in the log below.", "Đỉnh 5 giờ trước là lần khởi động lại broker trong nhật ký bên dưới."))}</div>` })}
       ${ui.card({ title: t("Alerts to the operations team", "Cảnh báo cho đội vận hành"), sub: "PLT-03", flush: true,
         body: `<ul class="list">${alertRules.map((a) => `<li><label class="switch"><input type="checkbox" data-rule="${a.id}" ${a.on ? "checked" : ""}><span></span></label><div class="grow"><div>${esc(tx(a.text))}</div><div class="meta">${esc(a.to)}</div></div></li>`).join("")}</ul>` })}
     </div>
@@ -1435,10 +1470,10 @@
     </div>
     <div class="grid cols-2 mt">
       ${ui.card({ title: t("Score per source", "Điểm theo nguồn"), body: `<div class="stack" style="gap:14px">${QUALITY_SOURCES.map((s) => { const rr = seeded(s.key); const trend = Array.from({ length: 14 }, () => s.score - 1.2 + rr() * 1.6); return `<div class="row between" style="flex-wrap:nowrap;gap:14px"><div style="min-width:0;flex:1"><div class="row between small"><span>${esc(tx(s.name))}</span><b class="num">${fmt.num(s.score, 1)}</b></div>${ui.meter(s.score, s.score < 98 ? "warn" : "")}<div class="small muted">${fmt.num(s.checked)} ${esc(t("records / 24 h", "bản ghi / 24 giờ"))}</div></div>${ui.sparkline(trend, s.score < 98 ? "var(--warn)" : "var(--primary)")}</div>`; }).join("")}</div>` })}
-      ${ui.card({ title: t("Violations per day, top rules", "Vi phạm theo ngày, quy tắc nhiều nhất"), actions: ui.legend(series.map((s) => [s.name, s.color])), body: ui.barChart({ labels, series, stacked: true, height: 220 }) })}
+      ${ui.card({ title: t("Violations per day", "Vi phạm theo ngày"), sub: t("top 4 rules, 14 days", "4 quy tắc nhiều nhất, 14 ngày"), body: ui.legend(series.map((s) => [s.name, s.color])) + ui.barChart({ labels, series, stacked: true, height: 200 }) })}
     </div>
     ${ui.card({ title: t("Rules", "Quy tắc"), sub: t("what happens to a reading that breaks a rule", "xử lý bản ghi vi phạm"), cls: "mt", flush: true, body: ui.table({ rows: qualityRules, columns: [
-      { label: t("On", "Bật"), render: (x) => `<label class="switch"><input type="checkbox" data-qrule="${x.id}" ${x.on ? "checked" : ""}><span></span></label>` },
+      { label: t("On", "Bật"), render: (x) => `<label class="switch" style="display:inline-block"><input type="checkbox" data-qrule="${x.id}" ${x.on ? "checked" : ""}><span></span></label>` },
       { label: t("Source", "Nguồn"), render: (x) => esc(tx(QUALITY_SOURCES.find((s) => s.key === x.source).name)) },
       { label: t("Rule", "Quy tắc"), render: (x) => `<b>${esc(tx(x.rule))}</b>` },
       { label: t("Condition", "Điều kiện"), render: (x) => `<code>${esc(x.cond)}</code>` },
@@ -1464,15 +1499,15 @@
   const tboxFirmware = (versions) => db.telematics.filter((d) => d.vehicle_id && versions.includes(d.firmware_version)).length;
   const DESTINATIONS = [
     { device: "tbox", name: ["G3 MQTT broker", "Broker MQTT G3"], host: "mqtt.g3network.vn", ip: "103.97.125.18", country: "VN", operator: "G3 Network · Viettel IDC", declared: true, data: ["Position, speed, battery, faults", "Vị trí, tốc độ, pin, mã lỗi"], mb: 1840, seen: () => db.telematics.filter((d) => d.vehicle_id && d.health !== "SILENT").length, first: 210 },
-    { device: "tbox", name: ["Firmware update server (OTA)", "Máy chủ cập nhật firmware (OTA)"], host: "ota.tbox-vendor.cn", ip: "47.112.18.201", country: "CN", operator: t("T-Box manufacturer", "Nhà sản xuất T-Box"), declared: true, data: ["Firmware download only", "Chỉ tải firmware"], mb: 12, seen: () => 26, first: 210 },
-    { device: "tbox", name: ["Unknown log collector", "Máy chủ thu log chưa rõ"], host: "tlog.tbox-vendor-cloud.cn", ip: "120.55.73.9", country: "CN", operator: t("unknown", "chưa rõ"), declared: false, data: ["Encrypted uploads ~1.4 MB/device/day — size matches GPS + CAN logs", "Tải lên mã hóa ~1,4 MB/thiết bị/ngày — khớp kích thước log GPS + CAN"], mb: 37, seen: () => tboxFirmware(["v2.4.0-rc1", "v2.2.8"]), first: 9 },
-    { device: "tbox", name: ["Time server (NTP)", "Máy chủ thời gian (NTP)"], host: "ntp.isp-hcm.vn", ip: "203.162.4.190", country: "VN", operator: t("Mobile operator", "Nhà mạng"), declared: false, data: ["Clock sync, no vehicle data", "Đồng bộ giờ, không có dữ liệu xe"], mb: 0.1, seen: () => 26, first: 210 },
+    { device: "tbox", name: ["Firmware update server (OTA)", "Máy chủ cập nhật firmware (OTA)"], host: "ota.tbox-vendor.cn", ip: "47.112.18.201", country: "CN", operator: ["T-Box manufacturer", "Nhà sản xuất T-Box"], declared: true, data: ["Firmware download only", "Chỉ tải firmware"], mb: 12, seen: () => 26, first: 210 },
+    { device: "tbox", name: ["Unknown log collector", "Máy chủ thu log chưa rõ"], host: "tlog.tbox-vendor-cloud.cn", ip: "120.55.73.9", country: "CN", operator: ["unknown", "chưa rõ"], declared: false, data: ["Encrypted uploads ~1.4 MB/device/day — size matches GPS + CAN logs", "Tải lên mã hóa ~1,4 MB/thiết bị/ngày — khớp kích thước log GPS + CAN"], mb: 37, seen: () => tboxFirmware(["v2.4.0-rc1", "v2.2.8"]), first: 9 },
+    { device: "tbox", name: ["Time server (NTP)", "Máy chủ thời gian (NTP)"], host: "ntp.isp-hcm.vn", ip: "203.162.4.190", country: "VN", operator: ["Mobile operator", "Nhà mạng"], declared: false, data: ["Clock sync, no vehicle data", "Đồng bộ giờ, không có dữ liệu xe"], mb: 0.1, seen: () => 26, first: 210 },
     { device: "charger", name: ["G3 OCPP gateway", "Cổng OCPP G3"], host: "ocpp.g3network.vn", ip: "103.97.125.20", country: "VN", operator: "G3 Network · Viettel IDC", declared: true, data: ["Sessions, meter values, statuses", "Phiên sạc, công tơ, trạng thái"], mb: 420, seen: () => db.charging_stations.filter((s) => s.is_online).length, first: 200 },
-    { device: "charger", name: ["Charger vendor remote service", "Dịch vụ từ xa của hãng trụ"], host: "support-vpn.charger-vendor.cn", ip: "116.62.40.77", country: "CN", operator: t("Charger manufacturer", "Hãng sản xuất trụ"), declared: true, data: ["Remote diagnostics on G3's request, over VPN", "Chẩn đoán từ xa khi G3 yêu cầu, qua VPN"], mb: 0, seen: () => 0, first: 200 },
-    { device: "charger", name: ["Unknown analytics endpoint", "Điểm thu thập phân tích chưa rõ"], host: "metrics.evse-analytics.eu", ip: "18.196.44.12", country: "DE", operator: t("unknown", "chưa rõ"), declared: false, data: ["Hourly HTTPS posts, ~25 KB each", "Gửi HTTPS mỗi giờ, ~25 KB mỗi lần"], mb: 6.2, seen: () => db.charging_stations.filter((s) => s.firmware_version === "WD-3.5.0").length, first: 21 },
+    { device: "charger", name: ["Charger vendor remote service", "Dịch vụ từ xa của hãng trụ"], host: "support-vpn.charger-vendor.cn", ip: "116.62.40.77", country: "CN", operator: ["Charger manufacturer", "Hãng sản xuất trụ"], declared: true, data: ["Remote diagnostics on G3's request, over VPN", "Chẩn đoán từ xa khi G3 yêu cầu, qua VPN"], mb: 0, seen: () => 0, first: 200 },
+    { device: "charger", name: ["Unknown analytics endpoint", "Điểm thu thập phân tích chưa rõ"], host: "metrics.evse-analytics.eu", ip: "18.196.44.12", country: "DE", operator: ["unknown", "chưa rõ"], declared: false, data: ["Hourly HTTPS posts, ~25 KB each", "Gửi HTTPS mỗi giờ, ~25 KB mỗi lần"], mb: 6.2, seen: () => db.charging_stations.filter((s) => s.firmware_version === "WD-3.5.0").length, first: 21 },
     { device: "app", name: ["G3 API", "API G3"], host: "api.g3network.vn", ip: "103.97.125.16", country: "VN", operator: "G3 Network · Viettel IDC", declared: true, data: ["Check-ins, trips, SOS, payments", "Nhận xe, chuyến, SOS, thanh toán"], mb: 610, seen: () => db.drivers.length, first: 180 },
     { device: "app", name: ["Push notifications", "Thông báo đẩy"], host: "fcm.googleapis.com", ip: "142.250.66.10", country: "US", operator: "Google FCM / Apple APNs", declared: true, data: ["Notification text, no position", "Nội dung thông báo, không có vị trí"], mb: 3, seen: () => db.drivers.length, first: 180 },
-    { device: "app", name: ["Crash reports", "Báo cáo lỗi ứng dụng"], host: "crash.g3network.vn", ip: "103.97.125.22", country: "VN", operator: t("G3 Network (self-hosted)", "G3 Network (tự vận hành)"), declared: true, data: ["Stack traces, no personal data", "Vết lỗi, không có dữ liệu cá nhân"], mb: 1.1, seen: () => 7, first: 180 },
+    { device: "app", name: ["Crash reports", "Báo cáo lỗi ứng dụng"], host: "crash.g3network.vn", ip: "103.97.125.22", country: "VN", operator: ["G3 Network (self-hosted)", "G3 Network (tự vận hành)"], declared: true, data: ["Stack traces, no personal data", "Vết lỗi, không có dữ liệu cá nhân"], mb: 1.1, seen: () => 7, first: 180 },
   ];
   const connState = {};
   const destState = (d) => (d.declared ? "DECLARED" : connState[d.host] || "NEW");
@@ -1528,20 +1563,19 @@
       actions: ui.legend([[t("Declared, Vietnam", "Đã khai báo, Việt Nam"), "#0e9f6e"], [t("Declared, abroad", "Đã khai báo, nước ngoài"), "#2563eb"], [t("Undeclared, Vietnam", "Chưa khai báo, Việt Nam"), "#d97706"], [t("Undeclared, abroad", "Chưa khai báo, nước ngoài"), "#dc2626"]]),
       body: flowDiagram() })}
     ${ui.card({ title: t("Observed connections (24 h)", "Kết nối quan sát được (24 giờ)"), cls: "mt", flush: true, actions: ui.btn(t("Export report", "Xuất báo cáo"), { icon: "download", sm: true, kind: "ghost", action: "export-sovereignty" }), body: ui.table({ rows: DESTINATIONS, rowAttrs: (x) => (!x.declared && x.country !== "VN" && destState(x) !== "BLOCKED" ? "data-sos" : ""), columns: [
-      { label: t("Device type", "Loại thiết bị"), render: (x) => esc(tx(DEVICE_TYPES.find((d) => d.key === x.device).name)) },
-      { label: t("Destination", "Điểm đến"), render: (x) => `<b>${esc(tx(x.name))}</b><span class="sub mono">${esc(x.host)} · ${esc(x.ip)}</span>` },
+      { label: t("Device", "Thiết bị"), render: (x) => esc(tx(DEVICE_TYPES.find((d) => d.key === x.device).name)) },
+      { label: t("Destination", "Điểm đến"), render: (x) => `<b>${esc(tx(x.name))}</b><span class="sub mono" title="${esc(x.ip)}">${esc(x.host)}</span><span class="sub">${esc(tx(x.operator))}</span>` },
       { label: t("Country", "Quốc gia"), render: (x) => ui.tag(x.country) },
-      { label: t("Operator / third party", "Đơn vị vận hành / bên thứ ba"), render: (x) => esc(x.operator) },
-      { label: t("Data", "Dữ liệu"), render: (x) => `<span class="small">${esc(tx(x.data))}</span>` },
+      { label: t("Data", "Dữ liệu"), render: (x) => `<span class="small" style="display:block;min-width:190px">${esc(tx(x.data))}</span>` },
       { label: t("Devices", "Thiết bị"), align: "right", render: (x) => fmt.num(x.seen()) },
-      { label: t("Volume", "Dung lượng"), align: "right", render: (x) => `${fmt.num(x.mb, x.mb < 10 ? 1 : 0)} MB` },
+      { label: t("Volume", "Dung lượng"), align: "right", cls: "nowrap", render: (x) => `${fmt.num(x.mb, x.mb < 10 ? 1 : 0)} MB` },
       { label: t("First seen", "Lần đầu"), render: (x) => fmt.date(db.NOW - x.first * 24 * 60 * MIN) },
       { label: t("State", "Tình trạng"), render: (x) => { const s = destState(x); return s === "DECLARED" ? badge("DECLARED", "ok") : s === "BLOCKED" ? ui.badge("BLOCKED") : s === "INVESTIGATING" ? badge("INVESTIGATING", "warn") : badge(x.country === "VN" ? "UNDECLARED" : "NEW", x.country === "VN" ? "warn" : "danger"); } },
-      { label: "", render: (x) => (x.declared || destState(x) === "BLOCKED" ? "" : `<div class="row" style="gap:4px;flex-wrap:nowrap">${destState(x) === "NEW" ? ui.btn(t("Investigate", "Điều tra"), { sm: true, action: "investigate", attrs: `data-host="${esc(x.host)}"` }) : ""}${x.country !== "VN" ? ui.btn(t("Block", "Chặn"), { sm: true, kind: "danger", action: "block", attrs: `data-host="${esc(x.host)}"` }) : ui.btn(t("Declare", "Khai báo"), { sm: true, action: "declare", attrs: `data-host="${esc(x.host)}"` })}</div>`) },
+      { label: "", render: (x) => (x.declared || destState(x) === "BLOCKED" ? "" : `<div style="display:flex;flex-direction:column;gap:4px">${destState(x) === "NEW" ? ui.btn(t("Investigate", "Điều tra"), { sm: true, action: "investigate", attrs: `data-host="${esc(x.host)}"` }) : ""}${x.country !== "VN" ? ui.btn(t("Block", "Chặn"), { sm: true, kind: "danger", action: "block", attrs: `data-host="${esc(x.host)}"` }) : ui.btn(t("Declare", "Khai báo"), { sm: true, action: "declare", attrs: `data-host="${esc(x.host)}"` })}</div>`) },
     ] }) })}
     ${ui.card({ title: t("Manufacturers' written commitments", "Cam kết bằng văn bản của nhà sản xuất"), sub: t("checked against observed traffic", "đối chiếu với lưu lượng thực tế"), cls: "mt", flush: true, body: ui.table({ rows: commitments, columns: [
       { label: t("Commitment", "Cam kết"), render: (x) => esc(tx(x.text)) },
-      { label: t("Document", "Văn bản"), render: (x) => `<span class="mono">${esc(x.ref)}</span>` },
+      { label: t("Document", "Văn bản"), cls: "nowrap", render: (x) => `<span class="mono">${esc(x.ref)}</span>` },
       { label: t("Evidence", "Bằng chứng"), render: (x) => `<span class="small">${esc(tx(x.evidence))}</span>` },
       { label: t("Verdict", "Kết luận"), render: (x) => (x.ok ? ui.badge("OK", "ok", t("Kept", "Tuân thủ")) : ui.badge("CRITICAL", "danger", t("Broken", "Vi phạm"))) },
     ] }) })}`;

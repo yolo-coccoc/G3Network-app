@@ -31,6 +31,7 @@ def main() -> None:
             "name": feature["name"],
             "name_vi": feature["name_vi"],
             "what": " ".join(feature["what"].split()),
+            "what_vi": " ".join(feature["what_vi"].split()),
             "users": feature["users"],
             "priority": feature["priority"],
             "release": feature["release"],

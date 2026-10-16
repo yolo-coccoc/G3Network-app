@@ -74,7 +74,7 @@
   }
   /** A side drawer kept open by a query key (survives re-renders and live ticks). */
   function drawer(title, sub, body, foot) {
-    return `<aside class="drawer" style="width:min(540px,100%)"><div class="modal-head"><div style="flex:1;min-width:0"><h2>${esc(title)}</h2>${sub ? `<div class="small muted">${sub}</div>` : ""}</div><button class="icon-btn" data-action="close-drawer" title="${esc(t("Close", "Đóng"))}">${ui.icon("x")}</button></div><div class="modal-body stack" style="flex:1">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ""}</aside>`;
+    return `<aside class="drawer" style="width:min(540px,100%);animation:none"><div class="modal-head"><div style="flex:1;min-width:0"><h2>${esc(title)}</h2>${sub ? `<div class="small muted">${sub}</div>` : ""}</div><button class="icon-btn" data-action="close-drawer" title="${esc(t("Close", "Đóng"))}">${ui.icon("x")}</button></div><div class="modal-body stack" style="flex:1">${body}</div>${foot ? `<div class="modal-foot">${foot}</div>` : ""}</aside>`;
   }
   function filterBar(items) { return `<div class="toolbar">${items.filter(Boolean).join("")}</div>`; }
   /** A small step indicator: done steps green, the current one highlighted. */
@@ -87,6 +87,8 @@
     }).join("")}</div>`;
   }
   const canOperate = () => scope.has("OPERATIONS", "HEAD_ADMIN");
+  /** Fleets the persona may filter by (organization scope plus the FLT-03 fleet limit). */
+  const scopedFleets = () => { const limit = scope.fleetLimit(); return scope.filter(db.fleets).filter((f) => !limit || limit.includes(f.fleet_id)); };
 
   /* ---------- Two trucks still on their way to activation (VEH-05) ----------
      The seed has only one truck waiting; these two show both waiting steps. */
@@ -161,7 +163,7 @@
       ${ui.kpi({ label: t("Average battery health", "SOH trung bình"), icon: "battery", value: fmt.num(avgSoh, 1), unit: "%", foot: `${live.filter((v) => v.soh_percent < 90).length} ${t("below 90%", "dưới 90%")}` })}
       ${ui.kpi({ label: t("Fleet odometer", "Tổng số km"), icon: "route", value: fmt.num(live.reduce((a, v) => a + v.odometer_km, 0) / 1000, 0), unit: t("k km", "nghìn km"), foot: `${fmt.num(live.reduce((a, v) => a + v.odometer_km, 0) / (live.length || 1))} km / ${t("truck", "xe")}` })}
     </div>`;
-    const fleets = scope.filter(db.fleets);
+    const fleets = scopedFleets();
     const toolbar = filterBar([
       ui.search("q", query.q, t("Plate or VIN", "Biển số hoặc VIN")),
       ui.select("status", [["", t("Every status", "Mọi trạng thái")], ["ACTIVE", G3.label("ACTIVE")], ["INACTIVE", G3.label("INACTIVE")], ["RETIRED", t("Retired", "Đã loại bỏ")]], query.status || ""),
@@ -443,47 +445,35 @@
       const km = rows.reduce((a, r) => a + r.distance_km, 0);
       return { n: rows.length, value: km ? rows.reduce((a, r) => a + r.energy_kwh, 0) / km : null };
     };
-    const cards = db.vehicle_models.map((m) => {
-      const sheet = MODEL_SHEET[m.vehicle_model_id];
-      const battery = db.battery_models.find((b) => b.capacity_kwh === m.battery_capacity_kwh);
-      const usable = m.battery_capacity_kwh * 0.9;
-      const empty = measured(m.vehicle_model_id, "EMPTY"), loaded = measured(m.vehicle_model_id, "LOADED");
-      return ui.card({
-        title: m.code, sub: esc(m.kind),
-        actions: `${sheet.confirmed ? ui.badge("CONFIRMED", "ok", t("Confirmed by the manufacturer", "Hãng đã xác nhận")) : ui.badge("UNCONFIRMED", "warn", t("Not confirmed yet", "Chưa được hãng xác nhận"))}${canEdit ? ui.btn("", { sm: true, kind: "ghost", icon: "edit", action: "edit-model", attrs: `data-id="${m.vehicle_model_id}" title="${esc(t("Edit", "Sửa"))}"` }) : ""}`,
-        body: `${ui.kv([
-          [t("Gross weight", "Tổng trọng tải"), `${m.gross_weight_t} t · ${t("payload", "tải hàng")} ${sheet.payload_t} t`],
-          [t("Battery", "Pin"), `${fmt.num(m.battery_capacity_kwh)} kWh${battery ? ` · ${esc(battery.chemistry)} ${esc(battery.layout)}` : ""}`],
-          [t("Motor", "Động cơ"), `${sheet.motor_kw} kW · ${sheet.top_speed_kmh} km/h`],
-          [t("Connector", "Chuẩn sạc"), esc(m.connector)],
-          [t("Consumption", "Tiêu thụ"), `${fmt.num(m.consumption_empty_kwh_km, 2)} – ${fmt.num(m.consumption_loaded_kwh_km, 2)} kWh/km`],
-          [t("Range (90% usable)", "Quãng đường (90% khả dụng)"), `${fmt.num(usable / m.consumption_loaded_kwh_km)} – ${fmt.num(usable / m.consumption_empty_kwh_km)} km`],
-          [t("Measured on trips", "Đo trên chuyến"), empty.value || loaded.value ? `${empty.value ? fmt.num(empty.value, 2) : "—"} / ${loaded.value ? fmt.num(loaded.value, 2) : "—"} kWh/km <span class="muted small">(${empty.n + loaded.n} ${t("trips", "chuyến")})</span>` : null],
-          [t("Source", "Nguồn số liệu"), `<span class="small">${esc(t(sheet.source[0], sheet.source[1]))}${sheet.confirmed_on ? ` · ${fmt.date(sheet.confirmed_on)}` : ""}</span>`],
-          [t("Trucks", "Số xe"), `${trucks.filter((v) => v.vehicle_model_id === m.vehicle_model_id).length}`],
-        ])}`,
-      });
-    }).join("");
+    const models = db.vehicle_models;
+    const sheetOf = (m) => MODEL_SHEET[m.vehicle_model_id];
+    const specRows = [
+      [t("Kind", "Loại xe"), (m) => esc(m.kind)],
+      [t("Gross weight / payload", "Tổng trọng tải / tải hàng"), (m) => `${m.gross_weight_t} t / ${sheetOf(m).payload_t} t`],
+      [t("Battery", "Pin"), (m) => { const b = db.battery_models.find((x) => x.capacity_kwh === m.battery_capacity_kwh); return `<b>${fmt.num(m.battery_capacity_kwh)} kWh</b>${b ? ` <span class="muted small">${esc(b.chemistry)} · ${esc(b.layout)} · ${b.nominal_voltage_v} V</span>` : ""}`; }],
+      [t("Motor / top speed", "Động cơ / tốc độ tối đa"), (m) => `${sheetOf(m).motor_kw} kW / ${sheetOf(m).top_speed_kmh} km/h`],
+      [t("Charging connector", "Chuẩn sạc"), (m) => esc(m.connector)],
+      [t("Consumption empty → full", "Tiêu thụ rỗng → đầy tải"), (m) => `<b>${fmt.num(m.consumption_empty_kwh_km, 2)} → ${fmt.num(m.consumption_loaded_kwh_km, 2)}</b> kWh/km`],
+      [t("Range on 90% of the pack", "Quãng đường với 90% pin"), (m) => `${fmt.num((m.battery_capacity_kwh * 0.9) / m.consumption_loaded_kwh_km)} – ${fmt.num((m.battery_capacity_kwh * 0.9) / m.consumption_empty_kwh_km)} km`],
+      [t("Measured on trips (empty / loaded)", "Đo trên chuyến (rỗng / có hàng)"), (m) => { const e = measured(m.vehicle_model_id, "EMPTY"), l = measured(m.vehicle_model_id, "LOADED"); return e.n + l.n ? `${e.value ? fmt.num(e.value, 2) : "—"} / ${l.value ? fmt.num(l.value, 2) : "—"} kWh/km <span class="muted small">· ${e.n + l.n} ${t("trips", "chuyến")}</span>` : '<span class="muted">—</span>'; }],
+      [t("Source of the figures", "Nguồn số liệu"), (m) => `<span class="small">${esc(t(sheetOf(m).source[0], sheetOf(m).source[1]))}${sheetOf(m).confirmed_on ? ` · ${fmt.date(sheetOf(m).confirmed_on)}` : ""}</span>`],
+      [t("Trucks in service", "Số xe đang dùng"), (m) => `${trucks.filter((v) => v.vehicle_model_id === m.vehicle_model_id).length}`],
+    ];
+    const specTable = `<div class="table-wrap"><table class="tbl"><thead><tr><th></th>${models.map((m) => `<th><div class="row" style="gap:8px;flex-wrap:nowrap"><span style="font-size:14px;color:var(--text)">${esc(m.code)}</span>${sheetOf(m).confirmed ? ui.badge("CONFIRMED", "ok", t("Confirmed by the manufacturer", "Hãng đã xác nhận")) : ui.badge("UNCONFIRMED", "warn", t("Not confirmed yet", "Chưa được hãng xác nhận"))}${canEdit ? ui.btn("", { sm: true, kind: "ghost", icon: "edit", action: "edit-model", attrs: `data-id="${m.vehicle_model_id}" title="${esc(t("Edit", "Sửa"))}"` }) : ""}</div></th>`).join("")}</tr></thead><tbody>${specRows.map(([label, cell]) => `<tr><td class="muted" style="white-space:nowrap">${esc(label)}</td>${models.map((m) => `<td>${cell(m)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
     return `${ui.featureChips(["VEH-03"])}
-      <div class="grid cols-3 mt">${cards}</div>
+      <div class="mt">${ui.card({ title: t("Specifications", "Thông số kỹ thuật"), sub: t("electric figures only", "chỉ thông số điện"), flush: true, body: specTable })}</div>
       <div class="grid side mt">
         ${ui.card({
-          title: t("Consumption by load", "Tiêu thụ theo tải"), sub: "kWh/km",
-          actions: ui.legend(db.vehicle_models.map((m, i) => [m.code + (MODEL_SHEET[m.vehicle_model_id].confirmed ? "" : " *"), ui.PALETTE[i + 1]])),
-          body: `${ui.lineChart({ labels: loads.map((l) => l + "%"), series: db.vehicle_models.map((m, i) => ({ name: m.code, values: loads.map((l) => Math.round(consumptionAt(m, l / 100) * 100) / 100), color: ui.PALETTE[i + 1], dashed: !MODEL_SHEET[m.vehicle_model_id].confirmed })), height: 240, yMin: 0.6, yMax: 1.8, yFormat: (v) => fmt.num(v, 2), unit: " kWh/km" })}
-            <div class="small muted">${esc(t("Load = share of the rated payload. * Dashed: G3's own road tests until the manufacturer confirms. The curve feeds range estimates and the trip load check (MON-11).", "Tải = phần trăm tải hàng định mức. * Nét đứt: số liệu chạy thử của G3 cho đến khi hãng xác nhận. Đường cong dùng để ước tính quãng đường và kiểm tra tải chuyến (MON-11)."))}</div>`,
+          title: t("Consumption by load", "Tiêu thụ theo tải"), sub: t("kWh/km against % of rated payload", "kWh/km theo % tải định mức"),
+          actions: ui.legend(models.map((m, i) => [m.code + (sheetOf(m).confirmed ? "" : " *"), ui.PALETTE[i + 1]])),
+          body: `${ui.lineChart({ labels: loads.map((l) => String(l)), series: models.map((m, i) => ({ name: m.code, values: loads.map((l) => Math.round(consumptionAt(m, l / 100) * 100) / 100), color: ui.PALETTE[i + 1], dashed: !sheetOf(m).confirmed })), height: 240, yMin: 0.6, yMax: 1.8, yFormat: (v) => fmt.num(v, 2), unit: " kWh/km" })}
+            <div class="small muted">${esc(t("* Dashed: G3's own road tests until the manufacturer confirms. The curve feeds range estimates and the trip load check (MON-11).", "* Nét đứt: số liệu chạy thử của G3 cho đến khi hãng xác nhận. Đường cong dùng để ước tính quãng đường và kiểm tra tải chuyến (MON-11)."))}</div>`,
         })}
         ${ui.card({
-          title: t("At a glance", "Tóm tắt"), flush: true,
+          title: t("Curve points", "Các điểm trên đường cong"), flush: true,
           body: ui.table({
-            rows: db.vehicle_models,
-            columns: [
-              { label: t("Model", "Dòng xe"), render: (m) => `<b>${esc(m.code)}</b>` },
-              { label: t("Empty", "Rỗng"), align: "right", render: (m) => fmt.num(m.consumption_empty_kwh_km, 2) },
-              { label: "50%", align: "right", render: (m) => fmt.num(consumptionAt(m, 0.5), 2) },
-              { label: t("Full", "Đầy tải"), align: "right", render: (m) => fmt.num(m.consumption_loaded_kwh_km, 2) },
-              { label: "kWh", align: "right", render: (m) => fmt.num(m.battery_capacity_kwh) },
-            ],
+            rows: [0, 25, 50, 75, 100],
+            columns: [{ label: t("Load", "Tải"), render: (l) => `<b>${l}%</b>` }, ...models.map((m) => ({ label: m.code, align: "right", render: (l) => fmt.num(consumptionAt(m, l / 100), 2) }))],
           }),
         })}
       </div>`;
@@ -655,7 +645,7 @@
         ${ui.kpi({ label: t("No data yet", "Chưa có dữ liệu"), icon: "clock", value: mounted.filter((d) => d.health === "NO_DATA").length, foot: t("mounted, waiting for first data", "đã lắp, chờ dữ liệu đầu") })}
         ${ui.kpi({ label: t("Not mounted", "Chưa lắp"), icon: "chip", value: all.filter((d) => !d.vehicle_id).length, foot: t("in stock", "trong kho") })}
       </div>
-      ${silent.length ? `<div class="grid cols-${Math.min(3, silent.length)} mb">${silent.map((d) => { const cause = silenceCause(d); const v = db.vehicle(d.vehicle_id); return `<div class="card clickable" data-open="${d.telematic_id}" style="cursor:pointer"><div class="card-body"><div class="row between"><b>${esc(v ? v.license_plate : d.telematic_serial)}</b>${causeBadge(cause)}</div><div class="small muted" style="margin-top:6px">${esc(t("Silent since", "Im lặng từ"))} ${fmt.ago(lastSeen(d))} · ${fmt.num(d.power_v, 1)} V · <span class="mono">${esc(d.telematic_serial)}</span></div></div></div>`; }).join("")}</div>` : ""}
+      ${silent.length ? `<div class="grid cols-${Math.min(3, silent.length)} mb">${silent.map((d) => { const cause = silenceCause(d); const v = db.vehicle(d.vehicle_id); return `<div class="card clickable" data-open="${d.telematic_id}" style="cursor:pointer"><div class="card-body stack" style="gap:6px"><div class="row between"><b>${esc(v ? v.license_plate : d.telematic_serial)}</b><span class="small muted">${esc(t("silent", "im lặng"))} ${fmt.ago(lastSeen(d))}</span></div><div>${causeBadge(cause)}</div><div class="small muted">${esc(t("Last supply", "Nguồn cuối"))} ${fmt.num(d.power_v, 1)} V · <span class="mono">${esc(d.telematic_serial)}</span> · DEV-06</div></div></div>`; }).join("")}</div>` : ""}
       ${ui.card({
         flush: true,
         body: filterBar([
@@ -669,15 +659,13 @@
           selected: (d) => d.telematic_id === query.d,
           empty: t("No device matches", "Không có thiết bị phù hợp"),
           columns: [
-            { label: t("Serial", "Serial"), render: (d) => `<b class="mono">${esc(d.telematic_serial)}</b><span class="sub mono">IMEI ${esc(d.imei)}</span>` },
-            { label: "ICCID", render: (d) => `<span class="mono small">${esc(d.iccid)}</span><span class="sub">SIM ${esc(G3.label(d.sim_status))}</span>` },
-            { label: "Firmware", render: (d) => `<span class="mono">${esc(d.firmware_version)}</span>${d.firmware_version === "v2.2.8" ? ` <span class="badge warn plain" data-tip="${esc(t("Below the minimum v2.3", "Thấp hơn bản tối thiểu v2.3"))}">!</span>` : ""}` },
-            { label: t("Owner", "Chủ sở hữu"), render: (d) => ui.orgName(d.organization_id) },
-            { label: t("Truck", "Xe"), render: (d) => plateLink(db.vehicle(d.vehicle_id)) },
+            { label: t("Serial · IMEI · ICCID", "Serial · IMEI · ICCID"), render: (d) => `<b class="mono">${esc(d.telematic_serial)}</b><span class="sub mono">IMEI ${esc(d.imei)}</span><span class="sub mono">${esc(d.iccid)} · SIM ${esc(G3.label(d.sim_status))}</span>` },
+            { label: "Firmware", cls: "nowrap", render: (d) => `<span class="mono">${esc(d.firmware_version)}</span>${d.firmware_version === "v2.2.8" ? ` <span class="badge warn plain" data-tip="${esc(t("Below the minimum v2.3", "Thấp hơn bản tối thiểu v2.3"))}">!</span>` : ""}` },
+            { label: t("Owner", "Chủ sở hữu"), cls: "nowrap", render: (d) => ui.orgName(d.organization_id) },
+            { label: t("Truck", "Xe"), cls: "nowrap", render: (d) => plateLink(db.vehicle(d.vehicle_id)) },
             { label: t("Health", "Tình trạng"), render: (d) => { const cause = silenceCause(d); return (d.deleted_at ? ui.badge("RETIRED", "muted", t("Retired", "Đã loại bỏ")) : ui.badge(d.health)) + (cause ? `<span class="sub">${esc(t(SILENCE[cause][1][0], SILENCE[cause][1][1]))}</span>` : ""); } },
-            { label: t("Last seen", "Lần cuối"), render: (d) => (lastSeen(d) ? fmt.ago(lastSeen(d)) : '<span class="muted">—</span>') },
-            { label: t("Signal", "Sóng"), align: "right", render: (d) => (d.signal_dbm === null ? '<span class="muted">—</span>' : `<span style="color:var(--${signalTone(d.signal_dbm)})">${d.signal_dbm} dBm</span>`) },
-            { label: t("Power", "Nguồn"), align: "right", render: (d) => (d.power_v === null ? '<span class="muted">—</span>' : `<span style="color:var(--${d.power_v < 20 ? "danger" : "text"})">${fmt.num(d.power_v, 1)} V</span>`) },
+            { label: t("Last seen", "Lần cuối"), cls: "nowrap", render: (d) => (lastSeen(d) ? fmt.ago(lastSeen(d)) : '<span class="muted">—</span>') },
+            { label: t("Signal · power", "Sóng · nguồn"), align: "right", cls: "nowrap", render: (d) => `${d.signal_dbm === null ? '<span class="muted">—</span>' : `<span style="color:var(--${signalTone(d.signal_dbm)})">${d.signal_dbm} dBm</span>`}<span class="sub" style="${d.power_v !== null && d.power_v < 20 ? "color:var(--danger)" : ""}">${d.power_v === null ? "—" : fmt.num(d.power_v, 1) + " V"}</span>` },
             { label: t("Storage", "Bộ nhớ"), render: (d) => `<div class="row" style="flex-wrap:nowrap;gap:6px">${ui.meter(d.storage_used_percent, d.storage_used_percent > 85 ? "danger" : d.storage_used_percent > 70 ? "warn" : "")}<span class="small num">${d.storage_used_percent}%</span></div>` },
             { label: "GNSS", render: (d) => (d.gnss_fix === "NONE" ? '<span class="muted">—</span>' : ui.tag(d.gnss_fix)) },
           ],
@@ -835,7 +823,7 @@
   const outcomeBadge = (o) => ui.badge(o, OUTCOME_BADGE[o][0], t(OUTCOME_BADGE[o][1][0], OUTCOME_BADGE[o][1][1]));
 
   function configTab(query) {
-    const orgs = scope.filter(db.organizations).filter((o) => db.vehicles.some((v) => v.organization_id === o.organization_id && v.telematic_id));
+    const orgs = scope.filter(db.organizations).filter((o) => db.vehicles.some((v) => v.organization_id === o.organization_id && v.telematic_id)).sort((a, b) => a.is_internal - b.is_internal);
     const orgId = orgs.some((o) => o.organization_id === query.org) ? query.org : (orgs[0] || {}).organization_id;
     if (!orgId) return ui.empty(t("No organization with devices", "Không có tổ chức nào có thiết bị"));
     const targets = pushTargets(orgId);
@@ -1022,10 +1010,10 @@
           ui.toast(t(`${list.length} credential(s) renewed`, `Đã gia hạn ${list.length} chứng thư`));
         },
       });
+      // Opened from the activation list (/devices?assign=<vehicle>): open the form once, then drop the parameter.
       if (query.assign) {
         const vehicleId = query.assign;
-        G3.setQuery({ assign: null });
-        setTimeout(() => assignDeviceModal(null, vehicleId), 0);
+        setTimeout(() => { G3.setQuery({ assign: null }); assignDeviceModal(null, vehicleId); }, 0);
       }
     },
   });
@@ -1034,6 +1022,11 @@
      BATTERIES (BAT-01, MON-07)
      ===================================================================== */
   const installs = db.batteries.filter((b) => b.vehicle_id).map((b) => ({ battery_id: b.battery_id, vehicle_id: b.vehicle_id, installed_at: b.installed_at, removed_at: null, reason: null }));
+  // bat-022 left its truck for a cell replacement (repair case RC-0398) and came back.
+  installs.filter((x) => x.battery_id === "bat-022").forEach((x) => {
+    installs.push({ battery_id: x.battery_id, vehicle_id: x.vehicle_id, installed_at: x.installed_at, removed_at: isoAgo(21), reason: ["Removed for a cell module replacement (RC-0398)", "Tháo ra để thay mô-đun cell (RC-0398)"] });
+    x.installed_at = isoAgo(14);
+  });
   if (db.vehicle("veh-027")) installs.push({ battery_id: "bat-spare", vehicle_id: "veh-027", installed_at: isoAgo(40), removed_at: isoAgo(38), reason: ["Acceptance test on the stock truck done", "Đã chạy thử nghiệm thu trên xe kho"] });
   if (db.vehicle("veh-022")) installs.push({ battery_id: "bat-spare", vehicle_id: "veh-022", installed_at: isoAgo(21), removed_at: isoAgo(14), reason: ["Loan pack while cells of bat-022 were replaced", "Pin cho mượn trong lúc thay cell của bat-022"] });
 
@@ -1089,7 +1082,7 @@
       </div>
       <div class="grid side mb">
         ${ui.card({ title: t("Health against cycles", "Sức khỏe theo số chu kỳ"), sub: t("each dot is a fitted pack", "mỗi chấm là một bộ pin đang lắp"), actions: ui.legend(db.battery_models.map((m, i) => [`${m.capacity_kwh} kWh`, ui.PALETTE[i + 1]])), body: dots })}
-        ${ui.card({ title: t("Lowest health", "Sức khỏe thấp nhất"), body: ui.hBars({ labels: lowest.map((b) => `${db.vehicle(b.vehicle_id).license_plate} · ${b.battery_serial}`), series: [{ values: lowest.map((b) => b.soh_percent), color: ui.PALETTE[2] }], yFormat: (v) => fmt.num(v, 1), unit: "%" }) })}
+        ${ui.card({ title: t("Lowest health", "Sức khỏe thấp nhất"), sub: t("scale 80–100%", "thang 80–100%"), body: `<div class="stack" style="gap:10px">${lowest.map((b) => `<div class="clickable" data-open="${b.battery_id}" data-open-key="b" style="cursor:pointer"><div class="row between small"><span><b>${esc(db.vehicle(b.vehicle_id).license_plate)}</b> <span class="muted mono">${esc(b.battery_serial)}</span></span><b class="num" style="color:var(--${sohTone(b.soh_percent) || "text"})">${fmt.num(b.soh_percent, 1)}%</b></div>${ui.meter((b.soh_percent - 80) * 5, sohTone(b.soh_percent))}</div>`).join("")}</div>` })}
       </div>
       ${ui.card({
         title: t("Battery models", "Dòng pin"), flush: true, cls: "mb",
@@ -1256,20 +1249,37 @@
     if (voided) warrantyHistory[voided.warranty_id] = [{ at: isoAgo(9), by: db.people.warranty.user.user_id, from: "ACTIVE", to: "VOIDED", reason: voided.status_reason }];
   })();
   const KIND_ICON = { VEHICLE: "truck", BATTERY: "battery", TELEMATIC: "chip", STATION: "station" };
+  /* The Long Thành chargers were commissioned first: their 2-year warranty ends soon. */
+  db.charging_stations.filter((st) => st.location_id === "loc-longthanh").forEach((st, i) => {
+    if (db.warranties.some((w) => w.object_id === st.station_id)) return;
+    db.warranties.push({ warranty_id: `war-lt-${i + 1}`, object_kind: "STATION", object_id: st.station_id, organization_id: "org-g3", warranty_type: "STANDARD", starts_on: isoAgo(640 + i * 9).slice(0, 10), ends_on: isoAgo(640 + i * 9 - 730).slice(0, 10), distance_limit_km: null, cycle_limit: null, energy_limit_kwh: 250000, session_limit: 8000, status: "ACTIVE", status_reason: null });
+  });
 
-  /** The covered object, where it is now, and its counters against each limit. */
+  /** Average km per day of a truck over the last 30 days (MON-14 daily report), cached per truck. */
+  const kmPerDayCache = {};
+  function kmPerDay(v) {
+    if (!(v.vehicle_id in kmPerDayCache)) { const rows = db.dailyReport(v.vehicle_id, 30); kmPerDayCache[v.vehicle_id] = rows.reduce((a, r) => a + r.distance_km, 0) / rows.length; }
+    return kmPerDayCache[v.vehicle_id];
+  }
+
+  /** The covered object, where it is now, and its counters against each limit: [label, used, limit, unit, used per day]. */
   function warrantyView(w) {
     const view = { label: w.object_id, sub: "", where: null, usages: [], visible: true };
     const ids = scope.vehicleIds();
     if (w.object_kind === "VEHICLE") {
       const v = db.vehicle(w.object_id);
       view.label = v ? v.license_plate : w.object_id; view.sub = v ? v.vin : ""; view.where = v; view.visible = !!v && ids.has(v.vehicle_id);
-      if (w.distance_limit_km && v) view.usages.push([t("Distance", "Quãng đường"), v.odometer_km, w.distance_limit_km, "km"]);
+      if (w.distance_limit_km && v) view.usages.push([t("Distance", "Quãng đường"), v.odometer_km, w.distance_limit_km, "km", kmPerDay(v)]);
     } else if (w.object_kind === "BATTERY") {
       const b = db.battery(w.object_id);
       const v = b && db.vehicle(b.vehicle_id);
       view.label = b ? b.battery_serial : w.object_id; view.sub = v ? `${t("on", "trên xe")} ${v.license_plate}` : t("not fitted", "chưa lắp"); view.where = v; view.visible = b ? (v ? ids.has(v.vehicle_id) : scope.orgIds().includes(b.organization_id)) : false;
-      if (w.cycle_limit && b) view.usages.push([t("Cycles", "Chu kỳ"), b.cycle_count, w.cycle_limit, ""]);
+      if (w.cycle_limit && b) {
+        // One full cycle ≈ the distance 90% of the pack covers at the model's average consumption.
+        const m = v && modelOf(v);
+        const kmPerCycle = m && m.battery_capacity_kwh ? (0.9 * m.battery_capacity_kwh) / ((m.consumption_empty_kwh_km + m.consumption_loaded_kwh_km) / 2) : null;
+        view.usages.push([t("Cycles", "Chu kỳ"), b.cycle_count, w.cycle_limit, "", kmPerCycle ? kmPerDay(v) / kmPerCycle : 0]);
+      }
       if (b) view.soh = b.soh_percent;
     } else if (w.object_kind === "TELEMATIC") {
       const d = db.telematic(w.object_id);
@@ -1278,15 +1288,16 @@
     } else if (w.object_kind === "STATION") {
       const s = db.station(w.object_id);
       view.label = s ? s.ocpp_identity : w.object_id; view.sub = s ? (db.location(s.location_id) || {}).name : ""; view.visible = scope.orgIds().includes(w.organization_id);
-      if (s && w.energy_limit_kwh) view.usages.push([t("Energy delivered", "Điện đã cấp"), s.energy_delivered_kwh_total, w.energy_limit_kwh, "kWh"]);
-      if (s && w.session_limit) view.usages.push([t("Sessions", "Phiên sạc"), s.sessions_total, w.session_limit, ""]);
+      const days = Math.max(30, (Date.now() - new Date(w.starts_on).getTime()) / DAY);
+      if (s && w.energy_limit_kwh) view.usages.push([t("Energy delivered", "Điện đã cấp"), s.energy_delivered_kwh_total, w.energy_limit_kwh, "kWh", s.energy_delivered_kwh_total / days]);
+      if (s && w.session_limit) view.usages.push([t("Sessions", "Phiên sạc"), s.sessions_total, w.session_limit, "", s.sessions_total / days]);
     }
     const start = new Date(w.starts_on).getTime(), end = new Date(w.ends_on).getTime();
     const elapsedShare = Math.max(0, Math.min(1, (Date.now() - start) / (end - start)));
     view.timeShare = elapsedShare;
     // The date a limit is reached at the current pace, when it comes before the end date.
     let projected = end;
-    view.usages.forEach(([, used, limit]) => { const days = (Date.now() - start) / DAY; if (used > 0 && days > 5) { const at = start + (limit / used) * days * DAY; if (at < projected) projected = at; } });
+    view.usages.forEach(([, used, limit, , perDay]) => { if (perDay > 0) { const at = Date.now() + Math.max(0, (limit - used) / perDay) * DAY; if (at < projected) projected = at; } });
     view.effectiveEnd = projected;
     view.byLimit = projected < end;
     return view;
@@ -1307,9 +1318,9 @@
   function usageCell(view) {
     const parts = view.usages.map(([label, used, limit, unit]) => {
       const share = (used / limit) * 100;
-      return `<div style="min-width:160px"><div class="row between small" style="flex-wrap:nowrap"><span class="muted">${esc(label)}</span><span class="num">${fmt.num(used)} / ${fmt.num(limit)}${unit ? " " + unit : ""}</span></div>${ui.meter(share, share > 85 ? "danger" : share > 60 ? "warn" : "")}</div>`;
+      return `<div style="min-width:210px"><div class="row between small" style="flex-wrap:nowrap"><span class="muted">${esc(label)}</span><span class="num nowrap">${fmt.num(used)} / ${fmt.num(limit)}${unit ? " " + unit : ""}</span></div>${ui.meter(share, share > 85 ? "danger" : share > 60 ? "warn" : "")}</div>`;
     });
-    parts.push(`<div style="min-width:160px"><div class="row between small" style="flex-wrap:nowrap"><span class="muted">${esc(t("Time", "Thời gian"))}</span><span class="num">${fmt.pct(view.timeShare * 100)}</span></div>${ui.meter(view.timeShare * 100, "")}</div>`);
+    parts.push(`<div style="min-width:210px"><div class="row between small" style="flex-wrap:nowrap"><span class="muted">${esc(t("Time", "Thời gian"))}</span><span class="num">${fmt.pct(view.timeShare * 100)}</span></div>${ui.meter(view.timeShare * 100, "")}</div>`);
     return `<div class="stack" style="gap:6px">${parts.join("")}</div>`;
   }
 
@@ -1337,9 +1348,9 @@
           empty: t("No warranty matches", "Không có bảo hành phù hợp"),
           columns: [
             { label: t("Covered object", "Đối tượng"), render: ({ w, view }) => `<div class="row" style="flex-wrap:nowrap;gap:10px"><span class="sev-icon INFO" style="background:var(--surface-3);color:var(--text-2)">${ui.icon(KIND_ICON[w.object_kind], 15)}</span><div><b>${esc(view.label)}</b><span class="sub">${esc(G3.label(w.object_kind))} · ${esc(view.sub || "")}</span></div></div>` },
-            { label: t("Owner", "Chủ sở hữu"), render: ({ w }) => ui.orgName(w.organization_id) },
+            { label: t("Owner", "Chủ sở hữu"), cls: "nowrap", render: ({ w }) => ui.orgName(w.organization_id) },
             { label: t("Type", "Loại"), render: ({ w }) => ui.tag(G3.label(w.warranty_type)) },
-            { label: t("Period", "Thời hạn"), render: ({ w }) => `${fmt.date(w.starts_on)} – ${fmt.date(w.ends_on)}` },
+            { label: t("Period", "Thời hạn"), cls: "nowrap", render: ({ w }) => `${fmt.date(w.starts_on)}<span class="sub">→ ${fmt.date(w.ends_on)}</span>` },
             { label: t("Usage against limits", "Sử dụng so với giới hạn"), render: ({ view }) => usageCell(view) },
             { label: t("Ends", "Kết thúc"), render: ({ w, view }) => (w.status !== "ACTIVE" ? '<span class="muted">—</span>' : `<b>${fmt.date(view.effectiveEnd)}</b><span class="sub" style="${daysUntil(view.effectiveEnd) <= 180 ? "color:var(--warn)" : ""}">${fmt.ago(new Date(view.effectiveEnd).toISOString())}${view.byLimit ? ` · ${t("by limit at this pace", "theo giới hạn ở nhịp hiện tại")}` : ""}</span>`) },
             { label: t("Status", "Trạng thái"), render: ({ w }) => statusBadge(w.status, w.status_reason) + (view_soh(w)) },
@@ -1486,7 +1497,7 @@
   db.vehicles.forEach((v) => {
     const plan = plans[v.vehicle_model_id];
     const r = rng(v.vehicle_id + "svc");
-    const kmSince = Math.round(r() * plan.interval_km * 1.1);
+    const kmSince = Math.round(Math.min(r() * plan.interval_km * 1.1, v.odometer_km * 0.7));
     const daysSince = Math.round(10 + r() * 185);
     if (v.odometer_km < 1000) return;
     services.push({ service_id: "svc-" + v.vehicle_id, vehicle_id: v.vehicle_id, kind: "PERIODIC", at: isoAgo(daysSince), odometer_km: Math.max(0, Math.round(v.odometer_km - kmSince)), workshop: r() < 0.5 ? "g3" : "org-p2", cost_vnd: plan.cost_vnd, note: null });
@@ -1545,7 +1556,7 @@
     return scope.vehicles().filter(isLive).filter((v) => !query.fleet || db.fleetAndDescendants(query.fleet).includes(v.fleet_id));
   }
   function fleetFilter(query) {
-    return ui.select("fleet", [["", t("Every fleet", "Mọi đội xe")], ...scope.filter(db.fleets).map((f) => [f.fleet_id, (f.parent_fleet_id ? "— " : "") + f.name])], query.fleet || "");
+    return ui.select("fleet", [["", t("Every fleet", "Mọi đội xe")], ...scopedFleets().map((f) => [f.fleet_id, (f.parent_fleet_id ? "— " : "") + f.name])], query.fleet || "");
   }
 
   function remindersTab(query) {
@@ -1561,7 +1572,10 @@
         ${ui.kpi({ label: t("Due soon", "Sắp đến hạn"), icon: "clock", value: count("DUE_SOON"), foot: t("≤ 3,000 km or 30 days", "≤ 3.000 km hoặc 30 ngày") })}
         ${ui.kpi({ label: t("Done (14 d)", "Đã làm (14 ngày)"), icon: "check", value: count("DONE") + count("COVERED"), tone: "ok", foot: `${count("COVERED")} ${t("covered by a repair", "làm trong lần sửa")}` })}
       </div>
-      <div class="grid side">
+      <div class="grid cols-4 mb">
+        ${db.vehicle_models.map((m) => { const p = plans[m.vehicle_model_id]; return `<div class="card"><div class="card-body"><div class="row between"><b>${esc(m.code)}</b>${canPlan ? ui.btn("", { sm: true, kind: "ghost", icon: "edit", action: "edit-plan", attrs: `data-id="${m.vehicle_model_id}" title="${esc(t("Edit plan", "Sửa kế hoạch"))}"` }) : ""}</div><div style="font-size:18px;font-weight:650" class="num">${fmt.num(p.interval_km)} km <span class="muted" style="font-size:13px;font-weight:500">${t("or", "hoặc")} ${p.interval_months} ${t("months", "tháng")}</span></div><div class="small muted">${p.labour_hours} ${t("h labour", "giờ công")} · ${fmt.vndShort(p.cost_vnd)} ${t("per service", "mỗi lần")}</div></div></div>`; }).join("")}
+        <div class="card"><div class="card-body"><b>${esc(t("Items each service", "Hạng mục mỗi lần"))}</b><div class="small muted" style="margin-top:4px">${PLAN_ITEMS.map(([en, vi]) => esc(t(en, vi))).join(" · ")}</div></div></div>
+      </div>
         ${ui.card({
           flush: true,
           body: filterBar([ui.segmented([["", t("All", "Tất cả")], ["OVERDUE", t("Overdue", "Quá hạn")], ["DUE", t("Due", "Đến hạn")], ["DUE_SOON", t("Due soon", "Sắp đến")], ["DONE", t("Done", "Đã làm")]], query.due || "", "due"), fleetFilter(query), '<span class="grow"></span>', ui.btn(t("Export", "Xuất"), { sm: true, icon: "download", action: "export-reminders" })]) + ui.table({
@@ -1573,17 +1587,11 @@
               { label: t("Next due", "Lần tới"), render: (r) => (r.due ? `${fmt.num(r.last.odometer_km + r.plan.interval_km)} km ${t("or", "hoặc")} ${fmt.date(r.due)}` : `${fmt.num(r.plan.interval_km)} km`) },
               { label: t("Left", "Còn lại"), align: "right", render: (r) => `<span style="color:var(--${r.kmLeft < 0 ? "danger" : r.kmLeft <= 3000 ? "warn" : "text"})">${fmt.num(r.kmLeft)} km</span>${r.daysLeft !== null ? `<span class="sub" style="${r.daysLeft < 0 ? "color:var(--danger)" : ""}">${r.daysLeft} ${t("days", "ngày")}</span>` : ""}` },
               { label: t("Status", "Trạng thái"), render: (r) => reminderBadge(r.status) + (r.covering ? `<span class="sub">${esc(r.covering.case_id)}</span>` : "") },
-              { label: "", align: "right", render: (r) => (scope.has("MAINTENANCE", "FLEET_MANAGER", "HEAD_ADMIN") ? ui.btn(t("Record service", "Ghi nhận bảo dưỡng"), { sm: true, kind: "ghost", action: "record-service", attrs: `data-id="${r.v.vehicle_id}"` }) : "") },
+              { label: "", align: "right", cls: "nowrap", render: (r) => (scope.has("MAINTENANCE", "FLEET_MANAGER", "HEAD_ADMIN") ? ui.btn(t("Record service", "Ghi nhận bảo dưỡng"), { sm: true, kind: "ghost", action: "record-service", attrs: `data-id="${r.v.vehicle_id}"` }) : "") },
             ],
           }),
         })}
-        ${ui.card({
-          title: t("Plan per model", "Kế hoạch theo dòng xe"),
-          body: `<div class="stack" style="gap:12px">${db.vehicle_models.map((m) => { const p = plans[m.vehicle_model_id]; return `<div class="row between" style="flex-wrap:nowrap"><div><b>${esc(m.code)}</b><div class="small muted">${t("every", "mỗi")} ${fmt.num(p.interval_km)} km ${t("or", "hoặc")} ${p.interval_months} ${t("months", "tháng")} · ${p.labour_hours} ${t("h labour", "giờ công")} · ${fmt.vndShort(p.cost_vnd)}</div></div>${canPlan ? ui.btn("", { sm: true, kind: "ghost", icon: "edit", action: "edit-plan", attrs: `data-id="${m.vehicle_model_id}"` }) : ""}</div>`; }).join("")}</div>
-            <div class="divider"></div><h4 style="margin-bottom:6px">${esc(t("Items each service", "Hạng mục mỗi lần"))}</h4><ul style="margin:0;padding-left:18px" class="small">${PLAN_ITEMS.map(([en, vi]) => `<li>${esc(t(en, vi))}</li>`).join("")}</ul>
-            <div class="divider"></div><div class="small muted">${esc(t("Whichever comes first. Drivers and fleet managers get the reminder; a service already recorded (or done inside a repair) clears it.", "Đến mốc nào trước thì nhắc. Tài xế và quản lý đội xe nhận nhắc nhở; một lần bảo dưỡng đã ghi nhận (hoặc làm trong lần sửa chữa) sẽ xóa nhắc nhở."))}</div>`,
-        })}
-      </div>`;
+      <div class="small muted mt">${esc(t("Whichever comes first. Drivers and fleet managers get the reminder; a service already recorded (or done inside a repair) clears it.", "Đến mốc nào trước thì nhắc. Tài xế và quản lý đội xe nhận nhắc nhở; một lần bảo dưỡng đã ghi nhận (hoặc làm trong lần sửa chữa) sẽ xóa nhắc nhở."))}</div>`;
   }
 
   function repairsTab(query) {
@@ -1647,7 +1655,7 @@
       const monthsAgo = 11 - i;
       if (monthsAgo >= owned) return { periodic: 0, unplanned: 0, overhaul: 0 };
       const periodic = (monthsAgo + phase) % 6 === 0 ? plan.cost_vnd : 0;
-      const unplanned = r() < 0.28 ? Math.round((1.2 + r() * 9) * 1e6 / 1e4) * 1e4 : 0;
+      const unplanned = r() < 0.16 ? Math.round((0.8 + r() * 4.5) * 1e6 / 1e4) * 1e4 : 0;
       return { periodic, unplanned, overhaul: 0 };
     });
     // Recorded repair cases land in the month they were opened.
@@ -1758,17 +1766,15 @@
       </div>
       <div class="grid side">
         ${ui.card({
-          title: t("Assets", "Tài sản"), flush: true, actions: fleetFilter(query),
+          title: t("Assets", "Tài sản"), sub: t("straight line 6 years, 10% residual · packs by cycles (4,000)", "đường thẳng 6 năm, thu hồi 10% · pin theo chu kỳ (4.000)"), flush: true, actions: fleetFilter(query),
           body: ui.table({
             rows: assets.sort((a, b) => b.share - a.share),
             columns: [
-              { label: t("Truck", "Xe"), render: (a) => `${plateLink(a.v)}<span class="sub">${esc(modelOf(a.v).code)}${a.used ? ` · ${t("bought used", "mua lại")}` : ""}</span>` },
-              { label: t("In service", "Sử dụng từ"), render: (a) => fmt.date(a.inService) },
-              { label: t("Cost", "Nguyên giá"), align: "right", render: (a) => fmt.vndShort(a.cost) },
-              { label: t("Method", "Phương pháp"), render: (a) => `<span class="small">${esc(t("Straight line", "Đường thẳng"))} · ${a.years} ${t("y", "năm")}</span><span class="sub">${t("residual", "giá trị thu hồi")} ${fmt.vndShort(a.residual)}</span>` },
-              { label: t("Life used", "Đã khấu hao"), render: (a) => `<div class="row" style="flex-wrap:nowrap;gap:6px;min-width:110px">${ui.meter(a.share * 100, a.share > 0.85 ? "danger" : a.share > 0.6 ? "warn" : "")}<span class="small num">${fmt.pct(a.share * 100)}</span></div>` },
-              { label: t("Book value", "Còn lại"), align: "right", render: (a) => `<b>${fmt.vndShort(a.book)}</b>` },
-              { label: t("Pack", "Pin"), align: "right", render: (a) => (a.battery ? `${fmt.vndShort(a.packBook)}<span class="sub">${t("by cycles", "theo chu kỳ")} · ${fmt.pct(a.packShare * 100, 1)}</span>` : "—") },
+              { label: t("Truck", "Xe"), cls: "nowrap", render: (a) => `${plateLink(a.v)}<span class="sub">${esc(modelOf(a.v).code)} · ${t("since", "từ")} ${fmt.date(a.inService)}${a.used ? ` · ${t("used", "mua lại")}` : ""}</span>` },
+              { label: t("Cost", "Nguyên giá"), align: "right", cls: "nowrap", render: (a) => fmt.vndShort(a.cost) },
+              { label: t("Life used", "Đã khấu hao"), render: (a) => `<div class="row" style="flex-wrap:nowrap;gap:6px;min-width:120px">${ui.meter(a.share * 100, a.share > 0.85 ? "danger" : a.share > 0.6 ? "warn" : "")}<span class="small num">${fmt.pct(a.share * 100)}</span></div><span class="sub">${a.monthsLeft} ${t("months left", "tháng còn lại")}</span>` },
+              { label: t("Book value", "Còn lại"), align: "right", cls: "nowrap", render: (a) => `<b>${fmt.vndShort(a.book)}</b><span class="sub">${t("residual", "thu hồi")} ${fmt.vndShort(a.residual)}</span>` },
+              { label: t("Pack value", "Giá trị pin"), align: "right", cls: "nowrap", render: (a) => (a.battery ? `${fmt.vndShort(a.packBook)}<span class="sub">${fmt.pct(a.packShare * 100, 1)} ${t("used", "đã dùng")}</span>` : "—") },
             ],
           }),
         })}

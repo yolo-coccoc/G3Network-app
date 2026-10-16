@@ -129,7 +129,8 @@
   G3.canSee = (pageId) => { const p = pages.find((x) => x.id === pageId); return !!p && canSee(p); };
 
   function parseHash() {
-    const raw = location.hash.replace(/^#/, "") || "/";
+    // G3.testHash lets a smoke test drive the router without touching history (Firefox throttles replaceState).
+    const raw = (G3.testHash !== undefined ? G3.testHash : location.hash).replace(/^#/, "") || "/";
     const [pathPart, queryPart] = raw.split("?");
     const query = Object.fromEntries(new URLSearchParams(queryPart || ""));
     return { path: pathPart || "/", query };
@@ -176,7 +177,7 @@
   function topbarHtml() {
     const user = scope.user();
     const org = scope.org();
-    const memberships = db.memberships.filter((m) => m.user_id === user.user_id && m.status === "ACTIVE");
+    const memberships = db.memberships.filter((m) => m.user_id === user.user_id && m.status === "ACTIVE" && !m.left_at);
     const unread = unreadCount();
     const orgFilter = scope.isInternal()
       ? `<select class="input" data-org-filter title="${esc(t("Organization filter (internal staff)", "Lọc tổ chức (nhân viên nội bộ)"))}"><option value="">${esc(t("All organizations", "Tất cả tổ chức"))}</option>${db.organizations.filter((o) => !o.is_internal).map((o) => `<option value="${o.organization_id}" ${scope.orgFilter() === o.organization_id ? "selected" : ""}>${esc(o.short_name)}</option>`).join("")}</select>`
@@ -251,7 +252,7 @@
 
   function orgMenu(anchor) {
     const user = scope.user();
-    const items = db.memberships.filter((m) => m.user_id === user.user_id && m.status === "ACTIVE").map((m) => ({
+    const items = db.memberships.filter((m) => m.user_id === user.user_id && m.status === "ACTIVE" && !m.left_at).map((m) => ({
       label: db.org(m.organization_id).short_name,
       sub: m.roles.map(G3.roleLabel).join(", "),
       icon: "building",
@@ -298,7 +299,7 @@
 
   /* ---------- Login, organization picker, legal acceptance (ACC-04, ACC-12, ACC-17) ---------- */
   function enterAs(userId, membershipId) {
-    const active = db.memberships.filter((m) => m.user_id === userId && m.status === "ACTIVE");
+    const active = db.memberships.filter((m) => m.user_id === userId && m.status === "ACTIVE" && !m.left_at);
     if (!membershipId && active.length > 1) {
       store.sset("g3.pendingUser", userId);
       G3.navigate("/choose-organization");
@@ -368,7 +369,7 @@
     const user = db.user(userId);
     if (!user) { G3.navigate("/login"); return renderLogin(); }
     const last = store.get("g3.lastOrg." + userId, null);
-    const options = db.memberships.filter((m) => m.user_id === userId && m.status === "ACTIVE");
+    const options = db.memberships.filter((m) => m.user_id === userId && m.status === "ACTIVE" && !m.left_at);
     app.innerHTML = `<div class="login-page" style="grid-template-columns:1fr"><div class="login-panel"><div class="login-box" style="width:min(460px,100%)">
       <h2>${esc(t("Choose an organization", "Chọn tổ chức"))}</h2><p class="muted">${esc(t(`${user.full_name}, you belong to ${options.length} organizations. Every screen shows the data of the one you pick.`, `${user.full_name}, bạn thuộc ${options.length} tổ chức. Mọi màn hình hiển thị dữ liệu của tổ chức bạn chọn.`))}</p>
       <div class="stack" style="gap:8px;margin-top:16px">${options.map((m) => `<button class="persona-card" data-pick="${m.membership_id}" style="padding:14px"><b>${esc(db.org(m.organization_id).name)}</b><span>${esc(m.roles.map(G3.roleLabel).join(", "))}${last === m.organization_id ? " · " + esc(t("last used", "dùng gần nhất")) : ""}</span></button>`).join("")}</div>

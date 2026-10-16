@@ -89,6 +89,7 @@ window.G3_FEATURES = {
    "name": "Organization registry",
    "name_vi": "Danh mục tổ chức",
    "what": "Record every party that uses the system: companies, owner-drivers, individual customers, our own organization and repair partners, stored the same way.",
+   "what_vi": "Ghi nhận mọi bên sử dụng hệ thống: doanh nghiệp, chủ xe cá nhân, khách lẻ, chính công ty ta và đối tác sửa chữa, lưu theo cùng một cách.",
    "users": [
     "SALES",
     "CO_ADMIN",
@@ -104,6 +105,7 @@ window.G3_FEATURES = {
    "name": "Account manager per customer",
    "name_vi": "Nhân viên phụ trách khách hàng",
    "what": "Assign one of our sales staff to each customer organization and keep a record of every reassignment.",
+   "what_vi": "Gán một nhân viên kinh doanh phụ trách mỗi tổ chức khách hàng và lưu lại mỗi lần đổi người phụ trách.",
    "users": [
     "SALES",
     "CO_ADMIN"
@@ -118,6 +120,7 @@ window.G3_FEATURES = {
    "name": "User accounts",
    "name_vi": "Tài khoản người dùng",
    "what": "One account per person, identified by phone number, used across every organization the person works for.",
+   "what_vi": "Mỗi người một tài khoản, định danh bằng số điện thoại, dùng chung cho mọi tổ chức người đó làm việc.",
    "users": [
     "HEAD_ADMIN",
     "CO_ADMIN"
@@ -132,6 +135,7 @@ window.G3_FEATURES = {
    "name": "Login and sessions",
    "name_vi": "Đăng nhập & phiên làm việc",
    "what": "Log in with phone number and password on the app and the portal; a person in several organizations picks one after login.",
+   "what_vi": "Đăng nhập bằng số điện thoại và mật khẩu trên app và portal; người thuộc nhiều tổ chức chọn một tổ chức sau khi đăng nhập.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -149,6 +153,7 @@ window.G3_FEATURES = {
    "name": "One-time codes (OTP)",
    "name_vi": "Mã xác thực một lần (OTP)",
    "what": "Send a one-time code by SMS to confirm a phone number when signing up, accepting an invitation, resetting a password or changing phone number.",
+   "what_vi": "Gửi mã dùng một lần qua SMS để xác nhận số điện thoại khi đăng ký, nhận lời mời, đặt lại mật khẩu hoặc đổi số điện thoại.",
    "users": [
     "SYSTEM",
     "DRIVER",
@@ -164,6 +169,7 @@ window.G3_FEATURES = {
    "name": "Password reset and phone number change",
    "name_vi": "Đặt lại mật khẩu & đổi số điện thoại",
    "what": "A user resets a forgotten password or moves the account to a new phone number, confirmed by a one-time code.",
+   "what_vi": "Người dùng đặt lại mật khẩu đã quên hoặc chuyển tài khoản sang số điện thoại mới, xác nhận bằng mã OTP.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -179,6 +185,7 @@ window.G3_FEATURES = {
    "name": "Company onboarding by sales",
    "name_vi": "Kinh doanh khởi tạo khách hàng doanh nghiệp",
    "what": "Our sales team creates a company's organization, its subscription and its first administrator, who then receives an invitation.",
+   "what_vi": "Nhân viên kinh doanh tạo tổ chức của doanh nghiệp, gói thuê bao và quản trị viên đầu tiên; quản trị viên nhận lời mời kích hoạt.",
    "users": [
     "SALES"
    ],
@@ -192,6 +199,7 @@ window.G3_FEATURES = {
    "name": "Invite users to an organization",
    "name_vi": "Mời người dùng vào tổ chức",
    "what": "An organization administrator invites office staff by phone number with their roles; the person accepts with an OTP.",
+   "what_vi": "Quản trị tổ chức mời nhân viên văn phòng qua SĐT kèm vai trò; người được mời xác nhận bằng OTP.",
    "users": [
     "ORG_ADMIN",
     "CO_ADMIN"
@@ -206,6 +214,7 @@ window.G3_FEATURES = {
    "name": "Driver account claim",
    "name_vi": "Tài xế kích hoạt tài khoản",
    "what": "A fleet manager registers a driver by phone number; the driver installs the app and claims the account with an OTP.",
+   "what_vi": "Quản lý đội xe đăng ký tài xế bằng SĐT; tài xế cài app và kích hoạt tài khoản bằng OTP.",
    "users": [
     "FLEET_MANAGER",
     "DRIVER"
@@ -220,6 +229,7 @@ window.G3_FEATURES = {
    "name": "Bulk import of users and drivers",
    "name_vi": "Nhập hàng loạt người dùng & tài xế",
    "what": "Our operations team imports a large customer's staff and drivers from a spreadsheet.",
+   "what_vi": "Bộ phận vận hành nhập danh sách nhân viên và tài xế của khách hàng lớn từ file bảng tính.",
    "users": [
     "OPERATIONS"
    ],
@@ -233,6 +243,7 @@ window.G3_FEATURES = {
    "name": "Memberships",
    "name_vi": "Thành viên tổ chức",
    "what": "Record which organizations each person belongs to, when they joined and left, and whether their membership is locked.",
+   "what_vi": "Ghi nhận mỗi người thuộc những tổ chức nào, ngày vào, ngày rời và thành viên có đang bị khóa không.",
    "users": [
     "ORG_ADMIN",
     "CO_ADMIN"
@@ -247,6 +258,7 @@ window.G3_FEATURES = {
    "name": "Role assignment",
    "name_vi": "Gán vai trò",
    "what": "Give each member one or more job-title roles (driver, fleet manager, accountant...), each a fixed bundle of features.",
+   "what_vi": "Gán cho mỗi thành viên một hoặc nhiều vai trò theo chức danh (tài xế, quản lý đội xe, kế toán...), mỗi vai trò là một nhóm tính năng cố định.",
    "users": [
     "ORG_ADMIN",
     "CO_ADMIN",
@@ -262,6 +274,7 @@ window.G3_FEATURES = {
    "name": "Feature access control",
    "name_vi": "Kiểm soát quyền dùng tính năng",
    "what": "Allow a feature only when it is in the person's roles and, for customers, also in their organization's plan.",
+   "what_vi": "Chỉ cho dùng một tính năng khi tính năng đó thuộc vai trò của người dùng và, với khách hàng, thuộc gói dịch vụ của tổ chức.",
    "users": [
     "SYSTEM"
    ],
@@ -275,6 +288,7 @@ window.G3_FEATURES = {
    "name": "Push device registration",
    "name_vi": "Đăng ký thiết bị nhận thông báo đẩy",
    "what": "Register each phone or browser that should receive push notifications, and clean up stale ones.",
+   "what_vi": "Đăng ký từng điện thoại hoặc trình duyệt nhận thông báo đẩy, và dọn các thiết bị không còn dùng.",
    "users": [
     "SYSTEM",
     "DRIVER",
@@ -290,6 +304,7 @@ window.G3_FEATURES = {
    "name": "Legal acceptance and consent",
    "name_vi": "Chấp thuận văn bản pháp lý & đồng ý xử lý dữ liệu",
    "what": "Record who accepted which version of which legal text: a company accepts the data processing agreement on its own behalf, an employed driver acknowledges the privacy notice, an individual customer accepts the terms, privacy policy and location tracking.",
+   "what_vi": "Ghi nhận ai đã chấp thuận phiên bản nào của văn bản pháp lý nào: doanh nghiệp chấp thuận thỏa thuận xử lý dữ liệu thay mặt chính mình, tài xế là nhân viên xác nhận đã đọc thông báo quyền riêng tư, khách hàng cá nhân chấp thuận điều khoản, chính sách quyền riêng tư và theo dõi vị trí.",
    "users": [
     "DRIVER",
     "ORG_ADMIN",
@@ -306,6 +321,7 @@ window.G3_FEATURES = {
    "name": "Personal-data access audit log",
    "name_vi": "Nhật ký truy cập dữ liệu cá nhân",
    "what": "Log who viewed, downloaded or exported which personal, location or camera data, when, and for which ticket or reason.",
+   "what_vi": "Ghi lại ai xem, tải hoặc trích xuất dữ liệu cá nhân, vị trí hay hình ảnh camera nào, khi nào, vì ticket hoặc lý do gì.",
    "users": [
     "SYSTEM",
     "HEAD_ADMIN",
@@ -321,6 +337,7 @@ window.G3_FEATURES = {
    "name": "Data-subject requests",
    "name_vi": "Yêu cầu của chủ thể dữ liệu",
    "what": "Handle a person's requests to see, export, correct or delete their personal data.",
+   "what_vi": "Xử lý yêu cầu của một người được xem, xuất, sửa hoặc xóa dữ liệu cá nhân của mình.",
    "users": [
     "DRIVER",
     "CUSTOMER_CARE",
@@ -336,6 +353,7 @@ window.G3_FEATURES = {
    "name": "API access for partners and systems",
    "name_vi": "Truy cập API cho đối tác & hệ thống",
    "what": "Issue API credentials to a partner's or customer's software (rescue partners, TMS, regulators) with limited permissions.",
+   "what_vi": "Cấp thông tin truy cập API cho phần mềm của đối tác hoặc khách hàng (đối tác cứu hộ, TMS, cơ quan quản lý) với quyền hạn giới hạn.",
    "users": [
     "CO_ADMIN",
     "EXTERNAL"
@@ -350,6 +368,7 @@ window.G3_FEATURES = {
    "name": "Change history viewer",
    "name_vi": "Xem lịch sử thay đổi",
    "what": "Show who changed an organization, a user, a role or another audited record, when, and what it looked like before.",
+   "what_vi": "Hiển thị ai đã thay đổi một tổ chức, người dùng, vai trò hoặc bản ghi được lưu lịch sử, khi nào và trước đó ra sao.",
    "users": [
     "CO_ADMIN",
     "HEAD_ADMIN",
@@ -365,6 +384,7 @@ window.G3_FEATURES = {
    "name": "Vehicle registry",
    "name_vi": "Danh mục xe",
    "what": "Keep every truck's profile: VIN, plate, model, handover date, warranty status and service status.",
+   "what_vi": "Lưu hồ sơ từng xe: số VIN, biển số, dòng xe, ngày bàn giao, trạng thái bảo hành và trạng thái phục vụ.",
    "users": [
     "OPERATIONS",
     "FLEET_MANAGER",
@@ -380,6 +400,7 @@ window.G3_FEATURES = {
    "name": "Vehicle ownership",
    "name_vi": "Chủ sở hữu xe",
    "what": "Each truck has exactly one owning organization; ownership can be transferred and every transfer is kept.",
+   "what_vi": "Mỗi xe có đúng một tổ chức sở hữu; quyền sở hữu có thể chuyển và mọi lần chuyển đều được lưu.",
    "users": [
     "OPERATIONS",
     "SALES"
@@ -394,6 +415,7 @@ window.G3_FEATURES = {
    "name": "Vehicle model catalog",
    "name_vi": "Danh mục dòng xe",
    "what": "Store each truck model's specifications (EVT-262/400/825): battery capacity and consumption curve by load (electric figures only).",
+   "what_vi": "Lưu thông số từng dòng xe (EVT-262/400/825): dung lượng pin, đường cong tiêu thụ theo tải (chỉ số liệu xe điện).",
    "users": [
     "OPERATIONS"
    ],
@@ -407,6 +429,7 @@ window.G3_FEATURES = {
    "name": "Vehicle activation",
    "name_vi": "Kích hoạt xe",
    "what": "Follow each truck from registration to device assignment to its first data received, and report the activation success rate.",
+   "what_vi": "Theo dõi từng xe từ khi đăng ký, gắn thiết bị tới khi nhận dữ liệu đầu tiên, và báo cáo tỷ lệ kích hoạt thành công.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -421,6 +444,7 @@ window.G3_FEATURES = {
    "name": "Fault code catalog",
    "name_vi": "Bảng mã lỗi",
    "what": "The manufacturer's fault code (DTC) table: description, severity, whether the truck can keep driving, and what to do.",
+   "what_vi": "Bảng mã lỗi (DTC) của nhà sản xuất: mô tả, mức nghiêm trọng, xe có tiếp tục chạy được không và hướng xử lý.",
    "users": [
     "OPERATIONS",
     "CUSTOMER_CARE",
@@ -436,6 +460,7 @@ window.G3_FEATURES = {
    "name": "Battery registry",
    "name_vi": "Hồ sơ pin",
    "what": "Manage each truck battery as an asset: its model, owner and the trucks it has been fitted to.",
+   "what_vi": "Quản lý từng pin xe như một tài sản: dòng pin, chủ sở hữu và các xe pin đã được lắp.",
    "users": [
     "OPERATIONS",
     "MAINTENANCE",
@@ -451,6 +476,7 @@ window.G3_FEATURES = {
    "name": "Warranty register",
    "name_vi": "Sổ bảo hành",
    "what": "Keep every warranty of a truck, its battery, its devices and of a charger: period, limits such as distance, charge cycles, energy delivered or sessions, and its status, with the reason when a warranty is voided.",
+   "what_vi": "Lưu mọi bảo hành của xe, pin, thiết bị trên xe và của trụ sạc: thời hạn, các giới hạn như quãng đường, số chu kỳ sạc, điện năng đã cấp hay số phiên sạc, và trạng thái, kèm lý do khi bảo hành bị hủy.",
    "users": [
     "WARRANTY",
     "OPERATIONS",
@@ -466,6 +492,7 @@ window.G3_FEATURES = {
    "name": "Device registry",
    "name_vi": "Danh mục thiết bị",
    "what": "Keep every telematics device: serial, IMEI, SIM/ICCID, firmware and status.",
+   "what_vi": "Lưu từng thiết bị telematics: số serial, IMEI, SIM/ICCID, firmware và trạng thái.",
    "users": [
     "OPERATIONS"
    ],
@@ -479,6 +506,7 @@ window.G3_FEATURES = {
    "name": "Device-to-vehicle assignment",
    "name_vi": "Gắn thiết bị với xe",
    "what": "Link a device to a truck at handover, replace it when needed, and keep the history of which device served which truck.",
+   "what_vi": "Gắn thiết bị với xe khi bàn giao, thay thiết bị khi cần và lưu lịch sử thiết bị nào đã gắn với xe nào.",
    "users": [
     "OPERATIONS"
    ],
@@ -492,6 +520,7 @@ window.G3_FEATURES = {
    "name": "Device health dashboard",
    "name_vi": "Dashboard sức khỏe thiết bị",
    "what": "Per-device view of last seen, online/silent, firmware, SIM and data status, power, storage, GNSS and signal; share of healthy devices.",
+   "what_vi": "Màn hình theo từng thiết bị: lần cuối online, online/im lặng, firmware, SIM và data, nguồn điện, bộ nhớ, GNSS và sóng; tỷ lệ thiết bị khỏe.",
    "users": [
     "OPERATIONS"
    ],
@@ -505,6 +534,7 @@ window.G3_FEATURES = {
    "name": "Device silence alert",
    "name_vi": "Cảnh báo thiết bị mất tín hiệu",
    "what": "Alert operations when a truck has sent no data for longer than a set time, once per silence.",
+   "what_vi": "Cảnh báo vận hành khi xe không gửi dữ liệu quá một khoảng thời gian định trước, mỗi lần mất tín hiệu chỉ báo một lần.",
    "users": [
     "SYSTEM",
     "OPERATIONS"
@@ -519,6 +549,7 @@ window.G3_FEATURES = {
    "name": "Tamper and power-loss detection",
    "name_vi": "Phát hiện tháo thiết bị & mất nguồn",
    "what": "Tell apart a sudden power cut (possible removal), a lost signal and a truck that is simply switched off, and alert on suspected tampering.",
+   "what_vi": "Phân biệt mất nguồn đột ngột (nghi bị tháo), mất sóng và xe chỉ đang tắt máy, và cảnh báo khi nghi thiết bị bị can thiệp.",
    "users": [
     "SYSTEM",
     "OPERATIONS"
@@ -533,6 +564,7 @@ window.G3_FEATURES = {
    "name": "Remote device configuration",
    "name_vi": "Cấu hình thiết bị từ xa",
    "what": "Set the send interval for an organization's trucks and push it to their devices, see which devices applied it, and roll back.",
+   "what_vi": "Đặt chu kỳ gửi cho các xe của một tổ chức và đẩy xuống thiết bị, xem thiết bị nào đã áp dụng và cho phép khôi phục.",
    "users": [
     "OPERATIONS"
    ],
@@ -546,6 +578,7 @@ window.G3_FEATURES = {
    "name": "Device identity certificates",
    "name_vi": "Chứng chỉ định danh thiết bị",
    "what": "Give each device a unique certificate or token at provisioning, check it on every connection, and revoke it when needed.",
+   "what_vi": "Cấp cho mỗi thiết bị một chứng chỉ hoặc token riêng khi kích hoạt, kiểm tra ở mỗi lần kết nối và thu hồi khi cần.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -560,6 +593,7 @@ window.G3_FEATURES = {
    "name": "Live vehicle status",
    "name_vi": "Trạng thái xe realtime",
    "what": "Show a truck's latest battery level, position, speed and whether it is online right now.",
+   "what_vi": "Hiển thị mức pin, vị trí, tốc độ mới nhất của xe và xe có đang online không.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -576,6 +610,7 @@ window.G3_FEATURES = {
    "name": "Tiered battery alerts",
    "name_vi": "Cảnh báo pin phân cấp",
    "what": "Alert the driver at 30% (early), 20% (main) and 10% (critical) battery, with the distance to the nearest available station and a navigation button; fleet managers also get the 20% and 10% alerts.",
+   "what_vi": "Cảnh báo tài xế khi pin còn 30% (sớm), 20% (chính) và 10% (nguy cấp), kèm khoảng cách tới trạm trống gần nhất và nút chỉ đường; quản lý đội xe cũng nhận cảnh báo 20% và 10%.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -591,6 +626,7 @@ window.G3_FEATURES = {
    "name": "Battery safety alerts",
    "name_vi": "Cảnh báo an toàn pin",
    "what": "Real-time alerts for high battery temperature, sudden voltage drop, cell/module faults, cell imbalance, insulation and cooling problems, with a data snapshot.",
+   "what_vi": "Cảnh báo tức thời khi nhiệt độ pin cao, sụt áp đột ngột, lỗi cell/module, mất cân bằng cell, lỗi cách điện và làm mát, kèm ảnh chụp dữ liệu.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -607,6 +643,7 @@ window.G3_FEATURES = {
    "name": "Powertrain and component fault alerts",
    "name_vi": "Cảnh báo lỗi hệ truyền động & thiết bị ngoài pin",
    "what": "Alert on motor, auxiliary battery, controller board, brake, tyre (TPMS), light, door and air-conditioning faults, with severity and whether the truck can keep driving; a fleet board lists trucks that need a workshop.",
+   "what_vi": "Cảnh báo lỗi motor, ắc quy phụ, bo mạch điều khiển, phanh, lốp (TPMS), đèn, cửa và điều hòa, kèm mức nghiêm trọng và xe có chạy tiếp được không; bảng tổng hợp cho đội xe liệt kê xe cần vào xưởng.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -623,6 +660,7 @@ window.G3_FEATURES = {
    "name": "Battery health and cycles",
    "name_vi": "Sức khỏe pin & số chu kỳ",
    "what": "Track pack state of health (SOH), charge cycles and capacity fade over time, and alert when SOH drops below a threshold.",
+   "what_vi": "Theo dõi sức khỏe pack (SOH), số chu kỳ sạc–xả và mức suy giảm dung lượng theo thời gian, cảnh báo khi SOH xuống dưới ngưỡng.",
    "users": [
     "FLEET_MANAGER",
     "WARRANTY",
@@ -639,6 +677,7 @@ window.G3_FEATURES = {
    "name": "Cell-level battery diagnostics",
    "name_vi": "Chẩn đoán pin cấp cell",
    "what": "Show SOH and voltage per cell, weak cells and imbalance, and recommend replacing single cells instead of the whole pack, with a cost estimate.",
+   "what_vi": "Hiển thị SOH và điện áp từng cell, cell yếu và mức mất cân bằng, đề xuất thay cell đơn lẻ thay vì thay cả pack, kèm ước tính chi phí.",
    "users": [
     "FLEET_MANAGER",
     "MAINTENANCE",
@@ -654,6 +693,7 @@ window.G3_FEATURES = {
    "name": "Vehicle operating state",
    "name_vi": "Trạng thái vận hành xe",
    "what": "Know whether each truck is off, driving, parked or charging, plus gear, brake and accelerator position.",
+   "what_vi": "Biết mỗi xe đang tắt máy, đang lái, đang đỗ hay đang sạc, cùng cấp số, phanh và vị trí chân ga.",
    "users": [
     "FLEET_MANAGER",
     "DISPATCHER",
@@ -669,6 +709,7 @@ window.G3_FEATURES = {
    "name": "Location history and route replay",
    "name_vi": "Lịch sử vị trí & xem lại hành trình",
    "what": "Replay where a truck went over a chosen period on a map; history kept at least 6 months.",
+   "what_vi": "Xem lại xe đã đi những đâu trong một khoảng thời gian trên bản đồ; lưu lịch sử tối thiểu 6 tháng.",
    "users": [
     "FLEET_MANAGER",
     "DISPATCHER",
@@ -684,6 +725,7 @@ window.G3_FEATURES = {
    "name": "Trips",
    "name_vi": "Chuyến đi",
    "what": "Trips planned by a fleet manager (A to B, planned times, driver, truck) and executed by the driver with Start and Finish in the app, with distance, energy and duration per trip; each trip gets an ID for later shipment linking.",
+   "what_vi": "Chuyến do quản lý đội xe lập kế hoạch (từ A tới B, giờ dự kiến, tài xế, xe) và được tài xế thực hiện bằng nút Bắt đầu và Kết thúc trên ứng dụng, kèm quãng đường, năng lượng và thời gian từng chuyến; mỗi chuyến có mã để sau này gắn với đơn hàng.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -699,6 +741,7 @@ window.G3_FEATURES = {
    "name": "Stops and parking log",
    "name_vi": "Nhật ký dừng & đỗ xe",
    "what": "Record every stop and parking period with its place and duration.",
+   "what_vi": "Ghi lại mỗi lần dừng, đỗ xe kèm vị trí và thời lượng.",
    "users": [
     "FLEET_MANAGER",
     "SYSTEM"
@@ -713,6 +756,7 @@ window.G3_FEATURES = {
    "name": "Load status and empty-trip detection",
    "name_vi": "Trạng thái tải & phát hiện chạy rỗng",
    "what": "Know whether a truck runs loaded or empty, from its load sensor or the driver's declaration, infer it from consumption, and flag mismatches.",
+   "what_vi": "Biết xe chạy có hàng hay chạy rỗng, từ cảm biến tải trọng hoặc khai báo của tài xế, suy ra từ mức tiêu thụ và gắn cờ khi không khớp.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -728,6 +772,7 @@ window.G3_FEATURES = {
    "name": "Vehicle operating report",
    "name_vi": "Báo cáo hiệu quả vận hành xe",
    "what": "Km per day, kWh used, kWh/km and cost/km per truck, by day, week or month, with CSV export and a configurable electricity price.",
+   "what_vi": "Km/ngày, kWh tiêu thụ, kWh/km và chi phí/km theo xe, theo ngày, tuần hoặc tháng, xuất CSV, giá điện cấu hình được.",
    "users": [
     "FLEET_MANAGER",
     "DRIVER",
@@ -743,6 +788,7 @@ window.G3_FEATURES = {
    "name": "Abnormal consumption alert",
    "name_vi": "Cảnh báo tiêu thụ điện bất thường",
    "what": "Alert when a truck uses clearly more energy than its normal level for the vehicle or route, showing the likely factors (load, terrain, weather, auxiliary loads, driving).",
+   "what_vi": "Cảnh báo khi xe tiêu thụ năng lượng cao rõ rệt so với mức bình thường theo xe hoặc tuyến, hiển thị các yếu tố liên quan (tải, địa hình, thời tiết, phụ tải, cách lái).",
    "users": [
     "FLEET_MANAGER",
     "SYSTEM"
@@ -757,6 +803,7 @@ window.G3_FEATURES = {
    "name": "Auxiliary load usage",
    "name_vi": "Thời gian dùng phụ tải điện",
    "what": "Track how long the air-conditioning, lights, heaters and other auxiliary loads run.",
+   "what_vi": "Theo dõi thời lượng bật điều hòa, đèn, sấy và các phụ tải khác.",
    "users": [
     "FLEET_MANAGER",
     "SYSTEM"
@@ -771,6 +818,7 @@ window.G3_FEATURES = {
    "name": "Alert threshold settings",
    "name_vi": "Cấu hình ngưỡng cảnh báo",
    "what": "Configure alert thresholds: battery levels, pack and cell temperature and SOH, abnormal consumption per vehicle or route, and the severity table.",
+   "what_vi": "Cấu hình ngưỡng cảnh báo: mức pin, nhiệt độ và SOH của pack và cell, tiêu thụ bất thường theo xe hoặc tuyến, và bảng phân loại mức độ.",
    "users": [
     "OPERATIONS"
    ],
@@ -784,6 +832,7 @@ window.G3_FEATURES = {
    "name": "Consumption root-cause analysis (AI)",
    "name_vi": "Phân tích nguyên nhân tiêu thụ bất thường (AI)",
    "what": "Explain the causes of unusually high consumption from real driving and equipment usage with a trained model.",
+   "what_vi": "Giải thích nguyên nhân tiêu thụ cao bất thường từ thực tế di chuyển và thời gian dùng thiết bị điện bằng mô hình được huấn luyện.",
    "users": [
     "FLEET_MANAGER"
    ],
@@ -797,6 +846,7 @@ window.G3_FEATURES = {
    "name": "Forecast quality report",
    "name_vi": "Báo cáo chất lượng mô hình dự báo",
    "what": "Measure forecast errors: range (p50/p90), station load and waiting time, weekly.",
+   "what_vi": "Đo sai số dự báo: quãng đường (p50/p90), tải trạm và thời gian chờ, theo tuần.",
    "users": [
     "OPERATIONS"
    ],
@@ -810,6 +860,7 @@ window.G3_FEATURES = {
    "name": "Driver profiles",
    "name_vi": "Hồ sơ tài xế",
    "what": "Keep each driver's facts for one organization: licence number, class and expiry, and status.",
+   "what_vi": "Lưu thông tin của tài xế trong một tổ chức: số bằng lái, hạng, ngày hết hạn và trạng thái.",
    "users": [
     "FLEET_MANAGER",
     "ORG_ADMIN"
@@ -824,6 +875,7 @@ window.G3_FEATURES = {
    "name": "Driver check-in",
    "name_vi": "Nhận xe",
    "what": "The driver checks in to the truck they are about to drive by scanning its QR code or picking it in the app; the system always knows who is at the wheel and keeps the full history.",
+   "what_vi": "Tài xế nhận chiếc xe sắp lái bằng cách quét mã QR trên xe hoặc chọn xe trên ứng dụng; hệ thống luôn biết ai đang cầm lái và lưu toàn bộ lịch sử.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -840,6 +892,7 @@ window.G3_FEATURES = {
    "name": "Driver work schedule",
    "name_vi": "Lịch làm việc của tài xế",
    "what": "Plan drivers' working days and shifts.",
+   "what_vi": "Lập lịch ngày làm việc và ca của tài xế.",
    "users": [
     "DISPATCHER",
     "FLEET_MANAGER",
@@ -855,6 +908,7 @@ window.G3_FEATURES = {
    "name": "Driving and rest compliance report",
    "name_vi": "Báo cáo tuân thủ thời gian lái & nghỉ",
    "what": "Per driver: shifts over 4 hours continuous, 10 hours a day and 48 hours a week.",
+   "what_vi": "Theo từng tài xế: số ca vượt 4 giờ liên tục, 10 giờ/ngày và 48 giờ/tuần.",
    "users": [
     "FLEET_MANAGER"
    ],
@@ -868,6 +922,7 @@ window.G3_FEATURES = {
    "name": "Driver charging-efficiency report",
    "name_vi": "Báo cáo hiệu quả sạc theo tài xế",
    "what": "Per driver: share of energy charged in off-peak or renewable hours, electricity cost per km, savings vs peak-hour charging and fleet ranking; a manager view and a driver's own view.",
+   "what_vi": "Theo tài xế: tỷ lệ kWh sạc giờ thấp điểm hoặc giờ điện tái tạo, chi phí điện/km, tiền tiết kiệm so với sạc giờ cao điểm và xếp hạng trong đội; có khung nhìn của quản lý và của chính tài xế.",
    "users": [
     "FLEET_MANAGER",
     "DRIVER"
@@ -882,6 +937,7 @@ window.G3_FEATURES = {
    "name": "Fleets and fleet hierarchy",
    "name_vi": "Đội xe & cấp bậc đội xe",
    "what": "Group an organization's trucks into named fleets that can sit under other fleets (region, branch, depot).",
+   "what_vi": "Nhóm xe của một tổ chức thành các đội xe có tên, đội này có thể nằm dưới đội khác (vùng, chi nhánh, bãi).",
    "users": [
     "FLEET_MANAGER",
     "ORG_ADMIN"
@@ -896,6 +952,7 @@ window.G3_FEATURES = {
    "name": "Fleet vehicle membership",
    "name_vi": "Thành viên xe của đội",
    "what": "Add trucks to a fleet and remove them, keeping the history; a truck is in at most one fleet at a time.",
+   "what_vi": "Thêm xe vào đội và rút xe khỏi đội, lưu lịch sử; mỗi xe chỉ thuộc tối đa một đội tại một thời điểm.",
    "users": [
     "FLEET_MANAGER"
    ],
@@ -909,6 +966,7 @@ window.G3_FEATURES = {
    "name": "Fleet manager scope",
    "name_vi": "Phạm vi quản lý đội xe",
    "what": "Limit a fleet manager or dispatcher to some fleets (and everything below them); with no limit they see the whole organization.",
+   "what_vi": "Giới hạn quản lý đội xe hoặc điều vận chỉ trong một số đội (và mọi đội cấp dưới); không giới hạn thì xem toàn bộ tổ chức.",
    "users": [
     "ORG_ADMIN"
    ],
@@ -922,6 +980,7 @@ window.G3_FEATURES = {
    "name": "Fleet list and live map",
    "name_vi": "Danh sách & bản đồ toàn đội xe",
    "what": "Every truck of the fleet on a list and a live map with its operating state (driving, parked, charging, off), position, offline trucks and overnight alerts; filter and search.",
+   "what_vi": "Toàn bộ xe của đội trên danh sách và bản đồ realtime, kèm trạng thái vận hành (đang lái, đỗ, sạc, tắt máy), vị trí, xe offline và cảnh báo qua đêm; lọc và tìm kiếm.",
    "users": [
     "FLEET_MANAGER",
     "DISPATCHER"
@@ -936,6 +995,7 @@ window.G3_FEATURES = {
    "name": "Geofences and zone alerts",
    "name_vi": "Vùng địa lý & cảnh báo ra/vào vùng",
    "what": "Draw areas on the map and get an alert when a truck enters or leaves one.",
+   "what_vi": "Vẽ vùng trên bản đồ và nhận cảnh báo khi xe đi vào hoặc ra khỏi vùng.",
    "users": [
     "FLEET_MANAGER",
     "DISPATCHER",
@@ -951,6 +1011,7 @@ window.G3_FEATURES = {
    "name": "Fleet KPI dashboard",
    "name_vi": "Dashboard KPI đội xe",
    "what": "Km, kWh, kWh/km, cost/km, SOH, utilization and alerts, for the fleet and per truck, over a chosen period, with export.",
+   "what_vi": "Km, kWh, kWh/km, chi phí/km, SOH, tỷ lệ sử dụng và cảnh báo, cho cả đội và từng xe, theo kỳ chọn, có xuất file.",
    "users": [
     "FLEET_MANAGER",
     "ORG_ADMIN"
@@ -965,6 +1026,7 @@ window.G3_FEATURES = {
    "name": "Fleet operating cost report",
    "name_vi": "Báo cáo chi phí vận hành đội xe",
    "what": "Electricity cost and cost per km by truck, driver and route.",
+   "what_vi": "Chi phí điện và chi phí/km theo xe, tài xế và tuyến.",
    "users": [
     "FLEET_MANAGER",
     "ACCOUNTANT"
@@ -979,6 +1041,7 @@ window.G3_FEATURES = {
    "name": "Charging and warranty report",
    "name_vi": "Báo cáo sạc & bảo hành theo đội/xe",
    "what": "Charging sessions, charging-policy compliance and warranty status per fleet and truck, filterable, with CSV/PDF export.",
+   "what_vi": "Phiên sạc, mức tuân thủ chính sách sạc và trạng thái bảo hành theo đội và xe, lọc được, xuất CSV/PDF.",
    "users": [
     "FLEET_MANAGER",
     "WARRANTY"
@@ -993,6 +1056,7 @@ window.G3_FEATURES = {
    "name": "Station directory",
    "name_vi": "Danh mục trạm sạc",
    "what": "Keep every station: location, region, power, number of chargers, connector standard, opening hours, maintenance and actual operating condition, managing unit and incident contact.",
+   "what_vi": "Lưu từng trạm sạc: vị trí, khu vực, công suất, số trụ, chuẩn đầu sạc, giờ hoạt động, tình trạng bảo trì và hoạt động thực tế, đơn vị quản lý và đầu mối xử lý sự cố.",
    "users": [
     "OPERATIONS"
    ],
@@ -1006,6 +1070,7 @@ window.G3_FEATURES = {
    "name": "Charger topology",
    "name_vi": "Cấu trúc trụ & súng sạc",
    "what": "Describe each station's chargers and guns: identities used by the charger, power and connector standard per gun.",
+   "what_vi": "Mô tả các trụ và súng sạc của từng trạm: mã định danh mà trụ dùng, công suất và chuẩn đầu sạc của từng súng.",
    "users": [
     "OPERATIONS"
    ],
@@ -1019,6 +1084,7 @@ window.G3_FEATURES = {
    "name": "Live connector status",
    "name_vi": "Trạng thái súng sạc realtime",
    "what": "Available, charging or faulted status and available power of every gun across the network, updated within 30 seconds.",
+   "what_vi": "Trạng thái trống, đang sạc hay lỗi và công suất khả dụng của mọi súng sạc trên toàn mạng, cập nhật trong vòng 30 giây.",
    "users": [
     "OPERATIONS",
     "DRIVER",
@@ -1034,6 +1100,7 @@ window.G3_FEATURES = {
    "name": "Charger fault alerts",
    "name_vi": "Cảnh báo trụ sạc lỗi",
    "what": "Alert on faulted or disconnected chargers and abnormal power, naming the station's managing unit and incident contact.",
+   "what_vi": "Cảnh báo trụ lỗi, mất kết nối hoặc công suất bất thường, kèm đơn vị quản lý và đầu mối xử lý sự cố của trạm.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -1048,6 +1115,7 @@ window.G3_FEATURES = {
    "name": "Station map and search",
    "name_vi": "Bản đồ & tìm trạm sạc",
    "what": "Find nearby stations on a map, filtered by availability, power and connector standard.",
+   "what_vi": "Tìm trạm gần nhất trên bản đồ, lọc theo tình trạng trống, công suất và chuẩn đầu sạc.",
    "users": [
     "DRIVER",
     "DISPATCHER"
@@ -1062,6 +1130,7 @@ window.G3_FEATURES = {
    "name": "Station load forecast and balancing",
    "name_vi": "Dự báo tải trạm & phân tải",
    "what": "Forecast how many trucks will arrive at each station against its free guns, warn drivers heading to an overloaded station within 60 minutes and suggest at least one alternative in range.",
+   "what_vi": "Dự báo số xe sẽ đến mỗi trạm so với số súng trống, cảnh báo tài xế đang hướng tới trạm sắp quá tải trong 60 phút và đề xuất ít nhất một trạm thay thế trong tầm pin.",
    "users": [
     "DRIVER",
     "OPERATIONS",
@@ -1077,6 +1146,7 @@ window.G3_FEATURES = {
    "name": "Remote charger commands",
    "name_vi": "Điều khiển trụ sạc từ xa",
    "what": "Send commands to chargers: start and stop a charge, unlock a connector, reset, change configuration, fetch diagnostics.",
+   "what_vi": "Gửi lệnh tới trụ sạc: bắt đầu và dừng sạc, mở khóa đầu sạc, khởi động lại, đổi cấu hình, lấy dữ liệu chẩn đoán.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -1091,6 +1161,7 @@ window.G3_FEATURES = {
    "name": "Secure charger connections",
    "name_vi": "Kết nối trụ sạc an toàn",
    "what": "Encrypt charger connections and authenticate each charger before real deployment.",
+   "what_vi": "Mã hóa kết nối trụ sạc và xác thực từng trụ trước khi triển khai thật.",
    "users": [
     "OPERATIONS"
    ],
@@ -1104,6 +1175,7 @@ window.G3_FEATURES = {
    "name": "Private stations",
    "name_vi": "Trạm sạc riêng",
    "what": "Stations that are not public (for example at a mine or a customer's depot) are visible and usable only by the organizations allowed, with their own pricing.",
+   "what_vi": "Trạm không công cộng (ví dụ tại mỏ hoặc bãi của khách hàng) chỉ hiển thị và dùng được cho các tổ chức được phép, với cách tính giá riêng.",
    "users": [
     "OPERATIONS",
     "SALES"
@@ -1118,6 +1190,7 @@ window.G3_FEATURES = {
    "name": "Green generation and storage data",
    "name_vi": "Dữ liệu nguồn phát xanh & BESS",
    "what": "Record each station's power sources (grid, solar, wind, biomass, battery storage), their hourly output, storage charge level and forecasts.",
+   "what_vi": "Ghi nhận các nguồn điện của từng trạm (lưới, mặt trời, gió, sinh khối, pin lưu trữ BESS), sản lượng theo giờ, mức pin BESS và dự báo.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -1132,6 +1205,7 @@ window.G3_FEATURES = {
    "name": "Station energy output",
    "name_vi": "Sản lượng điện theo trạm",
    "what": "kWh sold per station and per time slot, for time-of-use pricing.",
+   "what_vi": "kWh bán ra theo trạm và theo khung giờ, phục vụ tối ưu giá theo giờ.",
    "users": [
     "OPERATIONS",
     "HEAD_ADMIN"
@@ -1146,6 +1220,7 @@ window.G3_FEATURES = {
    "name": "Charger message log viewer",
    "name_vi": "Xem nhật ký bản tin trụ sạc",
    "what": "Let operations read a charger's raw messages for troubleshooting, with card IDs masked, and delete old messages after a retention period.",
+   "what_vi": "Cho vận hành đọc bản tin gốc của trụ để xử lý sự cố, che mã thẻ, và xóa bản tin cũ sau thời hạn lưu.",
    "users": [
     "OPERATIONS"
    ],
@@ -1159,6 +1234,7 @@ window.G3_FEATURES = {
    "name": "Charging session record",
    "name_vi": "Bản ghi phiên sạc",
    "what": "Keep an unchangeable record of every session: time, station, gun, power, kWh, start and end battery %, duration and cost, plus all meter readings.",
+   "what_vi": "Lưu bản ghi không sửa đổi của mọi phiên sạc: thời gian, trạm, súng, công suất, kWh, % pin đầu–cuối, thời lượng và chi phí, cùng mọi chỉ số đo.",
    "users": [
     "SYSTEM",
     "OPERATIONS",
@@ -1174,6 +1250,7 @@ window.G3_FEATURES = {
    "name": "Charging history",
    "name_vi": "Lịch sử phiên sạc",
    "what": "List past sessions for a driver, a truck or a whole organization, with filters.",
+   "what_vi": "Danh sách các phiên sạc đã qua của tài xế, của xe hoặc của cả tổ chức, có bộ lọc.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1189,6 +1266,7 @@ window.G3_FEATURES = {
    "name": "Energy per customer and session",
    "name_vi": "Điện năng theo khách hàng & phiên",
    "what": "kWh consumed per transport company and per session, for invoicing and reconciliation.",
+   "what_vi": "kWh tiêu thụ theo từng doanh nghiệp vận tải và theo phiên, phục vụ xuất hóa đơn và đối soát.",
    "users": [
     "ACCOUNTANT",
     "OPERATIONS"
@@ -1203,6 +1281,7 @@ window.G3_FEATURES = {
    "name": "Three-way reconciliation",
    "name_vi": "Đối soát 3 chiều",
    "what": "Match kWh between the charger, the truck's own data and the payment; alert when they differ by 1% or more.",
+   "what_vi": "Đối chiếu kWh giữa trụ sạc, dữ liệu của xe và thanh toán; cảnh báo khi lệch từ 1% trở lên.",
    "users": [
     "ACCOUNTANT",
     "OPERATIONS",
@@ -1218,6 +1297,7 @@ window.G3_FEATURES = {
    "name": "Charging cards and VIN Autocharge",
    "name_vi": "Thẻ sạc & tự động nhận xe (VIN Autocharge)",
    "what": "Start charging with an RFID card or automatically by the truck's VIN, for prepaid enterprise customers.",
+   "what_vi": "Bắt đầu sạc bằng thẻ RFID hoặc tự động nhận diện xe qua VIN, cho khách hàng doanh nghiệp trả trước.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER"
@@ -1232,6 +1312,7 @@ window.G3_FEATURES = {
    "name": "Charging policy configuration",
    "name_vi": "Cấu hình chính sách sạc",
    "what": "The warranty team sets charging rules: allowed time windows, battery min–max (e.g. 20–90%), duration, frequency and power, per truck, fleet or model; every version is kept.",
+   "what_vi": "Bộ phận bảo hành đặt quy tắc sạc: khung giờ cho phép, % pin tối thiểu–tối đa (vd 20–90%), thời lượng, tần suất và công suất, theo xe, đội xe hoặc dòng xe; lưu mọi phiên bản.",
    "users": [
     "WARRANTY"
    ],
@@ -1245,6 +1326,7 @@ window.G3_FEATURES = {
    "name": "Warranty-risk alert",
    "name_vi": "Cảnh báo nguy cơ mất bảo hành",
    "what": "Tell the driver and the truck owner in real time when charging behaviour puts the warranty at risk, naming the behaviour and how to fix it, plus a periodic summary.",
+   "what_vi": "Báo tài xế và chủ xe ngay khi hành vi sạc gây nguy cơ mất bảo hành, nêu rõ hành vi và cách khắc phục, kèm bản tổng hợp định kỳ.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1260,6 +1342,7 @@ window.G3_FEATURES = {
    "name": "Charging compliance score",
    "name_vi": "Điểm tuân thủ sạc",
    "what": "A compliance score, violation count and warranty risk level per truck, shown to the driver and the fleet.",
+   "what_vi": "Điểm tuân thủ, số vi phạm và mức nguy cơ bảo hành theo từng xe, hiển thị cho tài xế và đội xe.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1275,6 +1358,7 @@ window.G3_FEATURES = {
    "name": "Warranty status dashboard",
    "name_vi": "Bảng trạng thái bảo hành",
    "what": "For the warranty team and fleet managers: compliance, violations and risk per truck, filterable by risk, with an export for the warranty team.",
+   "what_vi": "Cho bộ phận bảo hành và quản lý đội xe: tuân thủ, vi phạm và mức nguy cơ theo xe, lọc theo mức nguy cơ, xuất báo cáo cho bộ phận bảo hành.",
    "users": [
     "WARRANTY",
     "FLEET_MANAGER"
@@ -1289,6 +1373,7 @@ window.G3_FEATURES = {
    "name": "Violation case files",
    "name_vi": "Hồ sơ vi phạm",
    "what": "A case file per violation (type, session snapshot, matching telematics data), sent to the warranty team on a schedule or on demand, with its handling history.",
+   "what_vi": "Hồ sơ cho từng vi phạm (loại, ảnh chụp phiên sạc, dữ liệu telematics đối chứng), gửi bộ phận bảo hành định kỳ hoặc khi cần, kèm lịch sử xử lý.",
    "users": [
     "WARRANTY",
     "FLEET_MANAGER",
@@ -1304,6 +1389,7 @@ window.G3_FEATURES = {
    "name": "Feature catalog and list prices",
    "name_vi": "Danh mục tính năng & giá niêm yết",
    "what": "Keep the sellable features with their list price and pricing unit (per truck per month, per organization, per user, per message).",
+   "what_vi": "Quản lý các tính năng bán được kèm giá niêm yết và đơn vị tính (theo xe mỗi tháng, theo tổ chức, theo người dùng, theo tin nhắn).",
    "users": [
     "SALES",
     "HEAD_ADMIN"
@@ -1318,6 +1404,7 @@ window.G3_FEATURES = {
    "name": "Service plans",
    "name_vi": "Gói dịch vụ",
    "what": "Bundle features into plans: public plans for most customers, private plans for one customer, and a free default plan for individuals.",
+   "what_vi": "Đóng gói tính năng thành các gói: gói công khai cho đa số khách hàng, gói riêng cho một khách hàng, và gói mặc định miễn phí cho khách lẻ.",
    "users": [
     "SALES",
     "HEAD_ADMIN"
@@ -1332,6 +1419,7 @@ window.G3_FEATURES = {
    "name": "Customer subscriptions",
    "name_vi": "Thuê bao của khách hàng",
    "what": "Give an organization a plan with its agreed price, billing cycle and period; remind before expiry, invoice each cycle and lock features when overdue.",
+   "what_vi": "Gán gói cho tổ chức kèm giá thỏa thuận, chu kỳ và thời hạn; nhắc trước khi hết hạn, xuất hóa đơn mỗi chu kỳ và khóa tính năng khi quá hạn.",
    "users": [
     "SALES",
     "ACCOUNTANT",
@@ -1347,6 +1435,7 @@ window.G3_FEATURES = {
    "name": "Add-ons",
    "name_vi": "Tiện ích mua thêm",
    "what": "Sell single features on top of a plan, such as the in-cab ADAS package or an SMS quota, each with its agreed price.",
+   "what_vi": "Bán thêm từng tính năng ngoài gói, như gói ADAS trong cabin hoặc hạn mức SMS, mỗi tiện ích có giá thỏa thuận riêng.",
    "users": [
     "SALES",
     "ORG_ADMIN"
@@ -1361,6 +1450,7 @@ window.G3_FEATURES = {
    "name": "Prepaid wallet",
    "name_vi": "Ví trả trước",
    "what": "A prepaid wallet for a driver or a fleet: top up, withdraw, pay for charging, with the transaction history.",
+   "what_vi": "Ví trả trước cho tài xế hoặc đội xe: nạp, rút, trả tiền sạc, kèm lịch sử giao dịch.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1376,6 +1466,7 @@ window.G3_FEATURES = {
    "name": "Fleet centralized billing",
    "name_vi": "Thanh toán tập trung cho đội xe",
    "what": "The company pays for its drivers' charging and receives one monthly invoice with kWh and cost broken down per truck.",
+   "what_vi": "Doanh nghiệp trả tiền sạc cho tài xế của mình và nhận một hóa đơn hằng tháng với kWh và chi phí chi tiết theo từng xe.",
    "users": [
     "ACCOUNTANT",
     "FLEET_MANAGER"
@@ -1390,6 +1481,7 @@ window.G3_FEATURES = {
    "name": "Dynamic tariffs",
    "name_vi": "Biểu giá điện động",
    "what": "Prices by time of day and generation source (grid, solar, wind, biomass, storage), versioned with effective dates; the app shows the current price and the cheapest window of the day per station.",
+   "what_vi": "Giá theo khung giờ và nguồn phát (lưới, mặt trời, gió, sinh khối, BESS), có phiên bản và ngày hiệu lực; app hiển thị giá hiện tại và khung giờ rẻ nhất trong ngày của từng trạm.",
    "users": [
     "OPERATIONS",
     "DRIVER"
@@ -1404,6 +1496,7 @@ window.G3_FEATURES = {
    "name": "E-invoicing",
    "name_vi": "Hóa đơn điện tử",
    "what": "Issue legal Vietnamese e-invoices through a licensed provider: per retail session and monthly per company; track invoice status and lookup code.",
+   "what_vi": "Phát hành hóa đơn điện tử hợp lệ qua nhà cung cấp được cấp phép: theo phiên cho khách lẻ và theo tháng cho doanh nghiệp; theo dõi trạng thái và mã tra cứu hóa đơn.",
    "users": [
     "ACCOUNTANT",
     "DRIVER",
@@ -1419,6 +1512,7 @@ window.G3_FEATURES = {
    "name": "Promotion campaigns",
    "name_vi": "Chiến dịch ưu đãi",
    "what": "Create promotions (discounts, offers, maintenance deals) and send them to customers who agreed to receive marketing.",
+   "what_vi": "Tạo chương trình ưu đãi (giảm giá, khuyến mãi, ưu đãi bảo dưỡng) và gửi tới khách hàng đã đồng ý nhận tin tiếp thị.",
    "users": [
     "SALES",
     "DRIVER"
@@ -1433,6 +1527,7 @@ window.G3_FEATURES = {
    "name": "Platform revenue report",
    "name_vi": "Báo cáo doanh thu nền tảng",
    "what": "Revenue from charging through the app and from subscriptions per truck per month, split by plan, for G3 Energy and G3 Network.",
+   "what_vi": "Doanh thu điện qua app và doanh thu thuê bao theo xe mỗi tháng, tách theo gói, cho G3 Energy và G3 Network.",
    "users": [
     "HEAD_ADMIN",
     "ACCOUNTANT"
@@ -1447,6 +1542,7 @@ window.G3_FEATURES = {
    "name": "Notification center",
    "name_vi": "Trung tâm thông báo",
    "what": "Every alert and message appears in the app and the portal, with unread count and mark-as-read; the portal checks for new ones about every 10 seconds.",
+   "what_vi": "Mọi cảnh báo và tin nhắn hiển thị trên app và portal, có số chưa đọc và đánh dấu đã đọc; portal kiểm tra tin mới khoảng mỗi 10 giây.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1464,6 +1560,7 @@ window.G3_FEATURES = {
    "name": "Push notifications",
    "name_vi": "Thông báo đẩy",
    "what": "Send alerts as push notifications to the person's phones and browsers.",
+   "what_vi": "Gửi cảnh báo dưới dạng thông báo đẩy tới điện thoại và trình duyệt của người nhận.",
    "users": [
     "SYSTEM",
     "DRIVER",
@@ -1479,6 +1576,7 @@ window.G3_FEATURES = {
    "name": "Organization channel settings",
    "name_vi": "Cấu hình kênh thông báo của tổ chức",
    "what": "Each organization switches push, SMS and e-mail on or off per service; in-app and portal delivery is always on.",
+   "what_vi": "Mỗi tổ chức bật hoặc tắt push, SMS và e-mail theo từng dịch vụ; hiển thị trên app và portal luôn bật.",
    "users": [
     "ORG_ADMIN"
    ],
@@ -1492,6 +1590,7 @@ window.G3_FEATURES = {
    "name": "Delivery status tracking",
    "name_vi": "Theo dõi trạng thái gửi",
    "what": "Record whether each push, SMS, OTP and e-mail was delivered, from the providers' reports.",
+   "what_vi": "Ghi nhận mỗi push, SMS, OTP và e-mail đã tới nơi hay chưa, theo báo cáo của nhà cung cấp.",
    "users": [
     "CUSTOMER_CARE",
     "SYSTEM"
@@ -1506,6 +1605,7 @@ window.G3_FEATURES = {
    "name": "Alert escalation",
    "name_vi": "Leo thang cảnh báo",
    "what": "Repeat or escalate a critical alert to the next person when nobody reacts in time.",
+   "what_vi": "Nhắc lại hoặc chuyển cảnh báo nguy cấp lên người tiếp theo khi không ai phản hồi kịp.",
    "users": [
     "SYSTEM",
     "FLEET_MANAGER",
@@ -1521,6 +1621,7 @@ window.G3_FEATURES = {
    "name": "Support tickets",
    "name_vi": "Yêu cầu hỗ trợ",
    "what": "Customers raise a request in the app with the truck's VIN, position and error code attached automatically; Zalo and hotline contacts are logged as tickets too; each ticket has a category, status and SLA timer.",
+   "what_vi": "Khách hàng gửi yêu cầu trên app, VIN, vị trí và mã lỗi của xe được tự động đính kèm; liên hệ qua Zalo và hotline cũng được ghi thành ticket; mỗi ticket có phân loại, trạng thái và đồng hồ SLA.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1536,6 +1637,7 @@ window.G3_FEATURES = {
    "name": "SOS",
    "name_vi": "SOS khẩn cấp",
    "what": "An always-visible SOS button sends the position and active error code to customer care, which calls back within 5 minutes; a hotline SOS is recorded the same way.",
+   "what_vi": "Nút SOS luôn hiển thị gửi vị trí và mã lỗi hiện tại tới CSKH, CSKH gọi lại trong 5 phút; SOS qua hotline cũng được ghi nhận như vậy.",
    "users": [
     "DRIVER",
     "CUSTOMER_CARE"
@@ -1550,6 +1652,7 @@ window.G3_FEATURES = {
    "name": "Support queue and SLA monitor",
    "name_vi": "Hàng đợi CSKH & giám sát SLA",
    "what": "The support console lists open tickets with their context, category and status, and warns before and when an SLA is breached.",
+   "what_vi": "Màn hình CSKH liệt kê ticket đang mở kèm ngữ cảnh, phân loại và trạng thái, cảnh báo trước và khi vượt SLA.",
    "users": [
     "CUSTOMER_CARE"
    ],
@@ -1563,6 +1666,7 @@ window.G3_FEATURES = {
    "name": "Repair and rescue partner directory",
    "name_vi": "Danh bạ đối tác sửa chữa & cứu hộ",
    "what": "Keep the partner network: type, service area, capabilities, opening hours, committed SLA, rating and revenue share.",
+   "what_vi": "Quản lý mạng lưới đối tác: loại, khu vực phục vụ, năng lực, giờ trực, SLA cam kết, đánh giá và tỷ lệ chia sẻ doanh thu.",
    "users": [
     "CUSTOMER_CARE",
     "OPERATIONS"
@@ -1577,6 +1681,7 @@ window.G3_FEATURES = {
    "name": "Partner dispatch",
    "name_vi": "Điều phối đối tác",
    "what": "Send an incident (position, VIN, error code, photos, required capability) to the nearest available partner; the partner must accept within 15 minutes with an ETA.",
+   "what_vi": "Chuyển sự cố (vị trí, VIN, mã lỗi, ảnh, năng lực cần) tới đối tác gần nhất còn khả năng nhận; đối tác phải nhận trong 15 phút kèm thời gian dự kiến đến.",
    "users": [
     "CUSTOMER_CARE",
     "SYSTEM",
@@ -1592,6 +1697,7 @@ window.G3_FEATURES = {
    "name": "Maintenance reminders",
    "name_vi": "Nhắc bảo dưỡng",
    "what": "Remind drivers and fleet managers of maintenance by distance or date, checked against the maintenance already done.",
+   "what_vi": "Nhắc tài xế và quản lý đội xe bảo dưỡng theo km hoặc mốc thời gian, đối chiếu với lịch sử bảo dưỡng đã thực hiện.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1607,6 +1713,7 @@ window.G3_FEATURES = {
    "name": "Maintenance booking",
    "name_vi": "Đặt lịch bảo dưỡng",
    "what": "Book a slot at a network workshop, usually from a reminder, and cancel it.",
+   "what_vi": "Đặt lịch tại xưởng trong mạng lưới, thường từ lời nhắc bảo dưỡng, và hủy lịch.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER",
@@ -1622,6 +1729,7 @@ window.G3_FEATURES = {
    "name": "Repair and maintenance records",
    "name_vi": "Hồ sơ sửa chữa – bảo dưỡng – thay thế",
    "what": "Follow each case end to end: fault, record, diagnosis, decision whether the truck may keep driving, workshop, repair or replacement, test and handover; with the warranty file.",
+   "what_vi": "Theo dõi trọn vòng mỗi ca: phát sinh lỗi, ghi nhận, chẩn đoán, quyết định xe có chạy tiếp được không, vào xưởng, sửa chữa hoặc thay thế, chạy thử và bàn giao; kèm hồ sơ bảo hành.",
    "users": [
     "MAINTENANCE",
     "WARRANTY",
@@ -1638,6 +1746,7 @@ window.G3_FEATURES = {
    "name": "Periodic maintenance report",
    "name_vi": "Báo cáo bảo dưỡng định kỳ",
    "what": "Which trucks are due soon, due, overdue, or done.",
+   "what_vi": "Xe nào sắp đến hạn, đến hạn, quá hạn và đã bảo dưỡng.",
    "users": [
     "FLEET_MANAGER",
     "MAINTENANCE"
@@ -1652,6 +1761,7 @@ window.G3_FEATURES = {
    "name": "Maintenance and repair cost report",
    "name_vi": "Báo cáo chi phí đại tu – bảo dưỡng – sửa chữa",
    "what": "Overhaul, periodic maintenance and unplanned repair costs, separately, per truck and for the whole fleet (individual and contract customers).",
+   "what_vi": "Chi phí đại tu, bảo dưỡng định kỳ và sửa chữa phát sinh, tách riêng, theo từng xe và toàn đội (cả khách cá nhân và khách hợp đồng).",
    "users": [
     "FLEET_MANAGER",
     "ACCOUNTANT",
@@ -1667,6 +1777,7 @@ window.G3_FEATURES = {
    "name": "Asset cost and depreciation",
    "name_vi": "Nguyên giá & khấu hao tài sản",
    "what": "Record the purchase cost of trucks, batteries and major components, the depreciation method and period, residual value and component lifetime norms (km or hours).",
+   "what_vi": "Ghi nhận nguyên giá xe, pin và tổng thành, phương pháp và thời gian khấu hao, giá trị còn lại và định mức vòng đời vật tư (km hoặc giờ).",
    "users": [
     "ACCOUNTANT",
     "MAINTENANCE"
@@ -1681,6 +1792,7 @@ window.G3_FEATURES = {
    "name": "Asset lifecycle alerts",
    "name_vi": "Cảnh báo bất thường vòng đời tài sản",
    "what": "Alert when a component fails earlier than its lifetime norm, when repair costs exceed a share of the residual value, or when a truck nears the end of its depreciation.",
+   "what_vi": "Cảnh báo khi vật tư hỏng sớm hơn định mức, khi chi phí sửa chữa vượt ngưỡng so với giá trị còn lại, hoặc khi xe sắp hết khấu hao.",
    "users": [
     "MAINTENANCE",
     "ACCOUNTANT",
@@ -1696,6 +1808,7 @@ window.G3_FEATURES = {
    "name": "Parts inventory report",
    "name_vi": "Báo cáo nhập – xuất – tồn vật tư",
    "what": "Stock movements of parts and supplies per period, compared with the physical count.",
+   "what_vi": "Biến động kho vật tư, phụ tùng theo kỳ, đối chiếu với kiểm kê thực tế.",
    "users": [
     "MAINTENANCE",
     "ACCOUNTANT"
@@ -1710,6 +1823,7 @@ window.G3_FEATURES = {
    "name": "Workshop revenue report",
    "name_vi": "Báo cáo doanh thu xưởng",
    "what": "Total workshop service revenue per month and year and where it comes from.",
+   "what_vi": "Tổng doanh thu dịch vụ của xưởng theo tháng, năm và nguồn hình thành.",
    "users": [
     "ACCOUNTANT",
     "HEAD_ADMIN"
@@ -1724,6 +1838,7 @@ window.G3_FEATURES = {
    "name": "Parts price margin report",
    "name_vi": "Báo cáo chênh lệch giá vật tư",
    "what": "Difference between selling price and cost of parts supplied to customers.",
+   "what_vi": "Phần chênh lệch giữa giá bán và giá vốn vật tư, phụ tùng cấp cho khách hàng.",
    "users": [
     "ACCOUNTANT"
    ],
@@ -1737,6 +1852,7 @@ window.G3_FEATURES = {
    "name": "Driver safety score",
    "name_vi": "Điểm an toàn lái xe",
    "what": "A 0–100 safety score per driver from hard braking, sudden acceleration, sharp cornering, speeding and over-4-hour driving, normalized per 100 km, merged with camera events where the advanced package is used; a manager view and a driver's own view.",
+   "what_vi": "Điểm an toàn 0–100 cho mỗi tài xế từ phanh gấp, tăng tốc đột ngột, vào cua gấp, quá tốc độ và lái liên tục quá 4 giờ, chuẩn hóa theo 100 km, gộp với sự kiện camera khi dùng gói nâng cao; có khung nhìn quản lý và của chính tài xế.",
    "users": [
     "FLEET_MANAGER",
     "DRIVER",
@@ -1752,6 +1868,7 @@ window.G3_FEATURES = {
    "name": "Safety event board",
    "name_vi": "Bảng sự kiện an toàn",
    "what": "Safety events per driver and truck, telematics events (basic plan) kept apart from camera/ADAS events (advanced plan), with severity and trends.",
+   "what_vi": "Sự kiện an toàn theo tài xế và xe, sự kiện từ telematics (gói cơ bản) tách biệt với sự kiện camera/ADAS (gói nâng cao), kèm mức độ và xu hướng.",
    "users": [
     "FLEET_MANAGER"
    ],
@@ -1765,6 +1882,7 @@ window.G3_FEATURES = {
    "name": "Driver monitoring camera",
    "name_vi": "Camera giám sát người lái",
    "what": "Record the driver continuously in all light (infrared at night), with plate/VIN, GPS, speed and time on each frame, as the law requires.",
+   "what_vi": "Ghi hình người lái liên tục trong mọi điều kiện ánh sáng (hồng ngoại ban đêm), chèn biển số/VIN, GPS, tốc độ và thời gian lên khung hình, theo yêu cầu của pháp luật.",
    "users": [
     "SYSTEM",
     "FLEET_MANAGER"
@@ -1779,6 +1897,7 @@ window.G3_FEATURES = {
    "name": "In-cab ADAS alerts",
    "name_vi": "Cảnh báo ADAS trong cabin",
    "what": "Warn the driver instantly about drowsiness, distraction, phone use and tailgating, only on trucks fitted with ADAS.",
+   "what_vi": "Cảnh báo tài xế tức thời khi buồn ngủ, mất tập trung, dùng điện thoại và bám đuôi quá gần, chỉ trên xe có trang bị ADAS.",
    "users": [
     "DRIVER",
     "FLEET_MANAGER"
@@ -1793,6 +1912,7 @@ window.G3_FEATURES = {
    "name": "Accident and insurance evidence pack",
    "name_vi": "Hồ sơ trích xuất phục vụ tai nạn & bảo hiểm",
    "what": "Export clips, route, speed and events around an incident time as one evidence pack.",
+   "what_vi": "Trích xuất clip, hành trình, tốc độ và sự kiện quanh thời điểm vụ việc thành một hồ sơ bằng chứng.",
    "users": [
     "FLEET_MANAGER",
     "CUSTOMER_CARE"
@@ -1807,6 +1927,7 @@ window.G3_FEATURES = {
    "name": "Camera health and tamper alerts",
    "name_vi": "Giám sát & cảnh báo camera",
    "what": "Watch each camera for lost signal, covering, misalignment, power loss, full storage, clock drift and firmware; tell deliberate covering apart from faults and signal loss; report camera uptime and upload success.",
+   "what_vi": "Theo dõi từng camera: mất tín hiệu, bị che, lệch góc, mất nguồn, đầy bộ nhớ, sai lệch đồng hồ và firmware; phân biệt cố ý che camera với hỏng hóc và mất sóng; báo cáo uptime camera và tỷ lệ truyền thành công.",
    "users": [
     "OPERATIONS",
     "FLEET_MANAGER",
@@ -1822,6 +1943,7 @@ window.G3_FEATURES = {
    "name": "Data transmission to authorities",
    "name_vi": "Truyền dữ liệu về cơ quan quản lý",
    "what": "Send real-time journey data and driver violation data to the authorities and keep the transmission receipts.",
+   "what_vi": "Truyền dữ liệu hành trình theo thời gian thực và dữ liệu vi phạm của lái xe về cơ quan quản lý, lưu biên nhận truyền.",
    "users": [
     "SYSTEM",
     "EXTERNAL"
@@ -1836,6 +1958,7 @@ window.G3_FEATURES = {
    "name": "Camera data retention compliance",
    "name_vi": "Tuân thủ lưu trữ dữ liệu camera",
    "what": "Check the mandatory retention periods: journey data ≥30 days on the device, ≥1 year on the service server, ≥3 years at the traffic police; driver images ≥3 days on the device; violation data ≥3 months.",
+   "what_vi": "Đối chiếu thời hạn lưu bắt buộc: hành trình ≥30 ngày trên thiết bị, ≥1 năm trên máy chủ dịch vụ, ≥3 năm tại Cục CSGT; hình ảnh người lái ≥3 ngày trên thiết bị; dữ liệu vi phạm ≥3 tháng.",
    "users": [
     "OPERATIONS"
    ],
@@ -1849,6 +1972,7 @@ window.G3_FEATURES = {
    "name": "Emission factor registry",
    "name_vi": "Quản lý hệ số phát thải",
    "what": "Keep emission factors with their version: Vietnam's grid factor (value, year, legal document, effective date) and life-cycle factors of solar, wind, biomass and storage; log which version was used for each period.",
+   "what_vi": "Quản lý hệ số phát thải có phiên bản: EF lưới điện Việt Nam (giá trị, năm, văn bản công bố, ngày hiệu lực) và EF vòng đời của điện mặt trời, gió, sinh khối và BESS; lưu phiên bản đã áp dụng cho từng kỳ.",
    "users": [
     "OPERATIONS"
    ],
@@ -1862,6 +1986,7 @@ window.G3_FEATURES = {
    "name": "Diesel baseline",
    "name_vi": "Đường cơ sở xe diesel",
    "what": "Fuel consumption of an equivalent diesel truck by model and load, and the diesel emission factor.",
+   "what_vi": "Mức tiêu hao nhiên liệu của xe diesel tương đương theo dòng xe và tải trọng, và hệ số phát thải của dầu diesel.",
    "users": [
     "OPERATIONS"
    ],
@@ -1875,6 +2000,7 @@ window.G3_FEATURES = {
    "name": "Fleet Scope 1 & 2 inventory",
    "name_vi": "Kiểm kê phát thải Scope 1 & 2 của đội xe",
    "what": "Tonnes of CO₂e per month, quarter and year, grid and renewable energy shown apart, within declared inventory boundaries and methodology.",
+   "what_vi": "Tấn CO₂e theo tháng, quý, năm, tách riêng điện lưới và điện tái tạo, theo ranh giới kiểm kê và phương pháp luận đã khai báo.",
    "users": [
     "FLEET_MANAGER",
     "ORG_ADMIN"
@@ -1889,6 +2015,7 @@ window.G3_FEATURES = {
    "name": "Emission intensity and EV vs diesel",
    "name_vi": "Cường độ phát thải & so sánh xe điện với diesel",
    "what": "gCO₂e per km and per tonne-km by truck and route, and the CO₂ avoided compared with the diesel baseline.",
+   "what_vi": "gCO₂e/km và gCO₂e/tấn-km theo xe và theo tuyến, và lượng CO₂ tránh được so với đường cơ sở diesel.",
    "users": [
     "FLEET_MANAGER"
    ],
@@ -1902,6 +2029,7 @@ window.G3_FEATURES = {
    "name": "Enterprise greenhouse-gas dataset",
    "name_vi": "Bộ dữ liệu kiểm kê khí nhà kính cấp doanh nghiệp",
    "what": "Total kWh, generation mix and tCO₂e per period, packaged for the official Scope 1 & 2 inventory submission.",
+   "what_vi": "Tổng kWh, cơ cấu nguồn phát và tCO₂e theo kỳ, đóng gói phục vụ nộp báo cáo kiểm kê Scope 1 & 2.",
    "users": [
     "OPERATIONS",
     "FLEET_MANAGER"
@@ -1916,6 +2044,7 @@ window.G3_FEATURES = {
    "name": "Renewable energy certificates",
    "name_vi": "Chứng chỉ năng lượng tái tạo",
    "what": "Record REC/I-REC certificates: code, matching volume, validity period and issuer.",
+   "what_vi": "Ghi nhận chứng chỉ REC/I-REC: mã, sản lượng tương ứng, kỳ hiệu lực và đơn vị phát hành.",
    "users": [
     "OPERATIONS"
    ],
@@ -1929,6 +2058,7 @@ window.G3_FEATURES = {
    "name": "Carbon credit MRV dossier",
    "name_vi": "Hồ sơ MRV tín chỉ carbon",
    "what": "Measurement, reporting and verification data for an emission-reduction project based on the switch to electric trucks.",
+   "what_vi": "Dữ liệu đo đạc – báo cáo – thẩm định cho dự án giảm phát thải từ chuyển đổi sang xe điện.",
    "users": [
     "HEAD_ADMIN",
     "OPERATIONS"
@@ -1943,6 +2073,7 @@ window.G3_FEATURES = {
    "name": "Data quality monitoring",
    "name_vi": "Giám sát chất lượng dữ liệu",
    "what": "Detect dirty, missing or impossible data and alert operations.",
+   "what_vi": "Phát hiện dữ liệu bẩn, thiếu hoặc bất hợp lý và cảnh báo vận hành.",
    "users": [
     "OPERATIONS",
     "SYSTEM"
@@ -1957,6 +2088,7 @@ window.G3_FEATURES = {
    "name": "System health dashboard",
    "name_vi": "Dashboard sức khỏe hệ thống",
    "what": "Uptime, ingestion delay, data-flow interruptions and data quality, with alerts to the operations team.",
+   "what_vi": "Uptime, độ trễ thu nhận, gián đoạn luồng dữ liệu và chất lượng dữ liệu, có cảnh báo tới đội vận hành.",
    "users": [
     "OPERATIONS"
    ],
@@ -1970,6 +2102,7 @@ window.G3_FEATURES = {
    "name": "Data sovereignty monitoring",
    "name_vi": "Giám sát chủ quyền dữ liệu",
    "what": "Map which data leaves the truck, to which servers, in which country and to which third parties; detect undeclared foreign connections and compare them with the manufacturer's written commitments.",
+   "what_vi": "Lập bản đồ dữ liệu nào rời khỏi xe, tới máy chủ nào, đặt ở quốc gia nào, bên thứ ba nào nhận; phát hiện kết nối tới máy chủ nước ngoài không khai báo và đối chiếu với cam kết bằng văn bản của nhà sản xuất.",
    "users": [
     "OPERATIONS",
     "HEAD_ADMIN"
@@ -1984,6 +2117,7 @@ window.G3_FEATURES = {
    "name": "Executive KPI dashboard",
    "name_vi": "Bộ KPI cho Ban lãnh đạo",
    "what": "North Star (weekly active vehicles), charging compliance, app activation, CSAT/NPS, revenue and number of trucks.",
+   "what_vi": "Chỉ số North Star (WHAV), tuân thủ sạc, kích hoạt app, CSAT/NPS, doanh thu và số xe.",
    "users": [
     "HEAD_ADMIN"
    ],
@@ -1997,6 +2131,7 @@ window.G3_FEATURES = {
    "name": "Shipments and shippers",
    "name_vi": "Đơn hàng & chủ hàng",
    "what": "Shippers, shipments and trips, linking trip ↔ truck ↔ driver ↔ shipment ↔ shipper.",
+   "what_vi": "Chủ hàng, đơn hàng và chuyến hàng, liên kết chuyến ↔ xe ↔ tài xế ↔ đơn hàng ↔ chủ hàng.",
    "users": [
     "DISPATCHER",
     "FLEET_MANAGER"
@@ -2011,6 +2146,7 @@ window.G3_FEATURES = {
    "name": "Depot directory",
    "name_vi": "Danh mục depot",
    "what": "Shared service points for dispatching: container depots, shipping-line depots and virtual depots with location, services and opening hours.",
+   "what_vi": "Danh mục điểm dịch vụ dùng chung cho điều phối: depot cắt kéo container, depot hãng tàu và depot ảo kèm tọa độ, dịch vụ và giờ hoạt động.",
    "users": [
     "DISPATCHER",
     "OPERATIONS"
@@ -2025,6 +2161,7 @@ window.G3_FEATURES = {
    "name": "Shipper carbon tracing (Scope 3)",
    "name_vi": "Truy vết carbon tới chủ hàng (Scope 3)",
    "what": "Allocate emissions down the chain shipper → shipment → trip → truck → kWh, and report intensity per shipper (gCO₂e/tonne-km) for their Scope 3.",
+   "what_vi": "Phân bổ phát thải theo chuỗi chủ hàng → đơn hàng → chuyến → xe → kWh, và báo cáo cường độ theo chủ hàng (gCO₂e/tấn-km) cho Scope 3 của họ.",
    "users": [
     "FLEET_MANAGER",
     "EXTERNAL"
@@ -2039,6 +2176,7 @@ window.G3_FEATURES = {
    "name": "Shipper emission certificates",
    "name_vi": "Chứng thư giảm phát thải cho chủ hàng",
    "what": "PDF certificates with a lookup code confirming the CO₂ of completed shipments, delivered to shippers through the API.",
+   "what_vi": "Chứng thư PDF có mã tra cứu xác nhận lượng CO₂ của các chuyến hàng đã thực hiện, gửi chủ hàng qua API.",
    "users": [
     "FLEET_MANAGER",
     "EXTERNAL"
