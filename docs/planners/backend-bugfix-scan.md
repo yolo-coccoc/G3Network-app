@@ -128,6 +128,18 @@ direct call during the scan.
   `list_organization_role_holder_user_ids` removed; stale docs fixed. Verified:
   `make check` 1,149 passed, `make backend-test-integration` 60/60, the
   end-to-end QR charge 12/12.
+- [x] **Module splits (2026-10-16, CV-23: split where a module mixes areas).**
+  Split, move-only (every definition checked unchanged apart from helpers
+  made public): `charging_sessions/service.py` (2,293 → lifecycle +
+  `read_service`, `report_service`, `access`, `mappers`), `drivers/service.py`
+  (1,773 → profiles + `driving_session_service`, `eligibility`),
+  `fleet/service.py` (1,843 → fleets + `vehicle_membership_service`,
+  `geofence_service`, `access`), `telematics/service.py` (1,501 → devices +
+  `health_service`, `config_push_service`, `device_view`, `access`),
+  `identity/account_service.py` (2,143 → account changes and administration +
+  `session_service`, `one_time_code_service`, `passwords`). Left whole as one
+  cohesive area each: `telemetry/service.py`, `vehicles` and `batteries`
+  services, the repositories, schema files and OCPP adapters.
 - [ ] **Step 4 — Verify and document** per batch: convention review, docs
   sync, feature catalog.
 

@@ -226,7 +226,7 @@ fleet rest, charging, billing, notifications.
 
 ## Known issues
 
-(File, what is wrong, why it was left. For the debugging phase.)
+(File, what is wrong, why it was left. For the debugging phase.) File paths are as written at the time: since the module splits of 2026-10-16 (CV-23) part of the code named here lives in area modules of the same domain (`session_service.py`, `health_service.py`, `driving_session_service.py`...; see the directory tree in [architecture.md](../design/architecture.md)).
 
 | File | Issue | Why left |
 |---|---|---|

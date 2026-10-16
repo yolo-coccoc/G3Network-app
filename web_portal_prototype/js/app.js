@@ -446,7 +446,9 @@
       content.innerHTML = ui.pageHead({ title: t(match.page.title[0], match.page.title[1]), features: match.page.features }) + ui.callout("warn", esc(t("Your roles do not include this feature (ACC-14). The menu hides what you cannot use; this page is shown because you opened its link.", "Vai trò của bạn không có tính năng này (ACC-14). Menu ẩn những gì bạn không dùng được; trang này hiện vì bạn mở trực tiếp đường dẫn.")), "lock");
       return;
     }
-    const ctx = { params: match.params, query, page: match.page };
+    // entering: false when the same path re-renders (filter change, live update), so an
+    // access-audit row is written once per screen opened (ACC-18), not per refresh.
+    const ctx = { params: match.params, query, page: match.page, entering: !keepScroll };
     content.className = "content" + (match.page.flush ? " flush" : "");
     try {
       content.innerHTML = match.page.render(ctx);

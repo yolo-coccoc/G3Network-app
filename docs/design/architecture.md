@@ -548,11 +548,12 @@ call each other is in
 │   │   │   │
 │   │   │   ├── telematics/            # Telematic device profile and mapping to vehicles (F-G1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │   │   # service.py = device records + cross-domain lookups; health_service.py (status reports, device health),
+│   │   │   │   │   # config_push_service.py (F-J2 push), device_view.py (mount + health of a device), access.py (reach loader)
 │   │   │   │   ├── commands/          # mqtt_publisher.py: F-J2 config-push publisher (the only MQTT publish path)
-│   │   │   │   ├── health_rule.py     # internal, pure: DEV-04 device health state
+│   │   │   │   ├── health_rule.py  silence_rule.py   # internal, pure: DEV-04 device health state; the silence rule shared by the monitor and the API's is_silent
 │   │   │   │   ├── ingestion/         # mqtt_consumer.py  message_worker.py  entrypoint.py for "make telematics-status-dev" (DEV-03: T-Box status reports -> telematic_status_reports)
-│   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3);
-│   │   │   │                          # silence_rule.py: pure silence rule shared by the monitor and the API's is_silent
+│   │   │   │   └── monitoring/        # device_health_monitor.py + entrypoint.py for "make telematics-monitor-dev" (F-J1/F-J3)
 │   │   │   │
 │   │   │   ├── telemetry/             # Real-time & historical vehicle data (F-A1)
 │   │   │   │   ├── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -590,6 +591,8 @@ call each other is in
 │   │   │   │
 │   │   │   ├── charging_sessions/     # QR-scan sessions, token-matched start/stop, measurements (F-B2)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       # service.py = session lifecycle (pending/active/completed, ingestion, hooks) + cross-domain lookups;
+│   │   │   │       # read_service.py (session reads), report_service.py (station energy), access.py (reach), mappers.py (responses)
 │   │   │   │
 │   │   │   ├── billing/               # Tariffs + versions, session bills, wallets + ledger, VietQR top-up (WP9)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
@@ -604,6 +607,8 @@ call each other is in
 │   │   │   ├── drivers/               # Driver profile, driving sessions, trips (F-E4, F-A9)
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
 │   │   │   │       trip_router.py  trip_service.py     # trips (MON-11, DR-12)
+│   │   │   │       driving_session_service.py           # check-in/out, session lists, auto-end, the driver's summary (service.py = profiles + hooks)
+│   │   │   │       eligibility.py  lookups.py           # who manages drivers + the licence rule; the person behind a profile + the truck's recent reading
 │   │   │   │       monitoring/                          # auto_end_worker.py + entrypoint.py for "make driving-sessions-autoend-dev" (DR-07)
 │   │   │   │       # models.py has 3 tables: DriverModel, DrivingSessionModel, TripModel
 │   │   │   │
@@ -612,6 +617,8 @@ call each other is in
 │   │   │   │
 │   │   │   ├── fleet/                 # Fleet CRUD and tree, vehicle membership, geofences, fleet limits of a member (F-E1, F-A5, FLT-03); assignment_service.py = the limits
 │   │   │   │   └── router.py  service.py  repository.py  schemas.py  models.py  types.py  exceptions.py
+│   │   │   │       # service.py = fleets + tree + cross-domain lookups; vehicle_membership_service.py (trucks in a fleet, FL-17),
+│   │   │   │       # geofence_service.py (geofences), access.py (fleet reach and the fleet limit, FL-10)
 │   │   │   │       # models.py has 3 tables: FleetModel, FleetVehicleMembershipModel, GeofenceModel
 │   │   │   │
 │   │   │   ├── batteries/             # Battery models and batteries (BAT-01)
@@ -621,6 +628,7 @@ call each other is in
 │   │   │   └── identity/              # Organizations, users, memberships, roles, credentials, sessions, consent, audit log (F-F1)
 │   │   │       ├── service.py  types.py  exceptions.py  dependencies.py   # public surface (dependencies = FastAPI authentication)
 │   │   │       ├── account_service.py  organization_service.py  member_service.py  legal_service.py  audit_service.py  # internal business rules
+│   │   │       ├── session_service.py  one_time_code_service.py  passwords.py   # login, tokens, request authentication; SMS codes; password helpers
 │   │   │       ├── repository.py  schemas.py  models.py  security.py  providers.py  bootstrap.py
 │   │   │       └── router.py  organization_router.py  membership_router.py  compliance_router.py   # 7 routers: /auth, /users, /organizations, /memberships, /legal-documents, /consents, /access-audit-logs
 │   │   │           # models.py has 12 tables (OrganizationModel ... AccessAuditLogModel, OrganizationSettingModel); security.py = scrypt/HMAC/random primitives, providers.py = SMS/e-mail interface + logging fake
@@ -654,6 +662,7 @@ call each other is in
 │   ├── charger_simulator/          # OCPP 1.6J dual-gun charger + sample car: QR remote start/stop happy path (TT-26), heartbeats, Get/ChangeConfiguration; page on :8090 with plug/unplug/stop; own .env, requirements.txt, README.md
 │   ├── phone_simulator/            # the driver app on a phone-shaped page (TT-27): login, scan, live charge, stop, receipt, wallet + simulated bank; API only, stdlib, own .env; page on :8093
 │   └── charger_monitor/            # runs on the VM, page on :8095: Monitoring (OCPP traffic from the message log), Configuration (get/change via the command API) and Chargers (register/edit/delete chargers, guns, location price) tabs; own .env, stdlib only
+├── web_portal_prototype/           # clickable web-portal prototype on mock data (plain HTML/CSS/JS, no build, not connected to the API); js/pages/ one file per area, js/features.js snapshot of features.yaml (feature_snapshot.py); see its README.md
 ├── infra/
 │   ├── docker-compose.yml          # defines exactly 2 services: db, broker (see dev-environment.md)
 │   ├── .env.example
@@ -696,6 +705,9 @@ which depends on `fleet`, not the reverse). Their planners in
 `web-portal/` (React/TS) and `vehicle-app/` (Flutter) are planned monorepo
 components with no source yet; their directory structure and coding
 convention will be written once the first task for that part starts.
+`web_portal_prototype/` is a throwaway clickable prototype of the portal's
+screens on mock data, not the start of `web-portal/`: it decides neither the
+stack (TT-20) nor the portal's conventions.
 
 ## Not yet in the MVP
 

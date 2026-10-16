@@ -61,7 +61,7 @@
     features: ["FLT-04", "MON-02", "MON-09", "FLT-05"],
     nav: { group: "monitoring", order: 1, icon: "map" },
     flush: true,
-    render({ query }) {
+    render({ query, entering }) {
       const vehicles = filtered(query);
       const all = scope.vehicles().filter((v) => v.live);
       const selected = db.vehicle(query.v) || null;
@@ -70,7 +70,7 @@
       const fleets = scope.filter(db.fleets);
       const geofences = G3.prefs.mapGeofences === false ? [] : scope.filter(db.geofences);
       const locations = db.charging_locations.filter((l) => l.is_public || scope.orgIds().some((id) => (l.allowed_organization_ids || []).includes(id)) || scope.isInternal());
-      G3.audit("VIEW", "LIVE_POSITION", null, null);
+      if (entering) G3.audit("VIEW", "LIVE_POSITION", null, null);
       return `<div style="display:grid;grid-template-columns:340px 1fr;height:100%">
         <div style="border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0">
           <div style="padding:16px 16px 10px"><h2>${esc(t("Live fleet map", "Bản đồ đội xe"))}</h2>${ui.featureChips(["FLT-04", "MON-02", "MON-09"])}</div>

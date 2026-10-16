@@ -107,7 +107,7 @@ G3.page({
   features: ["VEH-01", "VEH-05"],       // catalog codes shown as chips and on the coverage page
   nav: { group: "assets", order: 1, icon: "truck" }, // omit for detail pages
   navParent: "vehicles",                // (detail pages) highlights that menu entry
-  render(ctx) { return "<html string>"; },          // ctx = { params, query, page }
+  render(ctx) { return "<html string>"; },          // ctx = { params, query, page, entering }
   mount(root, ctx) { /* bind events; G3.onTick(fn) for live updates */ },
 });
 ```
