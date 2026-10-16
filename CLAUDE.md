@@ -42,19 +42,20 @@ only `.claude/settings.local.json` and `.claude/worktrees/` are ignored.
 | Backend convention — transaction/time/layer/worker | [backend-runtime-conventions.md](.claude/rules/backend-runtime-conventions.md) | Writing service/repository code, managing session/transaction, background workers, checklist before finishing a backend task |
 | Database | [database.md](.claude/rules/database.md) | Writing/reviewing a migration, changing the schema |
 | Development environment and agent tooling | [dev-environment.md](.claude/rules/dev-environment.md) | Running a local service, environment variables, choosing a skill/agent, a hook or MCP server misbehaves |
-| Web portal — stack, structure, imports, access, API | [web-portal-conventions.md](.claude/rules/web-portal-conventions.md) | Any task under `frontend/` |
+| Web portal — stack, structure, imports, access, API | [web-portal-conventions.md](.claude/rules/web-portal-conventions.md) | Any task under `web-portal/` |
 | Web portal — UI rules (no designer) | [web-portal-ui.md](.claude/rules/web-portal-ui.md) | Building or changing a portal screen |
 
 A platform choice or a new technology: check the decision log first (and the
 stack table in `architecture.md`). An area that is not decided yet: keep the
 interim proposal listed under the decision log's open questions.
 
-All frontend code lives in `frontend/` (TT-30). `frontend/web-portal/` has no
-source yet, but its stack is decided (TT-28 in the decision log) and its rules are written (two rows above); its first task is
-the scaffold planner
+Each client is a self-contained folder (TT-31 in the decision log).
+`web-portal/` is the portal app and its own pnpm workspace; it has no app
+source yet, but its stack is decided (TT-28) and its rules are written (two
+rows above); its first task is the scaffold planner
 [`docs/planners/web-portal-scaffold.md`](./docs/planners/web-portal-scaffold.md).
-The driver mobile app has no source and no decided stack (open question 12;
-folder name `driver-app/` or `vehicle-app/` still open) — don't write its
+`driver-app/` is reserved for the driver mobile app and holds only a README:
+no source and no decided stack (open question 12) — don't write its
 conventions in advance.
 
 ---

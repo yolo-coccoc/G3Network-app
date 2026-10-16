@@ -1,6 +1,6 @@
 # Web portal conventions
 
-> Read this file before any task under `frontend/`. Screen
+> Read this file before any task under `web-portal/`. Screen
 > design rules live in [web-portal-ui.md](./web-portal-ui.md); both apply
 > together. Why each choice was made: TT-28, TT-29, CV-24, CV-25, IS-13 in the
 > [decision log](../../docs/decisions/decision-log.md). The portal has no
@@ -29,7 +29,7 @@ code is never copied).
 
 | Concern | Choice |
 |---|---|
-| Language, UI, build | TypeScript (`strict`), React, Vite; pnpm (through corepack, version pinned in `frontend/package.json`) |
+| Language, UI, build | TypeScript (`strict`), React, Vite; pnpm (through corepack, version pinned in `web-portal/package.json`) |
 | UI library | Ant Design v6 (TT-29), themed only through design tokens (`shared/ui/theme.ts`); ProComponents only where they clearly save work; no Tailwind, no shadcn/ui |
 | Server data | TanStack Query |
 | Routing | TanStack Router, file-based, automatic code splitting |
@@ -45,25 +45,28 @@ A library outside this table is a new component: ask first (PR-03).
 
 ## 3. Workspace layout
 
-All frontend code lives in **one folder, `frontend/`**, next to `backend/`
-(TT-30); nothing frontend-related sits at the repository root. `frontend/` is
-the pnpm workspace root, and every path in the rest of this file is relative
-to it. Run pnpm from inside `frontend/` (corepack reads the pinned version
-from its `package.json`); the Make targets do this for you.
+The portal is **one self-contained folder, `web-portal/`**, next to
+`backend/` (TT-31): the app and its own pnpm workspace in one, with every
+dependency, lockfile and package it needs inside it; nothing portal-related
+sits at the repository root, and it imports nothing from another top-level
+folder (`driver-app/`, `web_portal_prototype/`). Every path in the rest of
+this file is relative to `web-portal/`. Run pnpm from inside `web-portal/`
+(corepack reads the pinned version from its `package.json`); the Make
+targets do this for you.
 
 ```text
-frontend/
-  package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc   workspace root
-  web-portal/              the portal (Vite app)
+web-portal/
+  package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc   workspace root = the app (@g3/web-portal)
+  vite.config.ts, index.html, src/                            the portal (Step 3 of the scaffold)
   packages/api-client/     generated types + the typed fetch client; never edited by hand
 ```
 
-`packages/` holds plain TypeScript with no browser-only or React code, so a
-future mobile app can use it whatever its stack (open question 12). The
-message catalogs stay inside the portal (`src/shared/i18n/locales/`) until a
-second client needs them; then they move to `packages/i18n/` (TT-29).
+`packages/` holds code the app uses but that is not the app (today only the
+generated client). The driver app (`driver-app/`, open question 12) gets its
+own client and catalogs; nothing is shared across the two folders. The
+message catalogs live in `src/shared/i18n/locales/` (TT-29).
 
-## 4. `frontend/web-portal/src/` structure
+## 4. `src/` structure
 
 ```text
 src/
