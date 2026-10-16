@@ -19,6 +19,7 @@ import app.domains.charging_stations.access as station_access
 import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.station_service as station_service
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.router as driver_router
 import app.domains.drivers.service as driver_service
@@ -276,7 +277,7 @@ async def test_a_driver_only_caller_cannot_name_another_driver(
     from app.domains.drivers.schemas import DrivingSessionCheckOutRequest
 
     with pytest.raises(AccessDeniedError):
-        await driver_service.check_out_driver(
+        await driving_session_service.check_out_driver(
             fake_db_session(),
             DrivingSessionCheckOutRequest(driver_id=uuid4()),
             principal=driver_only,

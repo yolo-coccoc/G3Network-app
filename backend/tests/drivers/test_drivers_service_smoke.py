@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.identity.service as identity_service
@@ -299,7 +300,7 @@ async def test_check_in_takes_over_a_truck_and_ends_the_drivers_other_session(
     monkeypatch.setattr(driver_repository, "close_session", close_session)
     monkeypatch.setattr(driver_repository, "insert_session", insert_session)
 
-    response = await driver_service.check_in_driver(
+    response = await driving_session_service.check_in_driver(
         fake_db_session(),
         _check_in_request(driver.driver_id),
         principal=build_internal_principal(),
@@ -331,7 +332,7 @@ async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
     _patch_person(monkeypatch, build_person_reference())
     driver.status = DriverStatus.INACTIVE
     with pytest.raises(DriverNotEligibleError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             _check_in_request(driver.driver_id),
             principal=build_internal_principal(),
@@ -342,7 +343,7 @@ async def test_check_in_rejects_an_inactive_driver_and_an_inactive_membership(
         monkeypatch, build_person_reference(membership_status=MembershipStatus.LOCKED)
     )
     with pytest.raises(DriverNotEligibleError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             _check_in_request(driver.driver_id),
             principal=build_internal_principal(),
@@ -364,7 +365,7 @@ async def test_check_out_closes_the_session_and_rejects_a_driver_not_checked_in(
     monkeypatch.setattr(driver_repository, "get_by_id", get_driver)
     _patch_no_open_session(monkeypatch)
     with pytest.raises(DrivingSessionNotFoundError):
-        await driver_service.check_out_driver(
+        await driving_session_service.check_out_driver(
             fake_db_session(),
             DrivingSessionCheckOutRequest(driver_id=driver_id),
             principal=build_internal_principal(),
@@ -385,7 +386,7 @@ async def test_check_out_closes_the_session_and_rejects_a_driver_not_checked_in(
     monkeypatch.setattr(driver_repository, "find_open_session_by_driver", find_open)
     monkeypatch.setattr(driver_repository, "close_session", close_session)
 
-    response = await driver_service.check_out_driver(
+    response = await driving_session_service.check_out_driver(
         fake_db_session(),
         DrivingSessionCheckOutRequest(driver_id=driver_id),
         principal=build_internal_principal(),

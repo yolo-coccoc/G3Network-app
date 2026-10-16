@@ -39,6 +39,7 @@ import app.domains.charging_stations.ocpp_state_repository as ocpp_state_reposit
 import app.domains.charging_stations.search_service as search_service
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.charging_stations.station_service as station_service
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -1825,7 +1826,7 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
 
             # A phone 5 km away is refused; one next to the truck checks in by VIN.
             with pytest.raises(DriverTooFarFromVehicleError):
-                await driver_service.check_in_driver(
+                await driving_session_service.check_in_driver(
                     db,
                     DrivingSessionCheckInRequest(
                         vehicle_vin=truck.vin,
@@ -1835,7 +1836,7 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
                     ),
                     principal=alice_principal,
                 )
-            alice_session = await driver_service.check_in_driver(
+            alice_session = await driving_session_service.check_in_driver(
                 db,
                 DrivingSessionCheckInRequest(
                     vehicle_vin=truck.vin,
@@ -1846,7 +1847,7 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
                 principal=alice_principal,
             )
             assert alice_session.warnings == []
-            current = await driver_service.get_current_driving_session(
+            current = await driving_session_service.get_current_driving_session(
                 db, principal=alice_principal
             )
             assert current.driving_session_id == alice_session.driving_session_id
@@ -1859,7 +1860,7 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
 
             # Bob, from another organization, takes the truck over by plate: Alice's
             # session ends TAKEN_OVER and her running trip closes by itself.
-            bob_session = await driver_service.check_in_driver(
+            bob_session = await driving_session_service.check_in_driver(
                 db,
                 DrivingSessionCheckInRequest(
                     vehicle_code=truck.license_plate,
@@ -1877,7 +1878,10 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
                 db, planned.trip_id, principal=manager
             )
             assert closed_trip.status == TripStatus.COMPLETED
-            assert closed_trip.status_reason == driver_service.TRIP_AUTO_CLOSED_REASON
+            assert (
+                closed_trip.status_reason
+                == driving_session_service.TRIP_AUTO_CLOSED_REASON
+            )
             assert closed_trip.actual_driver_id == alice.driver_id
 
             # Bob runs a personal trip; a second one in the same shift is a conflict.
@@ -1940,16 +1944,16 @@ async def test_check_in_takeover_trip_flow_and_auto_end_on_postgres(
             )
             assert history_reasons == [
                 "Trip started",
-                driver_service.TRIP_AUTO_CLOSED_REASON,
+                driving_session_service.TRIP_AUTO_CLOSED_REASON,
             ]
 
             # Hours later the truck is still standing and has reported since the
             # check-in: the session auto-ends at the countdown start.
-            sweep = await driver_service.end_idle_driving_sessions(
+            sweep = await driving_session_service.end_idle_driving_sessions(
                 db, now=datetime.now(timezone.utc) + timedelta(hours=3)
             )
             assert (sweep.checked, sweep.ended) == (1, 1)
-            ended = await driver_service.get_own_driving_summary(
+            ended = await driving_session_service.get_own_driving_summary(
                 db, principal=bob_principal
             )
             assert [item.end_cause for item in ended.sessions] == [

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -209,7 +210,7 @@ async def test_qr_check_in_is_refused_far_from_the_truck_and_warns_without_a_pos
 
     # No phone position on a QR check-in is an input error.
     with pytest.raises(DriverCheckInLocationRequiredError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             request(None, None),  # type: ignore[arg-type]
             principal=principal,
@@ -224,7 +225,7 @@ async def test_qr_check_in_is_refused_far_from_the_truck_and_warns_without_a_pos
 
     monkeypatch.setattr(telemetry_service, "resolve_vehicle_live_status", far_status)
     with pytest.raises(DriverTooFarFromVehicleError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             request(TRUCK_LAT, TRUCK_LON),  # type: ignore[arg-type]
             principal=principal,
@@ -236,7 +237,7 @@ async def test_qr_check_in_is_refused_far_from_the_truck_and_warns_without_a_pos
         return _reading(vehicle_id, age_minutes=600)
 
     monkeypatch.setattr(telemetry_service, "resolve_vehicle_live_status", stale_status)
-    response = await driver_service.check_in_driver(
+    response = await driving_session_service.check_in_driver(
         fake_db_session(),
         request(TRUCK_LAT, TRUCK_LON),  # type: ignore[arg-type]
         principal=principal,
@@ -261,7 +262,7 @@ async def test_check_in_near_the_truck_succeeds_and_a_driver_cannot_use_portal(
         return _reading(truck.vehicle_id)
 
     monkeypatch.setattr(telemetry_service, "resolve_vehicle_live_status", near_status)
-    response = await driver_service.check_in_driver(
+    response = await driving_session_service.check_in_driver(
         fake_db_session(),
         DrivingSessionCheckInRequest(
             vehicle_vin=truck.vin,
@@ -275,7 +276,7 @@ async def test_check_in_near_the_truck_succeeds_and_a_driver_cannot_use_portal(
     assert CheckInWarning.NO_RECENT_TRUCK_POSITION not in response.warnings
 
     with pytest.raises(AccessDeniedError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             DrivingSessionCheckInRequest(
                 vehicle_vin=truck.vin, check_in_method=CheckInMethod.PORTAL
@@ -338,7 +339,9 @@ async def test_auto_end_ends_only_idle_sessions_with_proof_the_truck_stood_still
     monkeypatch.setattr(telemetry_service, "resolve_last_movement_at", last_movement)
     monkeypatch.setattr(driver_repository, "close_session", close_session)
 
-    result = await driver_service.end_idle_driving_sessions(fake_db_session(), now=now)
+    result = await driving_session_service.end_idle_driving_sessions(
+        fake_db_session(), now=now
+    )
 
     assert (result.checked, result.ended, result.skipped) == (4, 1, 1)
     assert closed == [(idle, DrivingSessionEndCause.AUTO_ENDED)]
@@ -379,7 +382,7 @@ async def test_own_driving_summary_totals_per_day_and_week_without_routes(
     monkeypatch.setattr(telemetry_service, "resolve_distance_km_in_window", distance)
     monkeypatch.setattr(vehicle_service, "resolve_vehicle_summary_by_id", summary)
 
-    response = await driver_service.get_own_driving_summary(
+    response = await driving_session_service.get_own_driving_summary(
         fake_db_session(), principal=build_principal(roles=frozenset({UserRole.DRIVER}))
     )
 
@@ -560,14 +563,16 @@ async def test_check_out_closes_the_trip_still_running_in_the_session(
 
     from app.domains.drivers.schemas import DrivingSessionCheckOutRequest
 
-    await driver_service.check_out_driver(
+    await driving_session_service.check_out_driver(
         fake_db_session(),
         DrivingSessionCheckOutRequest(),
         principal=build_principal(roles=frozenset({UserRole.DRIVER})),
     )
 
     assert updates[0]["status"] == "COMPLETED"
-    assert updates[0]["status_reason"] == driver_service.TRIP_AUTO_CLOSED_REASON
+    assert (
+        updates[0]["status_reason"] == driving_session_service.TRIP_AUTO_CLOSED_REASON
+    )
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.eligibility as driver_eligibility
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -41,6 +42,7 @@ def _freeze_driver_clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None
         now: The UTC time `utc_now()` returns.
     """
     monkeypatch.setattr(driver_service, "utc_now", lambda: now)
+    monkeypatch.setattr(driver_eligibility, "utc_now", lambda: now)
 
 
 def test_licence_expired_yesterday_in_vietnam_is_expired_before_7am_local(
@@ -55,7 +57,7 @@ def test_licence_expired_yesterday_in_vietnam_is_expired_before_7am_local(
         monkeypatch, datetime(2026, 10, 10, 20, 0, tzinfo=timezone.utc)
     )
 
-    assert driver_service._is_license_expired(date(2026, 10, 10)) is True
+    assert driver_eligibility.is_license_expired(date(2026, 10, 10)) is True
 
 
 def test_licence_is_valid_on_its_last_local_day_guard(
@@ -64,7 +66,7 @@ def test_licence_is_valid_on_its_last_local_day_guard(
     """Guard: on the expiry day itself (10:00 local) the licence is still valid."""
     _freeze_driver_clock(monkeypatch, datetime(2026, 10, 10, 3, 0, tzinfo=timezone.utc))
 
-    assert driver_service._is_license_expired(date(2026, 10, 10)) is False
+    assert driver_eligibility.is_license_expired(date(2026, 10, 10)) is False
 
 
 def _planned_trip(*, planned_driver_id: UUID | None) -> TripModel:

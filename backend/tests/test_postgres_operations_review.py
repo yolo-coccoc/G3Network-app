@@ -26,9 +26,9 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.lookups as driver_lookups
 import app.domains.drivers.repository as driver_repository
-import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
 import app.domains.identity.service as identity_service
 import app.domains.notifications.repository as notification_repository
@@ -240,7 +240,7 @@ async def test_auto_end_keeps_a_moving_truck_whose_device_clock_runs_slow(
             )
 
         async with session_factory.begin() as db:
-            sweep = await driver_service.end_idle_driving_sessions(db, now=now)
+            sweep = await driving_session_service.end_idle_driving_sessions(db, now=now)
 
         assert (sweep.checked, sweep.ended) == (1, 0)
     finally:
@@ -302,7 +302,7 @@ async def test_auto_end_sweep_keeps_a_check_out_committed_during_the_sweep(
                 try:
                     async with session_factory.begin() as other:
                         await other.execute(text(LOCK_TIMEOUT_SQL))
-                        await driver_service.check_out_driver(
+                        await driving_session_service.check_out_driver(
                             other,
                             DrivingSessionCheckOutRequest(),
                             principal=driver_principal,
@@ -316,7 +316,7 @@ async def test_auto_end_sweep_keeps_a_check_out_committed_during_the_sweep(
             identity_service, "resolve_organization_settings", check_out_during_sweep
         )
         async with session_factory.begin() as db:
-            await driver_service.end_idle_driving_sessions(db, now=now)
+            await driving_session_service.end_idle_driving_sessions(db, now=now)
 
         async with session_factory() as db:
             end_cause = await _end_cause_of(db, open_session.driving_session_id)
@@ -531,7 +531,7 @@ async def _check_in_by_portal(
     """
     try:
         async with session_factory.begin() as db:
-            await driver_service.check_in_driver(
+            await driving_session_service.check_in_driver(
                 db,
                 DrivingSessionCheckInRequest(
                     driver_id=driver_id,

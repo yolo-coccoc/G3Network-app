@@ -11,7 +11,7 @@ and closes its running trip like a check-out does.
 import asyncio
 import logging
 
-import app.domains.drivers.service as driver_service
+import app.domains.drivers.driving_session_service as driving_session_service
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.db.session import async_session_factory
@@ -53,7 +53,7 @@ async def run_auto_end_tick() -> None:
         or none after the last movement).
     """
     async with async_session_factory.begin() as db_session:
-        result = await driver_service.end_idle_driving_sessions(
+        result = await driving_session_service.end_idle_driving_sessions(
             db_session, now=utc_now()
         )
     logger.info(

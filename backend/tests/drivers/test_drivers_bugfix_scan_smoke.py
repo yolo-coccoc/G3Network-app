@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -150,7 +151,7 @@ async def test_portal_self_check_in_to_another_organizations_truck_is_not_found(
     _patch_truck(monkeypatch, OTHER_ORGANIZATION_ID)
 
     with pytest.raises(DriverVehicleNotFoundError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             DrivingSessionCheckInRequest(
                 vehicle_code="51C-123.45", check_in_method=CheckInMethod.PORTAL
@@ -159,7 +160,7 @@ async def test_portal_self_check_in_to_another_organizations_truck_is_not_found(
         )
 
     # By QR the borrowed-truck rule (DR-11) still applies: it only warns.
-    response = await driver_service.check_in_driver(
+    response = await driving_session_service.check_in_driver(
         fake_db_session(),
         DrivingSessionCheckInRequest(
             vehicle_code="51C-123.45",
@@ -183,7 +184,7 @@ async def test_fleet_limited_manager_cannot_check_a_driver_in_or_out_outside_the
     other_fleet_truck_ids = frozenset({uuid4()})
 
     with pytest.raises(DriverVehicleNotFoundError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             DrivingSessionCheckInRequest(
                 driver_id=driver.driver_id,
@@ -203,7 +204,7 @@ async def test_fleet_limited_manager_cannot_check_a_driver_in_or_out_outside_the
 
     monkeypatch.setattr(driver_repository, "find_open_session_by_driver", find_open)
     with pytest.raises(DrivingSessionNotFoundError):
-        await driver_service.check_out_driver(
+        await driving_session_service.check_out_driver(
             fake_db_session(),
             DrivingSessionCheckOutRequest(driver_id=driver.driver_id),
             principal=manager,
@@ -225,7 +226,7 @@ async def test_check_in_is_refused_without_the_driver_role(
 
     monkeypatch.setattr(identity_service, "membership_holds_role", lacks_role)
     with pytest.raises(DriverRoleMissingError):
-        await driver_service.check_in_driver(
+        await driving_session_service.check_in_driver(
             fake_db_session(),
             DrivingSessionCheckInRequest(
                 vehicle_code="51C-123.45",

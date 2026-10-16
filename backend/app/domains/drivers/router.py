@@ -12,6 +12,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.driving_session_service as driving_session_service
+import app.domains.drivers.eligibility as driver_eligibility
 import app.domains.drivers.service as driver_service
 from app.domains.drivers.schemas import (
     DriverCreateRequest,
@@ -47,7 +49,7 @@ driving_sessions_router = APIRouter(tags=["driving-sessions"])
 # for a driver of the organization). A DRIVER-only caller never reads other
 # people's profiles and sees only their own sessions (DR-11).
 DRIVER_PROFILE_WRITERS = require_roles(*roles_for("DRV-01"))
-DRIVER_PROFILE_READERS = require_roles(*driver_service.DRIVER_MANAGER_ROLES)
+DRIVER_PROFILE_READERS = require_roles(*driver_eligibility.DRIVER_MANAGER_ROLES)
 DRIVING_SESSION_USERS = require_roles(*roles_for("DRV-02"))
 
 
@@ -288,7 +290,7 @@ async def check_in_driver_endpoint(
         DriverRoleMissingError: 400 when the driver lacks the DRIVER role.
         DriverTooFarFromVehicleError: 400 when the phone is far from the truck.
     """
-    return await driver_service.check_in_driver(
+    return await driving_session_service.check_in_driver(
         db_session,
         check_in_request,
         principal=principal,
@@ -324,7 +326,7 @@ async def check_out_driver_endpoint(
         DrivingSessionNotFoundError: 404 when the driver has no open session,
             or its truck is outside the manager's fleet limit.
     """
-    return await driver_service.check_out_driver(
+    return await driving_session_service.check_out_driver(
         db_session,
         check_out_request,
         principal=principal,
@@ -370,7 +372,7 @@ async def list_driving_sessions_endpoint(
     Returns:
         Paginated driving sessions.
     """
-    return await driver_service.list_driving_sessions(
+    return await driving_session_service.list_driving_sessions(
         db_session,
         page=page,
         page_size=page_size,
@@ -408,7 +410,7 @@ async def get_current_driving_session_endpoint(
         DriverNotFoundError: 404 when the caller has no driver profile.
         DrivingSessionNotFoundError: 404 when the caller is not checked in.
     """
-    return await driver_service.get_current_driving_session(
+    return await driving_session_service.get_current_driving_session(
         db_session, principal=principal
     )
 
@@ -448,6 +450,6 @@ async def get_own_driving_summary_endpoint(
         DrivingSummaryRangeError: 400 when the range is empty, longer than a
             year, or a time has no zone.
     """
-    return await driver_service.get_own_driving_summary(
+    return await driving_session_service.get_own_driving_summary(
         db_session, principal=principal, from_time=from_time, to_time=to_time
     )
