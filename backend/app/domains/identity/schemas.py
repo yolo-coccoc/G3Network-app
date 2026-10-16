@@ -112,9 +112,18 @@ class LoginRequest(DeviceFields):
 
 
 class RefreshRequest(BaseModel):
-    """Exchange a refresh token for a new pair."""
+    """Exchange a refresh token for a new pair.
 
-    refresh_token: str = Field(..., min_length=1, max_length=256)
+    The phone apps send their refresh token here; a browser sends none (or no
+    body at all): its token travels in the ``HttpOnly`` refresh cookie (IS-13).
+    """
+
+    refresh_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        description="The phone app's refresh token; a browser leaves it out",
+    )
 
 
 class LogoutRequest(BaseModel):
@@ -192,7 +201,13 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int = Field(..., description="Access token lifetime in seconds")
-    refresh_token: str
+    refresh_token: str | None = Field(
+        default=None,
+        description=(
+            "Refresh token of a phone-app session; null for a browser (WEB) "
+            "session, whose token is set as an HttpOnly cookie instead (IS-13)"
+        ),
+    )
     session_id: UUID
     organization_id: UUID | None = Field(
         default=None, description="Organization the session acts for; null until picked"

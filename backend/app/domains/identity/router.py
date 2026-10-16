@@ -5,6 +5,10 @@ acceptance, login, refresh, logout, the organization picker, password and
 phone-number changes, "my devices" and push-token registration. `users_router`
 (``/api/v1/users``) is the account administration for our own staff.
 
+A browser (``WEB``) session receives its refresh token in an ``HttpOnly``
+cookie, never in a body (IS-13): the service says when (`IssuedSessionTokens`),
+these endpoints set, read and clear the cookie.
+
 Domain exceptions are not caught here (`app/api/main.py` maps the shared bases
 to HTTP codes) except for the commit described at `persist_recorded_failure`.
 Status codes chosen: 401 wrong credentials or ended session, 403 locked
@@ -16,7 +20,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Cookie, Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.identity.account_service as account_service
@@ -61,6 +65,41 @@ from app.libs.db.session import get_db
 
 auth_router = APIRouter(tags=["identity-auth"])
 users_router = APIRouter(tags=["identity-users"])
+
+# The browser's refresh-token cookie (IS-13, web-portal-scaffold.md D4).
+# HttpOnly: page script can never read it, so an injected script cannot steal
+# the session. Secure: HTTPS only; Chrome and Firefox also accept it on
+# http://localhost, Safari does not, so develop the portal in Chrome or
+# Firefox. SameSite=Strict: a page of another site cannot make the
+# browser send it. The path is where `auth_router` is mounted
+# (`app/api/main.py`), so the cookie travels only to the auth routes.
+REFRESH_COOKIE_NAME = "g3_refresh"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _build_token_response_with_cookie(
+    response: Response, issued_tokens: login_session_service.IssuedSessionTokens
+) -> TokenResponse:
+    """Set the browser's refresh cookie when the service issued one.
+
+    Args:
+        response: The response FastAPI sends; the cookie is added to it.
+        issued_tokens: What the service issued.
+
+    Returns:
+        The response body (without a refresh token for a browser session).
+    """
+    if issued_tokens.cookie_refresh_token is not None:
+        response.set_cookie(
+            REFRESH_COOKIE_NAME,
+            issued_tokens.cookie_refresh_token,
+            max_age=issued_tokens.cookie_max_age_seconds,
+            path=REFRESH_COOKIE_PATH,
+            secure=True,
+            httponly=True,
+            samesite="strict",
+        )
+    return issued_tokens.token_response
 
 
 @asynccontextmanager
@@ -123,6 +162,7 @@ async def send_one_time_code_endpoint(
 )
 async def sign_up_endpoint(
     sign_up_request: SignUpRequest,
+    response: Response,
     client_context: ClientContext = Depends(get_client_context),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
@@ -130,6 +170,7 @@ async def sign_up_endpoint(
 
     Args:
         sign_up_request: Phone, code, name, password and device.
+        response: The outgoing response (a browser's refresh cookie is set on it).
         client_context: IP address and user agent of the request.
         db_session: Database session owned by the HTTP boundary.
 
@@ -137,9 +178,10 @@ async def sign_up_endpoint(
         Tokens of the new session.
     """
     async with persist_recorded_failure(db_session):
-        return await login_session_service.sign_up(
+        issued_tokens = await login_session_service.sign_up(
             db_session, sign_up_request, client_context
         )
+    return _build_token_response_with_cookie(response, issued_tokens)
 
 
 @auth_router.post(
@@ -149,6 +191,7 @@ async def sign_up_endpoint(
 )
 async def accept_invitation_endpoint(
     accept_request: InvitationAcceptRequest,
+    response: Response,
     client_context: ClientContext = Depends(get_client_context),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
@@ -156,6 +199,7 @@ async def accept_invitation_endpoint(
 
     Args:
         accept_request: Phone, code, new password and device.
+        response: The outgoing response (a browser's refresh cookie is set on it).
         client_context: IP address and user agent of the request.
         db_session: Database session owned by the HTTP boundary.
 
@@ -163,9 +207,10 @@ async def accept_invitation_endpoint(
         Tokens of the new session.
     """
     async with persist_recorded_failure(db_session):
-        return await login_session_service.accept_invitation(
+        issued_tokens = await login_session_service.accept_invitation(
             db_session, accept_request, client_context
         )
+    return _build_token_response_with_cookie(response, issued_tokens)
 
 
 @auth_router.post(
@@ -179,6 +224,7 @@ async def accept_invitation_endpoint(
 )
 async def login_endpoint(
     login_request: LoginRequest,
+    response: Response,
     client_context: ClientContext = Depends(get_client_context),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
@@ -186,37 +232,53 @@ async def login_endpoint(
 
     Args:
         login_request: Credentials and device.
+        response: The outgoing response (a browser's refresh cookie is set on it).
         client_context: IP address and user agent of the request.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
-        Access and refresh tokens and the person's memberships.
+        The access token, the refresh token (phone apps only) and the
+        person's memberships.
     """
     async with persist_recorded_failure(db_session):
-        return await login_session_service.login(
+        issued_tokens = await login_session_service.login(
             db_session, login_request, client_context
         )
+    return _build_token_response_with_cookie(response, issued_tokens)
 
 
 @auth_router.post(
     "/refresh",
     response_model=TokenResponse,
     summary="Exchange a refresh token for a new pair",
+    description=(
+        "A phone app sends its refresh token in the body; a browser sends no "
+        "body and its HttpOnly refresh cookie is used and replaced. 401 when "
+        "neither is present or the token is no longer valid."
+    ),
 )
 async def refresh_session_endpoint(
-    refresh_request: RefreshRequest,
+    response: Response,
+    refresh_request: RefreshRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
     db_session: AsyncSession = Depends(get_db, scope="function"),
 ) -> TokenResponse:
-    """Refresh a session.
+    """Refresh a session from the body's token, or else the browser's cookie.
 
     Args:
-        refresh_request: The refresh token.
+        response: The outgoing response (a browser's new cookie is set on it).
+        refresh_request: The phone app's refresh token; absent for a browser.
+        refresh_cookie: The browser's refresh cookie, if it sent one.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
         A new token pair; the old refresh token stops working.
     """
-    return await login_session_service.refresh_session(db_session, refresh_request)
+    body_token = None if refresh_request is None else refresh_request.refresh_token
+    issued_tokens = await login_session_service.refresh_session(
+        db_session, body_token if body_token is not None else refresh_cookie
+    )
+    return _build_token_response_with_cookie(response, issued_tokens)
 
 
 @auth_router.post(
@@ -239,7 +301,8 @@ async def logout_endpoint(
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
-        An empty 204 response.
+        An empty 204 response that also clears a browser's refresh cookie
+        (harmless for a phone app, which has none).
     """
     await login_session_service.logout(
         db_session,
@@ -247,7 +310,15 @@ async def logout_endpoint(
         all_devices=logout_request.all_devices,
         client_context=client_context,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    response.delete_cookie(
+        REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
 
 
 @auth_router.get("/me", response_model=MeResponse, summary="Who am I")

@@ -3997,6 +3997,7 @@ export interface paths {
          *
          *     Args:
          *         sign_up_request: Phone, code, name, password and device.
+         *         response: The outgoing response (a browser's refresh cookie is set on it).
          *         client_context: IP address and user agent of the request.
          *         db_session: Database session owned by the HTTP boundary.
          *
@@ -4025,6 +4026,7 @@ export interface paths {
          *
          *     Args:
          *         accept_request: Phone, code, new password and device.
+         *         response: The outgoing response (a browser's refresh cookie is set on it).
          *         client_context: IP address and user agent of the request.
          *         db_session: Database session owned by the HTTP boundary.
          *
@@ -4069,14 +4071,7 @@ export interface paths {
         put?: never;
         /**
          * Exchange a refresh token for a new pair
-         * @description Refresh a session.
-         *
-         *     Args:
-         *         refresh_request: The refresh token.
-         *         db_session: Database session owned by the HTTP boundary.
-         *
-         *     Returns:
-         *         A new token pair; the old refresh token stops working.
+         * @description A phone app sends its refresh token in the body; a browser sends no body and its HttpOnly refresh cookie is used and replaced. 401 when neither is present or the token is no longer valid.
          */
         post: operations["refresh_session_endpoint_api_v1_auth_refresh_post"];
         delete?: never;
@@ -4105,7 +4100,8 @@ export interface paths {
          *         db_session: Database session owned by the HTTP boundary.
          *
          *     Returns:
-         *         An empty 204 response.
+         *         An empty 204 response that also clears a browser's refresh cookie
+         *         (harmless for a phone app, which has none).
          */
         post: operations["logout_endpoint_api_v1_auth_logout_post"];
         delete?: never;
@@ -9633,10 +9629,16 @@ export interface components {
         /**
          * RefreshRequest
          * @description Exchange a refresh token for a new pair.
+         *
+         *     The phone apps send their refresh token here; a browser sends none (or no
+         *     body at all): its token travels in the ``HttpOnly`` refresh cookie (IS-13).
          */
         RefreshRequest: {
-            /** Refresh Token */
-            refresh_token: string;
+            /**
+             * Refresh Token
+             * @description The phone app's refresh token; a browser leaves it out
+             */
+            refresh_token?: string | null;
         };
         /**
          * ReportFormat
@@ -11075,8 +11077,11 @@ export interface components {
              * @description Access token lifetime in seconds
              */
             expires_in: number;
-            /** Refresh Token */
-            refresh_token: string;
+            /**
+             * Refresh Token
+             * @description Refresh token of a phone-app session; null for a browser (WEB) session, whose token is set as an HttpOnly cookie instead (IS-13)
+             */
+            refresh_token?: string | null;
             /**
              * Session Id
              * Format: uuid
@@ -18857,11 +18862,13 @@ export interface operations {
             query?: never;
             header?: never;
             path?: never;
-            cookie?: never;
+            cookie?: {
+                g3_refresh?: string | null;
+            };
         };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["RefreshRequest"];
+                "application/json": components["schemas"]["RefreshRequest"] | null;
             };
         };
         responses: {

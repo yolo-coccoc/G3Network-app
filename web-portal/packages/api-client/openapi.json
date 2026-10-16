@@ -11840,7 +11840,7 @@
           "identity-auth"
         ],
         "summary": "Register an individual customer",
-        "description": "Register an individual with a phone code and open a session.\n\nArgs:\n    sign_up_request: Phone, code, name, password and device.\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    Tokens of the new session.",
+        "description": "Register an individual with a phone code and open a session.\n\nArgs:\n    sign_up_request: Phone, code, name, password and device.\n    response: The outgoing response (a browser's refresh cookie is set on it).\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    Tokens of the new session.",
         "operationId": "sign_up_endpoint_api_v1_auth_sign_up_post",
         "requestBody": {
           "content": {
@@ -11882,7 +11882,7 @@
           "identity-auth"
         ],
         "summary": "Accept an invitation and set a password",
-        "description": "Accept an invitation with the SMS code and choose a password.\n\nArgs:\n    accept_request: Phone, code, new password and device.\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    Tokens of the new session.",
+        "description": "Accept an invitation with the SMS code and choose a password.\n\nArgs:\n    accept_request: Phone, code, new password and device.\n    response: The outgoing response (a browser's refresh cookie is set on it).\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    Tokens of the new session.",
         "operationId": "accept_invitation_endpoint_api_v1_auth_invitations_accept_post",
         "requestBody": {
           "content": {
@@ -11966,17 +11966,42 @@
           "identity-auth"
         ],
         "summary": "Exchange a refresh token for a new pair",
-        "description": "Refresh a session.\n\nArgs:\n    refresh_request: The refresh token.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    A new token pair; the old refresh token stops working.",
+        "description": "A phone app sends its refresh token in the body; a browser sends no body and its HttpOnly refresh cookie is used and replaced. 401 when neither is present or the token is no longer valid.",
         "operationId": "refresh_session_endpoint_api_v1_auth_refresh_post",
+        "parameters": [
+          {
+            "name": "g3_refresh",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "G3 Refresh"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefreshRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Refresh Request"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -12008,7 +12033,7 @@
           "identity-auth"
         ],
         "summary": "Log out this device or all devices",
-        "description": "End the session(s) of the caller.\n\nArgs:\n    logout_request: Whether to end every session.\n    session_identity: The validated session.\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    An empty 204 response.",
+        "description": "End the session(s) of the caller.\n\nArgs:\n    logout_request: Whether to end every session.\n    session_identity: The validated session.\n    client_context: IP address and user agent of the request.\n    db_session: Database session owned by the HTTP boundary.\n\nReturns:\n    An empty 204 response that also clears a browser's refresh cookie\n    (harmless for a phone app, which has none).",
         "operationId": "logout_endpoint_api_v1_auth_logout_post",
         "requestBody": {
           "content": {
@@ -23051,18 +23076,23 @@
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
-            "type": "string",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Refresh Token"
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token",
+            "description": "The phone app's refresh token; a browser leaves it out"
           }
         },
         "type": "object",
-        "required": [
-          "refresh_token"
-        ],
         "title": "RefreshRequest",
-        "description": "Exchange a refresh token for a new pair."
+        "description": "Exchange a refresh token for a new pair.\n\nThe phone apps send their refresh token here; a browser sends none (or no\nbody at all): its token travels in the ``HttpOnly`` refresh cookie (IS-13)."
       },
       "ReportFormat": {
         "type": "string",
@@ -25658,8 +25688,16 @@
             "description": "Access token lifetime in seconds"
           },
           "refresh_token": {
-            "type": "string",
-            "title": "Refresh Token"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token",
+            "description": "Refresh token of a phone-app session; null for a browser (WEB) session, whose token is set as an HttpOnly cookie instead (IS-13)"
           },
           "session_id": {
             "type": "string",
@@ -25691,7 +25729,6 @@
         "required": [
           "access_token",
           "expires_in",
-          "refresh_token",
           "session_id",
           "memberships"
         ],

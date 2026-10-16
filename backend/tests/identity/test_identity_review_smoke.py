@@ -59,7 +59,6 @@ from app.domains.identity.schemas import (
     PasswordChangeRequest,
     PhoneChangeConfirmRequest,
     PhoneChangeRequest,
-    RefreshRequest,
     TokenResponse,
     UserLockRequest,
 )
@@ -760,9 +759,7 @@ async def test_access_token_is_not_accepted_as_a_refresh_token(
     )
 
     with pytest.raises(SessionInvalidError):
-        await login_session_service.refresh_session(
-            _db(), RefreshRequest(refresh_token=access_token)
-        )
+        await login_session_service.refresh_session(_db(), access_token)
 
 
 @pytest.mark.asyncio
@@ -810,17 +807,15 @@ async def test_refresh_rotation_makes_the_old_refresh_token_unusable(
     user_record = store.add_user()
     _session_record, first_refresh_token = store.add_session(user_record, None)
 
-    token_response = await login_session_service.refresh_session(
-        _db(), RefreshRequest(refresh_token=first_refresh_token)
+    issued_tokens = await login_session_service.refresh_session(
+        _db(), first_refresh_token
     )
 
-    assert token_response.refresh_token != first_refresh_token
+    assert issued_tokens.token_response.refresh_token != first_refresh_token
     with pytest.raises(SessionInvalidError):
-        await login_session_service.refresh_session(
-            _db(), RefreshRequest(refresh_token=first_refresh_token)
-        )
+        await login_session_service.refresh_session(_db(), first_refresh_token)
     await login_session_service.refresh_session(
-        _db(), RefreshRequest(refresh_token=token_response.refresh_token)
+        _db(), issued_tokens.token_response.refresh_token
     )
 
 
@@ -1322,14 +1317,20 @@ def _stub_session_start(
             )
         )
 
-    async def start_session(_db: object, **_values: object) -> TokenResponse:
+    async def start_session(
+        _db: object, **_values: object
+    ) -> login_session_service.IssuedSessionTokens:
         """Return a fixed token pair instead of opening a session."""
-        return TokenResponse(
-            access_token="access",
-            refresh_token="refresh",
-            expires_in=60,
-            session_id=uuid4(),
-            memberships=[],
+        return login_session_service.IssuedSessionTokens(
+            TokenResponse(
+                access_token="access",
+                refresh_token="refresh",
+                expires_in=60,
+                session_id=uuid4(),
+                memberships=[],
+            ),
+            None,
+            None,
         )
 
     monkeypatch.setattr(identity_repository, "insert_credential", insert_credential)

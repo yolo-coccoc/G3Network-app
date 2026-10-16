@@ -181,8 +181,6 @@ from app.domains.identity.schemas import (
     OrganizationCreateRequest,
     OrganizationStatusRequest,
     PasswordResetRequest,
-    RefreshRequest,
-    TokenResponse,
 )
 from app.domains.identity.types import (
     AccessAuditAction,
@@ -4211,7 +4209,9 @@ async def test_identity_login_flow_roles_lockout_and_handover(
         engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    async def login(phone_number: str, password: str) -> TokenResponse:
+    async def login(
+        phone_number: str, password: str
+    ) -> login_session_service.IssuedSessionTokens:
         """Log in as the router would: commit recorded failures, then raise."""
         async with session_factory() as db:
             try:
@@ -4230,11 +4230,13 @@ async def test_identity_login_flow_roles_lockout_and_handover(
             await db.commit()
             return tokens
 
-    async def principal_of(tokens: TokenResponse) -> Principal:
+    async def principal_of(
+        tokens: login_session_service.IssuedSessionTokens,
+    ) -> Principal:
         """Authenticate an access token the way the dependencies do."""
         async with session_factory() as db:
             identity = await login_session_service.authenticate_session(
-                db, tokens.access_token
+                db, tokens.token_response.access_token
             )
             principal = await login_session_service.resolve_principal(db, identity)
             await db.commit()
@@ -4305,6 +4307,10 @@ async def test_identity_login_flow_roles_lockout_and_handover(
                 None,
             )
             await db.commit()
+        # A browser session gets its refresh token for the cookie, never in
+        # the body (IS-13).
+        assert accepted.token_response.refresh_token is None
+        assert accepted.cookie_refresh_token is not None
         admin = await principal_of(accepted)
         assert admin.organization_id == customer.organization_id
         assert admin.roles == {UserRole.ORG_ADMIN}
@@ -4366,13 +4372,13 @@ async def test_identity_login_flow_roles_lockout_and_handover(
         # Refreshing replaces the refresh token; the old one is dead.
         async with session_factory() as db:
             refreshed = await login_session_service.refresh_session(
-                db, RefreshRequest(refresh_token=new_tokens.refresh_token)
+                db, new_tokens.token_response.refresh_token
             )
             await db.commit()
         async with session_factory() as db:
             with pytest.raises(SessionInvalidError):
                 await login_session_service.refresh_session(
-                    db, RefreshRequest(refresh_token=new_tokens.refresh_token)
+                    db, new_tokens.token_response.refresh_token
                 )
         admin = await principal_of(refreshed)
 

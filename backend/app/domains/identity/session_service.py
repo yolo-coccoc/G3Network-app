@@ -9,6 +9,7 @@ session; the device's push token. Internal module: the domain's routers and
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
@@ -46,7 +47,6 @@ from app.domains.identity.schemas import (
     LoginRequest,
     MembershipSummaryResponse,
     MeResponse,
-    RefreshRequest,
     SessionResponse,
     SignUpRequest,
     TokenResponse,
@@ -185,12 +185,41 @@ async def _create_session(
     return session_record, refresh_token
 
 
-async def _build_token_response(
+# Lives here, not in `types.py`: it carries the Pydantic `TokenResponse`, and
+# `types.py` must not depend on Pydantic.
+@dataclass(frozen=True)
+class IssuedSessionTokens:
+    """What a login, sign-up, invitation acceptance or refresh hands out (IS-13).
+
+    A phone-app session gets both tokens in the response body. A browser
+    (``WEB``) session never does: its refresh token goes into an ``HttpOnly``
+    cookie that page script cannot read, so an injected script cannot steal
+    it; the router sets that cookie from the two ``cookie_*`` fields.
+
+    Attributes:
+        token_response: The response body; ``refresh_token`` is ``None`` for a
+            ``WEB`` session.
+        cookie_refresh_token: The plain refresh token for the browser's cookie;
+            ``None`` for a phone-app session.
+        cookie_max_age_seconds: How long the cookie lives: until the session
+            expires (its idle lifetime, pushed forward by every refresh);
+            ``None`` when there is no cookie.
+    """
+
+    token_response: TokenResponse
+    cookie_refresh_token: str | None
+    cookie_max_age_seconds: int | None
+
+
+async def _build_issued_tokens(
     db_session: AsyncSession,
     session_record: UserSessionModel,
     refresh_token: str,
-) -> TokenResponse:
-    """Sign an access token for a session and assemble the login answer.
+) -> IssuedSessionTokens:
+    """Sign an access token for a session and assemble what the client receives.
+
+    The session's stored platform decides where the refresh token goes, so a
+    browser session can never get it in a body, whatever the request says.
 
     Args:
         db_session: Current database session.
@@ -198,21 +227,28 @@ async def _build_token_response(
         refresh_token: The plain refresh token to hand to the client.
 
     Returns:
-        Both tokens, the session ID, the current organization and the
-        person's memberships.
+        The response body (access token, session ID, current organization,
+        memberships, and the refresh token for a phone app) and, for a
+        browser session, the refresh token and lifetime of its cookie.
     """
+    now = utc_now()
     ttl = timedelta(seconds=settings.IDENTITY_ACCESS_TOKEN_TTL_SECONDS)
-    access_token = create_access_token(session_record.user_session_id, utc_now() + ttl)
-    return TokenResponse(
+    access_token = create_access_token(session_record.user_session_id, now + ttl)
+    is_browser = session_record.platform == SessionPlatform.WEB.value
+    token_response = TokenResponse(
         access_token=access_token,
         expires_in=int(ttl.total_seconds()),
-        refresh_token=refresh_token,
+        refresh_token=None if is_browser else refresh_token,
         session_id=session_record.user_session_id,
         organization_id=session_record.organization_id,
         memberships=await build_membership_summaries(
             db_session, session_record.user_id
         ),
     )
+    if not is_browser:
+        return IssuedSessionTokens(token_response, None, None)
+    max_age_seconds = int((session_record.expires_at - now).total_seconds())
+    return IssuedSessionTokens(token_response, refresh_token, max(max_age_seconds, 0))
 
 
 def _choose_organization(
@@ -281,7 +317,7 @@ async def _start_session_for_login(
     user_record: UserModel,
     device: DeviceFields,
     client_context: ClientContext | None,
-) -> TokenResponse:
+) -> IssuedSessionTokens:
     """Open a session for a person who proved who they are.
 
     Checks the organizations they can enter, picks the one to open, creates
@@ -295,7 +331,8 @@ async def _start_session_for_login(
         client_context: IP address and user agent of the request.
 
     Returns:
-        The token response.
+        The issued tokens: the response body and, for a browser session,
+        the refresh cookie (IS-13).
 
     Raises:
         OrganizationInactiveError: If the person has active memberships but
@@ -358,14 +395,14 @@ async def _start_session_for_login(
     )
     await _alert_emergency_login(db_session, user_record)
     await db_session.flush()
-    return await _build_token_response(db_session, session_record, refresh_token)
+    return await _build_issued_tokens(db_session, session_record, refresh_token)
 
 
 async def login(
     db_session: AsyncSession,
     login_request: LoginRequest,
     client_context: ClientContext | None,
-) -> TokenResponse:
+) -> IssuedSessionTokens:
     """Log a person in with phone number and password (ACC-04).
 
     A wrong phone number and a wrong password give the same answer and cost
@@ -378,7 +415,8 @@ async def login(
         client_context: IP address and user agent of the request.
 
     Returns:
-        Access and refresh tokens and the person's memberships.
+        The issued tokens and the person's memberships (the refresh token
+        goes to a cookie for a browser session, IS-13).
 
     Raises:
         InvalidCredentialsError: Wrong phone number or password (401).
@@ -478,7 +516,7 @@ async def sign_up(
     db_session: AsyncSession,
     sign_up_request: SignUpRequest,
     client_context: ClientContext | None,
-) -> TokenResponse:
+) -> IssuedSessionTokens:
     """Register an individual customer after phone verification (ACC-07, ID-15).
 
     Creates the user, the password, a personal INDIVIDUAL organization whose
@@ -491,7 +529,8 @@ async def sign_up(
         client_context: IP address and user agent of the request.
 
     Returns:
-        Tokens of the new session.
+        The issued tokens of the new session (the refresh token goes to a
+        cookie for a browser session, IS-13).
 
     Raises:
         UserConflictError: The phone number or e-mail is registered.
@@ -603,7 +642,7 @@ async def accept_invitation(
     db_session: AsyncSession,
     accept_request: InvitationAcceptRequest,
     client_context: ClientContext | None,
-) -> TokenResponse:
+) -> IssuedSessionTokens:
     """Let an invited person choose a password and join (ACC-09, ACC-10).
 
     Args:
@@ -612,7 +651,8 @@ async def accept_invitation(
         client_context: IP address and user agent of the request.
 
     Returns:
-        Tokens of the new session.
+        The issued tokens of the new session (the refresh token goes to a
+        cookie for a browser session, IS-13).
 
     Raises:
         WeakPasswordError: The password breaks the policy.
@@ -679,24 +719,29 @@ async def accept_invitation(
 
 
 async def refresh_session(
-    db_session: AsyncSession, refresh_request: RefreshRequest
-) -> TokenResponse:
+    db_session: AsyncSession, refresh_token: str | None
+) -> IssuedSessionTokens:
     """Replace a refresh token with a new pair and extend the session (ACC-04).
 
     Args:
         db_session: Session owned by the entry boundary.
-        refresh_request: The refresh token.
+        refresh_token: The token from the phone app's body or the browser's
+            cookie (the router picks it); ``None`` when the client sent none.
 
     Returns:
-        A new access token and a new refresh token; the old one stops working.
+        A new access token and a new refresh token (in the body for a phone
+        app, for the cookie for a browser); the old one stops working.
 
     Raises:
-        SessionInvalidError: The token is unknown, was replaced, or the
-            session expired, or the account is no longer active.
+        SessionInvalidError: No token was sent, the token is unknown, was
+            replaced, or the session expired, or the account is no longer
+            active.
     """
+    if refresh_token is None:
+        raise SessionInvalidError("No refresh token was sent; log in again")
     now = utc_now()
     session_record = await identity_repository.find_session_by_refresh_hash(
-        db_session, hash_refresh_token(refresh_request.refresh_token)
+        db_session, hash_refresh_token(refresh_token)
     )
     if session_record is None or session_record.expires_at <= now:
         raise SessionInvalidError("The session is no longer valid; log in again")
@@ -717,7 +762,7 @@ async def refresh_session(
         session_record.platform, is_internal
     )
     await db_session.flush()
-    return await _build_token_response(db_session, session_record, new_refresh_token)
+    return await _build_issued_tokens(db_session, session_record, new_refresh_token)
 
 
 async def authenticate_session(
