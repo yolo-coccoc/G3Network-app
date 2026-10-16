@@ -11,7 +11,7 @@ Groups of trucks inside an organization, their managers, the live fleet map, geo
 - [ ] **FLT-01** [Fleets and fleet hierarchy](#flt-01) — Backend ✅ · Portal ⬜
 - [ ] **FLT-02** [Fleet vehicle membership](#flt-02) — Backend ✅ · Portal ⬜
 - [ ] **FLT-03** [Fleet manager scope](#flt-03) — Backend ✅ · Portal ⬜
-- [ ] **FLT-04** [Fleet list and live map](#flt-04) — Backend ✅ · Portal ⬜
+- [ ] **FLT-04** [Fleet list and live map](#flt-04) — Backend ✅ · Portal 🚧
 - [ ] **FLT-05** [Geofences and zone alerts](#flt-05) — Backend ✅ · Portal ⬜
 - [ ] **FLT-06** [Fleet KPI dashboard](#flt-06) — Backend ⬜ · Portal ⬜
 - [ ] **FLT-07** [Fleet operating cost report](#flt-07) — Backend ⬜ · Portal ⬜
@@ -114,7 +114,7 @@ Every truck of the fleet on a list and a live map with its operating state (driv
 - Offline trucks and overnight alerts highlighted
 - Filter by state, status and search by VIN or plate
 
-**Status:** Backend ✅ · Portal ⬜
+**Status:** Backend ✅ · Portal 🚧
 
 **Depends on:** [FLT-02](#flt-02), [MON-02](telemetry.md#mon-02), [MON-09](telemetry.md#mon-09)  
 **Also touches:** `telemetry`  

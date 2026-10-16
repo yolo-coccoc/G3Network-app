@@ -12,6 +12,7 @@ pieces that don't need frequent direct code changes are Dockerized.
 | Component | Tool |
 |---|---|
 | Backend (`api`, and the entrypoints under `telemetry/ingestion`, `telematics/ingestion`, `charging_stations/ocpp`, `telematics/monitoring`, `drivers/monitoring`) | `uv` — `uv run uvicorn app.api.main:app`, `uv run python -m app.domains.telemetry.ingestion.entrypoint`... (normally through `make backend-dev`, `make telemetry-dev`, `make charging-ocpp-dev`, `make telematics-monitor-dev`) |
+| Web portal (`web-portal/`) | Node 22 + pnpm through corepack — Vite dev server through `make portal-dev` (http://localhost:5173, `/api` proxied to :8000) |
 
 ## Running in Docker (`infra/docker-compose.yml`)
 
@@ -53,6 +54,7 @@ Basic commands:
 - `make driving-sessions-autoend-dev` — Driving-session auto-end worker (`DRIVERS_*` settings)
 - `make identity-bootstrap` — Create the internal organization and the first HEAD_ADMIN from `IDENTITY_BOOTSTRAP_*` (idempotent; run once per database)
 - `make portal-install` / `make portal-dev` — Install the web portal's workspace (frozen lockfile) / run its dev server on http://localhost:5173, with `/api` proxied to the API on :8000 (`make backend-dev`)
+- `make portal-e2e` — Playwright page flows and screenshots against a mocked API (no backend; not in `make check`); `make portal-e2e-update` rewrites the reference screenshots (look at every changed image); `make portal-e2e-install` downloads Playwright's Chromium once per machine (on Ubuntu 20.04, for which Playwright publishes no build, it fetches the Ubuntu 22.04 one, which runs there)
 - `make db-migrate` — Apply the baseline migration to an empty database
 - `make db-reset` — Clear the database and rebuild it from the baseline migration (wipes all data)
 - `make db-check` — Verify the database built by the migration matches the models (`alembic check`)
@@ -66,7 +68,7 @@ instructions.
 
 ## Environment variables
 
-- There are 2 separate sample files: `backend/.env.example` and `infra/.env.example` (there's no shared root-level `.env.example`); `make setup` copies each to `.env` if missing. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
+- There are 3 separate sample files: `backend/.env.example`, `infra/.env.example` and `web-portal/.env.example` (there's no shared root-level `.env.example`); `make setup` copies the first two to `.env` if missing. `web-portal/.env` is optional: it holds `VITE_MAP_STYLE_URL` (the live map's MapLibre style; empty = the free MapLibre demo style, development only; provider: open question 13), and only `VITE_*` names reach the browser. Backend settings point to `localhost` (not internal Docker service names), e.g. `DATABASE_URL=postgresql+asyncpg://...@localhost:5432/...`, `MQTT_HOST=localhost`; `infra/.env` only holds the PostgreSQL credentials read by `docker-compose.yml`.
 - Every backend setting is defined (type, validation, default) in `backend/app/libs/common/config.py` and documented with its default in `backend/.env.example`, grouped by component; only `DATABASE_URL` has no default (the API also refuses to start without `IDENTITY_TOKEN_SECRET_KEY`, below). A new setting goes in both, namespaced by component.
 - OCPP gateway settings (`CHARGING_OCPP_*`, `CHARGING_OFFLINE_TIMEOUT_SECONDS`): listen address/port, largest accepted frame, the heartbeat interval returned at boot (both protocols), the offline threshold behind the derived `is_online`, the timeout for a charger's answer to a gateway request, and the command channel (`CHARGING_OCPP_COMMAND_POLL_SECONDS`, `CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS`: how often the gateway looks for queued commands, and how long a queued command may wait for a connected charger before it ends `NOT_SENT`; `CHARGING_OCPP_COMMAND_CLAIM_BATCH_SIZE`, default 20: how many queued commands one poll claims; `CHARGING_OCPP_COMMAND_STALE_SENT_FACTOR`, default 3: a sent command with no answer is closed `TIMEOUT` after this many `CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS`).
 - Identity settings (`IDENTITY_*`): `IDENTITY_TOKEN_SECRET_KEY` (signs access tokens and keys the one-time-code hash; required, at least 32 characters: the API refuses to start without it, and `make setup` generates one into `backend/.env` when it is empty), token/session lifetimes, login lockout, one-time-code limits (`IDENTITY_OTP_*` per phone, `IDENTITY_INVITES_PER_USER_PER_DAY` per inviter), `IDENTITY_SMS_PROVIDER` / `IDENTITY_EMAIL_PROVIDER` (only the logging fake `log` exists: it writes the SMS, codes included, to the log as `fake_sms_sent` with the text in `sms_text`), `IDENTITY_EMERGENCY_ADMIN_PHONE` (ACC-20) and the `IDENTITY_BOOTSTRAP_*` seed values.

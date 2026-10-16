@@ -11,7 +11,7 @@ Organizations, people, logins, roles and what each person may see and do; consen
 - [ ] **ACC-01** [Organization registry](#acc-01) — Backend ✅ · Portal ⬜
 - [ ] **ACC-02** [Account manager per customer](#acc-02) — Backend ✅ · Portal ⬜
 - [ ] **ACC-03** [User accounts](#acc-03) — Backend ✅ · App ⬜ · Portal ⬜
-- [ ] **ACC-04** [Login and sessions](#acc-04) — Backend ✅ · App ⬜ · Portal ⬜
+- [ ] **ACC-04** [Login and sessions](#acc-04) — Backend ✅ · App ⬜ · Portal 🚧
 - [ ] **ACC-05** [One-time codes (OTP)](#acc-05) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **ACC-06** [Password reset and phone number change](#acc-06) — Backend 🚧 · App ⬜ · Portal ⬜
 - [ ] **ACC-07** [Self-registration for individual customers](#acc-07) — Backend ✅ · App ⬜
@@ -21,7 +21,7 @@ Organizations, people, logins, roles and what each person may see and do; consen
 - [ ] **ACC-11** [Bulk import of users and drivers](#acc-11) — Backend ⬜ · Portal ⬜
 - [ ] **ACC-12** [Memberships](#acc-12) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **ACC-13** [Role assignment](#acc-13) — Backend ✅ · Portal ⬜
-- [ ] **ACC-14** [Feature access control](#acc-14) — Backend ✅ · App ⬜ · Portal ⬜
+- [ ] **ACC-14** [Feature access control](#acc-14) — Backend ✅ · App ⬜ · Portal 🚧
 - [x] **ACC-15** [Data scope enforcement](#acc-15) — Backend ✅
 - [ ] **ACC-16** [Push device registration](#acc-16) — Backend ✅ · App ⬜ · Portal ⬜
 - [ ] **ACC-17** [Legal acceptance and consent](#acc-17) — Backend 🚧 · App ⬜ · Portal ⬜
@@ -131,7 +131,7 @@ Log in with phone number and password on the app and the portal; a person in sev
 - Record last login and last activity
 - Login history (time, IP, device) visible to the user and our admins; alert the user on a login from a new device
 
-**Status:** Backend ✅ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal 🚧
 
 **Depends on:** [ACC-03](#acc-03)  
 **Needed by:** [ACC-16](#acc-16), [CHG-01](charging_sessions.md#chg-01)  
@@ -386,7 +386,7 @@ Allow a feature only when it is in the person's roles and, for customers, also i
 - The app and portal hide what the user cannot use
 - Lock features of an overdue subscription
 
-**Status:** Backend ✅ · App ⬜ · Portal ⬜
+**Status:** Backend ✅ · App ⬜ · Portal 🚧
 
 **Depends on:** [ACC-13](#acc-13), [PAY-02](billing.md#pay-02)  
 **Needed by:** [ACC-21](#acc-21), [NTF-06](notifications.md#ntf-06)  

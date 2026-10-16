@@ -1,16 +1,17 @@
-# Planner: Web portal scaffold (ACC-04, ACC-14, VEH-01)
+# Planner: Web portal scaffold (ACC-04, ACC-14, VEH-01, FLT-04, ACC-23)
 
 > Feature codes: ACC-04 (Login and sessions), ACC-14 (Feature access control),
-> VEH-01 (Vehicle registry) — portal surface; plus the shell every later
+> VEH-01 (Vehicle registry), and through the sample pages FLT-04 (live map)
+> and ACC-23 (Organization settings, ID-54) — portal surface; plus the shell every later
 > portal feature uses.
-> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Steps 1–3 done
+> Status: ✅ Done 2026-10-17 — scope confirmed 2026-10-16 (D1–D15; D11 amended by ID-54); Steps 1–8 done
 > Created: 2026-10-16
 >
 > Inputs: TT-28, CV-24, CV-25, IS-13 and open questions 12–14 in
-> [decision-log.md](../decisions/decision-log.md);
-> [web-portal-conventions.md](../../.claude/rules/web-portal-conventions.md),
-> [web-portal-ui.md](../../.claude/rules/web-portal-ui.md);
-> [scenario/web-portal.md](../scenario/web-portal.md) (flows and routes);
+> [decision-log.md](../../decisions/decision-log.md);
+> [web-portal-conventions.md](../../../.claude/rules/web-portal-conventions.md),
+> [web-portal-ui.md](../../../.claude/rules/web-portal-ui.md);
+> [scenario/web-portal.md](../../scenario/web-portal.md) (flows and routes);
 > `web_portal_prototype/` (screens, reference only); the identity routes in
 > `backend/app/domains/identity/router.py` (`/auth/login`, `/auth/refresh`,
 > `/auth/logout`, `GET /auth/me`, `POST /auth/organization`).
@@ -102,7 +103,7 @@ keeps no Node file):
 
 ```text
 web-portal/
-  package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc, .prettierrc   (root project = the app)
+  package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc, .prettierignore   (root project = the app; no .prettierrc, Step 3)
   vite.config.ts, tsconfig.json, eslint.config.js, playwright.config.ts, .env.example, index.html
   src/{app,routes,features,shared}, e2e/
   packages/api-client/  openapi.json, src/schema.d.ts (generated), src/index.ts (client factory), package.json
@@ -218,34 +219,143 @@ web-portal/
   color, a `style` prop, Vietnamese text in JSX and in `title=`; a stray
   file makes `make portal-check` exit 2. The hook reformatted a messy probe
   file and left `schema.d.ts` untouched.
-- [ ] **Step 4 — Shared foundation.** Theme tokens (D14), i18n setup with
+- [x] **Step 4 — Shared foundation.** Theme tokens (D14), i18n setup with
   vi/en catalogs (D7), API client with token refresh (D5) and error mapping
   (D15), formatters, status map, StatusTag, DataTable, ReasonDialog,
   PageHeader, Empty/Error states, the five templates. Evidence: Vitest for
-  formatters, error mapping, refresh single-flight, `useHasFeature`.
-- [ ] **Step 5 — Shell and access.** Login (`platform: "WEB"`), organization
+  formatters, error mapping, refresh single-flight, `useHasFeature`. Done
+  2026-10-16, commit `375a143` (Steps 4–7 together: the router's types need
+  the routes). Libraries (D2, exact, each at least two days old so pnpm's
+  minimum release age needs no exclusion): antd 6.6.6, @ant-design/icons
+  6.3.4, @tanstack/react-query 5.104.2, @tanstack/react-router 1.170.44 and
+  router-plugin 1.168.46, zustand 5.0.15, i18next 26.4.5, react-i18next
+  17.0.16, date-fns 4.4.0, date-fns-tz 3.2.0, @fontsource/be-vietnam-pro
+  5.3.0, maplibre-gl 6.14.0, react-map-gl 8.1.3; tests: jsdom 30.1.2,
+  @testing-library/react 16.3.3, @playwright/test 1.64.1. pnpm reports
+  "agent skills awaiting approval" in @tanstack/router-plugin; not approved
+  (nobody asked for agent instructions from a package). Settled while
+  building: the i18n catalogs type every `t()` key (`CustomTypeOptions`), so
+  a missing key fails `tsc`; status labels live once in `common`
+  (`status.<VALUE>`), because `StatusTag` (in `shared`) labels every
+  domain's values; static help text of a form field goes in `Form.Item`'s
+  `extra`, since `help` hides validation errors; `FilterField` (in
+  `shared/ui`) gives filter controls their width, because screens may not set
+  sizes; `QueryState` renders a query's skeleton/error/content; `useReportApiError`
+  puts 422 errors on the form and toasts the rest; Ant Design 6.6 deprecates
+  `List`, so lists of a few items are stacked `Card`s; page and page size are
+  optional in the URL (`resolvePage` applies 1 and 20), so a link to a list
+  needs no search params; the refresh is a raw `fetch` (not the typed
+  client) so its 401 never triggers the refresh-and-retry middleware.
+- [x] **Step 5 — Shell and access.** Login (`platform: "WEB"`), organization
   picker (`POST /auth/organization` when `organization_id` is null and there
   are several memberships), session store, `/auth/me`, tab bar from
   `tabs.ts` (D11), `_authed` guard, `beforeLoad` feature guards, `<Can>`,
   logout, language switch. Evidence: Vitest for guards; Playwright flow.
-- [ ] **Step 6 — The five sample pages (D12, D13).** Evidence: each page
-  works against mocked responses in Playwright.
-- [ ] **Step 7 — Screenshots (D10).** `make portal-e2e`: login, picker and
+  Done 2026-10-16. **Backend gap found and fixed first (ID-54, commit
+  `12956f6`)**: `/auth/me` listed only the `ACC-*` codes, so `VEH-01` and
+  `FLT-04` never reached the portal; it now lists what the routers allow, and
+  the Administration tab checks the new ACC-23 (ORG_ADMIN does not hold
+  ACC-01, the D11 choice). Settled: the shell (`app/AppShell.tsx`) wraps the
+  router's output through TanStack Router's `InnerWrap` and shows itself
+  only inside `/_authed`, so route files never import `app/`; the home-page
+  rule (`resolveHomePath`, from the tab registry in `app/tabs.ts`) reaches
+  routes through the router context; a tab with several pages opens a
+  submenu; a route without its feature redirects to `/no-access` (not to the
+  tab's first page: one rule, and the shell keeps the allowed tabs
+  reachable); `requireSession` returns the caller with `organization_id` as
+  a string; the login page's `?redirect=` accepts portal paths only (no
+  open redirect); a refresh refused during use clears the session and
+  returns to `/login?redirect=`; switching organization drops the query
+  cache. `<Can>` and `requireFeature` take one code or several (any one is
+  enough), because an endpoint can serve several features
+  (`VEHICLE_READERS`). ESLint: route files may throw the router's
+  `Redirect`; `react-refresh/only-export-components` is off for route files
+  (the router plugin splits the page component into its own module); every
+  feature may import `features/identity` (backend: every domain may call
+  `identity`).
+- [x] **Step 6 — The five sample pages (D12, D13).** Evidence: each page
+  works against mocked responses in Playwright. Done 2026-10-16. List
+  `/fleet/vehicles` (search, status filter, paging in the URL); Detail
+  `/vehicles/$vehicleId` (summary, ownership-history tab, Edit, Remove with
+  the reason dialog); Form `/fleet/vehicles/new` and
+  `/vehicles/$vehicleId/edit` (internal staff also pick the owner); Live map
+  `/fleet/live` (fleet and sub-fleets in the URL, statistics, MapLibre map
+  synced with the side list, polled every 15 s); Settings
+  `/administration/organization` (one card per setting, each saved with a
+  reason). Settled: **the vehicle edit opens no reason dialog**: its PATCH
+  has no `reason` field; a status change requires its `status_reason`, which
+  the backend stores as the history reason, and a plain edit gets the
+  backend's fixed reason (ID-50 (5)). MapLibre 6 looks for its worker next
+  to its own module, which Vite's pre-bundling moves: `MapView` hands it the
+  worker Vite bundles (`?worker&url`, `setWorkerUrl`). `react-map-gl` creates
+  the map asynchronously, so the first fit to the points happens in
+  `onLoad`; later fits only when the set of trucks changes (a poll must not
+  reset the user's zoom). `optimizeDeps.entries` scans every source file at
+  start-up so a lazily loaded route never forces a reload ("Outdated
+  Optimize Dep"). `VITE_MAP_STYLE_URL` in `web-portal/.env.example` (D13).
+- [x] **Step 7 — Screenshots (D10).** `make portal-e2e`: login, picker and
   the five pages in Vietnamese; reference screenshots committed; reviewed by
-  hand against web-portal-ui.md §5. Evidence: the run and the files.
-- [ ] **Step 8 — Verify and document.** One real-backend run with `e2e-sim`
+  hand against web-portal-ui.md §5. Evidence: the run and the files. Done
+  2026-10-16. 14 Playwright tests (`e2e/*.spec.ts`) against `e2e/mockApi.ts`
+  (fixtures typed by `@g3/api-client`, fixed clock, a blank map style),
+  plus a check that fails a test on any console error or warning (Ant
+  Design reports deprecated props there; two browser notices are ignored:
+  "Failed to load resource" for the statuses the tests return on purpose,
+  and the software GL renderer's "GPU stall"). Seven screenshots in
+  `e2e/__screenshots__/`: login, organization picker, vehicle list, detail,
+  create form, live map, organization settings (1440 × 900, `vi-VN`,
+  Vietnam time). Reviewed by hand; fixed after review: the map did not fit
+  the trucks, the header actions were not centered, the plate link was
+  indented, the date picker's Vietnamese placeholder said "Chọn thời điểm"
+  (now "Chọn ngày"), and required-field messages were hidden (the `help`
+  issue above). **Playwright 1.64 publishes no Chromium for Ubuntu 20.04**
+  (this machine): `make portal-e2e-install` downloads the Ubuntu 22.04
+  build there (the same Chrome for Testing binary; it runs on glibc 2.31).
+  New targets: `portal-e2e`, `portal-e2e-update`, `portal-e2e-install`.
+- [x] **Step 8 — Verify and document.** One real-backend run with `e2e-sim`
   (`make backend-dev`, `make portal-dev`, log in as a bootstrap admin, list
   vehicles); `make check`; architecture.md tree and stack row,
   dev-environment.md (portal commands, Node/pnpm), README, the conventions
   files where the build settled a detail, the feature catalog (`portal:
   doing` for ACC-04, ACC-14, VEH-01, and the organization-settings capability
   added to ACC-01 (D11); `feature-catalog` skill), the decision
-  log where the build settled a detail.
+  log where the build settled a detail. Done 2026-10-17. The local database
+  was already on the baseline and empty, so it was not reset; a bootstrap
+  HEAD_ADMIN was created with values passed in the shell (not written to
+  `backend/.env`), and a model, two trucks and a fleet were provisioned
+  through the API. A Playwright script (not committed) drove the real API
+  through `make portal-dev`'s proxy: login → vehicle list with the two
+  trucks → detail with the current ownership period → reload restores the
+  session from the cookie (`g3_refresh`: `HttpOnly`, `Secure`,
+  `SameSite=Strict`, `Path=/api/v1/auth`) → live map of the fleet (the truck
+  offline, "no data yet") → settings change 120 → 95 with a reason (one
+  `organization_setting_history` row with the old value, the reason and the
+  actor) → logout (cookie gone; `/fleet/vehicles` sends to login again); no
+  console problem. `/auth/me` of the admin lists `VEH-01`, `FLT-04` and
+  `ACC-23` (ID-54 holds on the real backend). It found one defect, fixed in
+  `fix(web-portal)`: the plate in the list was an anchor without `href`
+  (no link role, no keyboard focus, no new tab). The map with the demo
+  style was checked by eye (Vietnam centered). The catalog marks the
+  organization-settings capability as ACC-23 (ID-54), not ACC-01.
 
 ## 5. Verification
 
-Filled in as steps complete.
+- `make check` passes: backend gate (1157 smoke tests), domain-model and
+  feature-catalog checks, `make portal-check` (Prettier, ESLint with the
+  boundary, i18n and color rules, `tsc -b`, 63 Vitest tests, API client
+  freshness).
+- `make portal-e2e`: 14 passed, console clean; the seven screenshots
+  reviewed by hand.
+- Real backend (Step 8): login, session restore, list, detail, live map,
+  settings with reason, logout, as described above.
+- Deliberate violations refused by lint (Step 3); a stray file fails
+  `make portal-check`.
 
 ## 6. Deferred / follow-ups
 
 `deferred.md` 106 (portal serving added to it), 107 (created): see §2.1.
+Added at the end: 108 (Vietnamese month and day names in the date picker:
+needs dayjs's `vi` locale, and `dayjs` as a direct dependency), 109 (the live
+map shows the first 100 trucks of a scope; paging or clustering once a fleet
+is larger). The production bundle has one chunk over 500 kB (MapLibre, loaded
+only by the live map route); part of the serving work of item 106.

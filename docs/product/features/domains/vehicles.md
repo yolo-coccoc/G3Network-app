@@ -8,7 +8,7 @@ The truck's profile, owner and model, and its activation at handover. Backend do
 
 ## Checklist
 
-- [ ] **VEH-01** [Vehicle registry](#veh-01) — Backend ✅ · Portal ⬜
+- [ ] **VEH-01** [Vehicle registry](#veh-01) — Backend ✅ · Portal 🚧
 - [ ] **VEH-02** [Vehicle ownership](#veh-02) — Backend ✅ · Portal ⬜
 - [ ] **VEH-03** [Vehicle model catalog](#veh-03) — Backend ✅ · Portal ⬜
 - [ ] **VEH-05** [Vehicle activation](#veh-05) — Backend ✅ · Portal ⬜
@@ -35,7 +35,7 @@ Keep every truck's profile: VIN, plate, model, handover date, warranty status an
 - Service status: active or inactive (in the workshop, not used), with a reason; a truck that leaves the system is removed with its reason and its data kept; idle or silent trucks are shown from their data, not stored
 - Filter by status, model, owner and fleet
 
-**Status:** Backend ✅ · Portal ⬜
+**Status:** Backend ✅ · Portal 🚧
 
 **Needed by:** [BAT-01](batteries.md#bat-01), [DEV-02](telematics.md#dev-02), [DRV-02](drivers.md#drv-02), [FLT-02](fleet.md#flt-02), [MNT-03](maintenance.md#mnt-03), [MNT-06](maintenance.md#mnt-06), [SAF-03](safety.md#saf-03), [SUP-01](support.md#sup-01), [VEH-02](#veh-02), [VEH-03](#veh-03), [VEH-05](#veh-05), [WAR-01](warranties.md#war-01)  
 **Related tables:** `vehicles`, `vehicle_models`  

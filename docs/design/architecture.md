@@ -11,10 +11,10 @@ Contents: [Components](#current-components) ·
 [Local infrastructure](#local-infrastructure) ·
 [Directory structure](#directory-structure) · [Not built yet](#not-yet-in-the-mvp)
 
-The repo is a backend MVP monorepo. The diagram below describes the
-components present in the source and local infrastructure; Kafka, Redis, API
-Gateway, the portal and the vehicle app are only future directions, not
-active components yet.
+The repo is a backend MVP monorepo with the start of the web portal. The
+diagram below describes the components present in the source and local
+infrastructure; Kafka, Redis, API Gateway and the vehicle app are only future
+directions, not active components yet.
 
 ```mermaid
 flowchart LR
@@ -30,7 +30,7 @@ flowchart LR
     Domains["identity\nvehicles\nbatteries\nwarranties\ntelematics\ntelemetry\ncharging_stations\ncharging_sessions\nbilling\ndrivers\nsupport\nfleet"]
     Notifications["notifications"]
     DB[("PostgreSQL 16\nTimescaleDB + PostGIS")]
-    Portal["Admin web portal\n(polls, not built yet)"]
+    Portal["Web portal (web-portal/)\nReact SPA, polls"]
 
     Vehicle -->|MQTT telemetry| Broker
     Broker --> Ingestion
@@ -55,7 +55,7 @@ flowchart LR
     API -->|F-J2 command publish, per device or fleet| Broker
     Broker -.->|command topic, not consumed by any device yet| Vehicle
     Domains -->|CRUD/query| DB
-    Portal -.->|GET /api/v1/notifications| API
+    Portal -->|/api/v1, same origin: auth, vehicles, fleets, live positions, settings| API
 ```
 
 ## Current components
@@ -442,6 +442,48 @@ monitor and the driving-session auto-end worker each have their own entrypoint
 (`make identity-bootstrap` is a one-off script that creates the first
 administrator), sharing the same database/session configuration.
 
+### Web portal
+
+`web-portal/` is a React single-page app (TT-28, TT-29), self-contained with
+its own pnpm workspace (TT-31). In development `make portal-dev` serves it
+with Vite on port 5173 and proxies `/api` to the API on :8000, so the portal
+and the API share one origin and the backend has no CORS (IS-13). A `WEB`
+login gets its refresh token in the `g3_refresh` `HttpOnly` cookie; the
+access token stays in memory. Production serving is not built (`deferred.md`
+item 106).
+
+What exists (built by the scaffold,
+[web-portal-scaffold.md](../planners/done/web-portal-scaffold.md)):
+
+- **Shell** (`src/app/`): providers, router, the tab bar from the tab
+  registry `tabs.ts` (tabs Fleet and Administration), organization switcher,
+  language switch, account menu with logout. Pages outside it: `/login` and
+  `/select-organization`.
+- **Access**: the guards `requireSession` and `requireFeature`
+  (`src/shared/auth/guards.ts`) and `<Can>` check the feature codes of
+  `GET /auth/me` (ID-54), never role names; a missing feature leads to
+  `/no-access`.
+- **Shared foundation** (`src/shared/`): theme tokens, status map and
+  `StatusTag`, `DataTable`, `ReasonDialog`, `PageHeader`, `QueryState` and the
+  empty/error states, `MapView` (MapLibre, style from `VITE_MAP_STYLE_URL`),
+  the five page templates, the API client with serialized token refresh and
+  error mapping, formatters, and the vi/en i18n catalogs.
+- **Sample pages**, one per template, on the real API: List `/fleet/vehicles`,
+  Detail `/vehicles/$vehicleId` (ownership-history tab, remove with a
+  reason), Form `/fleet/vehicles/new` and `/vehicles/$vehicleId/edit`, Live
+  map `/fleet/live` (a fleet's latest positions, polled), Settings
+  `/administration/organization` (`/organizations/{id}/settings`).
+- **Client**: `packages/api-client/` is generated from the backend's OpenAPI
+  document (`make api-client`; `make api-client-check` in the gate).
+- **Checks**: `make portal-check` (Prettier, ESLint with import boundaries,
+  i18n and color rules, `tsc -b`, Vitest) is part of `make check`;
+  `make portal-e2e` runs Playwright against a mocked API and compares the
+  seven committed screenshots.
+
+The portal's rules are in
+[web-portal-conventions.md](../../.claude/rules/web-portal-conventions.md) and
+[web-portal-ui.md](../../.claude/rules/web-portal-ui.md).
+
 Domain exceptions are mapped to HTTP once: each inherits one base in
 `app/libs/common/errors.py` (`NotFoundError` 404, `ConflictError` 409,
 `InvalidInputError` 400, `UpstreamUnavailableError` 502) and
@@ -473,7 +515,7 @@ Facts only; the reasoning and alternatives are in the
 | Domain boundaries | import-linter, one contract per domain | CV-01 |
 | Quality gate | local pre-commit hook running `make check`; no CI yet | TT-05 |
 | Reverse proxy / API gateway | none in development | IS-02 |
-| Web portal (decided, not built yet) | TypeScript + React + Vite SPA, self-contained in `web-portal/` (its own pnpm workspace with `packages/api-client/`); Ant Design v6 themed by tokens; TanStack Query + TanStack Router; Zustand (session, organization, UI preferences only); API client generated from the OpenAPI document; MapLibre GL; Apache ECharts; react-i18next; Vitest + Playwright. Same origin as the API, no CORS; web refresh token in an `HttpOnly` cookie | TT-28, TT-29, TT-31, CV-24, CV-25, IS-13 |
+| Web portal | TypeScript (strict, 5.9) + React 19 + Vite SPA, self-contained in `web-portal/` (its own pnpm workspace with `packages/api-client/`; Node 22, pnpm through corepack; versions pinned exactly in `package.json`); Ant Design v6 themed by tokens; TanStack Query + TanStack Router (file routes); Zustand (session, organization, UI preferences only); API client generated from the OpenAPI document (openapi-typescript + openapi-fetch); MapLibre GL through react-map-gl; react-i18next; date-fns-tz; ESLint (boundaries, i18n) + Prettier; Vitest + Playwright (Chromium). Apache ECharts is decided but not installed yet (no chart page). Same origin as the API, no CORS; web refresh token in an `HttpOnly` cookie | TT-28, TT-29, TT-31, CV-24, CV-25, IS-13 |
 | Driver mobile app (`driver-app/`, README only) | not decided (React Native + Expo proposed, Flutter the alternative) | open question 12, TT-31 |
 
 ## Database
@@ -532,12 +574,13 @@ TLS/per-charger authentication (STN-11); see `deferred.md` items 27, 73-76.
 - `db`: PostgreSQL/TimescaleDB/PostGIS on port `5432`.
 - `broker`: EMQX on port `1883`, dashboard on `18083`.
 
-The backend runs directly on the host via `uv`; there is no API Gateway or
-reverse proxy in the development environment.
+The backend runs directly on the host via `uv`, the web portal through
+Vite (`make portal-dev`, which proxies `/api` to the API); there is no API
+Gateway or reverse proxy in the development environment.
 
 ## Directory structure
 
-The layout of active source (`backend/`, `infra/`) and of the
+The layout of active source (`backend/`, `infra/`, `web-portal/`) and of the
 project tooling. Where a new file belongs is decided here; how domains may
 call each other is in
 [domain-boundaries.md](../../.claude/rules/domain-boundaries.md).
@@ -668,7 +711,18 @@ call each other is in
 │   ├── phone_simulator/            # the driver app on a phone-shaped page (TT-27): login, scan, live charge, stop, receipt, wallet + simulated bank; API only, stdlib, own .env; page on :8093
 │   └── charger_monitor/            # runs on the VM, page on :8095: Monitoring (OCPP traffic from the message log), Configuration (get/change via the command API) and Chargers (register/edit/delete chargers, guns, location price) tabs; own .env, stdlib only
 ├── web-portal/                     # the web portal, self-contained (TT-31): the app and its own pnpm workspace; pnpm commands run from here (the Make targets do it)
-│   ├── package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc   # workspace root = the portal app (@g3/web-portal): Node 22, pnpm pinned through corepack (TT-29); node_modules/ is untracked; src/ arrives in the scaffold's Step 3
+│   ├── package.json, pnpm-workspace.yaml, pnpm-lock.yaml, .nvmrc   # workspace root = the portal app (@g3/web-portal): Node 22, pnpm pinned through corepack, exact versions (TT-29); node_modules/ is untracked
+│   ├── vite.config.ts  index.html  # Vite (dev server :5173, /api proxy to :8000) and Vitest configuration
+│   ├── tsconfig.json               # references tsconfig.app.json (src/), tsconfig.node.json, tsconfig.e2e.json
+│   ├── eslint.config.js            # import boundaries between layers and features, no literal strings in JSX, no hand-picked colors
+│   ├── playwright.config.ts  .prettierignore  .env.example   # .env.example: VITE_MAP_STYLE_URL (map style)
+│   ├── src/
+│   │   ├── main.tsx                # mounts app/App
+│   │   ├── app/                    # the shell: App (providers), router.ts, AppShell.tsx (tab bar, organization switcher), tabs.ts (tab registry), routeTree.gen.ts (generated)
+│   │   ├── routes/                 # file routes by tab: login, select-organization, _authed/{fleet,administration}/..., _authed/vehicles/$vehicleId (shared detail), _authed/no-access
+│   │   ├── features/               # one folder per backend domain (identity, vehicles, fleet, telemetry): api/ (keys, queries, mutations), components/, permissions.ts, index.ts
+│   │   └── shared/                 # ui/ (theme, status map, DataTable, ReasonDialog, templates/ ...), auth/ (session, guards, Can), api/ (client, token refresh, errors, polling), lib/ (formatters, list search), i18n/ (locales/{vi,en}/)
+│   ├── e2e/                        # Playwright specs against a mocked API: mockApi.ts, typed fixtures.ts, test.ts (fails on console problems), __screenshots__/ (reference screenshots)
 │   └── packages/
 │       └── api-client/             # typed API client (TT-28): openapi.json + src/schema.d.ts generated by `make api-client` (never edited), src/index.ts wraps openapi-fetch
 ├── driver-app/                     # reserved for the driver's phone app: README.md only until its stack is decided (open question 12, TT-31)
@@ -697,7 +751,7 @@ call each other is in
 
 Not present yet: `backend/Dockerfile`, `infra/docker-compose.prod.yml`, a
 `scripts/` directory, and a single shared `.env.example` at the repo root —
-each part (`backend/`, `infra/`) currently keeps its own `.env.example`.
+each part (`backend/`, `infra/`, `web-portal/`) keeps its own `.env.example`.
 Don't create these files/directories before a concrete task needs them.
 
 Domains that have feature codes in `docs/product/feature-list.md`
@@ -712,13 +766,9 @@ dashboard; its live-position and operating-rollup views live in `telemetry`,
 which depends on `fleet`, not the reverse). Their planners in
 `docs/planners/done/` record what was left out.
 
-`web-portal/` has no app source yet; its stack is decided (TT-28) and its
-structure and rules are written in
-[web-portal-conventions.md](../../.claude/rules/web-portal-conventions.md) and
-[web-portal-ui.md](../../.claude/rules/web-portal-ui.md); the scaffold is
-planned in [web-portal-scaffold.md](../planners/web-portal-scaffold.md). So far
-`web-portal/` holds the workspace and the generated API client (Step 1); the
-app's `src/` arrives in Step 3. `driver-app/` holds only its README: the
+`web-portal/` holds the shell, the shared foundation and one sample page per
+template ([Web portal](#web-portal) above); every other portal screen is still
+to be built. `driver-app/` holds only its README: the
 driver mobile app has no source and no decided stack (open question 12).
 `web_portal_prototype/` is a throwaway clickable prototype of the portal's
 screens on mock data, not the start of `web-portal/`: its code is not reused,
@@ -770,8 +820,10 @@ only its screens and flows serve as a reference.
   SLA-breach monitor/escalation for support cases and support-case
   ownership scoped to an authenticated driver also don't exist yet
   (`deferred.md` items 70-71).
-- Web portal, vehicle app, centralized observability and production
-  reliability.
+- The web portal's screens beyond the five sample pages (every tab but
+  Fleet and Administration, notifications, charts), its production serving
+  (`deferred.md` item 106), the vehicle app, centralized observability and
+  production reliability.
 
 Items confirmed as needed in the future must be recorded in
 [`docs/decisions/deferred.md`](../decisions/deferred.md); do not

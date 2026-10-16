@@ -395,7 +395,7 @@ features:
       - ["Passwords stored only as one-way hashes; old ones cannot be reused", "Mật khẩu chỉ lưu dạng băm một chiều; không dùng lại mật khẩu cũ"]
       - ["Record last login and last activity", "Ghi nhận lần đăng nhập và hoạt động gần nhất"]
       - ["Login history (time, IP, device) visible to the user and our admins; alert the user on a login from a new device", "Lịch sử đăng nhập (thời gian, IP, thiết bị) cho người dùng và quản trị nội bộ xem; báo người dùng khi đăng nhập từ thiết bị mới"]
-    surfaces: {backend: done, portal: todo, app: todo}
+    surfaces: {backend: done, portal: doing, app: todo}
     related_tables: [user_credentials, user_sessions, user_state]
     priority: Must
     release: P1.0
@@ -667,7 +667,7 @@ features:
       - ["A role gives internal and customer users the same features; they differ only in which data they reach. Each role's feature list is granted in one step when nearly all features are built", "Một vai trò cho người dùng nội bộ và khách hàng cùng các tính năng; khác nhau chỉ ở phạm vi dữ liệu được xem. Danh sách tính năng của từng vai trò được cấp trong một bước khi gần hoàn tất các tính năng"]
       - ["The app and portal hide what the user cannot use", "App và portal ẩn những gì người dùng không được dùng"]
       - ["Lock features of an overdue subscription", "Khóa tính năng khi thuê bao quá hạn"]
-    surfaces: {backend: done, portal: todo, app: todo}
+    surfaces: {backend: done, portal: doing, app: todo}
     related_tables: [user_role_assignments, memberships]
     priority: Must
     release: P1.0
@@ -955,7 +955,7 @@ features:
       - ["VIN and plate unique among live trucks and both editable (typing mistakes, plates that follow the owner); history of changes with a reason", "VIN và biển số không trùng trong các xe đang dùng và đều sửa được (nhập nhầm, biển số theo chủ xe); lưu lịch sử thay đổi kèm lý do"]
       - ["Service status: active or inactive (in the workshop, not used), with a reason; a truck that leaves the system is removed with its reason and its data kept; idle or silent trucks are shown from their data, not stored", "Trạng thái phục vụ: đang phục vụ hoặc không phục vụ (ở xưởng, không dùng), kèm lý do; xe rời hệ thống được gỡ khỏi hệ thống kèm lý do và vẫn giữ dữ liệu; xe nhàn rỗi hay mất tín hiệu được hiển thị từ dữ liệu, không lưu"]
       - ["Filter by status, model, owner and fleet", "Lọc theo trạng thái, dòng xe, chủ sở hữu và đội xe"]
-    surfaces: {backend: done, portal: todo}
+    surfaces: {backend: done, portal: doing}
     related_tables: [vehicles, vehicle_models]
     priority: Must
     release: P1.0
@@ -2409,7 +2409,7 @@ features:
       - ["Latest position and state of every member truck", "Vị trí và trạng thái mới nhất của mọi xe trong đội"]
       - ["Offline trucks and overnight alerts highlighted", "Làm nổi bật xe offline và cảnh báo qua đêm"]
       - ["Filter by state, status and search by VIN or plate", "Lọc theo trạng thái và tìm theo VIN hoặc biển số"]
-    surfaces: {backend: done, portal: todo}
+    surfaces: {backend: done, portal: doing}
     related_tables: [fleets, fleet_vehicle_memberships, telemetry]
     priority: Must
     release: P1.0

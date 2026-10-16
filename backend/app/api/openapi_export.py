@@ -1,7 +1,7 @@
 """Write the API's OpenAPI document to a file without starting the server.
 
 Used by ``make api-client`` and ``make api-client-check``
-(``docs/planners/web-portal-scaffold.md`` D6): the portal's typed client in
+(``docs/planners/done/web-portal-scaffold.md`` D6): the portal's typed client in
 ``web-portal/packages/api-client/`` is generated from this document. Importing the app
 only builds its routes; no lifespan runs and no database connection is
 opened. Settings are still loaded, so ``backend/.env`` (at least

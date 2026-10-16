@@ -1,8 +1,9 @@
 # G3Network
 
 G3Network is a driver assistance and electric truck fleet management system.
-This repo currently holds the backend MVP and the local infrastructure. The
-web portal and vehicle app have no source in this repo yet.
+This repo currently holds the backend MVP, the local infrastructure and the
+start of the web portal (`web-portal/`: shell and five sample pages). The
+vehicle app has no source in this repo yet.
 
 - Command reference: `make help` (the Makefile is the source of truth).
 - AI coding agents: start with [CLAUDE.md](./CLAUDE.md).
@@ -16,6 +17,8 @@ web portal and vehicle app have no source in this repo yet.
 - Docker with the `docker compose` plugin (Docker Desktop or Docker Engine), running
 - [`uv`](https://docs.astral.sh/uv/) — it also provisions Python 3.12, so no
   system Python is needed
+- Node.js 22 (`web-portal/.nvmrc`) with corepack, which provides the pnpm
+  version pinned in `web-portal/package.json`
 - `make` and `git`
 
 Only for working with Claude Code in this repo (optional):
@@ -42,7 +45,8 @@ make setup
    `IDENTITY_TOKEN_SECRET_KEY` into `backend/.env` when it is empty (the API
    refuses to start without one);
 2. runs `uv sync` in `backend/` — runtime dependencies plus the `dev`
-   dependency group (ruff, mypy, pytest, import-linter, pytest-cov);
+   dependency group (ruff, mypy, pytest, import-linter, pytest-cov) — and
+   `pnpm install` in `web-portal/`;
 3. points git at `.githooks/`, so every commit runs `make check`;
 4. starts PostgreSQL and EMQX (`infra/docker-compose.yml`) and waits until
    PostgreSQL accepts connections;
@@ -57,6 +61,7 @@ cp infra/.env.example infra/.env
 # then set IDENTITY_TOKEN_SECRET_KEY in backend/.env to the output of:
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 make backend-install     # uv sync
+make portal-install      # pnpm install in web-portal/
 make install-hooks
 make infra-up
 make db-migrate          # once PostgreSQL is up
@@ -85,18 +90,49 @@ their flow.
 
 Addresses once everything is up:
 
+- Web portal: <http://localhost:5173> (`make portal-dev`, see below)
 - API and Swagger: <http://localhost:8000/docs> (ReDoc: <http://localhost:8000/redoc>)
 - API health check: <http://localhost:8000/health>
 - OCPP endpoint: `ws://localhost:9000/ocpp/<station-code>`
 - EMQX dashboard: <http://localhost:18083>
+
+## Web portal
+
+`make setup` installs the portal's workspace (or run `make portal-install`).
+Then, with the infrastructure up and a bootstrap admin created
+(`make identity-bootstrap`, above):
+
+```bash
+make backend-dev        # terminal 1: the API on :8000
+make portal-dev         # terminal 2: the portal on :5173, /api proxied to :8000
+```
+
+Open <http://localhost:5173> and log in with `IDENTITY_BOOTSTRAP_ADMIN_PHONE` /
+`IDENTITY_BOOTSTRAP_ADMIN_PASSWORD`. Use Chrome or Firefox: the refresh token
+is a `Secure` cookie, which Safari refuses on `http://localhost`. The live
+map's style comes from `VITE_MAP_STYLE_URL` in `web-portal/.env` (copy
+`web-portal/.env.example`; empty means the MapLibre demo style).
+
+Page flows and screenshots run with Playwright against a mocked API (no
+backend needed):
+
+```bash
+make portal-e2e-install   # once per machine: downloads Chromium
+make portal-e2e           # make portal-e2e-update rewrites the screenshots
+```
+
+How to build portal screens: [web-portal-conventions.md](.claude/rules/web-portal-conventions.md)
+and [web-portal-ui.md](.claude/rules/web-portal-ui.md).
 
 ## Checks
 
 ```bash
 make check                      # the gate: ruff lint + format check, import-linter,
                                 # mypy (app + tests), smoke tests, domain-model and
-                                # feature-catalog checks
-make format                     # sort imports and format with ruff
+                                # feature-catalog checks, portal checks (Prettier,
+                                # ESLint, tsc, Vitest, API client freshness)
+make format                     # format with ruff (backend) and Prettier (portal)
+make api-client                 # regenerate the portal's API client after an API change
 make backend-test-integration   # PostgreSQL integration tests (needs make infra-up)
 make coverage                   # smoke tests with a coverage report (backend/htmlcov/)
 make audit                      # known-vulnerability check of locked dependencies (pip-audit)
@@ -167,6 +203,8 @@ Data is kept. `make infra-reset` (removes the volumes) and `make db-reset`
 
 ```text
 backend/      FastAPI backend, Alembic migration, tests (see backend/README.md)
+web-portal/   Web portal: React SPA and its own pnpm workspace (generated API client)
+driver-app/   Reserved for the driver mobile app (README only)
 infra/        Docker Compose for PostgreSQL/TimescaleDB/PostGIS and EMQX
 docs/         Product, design, decisions, planners, reports (see docs/README.md)
 .claude/      Rules, skills, agents and hooks for AI coding agents (see CLAUDE.md)

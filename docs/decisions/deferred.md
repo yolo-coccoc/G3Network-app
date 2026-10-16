@@ -2043,7 +2043,7 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
   the items marked as due before deployment (real providers, webhook replay window, rate limits).
   Added 2026-10-16: the web portal's production build is served as static files by the same
   reverse proxy, on the API's origin (no CORS, IS-13), with long cache headers for hashed assets
-  and none for `index.html` (`docs/planners/web-portal-scaffold.md` §2.1).
+  and none for `index.html` (`docs/planners/done/web-portal-scaffold.md` §2.1).
 
 ### 107. Machine-readable error codes in API error bodies
 
@@ -2057,9 +2057,44 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
 - **Reason for deferral**: The scaffold shows a Vietnamese message per status with the backend text
   as secondary detail (owner confirmed 2026-10-16, scaffold planner D15); precise messages matter
   once users meet many business errors on real screens.
-- **Related planner/feature**: `docs/planners/web-portal-scaffold.md` D15;
+- **Related planner/feature**: `docs/planners/done/web-portal-scaffold.md` D15;
   `.claude/rules/web-portal-conventions.md` §8; `backend-coding-conventions.md` §6.
 - **Date recorded**: 2026-10-16
+
+### 108. Vietnamese month and day names in the portal's date picker
+
+- **Short description**: Ant Design's `vi_VN` locale (set in `web-portal/src/app/App.tsx`)
+  translates the date picker's own texts (placeholders, buttons), but the month and day names come
+  from dayjs's locale, so they still show in English. Showing them in Vietnamese needs
+  `import "dayjs/locale/vi"` and `dayjs.locale("vi")` (switched with the language), which makes
+  `dayjs` (Ant Design's own date library, today installed only as its dependency) a direct
+  dependency of the portal.
+- **Purpose/role in the system**: A fully Vietnamese date picker on every screen where users pick a
+  date (the vehicle create form's handover date today; reports and trip planning later).
+- **Reason for deferral**: A new direct dependency is a new component (PR-03); one date field on
+  one form does not justify it. It waits for the first screen where users pick dates often
+  (reports, trip planning).
+- **Related planner/feature**: `docs/planners/done/web-portal-scaffold.md` (Step 7, §6); VEH-01 (the
+  vehicle create form, `features/vehicles/components/VehicleForm.tsx`);
+  `.claude/rules/web-portal-conventions.md` §2 (a library outside the stack table) and §10.
+- **Date recorded**: 2026-10-17
+
+### 109. Live map beyond 100 trucks in one scope
+
+- **Short description**: `GET /telemetry/fleets/{fleet_id}/vehicles/latest` pages at most 100 rows
+  (`API_MAX_PAGE_SIZE`). The portal's live map (`/fleet/live`,
+  `features/telemetry/api/queries.ts` `useFleetLiveStatusListQuery`) fetches only the first page
+  on each poll: its "total" statistic shows the response's `total`, but the list, the map and
+  the online/offline/no-position counts cover only those 100 trucks. Either page through every
+  page on each poll, or add a backend query that clusters or limits to the map's bounding box.
+- **Purpose/role in the system**: A dispatcher watching a large fleet (or a fleet with its
+  sub-fleets) sees every truck on the map.
+- **Reason for deferral**: Until one fleet scope has more than 100 trucks the first page holds
+  every truck; the right shape
+  (paging every poll vs. a clustering/bounding-box query) depends on real fleet sizes and the
+  map provider (open question 13 in `docs/decisions/decision-log.md`).
+- **Related planner/feature**: FLT-04; `docs/planners/done/web-portal-scaffold.md` Step 6 and §6.
+- **Date recorded**: 2026-10-17
 
 ---
 

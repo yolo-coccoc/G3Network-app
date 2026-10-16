@@ -50,10 +50,12 @@ stack table in `architecture.md`). An area that is not decided yet: keep the
 interim proposal listed under the decision log's open questions.
 
 Each client is a self-contained folder (TT-31 in the decision log).
-`web-portal/` is the portal app and its own pnpm workspace; it has no app
-source yet, but its stack is decided (TT-28) and its rules are written (two
-rows above); its first task is the scaffold planner
-[`docs/planners/web-portal-scaffold.md`](./docs/planners/web-portal-scaffold.md).
+`web-portal/` is the portal app and its own pnpm workspace (stack TT-28,
+TT-29). It has its shell (login, organization picker, tab bar, route
+guards), the shared foundation and five sample pages, one per page template;
+a new screen starts from a template and follows the two portal rules files
+(two rows above). How it was built:
+[`docs/planners/done/web-portal-scaffold.md`](./docs/planners/done/web-portal-scaffold.md).
 `driver-app/` is reserved for the driver mobile app and holds only a README:
 no source and no decided stack (open question 12) — don't write its
 conventions in advance.

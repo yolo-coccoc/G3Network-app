@@ -55,3 +55,4 @@ node_modules/
 web-portal/dist/
 web-portal/test-results/
 web-portal/playwright-report/
+web-portal/.tanstack/

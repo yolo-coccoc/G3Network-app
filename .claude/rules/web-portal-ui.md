@@ -19,6 +19,12 @@
   `Card`, `Descriptions`.
 - Icons only from `@ant-design/icons`.
 - Light theme only until a dark theme is asked for.
+- Ant Design 6.6 deprecates `List`: show a few items as stacked `Card`s; its
+  replacement `Listy` is a virtual list, for long lists only.
+- Static help text of a form field goes in `Form.Item`'s `extra`, never
+  `help` (`help` replaces the field's validation errors).
+- Filter controls sit in `FilterField` (`shared/ui`), which sets their
+  width; a screen never sizes them itself.
 
 ## 2. Status colors
 
@@ -43,6 +49,8 @@ Every data area handles all four states with the shared components:
 
 - **Loading**: `Skeleton` inside the page template's content area (a table
   shows its own loading row); never a blank page or a full-page spinner.
+  `QueryState` (`shared/ui`) is the standard wrapper of one query: skeleton,
+  error state with retry, then the content.
 - **Empty**: `<EmptyState>` with a one-line explanation and, when the user
   may act, the primary action ("Add a vehicle").
 - **Error**: `<ErrorState>` with the mapped message and a retry button;
@@ -62,8 +70,10 @@ Every data area handles all four states with the shared components:
 
 ## 5. Page templates
 
-Every screen starts from one of five templates in `shared/ui/templates/`; a
-screen that fits none is discussed with the owner before a sixth is added.
+Every screen inside the shell starts from one of five templates in
+`src/shared/ui/templates/`; a screen that fits none is discussed with the
+owner before a sixth is added. A page outside the shell (login, organization
+picker) uses `CenteredCardLayout` (`shared/ui`), which is not a template.
 
 | Template | For | Layout |
 |---|---|---|
@@ -80,9 +90,12 @@ on detail and form pages; content width follows the template, not the page.
 
 - Every new or changed page gets a Playwright screenshot (Chromium, fixed
   viewport, mocked API, Vietnamese) committed with the page.
-- Before finishing, compare it with its template's reference screenshot:
-  same header, spacing, table and state components, status colors from the
-  map. Differences are fixed or explained in the planner.
+- Before finishing, compare it with its template's reference screenshot,
+  the sample page of that template in `web-portal/e2e/__screenshots__/`
+  (List: vehicle list, Detail: vehicle detail, Form: vehicle create, Live
+  map: live map, Settings: organization settings): same header, spacing,
+  table and state components, status colors from the map. Differences are
+  fixed or explained in the planner.
 - Look at the Vietnamese screenshot specifically for clipped diacritics and
   long labels that wrap badly.
 
