@@ -904,6 +904,33 @@ features:
     offer: internal
     sources: [Decision DM-15]
 
+  - code: ACC-23
+    name: Organization settings
+    name_vi: Cài đặt tổ chức
+    what: >-
+      Let an organization's administrator set how the system behaves for the
+      organization: when an idle driving session ends on its own, how often
+      the trucks send data.
+    what_vi: >-
+      Cho quản trị viên của tổ chức chọn cách hệ thống hoạt động cho tổ chức
+      mình: phiên lái xe không hoạt động tự kết thúc sau bao lâu, xe gửi dữ
+      liệu bao lâu một lần.
+    value: >-
+      Each customer tunes the rules to how its trucks work, without asking us.
+    value_vi: >-
+      Mỗi khách hàng tự chỉnh quy tắc theo cách vận hành xe của mình, không
+      cần nhờ chúng tôi.
+    users: [ORG_ADMIN, CO_ADMIN, HEAD_ADMIN]
+    capabilities:
+      - ["Driving-session auto-end time and telemetry interval, within allowed ranges", "Thời gian tự kết thúc phiên lái xe và chu kỳ gửi dữ liệu, trong giới hạn cho phép"]
+      - ["Every change needs a reason and is kept in the change history", "Mỗi thay đổi cần lý do và được lưu trong lịch sử thay đổi"]
+    surfaces: {backend: done, portal: doing}
+    related_tables: [organization_settings]
+    priority: Must
+    release: P1.0
+    offer: included
+    sources: [Decision ID-45]
+
   # ---------------------------------------------------------------------------
   # VEH — Vehicles
   # ---------------------------------------------------------------------------

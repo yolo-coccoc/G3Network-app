@@ -30,6 +30,7 @@ Organizations, people, logins, roles and what each person may see and do; consen
 - [x] **ACC-20** [Emergency administrator access](#acc-20) — Backend ✅
 - [ ] **ACC-21** [API access for partners and systems](#acc-21) — Backend ⬜ · Portal ⬜
 - [ ] **ACC-22** [Change history viewer](#acc-22) — Backend ⬜ · Portal ⬜
+- [ ] **ACC-23** [Organization settings](#acc-23) — Backend ✅ · Portal 🚧
 
 ## Features
 
@@ -599,3 +600,25 @@ Show who changed an organization, a user, a role or another audited record, when
 
 **Related tables:** — (after the database review)  
 **Sources:** Decision DM-15
+
+<a id="acc-23"></a>
+
+### ACC-23 Organization settings
+
+*Cài đặt tổ chức* · Must · P1.0 · Included in every plan
+
+Let an organization's administrator set how the system behaves for the organization: when an idle driving session ends on its own, how often the trucks send data.
+
+**Value:** Each customer tunes the rules to how its trucks work, without asking us.
+
+**Users:** Organization administrator, Co-administrator (internal), Head administrator (internal)
+
+**Capabilities:**
+
+- Driving-session auto-end time and telemetry interval, within allowed ranges
+- Every change needs a reason and is kept in the change history
+
+**Status:** Backend ✅ · Portal 🚧
+
+**Related tables:** `organization_settings`  
+**Sources:** Decision ID-45

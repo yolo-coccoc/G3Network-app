@@ -16,7 +16,7 @@ A feature is done when every surface it needs is done. A cell shows
 
 | Domain | Features | Done | Backend | App | Portal |
 |---|---|---|---|---|---|
-| [ACC — Accounts & access](domains/identity.md) | 22 | 2 | 16/22 | 0/12 | 0/19 |
+| [ACC — Accounts & access](domains/identity.md) | 23 | 2 | 17/23 | 0/12 | 0/20 |
 | [VEH — Vehicles](domains/vehicles.md) | 5 | 0 | 4/5 | — | 0/5 |
 | [BAT — Batteries](domains/batteries.md) | 1 | 0 | 1/1 | — | 0/1 |
 | [WAR — Warranties](domains/warranties.md) | 1 | 0 | 1/1 | — | 0/1 |
@@ -36,13 +36,13 @@ A feature is done when every surface it needs is done. A cell shows
 | [CRB — Carbon & green transition](domains/carbon.md) | 11 | 0 | 0/11 | 0/2 | 0/7 |
 | [PLT — Platform, data & compliance](domains/platform.md) | 7 | 0 | 0/7 | — | 0/4 |
 | [TMS — Transport management integration (Phase 2)](domains/tms.md) | 6 | 0 | 0/6 | 0/1 | 0/4 |
-| **Total** | **178** | **9** | **61/176** | **0/64** | **0/138** |
+| **Total** | **179** | **9** | **62/177** | **0/64** | **0/139** |
 
 ## Domains and releases
 
 | Code | Domain | Backend domain | Scope | P1.0 | P1.1 | P1.5 | P2 |
 |---|---|---|---|---|---|---|---|
-| ACC | [Accounts & access](domains/identity.md) | `identity` | Organizations, people, logins, roles and what each person may see and do; consent and audit of personal data. | 18 | 4 |  |  |
+| ACC | [Accounts & access](domains/identity.md) | `identity` | Organizations, people, logins, roles and what each person may see and do; consent and audit of personal data. | 19 | 4 |  |  |
 | VEH | [Vehicles](domains/vehicles.md) | `vehicles` | The truck's profile, owner and model, and its activation at handover. | 5 |  |  |  |
 | BAT | [Batteries](domains/batteries.md) | `batteries` | Each truck battery managed as an asset of its own: its model, owner and the trucks it has been fitted to. | 1 |  |  |  |
 | WAR | [Warranties](domains/warranties.md) | `warranties` | The warranties of each truck, battery and device: their periods and limits, and why a warranty was voided. | 1 |  |  |  |
