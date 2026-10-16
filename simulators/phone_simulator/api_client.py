@@ -3,7 +3,10 @@
 Logs in with a phone number and password (platform ``ANDROID``), sends the
 bearer token with every request, and when the backend refuses an expired
 access token (``401``) trades the refresh token for a new pair
-(``/auth/refresh``) and repeats the request once, as the real app will.
+(``/auth/refresh``) and repeats the request once, as the real app will. A
+``WEB`` session gets no refresh token in the body (the backend sets it as an
+``HttpOnly`` cookie, which this client does not keep), so it holds only the
+access token and must log in again once that expires.
 Thread-safe: the page's requests are answered from several threads. Standard
 library only.
 """
@@ -202,12 +205,14 @@ class ApiSession:
             The access token.
 
         Raises:
-            ApiError: The answer carries no tokens.
+            ApiError: The answer carries no access token.
         """
         access = answer.get("access_token") if isinstance(answer, dict) else None
         refresh = answer.get("refresh_token") if isinstance(answer, dict) else None
-        if not isinstance(access, str) or not isinstance(refresh, str):
-            raise ApiError(None, "the backend answered without tokens")
+        if not isinstance(access, str):
+            raise ApiError(None, "the backend answered without an access token")
+        if not isinstance(refresh, str):
+            refresh = None  # a WEB session: the backend set it as a cookie
         with self._lock:
             self._access_token, self._refresh_token = access, refresh
         return access

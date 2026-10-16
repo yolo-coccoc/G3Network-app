@@ -320,7 +320,9 @@ class PhoneApp:
         """Pay a top-up from the simulated bank app.
 
         Logs the bank in on first use, as the configured internal admin, and
-        confirms the transfer through the backend's development endpoint.
+        confirms the transfer through the backend's development endpoint. The
+        bank's ``WEB`` session has no refresh token (the backend sets it as a
+        cookie this client does not keep), so an expired login is redone once.
 
         Args:
             transfer_code: The top-up's transfer code.
@@ -339,7 +341,16 @@ class PhoneApp:
             self._bank.login(
                 self.settings.bank_admin_phone, self.settings.bank_admin_password
             )
-        answer: dict[str, Any] = self._bank.post(
-            "/api/v1/payments/vietqr/simulate", {"transfer_code": transfer_code}
-        )
+        payload: dict[str, object] = {"transfer_code": transfer_code}
+        try:
+            answer: dict[str, Any] = self._bank.post(
+                "/api/v1/payments/vietqr/simulate", payload
+            )
+        except ApiError as error:
+            if error.status != 401:
+                raise
+            self._bank.login(
+                self.settings.bank_admin_phone, self.settings.bank_admin_password
+            )
+            answer = self._bank.post("/api/v1/payments/vietqr/simulate", payload)
         return answer
