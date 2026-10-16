@@ -3,7 +3,7 @@
 > Feature codes: ACC-04 (Login and sessions), ACC-14 (Feature access control),
 > VEH-01 (Vehicle registry) — portal surface; plus the shell every later
 > portal feature uses.
-> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Step 1 done
+> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Steps 1–2 done
 > Created: 2026-10-16
 >
 > Inputs: TT-28, CV-24, CV-25, IS-13 and open questions 12–14 in
@@ -142,9 +142,33 @@ web-portal/
   Step 3, not in a nested `web-portal/web-portal/`); `driver-app/` created
   with a README only. Evidence: `pnpm install --frozen-lockfile` reused the
   lockfile; `make api-client-check` OK.
-- [ ] **Step 2 — Backend web cookie mode (D4).** `identity` schemas, router,
-  session service; smoke tests; scenario doc §2 and IS-13 updated. Own
-  commit `feat(identity): …`. Evidence: `make check`, the new smoke tests.
+- [x] **Step 2 — Backend web cookie mode (D4).** `identity` schemas, router,
+  session service; smoke tests; scenario docs and IS-13 updated. Own
+  commit `feat(identity): …`. Done 2026-10-16. The service decides from the
+  session's stored platform and returns `IssuedSessionTokens` (the body, plus
+  the cookie value and lifetime for a `WEB` session; the cookie's `Max-Age`
+  is the time left until the session expires); only the router touches
+  cookies (`REFRESH_COOKIE_NAME` `g3_refresh`, `REFRESH_COOKIE_PATH`
+  `/api/v1/auth`). `refresh_session` now takes the token itself (body first,
+  else cookie; none → `401`), and the refresh body is optional.
+  `TokenResponse.refresh_token` is nullable. Not done: clearing the cookie
+  when a refresh fails (the error handler builds that response; the portal
+  logs out on that `401` anyway). Also changed: the phone simulator's
+  simulated bank logs in as `WEB` and required a body refresh token; it now
+  accepts none and logs in again on a `401`. Evidence: new
+  `tests/identity/test_identity_web_cookie_smoke.py` (6 tests: WEB body
+  without token + cookie value and lifetime, ANDROID unchanged, no token →
+  `401`, the endpoint reads the cookie and sets an `HttpOnly; Secure;
+  SameSite=strict; Path=/api/v1/auth` one, a body token wins over a cookie,
+  logout expires the cookie); `make check` (1156 passed); `make
+  backend-test-integration` 60 passed (the identity flow now also asserts a
+  WEB invitation gets no body token); an HTTP run through FastAPI's test
+  client with the service stubbed (scratchpad script, not committed): WEB
+  login → `Set-Cookie: g3_refresh=…; HttpOnly; Max-Age=600;
+  Path=/api/v1/auth; SameSite=strict; Secure` and `refresh_token: null`;
+  a body-less refresh sent the cookie back and got a new one; ANDROID login
+  → token in the body, no cookie. `make api-client` regenerated the client
+  (`refresh_token?: string | null`).
 - [ ] **Step 3 — Portal workspace and gate (D1, D2, D8, D9).** Vite app,
   strict TS, ESLint (boundaries, i18n, hooks) + Prettier, Vitest, the make
   targets, `make setup`, the agent format hook. Evidence: `make check`

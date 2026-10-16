@@ -19,6 +19,17 @@
   router constants of each domain; query and body fields that named the actor
   (`granted_by`, `requested_by`, `user_id`, ...) are gone, the caller is the
   actor.
+- **Login and session (IS-13, built 2026-10-16):** the portal logs in with
+  `POST /auth/login` `{phone_number, password, platform: "WEB"}`. The answer's
+  `refresh_token` is `null`: the refresh token is set as the `HttpOnly`,
+  `Secure`, `SameSite=Strict` cookie `g3_refresh` (path `/api/v1/auth`),
+  which page script never sees. The portal keeps the 15-minute access token
+  in memory only; after a reload or a `401` it calls `POST /auth/refresh`
+  with no body, the browser sends the cookie and gets a new access token and
+  a new cookie (`401` when the session ended). `POST /auth/logout` clears the
+  cookie. Sign-up and invitation acceptance with `platform: "WEB"` work the
+  same way. The organization picker is `POST /auth/organization`
+  `{organization_id}` (returns `GET /auth/me`'s answer).
 - Data reach is decided by the organization, not the role (ID-44,
   [decision-log.md:229](../decisions/decision-log.md#L229)): internal users see
   every organization, everyone else only their own; a fleet manager or

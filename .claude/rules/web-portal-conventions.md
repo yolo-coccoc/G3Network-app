@@ -175,7 +175,9 @@ in code, only as i18n keys (§10).
   cookie the portal never sees. On a `401` the client refreshes once and
   retries the request once; concurrent refreshes, also across tabs, are
   serialized (one refresh in flight); a failed refresh clears the session and
-  goes to `/login`. Login sends `platform: "WEB"`.
+  goes to `/login`. Login sends `platform: "WEB"`. The cookie is `Secure`:
+  in development use Chrome or Firefox, which accept it on
+  `http://localhost`; Safari does not.
 - **Regenerating the client**: after any backend route or schema change, run
   the make target that exports the OpenAPI document and regenerates
   `packages/api-client` (named in the scaffold planner); the gate fails when

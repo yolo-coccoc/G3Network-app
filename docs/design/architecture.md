@@ -322,7 +322,10 @@ FastAPI registers the following domains:
   devices" and push token), memberships and roles (invite, lock, remove,
   leave, grant/revoke, ORG_ADMIN handover), legal documents and consent, and
   the access audit log. Sessions are rows of `user_sessions` with an opaque
-  hashed refresh token; the access token is an HMAC-signed short-lived string
+  hashed refresh token (a phone app gets it in the response body; a browser
+  session, `platform` `WEB`, only as the `HttpOnly` cookie `g3_refresh` on
+  `/api/v1/auth`, which `POST /auth/refresh` reads and replaces and logout
+  clears, IS-13); the access token is an HMAC-signed short-lived string
   checked against the session row (no JWT, standard library only), signed
   with `IDENTITY_TOKEN_SECRET_KEY`, without which the API refuses to start
   (IS-12). Removing a usable HEAD_ADMIN (ending or locking the membership,
