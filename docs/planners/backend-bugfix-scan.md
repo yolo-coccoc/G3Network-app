@@ -79,7 +79,7 @@ direct call during the scan.
 | B9 | M | `telemetry/detection.py` | Comparing with a previous row that lacks the field: temperature alert storm, SOH alert never | Compare with the newest earlier row that has the field |
 | B10 | M | `telematics/schemas.py` timestamp | A status report dated far ahead or back freezes the device's health view | Bound the timestamp like `TELEMETRY_MAX_FUTURE_SKEW_SECONDS` |
 | B11 | L | `telematics/repository.py` mapping by serial | Buffered readings from before a remount or sale go to the new truck / owner | Skip or flag readings older than the mount |
-| B12 | L | `ocpp/ocpp201_charge_point.py` | 2.0.1 `Started` without meter values refused; a repeated `Ended` gets CALLERROR | Record in `deferred.md` 78 (2.0.1 parity) |
+| B12 | L | `ocpp/ocpp201_charge_point.py` | 2.0.1 `Started` without meter values refused; a repeated `Ended` gets CALLERROR | Recorded in `deferred.md` 78 (2.0.1 parity), 2026-10-16 |
 
 ### Batch C — before a frontend or deployment
 
@@ -87,7 +87,7 @@ direct call during the scan.
 |---|---|---|---|---|
 | C1 | L | every HTTP request schema with free text | A NUL character gives 500 (RV-OP3 covered MQTT only) | One shared validator for text and `Reason` |
 | C2 | L | `libs/common/pagination.py`, `charging_sessions/schemas.py`, `notifications/router.py` | Huge `page`, `connector_number`, `after_id` / notification IDs give 500 | Upper bounds |
-| C3 | L | `identity/compliance_router.py` audit search | A time without a zone gives 500 | `AwareDatetime` or 400 |
+| C3 | L | `identity/compliance_router.py` audit search | A time without a zone gives 500 | `AwareDatetime` or 400 — done 2026-10-16 (convention fixes) |
 | C4 | M | `identity/security.py` phone normalization | Non-ASCII digits give one SIM several login IDs and OTP quotas | ASCII-only digits |
 | C5 | M | `notifications/repository.py` poll cursor | An alert committed after a higher ID is skipped by `after_id` polling | Commit-lag margin or overlap re-read |
 | C6 | L | `libs/db/session.py`, `ocpp/library_logging.py` | DB-error tracebacks carry SQL parameters (QR tokens) into the log | `hide_parameters=True` outside debug |
@@ -111,6 +111,23 @@ direct call during the scan.
   odometer check (rare, not handled).
 - [ ] **Step 2 — Batch B**, right before the first real device connects.
 - [ ] **Step 3 — Batch C**, right before frontend work or deployment.
+- [x] **Convention fixes (2026-10-16, owner: "do all the fixes").** From a
+  codebase-wide convention review: times without a zone refused on five inputs
+  (T-Box `acquired_at` and status-report `since`, bill list, trip list, and
+  C3's audit search); the QR charge flow only sequences calls (the checks moved
+  to `billing.ensure_wallet_may_start_charge` and
+  `charging_sessions.ensure_session_may_start` / `prepare_session_stop`); access
+  audit rows written by services, not routers; charging-location grant policy
+  out of the repository; `charging_stations.ensure_station_visible` replaces
+  the HTTP response billing used; renames (`resolve_payment`,
+  `_build_member_response`, `find_latest_one_time_code_by_user_id`,
+  `normalize_status_update`, `BankTransferSimulationUnsupportedError`); the
+  command loop's batch size and stale factor are settings; one
+  `CLIENT_CLOCK_SKEW`; `drivers/lookups.py` so `trip_service` no longer imports
+  `service.py`; `telematics/silence_rule.py` at the domain root; unused
+  `list_organization_role_holder_user_ids` removed; stale docs fixed. Verified:
+  `make check` 1,149 passed, `make backend-test-integration` 60/60, the
+  end-to-end QR charge 12/12.
 - [ ] **Step 4 — Verify and document** per batch: convention review, docs
   sync, feature catalog.
 
@@ -130,4 +147,4 @@ violation; the boundary rows and three over-long docstring lines were fixed.
 
 ## 6. Deferred / follow-ups
 
-- B12 goes to `deferred.md` 78 (2.0.1 parity).
+- B12 is recorded in `deferred.md` 78 (2.0.1 parity), 2026-10-16.

@@ -114,8 +114,8 @@ FastAPI registers the following domains:
   `/telematics/{id}/health`, `/telematics/{id}/status-reports`) classifies each
   device with one pure rule (`health_rule.py`) over the silence flag and the
   newest status report. The silence alert is written for the truck's owning
-  organization and delivered to its ORG_ADMIN and FLEET_MANAGER members
-  (`identity.service.list_organization_role_holder_user_ids`). Only a mounted,
+  organization and delivered to the recipients the notifications routing table
+  gives a device-offline alert (NTF-06). Only a mounted,
   ACTIVE device receives configuration (TX-08). The `telematic_installation_periods`
   and `telematic_ownership_periods` views are not built (DM-27: no feature
   reads them; the history is in `telematic_history`).
@@ -702,8 +702,7 @@ convention will be written once the first task for that part starts.
 - The permission-granting step (ID-44): the role table is a copy of the
   catalog in `identity/types.py`. The per-manager fleet limit (FL-10) covers
   every endpoint a limited manager can reach except the driver profile list
-  (FL-14); its rule for rows with no truck (FL-15) awaits the owner's
-  confirmation ([backend-hardening.md](../planners/done/backend-hardening.md) D5).
+  (FL-14); its rule for rows with no truck is FL-15.
   `drivers` has no empty-trip detection (F-A9, suspended).
 - True trip segmentation (start/end detection, idle-gap grouping): F-A5's
   trip replay is a bounded time-range history query

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>G3 Network Portal</title>
+  <meta name="description" content="Clickable prototype of the G3 Network web portal (fleet, charging, support and administration) with mock data.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%230e9f6e'/%3E%3Cpath d='M13 4 6 14h5l-1 6 7-10h-5z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Core: language, mock data, UI kit, shell. Plain scripts (no modules) so the
+       prototype also opens straight from the file system. -->
+  <script src="js/i18n.js"></script>
+  <script src="js/features.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- Screens: each file registers its pages with G3.page(). -->
+  <script src="js/pages/overview.js"></script>
+  <script src="js/pages/live-map.js"></script>
+  <script src="js/pages/monitoring.js"></script>
+  <script src="js/pages/fleet.js"></script>
+  <script src="js/pages/assets.js"></script>
+  <script src="js/pages/charging.js"></script>
+  <script src="js/pages/billing.js"></script>
+  <script src="js/pages/support.js"></script>
+  <script src="js/pages/admin.js"></script>
+  <script src="js/pages/coverage.js"></script>
+
+  <script>G3.start();</script>
+</body>
+</html>

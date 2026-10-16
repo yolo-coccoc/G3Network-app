@@ -299,7 +299,10 @@ has_/is_   boolean check with no side effect (has_active_session_on_connector)
 ```
 
 Don't name a function `get_` if it writes data. If the operation is a soft
-delete, spell out `soft_delete_` instead of just `delete_`.
+delete, spell out `soft_delete_` instead of just `delete_`. Writing the
+access-audit row of a personal-data read (ACC-18, `record_data_access`) does
+not count as writing data here: a read that is audited keeps its read name
+(`get_driver`, `get_latest_vehicle_telemetry_response`).
 
 ### 7.2 Repository
 
@@ -384,9 +387,16 @@ reading a stack trace.
 domains call (`domain-boundaries.md`). How much logic sits inside it depends
 on the domain's size:
 
+**When to split (owner decision, 2026-10-16, CV-23).** ~1,000 lines is a
+signal to look, not a rule: split a module (any module, not only
+`service.py`) when it mixes sub-areas that change for different reasons or
+are hard to find your way in, so each area can be read on its own. A long
+module that is one cohesive area (a repository of one table group, an OCPP
+adapter, a schema file) stays as it is.
+
 - **Small domain**: all the business logic stays in `service.py`, called by
   the domain's own router and by other domains (`vehicles`, `warranties`).
-- **Large domain** (`service.py` past ~1,000 lines): move each sub-area into
+- **Large domain**: move each sub-area into
   its own `<area>_service.py` (`tariff_service.py`, `command_service.py`)
   holding that area's logic; the domain's routers import the area modules
   directly. `service.py` keeps only what other domains call: its own small

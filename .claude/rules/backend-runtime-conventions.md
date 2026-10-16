@@ -130,7 +130,7 @@
 - The telemetry MVP processes **one message per transaction** (`telemetry/ingestion/message_worker.py`), with QoS 0, no retry, and no DLQ: a DB error rolls back that message's transaction, logs the traceback, and stops the worker (the ingestion process then exits non-zero). Batched ingestion is deferred (`deferred.md` item 25).
 - Use structured logging via `extra`; never use an f-string inside a logger call. Use `logger.exception()` for unexpected exceptions.
 - A key in `extra` never names a `LogRecord` attribute (`message`, `created`, `name`, ...): the logging module raises on it once the level is enabled. Every process, the API included (in its lifespan), calls `configure_logging()` from `app.libs.common.logging` at start-up (CV-22; `tests/libs/test_logging_smoke.py`).
-- Never use `except Exception` outside a process/task boundary.
+- Never use `except Exception` outside a process/task boundary. The boundaries this backend uses, each with a comment saying so at the `except`: a process entrypoint or worker loop; a background task (e.g. the 1.6J post-boot configuration capture); the session-ended hook runner (`charging_sessions`, each hook in a savepoint so a billing fault never fails the charger's stop); notification routing and push / e-mail delivery (the alert is stored even when delivery fails, and one bad provider call must not stop the others); and the request's `get_db` rollback. A new one needs the same justification.
 - The `processed`, `skipped`, `errors`, `dropped` metrics must be clearly defined and must accurately reflect the outcome.
 
 ## Consistency checklist before finishing a backend task
