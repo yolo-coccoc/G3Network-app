@@ -5,12 +5,12 @@
 .PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
-# The frontend's pnpm workspace lives in frontend/ (TT-30). pnpm runs through
-# corepack at the version pinned in frontend/package.json (TT-29), so every
-# pnpm command runs from inside frontend/; no global `corepack enable`, and no
-# download prompt in scripts.
-PNPM := cd frontend && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm
-API_CLIENT_DIR := frontend/packages/api-client
+# The web portal is one self-contained pnpm workspace in web-portal/ (TT-31).
+# pnpm runs through corepack at the version pinned in web-portal/package.json
+# (TT-29), so every pnpm command runs from inside web-portal/; no global
+# `corepack enable`, and no download prompt in scripts.
+PNPM := cd web-portal && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm
+API_CLIENT_DIR := web-portal/packages/api-client
 
 # Default: show help
 help:
@@ -43,7 +43,7 @@ help:
 	@echo "  make lint            - Ruff lint + format check, import-linter, mypy (app + tests)"
 	@echo "  make domain-model-check - DBML design source matches the models; generated views are current"
 	@echo "  make feature-catalog-check - feature catalog source follows its rules; generated views are current"
-	@echo "  make api-client      - Regenerate frontend/packages/api-client from the backend's OpenAPI document (after an API change)"
+	@echo "  make api-client      - Regenerate web-portal/packages/api-client from the backend's OpenAPI document (after an API change)"
 	@echo "  make api-client-check - the committed API client matches the backend; type-checks it"
 	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check + api-client-check (the pre-commit gate)"
 	@echo "  make audit           - Check locked dependencies for known vulnerabilities (pip-audit)"

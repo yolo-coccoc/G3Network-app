@@ -1,4 +1,0 @@
-# The frontend's pnpm workspace (TT-28, TT-30: everything frontend lives in
-# frontend/). The web portal joins in the scaffold's Step 3.
-packages:
-  - packages/*

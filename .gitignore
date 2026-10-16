@@ -50,5 +50,5 @@ Thumbs.db
 logs/
 .claude/worktrees/
 
-# === NODE (the pnpm workspace in frontend/, TT-30) ===
+# === NODE (the web portal's pnpm workspace, web-portal/, TT-31) ===
 node_modules/

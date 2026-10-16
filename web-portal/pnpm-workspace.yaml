@@ -1,0 +1,5 @@
+# The web portal's pnpm workspace (TT-31): this folder is the portal app
+# itself (the workspace root project) plus its own packages. It is
+# self-contained: nothing outside web-portal/ is imported or installed.
+packages:
+  - packages/*
