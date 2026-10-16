@@ -43,7 +43,13 @@ const USER_VISIBLE_JSX_ATTRIBUTES = [
 ];
 
 export default defineConfig([
-  globalIgnores(["dist/", "packages/api-client/src/schema.d.ts"]),
+  globalIgnores([
+    "dist/",
+    "playwright-report/",
+    "test-results/",
+    "packages/api-client/src/schema.d.ts",
+    "src/app/routeTree.gen.ts",
+  ]),
 
   {
     files: ["**/*.{ts,tsx}"],
@@ -53,6 +59,21 @@ export default defineConfig([
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
+    rules: {
+      // TanStack Router's guards throw its `redirect` object by design.
+      "@typescript-eslint/only-throw-error": [
+        "error",
+        {
+          allow: [
+            {
+              from: "package",
+              package: "@tanstack/router-core",
+              name: "Redirect",
+            },
+          ],
+        },
+      ],
+    },
     languageOptions: {
       globals: globals.browser,
       parserOptions: {
@@ -132,13 +153,39 @@ export default defineConfig([
             },
             // A feature imports another feature only where the backend has the same
             // edge (domain-boundaries.md), and only through its index.ts. Each such
-            // edge is added here as its own policy, e.g.
-            // { from: { element: { type: "feature", captured: { featureName: "telemetry" } } },
-            //   allow: { to: { element: { type: "feature", captured: { featureName: "fleet" } , fileInternalPath: "index.ts" } } } }
+            // edge is one policy here. `identity` is foundational in the backend
+            // (every domain may call it), so every feature may import it.
+            {
+              from: { element: { type: "feature" } },
+              allow: {
+                to: {
+                  element: {
+                    type: "feature",
+                    captured: { featureName: "identity" },
+                    fileInternalPath: "index.ts",
+                  },
+                },
+              },
+            },
           ],
         },
       ],
     },
+  },
+
+  // A route file exports its `Route` object and keeps its page component
+  // unexported beside it (TanStack Router file routes). With
+  // `autoCodeSplitting` the router plugin moves the component into its own
+  // module, which is what Fast Refresh reloads, so the rule does not apply.
+  {
+    files: ["src/routes/**/*.tsx"],
+    rules: { "react-refresh/only-export-components": "off" },
+  },
+
+  // Playwright specs run in Node against the browser, outside the layers.
+  {
+    files: ["e2e/**/*.ts", "playwright.config.ts"],
+    languageOptions: { globals: globals.node },
   },
 
   // Only shared/api creates the client and handles tokens (§5, §8); everyone

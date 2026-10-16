@@ -1,0 +1,107 @@
+{
+  "appName": "G3 Network",
+  "actions": {
+    "save": "Lưu",
+    "cancel": "Hủy",
+    "edit": "Sửa",
+    "delete": "Xóa",
+    "retry": "Thử lại",
+    "view": "Xem",
+    "logout": "Đăng xuất",
+    "backHome": "Về trang chủ"
+  },
+  "tabs": {
+    "fleet": "Đội xe",
+    "administration": "Quản trị"
+  },
+  "navigation": {
+    "vehicles": "Danh sách xe",
+    "liveMap": "Bản đồ trực tiếp",
+    "organizationSettings": "Cài đặt tổ chức"
+  },
+  "language": {
+    "vi": "Tiếng Việt",
+    "en": "English"
+  },
+  "header": {
+    "organization": "Tổ chức",
+    "account": "Tài khoản"
+  },
+  "states": {
+    "emptyTitle": "Chưa có dữ liệu",
+    "lastRefreshed": "Cập nhật lúc {{time}}",
+    "total": "Tổng {{total}} mục"
+  },
+  "errors": {
+    "badRequest": "Yêu cầu không hợp lệ.",
+    "unauthenticated": "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+    "forbidden": "Bạn không có quyền thực hiện việc này.",
+    "notFound": "Không tìm thấy dữ liệu, hoặc dữ liệu không thuộc phạm vi bạn được xem.",
+    "conflict": "Dữ liệu bị trùng hoặc không thể thay đổi ở trạng thái hiện tại.",
+    "validation": "Dữ liệu nhập chưa hợp lệ. Vui lòng kiểm tra các trường được đánh dấu.",
+    "locked": "Tài khoản tạm bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau 15 phút.",
+    "tooManyRequests": "Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.",
+    "server": "Hệ thống đang gặp sự cố. Vui lòng thử lại.",
+    "network": "Không kết nối được máy chủ. Kiểm tra mạng và thử lại.",
+    "detail": "Chi tiết: {{detail}}",
+    "errorTitle": "Đã có lỗi xảy ra",
+    "forbiddenTitle": "Không có quyền truy cập",
+    "notFoundTitle": "Không tìm thấy"
+  },
+  "fieldErrors": {
+    "missing": "Trường này là bắt buộc.",
+    "tooShort": "Cần ít nhất {{min}} ký tự.",
+    "tooLong": "Tối đa {{max}} ký tự.",
+    "tooSmall": "Giá trị nhỏ nhất là {{min}}.",
+    "tooLarge": "Giá trị lớn nhất là {{max}}.",
+    "invalid": "Giá trị không hợp lệ."
+  },
+  "reasonDialog": {
+    "reasonLabel": "Lý do",
+    "reasonPlaceholder": "Nhập lý do, tối đa 200 ký tự",
+    "reasonHelp": "Lý do được lưu vào lịch sử thay đổi."
+  },
+  "noAccess": {
+    "title": "Không có quyền truy cập",
+    "description": "Tài khoản của bạn chưa được cấp tính năng này. Liên hệ quản trị viên tổ chức nếu bạn cần dùng."
+  },
+  "notFoundPage": {
+    "title": "Không tìm thấy trang",
+    "description": "Đường dẫn không tồn tại hoặc đã được đổi."
+  },
+  "status": {
+    "ACTIVE": "Đang hoạt động",
+    "HEALTHY": "Bình thường",
+    "Available": "Sẵn sàng",
+    "ACCEPTED": "Đã chấp nhận",
+    "COMPLETED": "Hoàn tất",
+    "SUCCEEDED": "Thành công",
+    "BILLED": "Đã tính tiền",
+    "PENDING": "Đang chờ",
+    "Charging": "Đang sạc",
+    "IN_PROGRESS": "Đang thực hiện",
+    "SILENT": "Mất tín hiệu",
+    "ATTENTION": "Cần chú ý",
+    "ON_HOLD": "Tạm giữ",
+    "SuspendedEV": "Xe tạm dừng sạc",
+    "SuspendedEVSE": "Trụ tạm dừng sạc",
+    "Faulted": "Lỗi",
+    "FAILED": "Thất bại",
+    "REJECTED": "Bị từ chối",
+    "ERROR": "Lỗi",
+    "TIMEOUT": "Quá thời gian",
+    "LOCKED": "Bị khóa",
+    "SUSPENDED": "Tạm ngưng",
+    "INACTIVE": "Không hoạt động",
+    "CLOSED": "Đã đóng",
+    "CANCELLED": "Đã hủy",
+    "VOIDED": "Đã hủy bỏ",
+    "ABANDONED": "Bỏ dở",
+    "NOT_SENT": "Chưa gửi",
+    "NOT_MOUNTED": "Chưa lắp",
+    "NO_DATA": "Chưa có dữ liệu",
+    "Unavailable": "Không khả dụng",
+    "ONLINE": "Trực tuyến",
+    "OFFLINE": "Mất kết nối"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "fleetSelect": {
+    "placeholder": "Chọn đội xe",
+    "includeSubFleets": "Gồm cả đội con"
+  }
+}

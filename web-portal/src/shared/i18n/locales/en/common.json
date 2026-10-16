@@ -1,0 +1,107 @@
+{
+  "appName": "G3 Network",
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "retry": "Retry",
+    "view": "View",
+    "logout": "Log out",
+    "backHome": "Back to home"
+  },
+  "tabs": {
+    "fleet": "Fleet",
+    "administration": "Administration"
+  },
+  "navigation": {
+    "vehicles": "Vehicles",
+    "liveMap": "Live map",
+    "organizationSettings": "Organization settings"
+  },
+  "language": {
+    "vi": "Tiếng Việt",
+    "en": "English"
+  },
+  "header": {
+    "organization": "Organization",
+    "account": "Account"
+  },
+  "states": {
+    "emptyTitle": "No data yet",
+    "lastRefreshed": "Updated at {{time}}",
+    "total": "{{total}} items"
+  },
+  "errors": {
+    "badRequest": "The request is not valid.",
+    "unauthenticated": "Your session has expired. Please log in again.",
+    "forbidden": "You do not have permission to do this.",
+    "notFound": "Not found, or outside the data you may see.",
+    "conflict": "The data is a duplicate or cannot change in its current state.",
+    "validation": "Some values are not valid. Please check the marked fields.",
+    "locked": "The account is temporarily locked after too many failed logins. Try again in 15 minutes.",
+    "tooManyRequests": "Too many attempts. Please try again in a few minutes.",
+    "server": "The system has a problem. Please try again.",
+    "network": "Cannot reach the server. Check the network and try again.",
+    "detail": "Detail: {{detail}}",
+    "errorTitle": "Something went wrong",
+    "forbiddenTitle": "No access",
+    "notFoundTitle": "Not found"
+  },
+  "fieldErrors": {
+    "missing": "This field is required.",
+    "tooShort": "At least {{min}} characters.",
+    "tooLong": "At most {{max}} characters.",
+    "tooSmall": "The smallest value is {{min}}.",
+    "tooLarge": "The largest value is {{max}}.",
+    "invalid": "The value is not valid."
+  },
+  "reasonDialog": {
+    "reasonLabel": "Reason",
+    "reasonPlaceholder": "Enter a reason, at most 200 characters",
+    "reasonHelp": "The reason is kept in the change history."
+  },
+  "noAccess": {
+    "title": "No access",
+    "description": "Your account has not been given this feature. Ask your organization administrator if you need it."
+  },
+  "notFoundPage": {
+    "title": "Page not found",
+    "description": "The address does not exist or has changed."
+  },
+  "status": {
+    "ACTIVE": "Active",
+    "HEALTHY": "Healthy",
+    "Available": "Available",
+    "ACCEPTED": "Accepted",
+    "COMPLETED": "Completed",
+    "SUCCEEDED": "Succeeded",
+    "BILLED": "Billed",
+    "PENDING": "Pending",
+    "Charging": "Charging",
+    "IN_PROGRESS": "In progress",
+    "SILENT": "Silent",
+    "ATTENTION": "Needs attention",
+    "ON_HOLD": "On hold",
+    "SuspendedEV": "Suspended by vehicle",
+    "SuspendedEVSE": "Suspended by charger",
+    "Faulted": "Faulted",
+    "FAILED": "Failed",
+    "REJECTED": "Rejected",
+    "ERROR": "Error",
+    "TIMEOUT": "Timed out",
+    "LOCKED": "Locked",
+    "SUSPENDED": "Suspended",
+    "INACTIVE": "Inactive",
+    "CLOSED": "Closed",
+    "CANCELLED": "Cancelled",
+    "VOIDED": "Voided",
+    "ABANDONED": "Abandoned",
+    "NOT_SENT": "Not sent",
+    "NOT_MOUNTED": "Not mounted",
+    "NO_DATA": "No data",
+    "Unavailable": "Unavailable",
+    "ONLINE": "Online",
+    "OFFLINE": "Offline"
+  }
+}

@@ -53,3 +53,5 @@ logs/
 # === NODE (the web portal's pnpm workspace, web-portal/, TT-31) ===
 node_modules/
 web-portal/dist/
+web-portal/test-results/
+web-portal/playwright-report/

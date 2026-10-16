@@ -3,3 +3,6 @@ dist/
 pnpm-lock.yaml
 packages/api-client/openapi.json
 packages/api-client/src/schema.d.ts
+src/app/routeTree.gen.ts
+playwright-report/
+test-results/

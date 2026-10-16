@@ -1,0 +1,52 @@
+{
+  "login": {
+    "title": "Đăng nhập",
+    "subtitle": "Cổng quản lý đội xe điện",
+    "phoneNumber": "Số điện thoại",
+    "phonePlaceholder": "Ví dụ: 0901234567",
+    "phoneRequired": "Vui lòng nhập số điện thoại.",
+    "password": "Mật khẩu",
+    "passwordRequired": "Vui lòng nhập mật khẩu.",
+    "submit": "Đăng nhập",
+    "invalidCredentials": "Sai số điện thoại hoặc mật khẩu."
+  },
+  "selectOrganization": {
+    "title": "Chọn tổ chức",
+    "description": "Bạn thuộc nhiều tổ chức. Chọn tổ chức để làm việc; có thể đổi lại ở đầu trang.",
+    "internal": "Nội bộ",
+    "choose": "Chọn"
+  },
+  "organizationSwitcher": {
+    "label": "Tổ chức đang làm việc"
+  },
+  "organizationSelect": {
+    "placeholder": "Tìm tổ chức theo tên"
+  },
+  "settings": {
+    "pageTitle": "Cài đặt tổ chức",
+    "drivingSessionsTitle": "Phiên lái xe",
+    "autoEndMinutes": "Tự kết thúc phiên lái xe sau (phút)",
+    "autoEndHelp": "Phiên lái xe không có hoạt động sẽ tự kết thúc sau thời gian này, từ 5 đến 1440 phút.",
+    "telemetryTitle": "Dữ liệu xe",
+    "telemetryIntervalSeconds": "Chu kỳ gửi dữ liệu (giây)",
+    "telemetryIntervalHelp": "Thiết bị trên xe gửi dữ liệu bao lâu một lần, từ 5 đến 3600 giây.",
+    "reasonTitle": "Lưu cài đặt",
+    "reasonDescription": "Thay đổi có hiệu lực cho cả tổ chức và được ghi vào lịch sử kèm lý do.",
+    "saveSuccess": "Đã lưu cài đặt."
+  },
+  "roles": {
+    "HEAD_ADMIN": "Quản trị cấp cao",
+    "CO_ADMIN": "Đồng quản trị",
+    "ORG_ADMIN": "Quản trị tổ chức",
+    "SALES": "Kinh doanh",
+    "ACCOUNTANT": "Kế toán",
+    "CUSTOMER_CARE": "Chăm sóc khách hàng",
+    "OPERATIONS": "Vận hành",
+    "MAINTENANCE": "Bảo dưỡng",
+    "WARRANTY": "Bảo hành",
+    "FLEET_MANAGER": "Quản lý đội xe",
+    "DISPATCHER": "Điều phối",
+    "DRIVER": "Tài xế",
+    "TECHNICIAN": "Kỹ thuật viên"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "live": {
+    "title": "Live map",
+    "pickFleet": "Choose a fleet to see where its vehicles are.",
+    "noVehicles": "This fleet has no vehicles yet.",
+    "total": "Vehicles",
+    "online": "Online",
+    "offline": "Offline",
+    "noPosition": "No position",
+    "vehicles": "Fleet vehicles",
+    "recordedAt": "Data at {{time}}",
+    "noData": "No data yet",
+    "signal": "Signal {{dbm}} dBm",
+    "shownFirst": "Showing {{shown}} of {{total}} vehicles."
+  }
+}

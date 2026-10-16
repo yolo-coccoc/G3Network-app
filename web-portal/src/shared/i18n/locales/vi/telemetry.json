@@ -1,0 +1,16 @@
+{
+  "live": {
+    "title": "Bản đồ trực tiếp",
+    "pickFleet": "Chọn một đội xe để xem vị trí các xe.",
+    "noVehicles": "Đội xe này chưa có xe nào.",
+    "total": "Tổng số xe",
+    "online": "Trực tuyến",
+    "offline": "Mất kết nối",
+    "noPosition": "Chưa có vị trí",
+    "vehicles": "Xe trong đội",
+    "recordedAt": "Dữ liệu lúc {{time}}",
+    "noData": "Chưa có dữ liệu",
+    "signal": "Sóng {{dbm}} dBm",
+    "shownFirst": "Đang hiện {{shown}} trên {{total}} xe."
+  }
+}

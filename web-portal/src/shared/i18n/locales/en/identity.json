@@ -1,0 +1,52 @@
+{
+  "login": {
+    "title": "Log in",
+    "subtitle": "Electric fleet management portal",
+    "phoneNumber": "Phone number",
+    "phonePlaceholder": "For example: 0901234567",
+    "phoneRequired": "Please enter your phone number.",
+    "password": "Password",
+    "passwordRequired": "Please enter your password.",
+    "submit": "Log in",
+    "invalidCredentials": "Wrong phone number or password."
+  },
+  "selectOrganization": {
+    "title": "Choose an organization",
+    "description": "You belong to several organizations. Choose one to work in; you can switch at the top of the page.",
+    "internal": "Internal",
+    "choose": "Choose"
+  },
+  "organizationSwitcher": {
+    "label": "Current organization"
+  },
+  "organizationSelect": {
+    "placeholder": "Search organizations by name"
+  },
+  "settings": {
+    "pageTitle": "Organization settings",
+    "drivingSessionsTitle": "Driving sessions",
+    "autoEndMinutes": "End an idle driving session after (minutes)",
+    "autoEndHelp": "A driving session with no activity ends on its own after this time, 5 to 1440 minutes.",
+    "telemetryTitle": "Vehicle data",
+    "telemetryIntervalSeconds": "Data interval (seconds)",
+    "telemetryIntervalHelp": "How often the device in each truck sends data, 5 to 3600 seconds.",
+    "reasonTitle": "Save settings",
+    "reasonDescription": "The change applies to the whole organization and is kept in the history with its reason.",
+    "saveSuccess": "Settings saved."
+  },
+  "roles": {
+    "HEAD_ADMIN": "Head administrator",
+    "CO_ADMIN": "Co-administrator",
+    "ORG_ADMIN": "Organization administrator",
+    "SALES": "Sales",
+    "ACCOUNTANT": "Accountant",
+    "CUSTOMER_CARE": "Customer care",
+    "OPERATIONS": "Operations",
+    "MAINTENANCE": "Maintenance",
+    "WARRANTY": "Warranty",
+    "FLEET_MANAGER": "Fleet manager",
+    "DISPATCHER": "Dispatcher",
+    "DRIVER": "Driver",
+    "TECHNICIAN": "Technician"
+  }
+}

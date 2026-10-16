@@ -1,0 +1,6 @@
+{
+  "fleetSelect": {
+    "placeholder": "Choose a fleet",
+    "includeSubFleets": "Include sub-fleets"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "list": {
+    "title": "Danh sách xe",
+    "add": "Thêm xe",
+    "searchPlaceholder": "Tìm theo biển số hoặc số VIN",
+    "allStatuses": "Tất cả trạng thái",
+    "empty": "Chưa có xe nào.",
+    "emptyFiltered": "Không có xe phù hợp với bộ lọc."
+  },
+  "fields": {
+    "licensePlate": "Biển số",
+    "vin": "Số VIN",
+    "model": "Dòng xe",
+    "year": "Năm sản xuất",
+    "status": "Trạng thái",
+    "statusReason": "Lý do trạng thái",
+    "acquiredAt": "Ngày bàn giao",
+    "owner": "Chủ sở hữu",
+    "createdAt": "Ngày tạo",
+    "updatedAt": "Cập nhật lần cuối",
+    "actions": "Thao tác"
+  },
+  "detail": {
+    "summary": "Thông tin xe",
+    "ownershipTab": "Lịch sử chủ sở hữu",
+    "ownedFrom": "Từ",
+    "ownedUntil": "Đến",
+    "current": "Hiện tại",
+    "noOwnershipPeriods": "Chưa có lịch sử chủ sở hữu."
+  },
+  "delete": {
+    "title": "Gỡ xe khỏi hệ thống",
+    "description": "Xe chuyển sang Không hoạt động và không còn trong danh sách. Dữ liệu của xe vẫn được giữ.",
+    "confirm": "Gỡ xe",
+    "success": "Đã gỡ xe."
+  },
+  "form": {
+    "createTitle": "Thêm xe",
+    "editTitle": "Sửa xe {{plate}}",
+    "vinHelp": "Đúng 17 ký tự, in trên khung xe.",
+    "modelPlaceholder": "Chọn dòng xe",
+    "acquiredAtHelp": "Ngày xe được bàn giao cho chủ sở hữu; để trống là hôm nay.",
+    "acquiredAtPlaceholder": "Chọn ngày",
+    "ownerHelp": "Tổ chức sở hữu xe; để trống là tổ chức đang làm việc.",
+    "statusReasonHelp": "Bắt buộc khi đổi trạng thái; được lưu vào lịch sử thay đổi.",
+    "statusReasonRequired": "Vui lòng nhập lý do khi đổi trạng thái.",
+    "createSuccess": "Đã thêm xe.",
+    "updateSuccess": "Đã lưu thay đổi."
+  }
+}

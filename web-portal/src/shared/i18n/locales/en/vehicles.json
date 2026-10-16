@@ -1,0 +1,50 @@
+{
+  "list": {
+    "title": "Vehicles",
+    "add": "Add vehicle",
+    "searchPlaceholder": "Search by plate or VIN",
+    "allStatuses": "All statuses",
+    "empty": "No vehicles yet.",
+    "emptyFiltered": "No vehicles match the filters."
+  },
+  "fields": {
+    "licensePlate": "License plate",
+    "vin": "VIN",
+    "model": "Model",
+    "year": "Year",
+    "status": "Status",
+    "statusReason": "Status reason",
+    "acquiredAt": "Handover date",
+    "owner": "Owner",
+    "createdAt": "Created",
+    "updatedAt": "Last updated",
+    "actions": "Actions"
+  },
+  "detail": {
+    "summary": "Vehicle details",
+    "ownershipTab": "Ownership history",
+    "ownedFrom": "From",
+    "ownedUntil": "Until",
+    "current": "Current",
+    "noOwnershipPeriods": "No ownership history yet."
+  },
+  "delete": {
+    "title": "Remove the vehicle",
+    "description": "The vehicle becomes Inactive and leaves the list. Its data is kept.",
+    "confirm": "Remove vehicle",
+    "success": "Vehicle removed."
+  },
+  "form": {
+    "createTitle": "Add vehicle",
+    "editTitle": "Edit vehicle {{plate}}",
+    "vinHelp": "Exactly 17 characters, as stamped on the chassis.",
+    "modelPlaceholder": "Choose a model",
+    "acquiredAtHelp": "The day the vehicle was handed to its owner; empty means today.",
+    "acquiredAtPlaceholder": "Pick a date",
+    "ownerHelp": "The organization that owns the vehicle; empty means the current organization.",
+    "statusReasonHelp": "Required when the status changes; kept in the change history.",
+    "statusReasonRequired": "Please give a reason for the status change.",
+    "createSuccess": "Vehicle added.",
+    "updateSuccess": "Changes saved."
+  }
+}

@@ -2,7 +2,7 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check portal-install portal-dev portal-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check portal-install portal-dev portal-check portal-e2e portal-e2e-update portal-e2e-install check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 # The web portal is one self-contained pnpm workspace in web-portal/ (TT-31).
@@ -38,6 +38,9 @@ help:
 	@echo "Web portal (web-portal/):"
 	@echo "  make portal-install  - Install the portal's dependencies (pnpm, frozen lockfile)"
 	@echo "  make portal-dev      - Run the portal dev server (http://localhost:5173, /api proxied to :8000)"
+	@echo "  make portal-e2e      - Playwright: page flows and screenshots against a mocked API (not in make check)"
+	@echo "  make portal-e2e-update - Same, rewriting the reference screenshots (after an intended UI change; review them)"
+	@echo "  make portal-e2e-install - Download Playwright's Chromium (once per machine)"
 	@echo ""
 	@echo "Tests and quality:"
 	@echo "  make backend-test    - Run the smoke tests"
@@ -166,6 +169,27 @@ portal-install:
 portal-dev:
 	@echo "Portal: http://localhost:5173 (start the API with 'make backend-dev')"
 	$(PNPM) dev
+
+# Page flows and one screenshot per page, against API answers mocked from typed
+# fixtures (web-portal-scaffold.md D10): no backend needed. Run by the finish
+# checklist of every portal task, not by the pre-commit hook.
+portal-e2e:
+	$(PNPM) e2e
+
+# Rewrites the committed reference screenshots; look at every changed image
+# before committing it (web-portal-ui.md §6).
+portal-e2e-update:
+	$(PNPM) e2e --update-snapshots
+
+# Playwright publishes no Chromium build for Ubuntu 20.04; its Ubuntu 22.04
+# build is the same Chrome for Testing binary and runs there, so the download
+# asks for that one on 20.04.
+portal-e2e-install:
+	@if grep -qs 'VERSION_ID="20.04"' /etc/os-release; then \
+		cd web-portal && PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu22.04-x64 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm exec playwright install chromium; \
+	else \
+		cd web-portal && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm exec playwright install chromium; \
+	fi
 
 # === TESTS AND QUALITY ===
 
