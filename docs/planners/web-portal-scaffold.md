@@ -3,7 +3,7 @@
 > Feature codes: ACC-04 (Login and sessions), ACC-14 (Feature access control),
 > VEH-01 (Vehicle registry) — portal surface; plus the shell every later
 > portal feature uses.
-> Status: 📋 Planned — scope confirmed 2026-10-16 (D1–D15)
+> Status: 🚧 In progress — scope confirmed 2026-10-16 (D1–D15); Step 1 done
 > Created: 2026-10-16
 >
 > Inputs: TT-28, CV-24, CV-25, IS-13 and open questions 12–14 in
@@ -107,10 +107,27 @@ web-portal/             package.json, vite.config.ts, tsconfig.json, eslint.conf
 
 ## 4. Steps
 
-- [ ] **Step 1 — OpenAPI export and generated client (D3, D6).** Root
+- [x] **Step 1 — OpenAPI export and generated client (D3, D6).** Root
   workspace files, `packages/api-client`, `make api-client`,
-  `make api-client-check`. Evidence: generated `schema.d.ts` type-checks;
-  the check fails after a deliberate backend schema edit.
+  `make api-client-check`. Done 2026-10-16. Root `package.json`
+  (`packageManager: pnpm@12.11.2`, the `latest` tag; Node `>=22 <23`),
+  `pnpm-workspace.yaml` (`packages/*` only; `web-portal` joins in Step 3),
+  `.nvmrc`, `node_modules/` in `.gitignore`. The dump is a backend module,
+  `app/api/openapi_export.py` (`uv run python -m app.api.openapi_export
+  <file>`), rather than inline Python in the Makefile, with one smoke test
+  (`tests/test_openapi_export_smoke.py`). `packages/api-client`:
+  openapi-fetch 0.17.0, openapi-typescript 7.13.0, and **TypeScript 5.9.3,
+  not the `latest` 7.0.2**: openapi-typescript accepts only `^5.x` and
+  typescript-eslint only `<6.1.0`, so 5.9.3 is the newest version every tool
+  takes (D2 applied per tool). The Makefile calls pnpm as `corepack pnpm`
+  (no global `corepack enable`); `make setup` runs `pnpm install
+  --frozen-lockfile`; `api-client-check` is in `make check` for now and moves
+  under `portal-check` in Step 3. Generated sizes: `openapi.json` 0.9 MB,
+  `schema.d.ts` 0.7 MB, both committed. Evidence: `make api-client` →
+  `openapi.json → src/schema.d.ts`; `make api-client-check` → "OK: the API
+  client matches…" and `tsc --noEmit` clean; after changing one route
+  summary in `identity/router.py` it printed "✗ packages/api-client is
+  stale…" and exited 1; after the revert, OK again; `make check` passes.
 - [ ] **Step 2 — Backend web cookie mode (D4).** `identity` schemas, router,
   session service; smoke tests; scenario doc §2 and IS-13 updated. Own
   commit `feat(identity): …`. Evidence: `make check`, the new smoke tests.
