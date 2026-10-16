@@ -10,7 +10,7 @@ process then exits non-zero), as for telemetry.
 import asyncio
 import logging
 
-import app.domains.telematics.service as telematics_service
+import app.domains.telematics.health_service as telematic_health_service
 from app.domains.telematics.schemas import TelematicStatusEnvelope
 from app.libs.db.session import async_session_factory
 
@@ -95,7 +95,7 @@ class StatusReportWorker:
         """
         try:
             async with async_session_factory.begin() as db_session:
-                process_result = await telematics_service.record_status_report(
+                process_result = await telematic_health_service.record_status_report(
                     db_session, envelope
                 )
             logger.info(

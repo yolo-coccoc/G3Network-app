@@ -15,6 +15,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telematics.config_push_service as telematic_config_push_service
+import app.domains.telematics.health_service as telematic_health_service
 import app.domains.telematics.service as telematics_service
 from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
@@ -140,7 +142,7 @@ async def get_device_health_summary_endpoint(
     Raises:
         FleetNotFoundError: The fleet does not exist or is out of reach (404).
     """
-    return await telematics_service.get_device_health_summary(
+    return await telematic_health_service.get_device_health_summary(
         db_session,
         principal=principal,
         visible_vehicle_ids=visible_vehicle_ids,
@@ -182,7 +184,7 @@ async def list_device_health_endpoint(
     Raises:
         FleetNotFoundError: The fleet does not exist or is out of reach (404).
     """
-    return await telematics_service.list_device_health(
+    return await telematic_health_service.list_device_health(
         db_session,
         principal=principal,
         visible_vehicle_ids=visible_vehicle_ids,
@@ -216,7 +218,7 @@ async def get_telematic_health_endpoint(
         TelematicNotFoundError: The device does not exist or is soft-deleted
             (404).
     """
-    return await telematics_service.get_telematic_health(
+    return await telematic_health_service.get_telematic_health(
         db_session,
         telematic_id,
         principal=principal,
@@ -260,7 +262,7 @@ async def list_telematic_status_reports_endpoint(
         TelematicNotFoundError: The device does not exist or is soft-deleted
             (404).
     """
-    return await telematics_service.list_telematic_status_reports(
+    return await telematic_health_service.list_telematic_status_reports(
         db_session,
         telematic_id,
         principal=principal,
@@ -394,7 +396,7 @@ async def push_fleet_config_endpoint(
         FleetNotFoundError: The fleet does not exist or is soft-deleted
             (404).
     """
-    return await telematics_service.push_fleet_config(
+    return await telematic_config_push_service.push_fleet_config(
         db_session,
         fleet_id,
         telematic_config_push_request,
@@ -429,7 +431,7 @@ async def push_telematic_config_endpoint(
             vehicle or is ``INACTIVE`` (409).
         TelematicCommandPublishError: The MQTT publish failed (502).
     """
-    return await telematics_service.push_telematic_config(
+    return await telematic_config_push_service.push_telematic_config(
         db_session,
         telematic_id,
         telematic_config_push_request,

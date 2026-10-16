@@ -725,6 +725,7 @@ async def test_every_fleet_limited_list_runs_on_postgresql(
     import app.domains.billing.bill_service as bill_service
     import app.domains.charging_sessions.read_service as session_read_service
     import app.domains.support.service as support_service
+    import app.domains.telematics.health_service as telematic_health_service
     import app.domains.telematics.service as telematic_service
     import app.domains.warranties.service as warranty_service
 
@@ -773,7 +774,7 @@ async def test_every_fleet_limited_list_runs_on_postgresql(
                 ),
                 list(
                     (
-                        await telematic_service.list_device_health(
+                        await telematic_health_service.list_device_health(
                             db,
                             principal=manager,
                             page=1,

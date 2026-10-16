@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.service as fleet_public_service
 import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
+import app.domains.telematics.config_push_service as telematic_config_push_service
 import app.domains.telematics.repository as telematics_repository
-import app.domains.telematics.service as telematics_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.fleet.exceptions import FleetNotFoundError
 from app.domains.telematics.models import TelematicModel
@@ -88,7 +88,7 @@ async def test_push_fleet_config_reports_published_skipped_and_failed(
     monkeypatch.setattr(telematics_repository, "find_by_vehicle_id", find_device)
     monkeypatch.setattr(telematics_mqtt_publisher, "publish_device_command", publish)
 
-    fleet_config_push_response = await telematics_service.push_fleet_config(
+    fleet_config_push_response = await telematic_config_push_service.push_fleet_config(
         fake_db_session(),
         fleet_id,
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -137,7 +137,7 @@ async def test_push_fleet_config_with_no_members_reports_nothing(
         fleet_public_service, "list_active_member_vehicle_ids", no_members
     )
 
-    fleet_config_push_response = await telematics_service.push_fleet_config(
+    fleet_config_push_response = await telematic_config_push_service.push_fleet_config(
         fake_db_session(),
         uuid4(),
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -172,7 +172,7 @@ async def test_push_fleet_config_unknown_fleet_raises_not_found(
     )
 
     with pytest.raises(FleetNotFoundError) as error_info:
-        await telematics_service.push_fleet_config(
+        await telematic_config_push_service.push_fleet_config(
             fake_db_session(),
             uuid4(),
             TelematicConfigPushRequest(telemetry_interval_seconds=60),

@@ -10,6 +10,8 @@ from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
+import app.domains.telematics.config_push_service as telematic_config_push_service
+import app.domains.telematics.health_service as telematic_health_service
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.service as telemetry_public_service
@@ -298,7 +300,7 @@ async def test_push_telematic_config_publishes_and_records_interval(
     monkeypatch.setattr(telematics_mqtt_publisher, "publish_device_command", publish)
     monkeypatch.setattr(telematics_repository, "update_fields", update_fields)
 
-    response = await telematics_service.push_telematic_config(
+    response = await telematic_config_push_service.push_telematic_config(
         fake_db_session(),
         record.telematic_id,
         TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -334,7 +336,7 @@ async def test_push_telematic_config_rejects_unknown_device(
     )
 
     with pytest.raises(TelematicNotFoundError):
-        await telematics_service.push_telematic_config(
+        await telematic_config_push_service.push_telematic_config(
             fake_db_session(),
             uuid4(),
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -364,7 +366,7 @@ async def test_push_telematic_config_rejects_inactive_device(
     )
 
     with pytest.raises(TelematicNotConfigurableError):
-        await telematics_service.push_telematic_config(
+        await telematic_config_push_service.push_telematic_config(
             fake_db_session(),
             record.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -399,7 +401,7 @@ async def test_push_telematic_config_does_not_record_when_publish_fails(
     monkeypatch.setattr(telematics_repository, "update_fields", fail_if_called)
 
     with pytest.raises(TelematicCommandPublishError):
-        await telematics_service.push_telematic_config(
+        await telematic_config_push_service.push_telematic_config(
             fake_db_session(),
             record.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -708,14 +710,14 @@ async def test_fleet_limited_caller_gets_not_found_for_a_device_off_their_trucks
                 visible_vehicle_ids=visible_vehicle_ids,
             )
         with pytest.raises(TelematicNotFoundError):
-            await telematics_service.get_telematic_health(
+            await telematic_health_service.get_telematic_health(
                 fake_db_session(),
                 hidden_id,
                 principal=principal,
                 visible_vehicle_ids=visible_vehicle_ids,
             )
         with pytest.raises(TelematicNotFoundError):
-            await telematics_service.list_telematic_status_reports(
+            await telematic_health_service.list_telematic_status_reports(
                 fake_db_session(),
                 hidden_id,
                 principal=principal,
@@ -724,7 +726,7 @@ async def test_fleet_limited_caller_gets_not_found_for_a_device_off_their_trucks
                 visible_vehicle_ids=visible_vehicle_ids,
             )
         with pytest.raises(TelematicNotFoundError):
-            await telematics_service.push_telematic_config(
+            await telematic_config_push_service.push_telematic_config(
                 fake_db_session(),
                 hidden_id,
                 TelematicConfigPushRequest(telemetry_interval_seconds=60),
@@ -780,7 +782,7 @@ async def test_device_list_and_health_dashboard_filter_on_the_fleet_limit(
         page_size=10,
         visible_vehicle_ids=visible_vehicle_ids,
     )
-    await telematics_service.get_device_health_summary(
+    await telematic_health_service.get_device_health_summary(
         fake_db_session(), principal=principal, visible_vehicle_ids=visible_vehicle_ids
     )
 
@@ -939,7 +941,7 @@ async def test_list_telematic_status_reports_rejects_since_without_time_zone(
     monkeypatch.setattr(telematics_repository, "list_status_reports", fail_if_called)
 
     with pytest.raises(TelematicDateInvalidError) as error_info:
-        await telematics_service.list_telematic_status_reports(
+        await telematic_health_service.list_telematic_status_reports(
             fake_db_session(),
             uuid4(),
             principal=build_internal_principal(),

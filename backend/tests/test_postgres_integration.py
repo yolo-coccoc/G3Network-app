@@ -62,6 +62,7 @@ import app.domains.notifications.service as notifications_service
 import app.domains.notifications.settings_service as notification_settings_service
 import app.domains.support.repository as support_repository
 import app.domains.support.service as support_service
+import app.domains.telematics.health_service as telematic_health_service
 import app.domains.telematics.monitoring.device_health_monitor as device_health_monitor
 import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
@@ -4901,7 +4902,7 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
                     },
                 ),
             ):
-                result = await telematics_service.record_status_report(
+                result = await telematic_health_service.record_status_report(
                     db,
                     TelematicStatusEnvelope(
                         device.telematic_serial,
@@ -4911,7 +4912,7 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
                     ),
                 )
                 assert result["processed"] == 1
-            notice = await telematics_service.record_status_report(
+            notice = await telematic_health_service.record_status_report(
                 db,
                 TelematicStatusEnvelope(
                     device.telematic_serial,
@@ -4920,7 +4921,7 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
             )
             assert notice["skipped"] == 1
 
-            health = await telematics_service.get_telematic_health(
+            health = await telematic_health_service.get_telematic_health(
                 db, device.telematic_id, principal=staff
             )
             assert health.health_state is TelematicHealthState.ATTENTION
@@ -4932,14 +4933,14 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
             )
             assert detail.firmware_version == "1.2.4"
             assert detail.telemetry_interval_seconds == 10
-            reports = await telematics_service.list_telematic_status_reports(
+            reports = await telematic_health_service.list_telematic_status_reports(
                 db, device.telematic_id, principal=staff, since=None, limit=10
             )
             assert [report.firmware_version for report in reports.items] == [
                 "1.2.4",
                 "1.2.3",
             ]
-            summary = await telematics_service.get_device_health_summary(
+            summary = await telematic_health_service.get_device_health_summary(
                 db, principal=staff
             )
             assert summary.total_count == 3

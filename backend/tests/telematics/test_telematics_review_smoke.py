@@ -20,8 +20,8 @@ from aiomqtt import Message
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telematics.health_service as telematic_health_service
 import app.domains.telematics.repository as telematics_repository
-import app.domains.telematics.service as telematics_service
 from app.domains.telematics.ingestion.mqtt_consumer import StatusReportConsumer
 from app.domains.telematics.models import TelematicModel, TelematicStatusReportModel
 from app.domains.telematics.schemas import (
@@ -187,7 +187,7 @@ async def test_status_report_of_unknown_serial_is_skipped_without_error_guard(
     monkeypatch.setattr(telematics_repository, "find_by_serial", no_device)
     monkeypatch.setattr(telematics_repository, "insert_status_report", insert_report)
 
-    result = await telematics_service.record_status_report(
+    result = await telematic_health_service.record_status_report(
         fake_db_session(),
         TelematicStatusEnvelope(
             "TBOX-UNKNOWN",

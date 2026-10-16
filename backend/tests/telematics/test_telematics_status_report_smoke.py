@@ -15,8 +15,9 @@ import pytest
 from aiomqtt import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.telematics.config_push_service as telematic_config_push_service
+import app.domains.telematics.health_service as telematic_health_service
 import app.domains.telematics.repository as telematics_repository
-import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.service as telemetry_public_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.telematics.exceptions import TelematicNotConfigurableError
@@ -164,21 +165,21 @@ async def test_record_status_report_stores_one_row_and_skips_notices_and_unknown
     monkeypatch.setattr(telematics_repository, "insert_status_report", insert_report)
     session = fake_db_session()
 
-    stored = await telematics_service.record_status_report(
+    stored = await telematic_health_service.record_status_report(
         session,
         TelematicStatusEnvelope(
             telematic_record.telematic_serial,
             TelematicStatusMessage.model_validate(FULL_STATUS_PAYLOAD),
         ),
     )
-    notice = await telematics_service.record_status_report(
+    notice = await telematic_health_service.record_status_report(
         session,
         TelematicStatusEnvelope(
             telematic_record.telematic_serial,
             TelematicStatusMessage.model_validate({"status": "offline"}),
         ),
     )
-    unknown = await telematics_service.record_status_report(
+    unknown = await telematic_health_service.record_status_report(
         session,
         TelematicStatusEnvelope(
             "UNKNOWN", TelematicStatusMessage.model_validate(FULL_STATUS_PAYLOAD)
@@ -281,7 +282,7 @@ async def test_health_summary_counts_states_and_healthy_share(
         telemetry_public_service, "resolve_vehicle_live_status", live_status
     )
 
-    summary = await telematics_service.get_device_health_summary(
+    summary = await telematic_health_service.get_device_health_summary(
         fake_db_session(), principal=build_internal_principal()
     )
 
@@ -312,7 +313,7 @@ async def test_config_push_refuses_a_device_that_is_not_mounted(
     monkeypatch.setattr(telematics_repository, "get_by_id", get_device)
 
     with pytest.raises(TelematicNotConfigurableError):
-        await telematics_service.push_telematic_config(
+        await telematic_config_push_service.push_telematic_config(
             fake_db_session(),
             stock_device.telematic_id,
             TelematicConfigPushRequest(telemetry_interval_seconds=30),
