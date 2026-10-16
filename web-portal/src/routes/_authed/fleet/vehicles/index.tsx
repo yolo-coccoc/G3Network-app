@@ -90,6 +90,7 @@ function VehicleListPage() {
               search: { ...search, page: nextPage, page_size: nextPageSize },
             });
           }}
+          vehicleHrefOf={(vehicleId) => `/vehicles/${vehicleId}`}
           onOpen={(vehicleId) => {
             void navigate({
               to: "/vehicles/$vehicleId",

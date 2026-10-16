@@ -13,7 +13,10 @@ test("list: paged table, status filter in the URL", async ({ page }) => {
   const mock = await mockApi(page);
   await page.goto("/fleet/vehicles");
 
-  await expect(page.getByRole("cell", { name: "51C-101.01" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "51C-101.01" })).toHaveAttribute(
+    "href",
+    `/vehicles/${FIRST_VEHICLE?.vehicle_id ?? ""}`,
+  );
   await expect(page.getByText("Tổng 12 mục")).toBeVisible();
   await expect(page).toHaveScreenshot("vehicle-list.png", { fullPage: true });
 

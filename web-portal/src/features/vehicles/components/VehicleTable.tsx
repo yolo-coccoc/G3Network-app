@@ -28,6 +28,8 @@ type Vehicle = Schema<"VehicleResponse">;
  *   isFiltered: Filters are on (changes the empty text).
  *   onPageChange: Called with the new page and size.
  *   onOpen: Called with a vehicle's ID to open its detail page.
+ *   vehicleHrefOf: The detail page's address, so the plate is a real link
+ *     (keyboard, new tab); the route owns the paths.
  */
 interface VehicleTableProps {
   vehiclePage: Schema<"VehicleListResponse"> | undefined;
@@ -37,6 +39,7 @@ interface VehicleTableProps {
   isFiltered: boolean;
   onPageChange: (page: number, pageSize: number) => void;
   onOpen: (vehicleId: string) => void;
+  vehicleHrefOf: (vehicleId: string) => string;
 }
 
 /** One page of vehicles. */
@@ -48,6 +51,7 @@ export function VehicleTable({
   isFiltered,
   onPageChange,
   onOpen,
+  vehicleHrefOf,
 }: VehicleTableProps) {
   const { t } = useTranslation("vehicles");
   const { t: tCommon } = useTranslation();
@@ -59,8 +63,13 @@ export function VehicleTable({
       title: t("fields.licensePlate"),
       render: (_, vehicle) => (
         <Typography.Link
-          onClick={() => {
-            onOpen(vehicle.vehicle_id);
+          href={vehicleHrefOf(vehicle.vehicle_id)}
+          onClick={(event) => {
+            // A plain click stays in the app; Ctrl/middle-click opens a new tab.
+            if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+              event.preventDefault();
+              onOpen(vehicle.vehicle_id);
+            }
           }}
         >
           {vehicle.license_plate}
