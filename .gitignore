@@ -49,3 +49,6 @@ Thumbs.db
 *.log
 logs/
 .claude/worktrees/
+
+# === NODE (pnpm workspaces: web-portal, packages) ===
+node_modules/

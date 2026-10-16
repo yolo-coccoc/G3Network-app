@@ -1,0 +1,4 @@
+# pnpm workspaces of the frontend (TT-28): the web portal joins in the
+# scaffold's Step 3; the driver mobile app later (open question 12).
+packages:
+  - packages/*

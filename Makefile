@@ -2,9 +2,13 @@
 # Common development commands. `make help` lists them; the Makefile is the
 # source of truth for how to run anything in this repo.
 
-.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check check audit install-hooks db-check db-migrate db-reset
+.PHONY: help setup infra-up infra-down infra-logs infra-reset backend-install backend-dev telemetry-dev charging-ocpp-dev telematics-monitor-dev telematics-status-dev driving-sessions-autoend-dev identity-bootstrap backend-test backend-test-integration coverage format lint domain-model-check feature-catalog-check api-client api-client-check check audit install-hooks db-check db-migrate db-reset
 
 COMPOSE := docker compose -f infra/docker-compose.yml
+# pnpm through corepack at the version pinned in package.json (TT-29); no
+# global `corepack enable` needed, and no download prompt in scripts.
+PNPM := COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm
+API_CLIENT_DIR := packages/api-client
 
 # Default: show help
 help:
@@ -37,7 +41,9 @@ help:
 	@echo "  make lint            - Ruff lint + format check, import-linter, mypy (app + tests)"
 	@echo "  make domain-model-check - DBML design source matches the models; generated views are current"
 	@echo "  make feature-catalog-check - feature catalog source follows its rules; generated views are current"
-	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check (the pre-commit gate)"
+	@echo "  make api-client      - Regenerate packages/api-client from the backend's OpenAPI document (after an API change)"
+	@echo "  make api-client-check - the committed API client matches the backend; type-checks it"
+	@echo "  make check           - lint + backend-test + domain-model-check + feature-catalog-check + api-client-check (the pre-commit gate)"
 	@echo "  make audit           - Check locked dependencies for known vulnerabilities (pip-audit)"
 	@echo "  make install-hooks   - Make git run .githooks/pre-commit (make check) before every commit"
 	@echo ""
@@ -65,6 +71,7 @@ setup:
 	path.write_text(text); \
 	print('✓ IDENTITY_TOKEN_SECRET_KEY is set in backend/.env' if ok else '✓ Generated IDENTITY_TOKEN_SECRET_KEY in backend/.env')"
 	cd backend && uv sync
+	$(PNPM) install --frozen-lockfile
 	git config core.hooksPath .githooks
 	$(COMPOSE) up -d
 	@echo "Waiting for PostgreSQL to accept connections..."
@@ -182,7 +189,29 @@ feature-catalog-check:
 
 # The gate the pre-commit hook runs. The PostgreSQL integration tests are not
 # part of it (they need the database); run backend-test-integration for schema work.
-check: lint backend-test domain-model-check feature-catalog-check
+# Regenerates the portal's typed API client (web-portal-scaffold.md D6): dumps
+# the OpenAPI document without running the server, then generates the types.
+# Run after any backend route or schema change; commit both files.
+api-client:
+	cd backend && uv run python -m app.api.openapi_export ../$(API_CLIENT_DIR)/openapi.json
+	$(PNPM) --filter @g3/api-client generate
+
+# Fails when the committed client no longer matches the backend's API: builds
+# both files again in a temporary folder and compares them byte for byte.
+api-client-check:
+	@tmp_dir=$$(mktemp -d) && trap 'rm -rf "$$tmp_dir"' EXIT && \
+	(cd backend && uv run python -m app.api.openapi_export "$$tmp_dir/openapi.json") && \
+	OPENAPI_INPUT="$$tmp_dir/openapi.json" OPENAPI_OUTPUT="$$tmp_dir/schema.d.ts" \
+		$(PNPM) --silent --filter @g3/api-client generate > /dev/null && \
+	if cmp -s "$$tmp_dir/openapi.json" $(API_CLIENT_DIR)/openapi.json && \
+		cmp -s "$$tmp_dir/schema.d.ts" $(API_CLIENT_DIR)/src/schema.d.ts; then \
+		echo "OK: the API client matches the backend's OpenAPI document"; \
+	else \
+		echo "✗ packages/api-client is stale: run 'make api-client' and commit the result"; exit 1; \
+	fi
+	$(PNPM) --filter @g3/api-client typecheck
+
+check: lint backend-test domain-model-check feature-catalog-check api-client-check
 	@echo "✓ All checks passed"
 
 # Audits every locked package (runtime + dev groups) against the PyPA advisory
