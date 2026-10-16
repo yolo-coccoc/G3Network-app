@@ -11,7 +11,9 @@ about itself (frame log, state tables, commands, configuration captures) live in
 
 The repository only queries and flushes data; it never commits or rolls back.
 Business checks (parent existence, identity conflicts, grant rules) belong to
-the service. The soft-delete cascade (location -> stations -> EVSEs ->
+the service: it decides which day a grant must still be valid on and the
+reason text a closed grant carries, and the repository only filters and updates
+by the values it is given. The soft-delete cascade (location -> stations -> EVSEs ->
 connectors) is done here, inside one flush, because it is a pure consequence of
 the parent row's ``deleted_at`` with no rule to decide. Every update of a
 tracked row (``@tracked *``: location, station, EVSE, connector) first sets the
@@ -24,7 +26,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from geoalchemy2.elements import WKBElement
-from sqlalchemy import Date, and_, cast, exists, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -43,7 +45,6 @@ from app.domains.charging_stations.types import (
     LocationViewer,
 )
 from app.libs.common.clock import utc_now
-from app.libs.common.config import settings
 from app.libs.db.history import set_change_context
 
 _ACTIVE = ChargingResourceStatus.ACTIVE.value
@@ -117,29 +118,30 @@ async def get_location_by_id(
 
 
 def _grant_in_force_condition(
-    allowed_organization_id: UUID | ColumnElement[UUID],
+    allowed_organization_id: UUID | ColumnElement[UUID], valid_on: date
 ) -> ColumnElement[bool]:
-    """Build "this organization holds a grant at the location that is in force" (CS-13).
+    """Build "this organization holds a grant at the location valid on a day" (CS-13).
 
-    A grant is in force while it is not revoked and its ``valid_until`` (the
-    last valid day, Vietnam time) has not passed. The check is made at read
-    time, so an expired grant stops counting even before anything closed its
-    row. Correlated on ``ChargingLocationModel.location_id``.
+    Matches a grant that is not revoked and whose ``valid_until`` (the last
+    valid day) is open or not before ``valid_on``. The caller passes the day
+    (the service's today in the report time zone), so an expired grant stops
+    counting even before anything closed its row. Correlated on
+    ``ChargingLocationModel.location_id``.
 
     Args:
         allowed_organization_id: The organization (or a column) to look for.
+        valid_on: The day the grant must still be valid on.
 
     Returns:
         A correlated ``EXISTS`` condition.
     """
-    today = cast(func.timezone(settings.APP_REPORT_TIMEZONE, func.now()), Date)
     return exists().where(
         ChargingLocationAccessModel.location_id == ChargingLocationModel.location_id,
         ChargingLocationAccessModel.allowed_organization_id == allowed_organization_id,
         ChargingLocationAccessModel.revoked_at.is_(None),
         or_(
             ChargingLocationAccessModel.valid_until.is_(None),
-            ChargingLocationAccessModel.valid_until >= today,
+            ChargingLocationAccessModel.valid_until >= valid_on,
         ),
     )
 
@@ -203,7 +205,12 @@ def _location_list_conditions(
                 reach.append(
                     ChargingLocationModel.organization_id == viewer.organization_id
                 )
-                others_visible.append(_grant_in_force_condition(viewer.organization_id))
+                if viewer.grants_valid_on is not None:
+                    others_visible.append(
+                        _grant_in_force_condition(
+                            viewer.organization_id, viewer.grants_valid_on
+                        )
+                    )
             reach.append(
                 and_(ChargingLocationModel.status == _ACTIVE, or_(*others_visible))
             )
@@ -357,17 +364,20 @@ async def soft_delete_location(
     location_id: UUID,
     *,
     status_reason: str,
+    grant_revoke_reason: str,
     changed_by: UUID | None = None,
 ) -> bool:
     """Soft-delete a location with its chargers, EVSEs, connectors and grants.
 
     A deleted row is also ``INACTIVE`` with the reason (DM-25). The live
-    access grants are closed by the system (``revoked_by`` stays ``NULL``).
+    access grants are closed by the system (``revoked_by`` stays ``NULL``)
+    with the reason the service gives.
 
     Args:
         db: Current async session.
         location_id: UUID of the location to soft-delete.
         status_reason: Why the location left the system.
+        grant_revoke_reason: The ``revoke_reason`` of the grants it closes.
         changed_by: The acting user, recorded in the change history.
 
     Returns:
@@ -404,7 +414,7 @@ async def soft_delete_location(
         .values(
             revoked_at=now,
             revoked_by=changed_by,
-            revoke_reason="Location left the system",
+            revoke_reason=grant_revoke_reason,
         )
     )
     location.status = _INACTIVE
@@ -523,16 +533,22 @@ async def list_live_location_access(
 
 
 async def close_expired_location_access(
-    db: AsyncSession, location_id: UUID | None = None
+    db: AsyncSession,
+    *,
+    valid_before: date,
+    revoke_reason: str,
+    location_id: UUID | None = None,
 ) -> int:
-    """Close the grants whose last valid day has passed (CS-13).
+    """Close the live grants whose last valid day is before a given day (CS-13).
 
-    The system closes them (``revoked_by`` stays ``NULL``) so a new grant to
-    the same organization is possible again. Reads already ignore an expired
-    grant (`_grant_in_force_condition`); this only tidies the rows.
+    The rows are closed by the system (``revoked_by`` stays ``NULL``); the
+    service decides the day and the reason text. Reads already ignore an
+    expired grant (`_grant_in_force_condition`); this only tidies the rows.
 
     Args:
         db: Current async session.
+        valid_before: Close the grants whose ``valid_until`` is before this day.
+        revoke_reason: The ``revoke_reason`` written on each closed grant.
         location_id: Only this location's grants; `None` for every location.
 
     Returns:
@@ -541,18 +557,17 @@ async def close_expired_location_access(
     Side Effects:
         Updates rows and flushes; does not commit.
     """
-    today = cast(func.timezone(settings.APP_REPORT_TIMEZONE, func.now()), Date)
     conditions: list[ColumnElement[bool]] = [
         ChargingLocationAccessModel.revoked_at.is_(None),
         ChargingLocationAccessModel.valid_until.is_not(None),
-        ChargingLocationAccessModel.valid_until < today,
+        ChargingLocationAccessModel.valid_until < valid_before,
     ]
     if location_id is not None:
         conditions.append(ChargingLocationAccessModel.location_id == location_id)
     result = await db.execute(
         update(ChargingLocationAccessModel)
         .where(*conditions)
-        .values(revoked_at=utc_now(), revoke_reason="Access expired")
+        .values(revoked_at=utc_now(), revoke_reason=revoke_reason)
     )
     await db.flush()
     return int(result.rowcount or 0)  # type: ignore[attr-defined]
@@ -980,7 +995,12 @@ def _visible_active_location_conditions(
     visible: list[ColumnElement[bool]] = [ChargingLocationModel.is_public.is_(True)]
     if viewer is not None and viewer.organization_id is not None:
         visible.append(ChargingLocationModel.organization_id == viewer.organization_id)
-        visible.append(_grant_in_force_condition(viewer.organization_id))
+        if viewer.grants_valid_on is not None:
+            visible.append(
+                _grant_in_force_condition(
+                    viewer.organization_id, viewer.grants_valid_on
+                )
+            )
     conditions.append(or_(*visible))
     return conditions
 

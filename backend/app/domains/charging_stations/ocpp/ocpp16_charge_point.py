@@ -945,6 +945,8 @@ class OCPP16ChargePoint(ChargePoint):  # type: ignore[misc]
                     )
                 return
             await self._store_configuration_answer(command_id, response)
+        # Task boundary: this runs as a background task after boot that nothing
+        # awaits, so a failure is logged and must not end the connection.
         except Exception:
             logger.exception(
                 "Configuration capture failed", extra={"ocpp_identity": self.id}

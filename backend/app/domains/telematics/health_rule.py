@@ -3,7 +3,7 @@
 Pure, no I/O. One rule, so the device list, the single-device view and the
 network summary can never disagree on what "healthy" means. The inputs are
 facts the caller has already read (status, whether the device is mounted on a
-live truck, the silence flag of ``monitoring/silence_rule`` and the newest
+live truck, the silence flag of ``silence_rule`` and the newest
 status report's SIM and GNSS fields).
 """
 

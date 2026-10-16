@@ -22,8 +22,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.notifications.service as notifications_service
-import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
+import app.domains.telematics.silence_rule as silence_rule
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.notifications.types import NotificationSeverity, NotificationType

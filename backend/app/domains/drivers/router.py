@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.drivers.service as driver_service
-import app.domains.identity.service as identity_service
 from app.domains.drivers.schemas import (
     DriverCreateRequest,
     DriverListResponse,
@@ -32,7 +31,6 @@ from app.domains.identity.dependencies import (
     require_roles,
 )
 from app.domains.identity.types import (
-    AccessAuditAction,
     ClientContext,
     Principal,
     roles_for,
@@ -183,20 +181,9 @@ async def get_driver_endpoint(
         DriverNotFoundError: 404 when the driver does not exist or was
             soft-deleted.
     """
-    driver_response = await driver_service.get_driver(
-        db_session, driver_id, principal=principal
+    return await driver_service.get_driver(
+        db_session, driver_id, principal=principal, client_context=client_context
     )
-    # Name, phone and licence of a person: one VIEW row per profile opened.
-    await identity_service.record_data_access(
-        db_session,
-        principal=principal,
-        action=AccessAuditAction.VIEW,
-        resource_type="DRIVER_PROFILE",
-        resource_id=str(driver_id),
-        client_context=client_context,
-        organization_id=driver_response.organization_id,
-    )
-    return driver_response
 
 
 @router.patch(
@@ -383,28 +370,16 @@ async def list_driving_sessions_endpoint(
     Returns:
         Paginated driving sessions.
     """
-    session_list_response = await driver_service.list_driving_sessions(
+    return await driver_service.list_driving_sessions(
         db_session,
         page=page,
         page_size=page_size,
         driver_id=driver_id,
         vehicle_vin=vehicle_vin,
         principal=principal,
+        client_context=client_context,
         visible_vehicle_ids=visible_vehicle_ids,
     )
-    if principal.has_any_role(*driver_service.DRIVER_MANAGER_ROLES):
-        # A manager sees who drove where (personal data, DR-08): one VIEW row
-        # per screen. A driver reading their own summary needs none.
-        await identity_service.record_data_access(
-            db_session,
-            principal=principal,
-            action=AccessAuditAction.VIEW,
-            resource_type="DRIVING_SESSIONS",
-            resource_id=None if driver_id is None else str(driver_id),
-            client_context=client_context,
-            details={"vehicle_vin": vehicle_vin} if vehicle_vin else None,
-        )
-    return session_list_response
 
 
 @driving_sessions_router.get(

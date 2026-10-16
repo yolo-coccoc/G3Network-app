@@ -26,6 +26,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+import app.domains.drivers.lookups as driver_lookups
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
@@ -62,7 +63,11 @@ from app.domains.notifications.types import (
     NotificationType,
 )
 from app.domains.telematics.models import TelematicModel
-from app.domains.telemetry.types import VehicleLiveStatusReference
+from app.domains.telemetry.types import (
+    MAX_PLAUSIBLE_SPEED_KMH,
+    MIN_ODOMETER_STEP_SECONDS,
+    VehicleLiveStatusReference,
+)
 from app.domains.vehicles.models import VehicleModel
 from app.domains.vehicles.types import VehicleStatus
 from tests.principals import build_principal
@@ -399,7 +404,7 @@ async def test_a_trip_started_meanwhile_by_another_driver_cannot_be_started_agai
         hook_fired: list[bool] = []
         inner_started: list[bool] = []
         original_reading: Callable[..., Awaitable[VehicleLiveStatusReference | None]]
-        original_reading = driver_service.read_recent_truck_reading
+        original_reading = driver_lookups.read_recent_truck_reading
 
         async def start_meanwhile(
             db_session: AsyncSession, vehicle_id: UUID, *, now: datetime
@@ -422,7 +427,7 @@ async def test_a_trip_started_meanwhile_by_another_driver_cannot_be_started_agai
             return await original_reading(db_session, vehicle_id, now=now)
 
         monkeypatch.setattr(
-            driver_service, "read_recent_truck_reading", start_meanwhile
+            driver_lookups, "read_recent_truck_reading", start_meanwhile
         )
         first_got_conflict = False
         try:
@@ -471,6 +476,8 @@ async def _window_distance_km(
             vehicle_id=truck.vehicle_id,
             start_time=start,
             end_time=start + timedelta(hours=1),
+            max_plausible_speed_kmh=MAX_PLAUSIBLE_SPEED_KMH,
+            min_odometer_step_seconds=MIN_ODOMETER_STEP_SECONDS,
         )
     return summary.distance_km
 

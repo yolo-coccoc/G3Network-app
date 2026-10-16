@@ -315,7 +315,7 @@ async def test_station_response_carries_both_connector_counts(
         available_connector_count,
     )
 
-    response = await charging_stations_service.get_charging_station(
+    response = await station_service.get_charging_station(
         fake_db_session(), station.station_id, principal=build_internal_principal()
     )
 

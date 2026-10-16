@@ -1,6 +1,6 @@
 """Smoke tests for the charging_sessions service: scan, start, stop, station energy (F-B2, F-C5, CE-10, CE-11)."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
 from uuid import UUID, uuid4
@@ -26,6 +26,7 @@ from app.domains.charging_sessions.types import (
     SessionStatus,
 )
 from app.domains.identity.types import UserRole
+from app.libs.common.config import settings
 from tests.builders import build_charging_session, fake_db_session
 from tests.principals import build_internal_principal, build_principal
 
@@ -62,6 +63,10 @@ async def test_create_pending_session_issues_a_token_that_fits_ocpp16(
     assert captured["id_token"] == reference.id_token
     assert captured["vehicle_id"] is None
     assert reference.session_id == session.session_id
+    # The scan expires one pending window after it was created (CE-10).
+    assert reference.expires_at == session.created_at + timedelta(
+        seconds=settings.CHARGING_PENDING_SESSION_TIMEOUT_SECONDS
+    )
 
 
 @pytest.mark.asyncio

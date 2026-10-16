@@ -220,34 +220,6 @@ async def resolve_organization_for_new_record(
     return requested_organization_id
 
 
-async def list_organization_role_holder_user_ids(
-    db_session: AsyncSession,
-    organization_id: UUID,
-    roles: Sequence[UserRole],
-) -> list[UUID]:
-    """List the people of one organization who hold one of the given roles.
-
-    Used by producers of organization alerts (a silent device, DEV-05) to
-    decide who receives them: it answers "who is the organization's
-    administrator or fleet manager" without the caller reading identity tables.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        organization_id: The organization whose members are searched.
-        roles: Roles that qualify; a person holding any of them is returned.
-
-    Returns:
-        User IDs of active members holding a role right now (each once);
-        empty when nobody does.
-
-    Side Effects:
-        Performs a read-only query only; does not commit or rollback.
-    """
-    return await identity_repository.list_user_ids_holding_roles_in_organization(
-        db_session, organization_id, [role.value for role in roles]
-    )
-
-
 async def list_organization_role_holders(
     db_session: AsyncSession,
     organization_id: UUID,
@@ -255,10 +227,9 @@ async def list_organization_role_holders(
 ) -> list[RoleHolderReference]:
     """List the people of one organization who hold one of the given roles.
 
-    Like `list_organization_role_holder_user_ids`, but each person comes with
-    the membership and every role they hold, so a caller can tell a
-    fleet-limited manager from an unlimited one (notification routing,
-    NTF-06).
+    Each person comes with the membership and every role they hold, so a
+    caller can tell a fleet-limited manager from an unlimited one
+    (notification routing, NTF-06).
 
     Args:
         db_session: Database session owned by the entry boundary.

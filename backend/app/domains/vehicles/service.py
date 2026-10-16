@@ -14,7 +14,7 @@ is owned by the caller's organization unless staff name another one. The
 cross-domain `resolve_*` functions are unscoped system lookups.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -51,7 +51,7 @@ from app.domains.vehicles.types import (
     VehicleStatus,
     VehicleSummary,
 )
-from app.libs.common.clock import utc_now
+from app.libs.common.clock import CLIENT_CLOCK_SKEW, utc_now
 from app.libs.common.config import settings
 from app.libs.common.errors import InvalidInputError
 from app.libs.common.pagination import normalize_page_window
@@ -68,10 +68,6 @@ _DUPLICATE_IDENTIFIER_MESSAGE = (
 VEHICLE_DELETED_REASON = "Vehicle deleted"
 VEHICLE_MODEL_EDITED_REASON = "Vehicle model edited"
 VEHICLE_MODEL_DELETED_REASON = "Vehicle model removed from the catalog"
-
-# A handover date typed on a client may run a little ahead of the server clock;
-# a transfer effective later than this margin is refused (VH-12).
-TRANSFER_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def to_vehicle_response(vehicle_record: VehicleModel) -> VehicleResponse:
@@ -388,7 +384,7 @@ async def create_vehicle(
     )
     if insert_values["acquired_at"] is None:
         insert_values["acquired_at"] = utc_now()
-    elif insert_values["acquired_at"] > utc_now() + TRANSFER_CLOCK_SKEW:
+    elif insert_values["acquired_at"] > utc_now() + CLIENT_CLOCK_SKEW:
         # A future handover date would make the truck untransferable until
         # then: a transfer cannot predate the owner's start (RV-AS4).
         raise InvalidInputError("acquired_at cannot be in the future")
@@ -698,7 +694,7 @@ async def transfer_vehicle_ownership(
     Rules:
         The new owner must exist and differ from the current owner. The
         effective date defaults to now, may not be in the future (beyond
-        ``TRANSFER_CLOCK_SKEW``) and must be after the date the current owner
+        ``CLIENT_CLOCK_SKEW``) and must be after the date the current owner
         took the truck, so every period has a positive length.
 
     Args:
@@ -734,7 +730,7 @@ async def transfer_vehicle_ownership(
         raise VehicleTransferInvalidError("The organization already owns this vehicle")
     now = utc_now()
     effective_at = vehicle_ownership_transfer_request.acquired_at or now
-    if effective_at > now + TRANSFER_CLOCK_SKEW:
+    if effective_at > now + CLIENT_CLOCK_SKEW:
         raise VehicleTransferInvalidError("The transfer date cannot be in the future")
     if effective_at <= vehicle_record.acquired_at:
         raise VehicleTransferInvalidError(

@@ -361,7 +361,7 @@ class IdentityStore:
         ]
         return matching[-1] if matching else None
 
-    async def find_latest_one_time_code_for_user(
+    async def find_latest_one_time_code_by_user_id(
         self, _db: object, *, user_id: UUID, purpose: str
     ) -> OneTimeCodeModel | None:
         """Return the newest code issued for a user and purpose."""

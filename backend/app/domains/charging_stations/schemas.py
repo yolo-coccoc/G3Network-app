@@ -161,7 +161,7 @@ class ChargingLocationUpdateRequest(BaseModel):
 
 
 class ChargingLocationResponse(BaseModel):
-    """A location (trạm sạc): where drivers go to charge.
+    """A charging location (the site): where drivers go to charge.
 
     Attributes:
         location_id: Internal UUID.

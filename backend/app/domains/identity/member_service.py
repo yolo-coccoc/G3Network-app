@@ -367,10 +367,25 @@ def _check_role_grantable(
             raise AccessDeniedError("Only a HEAD_ADMIN may grant an administrator role")
 
 
-async def _to_member_response(
+async def _build_member_response(
     db_session: AsyncSession, membership_record: MembershipModel, user_record: UserModel
 ) -> MemberResponse:
-    """Build a member response with the roles the membership holds now."""
+    """Build a member response with the roles the membership holds now.
+
+    Args:
+        db_session: Database session owned by the entry boundary.
+        membership_record: The membership to describe.
+        user_record: The person the membership belongs to.
+
+    Returns:
+        The member response; the person's name, e-mail and account status
+        are hidden while an existing account has not accepted the invitation
+        (RV-ID2).
+
+    Side Effects:
+        Reads the membership's active roles from the database; does not
+        commit or rollback.
+    """
     role_values = await identity_repository.list_active_roles_by_membership(
         db_session, membership_record.membership_id
     )
@@ -580,7 +595,7 @@ async def invite_member(
         roles=roles,
     )
     user_record = await _require_user(db_session, membership_record.user_id)
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def resend_invitation(
@@ -630,7 +645,7 @@ async def resend_invitation(
         organization_record=organization_record,
         issued_by=principal.user_id,
     )
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def list_members(
@@ -680,7 +695,7 @@ async def list_members(
     )
     return MemberListResponse(
         items=[
-            await _to_member_response(db_session, membership_record, user_record)
+            await _build_member_response(db_session, membership_record, user_record)
             for membership_record, user_record in pairs
         ],
         total=total,
@@ -776,7 +791,7 @@ async def _end_membership(
         reason=reason,
     )
     user_record = await _require_user(db_session, membership_record.user_id)
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def remove_member(
@@ -905,7 +920,7 @@ async def accept_membership(
         {"status": MembershipStatus.ACTIVE.value, "joined_at": utc_now()},
     )
     user_record = await _require_user(db_session, membership_record.user_id)
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def lock_member(
@@ -965,7 +980,7 @@ async def lock_member(
         reason=reason,
     )
     user_record = await _require_user(db_session, membership_record.user_id)
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def unlock_member(
@@ -1009,7 +1024,7 @@ async def unlock_member(
         {"status": MembershipStatus.ACTIVE.value, "status_reason": None},
     )
     user_record = await _require_user(db_session, membership_record.user_id)
-    return await _to_member_response(db_session, membership_record, user_record)
+    return await _build_member_response(db_session, membership_record, user_record)
 
 
 async def grant_role(
@@ -1255,4 +1270,4 @@ async def handover_org_admin(
         },
     )
     user_record = await _require_user(db_session, target_membership.user_id)
-    return await _to_member_response(db_session, target_membership, user_record)
+    return await _build_member_response(db_session, target_membership, user_record)

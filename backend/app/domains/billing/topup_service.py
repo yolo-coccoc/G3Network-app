@@ -42,7 +42,7 @@ import app.domains.billing.providers as bank_providers
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.vietqr as vietqr
 from app.domains.billing.exceptions import (
-    BankProviderUnavailableError,
+    BankTransferSimulationUnsupportedError,
     PaymentInputError,
     PaymentNotFoundError,
     WalletBlockedError,
@@ -226,17 +226,90 @@ async def create_top_up(
     )
 
 
-async def get_payment(
-    db: AsyncSession, payment_id: UUID, *, principal: Principal
-) -> PaymentResponse:
-    """Get a payment the caller owns, or any payment for internal wallet staff.
+async def _get_payment_record_in_reach(
+    db: AsyncSession, payment_id: UUID, principal: Principal
+) -> PaymentModel:
+    """Load a payment the caller owns, or any payment for internal wallet staff.
 
     Wallet staff are the internal roles of PAY-13; any other internal user
-    (a driver, a support agent) sees their own payments only, because the read
-    below can also expire a PENDING payment (RV-BL8).
+    (a driver, a support agent) reaches their own payments only, because the
+    read in `resolve_payment` can also expire a PENDING payment (RV-BL8).
 
-    A PENDING payment past its expiry is shown, and stored, as FAILED
-    ("expired unpaid"); a transfer that still arrives later is credited anyway.
+    Args:
+        db: The async session owned by the entry boundary.
+        payment_id: UUID of the payment.
+        principal: The caller.
+
+    Returns:
+        The payment row.
+
+    Raises:
+        PaymentNotFoundError: Unknown, or another person's (404).
+    """
+    payment_record = await billing_repository.get_payment_by_id(db, payment_id)
+    is_wallet_staff = principal.is_internal and principal.has_any_role(
+        *roles_for("PAY-13")
+    )
+    if payment_record is None or (
+        not is_wallet_staff and payment_record.user_id != principal.user_id
+    ):
+        raise PaymentNotFoundError(f"Payment '{payment_id}' was not found")
+    return payment_record
+
+
+async def expire_payment_if_due(
+    db: AsyncSession, payment_record: PaymentModel
+) -> PaymentModel:
+    """Mark a PENDING payment past its expiry FAILED ("expired unpaid").
+
+    The row is re-read under a lock first, so a bank notification crediting it
+    at the same moment runs before or after this, never interleaved; a payment
+    that is no longer PENDING once locked is left alone. A transfer that still
+    arrives later is credited anyway (BL-19).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        payment_record: The payment, already checked to be in the caller's
+            reach.
+
+    Returns:
+        The payment as it stands now (the locked, fresh row when it was due).
+
+    Raises:
+        PaymentNotFoundError: The payment disappeared before the lock (404).
+
+    Side Effects:
+        For a due payment, locks its row until the transaction ends and, while
+        it is still PENDING, sets ``status`` FAILED and ``completed_at`` and
+        flushes.
+    """
+    now = utc_now()
+    if (
+        payment_record.status != PaymentStatus.PENDING.value
+        or calculate_expires_at(payment_record) > now
+    ):
+        return payment_record
+    payment_id = payment_record.payment_id
+    locked_payment_record = await billing_repository.get_payment_by_id(
+        db, payment_id, for_update=True
+    )
+    if locked_payment_record is None:
+        raise PaymentNotFoundError(f"Payment '{payment_id}' was not found")
+    if locked_payment_record.status == PaymentStatus.PENDING.value:
+        locked_payment_record.status = PaymentStatus.FAILED.value
+        locked_payment_record.completed_at = now
+        await db.flush()
+    return locked_payment_record
+
+
+async def resolve_payment(
+    db: AsyncSession, payment_id: UUID, *, principal: Principal
+) -> PaymentResponse:
+    """Read a payment of the caller, expiring it first when it is due (PAY-06).
+
+    The caller's own payments, or any payment for internal wallet staff
+    (PAY-13). A PENDING payment past its expiry is shown, and stored, as
+    FAILED (`expire_payment_if_due`).
 
     Args:
         db: The async session owned by the entry boundary.
@@ -250,30 +323,11 @@ async def get_payment(
         PaymentNotFoundError: Unknown, or another person's (404).
 
     Side Effects:
-        May mark an expired PENDING payment FAILED.
+        May mark an expired PENDING payment FAILED (see
+        `expire_payment_if_due`).
     """
-    payment_record = await billing_repository.get_payment_by_id(db, payment_id)
-    is_wallet_staff = principal.is_internal and principal.has_any_role(
-        *roles_for("PAY-13")
-    )
-    if payment_record is None or (
-        not is_wallet_staff and payment_record.user_id != principal.user_id
-    ):
-        raise PaymentNotFoundError(f"Payment '{payment_id}' was not found")
-    now = utc_now()
-    if (
-        payment_record.status == PaymentStatus.PENDING.value
-        and calculate_expires_at(payment_record) <= now
-    ):
-        payment_record = await billing_repository.get_payment_by_id(
-            db, payment_id, for_update=True
-        )
-        if payment_record is None:
-            raise PaymentNotFoundError(f"Payment '{payment_id}' was not found")
-        if payment_record.status == PaymentStatus.PENDING.value:
-            payment_record.status = PaymentStatus.FAILED.value
-            payment_record.completed_at = now
-            await db.flush()
+    payment_record = await _get_payment_record_in_reach(db, payment_id, principal)
+    payment_record = await expire_payment_if_due(db, payment_record)
     return to_payment_response(payment_record)
 
 
@@ -445,18 +499,18 @@ async def simulate_bank_transfer(
         What happened to the notification.
 
     Raises:
-        BankProviderUnavailableError: Simulation is turned off, or the
+        BankTransferSimulationUnsupportedError: Simulation is turned off, or the
             provider cannot simulate (409).
         PaymentNotFoundError: No payment carries the code (404).
     """
     if not settings.BILLING_SIMULATE_TRANSFERS_ENABLED:
-        raise BankProviderUnavailableError(
+        raise BankTransferSimulationUnsupportedError(
             "Simulating bank transfers is turned off "
             "(BILLING_SIMULATE_TRANSFERS_ENABLED)"
         )
     provider = bank_providers.get_bank_notification_provider()
     if not provider.supports_simulation:
-        raise BankProviderUnavailableError(
+        raise BankTransferSimulationUnsupportedError(
             f"The '{provider.name}' bank provider cannot simulate transfers"
         )
     payment_record = await billing_repository.find_payment_by_transfer_code(

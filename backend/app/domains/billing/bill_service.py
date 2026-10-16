@@ -22,7 +22,7 @@ computed energy cannot be released, only voided.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -31,7 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.billing.ledger_service as ledger_service
 import app.domains.billing.pricing as pricing
 import app.domains.billing.repository as billing_repository
-from app.domains.billing.exceptions import BillNotFoundError, BillStateError
+from app.domains.billing.exceptions import (
+    BillInputError,
+    BillNotFoundError,
+    BillStateError,
+)
 from app.domains.billing.models import ChargingSessionBillModel
 from app.domains.billing.schemas import SessionBillListResponse, SessionBillResponse
 from app.domains.billing.types import (
@@ -433,6 +437,31 @@ async def get_session_bill(db: AsyncSession, session_id: UUID) -> SessionBillRes
     return await build_bill_response(db, bill_record)
 
 
+def _normalize_filter_time(
+    value: datetime | None, parameter_name: str
+) -> datetime | None:
+    """Check that a time filter carries a timezone and convert it to UTC.
+
+    A value without a timezone is refused rather than guessed: the database
+    driver would read it as the server's local time and shift the window.
+
+    Args:
+        value: The filter value, ``None`` when not given.
+        parameter_name: The query parameter's name, for the error message.
+
+    Returns:
+        The value in UTC, or ``None``.
+
+    Raises:
+        BillInputError: The value has no timezone (400).
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise BillInputError(f"'{parameter_name}' must carry a timezone")
+    return value.astimezone(timezone.utc)
+
+
 async def list_session_bills(
     db: AsyncSession,
     *,
@@ -457,8 +486,10 @@ async def list_session_bills(
         organization_id: Payer-organization filter, honored for staff only.
         started_by: Only bills of sessions this user scanned.
         status: Only this bill status.
-        created_from: Only bills created (scanned) at or after this time.
-        created_to: Only bills created before this time.
+        created_from: Only bills created (scanned) at or after this time;
+            must carry a timezone.
+        created_to: Only bills created before this time; must carry a
+            timezone.
         visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
             only bills of sessions on them, plus the caller's own, are listed
             (a session with no truck is hidden, hardening D5). `None` means
@@ -466,7 +497,13 @@ async def list_session_bills(
 
     Returns:
         A page of bills.
+
+    Raises:
+        BillInputError: ``created_from`` or ``created_to`` has no timezone
+            (400).
     """
+    created_from_utc = _normalize_filter_time(created_from, "from")
+    created_to_utc = _normalize_filter_time(created_to, "to")
     window = normalize_page_window(page, page_size)
     rows, total = await billing_repository.list_bills(
         db,
@@ -474,8 +511,8 @@ async def list_session_bills(
         payer_organization_id=organization_id,
         started_by=started_by,
         status=None if status is None else status.value,
-        created_from=created_from,
-        created_to=created_to,
+        created_from=created_from_utc,
+        created_to=created_to_utc,
         offset=window.offset,
         limit=window.page_size,
         vehicle_ids=visible_vehicle_ids,

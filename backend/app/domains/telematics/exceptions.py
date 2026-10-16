@@ -3,6 +3,7 @@
 from app.libs.common.errors import (
     ConflictError,
     DomainError,
+    InvalidInputError,
     NotFoundError,
     UpstreamUnavailableError,
 )
@@ -32,3 +33,12 @@ class TelematicNotConfigurableError(TelematicError, ConflictError):
 
 class TelematicCommandPublishError(TelematicError, UpstreamUnavailableError):
     """Publishing a device command over MQTT failed (F-J2)."""
+
+
+class TelematicDateInvalidError(TelematicError, InvalidInputError):
+    """A time sent to the device API breaks a rule (400).
+
+    The time has no time zone (asyncpg would store a naive value as the
+    host's local time), or ``acquired_at`` lies in the future beyond
+    ``CLIENT_CLOCK_SKEW`` (RV-AS4).
+    """

@@ -46,6 +46,12 @@ from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 from app.libs.common.pagination import normalize_page_window
 
+# Fixed ``revoke_reason`` texts of the grants the system closes on its own
+# (``revoked_by`` stays NULL): one whose last valid day has passed, and the
+# live grants of a location that is soft-deleted (CS-13).
+_EXPIRED_GRANT_REVOKE_REASON = "Access expired"
+_DELETED_LOCATION_GRANT_REVOKE_REASON = "Location left the system"
+
 # --- Locations ---------------------------------------------------------------
 
 
@@ -213,7 +219,7 @@ async def update_charging_location(
         update_data["coordinates"] = coordinates_to_location(
             location_update_request.latitude, location_update_request.longitude
         )
-    change_reason = station_mappers.resolve_status_change_reason(
+    update_data, change_reason = station_mappers.normalize_status_update(
         update_data, "Charging location edited"
     )
     if not update_data:
@@ -264,13 +270,38 @@ async def soft_delete_charging_location(
             "A charging session is in progress at this location",
         )
     if not await charging_stations_repository.soft_delete_location(
-        db, location_id, status_reason=status_reason, changed_by=principal.user_id
+        db,
+        location_id,
+        status_reason=status_reason,
+        grant_revoke_reason=_DELETED_LOCATION_GRANT_REVOKE_REASON,
+        changed_by=principal.user_id,
     ):
         raise ChargingLocationNotFoundError(f"Location '{location_id}' not found")
     return ChargingResourceDeleteResponse(message="Charging location soft-deleted")
 
 
 # --- Access grants -----------------------------------------------------------
+
+
+async def _close_expired_grants(db: AsyncSession, location_id: UUID) -> None:
+    """Close a location's live grants whose last valid day has passed (CS-13).
+
+    A grant is valid through its ``valid_until`` day in the report time zone,
+    so it has expired once that day is before today there.
+
+    Args:
+        db: Async session owned by the HTTP boundary.
+        location_id: The location whose grants are tidied.
+
+    Side Effects:
+        Closes the expired rows with a fixed reason and flushes; no commit.
+    """
+    await charging_stations_repository.close_expired_location_access(
+        db,
+        valid_before=station_access.today_in_report_zone(),
+        revoke_reason=_EXPIRED_GRANT_REVOKE_REASON,
+        location_id=location_id,
+    )
 
 
 async def grant_charging_location_access(
@@ -306,7 +337,7 @@ async def grant_charging_location_access(
     """
     location = await station_access.get_location_in_reach(db, location_id, principal)
     # An expired grant would still block a new one (one live row per pair).
-    await charging_stations_repository.close_expired_location_access(db, location_id)
+    await _close_expired_grants(db, location_id)
     if access_create_request.allowed_organization_id == location.organization_id:
         raise ChargingLocationAccessConflictError(
             "The owner organization already may charge at its own location"
@@ -359,7 +390,7 @@ async def list_charging_location_access(
         ChargingLocationNotFoundError: If the location is not active.
     """
     await station_access.get_location_in_reach(db, location_id, principal)
-    await charging_stations_repository.close_expired_location_access(db, location_id)
+    await _close_expired_grants(db, location_id)
     grants = await charging_stations_repository.list_live_location_access(
         db, location_id
     )

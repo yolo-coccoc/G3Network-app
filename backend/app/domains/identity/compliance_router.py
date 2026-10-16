@@ -206,7 +206,8 @@ async def list_my_consents_endpoint(
     summary="Search the access audit log",
     description=(
         "Our HEAD_ADMIN / CO_ADMIN search everything; an ORG_ADMIN only their "
-        "own organization. 400 when the range is longer than the limit."
+        "own organization. 400 when a bound has no time zone or the range is "
+        "longer than the limit."
     ),
 )
 async def search_audit_logs_endpoint(
@@ -235,8 +236,9 @@ async def search_audit_logs_endpoint(
         organization_id: Only this organization (internal administrators).
         action: Only this action.
         resource_type: Only this resource type.
-        occurred_from: Start of the range (default 30 days before the end).
-        occurred_to: End of the range (default now).
+        occurred_from: Start of the range (default 30 days before the end);
+            must carry a time zone.
+        occurred_to: End of the range (default now); must carry a time zone.
         principal: The caller.
         db_session: Database session owned by the HTTP boundary.
 

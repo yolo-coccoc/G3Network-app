@@ -1373,10 +1373,10 @@ async def test_station_availability_counts_only_available_connectors_on_postgres
                 radius_km=5,
                 principal=outsider,
             )
-            free_detail = await charging_stations_service.get_charging_station(
+            free_detail = await station_service.get_charging_station(
                 db, free_id, principal=build_internal_principal()
             )
-            maintenance_detail = await charging_stations_service.get_charging_station(
+            maintenance_detail = await station_service.get_charging_station(
                 db, maintenance_id, principal=build_internal_principal()
             )
             free_status = await station_service.get_charging_station_status(
@@ -4445,10 +4445,18 @@ async def test_identity_login_flow_roles_lockout_and_handover(
 @pytest.mark.asyncio
 async def test_data_scope_hides_another_organizations_records_on_postgres(
     temporary_database: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ACC-15 on real rows: vehicle, fleet and driver of organization A answer 404
     to organization B, are found by A and by internal staff, and a list of B
     stays empty."""
+
+    async def skip_data_access_row(*_args: object, **_kwargs: object) -> None:
+        """Skip the profile's audit row: these built principals are no users."""
+
+    # `get_driver` writes a personal-data VIEW row whose user must exist; the
+    # principals here are built, not seeded, and the row is not under test.
+    monkeypatch.setattr(identity_service, "record_data_access", skip_data_access_row)
     from app.domains.drivers.exceptions import DriverNotFoundError
     from app.domains.fleet.exceptions import FleetNotFoundError
     from app.domains.vehicles.exceptions import VehicleNotFoundError
@@ -4500,7 +4508,7 @@ async def test_data_scope_hides_another_organizations_records_on_postgres(
                 ).fleet_id == fleet.fleet_id
                 assert (
                     await driver_service.get_driver(
-                        db, driver.driver_id, principal=principal
+                        db, driver.driver_id, principal=principal, client_context=None
                     )
                 ).driver_id == driver.driver_id
             with pytest.raises(VehicleNotFoundError):
@@ -4511,7 +4519,7 @@ async def test_data_scope_hides_another_organizations_records_on_postgres(
                 await fleet_service.get_fleet(db, fleet.fleet_id, principal=principal_b)
             with pytest.raises(DriverNotFoundError):
                 await driver_service.get_driver(
-                    db, driver.driver_id, principal=principal_b
+                    db, driver.driver_id, principal=principal_b, client_context=None
                 )
             assert (
                 await vehicle_service.list_vehicles(db, principal=principal_b)
@@ -4973,13 +4981,6 @@ async def test_status_reports_health_activation_and_silence_alert_on_postgres(
                     db, membership_record=membership, role=role.value, granted_by=None
                 )
                 people[label] = user.user_id
-            recipients = await identity_service.list_organization_role_holder_user_ids(
-                db,
-                vehicle.organization_id,
-                (UserRole.ORG_ADMIN, UserRole.FLEET_MANAGER),
-            )
-            assert recipients == [people["manager"]]
-
             await device_health_monitor.check_devices_for_silence(db)
             manager_unread = await notifications_service.count_unread_notifications(
                 db, principal=build_principal(user_id=people["manager"])

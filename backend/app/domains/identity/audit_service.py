@@ -162,8 +162,8 @@ async def search_audit_logs(
     Raises:
         AccessDeniedError: If the caller is neither an internal administrator
             nor an ORG_ADMIN.
-        AuditLogInvalidError: If the range is reversed or longer than
-            `IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS`.
+        AuditLogInvalidError: If a bound has no time zone, or the range is
+            reversed or longer than `IDENTITY_AUDIT_LOG_MAX_RANGE_DAYS`.
 
     Side Effects:
         Read-only; does not commit.
@@ -175,6 +175,13 @@ async def search_audit_logs(
         if not principal.has_any_role(UserRole.ORG_ADMIN):
             raise AccessDeniedError("Only administrators may read the audit log")
         organization_id = principal.organization_id
+    for bound in (occurred_from, occurred_to):
+        # A bound without a zone cannot be compared with the stored UTC times
+        # (it raised a TypeError, a 500); refuse it instead of guessing a zone.
+        if bound is not None and (bound.tzinfo is None or bound.utcoffset() is None):
+            raise AuditLogInvalidError(
+                "The range bounds must include a time zone (e.g. Z or +07:00)"
+            )
     range_end = occurred_to or utc_now()
     range_start = occurred_from or range_end - DEFAULT_SEARCH_WINDOW
     if range_start > range_end:

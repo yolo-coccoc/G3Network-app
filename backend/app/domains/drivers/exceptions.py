@@ -107,3 +107,11 @@ class TripInvalidPlanError(TripError, InvalidInputError):
 
 class TripVehicleNotFoundError(TripError, NotFoundError):
     """Raised when the truck of a trip plan does not exist in the caller's reach."""
+
+
+class TripTimeFilterError(TripError, InvalidInputError):
+    """Raised when a trip-list time bound (``from`` / ``to``) has no time zone.
+
+    A naive value would be read by the database in the server's local zone,
+    not UTC, so the list would silently shift by the zone's offset.
+    """

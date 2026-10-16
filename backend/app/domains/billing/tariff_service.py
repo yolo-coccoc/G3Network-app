@@ -51,7 +51,9 @@ from app.libs.common.clock import utc_now
 from app.libs.common.pagination import normalize_page_window
 from app.libs.db.history import set_change_context
 
-# A client clock a little behind ours may send "now" as a moment already past.
+# A client clock a little behind ours may send "now" as a moment already past:
+# a version may start this far in the past. A different rule from
+# `CLIENT_CLOCK_SKEW` (how far ahead a typed date may run), so its own value.
 _EFFECTIVE_FROM_SKEW = timedelta(seconds=60)
 _CURRENCY_VND = "VND"
 
@@ -596,7 +598,7 @@ async def get_station_price(
     moment = at or utc_now()
     if moment.tzinfo is None:
         raise TariffInputError("'at' must carry a timezone")
-    await charging_stations_service.get_charging_station(
+    await charging_stations_service.ensure_station_visible(
         db, station_id, principal=principal
     )
     return to_tariff_quote_response(

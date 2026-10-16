@@ -17,14 +17,12 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.identity.service as identity_service
 import app.domains.telemetry.service as telemetry_service
 from app.domains.identity.dependencies import (
     get_client_context,
     require_roles,
 )
 from app.domains.identity.types import (
-    AccessAuditAction,
     ClientContext,
     Principal,
     UserRole,
@@ -173,19 +171,9 @@ async def get_latest_vehicle_telemetry_endpoint(
         AccessDeniedError: HTTP 403 - a driver who is not checked in to this
             truck.
     """
-    latest_response = await telemetry_service.get_latest_vehicle_telemetry_response(
-        db, vehicle_id, principal=principal
+    return await telemetry_service.get_latest_vehicle_telemetry_response(
+        db, vehicle_id, principal=principal, client_context=client_context
     )
-    # The position of a truck is personal data of its driver (ACC-18).
-    await identity_service.record_data_access(
-        db,
-        principal=principal,
-        action=AccessAuditAction.VIEW,
-        resource_type="VEHICLE_LOCATION",
-        resource_id=str(vehicle_id),
-        client_context=client_context,
-    )
-    return latest_response
 
 
 @router.get(
@@ -233,28 +221,15 @@ async def get_vehicle_telemetry_history_endpoint(
             soft-deleted or its owners never included the caller's
             organization (a former owner reads its own period, VH-11).
     """
-    history_response = await telemetry_service.get_vehicle_telemetry_history_response(
+    return await telemetry_service.get_vehicle_telemetry_history_response(
         db,
         vehicle_id=vehicle_id,
         start_time=start_time,
         end_time=end_time,
         limit=limit,
         principal=principal,
-    )
-    # A location trail is personal data of the driver (ACC-18, ID-41).
-    await identity_service.record_data_access(
-        db,
-        principal=principal,
-        action=AccessAuditAction.VIEW,
-        resource_type="VEHICLE_LOCATION_HISTORY",
-        resource_id=str(vehicle_id),
         client_context=client_context,
-        details={
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
-        },
     )
-    return history_response
 
 
 @router.get(

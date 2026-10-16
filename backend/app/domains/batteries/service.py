@@ -15,7 +15,7 @@ pack capacity (``resolve_installed_battery_capacity_kwh``) is an unscoped
 system lookup.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -50,7 +50,7 @@ from app.domains.batteries.schemas import (
 )
 from app.domains.batteries.types import BatteryStatus
 from app.domains.identity.types import Principal
-from app.libs.common.clock import utc_now
+from app.libs.common.clock import CLIENT_CLOCK_SKEW, utc_now
 from app.libs.common.config import settings
 from app.libs.common.pagination import normalize_page_window
 
@@ -62,10 +62,6 @@ BATTERY_DELETED_REASON = "Battery deleted"
 BATTERY_INSTALLED_REASON = "Battery installed in vehicle"
 BATTERY_REMOVED_REASON = "Battery removed from vehicle"
 BATTERY_SOLD_WITH_VEHICLE_REASON = "Battery moved to the buyer with its vehicle"
-
-# A date typed on a client may run a little ahead of the server clock; a date
-# later than this margin is refused.
-DATE_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def to_battery_model_response(
@@ -462,7 +458,7 @@ async def create_battery(
     if insert_values["acquired_at"] is None:
         insert_values["acquired_at"] = utc_now()
     elif battery_create_request.acquired_at is not None and (
-        battery_create_request.acquired_at > utc_now() + DATE_CLOCK_SKEW
+        battery_create_request.acquired_at > utc_now() + CLIENT_CLOCK_SKEW
     ):
         raise BatteryDateInvalidError("acquired_at cannot be in the future")
     try:
@@ -807,7 +803,7 @@ async def install_battery(
         )
     now = utc_now()
     installed_at = battery_install_request.installed_at or now
-    if installed_at > now + DATE_CLOCK_SKEW:
+    if installed_at > now + CLIENT_CLOCK_SKEW:
         raise BatteryDateInvalidError("The installation time cannot be in the future")
     # One pack is in one truck at a time: the new stay cannot start before the
     # last one ended (DM-22, RV-AS4).
@@ -933,7 +929,7 @@ async def transfer_battery_ownership(
         raise BatteryConflictError("The organization already owns this battery")
     now = utc_now()
     effective_at = battery_ownership_transfer_request.acquired_at or now
-    if effective_at > now + DATE_CLOCK_SKEW:
+    if effective_at > now + CLIENT_CLOCK_SKEW:
         raise BatteryDateInvalidError("The transfer date cannot be in the future")
     if effective_at <= battery_record.acquired_at:
         raise BatteryDateInvalidError(

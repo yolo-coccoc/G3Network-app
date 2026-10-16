@@ -52,7 +52,9 @@ class TelematicCreateRequest(BaseModel):
         organization_id: The organization that owns the device (TX-07);
             internal staff only, defaults to the caller's organization; an
             unknown or out-of-reach organization is rejected (404).
-        acquired_at: When the owner took the device; defaults to now.
+        acquired_at: When the owner took the device; defaults to now. Must
+            carry a time zone and may not lie in the future beyond a small
+            clock skew (checked in the service, 400).
         vehicle_vin: VIN of the vehicle to assign, if any; a VIN matching
             no live vehicle is rejected (404).
         status: Initial status.

@@ -10,8 +10,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.service as telematics_service
+import app.domains.telematics.silence_rule as silence_rule
 import app.domains.telemetry.service as telemetry_public_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.telematics.types import TelematicStatus

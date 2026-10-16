@@ -74,10 +74,13 @@ def viewer_of(principal: Principal) -> LocationViewer:
         principal: The caller.
 
     Returns:
-        The caller's organization, and whether they see every location.
+        The caller's organization, whether they see every location, and the
+        day a grant must still be valid on (today in the report time zone).
     """
     return LocationViewer(
-        organization_id=principal.organization_id, sees_all=principal.is_internal
+        organization_id=principal.organization_id,
+        sees_all=principal.is_internal,
+        grants_valid_on=today_in_report_zone(),
     )
 
 

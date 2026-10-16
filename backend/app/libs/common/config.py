@@ -70,6 +70,12 @@ class Settings(BaseSettings):
         CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: How long a queued command
             may wait for a connected charger before it is closed as
             ``NOT_SENT`` (CS-20).
+        CHARGING_OCPP_COMMAND_CLAIM_BATCH_SIZE: Most queued commands one poll
+            of the gateway's command loop claims.
+        CHARGING_OCPP_COMMAND_STALE_SENT_FACTOR: A sent command nobody answered
+            is closed as ``TIMEOUT`` after this many
+            ``CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS`` (the gateway restarted
+            between the send and the answer).
         CHARGING_PENDING_SESSION_TIMEOUT_SECONDS: How long a scan may wait for
             the charger to start before its PENDING session is ABANDONED
             (CE-10).
@@ -272,6 +278,10 @@ class Settings(BaseSettings):
     # the pickup timeout ends as NOT_SENT.
     CHARGING_OCPP_COMMAND_POLL_SECONDS: float = Field(default=1.0, gt=0)
     CHARGING_OCPP_COMMAND_PICKUP_TIMEOUT_SECONDS: float = Field(default=30.0, gt=0)
+    # One poll claims at most this many queued commands; a sent command with no
+    # answer after this many request timeouts is swept to TIMEOUT.
+    CHARGING_OCPP_COMMAND_CLAIM_BATCH_SIZE: int = Field(default=20, ge=1)
+    CHARGING_OCPP_COMMAND_STALE_SENT_FACTOR: int = Field(default=3, ge=1)
     # QR charging (CE-10, CE-11): a PENDING session whose charger never started
     # within this many seconds of the scan becomes ABANDONED, and its token
     # stops working. The gateway's command loop runs the sweep every

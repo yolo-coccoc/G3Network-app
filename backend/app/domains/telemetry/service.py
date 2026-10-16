@@ -37,8 +37,9 @@ Cross-domain edges owned by this module: ``vehicles`` (existence, battery
 capacity, display data, VEH-05 activation: the trucks and their handover
 date), ``telematics`` (serial ->
 vehicle mapping), ``fleet`` (a fleet's current member vehicles for the
-fleet-wide views, planner D7) and ``drivers`` (a driver reads the live data
-of the truck they are checked in to).
+fleet-wide views, planner D7), ``drivers`` (a driver reads the live data
+of the truck they are checked in to) and ``identity`` (the personal-data
+access rows the live and history reads write, ACC-18).
 
 Every HTTP-facing read takes the caller's `Principal`: a vehicle or fleet of
 an organization out of the caller's data reach is "not found" (ACC-15).
@@ -80,6 +81,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.batteries.service as battery_service
 import app.domains.drivers.service as driver_service
 import app.domains.fleet.service as fleet_service
+import app.domains.identity.service as identity_service
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.activation as telemetry_activation
 import app.domains.telemetry.alerting as telemetry_alerting
@@ -90,7 +92,13 @@ import app.domains.telemetry.repository as telemetry_repository
 import app.domains.telemetry.time_windows as telemetry_time_windows
 import app.domains.vehicles.service as vehicle_service
 from app.domains.identity.exceptions import AccessDeniedError
-from app.domains.identity.types import Principal, UserRole, roles_for
+from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
+    Principal,
+    UserRole,
+    roles_for,
+)
 from app.domains.telemetry.exceptions import TelemetryNotFoundError
 from app.domains.telemetry.models import TelemetryModel
 from app.domains.telemetry.schemas import (
@@ -106,6 +114,8 @@ from app.domains.telemetry.schemas import (
     VehicleTelemetryLatestResponse,
 )
 from app.domains.telemetry.types import (
+    MAX_PLAUSIBLE_SPEED_KMH,
+    MIN_ODOMETER_STEP_SECONDS,
     ReportGranularity,
     VehicleActivationStatus,
     VehicleLiveStatusReference,
@@ -286,9 +296,16 @@ async def _find_latest_telemetry_with_online_flag(
 
 
 async def get_latest_vehicle_telemetry_response(
-    db: AsyncSession, vehicle_id: UUID, *, principal: Principal
+    db: AsyncSession,
+    vehicle_id: UUID,
+    *,
+    principal: Principal,
+    client_context: ClientContext | None,
 ) -> VehicleTelemetryLatestResponse:
     """Get the latest telemetry after confirming the vehicle is still active.
+
+    The position of a truck is personal data of its driver (ACC-18), so a
+    successful read writes one `VEHICLE_LOCATION` `VIEW` row.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -298,6 +315,8 @@ async def get_latest_vehicle_telemetry_response(
             view is the current owner's only, VH-11); a caller who is only a
             DRIVER reads the truck they are checked in to, whichever
             organization owns it (DR-11).
+        client_context: IP address and user agent of the request, for the
+            audit row; `None` when unknown.
 
     Returns:
         Response schema containing the latest telemetry record, its
@@ -311,6 +330,10 @@ async def get_latest_vehicle_telemetry_response(
             owner, for a caller other than internal staff).
         AccessDeniedError: A DRIVER-only caller is not checked in to this
             truck (403, also right after a check-out).
+
+    Side Effects:
+        Inserts one `access_audit_logs` row through
+        `identity.service.record_data_access`; does not commit.
     """
     if principal.has_any_role(*LIVE_VIEW_STAFF_ROLES):
         vehicle_reference = await _get_vehicle_reference(db, vehicle_id, principal)
@@ -338,11 +361,21 @@ async def get_latest_vehicle_telemetry_response(
     telematic_serial = await telematics_service.resolve_serial_by_id(
         db, telemetry.telematic_id
     )
-    return telemetry_mappers.to_vehicle_telemetry_latest_response(
+    latest_response = telemetry_mappers.to_vehicle_telemetry_latest_response(
         telemetry,
         is_online=is_online,
         telematic_serial=telematic_serial or "",
     )
+    # The position of a truck is personal data of its driver (ACC-18).
+    await identity_service.record_data_access(
+        db,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="VEHICLE_LOCATION",
+        resource_id=str(vehicle_id),
+        client_context=client_context,
+    )
+    return latest_response
 
 
 async def resolve_vehicle_live_status(
@@ -469,7 +502,12 @@ async def resolve_distance_km_in_window(
         Read-only query; does not commit or roll back.
     """
     window_summary = await telemetry_repository.get_vehicle_window_summary(
-        db, vehicle_id=vehicle_id, start_time=start_time, end_time=end_time
+        db,
+        vehicle_id=vehicle_id,
+        start_time=start_time,
+        end_time=end_time,
+        max_plausible_speed_kmh=MAX_PLAUSIBLE_SPEED_KMH,
+        min_odometer_step_seconds=MIN_ODOMETER_STEP_SECONDS,
     )
     if window_summary.odometer_sample_count < 2:
         return None
@@ -484,6 +522,7 @@ async def get_vehicle_telemetry_history_response(
     end_time: datetime,
     limit: int | None = None,
     principal: Principal,
+    client_context: ClientContext | None,
 ) -> VehicleTelemetryHistoryResponse:
     """Get a vehicle's telemetry history within a bounded time range (F-A5).
 
@@ -491,7 +530,9 @@ async def get_vehicle_telemetry_history_response(
     trips - this backend has no trip concept (see
     ``docs/decisions/deferred.md``). The caller narrows the time window
     if a range holds more points than ``limit``; this function does not
-    paginate server-side.
+    paginate server-side. A location trail is personal data of the driver
+    (ACC-18, ID-41), so a successful read writes one
+    `VEHICLE_LOCATION_HISTORY` `VIEW` row with the requested window.
 
     Args:
         db: Database session owned by the HTTP boundary.
@@ -505,6 +546,8 @@ async def get_vehicle_telemetry_history_response(
             A customer reads only the rows recorded while its organization
             owned the truck, and a former owner still reads its own period
             (VH-11); internal staff read every owner's rows.
+        client_context: IP address and user agent of the request, for the
+            audit row; `None` when unknown.
 
     Returns:
         Response with points ordered chronologically (oldest first).
@@ -515,6 +558,10 @@ async def get_vehicle_telemetry_history_response(
             ``settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS``.
         TelemetryNotFoundError: If the vehicle does not exist, was
             soft-deleted or the caller's organization never owned it.
+
+    Side Effects:
+        Inserts one `access_audit_logs` row through
+        `identity.service.record_data_access`; does not commit.
     """
     normalized_start, normalized_end = telemetry_time_windows.validate_time_window(
         start_time, end_time, settings.TELEMETRY_HISTORY_MAX_RANGE_DAYS
@@ -539,9 +586,24 @@ async def get_vehicle_telemetry_history_response(
         telemetry_mappers.to_vehicle_telemetry_history_point(record)
         for record in records
     ]
-    return VehicleTelemetryHistoryResponse(
+    history_response = VehicleTelemetryHistoryResponse(
         vehicle_id=vehicle_id, points=points, count=len(points)
     )
+    # A location trail is personal data of the driver (ACC-18, ID-41). The
+    # window is recorded as requested, before UTC normalization.
+    await identity_service.record_data_access(
+        db,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="VEHICLE_LOCATION_HISTORY",
+        resource_id=str(vehicle_id),
+        client_context=client_context,
+        details={
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+        },
+    )
+    return history_response
 
 
 async def get_vehicle_battery_health_response(
@@ -658,6 +720,8 @@ async def _resolve_report_context(
         vehicle_id=vehicle_id,
         start_time=normalized_start,
         end_time=normalized_end,
+        max_plausible_speed_kmh=MAX_PLAUSIBLE_SPEED_KMH,
+        min_odometer_step_seconds=MIN_ODOMETER_STEP_SECONDS,
         organization_id=owner_organization_id,
     )
 
@@ -676,6 +740,8 @@ async def _resolve_report_context(
             end_time=normalized_end,
             granularity=granularity,
             time_zone=settings.APP_REPORT_TIMEZONE,
+            max_plausible_speed_kmh=MAX_PLAUSIBLE_SPEED_KMH,
+            min_odometer_step_seconds=MIN_ODOMETER_STEP_SECONDS,
             organization_id=owner_organization_id,
         )
         period_summaries = tuple(
@@ -984,6 +1050,8 @@ async def get_fleet_operating_report(
             vehicle_id=vehicle_id,
             start_time=normalized_start,
             end_time=normalized_end,
+            max_plausible_speed_kmh=MAX_PLAUSIBLE_SPEED_KMH,
+            min_odometer_step_seconds=MIN_ODOMETER_STEP_SECONDS,
             organization_id=principal.data_scope,
         )
         operating_summary = telemetry_reports.build_operating_summary(

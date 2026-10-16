@@ -19,7 +19,9 @@ A check-in compares the phone with the truck's last T-Box position (the
 `end_idle_driving_sessions` (run by ``monitoring/``), and every way a session
 ends also closes the trip still running in it (DR-12). The driver's own
 summary (DR-11) reads the distance from the telemetry odometer. Trips
-themselves (plan / start / finish) are in ``trip_service.py``.
+themselves (plan / start / finish) are in ``trip_service.py``; the lookups
+both modules need (the person behind a profile, the truck's recent T-Box
+reading) are in ``lookups.py``.
 """
 
 import logging
@@ -32,10 +34,10 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.lookups as driver_lookups
 import app.domains.drivers.repository as driver_repository
 import app.domains.identity.service as identity_service
 import app.domains.telemetry.service as telemetry_service
-import app.domains.telemetry.types as telemetry_types
 import app.domains.vehicles.service as vehicle_service
 from app.domains.drivers.exceptions import (
     DriverCheckInLocationRequiredError,
@@ -79,6 +81,8 @@ from app.domains.drivers.types import (
 )
 from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import (
+    AccessAuditAction,
+    ClientContext,
     MembershipEndKind,
     MembershipPersonReference,
     MembershipStatus,
@@ -106,8 +110,6 @@ TRIP_AUTO_CLOSED_REASON = "Closed automatically when the driving session ended"
 SUMMARY_DEFAULT_RANGE_DAYS = 30
 SUMMARY_MAX_RANGE_DAYS = 366
 SUMMARY_MAX_SESSIONS = 1000
-# Auto-end time used when an organization's settings cannot be read.
-DEFAULT_AUTO_END_MINUTES = 120
 
 # Roles that may act for another driver (check a driver in or out): the
 # users of DRV-02 except the driver themselves; a DRIVER-only caller acts on
@@ -381,20 +383,31 @@ async def get_driver(
     driver_id: UUID,
     *,
     principal: Principal,
+    client_context: ClientContext | None,
 ) -> DriverResponse:
     """Get an active driver by ID inside the caller's data reach.
+
+    The profile holds a person's name, phone and licence, so opening it
+    writes one personal-data `VIEW` row (ACC-18) for the profile's
+    organization.
 
     Args:
         db_session: Current database session.
         driver_id: Internal ID of the driver.
         principal: The caller; a profile of another organization is not found
             unless the caller is internal.
+        client_context: IP address and user agent of the request, for the
+            audit row; `None` when unknown.
 
     Returns:
         Response for the driver.
 
     Raises:
         DriverNotFoundError: When the driver does not exist or has been soft-deleted.
+
+    Side Effects:
+        Inserts one `access_audit_logs` row (`DRIVER_PROFILE`) through
+        `identity.service.record_data_access`; does not commit.
     """
     driver_record = await driver_repository.get_by_id(
         db_session, driver_id, organization_id=principal.data_scope
@@ -402,7 +415,18 @@ async def get_driver(
     if not driver_record:
         raise DriverNotFoundError(f"Driver with id '{driver_id}' not found")
 
-    return await build_driver_response(db_session, driver_record)
+    driver_response = await build_driver_response(db_session, driver_record)
+    # Name, phone and licence of a person: one VIEW row per profile opened.
+    await identity_service.record_data_access(
+        db_session,
+        principal=principal,
+        action=AccessAuditAction.VIEW,
+        resource_type="DRIVER_PROFILE",
+        resource_id=str(driver_id),
+        client_context=client_context,
+        organization_id=driver_response.organization_id,
+    )
+    return driver_response
 
 
 async def list_drivers(
@@ -648,38 +672,6 @@ async def soft_delete_driver(
     return {"message": "Driver deleted successfully"}
 
 
-async def read_recent_truck_reading(
-    db_session: AsyncSession, vehicle_id: UUID, *, now: datetime
-) -> telemetry_types.VehicleLiveStatusReference | None:
-    """Read the truck's latest T-Box sample if it is recent enough to rely on.
-
-    Used for the phone-to-truck check at check-in (DR-07) and for the
-    position, odometer and battery % a trip records at both ends (DR-12).
-
-    Args:
-        db_session: Current database session.
-        vehicle_id: Internal ID of the truck.
-        now: The current time.
-
-    Returns:
-        The latest reading, or `None` when the truck has no telemetry or its
-        newest sample was received longer ago than
-        ``settings.DRIVERS_CHECKIN_POSITION_MAX_AGE_MINUTES``.
-
-    Side Effects:
-        Read-only; calls the telemetry domain's public service.
-    """
-    live_status = await telemetry_service.resolve_vehicle_live_status(
-        db_session, vehicle_id
-    )
-    if live_status is None:
-        return None
-    max_age = timedelta(minutes=settings.DRIVERS_CHECKIN_POSITION_MAX_AGE_MINUTES)
-    if now - live_status.received_at > max_age:
-        return None
-    return live_status
-
-
 async def _auto_close_trip(
     db_session: AsyncSession,
     session_record: DrivingSessionModel,
@@ -717,7 +709,7 @@ async def _auto_close_trip(
         "status_reason": TRIP_AUTO_CLOSED_REASON,
         "ended_at": trip_ended_at,
     }
-    reading = await read_recent_truck_reading(
+    reading = await driver_lookups.read_recent_truck_reading(
         db_session, session_record.vehicle_id, now=utc_now()
     )
     if reading is not None:
@@ -1010,7 +1002,7 @@ async def check_in_driver(
         and check_in_request.latitude is not None
         and check_in_request.longitude is not None
     ):
-        truck_reading = await read_recent_truck_reading(
+        truck_reading = await driver_lookups.read_recent_truck_reading(
             db_session, vehicle_reference.vehicle_id, now=now
         )
         if truck_reading is None:
@@ -1171,6 +1163,7 @@ async def list_driving_sessions(
     db_session: AsyncSession,
     *,
     principal: Principal,
+    client_context: ClientContext | None,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
     driver_id: UUID | None = None,
@@ -1179,11 +1172,17 @@ async def list_driving_sessions(
 ) -> DrivingSessionListResponse:
     """Get a paginated list of driving sessions, newest first.
 
+    A manager (`DRIVER_MANAGER_ROLES`) sees who drove where, which is
+    personal data (DR-08): each call writes one `VIEW` row (ACC-18), empty
+    pages included. A driver reading their own sessions writes none.
+
     Args:
         db_session: Current database session.
         principal: The caller. Sessions are read through the truck owner's
             organization recorded on them; a caller who is only a DRIVER sees
             their own sessions, whatever the filters say (DR-11).
+        client_context: IP address and user agent of the request, for the
+            audit row; `None` when unknown.
         page: Page number, starting from 1.
         page_size: Maximum number of sessions per page.
         driver_id: Only this driver's sessions, if given.
@@ -1196,6 +1195,63 @@ async def list_driving_sessions(
 
     Returns:
         Paginated session list, open and closed sessions.
+
+    Side Effects:
+        For a manager, inserts one `access_audit_logs` row
+        (`DRIVING_SESSIONS`) through `identity.service.record_data_access`;
+        does not commit.
+    """
+    session_list_response = await _list_driving_session_page(
+        db_session,
+        principal=principal,
+        page=page,
+        page_size=page_size,
+        driver_id=driver_id,
+        vehicle_vin=vehicle_vin,
+        visible_vehicle_ids=visible_vehicle_ids,
+    )
+    if principal.has_any_role(*DRIVER_MANAGER_ROLES):
+        # A manager sees who drove where (personal data, DR-08): one VIEW row
+        # per screen. A driver reading their own summary needs none.
+        await identity_service.record_data_access(
+            db_session,
+            principal=principal,
+            action=AccessAuditAction.VIEW,
+            resource_type="DRIVING_SESSIONS",
+            resource_id=None if driver_id is None else str(driver_id),
+            client_context=client_context,
+            details={"vehicle_vin": vehicle_vin} if vehicle_vin else None,
+        )
+    return session_list_response
+
+
+async def _list_driving_session_page(
+    db_session: AsyncSession,
+    *,
+    principal: Principal,
+    page: int,
+    page_size: int,
+    driver_id: UUID | None,
+    vehicle_vin: str | None,
+    visible_vehicle_ids: frozenset[UUID] | None,
+) -> DrivingSessionListResponse:
+    """Read one page of driving sessions for `list_driving_sessions`.
+
+    Args:
+        db_session: Current database session.
+        principal: The caller (see `list_driving_sessions`).
+        page: Page number, starting from 1.
+        page_size: Maximum number of sessions per page.
+        driver_id: Only this driver's sessions, if given; replaced by the
+            caller's own profile for a DRIVER-only caller.
+        vehicle_vin: Only this truck's sessions, if given.
+        visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
+
+    Returns:
+        Paginated session list, open and closed sessions.
+
+    Side Effects:
+        Read-only queries; does not commit.
     """
     page_window = normalize_page_window(page, page_size)
     organization_id = principal.data_scope
@@ -1340,35 +1396,9 @@ async def find_checked_in_user_id_by_vehicle(
     )
     if open_session is None:
         return None
-    return await find_user_id_by_driver_id(db_session, open_session.driver_id)
-
-
-async def find_user_id_by_driver_id(
-    db_session: AsyncSession, driver_id: UUID
-) -> UUID | None:
-    """Find the person behind a driver profile. Cross-domain.
-
-    Used to address a notification to a driver (a trip assigned to them,
-    NT-15).
-
-    Args:
-        db_session: Session owned by the caller's entry boundary.
-        driver_id: Internal ID of the driver profile.
-
-    Returns:
-        The user ID, or `None` when the profile does not exist, was deleted
-        or its membership does not resolve.
-
-    Side Effects:
-        Read-only queries; does not commit or rollback.
-    """
-    driver_record = await driver_repository.get_by_id(db_session, driver_id)
-    if driver_record is None or driver_record.deleted_at is not None:
-        return None
-    person = await identity_service.resolve_membership_person_reference(
-        db_session, driver_record.membership_id
+    return await driver_lookups.find_user_id_by_driver_id(
+        db_session, open_session.driver_id
     )
-    return None if person is None else person.user_id
 
 
 async def end_open_session_on_ownership_change(
@@ -1556,14 +1586,19 @@ async def end_idle_driving_sessions(
     ended_count = 0
     skipped_count = 0
     for session_record in open_sessions:
+        # identity answers with its own default when the organization has no
+        # settings row (`DEFAULT_DRIVING_SESSION_AUTO_END_MINUTES` in
+        # identity's organization_service), so drivers keeps no copy of that
+        # number. `None` means an unknown organization, which the session's
+        # NOT NULL foreign key (ON DELETE RESTRICT) rules out; such a session
+        # would be skipped rather than ended on a guessed time.
         organization_settings = await identity_service.resolve_organization_settings(
             db_session, session_record.organization_id
         )
-        auto_end_minutes = (
-            organization_settings.driving_session_auto_end_minutes
-            if organization_settings is not None
-            else DEFAULT_AUTO_END_MINUTES
-        )
+        if organization_settings is None:
+            skipped_count += 1
+            continue
+        auto_end_minutes = organization_settings.driving_session_auto_end_minutes
         last_telemetry_at = await telemetry_service.resolve_last_telemetry_at(
             db_session, session_record.vehicle_id
         )

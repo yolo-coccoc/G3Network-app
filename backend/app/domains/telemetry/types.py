@@ -6,7 +6,8 @@ Feature code: F-A1 (live status), F-A2 (Tiered battery alerts), F-A4
 (Per-customer energy usage)
 
 Scope: the alert levels/anomaly types and their thresholds and severities
-(read by ``detection.py`` and ``alerting.py``), the geofence transition
+(read by ``detection.py`` and ``alerting.py``), the odometer plausibility
+limits of the distance folds (RV-OP8), the geofence transition
 kind (``geofencing.py``), the report granularity and output format, the
 folded-window/per-period/per-day DTOs the repository
 hands to ``reports.py`` and the service, the public cross-domain DTOs
@@ -141,6 +142,16 @@ class VehicleTelemetryWindowSummary:
     odometer_sample_count: int
     first_recorded_at: datetime | None
     last_recorded_at: datetime | None
+
+
+# Odometer steps larger than a truck can plausibly drive are glitches, not
+# distance (RV-OP8): a step counts only up to this speed over the time between
+# the two readings, with that time counted as at least the minimum below, so
+# readings seconds apart do not make a normal step look impossible. The
+# service passes both to the repository's distance folds
+# (``get_vehicle_window_summary``, ``list_vehicle_period_summaries``).
+MAX_PLAUSIBLE_SPEED_KMH = 200.0
+MIN_ODOMETER_STEP_SECONDS = 300.0
 
 
 # Engineering default, not vendor-confirmed - see docs/decisions/deferred.md.

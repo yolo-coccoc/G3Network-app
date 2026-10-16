@@ -197,7 +197,7 @@ async def update_charging_evse(
     update_data = station_mappers.clean_update_values(
         evse_update_request.model_dump(exclude_unset=True)
     )
-    change_reason = station_mappers.resolve_status_change_reason(
+    update_data, change_reason = station_mappers.normalize_status_update(
         update_data, "Charging EVSE edited"
     )
     if not update_data:

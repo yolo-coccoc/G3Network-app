@@ -133,7 +133,7 @@ async def test_reading_an_expired_top_up_never_fails_a_payment_credited_meanwhil
         async def poll_payment() -> PaymentResponse:
             """Read the payment the way the app's poll does, in its own transaction."""
             async with session_factory.begin() as db:
-                return await topup_service.get_payment(
+                return await topup_service.resolve_payment(
                     db, top_up.payment_id, principal=driver
                 )
 

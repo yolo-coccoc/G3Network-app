@@ -22,6 +22,7 @@ import app.domains.charging_stations.access as station_access
 import app.domains.charging_stations.mappers as station_mappers
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
+import app.domains.identity.service as identity_service
 from app.domains.charging_stations.exceptions import (
     ChargingStationNotFoundError,
     ChargingStationReportRangeError,
@@ -58,7 +59,7 @@ from app.domains.charging_stations.types import (
     StationListScope,
 )
 from app.domains.identity.exceptions import AccessDeniedError
-from app.domains.identity.types import Principal
+from app.domains.identity.types import AccessAuditAction, ClientContext, Principal
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.pagination import normalize_page_window
@@ -498,14 +499,16 @@ async def list_charging_station_ocpp_messages(
     include_raw_frame: bool = False,
     page: int = settings.API_DEFAULT_PAGE,
     page_size: int = settings.API_DEFAULT_PAGE_SIZE,
+    client_context: ClientContext | None = None,
 ) -> ChargingOcppMessageListResponse:
     """Read a charger's OCPP message log, newest first (STN-03, minimal STN-15).
 
     Rule:
         Only internal staff read the log. The text of a frame can hold RFID
         ``idTag`` values, so it is left out unless the caller asks for it with
-        ``include_raw_frame`` (and the router then writes an audit row); a
-        customer never reaches this function, whatever they ask.
+        ``include_raw_frame``, and asking for it writes a ``VIEW`` row of the
+        access audit log (``OCPP_RAW_FRAMES``, the station ID); a customer
+        never reaches this function, whatever they ask.
 
     Args:
         db: Async session owned by the HTTP boundary.
@@ -518,6 +521,8 @@ async def list_charging_station_ocpp_messages(
         include_raw_frame: Whether to return the frame text.
         page: Page number starting at one.
         page_size: Page size, clamped according to settings.
+        client_context: IP address and user agent of the request, for the
+            audit row.
 
     Returns:
         The frames and pagination metadata.
@@ -526,6 +531,10 @@ async def list_charging_station_ocpp_messages(
         AccessDeniedError: The caller is not internal staff.
         ChargingStationNotFoundError: The station does not exist or was deleted.
         ChargingStationReportRangeError: A time bound has no timezone.
+
+    Side Effects:
+        With ``include_raw_frame``, inserts one ``access_audit_logs`` row in
+        the caller's transaction; does not commit.
     """
     if not principal.is_internal:
         raise AccessDeniedError("The OCPP message log is for our own staff")
@@ -559,6 +568,15 @@ async def list_charging_station_ocpp_messages(
         occurred_from=lower,
         occurred_to=upper,
     )
+    if include_raw_frame:
+        await identity_service.record_data_access(
+            db,
+            principal=principal,
+            action=AccessAuditAction.VIEW,
+            resource_type="OCPP_RAW_FRAMES",
+            resource_id=str(station_id),
+            client_context=client_context,
+        )
     return ChargingOcppMessageListResponse(
         items=[
             to_charging_ocpp_message_response(message, include_raw_frame)
@@ -654,7 +672,7 @@ async def update_charging_station(
     # the generic _clean_update_values pass above.
     if station_update_request.max_power_kw is not None:
         update_data["max_power_kw"] = Decimal(str(station_update_request.max_power_kw))
-    change_reason = station_mappers.resolve_status_change_reason(
+    update_data, change_reason = station_mappers.normalize_status_update(
         update_data, "Charging station edited"
     )
     if not update_data:

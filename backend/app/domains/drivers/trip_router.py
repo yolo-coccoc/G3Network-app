@@ -147,14 +147,17 @@ async def list_trips_endpoint(
         statuses: Status filter, if any.
         mine: Own trips only.
         driver_id: Driver filter for a manager.
-        from_time: Lower time bound.
-        to_time: Exclusive upper time bound.
+        from_time: Lower time bound; must carry a time zone.
+        to_time: Exclusive upper time bound; must carry a time zone.
         principal: The authenticated caller.
         visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
         db_session: Database session owned by the HTTP boundary.
 
     Returns:
         A page of trips.
+
+    Raises:
+        TripTimeFilterError: 400 when ``from`` or ``to`` has no time zone.
     """
     return await trip_service.list_trips(
         db_session,

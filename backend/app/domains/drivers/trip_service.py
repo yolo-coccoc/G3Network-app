@@ -27,8 +27,8 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.drivers.lookups as driver_lookups
 import app.domains.drivers.repository as driver_repository
-import app.domains.drivers.service as driver_service
 import app.domains.identity.service as identity_service
 import app.domains.notifications.service as notification_service
 import app.domains.vehicles.service as vehicle_service
@@ -40,6 +40,7 @@ from app.domains.drivers.exceptions import (
     TripNotFoundError,
     TripOrganizationMismatchError,
     TripStateConflictError,
+    TripTimeFilterError,
     TripVehicleNotFoundError,
 )
 from app.domains.drivers.models import DriverModel, DrivingSessionModel, TripModel
@@ -362,7 +363,7 @@ async def _notify_trip_assigned(
     Side Effects:
         Writes one `TRIP_ASSIGNED` notification and the driver's inbox row.
     """
-    driver_user_id = await driver_service.find_user_id_by_driver_id(
+    driver_user_id = await driver_lookups.find_user_id_by_driver_id(
         db_session, driver_id
     )
     if driver_user_id is None:
@@ -568,8 +569,10 @@ async def list_trips(
         statuses: Only these statuses, if given.
         mine: Only the caller's own trips (a manager who also drives).
         driver_id: A manager's filter to one driver's trips.
-        from_time: Lower bound of the planned (or actual) start, if given.
-        to_time: Exclusive upper bound of the planned (or actual) start.
+        from_time: Lower bound of the planned (or actual) start, if given;
+            must carry a time zone.
+        to_time: Exclusive upper bound of the planned (or actual) start;
+            must carry a time zone.
         visible_vehicle_ids: The caller's fleet limit (FL-10): the dispatch
             board of a manager limited to some fleets shows only trips on
             those trucks. `None` means no limit; it does not apply to a
@@ -578,7 +581,15 @@ async def list_trips(
     Returns:
         A page of trips, newest plan first. A caller with no driver profile
         who asks for their own trips gets an empty page.
+
+    Raises:
+        TripTimeFilterError: ``from_time`` or ``to_time`` has no time zone.
     """
+    # asyncpg reads a naive datetime in the database server's local zone, not
+    # UTC, so a bound without a zone would shift the list silently.
+    for time_bound in (from_time, to_time):
+        if time_bound is not None and time_bound.tzinfo is None:
+            raise TripTimeFilterError("The from and to times must carry a time zone")
     page_window = normalize_page_window(page, page_size)
     empty_page = TripListResponse(
         items=[], total=0, page=page_window.page, page_size=page_window.page_size
@@ -836,7 +847,7 @@ async def start_trip(
         )
 
     now = utc_now()
-    reading = await driver_service.read_recent_truck_reading(
+    reading = await driver_lookups.read_recent_truck_reading(
         db_session, open_session.vehicle_id, now=now
     )
     values: dict[str, object] = {
@@ -892,7 +903,7 @@ async def start_personal_trip(
     driver_record = await _require_own_driver(db_session, principal)
     open_session = await _require_open_session(db_session, driver_record)
     now = utc_now()
-    reading = await driver_service.read_recent_truck_reading(
+    reading = await driver_lookups.read_recent_truck_reading(
         db_session, open_session.vehicle_id, now=now
     )
     try:
@@ -955,7 +966,7 @@ async def finish_trip(
         raise TripStateConflictError("Only a trip in progress can be finished")
 
     now = utc_now()
-    reading = await driver_service.read_recent_truck_reading(
+    reading = await driver_lookups.read_recent_truck_reading(
         db_session, session_record.vehicle_id, now=now
     )
     finished_trip = await driver_repository.update_trip_fields(

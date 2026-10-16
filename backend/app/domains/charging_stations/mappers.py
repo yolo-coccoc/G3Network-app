@@ -336,27 +336,32 @@ def clean_update_values(requested_fields: Mapping[str, object]) -> dict[str, obj
     }
 
 
-def resolve_status_change_reason(
-    update_data: dict[str, object], default_reason: str
-) -> str:
-    """Normalize a status change in ``update_data`` and pick the change reason.
+def normalize_status_update(
+    update_data: Mapping[str, object], default_reason: str
+) -> tuple[dict[str, object], str]:
+    """Normalize the status fields of a PATCH and pick its change-history reason.
 
-    A status of ``ACTIVE`` clears the reason (it is only kept while out of
-    service); a person-typed ``status_reason`` becomes the history reason.
+    Pure mapping: the input is not changed. A ``ChargingResourceStatus`` value
+    becomes its string value. The person-typed ``status_reason`` becomes the
+    history reason, or ``default_reason`` when there is none.
+
+    Rule (DM-25): a reason is only kept while a resource is out of service, so
+    a status of ``ACTIVE`` clears ``status_reason`` (set to ``None`` even when
+    the PATCH did not send one) and the history then records
+    ``default_reason``.
 
     Args:
-        update_data: The cleaned PATCH values; changed in place (the status
-            becomes its string value, and ``status_reason`` is cleared on
-            ``ACTIVE``).
+        update_data: The cleaned PATCH values (``clean_update_values``).
         default_reason: History reason when the person typed none.
 
     Returns:
-        The reason to record in the change history.
+        ``(values to update, reason to record in the change history)``.
     """
-    status = update_data.get("status")
+    normalized_values = dict(update_data)
+    status = normalized_values.get("status")
     if isinstance(status, ChargingResourceStatus):
-        update_data["status"] = status.value
+        normalized_values["status"] = status.value
         if status is ChargingResourceStatus.ACTIVE:
-            update_data["status_reason"] = None
-    reason = update_data.get("status_reason")
-    return reason if isinstance(reason, str) else default_reason
+            normalized_values["status_reason"] = None
+    reason = normalized_values.get("status_reason")
+    return normalized_values, reason if isinstance(reason, str) else default_reason

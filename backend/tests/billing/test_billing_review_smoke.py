@@ -27,7 +27,8 @@ import app.domains.billing.repository as billing_repository
 import app.domains.billing.router as billing_router
 import app.domains.billing.topup_service as topup_service
 from app.domains.billing.exceptions import (
-    BankProviderUnavailableError,
+    BankTransferSimulationUnsupportedError,
+    BillInputError,
     PaymentInputError,
     PaymentNotFoundError,
     WebhookAuthenticationError,
@@ -43,6 +44,7 @@ from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import Principal, UserRole
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
+from app.libs.common.errors import InvalidInputError
 from tests.billing import test_billing_services_smoke as services_smoke
 from tests.principals import OTHER_ORGANIZATION_ID, build_principal
 
@@ -195,10 +197,10 @@ async def test_a_customer_cannot_read_another_persons_payment(
     stranger = build_principal(roles=frozenset({UserRole.DRIVER}), user_id=uuid4())
 
     with pytest.raises(PaymentNotFoundError):
-        await topup_service.get_payment(DB, payment.payment_id, principal=stranger)
+        await topup_service.resolve_payment(DB, payment.payment_id, principal=stranger)
 
     owner = build_principal(roles=frozenset({UserRole.DRIVER}), user_id=payment.user_id)
-    own = await topup_service.get_payment(DB, payment.payment_id, principal=owner)
+    own = await topup_service.resolve_payment(DB, payment.payment_id, principal=owner)
     assert own.payment_id == payment.payment_id
 
 
@@ -265,6 +267,52 @@ async def test_a_customer_bill_list_stays_in_its_own_organization(
     )
 
     assert captured["organization_id"] == accountant.organization_id
+
+
+@pytest.mark.asyncio
+async def test_a_bill_list_time_filter_without_a_timezone_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A naive ``from`` is a 400, never read as the server's local time; an aware
+    one reaches the query in UTC."""
+    captured: dict[str, Any] = {}
+
+    async def list_bills(db: object, **kwargs: Any) -> tuple[list[Any], int]:
+        """Record the filters and return no rows."""
+        captured.update(kwargs)
+        return [], 0
+
+    monkeypatch.setattr(billing_repository, "list_bills", list_bills)
+    accountant = build_principal(roles=frozenset({UserRole.ACCOUNTANT}))
+    filters: dict[str, Any] = {
+        "principal": accountant,
+        "page": 1,
+        "page_size": 20,
+        "organization_id": None,
+        "started_by": None,
+        "status": None,
+    }
+
+    with pytest.raises(BillInputError, match="'from'") as raised:
+        await bill_service.list_session_bills(
+            DB,
+            **filters,
+            created_from=datetime(2026, 10, 1, 7, 0),
+            created_to=None,
+        )
+    assert isinstance(raised.value, InvalidInputError)  # mapped to 400
+    assert captured == {}
+
+    hanoi = timezone(timedelta(hours=7))
+    await bill_service.list_session_bills(
+        DB,
+        **filters,
+        created_from=datetime(2026, 10, 1, 7, 0, tzinfo=hanoi),
+        created_to=datetime(2026, 10, 2, 7, 0, tzinfo=hanoi),
+    )
+    assert captured["created_from"] == datetime(2026, 10, 1, 0, 0, tzinfo=timezone.utc)
+    assert captured["created_from"].tzinfo is timezone.utc
+    assert captured["created_to"] == datetime(2026, 10, 2, 0, 0, tzinfo=timezone.utc)
 
 
 class _StatementRecorder:
@@ -430,7 +478,7 @@ async def test_simulating_a_bank_transfer_is_refused_outside_development(
     monkeypatch.setattr(settings, "BILLING_SIMULATE_TRANSFERS_ENABLED", False)
     payment = _pending_top_up(store)
 
-    with pytest.raises(BankProviderUnavailableError):
+    with pytest.raises(BankTransferSimulationUnsupportedError):
         await topup_service.simulate_bank_transfer(
             DB,
             transfer_code=TRANSFER_CODE,
@@ -516,7 +564,7 @@ async def test_an_internal_driver_cannot_read_another_persons_payment(
     )
 
     with pytest.raises(PaymentNotFoundError):
-        await topup_service.get_payment(
+        await topup_service.resolve_payment(
             DB, payment.payment_id, principal=internal_driver
         )
 

@@ -3,7 +3,8 @@
 The `xfail(strict=True)` test asserts the correct behaviour that a reviewed
 defect breaks today; once fixed it passes, strict mode reports it and the
 marker must be removed. The other tests guard rules that already hold: a
-DRIVER-only caller reads, starts and finishes only their own trips.
+DRIVER-only caller reads, starts and finishes only their own trips, and the
+trip list refuses a time bound without a zone.
 
 RV-OP9 (the check-in location guard) waits for an owner decision and has no
 test here. Nothing touches a database: repositories are monkeypatched.
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
-from app.domains.drivers.exceptions import TripNotFoundError
+from app.domains.drivers.exceptions import TripNotFoundError, TripTimeFilterError
 from app.domains.drivers.models import DriverModel, DrivingSessionModel, TripModel
 from app.domains.drivers.schemas import TripStartRequest
 from app.domains.drivers.types import TripStatus
@@ -154,6 +155,61 @@ async def test_driver_trip_list_ignores_a_filter_naming_another_driver_guard(
 
     assert list_scopes[0]["driver_id"] == own_driver.driver_id
     assert list_scopes[0]["organization_id"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound_name", ["from_time", "to_time"])
+async def test_trip_list_rejects_a_time_bound_without_a_zone(
+    monkeypatch: pytest.MonkeyPatch, bound_name: str
+) -> None:
+    """A naive `from`/`to` is refused (400) before any query: the database would
+    read it in the server's local zone, not UTC."""
+
+    async def no_query(db: AsyncSession, **scope: Any) -> object:
+        raise AssertionError("no trip query may run for a naive time bound")
+
+    monkeypatch.setattr(driver_repository, "list_trips", no_query)
+    monkeypatch.setattr(driver_repository, "count_trips", no_query)
+    naive_bound = datetime(2026, 10, 1, 8, 0)
+
+    with pytest.raises(TripTimeFilterError):
+        await trip_service.list_trips(
+            fake_db_session(),
+            principal=build_principal(roles=frozenset({UserRole.DRIVER})),
+            from_time=naive_bound if bound_name == "from_time" else None,
+            to_time=naive_bound if bound_name == "to_time" else None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_trip_list_passes_zoned_time_bounds_to_the_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Zoned `from`/`to` keep working and reach the repository unchanged."""
+    _patch_own_driver(monkeypatch, build_driver_record())
+    list_scopes: list[dict[str, Any]] = []
+
+    async def list_trips(db: AsyncSession, **scope: Any) -> list[TripModel]:
+        list_scopes.append(scope)
+        return []
+
+    async def count_trips(db: AsyncSession, **scope: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(driver_repository, "list_trips", list_trips)
+    monkeypatch.setattr(driver_repository, "count_trips", count_trips)
+    from_time = datetime(2026, 10, 1, 1, 0, tzinfo=timezone.utc)
+    to_time = datetime(2026, 10, 2, 1, 0, tzinfo=timezone.utc)
+
+    await trip_service.list_trips(
+        fake_db_session(),
+        principal=build_principal(roles=frozenset({UserRole.DRIVER})),
+        from_time=from_time,
+        to_time=to_time,
+    )
+
+    assert list_scopes[0]["from_time"] == from_time
+    assert list_scopes[0]["to_time"] == to_time
 
 
 @pytest.mark.asyncio

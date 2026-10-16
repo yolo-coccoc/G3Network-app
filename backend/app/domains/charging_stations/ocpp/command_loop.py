@@ -45,7 +45,6 @@ import app.domains.charging_stations.ocpp_state_repository as ocpp_state_reposit
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
 from app.domains.charging_sessions.exceptions import ChargingSessionNotFoundError
-from app.domains.charging_stations.exceptions import ChargingEvseNotFoundError
 from app.domains.charging_stations.models import ChargingStationCommandModel
 from app.domains.charging_stations.ocpp.command_types import (
     RESPONSE_STATUS_MAX_LENGTH,
@@ -60,12 +59,6 @@ from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 
 logger = logging.getLogger(__name__)
-
-# How many queued commands one poll claims at most.
-_CLAIM_BATCH_SIZE: Final[int] = 20
-# A sent command nobody answered is closed as TIMEOUT after this many request
-# timeouts (the gateway restarted between the send and the answer).
-_STALE_SENT_FACTOR: Final[int] = 3
 
 
 # Outcomes after which a remote start can no longer begin its session (CE-10).
@@ -179,7 +172,7 @@ class StationConnectionRegistry:
 
 async def _build_outbound_command(
     db: AsyncSession, command: ChargingStationCommandModel
-) -> OutboundCommand:
+) -> OutboundCommand | None:
     """Turn a claimed command row into the primitives an adapter needs.
 
     Args:
@@ -188,13 +181,12 @@ async def _build_outbound_command(
 
     Returns:
         The outbound command: the OCPP numbers of the targeted gun, and for a
-        remote start / stop the session's token / transaction ID.
+        remote start / stop the session's token / transaction ID. ``None``
+        when the targeted EVSE no longer exists: the caller fails the
+        command, which is never widened to the whole charger (RV-CS10).
 
     Raises:
         ChargingSessionNotFoundError: If the command's session is missing.
-        ChargingEvseNotFoundError: If the targeted EVSE no longer exists:
-            the command is failed, never widened to the whole charger
-            (RV-CS10).
     """
     assert command.ocpp_message_id is not None, "a claimed command has a message ID"
     parameters: dict[str, Any] = dict(command.parameters or {})
@@ -203,9 +195,7 @@ async def _build_outbound_command(
     if command.evse_id is not None:
         evse = await charging_stations_repository.get_evse_by_id(db, command.evse_id)
         if evse is None:
-            raise ChargingEvseNotFoundError(
-                "The EVSE the command targets no longer exists"
-            )
+            return None
         ocpp_evse_id = evse.ocpp_evse_id
         connectors = await charging_stations_repository.list_charging_connectors(
             db, evse_id=evse.evse_id, offset=0, limit=1
@@ -297,13 +287,8 @@ async def run_command(
                 # sweep timed it out, or it was cancelled): it is not sent
                 # now, and nothing is written over its result (RV-CS6).
                 return
-            try:
-                outbound = await _build_outbound_command(db, command)
-            except ChargingEvseNotFoundError:
-                is_evse_missing = True
-            else:
-                is_evse_missing = False
-        if is_evse_missing:
+            outbound = await _build_outbound_command(db, command)
+        if outbound is None:
             await _record_failure(
                 session_factory,
                 command_id,
@@ -388,7 +373,9 @@ async def process_queued_commands(
     """
     async with session_factory.begin() as db:
         claimed = await ocpp_state_repository.claim_queued_commands(
-            db, registry.connected_station_ids(), limit=_CLAIM_BATCH_SIZE
+            db,
+            registry.connected_station_ids(),
+            limit=settings.CHARGING_OCPP_COMMAND_CLAIM_BATCH_SIZE,
         )
         claimed_by_station = [
             (command.command_id, command.station_id) for command in claimed
@@ -404,7 +391,7 @@ async def process_queued_commands(
             claimed_before=now
             - timedelta(
                 seconds=settings.CHARGING_OCPP_REQUEST_TIMEOUT_SECONDS
-                * _STALE_SENT_FACTOR
+                * settings.CHARGING_OCPP_COMMAND_STALE_SENT_FACTOR
             ),
         )
         for closed_command_id in not_sent_ids:

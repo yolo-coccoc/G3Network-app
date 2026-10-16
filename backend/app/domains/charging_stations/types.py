@@ -16,6 +16,7 @@ the allowed values); these enums are where the values live in code.
 
 import enum
 from dataclasses import dataclass
+from datetime import date
 from uuid import UUID
 
 
@@ -295,17 +296,23 @@ class LocationViewer:
     """Who is looking at locations, for the visibility rule (CS-10, CS-13).
 
     A public location is visible to everyone; a private one only to its owner
-    organization and to organizations with a live grant on it. Internal staff
-    see every location.
+    organization and to organizations with a grant in force on it. Internal
+    staff see every location.
 
     Attributes:
         organization_id: The viewer's organization, or `None` for a system
             caller with no organization (then only public locations show).
         sees_all: Internal staff: every location is visible.
+        grants_valid_on: The day a grant must still be valid on to count (the
+            service's today in the report time zone, CS-13); a grant whose
+            ``valid_until`` is earlier is not in force. `None` counts no grant
+            (only owned and public locations show), so every builder of a
+            viewer with an organization sets it (``access.viewer_of``).
     """
 
     organization_id: UUID | None = None
     sees_all: bool = False
+    grants_valid_on: date | None = None
 
 
 @dataclass(frozen=True, slots=True)

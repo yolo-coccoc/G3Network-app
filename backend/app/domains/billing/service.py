@@ -10,9 +10,11 @@ of the application uses (WP8, WP9):
 * ``settle_session_bill`` / ``void_session_bill``: the end of a session, called
   from the session-ended hook wired in ``app/api/billing_hooks.py`` (BL-19);
 * ``get_session_bill_response``: the bill of a session, for the API;
-* the wallet minimum-balance rule of BL-14, driven by the setting
-  ``BILLING_MIN_BALANCE_VND`` (``0`` turns it off), and the bill link on a
-  session receipt (CHG-03).
+* ``ensure_wallet_may_start_charge``: the wallet checks of a scan (not
+  blocked, BL-13; the minimum balance of BL-14, the setting
+  ``BILLING_MIN_BALANCE_VND``, never below zero, BL-25);
+* ``find_session_bill_receipt_summary``: what a session receipt shows of its
+  bill, the amounts only once BILLED (CHG-03).
 
 Functions run inside the caller's transaction and never commit or roll back.
 """
@@ -27,10 +29,15 @@ import app.domains.billing.bill_service as bill_service
 import app.domains.billing.ledger_service as ledger_service
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.tariff_service as tariff_service
+from app.domains.billing.exceptions import (
+    InsufficientBalanceError,
+    WalletBlockedError,
+)
 from app.domains.billing.models import ChargingSessionBillModel
 from app.domains.billing.schemas import SessionBillResponse
 from app.domains.billing.types import (
     ChargingSessionBillStatus,
+    SessionBillReceiptSummary,
     SessionBillReference,
     TariffQuote,
     WalletStanding,
@@ -88,8 +95,8 @@ async def has_minimum_balance(db: AsyncSession, user_id: UUID) -> bool:
     The minimum is the platform setting ``BILLING_MIN_BALANCE_VND`` and is
     never below zero (BL-25): at the default ``0`` a wallet left negative by an
     earlier charge must be topped up before the next one. A person without a
-    wallet counts as a zero balance. A blocked wallet is not judged here: the
-    caller reads ``resolve_wallet_standing`` for that.
+    wallet counts as a zero balance. A blocked wallet is not judged here:
+    ``ensure_wallet_may_start_charge`` checks that first.
 
     Args:
         db: The async session owned by the entry boundary.
@@ -101,6 +108,36 @@ async def has_minimum_balance(db: AsyncSession, user_id: UUID) -> bool:
     minimum_balance = settings.BILLING_MIN_BALANCE_VND
     standing = await resolve_wallet_standing(db, user_id)
     return standing.balance >= minimum_balance
+
+
+async def ensure_wallet_may_start_charge(db: AsyncSession, user_id: UUID) -> None:
+    """Check that a person's wallet may pay for a new charge (BL-13, BL-14).
+
+    1. The wallet is not ``BLOCKED`` (a person without a wallet is not).
+    2. The balance is at or above the minimum (`has_minimum_balance`); the
+       refusal names the amount to top up.
+
+    Args:
+        db: The async session owned by the entry boundary.
+        user_id: The person whose wallet pays.
+
+    Raises:
+        WalletBlockedError: The wallet is blocked (403).
+        InsufficientBalanceError: The balance is below the minimum (409); the
+            message starts with ``INSUFFICIENT_BALANCE``.
+
+    Side Effects:
+        Read queries only; a missing wallet is not created.
+    """
+    wallet = await resolve_wallet_standing(db, user_id)
+    if wallet.is_blocked:
+        raise WalletBlockedError("Your wallet is blocked, so you cannot start a charge")
+    if not await has_minimum_balance(db, user_id):
+        shortfall = settings.BILLING_MIN_BALANCE_VND - wallet.balance
+        raise InsufficientBalanceError(
+            "INSUFFICIENT_BALANCE: top up at least "
+            f"{shortfall:.0f} VND to start a charge"
+        )
 
 
 def to_session_bill_reference(
@@ -139,6 +176,64 @@ async def find_session_bill_reference(
     """
     bill_record = await billing_repository.find_bill_by_session_id(db, session_id)
     return None if bill_record is None else to_session_bill_reference(bill_record)
+
+
+def to_session_bill_receipt_summary(
+    bill_reference: SessionBillReference,
+) -> SessionBillReceiptSummary:
+    """Keep the part of a bill a receipt may show (pure mapping, CHG-03).
+
+    The amounts and their total are kept only for a ``BILLED`` bill (see
+    `SessionBillReceiptSummary`); the status, the frozen price and
+    ``billed_at`` are always kept.
+
+    Args:
+        bill_reference: The session's bill.
+
+    Returns:
+        The receipt's view of the bill.
+    """
+    is_billed = bill_reference.status is ChargingSessionBillStatus.BILLED
+    amount_before_vat = bill_reference.amount_before_vat if is_billed else None
+    vat_amount = bill_reference.vat_amount if is_billed else None
+    total_amount = (
+        amount_before_vat + vat_amount
+        if amount_before_vat is not None and vat_amount is not None
+        else None
+    )
+    return SessionBillReceiptSummary(
+        status=bill_reference.status,
+        price_per_kwh=bill_reference.price_per_kwh,
+        vat_rate_percent=bill_reference.vat_rate_percent,
+        amount_before_vat=amount_before_vat,
+        vat_amount=vat_amount,
+        total_amount=total_amount,
+        billed_at=bill_reference.billed_at,
+    )
+
+
+async def find_session_bill_receipt_summary(
+    db: AsyncSession, session_id: UUID
+) -> SessionBillReceiptSummary | None:
+    """Find what a session's receipt shows of its bill, if it has one (CHG-03).
+
+    Args:
+        db: The async session owned by the entry boundary.
+        session_id: The charging session; the caller checked their reach on it.
+
+    Returns:
+        The receipt's view of the bill, or ``None`` when the session has no
+        bill.
+
+    Side Effects:
+        One read query.
+    """
+    bill_reference = await find_session_bill_reference(db, session_id)
+    return (
+        None
+        if bill_reference is None
+        else to_session_bill_receipt_summary(bill_reference)
+    )
 
 
 async def resolve_tariff_for_station(

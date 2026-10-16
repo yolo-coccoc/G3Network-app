@@ -2,12 +2,13 @@
 
 A session is created ``PENDING`` at the QR scan and turned ``ACTIVE`` by the
 charger's start message that carries the single-use token (CE-10, CE-11); the
-stop message completes it. The messages are assumed to arrive in order, without
-duplicates and without interruption - retry, DLQ, out-of-order recovery and
-dedup remain deferred (``deferred.md`` item 27). Two correctness invariants
-hold on the happy path (F-B2): a session's status can only move forward (data
-for an already-``COMPLETED`` session is refused, not applied) and the session
-keeps only the meter readings the charger declares (CE-12).
+stop message completes it, staff may force-close it (CE-29) and a scan that
+never starts ends ``ABANDONED``. A retried start gets back the transaction the
+first one began (RV-CS3); general replay, DLQ, out-of-order recovery and
+sequence-number dedup remain deferred (``deferred.md`` item 27). Two
+correctness invariants hold (F-B2): a session's status can only move forward
+(data for an already-``COMPLETED`` session is refused, not applied) and the
+session keeps only the meter readings the charger declares (CE-12).
 
 The read side adds ``EnergySeriesGranularity`` (F-C5 time series),
 ``ChargingSessionListFilter`` (F-B2 list filters) and ``StationEnergyTotal``,
@@ -180,11 +181,39 @@ class PendingSessionReference:
         station_id: The charger the scan named.
         id_token: The single-use token to send in the remote start and that
             the charger echoes in its start message; never log it (IS-07).
+        expires_at: When the scan stops being startable: its creation time plus
+            ``CHARGING_PENDING_SESSION_TIMEOUT_SECONDS`` (CE-10); the sweep
+            abandons it after that.
     """
 
     session_id: UUID
     station_id: UUID
     id_token: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SessionStopTarget:
+    """What a stop asked for in the app did to a session, and what is left to do.
+
+    A PENDING scan is abandoned at once and needs no command; an ACTIVE session
+    stays ACTIVE until the charger confirms, so the caller must queue a remote
+    stop on the session's charger and gun (CHG-01, RV-BL9).
+
+    Attributes:
+        session_id: The UUID of the session.
+        station_id: The charger the session runs on.
+        evse_id: The gun it runs on, ``None`` for a scan that never started.
+        status: The session status after the call: ``ABANDONED`` for a
+            cancelled scan, ``ACTIVE`` for a running charge.
+        should_queue_remote_stop: Whether the caller must send a remote stop.
+    """
+
+    session_id: UUID
+    station_id: UUID
+    evse_id: UUID | None
+    status: SessionStatus
+    should_queue_remote_stop: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -287,19 +287,13 @@ async def get_vehicle_telemetry_history(
     return list(query_result.scalars().all())
 
 
-# Odometer steps larger than a truck can plausibly drive are glitches, not
-# distance (RV-OP8): a step counts only up to this speed over the time between
-# the two readings, with that time counted as at least the minimum below, so
-# readings seconds apart do not make a normal step look impossible.
-MAX_PLAUSIBLE_SPEED_KMH = 200.0
-MIN_ODOMETER_STEP_SECONDS = 300.0
-
-
 def _plausible_odometer_distance(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
     *,
+    max_plausible_speed_kmh: float,
+    min_odometer_step_seconds: float,
     granularity: ReportGranularity | None = None,
     time_zone: str | None = None,
     organization_id: UUID | None = None,
@@ -309,14 +303,18 @@ def _plausible_odometer_distance(
     Only readings that carry an odometer are compared with each other, so a
     reading without one (or with a glitch in between) neither hides the
     distance driven nor adds a fake one. A step counts when it is positive and
-    no larger than ``MAX_PLAUSIBLE_SPEED_KMH`` allows over the time between the
-    two readings (at least ``MIN_ODOMETER_STEP_SECONDS``); a backwards step
-    (device reset) or an impossible forward one contributes 0.
+    no larger than ``max_plausible_speed_kmh`` allows over the time between
+    the two readings (at least ``min_odometer_step_seconds``); a backwards
+    step (device reset) or an impossible forward one contributes 0. The two
+    limits are the service's (``types.MAX_PLAUSIBLE_SPEED_KMH``,
+    ``types.MIN_ODOMETER_STEP_SECONDS``, RV-OP8).
 
     Args:
         vehicle_id: The vehicle.
         start_time: Inclusive lower bound.
         end_time: Inclusive upper bound.
+        max_plausible_speed_kmh: Fastest speed a step may imply (km/h).
+        min_odometer_step_seconds: Shortest time a step is measured over.
         granularity: When given, also label each step with its calendar
             period (``period_start``), cut like the period summaries do.
         time_zone: IANA zone of the periods; required with ``granularity``.
@@ -364,8 +362,8 @@ def _plausible_odometer_distance(
         .subquery()
     )
     plausible_km = (
-        MAX_PLAUSIBLE_SPEED_KMH
-        * func.greatest(steps.c.elapsed_seconds, MIN_ODOMETER_STEP_SECONDS)
+        max_plausible_speed_kmh
+        * func.greatest(steps.c.elapsed_seconds, min_odometer_step_seconds)
         / 3600.0
     )
     selected: list[ColumnElement[Any]] = [
@@ -388,6 +386,8 @@ async def get_vehicle_window_summary(
     vehicle_id: UUID,
     start_time: datetime,
     end_time: datetime,
+    max_plausible_speed_kmh: float,
+    min_odometer_step_seconds: float,
     organization_id: UUID | None = None,
 ) -> VehicleTelemetryWindowSummary:
     """Fold one vehicle's telemetry deltas over a time window (F-A6/F-C6).
@@ -409,6 +409,10 @@ async def get_vehicle_window_summary(
             normalized to UTC by the service.
         end_time: Inclusive upper bound, already validated and normalized
             to UTC by the service.
+        max_plausible_speed_kmh: Fastest speed an odometer step may imply
+            to count as distance (RV-OP8, chosen by the service).
+        min_odometer_step_seconds: Shortest time an odometer step is
+            measured over (RV-OP8, chosen by the service).
         organization_id: Only rows recorded while this organization owned the
             truck (VH-11); `None` folds every owner's rows.
 
@@ -480,7 +484,12 @@ async def get_vehicle_window_summary(
         last_recorded_at,
     ) = query_result.one()
     distance_steps = _plausible_odometer_distance(
-        vehicle_id, start_time, end_time, organization_id=organization_id
+        vehicle_id,
+        start_time,
+        end_time,
+        max_plausible_speed_kmh=max_plausible_speed_kmh,
+        min_odometer_step_seconds=min_odometer_step_seconds,
+        organization_id=organization_id,
     )
     distance_km = (
         await db.execute(
@@ -506,6 +515,8 @@ async def list_vehicle_period_summaries(
     end_time: datetime,
     granularity: ReportGranularity,
     time_zone: str,
+    max_plausible_speed_kmh: float,
+    min_odometer_step_seconds: float,
     organization_id: UUID | None = None,
 ) -> dict[datetime, VehicleTelemetryWindowSummary]:
     """Fold one vehicle's telemetry deltas per calendar period (F-A6 breakdown).
@@ -527,6 +538,10 @@ async def list_vehicle_period_summaries(
         granularity: Calendar period to group by (its value is the
             ``date_trunc`` field).
         time_zone: IANA zone the periods are cut in.
+        max_plausible_speed_kmh: Fastest speed an odometer step may imply
+            to count as distance (RV-OP8, chosen by the service).
+        min_odometer_step_seconds: Shortest time an odometer step is
+            measured over (RV-OP8, chosen by the service).
         organization_id: Only rows recorded while this organization owned the
             truck (VH-11); `None` folds every owner's rows.
 
@@ -600,6 +615,8 @@ async def list_vehicle_period_summaries(
         vehicle_id,
         start_time,
         end_time,
+        max_plausible_speed_kmh=max_plausible_speed_kmh,
+        min_odometer_step_seconds=min_odometer_step_seconds,
         granularity=granularity,
         time_zone=time_zone,
         organization_id=organization_id,

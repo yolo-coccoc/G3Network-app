@@ -10,6 +10,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.domains.support.models import SupportCaseModel
 from app.domains.support.types import (
+    SLA_FROZEN_AT_CLOSE_STATUS,
     SupportCaseListFilter,
     SupportCaseStatus,
     is_terminal_status,
@@ -146,14 +147,15 @@ def _case_list_conditions(
         )
 
     if case_list_filter.is_sla_breached is not None:
-        # Same reference time as calculate_is_sla_breached: the first
-        # response; else, for a case cancelled unanswered, its cancellation
-        # time; else now. Never NULL, so NOT() below is a true complement.
+        # Same reference time as service.calculate_is_sla_breached (change
+        # both together): the first response; else, for a case cancelled
+        # unanswered (SLA_FROZEN_AT_CLOSE_STATUS), its cancellation time; else
+        # now. Never NULL, so NOT() below is a true complement.
         reference_time = func.coalesce(
             SupportCaseModel.first_responded_at,
             case(
                 (
-                    SupportCaseModel.status == SupportCaseStatus.CANCELLED,
+                    SupportCaseModel.status == SLA_FROZEN_AT_CLOSE_STATUS,
                     SupportCaseModel.closed_at,
                 )
             ),

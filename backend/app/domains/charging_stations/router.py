@@ -26,7 +26,6 @@ import app.domains.charging_stations.evse_service as evse_service
 import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.search_service as search_service
 import app.domains.charging_stations.station_service as station_service
-import app.domains.identity.service as identity_service
 from app.domains.charging_stations.schemas import (
     ChargingConnectorCreateRequest,
     ChargingConnectorListResponse,
@@ -69,7 +68,6 @@ from app.domains.charging_stations.types import (
 )
 from app.domains.identity.dependencies import get_client_context, require_roles
 from app.domains.identity.types import (
-    AccessAuditAction,
     ClientContext,
     Principal,
     roles_for,
@@ -620,7 +618,7 @@ async def list_charging_station_ocpp_messages_endpoint(
         ChargingStationNotFoundError: 404 if the station does not exist.
         ChargingStationReportRangeError: 400 if a time bound has no timezone.
     """
-    response = await station_service.list_charging_station_ocpp_messages(
+    return await station_service.list_charging_station_ocpp_messages(
         db,
         station_id,
         principal=principal,
@@ -631,17 +629,8 @@ async def list_charging_station_ocpp_messages_endpoint(
         include_raw_frame=include_raw_frame,
         page=page,
         page_size=page_size,
+        client_context=client_context,
     )
-    if include_raw_frame:
-        await identity_service.record_data_access(
-            db,
-            principal=principal,
-            action=AccessAuditAction.VIEW,
-            resource_type="OCPP_RAW_FRAMES",
-            resource_id=str(station_id),
-            client_context=client_context,
-        )
-    return response
 
 
 @router.get(

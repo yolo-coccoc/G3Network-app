@@ -52,6 +52,10 @@ class BillStateError(ConflictError):
     """The bill is not in a status that allows this action (BL-10)."""
 
 
+class BillInputError(InvalidInputError):
+    """A bill query breaks a rule, e.g. a time filter with no timezone (400)."""
+
+
 class WalletNotFoundError(NotFoundError):
     """The person has no wallet yet."""
 
@@ -76,5 +80,11 @@ class WebhookAuthenticationError(UnauthenticatedError):
     """The bank-notification call did not carry the shared secret (BL-15)."""
 
 
-class BankProviderUnavailableError(ConflictError):
-    """The configured bank-notification provider cannot do this (simulation)."""
+class BankTransferSimulationUnsupportedError(ConflictError):
+    """Simulating a bank transfer is not supported by this deployment (BL-26).
+
+    Raised when ``BILLING_SIMULATE_TRANSFERS_ENABLED`` is off or the configured
+    bank-notification provider cannot simulate. A setting or a provider
+    capability, not an outage of the bank: the request conflicts with how the
+    system is configured, hence 409.
+    """

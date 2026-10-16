@@ -73,6 +73,14 @@ def is_terminal_status(status: SupportCaseStatus) -> bool:
     return status in _TERMINAL_STATUSES
 
 
+# The status whose closing time freezes the response-SLA verdict of a case
+# nobody responded to: its `closed_at` stands in for the first response, so a
+# cancelled case does not turn "breached" as time passes. Read by both homes
+# of the SLA-breach rule - `service.calculate_is_sla_breached` and its SQL
+# form in `repository._case_list_conditions` - which must change together.
+SLA_FROZEN_AT_CLOSE_STATUS = SupportCaseStatus.CANCELLED
+
+
 @dataclass(frozen=True)
 class SupportCaseListFilter:
     """The filters of a support case list query (F-I1/F-I2), all optional.

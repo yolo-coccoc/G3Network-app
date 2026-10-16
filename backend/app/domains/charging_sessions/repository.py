@@ -1,7 +1,8 @@
 """Async repository of the charging sessions and their measurements.
 
 The repository only queries, creates and flushes rows; it holds no lifecycle
-rule (those live in the service) and never commits or rolls back the
+rule (the service decides retried starts, stops, force-closes and the pending
+sweep, and runs the session-ended hooks) and never commits or rolls back the
 transaction. Besides the lifecycle writes it serves the monitoring reads: the
 filtered session list, the per-session measurement lookups behind the session
 summary (first/last/maximum value) and the per-session energy samples behind
@@ -54,9 +55,11 @@ async def get_session_by_transaction(
     Returns:
         The matching aggregate, or ``None`` if there isn't one yet.
     """
-    # Reconnect, unknown-transaction and duplicate resolution are production
-    # contracts deferred for later; the repository only provides a primitive
-    # lookup for the MVP.
+    # A plain lookup: what a match means (a stop for an ACTIVE session, a late
+    # message for a COMPLETED one, a force-close racing a stop) is decided in
+    # the service. The unique index on (station, transaction) guarantees at
+    # most one row; sequence-number dedup of replayed frames is still deferred
+    # (deferred.md item 27).
     query = select(ChargingSessionModel).where(
         ChargingSessionModel.station_id == station_id,
         ChargingSessionModel.ocpp_transaction_id == transaction_id,

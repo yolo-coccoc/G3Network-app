@@ -66,6 +66,8 @@ async def create_telematic_endpoint(
         Created device.
 
     Raises:
+        TelematicDateInvalidError: ``acquired_at`` has no time zone or lies
+            in the future (400).
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
             vehicle (404).
         TelematicConflictError: The serial already exists or the vehicle is
@@ -228,7 +230,11 @@ async def get_telematic_health_endpoint(
 async def list_telematic_status_reports_endpoint(
     telematic_id: UUID,
     since: datetime | None = Query(
-        None, description="Only reports produced at or after this time"
+        None,
+        description=(
+            "Only reports produced at or after this time; must include a time "
+            "zone (e.g. Z or +07:00)"
+        ),
     ),
     limit: int = Query(100, ge=1, le=1000),
     principal: Principal = Depends(DEVICE_HEALTH_READERS),
@@ -239,7 +245,8 @@ async def list_telematic_status_reports_endpoint(
 
     Args:
         telematic_id: Internal ID of the device.
-        since: Only reports produced at or after this time, if given.
+        since: Only reports produced at or after this time, if given; must
+            carry a time zone.
         limit: Maximum number of reports.
         principal: The authenticated caller.
         visible_vehicle_ids: The caller's fleet limit (FL-10), `None` if none.
@@ -249,6 +256,7 @@ async def list_telematic_status_reports_endpoint(
         The reports, newest first.
 
     Raises:
+        TelematicDateInvalidError: ``since`` has no time zone (400).
         TelematicNotFoundError: The device does not exist or is soft-deleted
             (404).
     """

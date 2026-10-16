@@ -153,5 +153,5 @@ class LegalDocumentConflictError(IdentityError, ConflictError):
 
 
 class AuditLogInvalidError(IdentityError, InvalidInputError):
-    """An audit-log search or entry breaks a rule (range too long, an export
-    without a reason)."""
+    """An audit-log search or entry breaks a rule (a range bound without a time
+    zone, a range too long, an export without a reason)."""

@@ -426,7 +426,7 @@ async def _resolve_pending_invitation_organization_id(
     pending_organization_ids = {
         membership_record.organization_id for membership_record in invited_memberships
     }
-    latest_code_record = await identity_repository.find_latest_one_time_code_for_user(
+    latest_code_record = await identity_repository.find_latest_one_time_code_by_user_id(
         db_session, user_id=user_id, purpose=OneTimeCodePurpose.INVITE.value
     )
     if (
@@ -1774,7 +1774,7 @@ async def confirm_phone_change(
         InvalidOneTimeCodeError: The code is wrong, expired or used.
         UserConflictError: The number was taken in the meantime.
     """
-    code_record = await identity_repository.find_latest_one_time_code_for_user(
+    code_record = await identity_repository.find_latest_one_time_code_by_user_id(
         db_session,
         user_id=session_identity.user_id,
         purpose=OneTimeCodePurpose.PHONE_CHANGE.value,

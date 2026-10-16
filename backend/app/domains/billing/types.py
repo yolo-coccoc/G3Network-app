@@ -165,6 +165,34 @@ class SessionBillReference:
     billed_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class SessionBillReceiptSummary:
+    """The part of a session's bill a receipt may show (CHG-03, BL-10).
+
+    The money is shown only for a ``BILLED`` bill: a bill held for review keeps
+    the figures it computed, but staff may still release it with others or
+    void it, so the driver must not read them as the price paid.
+
+    Attributes:
+        status: The bill status.
+        price_per_kwh: Price frozen at the scan, before VAT.
+        vat_rate_percent: VAT rate frozen with the price.
+        amount_before_vat: Amount before VAT; ``None`` unless BILLED.
+        vat_amount: VAT amount; ``None`` unless BILLED.
+        total_amount: Amount before VAT plus VAT; ``None`` unless BILLED with
+            both amounts.
+        billed_at: When the amount was fixed, as stored on the bill.
+    """
+
+    status: ChargingSessionBillStatus
+    price_per_kwh: Decimal
+    vat_rate_percent: Decimal
+    amount_before_vat: Decimal | None
+    vat_amount: Decimal | None
+    total_amount: Decimal | None
+    billed_at: datetime | None
+
+
 class BankNotificationResult(str, enum.Enum):
     """What happened to one incoming bank notification (BL-15).
 

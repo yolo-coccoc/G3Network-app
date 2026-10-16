@@ -427,8 +427,10 @@ async def list_session_bills_endpoint(
         organization_id: Payer filter, honored for internal staff only.
         started_by: Only bills of sessions this user scanned.
         status_filter: Bill status (query parameter ``status``).
-        created_from: Only bills scanned at or after this time (``from``).
-        created_to: Only bills scanned before this time (``to``).
+        created_from: Only bills scanned at or after this time (``from``);
+            must carry a timezone.
+        created_to: Only bills scanned before this time (``to``); must carry
+            a timezone.
         principal: The authenticated caller.
         visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
             `None` when the caller is not limited.
@@ -436,6 +438,9 @@ async def list_session_bills_endpoint(
 
     Returns:
         A page of bills.
+
+    Raises:
+        BillInputError: ``from`` or ``to`` has no timezone (400).
     """
     return await bill_service.list_session_bills(
         db_session,
@@ -753,7 +758,9 @@ async def get_payment_endpoint(
     Raises:
         PaymentNotFoundError: Unknown, or another person's (404).
     """
-    return await topup_service.get_payment(db_session, payment_id, principal=principal)
+    return await topup_service.resolve_payment(
+        db_session, payment_id, principal=principal
+    )
 
 
 @router.post(
@@ -811,7 +818,7 @@ async def simulate_bank_transfer_endpoint(
         What happened to the simulated notification.
 
     Raises:
-        BankProviderUnavailableError: Simulation is turned off, or the
+        BankTransferSimulationUnsupportedError: Simulation is turned off, or the
             provider cannot simulate (409).
         PaymentNotFoundError: No payment carries the code (404).
     """

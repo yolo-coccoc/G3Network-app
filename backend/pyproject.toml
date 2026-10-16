@@ -172,6 +172,7 @@ name = "Other domains use only drivers's service, types and exceptions"
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_sessions", "app.domains.charging_stations", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.drivers.lookups",
     "app.domains.drivers.models",
     "app.domains.drivers.monitoring",
     "app.domains.drivers.repository",
@@ -260,6 +261,7 @@ forbidden_modules = [
     "app.domains.telematics.repository",
     "app.domains.telematics.router",
     "app.domains.telematics.schemas",
+    "app.domains.telematics.silence_rule",
 ]
 allow_indirect_imports = true
 

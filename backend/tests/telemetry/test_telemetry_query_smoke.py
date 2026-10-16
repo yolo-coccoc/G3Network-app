@@ -124,6 +124,7 @@ async def test_get_vehicle_telemetry_history_response_returns_ordered_points(
         start_time=start,
         end_time=end,
         principal=build_internal_principal(),
+        client_context=None,
     )
 
     assert response.vehicle_id == vehicle_id
@@ -154,6 +155,7 @@ async def test_get_vehicle_telemetry_history_response_raises_not_found_for_unkno
             start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
             principal=build_internal_principal(),
+            client_context=None,
         )
 
 
@@ -169,6 +171,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_naive_start_time()
             start_time=datetime(2026, 9, 1),
             end_time=datetime(2026, 9, 2, tzinfo=timezone.utc),
             principal=build_internal_principal(),
+            client_context=None,
         )
 
 
@@ -182,6 +185,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_naive_end_time() -
             start_time=datetime(2026, 9, 1, tzinfo=timezone.utc),
             end_time=datetime(2026, 9, 2),
             principal=build_internal_principal(),
+            client_context=None,
         )
 
 
@@ -199,6 +203,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_non_positive_range
             start_time=same_instant,
             end_time=same_instant,
             principal=build_internal_principal(),
+            client_context=None,
         )
 
 
@@ -217,6 +222,7 @@ async def test_get_vehicle_telemetry_history_response_rejects_range_exceeding_ma
             start_time=start,
             end_time=too_far,
             principal=build_internal_principal(),
+            client_context=None,
         )
 
 
@@ -255,6 +261,7 @@ async def test_get_vehicle_telemetry_history_response_clamps_limit(
         end_time=end,
         limit=settings.TELEMETRY_HISTORY_MAX_LIMIT + 1000,
         principal=build_internal_principal(),
+        client_context=None,
     )
 
     assert captured_limit["limit"] == settings.TELEMETRY_HISTORY_MAX_LIMIT

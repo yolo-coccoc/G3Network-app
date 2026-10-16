@@ -25,6 +25,7 @@ import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.station_service as station_service
+import app.domains.identity.service as identity_service
 from app.domains.charging_stations.exceptions import (
     ChargingStationCommandConflictError,
     ChargingStationCommandInputError,
@@ -47,6 +48,7 @@ from app.domains.charging_stations.types import (
     StationListScope,
 )
 from app.domains.identity.exceptions import AccessDeniedError
+from app.domains.identity.types import AccessAuditAction
 from app.libs.common.clock import utc_now
 from tests.builders import (
     build_charging_location_record,
@@ -82,7 +84,10 @@ def test_location_list_conditions_follow_the_scope_and_filters() -> None:
     visible = _sql(
         charging_stations_repository._location_list_conditions(
             organization_id=None,
-            viewer=LocationViewer(organization_id=DEFAULT_ORGANIZATION_ID),
+            viewer=LocationViewer(
+                organization_id=DEFAULT_ORGANIZATION_ID,
+                grants_valid_on=date(2026, 1, 1),
+            ),
             owner_organization_id=None,
             is_public=False,
             status="ACTIVE",
@@ -143,7 +148,10 @@ async def test_list_locations_passes_the_manage_or_the_view_scope(
     assert seen[0]["organization_id"] == DEFAULT_ORGANIZATION_ID
     assert seen[0]["viewer"] is None
     assert seen[1]["organization_id"] is None
-    assert seen[1]["viewer"] == LocationViewer(organization_id=DEFAULT_ORGANIZATION_ID)
+    assert seen[1]["viewer"] == LocationViewer(
+        organization_id=DEFAULT_ORGANIZATION_ID,
+        grants_valid_on=station_access.today_in_report_zone(),
+    )
     assert seen[1]["search_text"] == "depot"
 
 
@@ -263,7 +271,10 @@ async def test_connection_read_derives_online_and_compares_the_serial(
 async def test_message_log_is_for_staff_and_hides_the_frame_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """STN-03/15: a customer is refused; staff get no frame text unless they ask."""
+    """STN-03/15: a customer is refused; staff get no frame text unless they ask.
+
+    Asking for the frame text writes one ``VIEW`` audit row.
+    """
     station = _station_fixture(monkeypatch, state=None)
     message = SimpleNamespace(
         message_id=uuid4(),
@@ -283,6 +294,12 @@ async def test_message_log_is_for_staff_and_hides_the_frame_by_default(
 
     monkeypatch.setattr(ocpp_state_repository, "list_ocpp_messages", list_messages)
     monkeypatch.setattr(ocpp_state_repository, "count_ocpp_messages", count_messages)
+    audit_rows: list[dict[str, Any]] = []
+
+    async def record_data_access(db: AsyncSession, **kwargs: Any) -> None:
+        audit_rows.append(kwargs)
+
+    monkeypatch.setattr(identity_service, "record_data_access", record_data_access)
 
     with pytest.raises(AccessDeniedError):
         await station_service.list_charging_station_ocpp_messages(
@@ -299,6 +316,9 @@ async def test_message_log_is_for_staff_and_hides_the_frame_by_default(
     assert hidden.items[0].raw_frame is None
     assert hidden.items[0].action == "Authorize"
     assert shown.items[0].raw_frame is not None
+    assert [
+        (row["action"], row["resource_type"], row["resource_id"]) for row in audit_rows
+    ] == [(AccessAuditAction.VIEW, "OCPP_RAW_FRAMES", str(station.station_id))]
 
 
 @pytest.mark.asyncio

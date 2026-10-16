@@ -11,6 +11,14 @@ domains in the HTTP layer and calls each owner's public service in turn inside
 the request's single transaction (``get_db`` commits once, or rolls everything
 back when a step raises).
 
+The module holds no business rule of its own (domain-boundaries.md, CE-20):
+every check and decision is the owning domain's (``charging_sessions``: a free
+gun, one open charge per person, the stop of a PENDING scan, a receipt only
+after completion, the scan's expiry; ``billing``: the wallet checks, the money
+a receipt shows), and each domain raises its own errors. The flow only calls
+the services in order and passes values between domains that may not call
+each other.
+
 Endpoints (all under ``/charging-sessions``):
 
 * ``POST /scan`` - checks, creates the PENDING session and queues the remote
@@ -32,7 +40,7 @@ the retry endpoint calls that same hook function, so the rule lives in one
 place.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -46,17 +54,7 @@ import app.domains.billing.service as billing_service
 import app.domains.charging_sessions.service as charging_session_service
 import app.domains.charging_stations.service as charging_stations_service
 import app.domains.drivers.service as driver_service
-from app.domains.billing.exceptions import (
-    InsufficientBalanceError,
-    WalletBlockedError,
-)
 from app.domains.billing.schemas import SessionBillResponse
-from app.domains.billing.types import ChargingSessionBillStatus
-from app.domains.charging_sessions.exceptions import (
-    ChargingConnectorBusyError,
-    ChargingSessionAlreadyOpenError,
-    ChargingSessionStateError,
-)
 from app.domains.charging_sessions.schemas import (
     ChargingSessionScanRequest,
     ChargingSessionScanResponse,
@@ -68,7 +66,6 @@ from app.domains.charging_stations.types import StationCommandType
 from app.domains.identity.dependencies import get_visible_vehicle_ids, require_roles
 from app.domains.identity.types import Principal, roles_for
 from app.libs.common.clock import utc_now
-from app.libs.common.config import settings
 from app.libs.db.session import get_db
 
 router = APIRouter(tags=["charging-sessions"])
@@ -88,6 +85,18 @@ SESSION_BILL_SETTLERS = require_roles(*roles_for("PAY-10"), internal_only=True)
 
 # Text stored as the reason of a remote stop the person asked for in the app.
 _APP_STOP_REASON = "Stopped from the app"
+
+
+def _to_whole_dong(amount: Decimal | None) -> int | None:
+    """Convert a bill amount to the whole-dong integer the receipt shows.
+
+    Args:
+        amount: An amount from billing, already rounded to whole dong.
+
+    Returns:
+        The integer amount, or ``None`` when billing gave none.
+    """
+    return None if amount is None else int(amount)
 
 
 class ChargingSessionQuotedScanResponse(ChargingSessionScanResponse):
@@ -183,12 +192,12 @@ async def scan_charging_session_endpoint(
     1. the charger exists, its location is visible to the caller, it is in
        service and connected (``charging_stations``);
     2. no charge is running on the named gun (on every gun, when no gun is
-       named);
-    3. the caller has no other charge open;
-    4. the caller's wallet is not blocked and holds the minimum balance (BL-14);
-    5. a tariff must price the charger now (the price of the scan's hour is
+       named), and the caller has no other charge open (``charging_sessions``);
+    3. the caller's wallet is not blocked and holds the minimum balance
+       (``billing``, BL-14);
+    4. a tariff must price the charger now (the price of the scan's hour is
        frozen for the whole charge);
-    6. the session row is created PENDING with a single-use token, attributed to
+    5. the session row is created PENDING with a single-use token, attributed to
        the truck the caller is checked in to (CE-13), and a ``REMOTE_START``
        command is queued for the OCPP gateway (PR-16). The driver then picks the
        gun and starts on the charger's screen (CO-14), and a QUOTED bill holds
@@ -203,8 +212,8 @@ async def scan_charging_session_endpoint(
             ``get_db`` dependency.
 
     Returns:
-        The new session's ID, status ``PENDING``, token, command ID and the
-        frozen price.
+        The new session's ID, status ``PENDING``, token, command ID, when the
+        scan expires and the frozen price.
 
     Raises:
         ChargingStationNotFoundError: Unknown charger code or gun (404).
@@ -219,8 +228,8 @@ async def scan_charging_session_endpoint(
         InsufficientBalanceError: The wallet is below the minimum (409).
         NoTariffInForceError: No tariff prices the charger now (409).
     """
-    # Serialize this person's scans first: the one-open-charge check below is
-    # an unlocked read, so two simultaneous scans would both pass it (RV-BL3).
+    # Serialize this person's scans first: the one-open-charge check is an
+    # unlocked read, so two simultaneous scans would both pass it (RV-BL3).
     await billing_service.lock_wallet_for_charge(db_session, principal.user_id)
     target = await charging_stations_service.resolve_scan_target(
         db_session,
@@ -228,39 +237,13 @@ async def scan_charging_session_endpoint(
         gun_number=scan_request.connector_number,
         principal=principal,
     )
-    if target.connector_id is not None:
-        is_busy = await charging_session_service.has_active_session_on_connector(
-            db_session, target.connector_id
-        )
-    else:
-        # No gun named: the driver may still pick a free one, so only a charger
-        # whose every gun is charging refuses the scan.
-        is_busy = bool(target.connector_ids)
-        for connector_id in target.connector_ids:
-            if not await charging_session_service.has_active_session_on_connector(
-                db_session, connector_id
-            ):
-                is_busy = False
-                break
-    if is_busy:
-        raise ChargingConnectorBusyError("A charge is already running on this charger")
-    if await charging_session_service.has_open_session_by_user(
-        db_session, principal.user_id
-    ):
-        raise ChargingSessionAlreadyOpenError(
-            "You already have a charge open; finish or stop it first"
-        )
-    wallet = await billing_service.resolve_wallet_standing(
-        db_session, principal.user_id
+    await charging_session_service.ensure_session_may_start(
+        db_session,
+        user_id=principal.user_id,
+        connector_id=target.connector_id,
+        connector_ids=target.connector_ids,
     )
-    if wallet.is_blocked:
-        raise WalletBlockedError("Your wallet is blocked, so you cannot start a charge")
-    if not await billing_service.has_minimum_balance(db_session, principal.user_id):
-        shortfall = settings.BILLING_MIN_BALANCE_VND - wallet.balance
-        raise InsufficientBalanceError(
-            "INSUFFICIENT_BALANCE: top up at least "
-            f"{shortfall:.0f} VND to start a charge"
-        )
+    await billing_service.ensure_wallet_may_start_charge(db_session, principal.user_id)
     quote = await billing_service.resolve_tariff_for_station(
         db_session, target.station_id, utc_now()
     )
@@ -291,8 +274,7 @@ async def scan_charging_session_endpoint(
         status=SessionStatus.PENDING,
         id_token=pending_session.id_token,
         command_id=command.command_id,
-        expires_at=utc_now()
-        + timedelta(seconds=settings.CHARGING_PENDING_SESSION_TIMEOUT_SECONDS),
+        expires_at=pending_session.expires_at,
         tariff_version_id=quote.tariff_version_id,
         currency=quote.currency,
         price_per_kwh=int(quote.price_per_kwh),
@@ -319,7 +301,9 @@ async def stop_charging_session_endpoint(
     not started yet (``PENDING``) is abandoned at once instead: no command is
     queued, ``command_id`` is ``null``, and the session-ended hook voids the
     quoted bill (RV-BL9). Only the person who started the charge, or internal
-    staff, may stop it.
+    staff, may stop it. ``charging_sessions`` decides which of the two applies
+    (``prepare_session_stop``); this endpoint only queues the command it asks
+    for.
 
     Args:
         session_id: UUID of the session to stop.
@@ -340,24 +324,14 @@ async def stop_charging_session_endpoint(
             ``PENDING``, or the charger started a pending one while it was
             being cancelled (409).
     """
-    session = await charging_session_service.authorize_session_stop(
+    stop_target = await charging_session_service.prepare_session_stop(
         db_session, session_id, principal=principal
     )
-    if session.status is SessionStatus.PENDING:
-        # The conditional UPDATE decides against a StartTransaction arriving at
-        # the same moment: if the charger won, the session is ACTIVE now and
-        # the caller must stop it as a running charge.
-        if not await charging_session_service.abandon_pending_session(
-            db_session, session.session_id
-        ):
-            raise ChargingSessionStateError(
-                f"Session '{session.session_id}' was started by the charger "
-                "while it was being cancelled; stop it again"
-            )
+    if not stop_target.should_queue_remote_stop:
         return ChargingSessionStopResponse(
-            session_id=session.session_id,
+            session_id=stop_target.session_id,
             command_id=None,
-            status=SessionStatus.ABANDONED,
+            status=stop_target.status,
         )
     reason = (
         stop_request.reason
@@ -366,17 +340,17 @@ async def stop_charging_session_endpoint(
     )
     command = await charging_stations_service.queue_station_command(
         db_session,
-        station_id=session.station_id,
+        station_id=stop_target.station_id,
         command_type=StationCommandType.REMOTE_STOP,
-        evse_id=session.evse_id,
-        session_id=session.session_id,
+        evse_id=stop_target.evse_id,
+        session_id=stop_target.session_id,
         requested_by=principal.user_id,
         reason=reason or _APP_STOP_REASON,
     )
     return ChargingSessionStopResponse(
-        session_id=session.session_id,
+        session_id=stop_target.session_id,
         command_id=command.command_id,
-        status=session.status,
+        status=stop_target.status,
     )
 
 
@@ -405,42 +379,24 @@ async def get_charging_session_receipt_endpoint(
 
     Returns:
         Place, times, energy and the bill (``null`` fields until billing has
-        one; the amounts stay ``null`` until the bill is BILLED, so a bill
-        held for review shows its status and price only).
+        one; billing keeps the amounts ``null`` until the bill is BILLED, so a
+        bill held for review shows its status and price only).
 
     Raises:
         ChargingSessionNotFoundError: Unknown session or out of reach (404).
         ChargingSessionStateError: The session has not finished (409).
     """
-    session = await charging_session_service.get_charging_session(
+    session = await charging_session_service.get_completed_charging_session(
         db_session,
         session_id,
         principal=principal,
         visible_vehicle_ids=visible_vehicle_ids,
     )
-    if session.status is not SessionStatus.COMPLETED:
-        raise ChargingSessionStateError(
-            f"Session '{session_id}' is {session.status.value}; "
-            "a receipt exists only after the charge completed"
-        )
     place = await charging_stations_service.resolve_session_place_reference(
         db_session, session.station_id, session.evse_id
     )
-    bill = await billing_service.find_session_bill_reference(db_session, session_id)
-    # Money is shown only for a BILLED bill: a bill held for review keeps the
-    # figures it computed, but staff may still release it with others or void
-    # it, so the driver must not read them as the price paid.
-    billed = (
-        bill
-        if bill is not None and bill.status is ChargingSessionBillStatus.BILLED
-        else None
-    )
-    total_amount = (
-        billed.amount_before_vat + billed.vat_amount
-        if billed is not None
-        and billed.amount_before_vat is not None
-        and billed.vat_amount is not None
-        else None
+    bill = await billing_service.find_session_bill_receipt_summary(
+        db_session, session_id
     )
     return ChargingSessionReceiptResponse(
         session_id=session.session_id,
@@ -462,15 +418,9 @@ async def get_charging_session_receipt_endpoint(
         bill_status=bill.status.value if bill else None,
         price_per_kwh=int(bill.price_per_kwh) if bill else None,
         vat_rate_percent=bill.vat_rate_percent if bill else None,
-        amount_before_vat=(
-            int(billed.amount_before_vat)
-            if billed and billed.amount_before_vat is not None
-            else None
-        ),
-        vat_amount=(
-            int(billed.vat_amount) if billed and billed.vat_amount is not None else None
-        ),
-        total_amount=None if total_amount is None else int(total_amount),
+        amount_before_vat=_to_whole_dong(bill.amount_before_vat if bill else None),
+        vat_amount=_to_whole_dong(bill.vat_amount if bill else None),
+        total_amount=_to_whole_dong(bill.total_amount if bill else None),
         billed_at=bill.billed_at if bill else None,
     )
 

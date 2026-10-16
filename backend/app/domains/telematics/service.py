@@ -17,7 +17,7 @@ vehicle's newest telemetry, the rest from the device's newest status report
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TypedDict
 from uuid import UUID
 
@@ -28,8 +28,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.domains.fleet.service as fleet_service
 import app.domains.identity.service as identity_service
 import app.domains.telematics.health_rule as health_rule
-import app.domains.telematics.monitoring.silence_rule as silence_rule
 import app.domains.telematics.repository as telematics_repository
+import app.domains.telematics.silence_rule as silence_rule
 import app.domains.telemetry.service as telemetry_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.identity.types import Principal
@@ -37,6 +37,7 @@ from app.domains.telematics.commands import mqtt_publisher
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
     TelematicConflictError,
+    TelematicDateInvalidError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
     TelematicVehicleNotFoundError,
@@ -66,10 +67,11 @@ from app.domains.telematics.types import (
     TelematicStatus,
     TelematicVehicleMapping,
 )
-from app.libs.common.clock import utc_now
+from app.libs.common.clock import CLIENT_CLOCK_SKEW, utc_now
 from app.libs.common.pagination import normalize_page_window
 
 logger = logging.getLogger(__name__)
+
 
 # Fixed history reasons of routine actions; the acting user is the caller.
 TELEMATIC_EDITED_REASON = "Device details edited"
@@ -403,6 +405,8 @@ async def create_telematic(
         The HTTP response for the new device.
 
     Raises:
+        TelematicDateInvalidError: ``acquired_at`` has no time zone or lies
+            more than ``CLIENT_CLOCK_SKEW`` in the future.
         TelematicVehicleNotFoundError: ``vehicle_vin`` matches no live
             vehicle in the caller's reach or fleet limit.
         OrganizationNotFoundError: ``organization_id`` matches no
@@ -416,6 +420,11 @@ async def create_telematic(
         ``installed_at`` = now, and ``acquired_at`` defaults to now. Does not
         commit.
     """
+    acquired_at = telematic_create_request.acquired_at
+    if acquired_at is not None:
+        acquired_at = _normalize_utc(acquired_at, "acquired_at")
+        if acquired_at > utc_now() + CLIENT_CLOCK_SKEW:
+            raise TelematicDateInvalidError("acquired_at cannot be in the future")
     if await telematics_repository.find_by_serial(
         db_session,
         telematic_create_request.telematic_serial,
@@ -451,7 +460,7 @@ async def create_telematic(
                 "telematic_serial": telematic_create_request.telematic_serial,
                 "imei": telematic_create_request.imei,
                 "organization_id": organization_id,
-                "acquired_at": telematic_create_request.acquired_at or now,
+                "acquired_at": acquired_at or now,
                 "vehicle_id": vehicle_id,
                 "installed_at": now if vehicle_id is not None else None,
                 "status": telematic_create_request.status,
@@ -463,6 +472,27 @@ async def create_telematic(
             "Telematic serial, IMEI or vehicle already exists"
         ) from error
     return await build_telematic_response(db_session, telematic_record)
+
+
+def _normalize_utc(value: datetime, field_name: str) -> datetime:
+    """Require a time with a time zone and convert it to UTC.
+
+    A naive time cannot be compared with the stored UTC times, and asyncpg
+    would store it as the host's local time, silently shifted.
+
+    Args:
+        value: The time from the request.
+        field_name: Name used in the error message.
+
+    Returns:
+        ``value`` in UTC.
+
+    Raises:
+        TelematicDateInvalidError: If ``value`` has no time zone.
+    """
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise TelematicDateInvalidError(f"{field_name} must have a time zone")
+    return value.astimezone(timezone.utc)
 
 
 async def _get_telematic_record(
@@ -1190,9 +1220,12 @@ async def list_telematic_status_reports(
         The reports, newest first.
 
     Raises:
+        TelematicDateInvalidError: ``since`` has no time zone.
         TelematicNotFoundError: The device does not exist, is soft-deleted or
             is out of the caller's reach.
     """
+    if since is not None:
+        since = _normalize_utc(since, "since")
     await _get_telematic_record(
         db_session, telematic_id, principal, visible_vehicle_ids=visible_vehicle_ids
     )

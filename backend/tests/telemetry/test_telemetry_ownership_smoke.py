@@ -169,6 +169,7 @@ async def _read_history(principal_organization_id: UUID | None) -> None:
         start_time=_START,
         end_time=_END,
         principal=principal,
+        client_context=None,
     )
 
 
@@ -249,6 +250,7 @@ async def test_former_owner_gets_not_found_for_latest(
             fake_db_session(),
             uuid4(),
             principal=build_principal(organization_id=DEFAULT_ORGANIZATION_ID),
+            client_context=None,
         )
 
     assert ownership_lookups == []
@@ -268,6 +270,7 @@ async def test_buyer_without_own_reading_gets_not_found_for_latest(
             fake_db_session(),
             uuid4(),
             principal=build_principal(organization_id=DEFAULT_ORGANIZATION_ID),
+            client_context=None,
         )
 
     assert filters == [DEFAULT_ORGANIZATION_ID]
@@ -285,7 +288,10 @@ async def test_internal_staff_latest_reads_every_owner_rows(
     )
 
     response = await telemetry_service.get_latest_vehicle_telemetry_response(
-        fake_db_session(), vehicle_id, principal=build_internal_principal()
+        fake_db_session(),
+        vehicle_id,
+        principal=build_internal_principal(),
+        client_context=None,
     )
 
     assert response.vehicle_id == vehicle_id
@@ -319,6 +325,7 @@ async def test_checked_in_driver_latest_reads_the_current_owner_rows(
             organization_id=DEFAULT_ORGANIZATION_ID,
             roles=frozenset({UserRole.DRIVER}),
         ),
+        client_context=None,
     )
 
     assert filters == [OTHER_ORGANIZATION_ID]

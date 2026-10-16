@@ -1,6 +1,6 @@
 """Smoke tests for the identity services: rules checked without a database."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -451,6 +451,34 @@ async def test_audit_log_search_is_for_administrators_only() -> None:
                 "occurred_to": now - timedelta(days=1),
             },
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound_name", ["occurred_from", "occurred_to"])
+async def test_audit_log_search_rejects_range_bound_without_time_zone(
+    bound_name: str,
+) -> None:
+    """A range bound without a time zone is a 400, not a naive/aware 500 (C3)."""
+    arguments: dict[str, Any] = {
+        "user_id": None,
+        "organization_id": None,
+        "action": None,
+        "resource_type": None,
+        "occurred_from": None,
+        "occurred_to": None,
+        "page": 1,
+        "page_size": 10,
+        bound_name: datetime(2026, 10, 1, 8, 0),
+    }
+    with pytest.raises(AuditLogInvalidError) as error_info:
+        await audit_service.search_audit_logs(
+            _flush_session(),
+            _principal(is_internal=True, roles={UserRole.HEAD_ADMIN}),
+            **arguments,
+        )
+    request: Any = None
+    error_response = await domain_error_handler(request, error_info.value)
+    assert error_response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.asyncio

@@ -182,7 +182,10 @@ async def test_latest_response_exposes_received_at_and_online_flag(
     _patch_latest_reading(monkeypatch, telemetry=telemetry, last_received_at=now)
 
     response = await telemetry_service.get_latest_vehicle_telemetry_response(
-        fake_db_session(), vehicle_id, principal=build_internal_principal()
+        fake_db_session(),
+        vehicle_id,
+        principal=build_internal_principal(),
+        client_context=None,
     )
 
     assert response.received_at == telemetry.received_at

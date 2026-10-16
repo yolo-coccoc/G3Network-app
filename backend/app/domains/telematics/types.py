@@ -58,7 +58,7 @@ class TelematicDeviceHealth:
         is_online: The newest telemetry arrived within
             ``TELEMETRY_ONLINE_THRESHOLD_SECONDS`` (planner D2).
         is_silent: The device-health monitor's silence rule holds (see
-            ``monitoring/silence_rule.py``).
+            ``silence_rule.py``).
         last_signal_strength_dbm: Signal strength of the vehicle's newest
             reading in dBm, or ``None`` if it was not reported.
     """

@@ -18,7 +18,7 @@ import app.domains.charging_sessions.service as charging_session_service
 import app.domains.charging_stations.access as station_access
 import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.repository as charging_stations_repository
-import app.domains.charging_stations.service as charging_stations_service
+import app.domains.charging_stations.station_service as station_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.router as driver_router
 import app.domains.drivers.service as driver_service
@@ -254,7 +254,9 @@ async def test_driver_of_another_organization_is_not_found(
     customer = build_principal()
 
     with pytest.raises(DriverNotFoundError):
-        await driver_service.get_driver(fake_db_session(), uuid4(), principal=customer)
+        await driver_service.get_driver(
+            fake_db_session(), uuid4(), principal=customer, client_context=None
+        )
 
     assert scopes == [customer.organization_id]
 
@@ -393,6 +395,7 @@ async def test_telemetry_of_another_organizations_vehicle_is_not_found(
             fake_db_session(),
             uuid4(),
             principal=build_principal(roles=frozenset({UserRole.FLEET_MANAGER})),
+            client_context=None,
         )
 
 
@@ -425,6 +428,7 @@ async def test_a_driver_reads_live_data_only_of_the_truck_they_are_checked_in_to
             fake_db_session(),
             uuid4(),
             principal=build_principal(roles=frozenset({UserRole.DRIVER})),
+            client_context=None,
         )
 
 
@@ -523,6 +527,6 @@ async def test_station_and_location_of_another_organization_are_not_found(
             fake_db_session(), location.location_id, principal=customer
         )
     with pytest.raises(ChargingStationNotFoundError):
-        await charging_stations_service.get_charging_station(
+        await station_service.get_charging_station(
             fake_db_session(), station.station_id, principal=customer
         )

@@ -200,7 +200,7 @@ class ChargingLocationAccessModel(Base):
 
 
 class ChargingStationModel(Base):
-    """A pre-provisioned charger (trụ sạc): profile and decisions only (CS-09).
+    """A pre-provisioned charger (charging post): profile and decisions only (CS-09).
 
     What the charger reports about itself lives in ``ChargingStationStateModel``.
 

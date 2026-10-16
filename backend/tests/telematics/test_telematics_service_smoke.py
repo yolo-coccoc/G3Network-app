@@ -1,11 +1,12 @@
 """Smoke tests for the telematics service and the F-J2 config-push publisher."""
 
-from datetime import datetime, timezone
-from typing import cast
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from aiomqtt import MqttError
+from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.telematics.commands.mqtt_publisher as telematics_mqtt_publisher
@@ -13,10 +14,12 @@ import app.domains.telematics.repository as telematics_repository
 import app.domains.telematics.service as telematics_service
 import app.domains.telemetry.service as telemetry_public_service
 import app.domains.vehicles.service as vehicles_public_service
+from app.api.main import domain_error_handler
 from app.domains.identity.types import UserRole
 from app.domains.telematics.exceptions import (
     TelematicCommandPublishError,
     TelematicConflictError,
+    TelematicDateInvalidError,
     TelematicNotConfigurableError,
     TelematicNotFoundError,
     TelematicVehicleNotFoundError,
@@ -31,6 +34,7 @@ from app.domains.telematics.types import TelematicStatus, TelematicVehicleMappin
 from app.domains.vehicles.types import (
     VehicleReference,
 )
+from app.libs.common.clock import CLIENT_CLOCK_SKEW
 from app.libs.common.errors import NotFoundError
 from tests.builders import build_telematic_record, fake_db_session
 from tests.principals import build_internal_principal, build_principal
@@ -816,3 +820,130 @@ async def test_update_telematic_refuses_to_mount_on_a_truck_off_the_fleet_limit(
         )
 
     assert updated_values == {}
+
+
+async def _assert_bad_request(error: Exception) -> None:
+    """Assert that the shared HTTP handler turns ``error`` into a 400.
+
+    Args:
+        error: The domain exception the service raised.
+    """
+    request: Any = None
+    error_response = await domain_error_handler(request, error)
+    assert error_response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def _forbid_device_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every repository call of a device create fail the test.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the repository functions.
+    """
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a refused time must stop before the repository")
+
+    for function_name in ("find_by_serial", "find_by_imei", "insert"):
+        monkeypatch.setattr(telematics_repository, function_name, fail_if_called)
+
+
+@pytest.mark.asyncio
+async def test_create_telematic_rejects_acquired_at_without_time_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A naive ``acquired_at`` is a 400, never stored as host local time."""
+    _forbid_device_writes(monkeypatch)
+
+    with pytest.raises(TelematicDateInvalidError) as error_info:
+        await telematics_service.create_telematic(
+            fake_db_session(),
+            TelematicCreateRequest(
+                telematic_serial="TBOX-NAIVE-001",
+                acquired_at=datetime(2026, 10, 1, 8, 0),
+            ),
+            principal=build_internal_principal(),
+        )
+    await _assert_bad_request(error_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_telematic_rejects_acquired_at_in_the_future(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ``acquired_at`` beyond the clock skew is a 400 (RV-AS4)."""
+    _forbid_device_writes(monkeypatch)
+    future_acquired_at = (
+        datetime.now(timezone.utc) + CLIENT_CLOCK_SKEW + timedelta(minutes=1)
+    )
+
+    with pytest.raises(TelematicDateInvalidError) as error_info:
+        await telematics_service.create_telematic(
+            fake_db_session(),
+            TelematicCreateRequest(
+                telematic_serial="TBOX-FUTURE-001",
+                acquired_at=future_acquired_at,
+            ),
+            principal=build_internal_principal(),
+        )
+    await _assert_bad_request(error_info.value)
+
+
+@pytest.mark.asyncio
+async def test_create_telematic_stores_aware_acquired_at_in_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A past ``acquired_at`` with an offset is accepted and stored as UTC."""
+    record = build_telematic_record(uuid4())
+    record.vehicle_id = None
+    inserted_values: dict[str, object] = {}
+
+    async def no_existing_serial(db: AsyncSession, telematic_serial: str) -> None:
+        return None
+
+    async def insert_telematic(
+        db: AsyncSession, values: dict[str, object]
+    ) -> TelematicModel:
+        inserted_values.update(values)
+        return record
+
+    monkeypatch.setattr(telematics_repository, "find_by_serial", no_existing_serial)
+    monkeypatch.setattr(telematics_repository, "insert", insert_telematic)
+
+    await telematics_service.create_telematic(
+        fake_db_session(),
+        TelematicCreateRequest(
+            telematic_serial=record.telematic_serial,
+            organization_id=record.organization_id,
+            acquired_at=datetime(
+                2026, 10, 1, 15, 0, tzinfo=timezone(timedelta(hours=7))
+            ),
+        ),
+        principal=build_internal_principal(),
+    )
+
+    assert inserted_values["acquired_at"] == datetime(
+        2026, 10, 1, 8, 0, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_telematic_status_reports_rejects_since_without_time_zone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A naive ``since`` is a 400, not a naive/aware comparison in the query."""
+
+    async def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a refused time must stop before the repository")
+
+    monkeypatch.setattr(telematics_repository, "get_by_id", fail_if_called)
+    monkeypatch.setattr(telematics_repository, "list_status_reports", fail_if_called)
+
+    with pytest.raises(TelematicDateInvalidError) as error_info:
+        await telematics_service.list_telematic_status_reports(
+            fake_db_session(),
+            uuid4(),
+            principal=build_internal_principal(),
+            since=datetime(2026, 10, 1, 8, 0),
+            limit=10,
+        )
+    await _assert_bad_request(error_info.value)

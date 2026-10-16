@@ -49,6 +49,7 @@ from app.domains.support.schemas import (
     SupportTicketCreateRequest,
 )
 from app.domains.support.types import (
+    SLA_FROZEN_AT_CLOSE_STATUS,
     SupportCaseCategory,
     SupportCaseChannel,
     SupportCaseListFilter,
@@ -74,8 +75,9 @@ def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
     the first response time; for a case CANCELLED before anyone responded,
     its cancellation time (`closed_at`), so the verdict is frozen once the
     case is gone instead of turning "breached" as time passes; otherwise now.
-    The repository's ``sla_breached`` list filter is the SQL form of this
-    rule; change both together.
+    The ``is_sla_breached`` list filter in ``repository._case_list_conditions``
+    is the SQL form of this rule; both read ``SLA_FROZEN_AT_CLOSE_STATUS``
+    from ``types.py`` and must change together.
 
     Args:
         case_record: The support case record to evaluate.
@@ -86,7 +88,7 @@ def calculate_is_sla_breached(case_record: SupportCaseModel) -> bool:
         without a first response.
     """
     reference_time = case_record.first_responded_at
-    if reference_time is None and case_record.status is SupportCaseStatus.CANCELLED:
+    if reference_time is None and case_record.status is SLA_FROZEN_AT_CLOSE_STATUS:
         reference_time = case_record.closed_at
     if reference_time is None:
         reference_time = utc_now()

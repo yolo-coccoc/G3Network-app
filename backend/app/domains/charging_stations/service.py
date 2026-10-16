@@ -6,8 +6,8 @@ The domain's logic lives in area modules (``location_service``,
 backend-coding-conventions.md §7.4); the router calls them directly. This
 module is the only one another domain may import. It holds the lookups other
 domains need (a charger's or location's owner, the scan checks and the
-session place of the QR charge) and thin wrappers for the three area
-functions called from outside: ``get_charging_station`` (billing),
+session place of the QR charge, ``ensure_station_visible`` for billing's
+price read) and thin wrappers for the area functions called from outside:
 ``find_nearest_operational_station`` (telemetry) and
 ``queue_station_command`` (the QR charge flow). The OCPP gateway's own writes
 live in the internal ``ocpp_state_service.py``.
@@ -27,15 +27,11 @@ import app.domains.charging_stations.command_service as command_service
 import app.domains.charging_stations.mappers as station_mappers
 import app.domains.charging_stations.repository as charging_stations_repository
 import app.domains.charging_stations.search_service as search_service
-import app.domains.charging_stations.station_service as station_service
 from app.domains.charging_stations.exceptions import (
     ChargingLocationAccessDeniedError,
     ChargingStationNotFoundError,
     ChargingStationOfflineError,
     ChargingStationUnavailableError,
-)
-from app.domains.charging_stations.schemas import (
-    ChargingStationResponse,
 )
 from app.domains.charging_stations.types import (
     ChargingResourceStatus,
@@ -302,28 +298,26 @@ async def resolve_session_place_reference(
     )
 
 
-async def get_charging_station(
+async def ensure_station_visible(
     db: AsyncSession, station_id: UUID, *, principal: Principal
-) -> ChargingStationResponse:
-    """Get an active station the caller may see (billing checks a price read, PAY-09).
+) -> None:
+    """Check that an active charger is visible to the caller (PAY-09 price read).
 
     Args:
         db: Async session owned by the HTTP boundary.
-        station_id: UUID of the station to query.
+        station_id: UUID of the charger.
         principal: The caller; a charger at a private location is visible to
             its owner, to organizations with a live grant and to internal
             staff.
 
-    Returns:
-        The active station response.
-
     Raises:
-        ChargingStationNotFoundError: If the station does not exist, was
+        ChargingStationNotFoundError: If the charger does not exist, was
             soft-deleted or is out of the caller's reach.
+
+    Side Effects:
+        Read queries only.
     """
-    return await station_service.get_charging_station(
-        db, station_id, principal=principal
-    )
+    await station_access.get_station_in_reach(db, station_id, principal, view=True)
 
 
 async def find_nearest_operational_station(

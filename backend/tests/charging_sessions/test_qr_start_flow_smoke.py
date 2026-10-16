@@ -31,7 +31,6 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionStopDeniedError,
 )
 from app.domains.charging_sessions.schemas import (
-    ChargingSessionResponse,
     ChargingSessionScanRequest,
     ChargingSessionStopRequest,
 )
@@ -64,6 +63,7 @@ from tests.principals import build_internal_principal, build_principal
 STATION_ID, EVSE_ID, CONNECTOR_ID = uuid4(), uuid4(), uuid4()
 DRIVER = build_principal(roles=frozenset({UserRole.DRIVER}))
 TARIFF_VERSION_ID = uuid4()
+PENDING_EXPIRES_AT = datetime(2026, 10, 16, 8, 5, tzinfo=timezone.utc)
 
 
 # --- Wallet minimum (BL-14) --------------------------------------------------
@@ -263,7 +263,10 @@ def _patch_scan(
     async def create_pending(db: object, **kwargs: Any) -> PendingSessionReference:
         record["pending"] = kwargs
         return PendingSessionReference(
-            session_id=uuid4(), station_id=STATION_ID, id_token="TOKEN-1"
+            session_id=uuid4(),
+            station_id=STATION_ID,
+            id_token="TOKEN-1",
+            expires_at=PENDING_EXPIRES_AT,
         )
 
     async def resolve_tariff(db: object, station_id: UUID, at: datetime) -> TariffQuote:
@@ -329,6 +332,8 @@ async def test_scan_creates_the_pending_session_and_queues_the_remote_start(
 
     assert response.status is SessionStatus.PENDING
     assert response.id_token == "TOKEN-1"
+    # The expiry is the session's own window, decided by charging_sessions.
+    assert response.expires_at == PENDING_EXPIRES_AT
     # The price of the scan's hour is frozen on a QUOTED bill (PAY-10).
     assert record["quote_for"][0] == STATION_ID
     assert record["bill"]["session_id"] == response.session_id
@@ -693,4 +698,6 @@ def test_the_response_schema_carries_the_derived_energy_of_a_finished_session() 
         meter_stop_wh=Decimal(25),
     )
 
-    assert ChargingSessionResponse.model_validate(session).energy_delivered_wh == 15
+    assert (
+        charging_service.to_charging_session_response(session).energy_delivered_wh == 15
+    )
