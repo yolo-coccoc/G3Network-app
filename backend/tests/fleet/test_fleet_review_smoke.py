@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
+import app.domains.fleet.vehicle_membership_service as fleet_vehicle_membership_service
 import app.domains.vehicles.service as vehicle_service
 from app.domains.fleet.exceptions import (
     FleetHierarchyLoopError,
@@ -301,7 +302,7 @@ async def test_limited_manager_cannot_add_a_truck_outside_their_visible_set(
     )
 
     with pytest.raises((FleetVehicleNotFoundError, AccessDeniedError)):
-        await fleet_service.add_vehicle_to_fleet(
+        await fleet_vehicle_membership_service.add_vehicle_to_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin="LJ1EKABR3N0000001"),

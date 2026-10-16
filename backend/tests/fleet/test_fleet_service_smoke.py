@@ -6,8 +6,11 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.fleet.access as fleet_access
+import app.domains.fleet.geofence_service as geofence_service
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
+import app.domains.fleet.vehicle_membership_service as fleet_vehicle_membership_service
 import app.domains.vehicles.service as vehicles_public_service
 from app.domains.fleet.exceptions import (
     FleetConflictError,
@@ -150,7 +153,7 @@ async def test_add_vehicle_to_fleet_succeeds(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr(fleet_repository, "insert_membership", insert_membership)
 
-    response = await fleet_service.add_vehicle_to_fleet(
+    response = await fleet_vehicle_membership_service.add_vehicle_to_fleet(
         fake_db_session(),
         fleet_record.fleet_id,
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
@@ -188,7 +191,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_of_another_organization(
     )
 
     with pytest.raises(FleetVehicleOrganizationMismatchError):
-        await fleet_service.add_vehicle_to_fleet(
+        await fleet_vehicle_membership_service.add_vehicle_to_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
@@ -217,7 +220,7 @@ async def test_add_vehicle_to_fleet_rejects_unknown_vin(
     )
 
     with pytest.raises(FleetVehicleNotFoundError):
-        await fleet_service.add_vehicle_to_fleet(
+        await fleet_vehicle_membership_service.add_vehicle_to_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin="1HGBH41JXMN109186"),
@@ -269,7 +272,7 @@ async def test_add_vehicle_to_fleet_rejects_vehicle_in_another_fleet(
     monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
 
     with pytest.raises(FleetMembershipConflictError):
-        await fleet_service.add_vehicle_to_fleet(
+        await fleet_vehicle_membership_service.add_vehicle_to_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
@@ -319,7 +322,7 @@ async def test_add_vehicle_to_fleet_is_idempotent_for_same_fleet(
     )
     monkeypatch.setattr(fleet_repository, "insert_membership", fail_if_called)
 
-    response = await fleet_service.add_vehicle_to_fleet(
+    response = await fleet_vehicle_membership_service.add_vehicle_to_fleet(
         fake_db_session(),
         fleet_record.fleet_id,
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
@@ -380,7 +383,7 @@ async def test_remove_vehicle_from_fleet_closes_membership(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
 
-    await fleet_service.remove_vehicle_from_fleet(
+    await fleet_vehicle_membership_service.remove_vehicle_from_fleet(
         fake_db_session(),
         fleet_record.fleet_id,
         "1HGBH41JXMN109186",
@@ -423,7 +426,7 @@ async def test_remove_vehicle_from_fleet_rejects_when_no_active_membership(
     )
 
     with pytest.raises(FleetMembershipNotFoundError):
-        await fleet_service.remove_vehicle_from_fleet(
+        await fleet_vehicle_membership_service.remove_vehicle_from_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             "1HGBH41JXMN109186",
@@ -452,7 +455,7 @@ async def test_remove_vehicle_from_fleet_rejects_unknown_vin(
     )
 
     with pytest.raises(FleetVehicleNotFoundError):
-        await fleet_service.remove_vehicle_from_fleet(
+        await fleet_vehicle_membership_service.remove_vehicle_from_fleet(
             fake_db_session(),
             fleet_record.fleet_id,
             "1HGBH41JXMN109186",
@@ -504,7 +507,7 @@ async def test_list_fleet_vehicles_enriches_each_row(
         vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
     )
 
-    response = await fleet_service.list_fleet_vehicles(
+    response = await fleet_vehicle_membership_service.list_fleet_vehicles(
         fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
@@ -750,7 +753,7 @@ async def test_list_fleet_vehicles_keeps_member_whose_vehicle_was_deleted(
         vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
     )
 
-    response = await fleet_service.list_fleet_vehicles(
+    response = await fleet_vehicle_membership_service.list_fleet_vehicles(
         fake_db_session(), fleet_record.fleet_id, principal=build_internal_principal()
     )
 
@@ -874,7 +877,7 @@ async def test_list_fleet_vehicles_filters_by_status_and_text_then_pages(
         vehicles_public_service, "resolve_vehicle_summary_by_id", resolve_summary
     )
 
-    response = await fleet_service.list_fleet_vehicles(
+    response = await fleet_vehicle_membership_service.list_fleet_vehicles(
         fake_db_session(),
         fleet_record.fleet_id,
         page=1,
@@ -923,7 +926,7 @@ async def test_close_fleet_membership_closes_an_open_membership(
     monkeypatch.setattr(fleet_repository, "get_membership_by_id", get_membership)
     monkeypatch.setattr(fleet_repository, "close_membership", close_membership)
 
-    await fleet_service.close_fleet_membership(
+    await fleet_vehicle_membership_service.close_fleet_membership(
         fake_db_session(),
         fleet_record.fleet_id,
         membership.fleet_vehicle_membership_id,
@@ -962,7 +965,7 @@ async def test_close_fleet_membership_rejects_a_membership_not_open_in_fleet(
     monkeypatch.setattr(fleet_repository, "get_membership_by_id", get_membership)
 
     with pytest.raises(FleetMembershipNotFoundError):
-        await fleet_service.close_fleet_membership(
+        await fleet_vehicle_membership_service.close_fleet_membership(
             fake_db_session(),
             fleet_record.fleet_id,
             uuid4(),
@@ -979,11 +982,11 @@ def test_geofence_boundary_round_trips_through_postgis_shape() -> None:
         (106.70, 10.78),
         (106.70, 10.77),
     ]
-    boundary = fleet_service.to_geofence_boundary(
+    boundary = geofence_service.to_geofence_boundary(
         GeofencePolygonGeoJson(coordinates=[ring])
     )
 
-    round_tripped = fleet_service.to_geofence_polygon_geojson(boundary)
+    round_tripped = geofence_service.to_geofence_polygon_geojson(boundary)
 
     assert round_tripped.type == "Polygon"
     assert round_tripped.coordinates == [ring]
@@ -1014,7 +1017,7 @@ async def test_get_geofence_rejects_a_geofence_of_another_fleet(
     monkeypatch.setattr(fleet_repository, "get_geofence_by_id", get_geofence)
 
     with pytest.raises(GeofenceNotFoundError):
-        await fleet_service.get_geofence(
+        await geofence_service.get_geofence(
             fake_db_session(),
             fleet_record.fleet_id,
             other_fleet_geofence.geofence_id,
@@ -1186,9 +1189,9 @@ async def test_limited_manager_moves_a_truck_between_their_own_fleets_only_on_re
     monkeypatch.setattr(
         vehicles_public_service, "resolve_vehicle_reference_by_vin", resolve_vin
     )
-    monkeypatch.setattr(fleet_service, "resolve_principal_visible_vehicle_ids", visible)
+    monkeypatch.setattr(fleet_access, "resolve_principal_visible_vehicle_ids", visible)
     monkeypatch.setattr(
-        fleet_service, "resolve_principal_visible_fleet_ids", visible_fleets
+        fleet_access, "resolve_principal_visible_fleet_ids", visible_fleets
     )
     monkeypatch.setattr(
         fleet_repository, "find_active_membership_by_vehicle", active_membership
@@ -1197,13 +1200,13 @@ async def test_limited_manager_moves_a_truck_between_their_own_fleets_only_on_re
     monkeypatch.setattr(fleet_repository, "insert_membership", insert_membership)
 
     with pytest.raises(FleetMembershipConflictError):
-        await fleet_service.add_vehicle_to_fleet(
+        await fleet_vehicle_membership_service.add_vehicle_to_fleet(
             fake_db_session(),
             target_fleet.fleet_id,
             FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin),
             principal=manager,
         )
-    response = await fleet_service.add_vehicle_to_fleet(
+    response = await fleet_vehicle_membership_service.add_vehicle_to_fleet(
         fake_db_session(),
         target_fleet.fleet_id,
         FleetVehicleAddRequest(vehicle_vin=vehicle_reference.vin, move=True),

@@ -14,17 +14,23 @@ domain depends on the `vehicles` domain's public service to resolve a VIN
 into a vehicle and to enrich a response with a vehicle's VIN/license
 plate/status - the same one-directional edge shape already established by
 `telematics -> vehicles` and `drivers -> vehicles`.
+
+Where the code lives (CV-20, CV-23): this module holds the fleets and their
+tree, and what other domains call (member trucks, the current fleet of a
+truck, geofences containing a point, the sold-truck and membership-end
+hooks, and wrappers for the two visibility functions). Trucks in a fleet are
+in ``vehicle_membership_service.py``, geofences in ``geofence_service.py``,
+member fleet limits in ``assignment_service.py``, and the reach and
+fleet-limit rules every area uses in ``access.py``.
 """
 
 from datetime import datetime
 from uuid import UUID
 
-from geoalchemy2.elements import WKBElement
-from geoalchemy2.shape import from_shape, to_shape
-from shapely.geometry import Polygon
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.fleet.access as fleet_access
 import app.domains.fleet.repository as fleet_repository
 import app.domains.identity.service as identity_service
 import app.domains.vehicles.service as vehicle_service
@@ -32,72 +38,28 @@ from app.domains.fleet.exceptions import (
     FleetConflictError,
     FleetHasSubFleetsError,
     FleetHierarchyLoopError,
-    FleetMembershipConflictError,
-    FleetMembershipNotFoundError,
     FleetNotFoundError,
     FleetParentNotFoundError,
     FleetParentOrganizationMismatchError,
-    FleetVehicleNotFoundError,
-    FleetVehicleOrganizationMismatchError,
-    GeofenceNotFoundError,
 )
 from app.domains.fleet.models import (
     FleetModel,
-    FleetVehicleMembershipModel,
-    GeofenceModel,
 )
 from app.domains.fleet.schemas import (
     FleetCreateRequest,
     FleetListResponse,
-    FleetMembershipHistoryResponse,
-    FleetMembershipResponse,
     FleetResponse,
     FleetTreeNodeResponse,
     FleetTreeResponse,
     FleetUpdateRequest,
-    FleetVehicleAddRequest,
-    FleetVehicleListResponse,
-    FleetVehicleResponse,
-    GeofenceCreateRequest,
-    GeofenceListResponse,
-    GeofencePolygonGeoJson,
-    GeofenceResponse,
-    GeofenceUpdateRequest,
 )
 from app.domains.fleet.types import GeofenceReference
 from app.domains.identity.exceptions import AccessDeniedError
 from app.domains.identity.types import MembershipEndKind, Principal
-from app.domains.vehicles.types import VehicleStatus, VehicleSummary
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
 from app.libs.common.geo import coordinates_to_location
 from app.libs.common.pagination import normalize_page_window
-
-
-def to_membership_response(
-    membership_record: FleetVehicleMembershipModel, vehicle_vin: str | None
-) -> FleetMembershipResponse:
-    """Convert a membership ORM record into a response, given its vehicle's VIN.
-
-    Pure mapping only, no I/O - the caller resolves `vehicle_vin` via the
-    vehicles domain's public service beforehand.
-
-    Args:
-        membership_record: Membership record already queried or created.
-        vehicle_vin: VIN of the member vehicle, or `None` if it no longer
-            resolves (the vehicle was soft-deleted since).
-
-    Returns:
-        Response data for the membership.
-    """
-    return FleetMembershipResponse(
-        fleet_vehicle_membership_id=membership_record.fleet_vehicle_membership_id,
-        fleet_id=membership_record.fleet_id,
-        vehicle_id=membership_record.vehicle_id,
-        vehicle_vin=vehicle_vin,
-        added_at=membership_record.added_at,
-        removed_at=membership_record.removed_at,
-    )
 
 
 async def build_fleet_response(
@@ -128,7 +90,9 @@ async def build_fleet_response(
         subtree_fleet_ids = frozenset(
             [
                 fleet_record.fleet_id,
-                *await list_descendant_fleet_ids(db_session, fleet_record.fleet_id),
+                *await fleet_access.list_descendant_fleet_ids(
+                    db_session, fleet_record.fleet_id
+                ),
             ]
         )
         vehicle_count = len(
@@ -257,7 +221,9 @@ async def create_fleet(
     organization_id = await identity_service.resolve_organization_for_new_record(
         db_session, principal, fleet_create_request.organization_id
     )
-    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    visible_fleet_ids = await fleet_access.resolve_principal_visible_fleet_ids(
+        db_session, principal
+    )
     if visible_fleet_ids is not None and (
         fleet_create_request.parent_fleet_id not in visible_fleet_ids
     ):
@@ -324,7 +290,7 @@ async def get_fleet(
     Raises:
         FleetNotFoundError: When the fleet does not exist or has been soft-deleted.
     """
-    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
+    fleet_record = await fleet_access.get_fleet_record(db_session, fleet_id, principal)
     return await build_fleet_response(
         db_session, fleet_record, include_descendants=include_descendants
     )
@@ -372,11 +338,13 @@ async def list_fleets(
 
     # The fleets this caller may see (FL-10), narrowed to the part of the tree
     # under `parent_fleet_id` when given.
-    fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    fleet_ids = await fleet_access.resolve_principal_visible_fleet_ids(
+        db_session, principal
+    )
     if parent_fleet_id is not None:
-        await _get_fleet_record(db_session, parent_fleet_id, principal)
+        await fleet_access.get_fleet_record(db_session, parent_fleet_id, principal)
         below_parent_ids = frozenset(
-            await list_descendant_fleet_ids(db_session, parent_fleet_id)
+            await fleet_access.list_descendant_fleet_ids(db_session, parent_fleet_id)
             if include_descendants
             else await fleet_repository.list_child_fleet_ids(
                 db_session, parent_fleet_id
@@ -465,7 +433,9 @@ async def get_fleet_tree(
     fleet_records = await fleet_repository.list_by_organization(
         db_session, tree_organization_id
     )
-    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
+    visible_fleet_ids = await fleet_access.resolve_principal_visible_fleet_ids(
+        db_session, principal
+    )
     if visible_fleet_ids is not None:
         fleet_records = [
             fleet_record
@@ -585,7 +555,7 @@ async def update_fleet(
         FleetHierarchyLoopError: When the new parent is this fleet or one of
             its sub-fleets.
     """
-    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
+    fleet_record = await fleet_access.get_fleet_record(db_session, fleet_id, principal)
 
     if (
         fleet_update_request.fleet_code
@@ -603,7 +573,7 @@ async def update_fleet(
         fleet_update_request.parent_fleet_id is not None
         and fleet_update_request.parent_fleet_id != fleet_record.parent_fleet_id
     ):
-        visible_fleet_ids = await resolve_principal_visible_fleet_ids(
+        visible_fleet_ids = await fleet_access.resolve_principal_visible_fleet_ids(
             db_session, principal
         )
         if (
@@ -687,7 +657,7 @@ async def soft_delete_fleet(
         system ended it, FL-10); a member whose last assignment ended is no
         longer limited.
     """
-    await _get_fleet_record(db_session, fleet_id, principal)
+    await fleet_access.get_fleet_record(db_session, fleet_id, principal)
     if await fleet_repository.count_child_fleets(db_session, fleet_id) > 0:
         raise FleetHasSubFleetsError(
             f"Fleet '{fleet_id}' still has sub-fleets; move or delete them first"
@@ -731,910 +701,6 @@ async def soft_delete_fleet(
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
 
     return {"message": "Fleet deleted successfully"}
-
-
-async def add_vehicle_to_fleet(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    fleet_vehicle_add_request: FleetVehicleAddRequest,
-    *,
-    principal: Principal,
-) -> FleetMembershipResponse:
-    """Add a vehicle to a fleet by VIN.
-
-    Rule:
-        The target vehicle must not already be actively assigned to a
-        *different* fleet (raises rather than silently stealing it), unless
-        the request asks to ``move`` it: then its membership there is closed
-        and the new one opened in the same transaction. A fleet-limited
-        manager reaches only the trucks of their own fleets, so they can move
-        a truck between those and nowhere else (FL-10, bug-fix D4).
-        Adding a vehicle already actively in *this* fleet is a no-op that
-        returns the existing membership.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-        fleet_vehicle_add_request: The vehicle to add, by VIN.
-        principal: The caller, recorded as ``added_by``; a fleet or vehicle of
-            another organization is not found unless the caller is internal.
-
-    Returns:
-        The resulting open membership.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        FleetVehicleNotFoundError: When the VIN does not resolve to a vehicle.
-        FleetVehicleOrganizationMismatchError: When the vehicle belongs to
-            another organization than the fleet (FL-09).
-        FleetMembershipConflictError: When the vehicle is already actively
-            in a different fleet and no move was asked.
-
-    Side Effects:
-        Inserts a new membership row (and closes the old one on a move, with
-        the caller as ``removed_by``); does not commit or rollback on its own.
-    """
-    fleet_record = await _get_fleet_record(db_session, fleet_id, principal)
-
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
-        db_session, fleet_vehicle_add_request.vehicle_vin
-    )
-    if vehicle_reference is None or not principal.can_access_organization(
-        vehicle_reference.organization_id
-    ):
-        raise FleetVehicleNotFoundError(
-            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
-        )
-
-    # A manager limited to some fleets sees only the trucks in them: adding any
-    # other truck (one in no fleet) would widen their own reach (FL-10, RV-AS1).
-    visible_vehicle_ids = await resolve_principal_visible_vehicle_ids(
-        db_session, principal
-    )
-    if (
-        visible_vehicle_ids is not None
-        and vehicle_reference.vehicle_id not in visible_vehicle_ids
-    ):
-        raise FleetVehicleNotFoundError(
-            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' not found"
-        )
-
-    # A fleet holds only its own organization's vehicles (FL-09).
-    if vehicle_reference.organization_id != fleet_record.organization_id:
-        raise FleetVehicleOrganizationMismatchError(
-            f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' belongs "
-            "to another organization than the fleet"
-        )
-
-    existing_membership = await fleet_repository.find_active_membership_by_vehicle(
-        db_session, vehicle_reference.vehicle_id
-    )
-    now = utc_now()
-    if existing_membership is not None:
-        if existing_membership.fleet_id == fleet_id:
-            return to_membership_response(existing_membership, vehicle_reference.vin)
-        if not fleet_vehicle_add_request.move:
-            raise FleetMembershipConflictError(
-                f"Vehicle with VIN '{fleet_vehicle_add_request.vehicle_vin}' is "
-                "already assigned to another fleet"
-            )
-        # The source fleet is the vehicle's organization's (FL-09), so it is in
-        # the caller's reach; a limited manager got here only because the truck
-        # is visible to them, i.e. it sits in one of their own fleets.
-        await fleet_repository.close_membership(
-            db_session,
-            existing_membership,
-            removed_at=now,
-            removed_by=principal.user_id,
-        )
-
-    try:
-        membership_record = await fleet_repository.insert_membership(
-            db_session,
-            fleet_id=fleet_id,
-            vehicle_id=vehicle_reference.vehicle_id,
-            added_at=now,
-            added_by=principal.user_id,
-        )
-    except IntegrityError as error:
-        raise FleetMembershipConflictError(
-            "Vehicle already has an active fleet membership"
-        ) from error
-
-    return to_membership_response(membership_record, vehicle_reference.vin)
-
-
-async def remove_vehicle_from_fleet(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    vehicle_vin: str,
-    *,
-    principal: Principal,
-) -> None:
-    """Close a vehicle's active membership in a fleet, by VIN.
-
-    Identifies the vehicle by VIN, the same way `add_vehicle_to_fleet` does.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-        vehicle_vin: VIN of the vehicle to remove.
-        principal: The caller, recorded as ``removed_by``; a fleet of another
-            organization is not found unless the caller is internal.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        FleetVehicleNotFoundError: When no active vehicle has this VIN.
-        FleetMembershipNotFoundError: When the vehicle has no active
-            membership in this fleet.
-
-    Side Effects:
-        Calls the vehicles domain's public service to resolve the VIN.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-
-    vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_vin(
-        db_session, vehicle_vin
-    )
-    if vehicle_reference is None or not principal.can_access_organization(
-        vehicle_reference.organization_id
-    ):
-        # A truck of another organization looks like a missing one (RV-AS5).
-        raise FleetVehicleNotFoundError(f"Vehicle with VIN '{vehicle_vin}' not found")
-
-    active_membership = await fleet_repository.find_active_membership_by_vehicle(
-        db_session, vehicle_reference.vehicle_id
-    )
-    if active_membership is None or active_membership.fleet_id != fleet_id:
-        raise FleetMembershipNotFoundError(
-            f"Vehicle with VIN '{vehicle_vin}' has no active membership in "
-            f"fleet '{fleet_id}'"
-        )
-
-    await fleet_repository.close_membership(
-        db_session,
-        active_membership,
-        removed_at=utc_now(),
-        removed_by=principal.user_id,
-    )
-
-
-async def close_fleet_membership(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    fleet_vehicle_membership_id: UUID,
-    *,
-    principal: Principal,
-) -> None:
-    """Close an open membership of a fleet by its ID (D8, #84).
-
-    The only way to release a membership whose vehicle was soft-deleted
-    after joining: the VIN-based `remove_vehicle_from_fleet` can no longer
-    resolve such a vehicle, so its open row would otherwise keep counting
-    toward the fleet forever.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-        fleet_vehicle_membership_id: Internal ID of the membership to close.
-        principal: The caller, recorded as ``removed_by``; a fleet of another
-            organization is not found unless the caller is internal.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        FleetMembershipNotFoundError: When the membership is unknown,
-            belongs to another fleet, or is already closed.
-
-    Side Effects:
-        Stamps the membership's ``removed_at``; does not commit or rollback.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-
-    membership_record = await fleet_repository.get_membership_by_id(
-        db_session, fleet_vehicle_membership_id
-    )
-    if (
-        membership_record is None
-        or membership_record.fleet_id != fleet_id
-        or membership_record.removed_at is not None
-    ):
-        raise FleetMembershipNotFoundError(
-            f"Membership '{fleet_vehicle_membership_id}' is not an open "
-            f"membership of fleet '{fleet_id}'"
-        )
-
-    await fleet_repository.close_membership(
-        db_session,
-        membership_record,
-        removed_at=utc_now(),
-        removed_by=principal.user_id,
-    )
-
-
-def to_fleet_vehicle_response(
-    membership_record: FleetVehicleMembershipModel,
-    vehicle_summary: VehicleSummary | None,
-) -> FleetVehicleResponse:
-    """Convert an open membership and its vehicle's summary into a list row.
-
-    Pure mapping only, no I/O.
-
-    Args:
-        membership_record: The open membership.
-        vehicle_summary: The member vehicle's summary, or ``None`` when the
-            vehicle no longer resolves (soft-deleted after joining).
-
-    Returns:
-        The row, with ``vin``/``license_plate``/``status`` set to ``None``
-        when there is no summary.
-    """
-    return FleetVehicleResponse(
-        vehicle_id=membership_record.vehicle_id,
-        vin=vehicle_summary.vin if vehicle_summary else None,
-        license_plate=vehicle_summary.license_plate if vehicle_summary else None,
-        status=vehicle_summary.status if vehicle_summary else None,
-        added_at=membership_record.added_at,
-    )
-
-
-def _matches_vehicle_filters(
-    vehicle_summary: VehicleSummary,
-    *,
-    status_filter: VehicleStatus | None,
-    search_text: str | None,
-) -> bool:
-    """Check a member vehicle against the fleet-vehicle list filters.
-
-    Args:
-        vehicle_summary: The member vehicle's summary.
-        status_filter: Required vehicle lifecycle status, if any.
-        search_text: Case-insensitive substring of the VIN or license
-            plate, if any.
-
-    Returns:
-        True when the vehicle passes every given filter.
-    """
-    if status_filter is not None and vehicle_summary.status != status_filter:
-        return False
-    if search_text:
-        needle = search_text.casefold()
-        if (
-            needle not in vehicle_summary.vin.casefold()
-            and needle not in vehicle_summary.license_plate.casefold()
-        ):
-            return False
-    return True
-
-
-async def list_fleet_vehicles(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    *,
-    principal: Principal,
-    page: int = settings.API_DEFAULT_PAGE,
-    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-    status_filter: VehicleStatus | None = None,
-    search_text: str | None = None,
-) -> FleetVehicleListResponse:
-    """Get a fleet's paginated current vehicle list, newest member first (F-E1).
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet.
-        principal: The caller; a fleet of another organization is not found
-            unless the caller is internal.
-        page: Page number, starting from 1.
-        page_size: Maximum number of vehicles per page.
-        status_filter: Only vehicles in this lifecycle status, if given.
-        search_text: Only vehicles whose VIN or license plate contains this
-            text (case-insensitive), if given.
-
-    Returns:
-        Paginated list of vehicles currently in the fleet.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-
-    Side Effects:
-        Resolves each vehicle's VIN/license plate/status with one per-row
-        call to the vehicles domain's public service - no batching, per this
-        repo's no-premature-batching convention. Without a filter, only the
-        requested page of memberships is loaded, and a membership whose
-        vehicle no longer resolves (soft-deleted since) is still listed with
-        ``vin``/``license_plate``/``status`` set to ``None``, so ``total``
-        matches the rows a client can page through. With a filter, the
-        vehicle fields live in another domain, so every open membership is
-        resolved, filtered and then paged in memory; an unresolvable
-        vehicle can match no filter and is left out.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-
-    page_window = normalize_page_window(page, page_size)
-
-    if status_filter is None and not search_text:
-        membership_records = await fleet_repository.list_active_memberships_by_fleet(
-            db_session,
-            fleet_id,
-            offset=page_window.offset,
-            limit=page_window.page_size,
-        )
-        total = await fleet_repository.count_active_memberships_by_fleet(
-            db_session, fleet_id
-        )
-        fleet_vehicle_responses = []
-        for membership_record in membership_records:
-            vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
-                db_session, membership_record.vehicle_id
-            )
-            fleet_vehicle_responses.append(
-                to_fleet_vehicle_response(membership_record, vehicle_summary)
-            )
-        return FleetVehicleListResponse(
-            items=fleet_vehicle_responses,
-            total=total,
-            page=page_window.page,
-            page_size=page_window.page_size,
-        )
-
-    all_membership_records = (
-        await fleet_repository.list_all_active_memberships_by_fleet(
-            db_session, fleet_id
-        )
-    )
-    # Same order as the unfiltered, SQL-paged branch: newest member first.
-    all_membership_records.sort(
-        key=lambda membership_record: membership_record.added_at, reverse=True
-    )
-    matching_responses = []
-    for membership_record in all_membership_records:
-        vehicle_summary = await vehicle_service.resolve_vehicle_summary_by_id(
-            db_session, membership_record.vehicle_id
-        )
-        if vehicle_summary is None or not _matches_vehicle_filters(
-            vehicle_summary, status_filter=status_filter, search_text=search_text
-        ):
-            continue
-        matching_responses.append(
-            to_fleet_vehicle_response(membership_record, vehicle_summary)
-        )
-
-    page_end = page_window.offset + page_window.page_size
-    return FleetVehicleListResponse(
-        items=matching_responses[page_window.offset : page_end],
-        total=len(matching_responses),
-        page=page_window.page,
-        page_size=page_window.page_size,
-    )
-
-
-async def list_fleet_membership_history(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    *,
-    principal: Principal,
-    page: int = settings.API_DEFAULT_PAGE,
-    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-) -> FleetMembershipHistoryResponse:
-    """Get a fleet's paginated membership history, newest first.
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet.
-        principal: The caller; a fleet of another organization is not found
-            unless the caller is internal.
-        page: Page number, starting from 1.
-        page_size: Maximum number of memberships per page.
-
-    Returns:
-        Paginated membership history, including closed memberships.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-
-    Side Effects:
-        Resolves each membership's vehicle VIN with one per-row call to
-        the vehicles domain's public service - no batching, per this
-        repo's no-premature-batching convention.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-
-    page_window = normalize_page_window(page, page_size)
-
-    membership_records = await fleet_repository.list_memberships_by_fleet(
-        db_session, fleet_id, offset=page_window.offset, limit=page_window.page_size
-    )
-    total = await fleet_repository.count_memberships_by_fleet(db_session, fleet_id)
-
-    membership_responses = []
-    for membership_record in membership_records:
-        vehicle_reference = await vehicle_service.resolve_vehicle_reference_by_id(
-            db_session, membership_record.vehicle_id
-        )
-        vehicle_vin = vehicle_reference.vin if vehicle_reference else None
-        membership_responses.append(
-            to_membership_response(membership_record, vehicle_vin)
-        )
-
-    return FleetMembershipHistoryResponse(
-        items=membership_responses,
-        total=total,
-        page=page_window.page,
-        page_size=page_window.page_size,
-    )
-
-
-def to_geofence_boundary(boundary_geojson: GeofencePolygonGeoJson) -> WKBElement:
-    """Convert a validated GeoJSON polygon into a PostGIS geography polygon.
-
-    Pure mapping only, no I/O. The ring keeps its given order.
-
-    Args:
-        boundary_geojson: A polygon the request schema already validated
-            (one closed, non-self-crossing ring of at least 4 positions).
-
-    Returns:
-        A WKB polygon with SRID 4326, ready to persist.
-    """
-    return from_shape(Polygon(boundary_geojson.coordinates[0]), srid=4326)
-
-
-def to_geofence_polygon_geojson(boundary: object) -> GeofencePolygonGeoJson:
-    """Convert a stored geography polygon back into the API's GeoJSON shape.
-
-    Pure mapping only, no I/O.
-
-    Args:
-        boundary: The ``geofences.boundary`` value read back from the ORM.
-
-    Returns:
-        The polygon with its single exterior ring, in the stored order.
-
-    Raises:
-        TypeError: If ``boundary`` is not a WKB polygon - never the case for
-            a row flushed to or loaded from the database, whose column only
-            admits polygons.
-    """
-    if not isinstance(boundary, WKBElement):
-        raise TypeError(f"expected a WKB polygon, got {type(boundary).__name__}")
-    polygon = to_shape(boundary)
-    if not isinstance(polygon, Polygon):
-        raise TypeError(f"expected a polygon, got {polygon.geom_type}")
-    ring = [
-        (float(position[0]), float(position[1])) for position in polygon.exterior.coords
-    ]
-    return GeofencePolygonGeoJson(coordinates=[ring])
-
-
-def to_geofence_response(geofence_record: GeofenceModel) -> GeofenceResponse:
-    """Convert a geofence ORM record into an HTTP response.
-
-    Pure mapping only, no I/O.
-
-    Args:
-        geofence_record: A geofence record created, loaded or updated by the
-            repository.
-
-    Returns:
-        Response data, with the boundary in the API's GeoJSON shape.
-    """
-    return GeofenceResponse(
-        geofence_id=geofence_record.geofence_id,
-        fleet_id=geofence_record.fleet_id,
-        name=geofence_record.name,
-        boundary=to_geofence_polygon_geojson(geofence_record.boundary),
-        created_at=geofence_record.created_at,
-        updated_at=geofence_record.updated_at,
-    )
-
-
-async def _get_fleet_record(
-    db_session: AsyncSession, fleet_id: UUID, principal: Principal
-) -> FleetModel:
-    """Load a live fleet inside the caller's data reach, or raise.
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet.
-        principal: The caller; a fleet of another organization does not exist
-            for them unless they are internal, nor does a fleet outside the
-            fleets they are limited to (FL-10).
-
-    Returns:
-        The fleet record.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist, was soft-deleted
-            or is outside the caller's reach.
-    """
-    fleet_record = await fleet_repository.get_by_id(
-        db_session, fleet_id, organization_id=principal.data_scope
-    )
-    if fleet_record is None:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
-    visible_fleet_ids = await resolve_principal_visible_fleet_ids(db_session, principal)
-    if visible_fleet_ids is not None and fleet_id not in visible_fleet_ids:
-        raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
-    return fleet_record
-
-
-async def _get_fleet_geofence_record(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    geofence_id: UUID,
-    principal: Principal,
-) -> GeofenceModel:
-    """Load a live geofence of a live fleet, or raise.
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet the geofence must belong to.
-        geofence_id: Internal ID of the geofence.
-        principal: The caller (data scope).
-
-    Returns:
-        The geofence record.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        GeofenceNotFoundError: When the geofence does not exist, was
-            soft-deleted, or belongs to another fleet.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-    geofence_record = await fleet_repository.get_geofence_by_id(db_session, geofence_id)
-    if geofence_record is None or geofence_record.fleet_id != fleet_id:
-        raise GeofenceNotFoundError(
-            f"Geofence '{geofence_id}' not found in fleet '{fleet_id}'"
-        )
-    return geofence_record
-
-
-async def create_geofence(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    geofence_create_request: GeofenceCreateRequest,
-    *,
-    principal: Principal,
-) -> GeofenceResponse:
-    """Create a geofence for a fleet (F-A5, D6).
-
-    The geofence applies to every vehicle that is currently a member of the
-    fleet; entry/exit detection itself belongs to the telemetry domain.
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the owning fleet.
-        geofence_create_request: Name and boundary, already validated.
-        principal: The caller (data scope).
-
-    Returns:
-        Response for the new geofence.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-
-    Side Effects:
-        Inserts one ``geofences`` row (flushed, not committed).
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-    geofence_record = await fleet_repository.insert_geofence(
-        db_session,
-        fleet_id=fleet_id,
-        name=geofence_create_request.name,
-        boundary=to_geofence_boundary(geofence_create_request.boundary),
-    )
-    return to_geofence_response(geofence_record)
-
-
-async def list_geofences(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    *,
-    principal: Principal,
-    page: int = settings.API_DEFAULT_PAGE,
-    page_size: int = settings.API_DEFAULT_PAGE_SIZE,
-) -> GeofenceListResponse:
-    """Get a fleet's paginated live geofences, newest first (F-A5).
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet.
-        principal: The caller (data scope).
-        page: Page number, starting from 1.
-        page_size: Maximum number of geofences per page.
-
-    Returns:
-        Paginated geofence list response.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-    """
-    await _get_fleet_record(db_session, fleet_id, principal)
-    page_window = normalize_page_window(page, page_size)
-
-    geofence_records = await fleet_repository.list_geofences_by_fleet(
-        db_session, fleet_id, offset=page_window.offset, limit=page_window.page_size
-    )
-    total = await fleet_repository.count_geofences(db_session, fleet_id)
-
-    return GeofenceListResponse(
-        items=[
-            to_geofence_response(geofence_record)
-            for geofence_record in geofence_records
-        ],
-        total=total,
-        page=page_window.page,
-        page_size=page_window.page_size,
-    )
-
-
-async def get_geofence(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    geofence_id: UUID,
-    *,
-    principal: Principal,
-) -> GeofenceResponse:
-    """Get one live geofence of a fleet (F-A5).
-
-    Args:
-        db_session: Current database session.
-        fleet_id: Internal ID of the fleet.
-        geofence_id: Internal ID of the geofence.
-        principal: The caller (data scope).
-
-    Returns:
-        Response for the geofence.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        GeofenceNotFoundError: When the geofence is not a live geofence of
-            this fleet.
-    """
-    geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id, principal
-    )
-    return to_geofence_response(geofence_record)
-
-
-async def update_geofence(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    geofence_id: UUID,
-    geofence_update_request: GeofenceUpdateRequest,
-    *,
-    principal: Principal,
-) -> GeofenceResponse:
-    """Partially update a geofence's name and/or boundary (F-A5).
-
-    A field not sent, or sent as ``null``, is left unchanged (the backend's
-    PATCH convention).
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-        geofence_id: Internal ID of the geofence.
-        geofence_update_request: Fields to change, already validated.
-        principal: The caller (data scope).
-
-    Returns:
-        Response for the geofence after the update.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        GeofenceNotFoundError: When the geofence is not a live geofence of
-            this fleet.
-
-    Side Effects:
-        Updates the row and flushes; does not commit.
-    """
-    geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id, principal
-    )
-    update_values: dict[str, object] = {}
-    if geofence_update_request.name is not None:
-        update_values["name"] = geofence_update_request.name
-    if geofence_update_request.boundary is not None:
-        update_values["boundary"] = to_geofence_boundary(
-            geofence_update_request.boundary
-        )
-    if not update_values:
-        return to_geofence_response(geofence_record)
-
-    updated_geofence_record = await fleet_repository.update_geofence_fields(
-        db_session, geofence_record, update_values
-    )
-    return to_geofence_response(updated_geofence_record)
-
-
-async def soft_delete_geofence(
-    db_session: AsyncSession,
-    fleet_id: UUID,
-    geofence_id: UUID,
-    *,
-    principal: Principal,
-) -> dict[str, str]:
-    """Soft-delete a geofence of a fleet (F-A5).
-
-    Args:
-        db_session: Database session owned by the entry boundary.
-        fleet_id: Internal ID of the fleet.
-        geofence_id: Internal ID of the geofence.
-        principal: The caller (data scope).
-
-    Returns:
-        Success deletion message.
-
-    Raises:
-        FleetNotFoundError: When the fleet does not exist.
-        GeofenceNotFoundError: When the geofence is not a live geofence of
-            this fleet (including one already deleted).
-
-    Side Effects:
-        Stamps ``deleted_at``; does not commit. A deleted geofence is no
-        longer returned by ``list_geofences_containing``.
-    """
-    geofence_record = await _get_fleet_geofence_record(
-        db_session, fleet_id, geofence_id, principal
-    )
-    await fleet_repository.soft_delete_geofence(db_session, geofence_record)
-    return {"message": "Geofence deleted successfully"}
-
-
-async def list_descendant_fleet_ids(db: AsyncSession, fleet_id: UUID) -> list[UUID]:
-    """List every live fleet below a fleet, at any depth. Public cross-domain entry point.
-
-    Walks the tree one fleet at a time (one query per fleet, no batching;
-    trees are a few levels deep) with a visited set, so a damaged loop in the
-    data still ends. The fleet itself is not included.
-
-    Args:
-        db: Session owned by the caller's entry boundary.
-        fleet_id: Internal ID of the top fleet. Not checked: an unknown or
-            deleted fleet simply has no descendants.
-
-    Returns:
-        IDs of the fleets below, nearest first.
-
-    Side Effects:
-        Read-only; does not commit or rollback.
-    """
-    descendant_ids: list[UUID] = []
-    visited_ids: set[UUID] = {fleet_id}
-    pending_ids = [fleet_id]
-    while pending_ids:
-        parent_id = pending_ids.pop(0)
-        for child_id in await fleet_repository.list_child_fleet_ids(db, parent_id):
-            if child_id in visited_ids:
-                continue
-            visited_ids.add(child_id)
-            descendant_ids.append(child_id)
-            pending_ids.append(child_id)
-    return descendant_ids
-
-
-async def resolve_visible_fleet_ids(
-    db: AsyncSession, principal_membership_id: UUID, organization_id: UUID
-) -> frozenset[UUID] | None:
-    """Resolve the fleets a membership's fleet-level roles are limited to (FL-10).
-
-    Public cross-domain entry point. The rule is the union of the fleets
-    assigned to the membership (open `fleet_user_assignments` rows) and every
-    fleet below them.
-
-    Args:
-        db: Session owned by the caller's entry boundary.
-        principal_membership_id: The membership (person in the organization).
-        organization_id: The organization the membership acts for; an
-            assigned fleet owned by another organization (or deleted since)
-            adds nothing.
-
-    Returns:
-        `None` when the membership has no open assignment: no limit, the
-        whole organization. Otherwise the visible fleet IDs; the set is empty
-        when every assigned fleet has vanished, so the limit then fails closed
-        and shows nothing rather than everything.
-
-    Side Effects:
-        Read-only; one query for the assignments, then one per assigned fleet
-        and per fleet of its subtree (no batching).
-    """
-    assignment_records = await fleet_repository.list_open_assignments_by_membership(
-        db, principal_membership_id
-    )
-    if not assignment_records:
-        return None
-    visible_ids: set[UUID] = set()
-    for assignment_record in assignment_records:
-        fleet_record = await fleet_repository.get_by_id(
-            db, assignment_record.fleet_id, organization_id=organization_id
-        )
-        if fleet_record is None:
-            continue
-        visible_ids.add(fleet_record.fleet_id)
-        visible_ids.update(await list_descendant_fleet_ids(db, fleet_record.fleet_id))
-    return frozenset(visible_ids)
-
-
-async def resolve_visible_vehicle_ids(
-    db: AsyncSession, principal_membership_id: UUID, organization_id: UUID
-) -> frozenset[UUID] | None:
-    """Resolve the trucks a membership's fleet limit lets it see (FL-10).
-
-    Public cross-domain entry point.
-
-    Args:
-        db: Session owned by the caller's entry boundary.
-        principal_membership_id: The membership (person in the organization).
-        organization_id: The organization the membership acts for.
-
-    Returns:
-        `None` when the membership is not limited. Otherwise the IDs of the
-        trucks that currently have an open fleet membership in a visible
-        fleet (a truck in no fleet is not visible to a limited member).
-
-    Side Effects:
-        Read-only; see `resolve_visible_fleet_ids`, plus one query for the
-        trucks.
-    """
-    visible_fleet_ids = await resolve_visible_fleet_ids(
-        db, principal_membership_id, organization_id
-    )
-    if visible_fleet_ids is None:
-        return None
-    if not visible_fleet_ids:
-        return frozenset()
-    return frozenset(
-        await fleet_repository.list_active_vehicle_ids_by_fleet_ids(
-            db, visible_fleet_ids
-        )
-    )
-
-
-async def resolve_principal_visible_fleet_ids(
-    db: AsyncSession, principal: Principal
-) -> frozenset[UUID] | None:
-    """Resolve the fleet limit of an HTTP caller (FL-10).
-
-    Public cross-domain entry point for endpoints. Internal staff, the
-    organization administrator and roles that are not fleet-level are never
-    limited and cost no query.
-
-    Args:
-        db: Session owned by the caller's entry boundary.
-        principal: The authenticated caller.
-
-    Returns:
-        `None` for no limit, else the visible fleet IDs
-        (see `resolve_visible_fleet_ids`).
-    """
-    if not principal.is_fleet_limited:
-        return None
-    return await resolve_visible_fleet_ids(
-        db, principal.membership_id, principal.organization_id
-    )
-
-
-async def resolve_principal_visible_vehicle_ids(
-    db: AsyncSession, principal: Principal
-) -> frozenset[UUID] | None:
-    """Resolve the truck limit of an HTTP caller (FL-10).
-
-    Public cross-domain entry point; the function the HTTP layer registers
-    for the vehicle endpoints (`app/api/fleet_visibility.py`).
-
-    Args:
-        db: Session owned by the caller's entry boundary.
-        principal: The authenticated caller.
-
-    Returns:
-        `None` for no limit, else the visible truck IDs
-        (see `resolve_visible_vehicle_ids`).
-    """
-    if not principal.is_fleet_limited:
-        return None
-    return await resolve_visible_vehicle_ids(
-        db, principal.membership_id, principal.organization_id
-    )
 
 
 async def list_active_member_vehicle_ids(
@@ -1683,12 +749,14 @@ async def list_active_member_vehicle_ids(
     if fleet_record is None:
         raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
     if principal is not None:
-        visible_fleet_ids = await resolve_principal_visible_fleet_ids(db, principal)
+        visible_fleet_ids = await fleet_access.resolve_principal_visible_fleet_ids(
+            db, principal
+        )
         if visible_fleet_ids is not None and fleet_id not in visible_fleet_ids:
             raise FleetNotFoundError(f"Fleet with id '{fleet_id}' not found")
     if include_descendants:
         subtree_fleet_ids = frozenset(
-            [fleet_id, *await list_descendant_fleet_ids(db, fleet_id)]
+            [fleet_id, *await fleet_access.list_descendant_fleet_ids(db, fleet_id)]
         )
         return await fleet_repository.list_active_vehicle_ids_by_fleet_ids(
             db, subtree_fleet_ids
@@ -1841,3 +909,48 @@ async def handle_membership_end(
             unassigned_at=ended_at,
             unassigned_by=acting_user_id,
         )
+
+
+async def resolve_principal_visible_vehicle_ids(
+    db: AsyncSession, principal: Principal
+) -> frozenset[UUID] | None:
+    """Resolve the truck limit of an HTTP caller (FL-10).
+
+    Public cross-domain entry point; the function the HTTP layer registers
+    for the vehicle endpoints (`app/api/fleet_visibility.py`).
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal: The authenticated caller.
+
+    Returns:
+        `None` for no limit, else the visible truck IDs
+        (see `resolve_visible_vehicle_ids`).
+    """
+    return await fleet_access.resolve_principal_visible_vehicle_ids(db, principal)
+
+
+async def resolve_visible_vehicle_ids(
+    db: AsyncSession, principal_membership_id: UUID, organization_id: UUID
+) -> frozenset[UUID] | None:
+    """Resolve the trucks a membership's fleet limit lets it see (FL-10).
+
+    Public cross-domain entry point.
+
+    Args:
+        db: Session owned by the caller's entry boundary.
+        principal_membership_id: The membership (person in the organization).
+        organization_id: The organization the membership acts for.
+
+    Returns:
+        `None` when the membership is not limited. Otherwise the IDs of the
+        trucks that currently have an open fleet membership in a visible
+        fleet (a truck in no fleet is not visible to a limited member).
+
+    Side Effects:
+        Read-only; see `resolve_visible_fleet_ids`, plus one query for the
+        trucks.
+    """
+    return await fleet_access.resolve_visible_vehicle_ids(
+        db, principal_membership_id, organization_id
+    )

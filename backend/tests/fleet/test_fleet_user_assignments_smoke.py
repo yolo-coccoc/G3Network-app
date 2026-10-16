@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.fleet.access as fleet_access
 import app.domains.fleet.assignment_service as assignment_service
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
@@ -111,14 +112,14 @@ async def test_resolve_visible_fleet_ids_is_union_of_assigned_fleets_and_descend
     monkeypatch.setattr(fleet_repository, "list_child_fleet_ids", list_child_fleet_ids)
 
     assert (
-        await fleet_service.resolve_visible_fleet_ids(
+        await fleet_access.resolve_visible_fleet_ids(
             fake_db_session(), membership_id, organization_id
         )
         is None
     )
 
     assignments.append(_assignment(top.fleet_id, membership_id))
-    visible = await fleet_service.resolve_visible_fleet_ids(
+    visible = await fleet_access.resolve_visible_fleet_ids(
         fake_db_session(), membership_id, organization_id
     )
     assert visible == frozenset({top.fleet_id, child_id, grandchild_id})
@@ -127,7 +128,7 @@ async def test_resolve_visible_fleet_ids_is_union_of_assigned_fleets_and_descend
     # An assigned fleet that vanished fails closed: an empty set, not "no limit".
     assignments[:] = [_assignment(uuid4(), membership_id)]
     assert (
-        await fleet_service.resolve_visible_fleet_ids(
+        await fleet_access.resolve_visible_fleet_ids(
             fake_db_session(), membership_id, organization_id
         )
         == frozenset()
@@ -155,7 +156,7 @@ async def test_limited_manager_cannot_reach_fleet_outside_their_set(
 
     monkeypatch.setattr(fleet_repository, "get_by_id", get_by_id)
     monkeypatch.setattr(
-        fleet_service, "resolve_principal_visible_fleet_ids", visible_ids
+        fleet_access, "resolve_principal_visible_fleet_ids", visible_ids
     )
 
     with pytest.raises(FleetNotFoundError):
@@ -313,7 +314,7 @@ async def test_limited_manager_cannot_delete_a_fleet_that_is_given_to_someone(
     monkeypatch.setattr(fleet_repository, "count_child_fleets", count_child_fleets)
     monkeypatch.setattr(fleet_repository, "list_open_assignments_by_fleet", list_open)
     monkeypatch.setattr(
-        fleet_service, "resolve_principal_visible_fleet_ids", visible_ids
+        fleet_access, "resolve_principal_visible_fleet_ids", visible_ids
     )
 
     with pytest.raises(AccessDeniedError):

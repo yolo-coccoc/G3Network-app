@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.domains.fleet.assignment_service as assignment_service
+import app.domains.fleet.geofence_service as geofence_service
 import app.domains.fleet.service as fleet_service
+import app.domains.fleet.vehicle_membership_service as fleet_vehicle_membership_service
 from app.domains.fleet.schemas import (
     FleetCreateRequest,
     FleetListResponse,
@@ -345,7 +347,7 @@ async def add_vehicle_to_fleet_endpoint(
         FleetMembershipConflictError: 409 when the vehicle is already
             actively in a different fleet.
     """
-    return await fleet_service.add_vehicle_to_fleet(
+    return await fleet_vehicle_membership_service.add_vehicle_to_fleet(
         db_session, fleet_id, fleet_vehicle_add_request, principal=principal
     )
 
@@ -379,7 +381,7 @@ async def remove_vehicle_from_fleet_endpoint(
         FleetMembershipNotFoundError: 404 when the vehicle has no active
             membership in this fleet.
     """
-    await fleet_service.remove_vehicle_from_fleet(
+    await fleet_vehicle_membership_service.remove_vehicle_from_fleet(
         db_session, fleet_id, vehicle_vin, principal=principal
     )
 
@@ -432,7 +434,7 @@ async def list_fleet_vehicles_endpoint(
     Raises:
         FleetNotFoundError: 404 when the fleet does not exist.
     """
-    return await fleet_service.list_fleet_vehicles(
+    return await fleet_vehicle_membership_service.list_fleet_vehicles(
         db_session,
         fleet_id,
         page=page,
@@ -476,7 +478,7 @@ async def list_fleet_membership_history_endpoint(
     Raises:
         FleetNotFoundError: 404 when the fleet does not exist.
     """
-    return await fleet_service.list_fleet_membership_history(
+    return await fleet_vehicle_membership_service.list_fleet_membership_history(
         db_session, fleet_id, page=page, page_size=page_size, principal=principal
     )
 
@@ -509,7 +511,7 @@ async def close_fleet_membership_endpoint(
         FleetMembershipNotFoundError: 404 when the membership is unknown,
             belongs to another fleet, or is already closed.
     """
-    await fleet_service.close_fleet_membership(
+    await fleet_vehicle_membership_service.close_fleet_membership(
         db_session, fleet_id, fleet_vehicle_membership_id, principal=principal
     )
 
@@ -545,7 +547,7 @@ async def create_geofence_endpoint(
     Raises:
         FleetNotFoundError: 404 when the fleet does not exist.
     """
-    return await fleet_service.create_geofence(
+    return await geofence_service.create_geofence(
         db_session, fleet_id, geofence_create_request, principal=principal
     )
 
@@ -583,7 +585,7 @@ async def list_geofences_endpoint(
     Raises:
         FleetNotFoundError: 404 when the fleet does not exist.
     """
-    return await fleet_service.list_geofences(
+    return await geofence_service.list_geofences(
         db_session, fleet_id, page=page, page_size=page_size, principal=principal
     )
 
@@ -616,7 +618,7 @@ async def get_geofence_endpoint(
         GeofenceNotFoundError: 404 when the geofence is not a live geofence
             of this fleet.
     """
-    return await fleet_service.get_geofence(
+    return await geofence_service.get_geofence(
         db_session, fleet_id, geofence_id, principal=principal
     )
 
@@ -651,7 +653,7 @@ async def update_geofence_endpoint(
         GeofenceNotFoundError: 404 when the geofence is not a live geofence
             of this fleet.
     """
-    return await fleet_service.update_geofence(
+    return await geofence_service.update_geofence(
         db_session, fleet_id, geofence_id, geofence_update_request, principal=principal
     )
 
@@ -684,7 +686,7 @@ async def soft_delete_geofence_endpoint(
         GeofenceNotFoundError: 404 when the geofence is not a live geofence
             of this fleet.
     """
-    return await fleet_service.soft_delete_geofence(
+    return await geofence_service.soft_delete_geofence(
         db_session, fleet_id, geofence_id, principal=principal
     )
 

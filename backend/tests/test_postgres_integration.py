@@ -43,8 +43,11 @@ import app.domains.drivers.driving_session_service as driving_session_service
 import app.domains.drivers.repository as driver_repository
 import app.domains.drivers.service as driver_service
 import app.domains.drivers.trip_service as trip_service
+import app.domains.fleet.access as fleet_access
+import app.domains.fleet.geofence_service as geofence_service
 import app.domains.fleet.repository as fleet_repository
 import app.domains.fleet.service as fleet_service
+import app.domains.fleet.vehicle_membership_service as fleet_vehicle_membership_service
 import app.domains.identity.account_service as identity_account_service
 import app.domains.identity.audit_service as identity_audit_service
 import app.domains.identity.bootstrap as identity_bootstrap
@@ -2054,7 +2057,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 db, hanoi.fleet_id
             ) == [vehicle.vehicle_id]
 
-            geofence = await fleet_service.create_geofence(
+            geofence = await geofence_service.create_geofence(
                 db,
                 hanoi.fleet_id,
                 GeofenceCreateRequest(
@@ -2083,7 +2086,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
 
             # Moving the boundary away and then deleting it both take effect.
             moved_ring = [(lon + 1.0, lat) for lon, lat in square_ring]
-            moved = await fleet_service.update_geofence(
+            moved = await geofence_service.update_geofence(
                 db,
                 hanoi.fleet_id,
                 geofence.geofence_id,
@@ -2100,7 +2103,7 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 )
                 == []
             )
-            await fleet_service.soft_delete_geofence(
+            await geofence_service.soft_delete_geofence(
                 db,
                 hanoi.fleet_id,
                 geofence.geofence_id,
@@ -2112,13 +2115,13 @@ async def test_fleet_membership_index_filters_and_geofences_on_postgres(
                 )
                 == []
             )
-            listed = await fleet_service.list_geofences(
+            listed = await geofence_service.list_geofences(
                 db, hanoi.fleet_id, principal=build_internal_principal()
             )
             assert listed.total == 0
 
             # #84: close the membership by ID; a second close is a 404.
-            await fleet_service.close_fleet_membership(
+            await fleet_vehicle_membership_service.close_fleet_membership(
                 db,
                 hanoi.fleet_id,
                 membership.fleet_vehicle_membership_id,
@@ -2872,7 +2875,7 @@ async def test_geofence_enter_then_exit_raises_alerts_through_ingestion(
                 vehicle_id=vehicle.vehicle_id,
                 added_at=datetime.now(timezone.utc),
             )
-            geofence = await fleet_service.create_geofence(
+            geofence = await geofence_service.create_geofence(
                 db,
                 fleet.fleet_id,
                 GeofenceCreateRequest(
@@ -4613,7 +4616,7 @@ async def test_ownership_transfer_moves_battery_closes_fleet_and_warranties_foll
             fleet = await fleet_service.create_fleet(
                 db, FleetCreateRequest(name="WP3 fleet"), principal=seller
             )
-            await fleet_service.add_vehicle_to_fleet(
+            await fleet_vehicle_membership_service.add_vehicle_to_fleet(
                 db,
                 fleet.fleet_id,
                 FleetVehicleAddRequest(vehicle_vin=vehicle.vin),
@@ -4764,8 +4767,10 @@ async def test_ownership_transfer_moves_battery_closes_fleet_and_warranties_foll
             assert [
                 (item.vehicle_id, item.installed_until) for item in installation.items
             ] == [(vehicle.vehicle_id, None)]
-            memberships = await fleet_service.list_fleet_membership_history(
-                db, fleet.fleet_id, principal=staff
+            memberships = (
+                await fleet_vehicle_membership_service.list_fleet_membership_history(
+                    db, fleet.fleet_id, principal=staff
+                )
             )
             assert memberships.items[0].removed_at is not None
 
@@ -5092,7 +5097,7 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
 
             # No assignment: no limit, and the limited-role caller sees all.
             assert (
-                await fleet_service.resolve_visible_fleet_ids(
+                await fleet_access.resolve_visible_fleet_ids(
                     db, membership.membership_id, organization_id
                 )
                 is None
@@ -5111,10 +5116,10 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
             assert second.warnings == [
                 assignment_service.WARNING_COVERED_BY_ASSIGNED_PARENT
             ]
-            assert await fleet_service.resolve_visible_fleet_ids(
+            assert await fleet_access.resolve_visible_fleet_ids(
                 db, membership.membership_id, organization_id
             ) == frozenset({region, branch, depot})
-            assert await fleet_service.resolve_visible_vehicle_ids(
+            assert await fleet_access.resolve_visible_vehicle_ids(
                 db, membership.membership_id, organization_id
             ) == frozenset({truck_region, truck_depot})
 
@@ -5130,7 +5135,7 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
             admin_tree = await fleet_service.get_fleet_tree(db, principal=admin)
             assert {node.fleet_id for node in admin_tree.items} == {region, other}
             assert admin_tree.total_fleets == 4
-            visible_trucks = await fleet_service.resolve_principal_visible_vehicle_ids(
+            visible_trucks = await fleet_access.resolve_principal_visible_vehicle_ids(
                 db, manager
             )
             assert (
@@ -5191,10 +5196,10 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
             await fleet_service.update_fleet(
                 db, depot, FleetUpdateRequest(parent_fleet_id=other), principal=admin
             )
-            assert await fleet_service.resolve_visible_fleet_ids(
+            assert await fleet_access.resolve_visible_fleet_ids(
                 db, membership.membership_id, organization_id
             ) == frozenset({region, branch})
-            assert await fleet_service.resolve_visible_vehicle_ids(
+            assert await fleet_access.resolve_visible_vehicle_ids(
                 db, membership.membership_id, organization_id
             ) == frozenset({truck_region})
             assert set(
@@ -5230,7 +5235,7 @@ async def test_fleet_limit_visible_set_tree_move_and_deleted_fleet_ends_assignme
                 db, membership.membership_id, region, principal=admin
             )
             assert (
-                await fleet_service.resolve_visible_fleet_ids(
+                await fleet_access.resolve_visible_fleet_ids(
                     db, membership.membership_id, organization_id
                 )
                 is None
