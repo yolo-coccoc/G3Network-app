@@ -20,6 +20,7 @@ import pytest
 import app.api.charging_session_flow as flow
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.service as billing_service
+import app.domains.charging_sessions.read_service as session_read_service
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.router as charging_router
 import app.domains.charging_sessions.service as charging_service
@@ -159,7 +160,7 @@ async def test_a_driver_reads_only_sessions_they_started_in_their_organization(
 
     for principal in (DRIVER, FLEET_MANAGER):
         with pytest.raises(ChargingSessionNotFoundError):
-            await charging_service.get_charging_session(
+            await session_read_service.get_charging_session(
                 fake_db_session(), uuid4(), principal=principal
             )
 

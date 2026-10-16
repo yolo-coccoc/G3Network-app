@@ -138,7 +138,11 @@ name = "Other domains use only charging_sessions's service, types and exceptions
 type = "forbidden"
 source_modules = ["app.domains.batteries", "app.domains.billing", "app.domains.charging_stations", "app.domains.drivers", "app.domains.fleet", "app.domains.identity", "app.domains.notifications", "app.domains.support", "app.domains.telematics", "app.domains.telemetry", "app.domains.vehicles", "app.domains.warranties"]
 forbidden_modules = [
+    "app.domains.charging_sessions.access",
+    "app.domains.charging_sessions.mappers",
     "app.domains.charging_sessions.models",
+    "app.domains.charging_sessions.read_service",
+    "app.domains.charging_sessions.report_service",
     "app.domains.charging_sessions.repository",
     "app.domains.charging_sessions.router",
     "app.domains.charging_sessions.schemas",

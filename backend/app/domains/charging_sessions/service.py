@@ -32,10 +32,14 @@ DRIVER sees just the sessions they started. The owner of the charger does not
 see other organizations' sessions at their chargers through this module
 (`charging_sessions` cannot ask `charging_stations` who owns a charger).
 
-The module also serves the read-only monitoring endpoints (session detail with
-its read-time summary, the filtered session list, energy samples,
-measurements, the station energy summary and the station energy time series).
-The ingestion functions, ``allocate_ocpp16_transaction_id``,
+The read-only monitoring endpoints live in area modules (CV-20, CV-23):
+``read_service`` (session detail with its read-time summary, the filtered
+session list, energy samples, measurements) and ``report_service`` (the
+station energy summary and time series); the reach checks and response
+mappers they share with this module are in ``access`` and ``mappers``. This
+module keeps thin wrappers for the reads other code outside the domain calls
+(``get_charging_session``, ``get_completed_charging_session``,
+``resolve_station_energy_total``). The ingestion functions, ``allocate_ocpp16_transaction_id``,
 ``has_active_session_on_connector`` and ``resolve_session_by_transaction`` are
 the public entry points the ``charging_stations`` OCPP adapters call;
 ``resolve_station_energy_total`` is the one its all-stations energy report
@@ -47,20 +51,21 @@ This domain imports no billing code; ``app/api/billing_hooks.py`` wires the two
 (BL-19).
 """
 
-import bisect
 import dataclasses
 import logging
 import secrets
-from collections.abc import Awaitable, Callable, Sequence
-from datetime import datetime, timedelta, timezone
+from collections.abc import Sequence
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Final
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_sessions.access as session_access
+import app.domains.charging_sessions.mappers as session_mappers
+import app.domains.charging_sessions.read_service as session_read_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.repository as charging_session_repository
 from app.domains.charging_sessions.exceptions import (
     ChargingConnectorBusyError,
@@ -72,20 +77,11 @@ from app.domains.charging_sessions.exceptions import (
     ChargingSessionTokenError,
 )
 from app.domains.charging_sessions.models import (
-    ChargingSessionMeasurementModel,
     ChargingSessionModel,
 )
 from app.domains.charging_sessions.schemas import (
     ChargingSessionDetailResponse,
-    ChargingSessionListResponse,
-    ChargingSessionMeasurementListResponse,
-    ChargingSessionMeasurementResponse,
-    ChargingSessionMeterValueListResponse,
-    ChargingSessionMeterValueResponse,
     ChargingSessionResponse,
-    StationEnergySeriesBucketResponse,
-    StationEnergySeriesResponse,
-    StationEnergySummaryResponse,
 )
 from app.domains.charging_sessions.types import (
     ENERGY_ACTIVE_IMPORT_REGISTER,
@@ -97,8 +93,6 @@ from app.domains.charging_sessions.types import (
     QR_TOKEN_LENGTH,
     STAFF_CLOSED_STOP_REASON,
     STOP_REASON_MAX_LENGTH,
-    ChargingSessionListFilter,
-    EnergySeriesGranularity,
     MeasurementInput,
     MeterIngestResult,
     MeterSampleInput,
@@ -113,12 +107,12 @@ from app.domains.charging_sessions.types import (
     TransactionIngestResult,
     TransactionSessionReference,
 )
-from app.domains.identity.types import Principal, UserRole, roles_for
+from app.domains.identity.types import Principal
 from app.libs.common.clock import utc_now
 from app.libs.common.config import settings
-from app.libs.common.pagination import PageWindow, normalize_page_window
 
 logger = logging.getLogger(__name__)
+
 
 # Callbacks run, in the caller's transaction, after a session ended (BL-19).
 # Registered once per process at start-up through `register_session_ended_hook`
@@ -172,45 +166,23 @@ async def _run_session_ended_hooks(db: AsyncSession, event: SessionEndedEvent) -
             )
 
 
-# Roles that read every session of their organization (CHG-02/04/05); a
-# caller holding only DRIVER sees the sessions they started themselves.
-SESSION_STAFF_ROLES = roles_for("CHG-02", "CHG-04", "CHG-05") - {UserRole.DRIVER}
-
-# Measurands read by the session summary (F-B2). Names as OCPP defines them.
-# Values are stored in one fixed unit per measurand (CE-14): power in W, SoC in
-# percent, so the summary converts nothing but W to kW for display.
-_SOC_MEASURAND: Final[str] = "SoC"
-_POWER_ACTIVE_IMPORT_MEASURAND: Final[str] = "Power.Active.Import"
-_W_PER_KW: Final[Decimal] = Decimal(1000)
-_WH_PER_KWH: Final[Decimal] = Decimal(1000)
-
 # Input length limits, mirroring the widths of the columns the values are
 # stored in (``charging_session_measurements``): validating here turns an
 # over-long value into a ChargingSessionInputError instead of a database error
 # at flush time. The session columns' widths live in ``types.py``.
 _MEASURAND_MAX_LENGTH: Final[int] = 60
+
+
 _MEASUREMENT_UNIT_MAX_LENGTH: Final[int] = 20
+
+
 _MEASUREMENT_CONTEXT_MAX_LENGTH: Final[int] = 30
+
+
 _MEASUREMENT_PHASE_MAX_LENGTH: Final[int] = 10
+
+
 _MEASUREMENT_LOCATION_MAX_LENGTH: Final[int] = 20
-
-
-def _normalize_utc(value: datetime, field_name: str) -> datetime:
-    """Check that the timestamp is timezone-aware and normalize it to UTC.
-
-    Args:
-        value: The input timestamp from the adapter or API.
-        field_name: The field name used in the error message.
-
-    Returns:
-        A timestamp with UTC timezone.
-
-    Raises:
-        ChargingSessionInputError: If the timestamp lacks a timezone.
-    """
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ChargingSessionInputError(f"{field_name} must have a timezone")
-    return value.astimezone(timezone.utc)
 
 
 def _validate_energy(value: Decimal | None, field_name: str) -> Decimal | None:
@@ -279,7 +251,7 @@ def _validate_measurement(sample: MeasurementInput) -> MeasurementInput:
     if not isinstance(sample.value, Decimal) or not sample.value.is_finite():
         raise ChargingSessionInputError("value must be a finite Decimal")
     return dataclasses.replace(
-        sample, sampled_at=_normalize_utc(sample.sampled_at, "sampled_at")
+        sample, sampled_at=session_access.normalize_utc(sample.sampled_at, "sampled_at")
     )
 
 
@@ -314,72 +286,6 @@ def _touch_session(session_record: ChargingSessionModel) -> None:
     session_record.updated_at = utc_now()
 
 
-def _session_started_by_scope(principal: Principal) -> UUID | None:
-    """Tell whose sessions a caller may read inside their organization.
-
-    Args:
-        principal: The HTTP caller.
-
-    Returns:
-        `None` for staff roles (every session of the organization); the
-        caller's own user ID for a DRIVER-only caller.
-    """
-    if principal.has_any_role(*SESSION_STAFF_ROLES):
-        return None
-    return principal.user_id
-
-
-async def _get_charging_session_record(
-    db: AsyncSession,
-    session_id: UUID,
-    principal: Principal | None = None,
-    *,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-    for_update: bool = False,
-) -> ChargingSessionModel:
-    """Load a session aggregate that must exist.
-
-    Private on purpose: it returns the ORM model, which must never cross
-    the domain boundary.
-
-    Args:
-        db: The current async session.
-        session_id: UUID of the session to load.
-        principal: The HTTP caller whose data reach limits the lookup; `None`
-            for a system caller (OCPP adapters).
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10):
-            a session on another truck, or with no truck, is not found unless
-            the caller started it (hardening D5). `None` means no limit; read
-            only with a ``principal``.
-        for_update: Lock the row until the transaction ends (CE-29).
-
-    Returns:
-        The existing session aggregate.
-
-    Raises:
-        ChargingSessionNotFoundError: If the session is not found.
-    """
-    if principal is None:
-        session_record = await charging_session_repository.get_session_by_id(
-            db, session_id, for_update=for_update
-        )
-    else:
-        session_record = await charging_session_repository.get_session_by_id(
-            db,
-            session_id,
-            organization_id=principal.data_scope,
-            started_by=_session_started_by_scope(principal),
-            vehicle_ids=visible_vehicle_ids,
-            caller_user_id=(
-                principal.user_id if visible_vehicle_ids is not None else None
-            ),
-            for_update=for_update,
-        )
-    if session_record is None:
-        raise ChargingSessionNotFoundError(f"Session '{session_id}' not found")
-    return session_record
-
-
 async def _get_open_charging_session_record(
     db: AsyncSession, session_id: UUID
 ) -> ChargingSessionModel:
@@ -398,7 +304,7 @@ async def _get_open_charging_session_record(
             landing after the stop must not silently rewrite a finished
             session, and a session that never started has no readings.
     """
-    session_record = await _get_charging_session_record(db, session_id)
+    session_record = await session_access.get_charging_session_record(db, session_id)
     if session_record.status is not SessionStatus.ACTIVE:
         raise ChargingSessionStateError(
             f"Session '{session_id}' is {session_record.status.value}, not active"
@@ -458,587 +364,6 @@ async def _get_open_session_by_transaction(
             f"Transaction '{transaction_id}' is already completed"
         )
     return session_record
-
-
-async def _build_page_response[RowT, ItemT: BaseModel, PageT: BaseModel](
-    page_response_type: type[PageT],
-    *,
-    page: int,
-    page_size: int,
-    list_rows: Callable[[PageWindow], Awaitable[Sequence[RowT]]],
-    count_rows: Callable[[], Awaitable[int]],
-    to_item: Callable[[RowT], ItemT],
-) -> PageT:
-    """Load one page of rows plus the total and wrap them in a page response.
-
-    Shared by every monitoring list: each page response has the same
-    ``items``/``total``/``page``/``page_size`` shape.
-
-    Args:
-        page_response_type: The ``*ListResponse`` schema to build.
-        page: The requested page, starting at one.
-        page_size: The requested page size.
-        list_rows: Loads the rows of a normalized page window.
-        count_rows: Counts every row matching the same filter.
-        to_item: Converts one row into its response item.
-
-    Returns:
-        The page response, with the normalized page and page size.
-
-    Side Effects:
-        Runs one items query and one count query; no ORM relationships are
-        loaded, so there is no N+1 pattern. Does not commit or roll back.
-    """
-    page_window = normalize_page_window(page, page_size)
-    rows = await list_rows(page_window)
-    total = await count_rows()
-    return page_response_type(
-        items=[to_item(row) for row in rows],
-        total=total,
-        page=page_window.page,
-        page_size=page_window.page_size,
-    )
-
-
-def calculate_session_duration_seconds(
-    session_record: ChargingSessionModel, *, now: datetime
-) -> int:
-    """Compute how long a session lasted, or has lasted so far (F-B2).
-
-    Args:
-        session_record: The session.
-        now: Reference time used while the session has no ``ended_at``.
-
-    Returns:
-        Whole seconds from ``started_at`` to ``ended_at`` (or ``now``),
-        floored at zero so a charger clock ahead of the server never yields
-        a negative duration; ``0`` for a session that never started.
-    """
-    if session_record.started_at is None:
-        return 0
-    ended_at = session_record.ended_at if session_record.ended_at is not None else now
-    return max(int((ended_at - session_record.started_at).total_seconds()), 0)
-
-
-def calculate_energy_delivered_wh(
-    meter_start_wh: Decimal | None, meter_stop_wh: Decimal | None
-) -> Decimal | None:
-    """Compute the energy between two meter readings of a session (CE-12).
-
-    Derived on every read, never stored.
-
-    Args:
-        meter_start_wh: The charger's start reading.
-        meter_stop_wh: The charger's closing reading, or the figure standing in
-            for it.
-
-    Returns:
-        The closing reading minus the start reading; ``None`` when either is
-        missing.
-    """
-    if meter_start_wh is None or meter_stop_wh is None:
-        return None
-    return meter_stop_wh - meter_start_wh
-
-
-def to_charging_session_response(
-    session_record: ChargingSessionModel,
-) -> ChargingSessionResponse:
-    """Convert a session row into the monitoring response (pure mapping).
-
-    The delivered energy is the stop reading minus the start reading, so a
-    running session or one stopped without a reading shows ``None``; the
-    detail read replaces it with its measurement-based estimate.
-
-    Args:
-        session_record: The session queried by the repository.
-
-    Returns:
-        The response.
-    """
-    return ChargingSessionResponse(
-        session_id=session_record.session_id,
-        station_id=session_record.station_id,
-        evse_id=session_record.evse_id,
-        connector_id=session_record.connector_id,
-        organization_id=session_record.organization_id,
-        started_by=session_record.started_by,
-        vehicle_id=session_record.vehicle_id,
-        ocpp_transaction_id=session_record.ocpp_transaction_id,
-        status=session_record.status,
-        started_at=session_record.started_at,
-        ended_at=session_record.ended_at,
-        meter_start_wh=session_record.meter_start_wh,
-        stop_reason=session_record.stop_reason,
-        meter_stop_wh=session_record.meter_stop_wh,
-        energy_delivered_wh=calculate_energy_delivered_wh(
-            session_record.meter_start_wh, session_record.meter_stop_wh
-        ),
-        created_at=session_record.created_at,
-        updated_at=session_record.updated_at,
-    )
-
-
-async def _resolve_energy_delivered_wh(
-    db: AsyncSession, session_record: ChargingSessionModel
-) -> Decimal | None:
-    """Compute the energy a session delivered, at read time (CE-12).
-
-    Args:
-        db: The current async session.
-        session_record: The session.
-
-    Returns:
-        The charger's stop reading minus its start reading; while the session
-        runs (or when the stop message carried no reading) the newest outlet
-        energy measurement stands in for the stop reading. ``None`` without a
-        start reading or any closing figure.
-
-    Side Effects:
-        Runs one measurement query when the stop reading is missing.
-    """
-    if session_record.meter_start_wh is None:
-        return None
-    closing_wh = session_record.meter_stop_wh
-    if closing_wh is None:
-        closing_wh = await charging_session_repository.find_last_measurement_value(
-            db,
-            session_record.session_id,
-            measurand=ENERGY_ACTIVE_IMPORT_REGISTER,
-            measurement_location=MEASUREMENT_LOCATION_OUTLET,
-        )
-    return calculate_energy_delivered_wh(session_record.meter_start_wh, closing_wh)
-
-
-async def _build_charging_session_detail_response(
-    db: AsyncSession, session_record: ChargingSessionModel
-) -> ChargingSessionDetailResponse:
-    """Build the session detail, computing its summary from the measurements.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_record: The session already loaded.
-
-    Returns:
-        The session response plus the delivered energy, ``duration_seconds``,
-        the first/last SoC and the maximum and newest outlet import power in kW
-        (``None`` where the session has no such sample).
-
-    Side Effects:
-        Runs up to five measurement queries; does not commit or roll back.
-    """
-    soc_start = await charging_session_repository.find_first_measurement_value(
-        db, session_record.session_id, measurand=_SOC_MEASURAND
-    )
-    soc_end = await charging_session_repository.find_last_measurement_value(
-        db, session_record.session_id, measurand=_SOC_MEASURAND
-    )
-    max_power_w = await charging_session_repository.find_max_measurement_value(
-        db,
-        session_record.session_id,
-        measurand=_POWER_ACTIVE_IMPORT_MEASURAND,
-        measurement_location=MEASUREMENT_LOCATION_OUTLET,
-    )
-    current_power_w = await charging_session_repository.find_last_measurement_value(
-        db,
-        session_record.session_id,
-        measurand=_POWER_ACTIVE_IMPORT_MEASURAND,
-        measurement_location=MEASUREMENT_LOCATION_OUTLET,
-    )
-    session_response = to_charging_session_response(session_record)
-    return ChargingSessionDetailResponse(
-        **session_response.model_dump(exclude={"energy_delivered_wh"}),
-        energy_delivered_wh=await _resolve_energy_delivered_wh(db, session_record),
-        duration_seconds=calculate_session_duration_seconds(
-            session_record, now=utc_now()
-        ),
-        soc_start_percent=float(soc_start) if soc_start is not None else None,
-        soc_end_percent=float(soc_end) if soc_end is not None else None,
-        max_power_kw=(
-            float(max_power_w / _W_PER_KW) if max_power_w is not None else None
-        ),
-        current_power_kw=(
-            float(current_power_w / _W_PER_KW) if current_power_w is not None else None
-        ),
-    )
-
-
-async def get_charging_session(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    principal: Principal,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-) -> ChargingSessionDetailResponse:
-    """Get the session aggregate and its read-time summary (F-B2).
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_id: UUID of the aggregate to view.
-        principal: The caller; a session out of their reach is not found.
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
-            a session on another truck or with no truck is not found unless
-            the caller started it (hardening D5). `None` means no limit.
-
-    Returns:
-        The session response plus ``duration_seconds``,
-        ``soc_start_percent``, ``soc_end_percent`` and ``max_power_kw``, all
-        computed now from the stored measurements (never stored).
-
-    Raises:
-        ChargingSessionNotFoundError: If the session does not exist.
-
-    Side Effects:
-        Performs one aggregate query and four measurement queries; does not
-        commit or roll back.
-    """
-    session_record = await _get_charging_session_record(
-        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
-    )
-    return await _build_charging_session_detail_response(db, session_record)
-
-
-async def get_completed_charging_session(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    principal: Principal,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-) -> ChargingSessionDetailResponse:
-    """Get a session a receipt may be shown for (CHG-03).
-
-    A receipt exists only once the charge completed: a PENDING, ACTIVE or
-    ABANDONED session has none.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_id: UUID of the session.
-        principal: The caller; a session out of their reach is not found.
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
-            as for `get_charging_session`; `None` means no limit.
-
-    Returns:
-        The session detail, as `get_charging_session` returns it.
-
-    Raises:
-        ChargingSessionNotFoundError: The session does not exist or is out of
-            the caller's reach.
-        ChargingSessionStateError: The session has not completed.
-
-    Side Effects:
-        The read queries of `get_charging_session`; nothing is written.
-    """
-    session = await get_charging_session(
-        db,
-        session_id,
-        principal=principal,
-        visible_vehicle_ids=visible_vehicle_ids,
-    )
-    if session.status is not SessionStatus.COMPLETED:
-        raise ChargingSessionStateError(
-            f"Session '{session_id}' is {session.status.value}; "
-            "a receipt exists only after the charge completed"
-        )
-    return session
-
-
-async def list_charging_sessions(
-    db: AsyncSession,
-    *,
-    principal: Principal,
-    page: int,
-    page_size: int,
-    station_id: UUID | None = None,
-    connector_id: UUID | None = None,
-    organization_id: UUID | None = None,
-    vehicle_id: UUID | None = None,
-    started_by: UUID | None = None,
-    status: SessionStatus | None = None,
-    started_from: datetime | None = None,
-    started_to: datetime | None = None,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-) -> ChargingSessionListResponse:
-    """Get the most recent sessions matching optional filters (F-B2).
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        principal: The caller; only sessions of their organization are listed
-            (internal staff: all), and a DRIVER-only caller sees just the
-            sessions they started.
-        page: The page, starting at one.
-        page_size: The page size.
-        station_id: Only sessions of this station, if given.
-        connector_id: Only sessions on this connector, if given.
-        organization_id: Only sessions paid by this organization, if given; a
-            caller who cannot reach that organization gets an empty page.
-        vehicle_id: Only sessions attributed to this truck, if given (CHG-07).
-        started_by: Only sessions scanned by this user (the driver at the
-            wheel), if given; a DRIVER-only caller always gets their own.
-        status: Only sessions in this status, if given.
-        started_from: Only sessions with ``started_at >= started_from``;
-            must carry a timezone.
-        started_to: Only sessions with ``started_at < started_to``; must
-            carry a timezone and, with ``started_from``, be after it.
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
-            only sessions on them, plus the ones the caller started, are
-            listed (a session with no truck is hidden, hardening D5). `None`
-            means no limit.
-
-    Returns:
-        The list of sessions and pagination metadata; the items keep the
-        plain session schema (no read-time summary).
-
-    Raises:
-        ChargingSessionInputError: If a time bound lacks a timezone or
-            ``started_to`` is not after ``started_from``.
-
-    Side Effects:
-        Performs one items query and one count query; does not commit or
-        roll back.
-    """
-    normalized_from = (
-        _normalize_utc(started_from, "started_from")
-        if started_from is not None
-        else None
-    )
-    normalized_to = (
-        _normalize_utc(started_to, "started_to") if started_to is not None else None
-    )
-    if (
-        normalized_from is not None
-        and normalized_to is not None
-        and normalized_to <= normalized_from
-    ):
-        raise ChargingSessionInputError("started_to must be after started_from")
-    scope = principal.data_scope
-    if scope is not None and organization_id not in (None, scope):
-        # Another organization's sessions do not exist for this caller.
-        page_window = normalize_page_window(page, page_size)
-        return ChargingSessionListResponse(
-            items=[], total=0, page=page_window.page, page_size=page_window.page_size
-        )
-    filters = ChargingSessionListFilter(
-        station_id=station_id,
-        connector_id=connector_id,
-        organization_id=scope if scope is not None else organization_id,
-        started_by=_session_started_by_scope(principal) or started_by,
-        vehicle_id=vehicle_id,
-        status=status,
-        started_from=normalized_from,
-        started_to=normalized_to,
-        vehicle_ids=visible_vehicle_ids,
-        caller_user_id=principal.user_id if visible_vehicle_ids is not None else None,
-    )
-    return await _build_page_response(
-        ChargingSessionListResponse,
-        page=page,
-        page_size=page_size,
-        list_rows=lambda page_window: charging_session_repository.list_sessions(
-            db,
-            filters=filters,
-            offset=page_window.offset,
-            limit=page_window.page_size,
-        ),
-        count_rows=lambda: charging_session_repository.count_sessions(db, filters),
-        to_item=to_charging_session_response,
-    )
-
-
-async def list_my_charging_sessions(
-    db: AsyncSession,
-    *,
-    principal: Principal,
-    page: int,
-    page_size: int,
-    vehicle_id: UUID | None = None,
-    status: SessionStatus | None = None,
-    started_from: datetime | None = None,
-    started_to: datetime | None = None,
-) -> ChargingSessionListResponse:
-    """List the caller's own charging history, newest first (CHG-04).
-
-    The history follows the person, not the organization they act for now: the
-    scanning user's own wallet pays (BL-13), so every session they started is
-    listed whichever organization it was recorded under.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        principal: The caller; only sessions they started are listed.
-        page: The page, starting at one.
-        page_size: The page size.
-        vehicle_id: Only sessions attributed to this truck, if given.
-        status: Only sessions in this status, if given.
-        started_from: Inclusive lower bound on ``started_at`` (timezone needed).
-        started_to: Exclusive upper bound on ``started_at`` (timezone needed).
-
-    Returns:
-        The caller's sessions and pagination metadata.
-
-    Raises:
-        ChargingSessionInputError: A time bound lacks a timezone or
-            ``started_to`` is not after ``started_from``.
-    """
-    normalized_from = (
-        _normalize_utc(started_from, "started_from")
-        if started_from is not None
-        else None
-    )
-    normalized_to = (
-        _normalize_utc(started_to, "started_to") if started_to is not None else None
-    )
-    if (
-        normalized_from is not None
-        and normalized_to is not None
-        and normalized_to <= normalized_from
-    ):
-        raise ChargingSessionInputError("started_to must be after started_from")
-    filters = ChargingSessionListFilter(
-        started_by=principal.user_id,
-        vehicle_id=vehicle_id,
-        status=status,
-        started_from=normalized_from,
-        started_to=normalized_to,
-    )
-    return await _build_page_response(
-        ChargingSessionListResponse,
-        page=page,
-        page_size=page_size,
-        list_rows=lambda page_window: charging_session_repository.list_sessions(
-            db,
-            filters=filters,
-            offset=page_window.offset,
-            limit=page_window.page_size,
-        ),
-        count_rows=lambda: charging_session_repository.count_sessions(db, filters),
-        to_item=to_charging_session_response,
-    )
-
-
-async def list_charging_session_meter_values(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    principal: Principal,
-    page: int,
-    page_size: int,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-) -> ChargingSessionMeterValueListResponse:
-    """Get paginated energy-register samples for the ``/meter-values`` endpoint.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_id: UUID of the session whose meter to view.
-        principal: The caller; a session out of their reach is not found.
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
-            as in ``get_charging_session``; `None` means no limit.
-        page: The page, starting at one.
-        page_size: The page size.
-
-    Returns:
-        The meter response and pagination metadata.
-
-    Raises:
-        ChargingSessionNotFoundError: If the session does not exist.
-
-    Side Effects:
-        Performs one session lookup and two measurement queries
-        (items/count).
-    """
-    await _get_charging_session_record(
-        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
-    )
-    return await _build_page_response(
-        ChargingSessionMeterValueListResponse,
-        page=page,
-        page_size=page_size,
-        list_rows=lambda page_window: (
-            charging_session_repository.list_energy_measurements(
-                db, session_id, offset=page_window.offset, limit=page_window.page_size
-            )
-        ),
-        count_rows=lambda: charging_session_repository.count_energy_measurements(
-            db, session_id
-        ),
-        to_item=to_charging_session_meter_value_response,
-    )
-
-
-async def list_charging_session_measurements(
-    db: AsyncSession,
-    session_id: UUID,
-    *,
-    principal: Principal,
-    measurand: str | None,
-    page: int,
-    page_size: int,
-    visible_vehicle_ids: frozenset[UUID] | None = None,
-) -> ChargingSessionMeasurementListResponse:
-    """Get paginated measurements (any measurand) for the monitoring endpoint.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        session_id: UUID of the session whose measurements to view.
-        principal: The caller; a session out of their reach is not found.
-        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
-            as in ``get_charging_session``; `None` means no limit.
-        measurand: Return only this measurand, or all of them if ``None``.
-        page: The page, starting at one.
-        page_size: The page size.
-
-    Returns:
-        The measurements and pagination metadata.
-
-    Raises:
-        ChargingSessionNotFoundError: If the session does not exist.
-
-    Side Effects:
-        Performs one session lookup and two measurement queries (items and
-        count).
-    """
-    await _get_charging_session_record(
-        db, session_id, principal, visible_vehicle_ids=visible_vehicle_ids
-    )
-    return await _build_page_response(
-        ChargingSessionMeasurementListResponse,
-        page=page,
-        page_size=page_size,
-        list_rows=lambda page_window: charging_session_repository.list_measurements(
-            db,
-            session_id,
-            measurand=measurand,
-            offset=page_window.offset,
-            limit=page_window.page_size,
-        ),
-        count_rows=lambda: charging_session_repository.count_measurements(
-            db, session_id, measurand=measurand
-        ),
-        to_item=ChargingSessionMeasurementResponse.model_validate,
-    )
-
-
-def to_charging_session_meter_value_response(
-    measurement_record: ChargingSessionMeasurementModel,
-) -> ChargingSessionMeterValueResponse:
-    """Convert an energy measurement into the ``/meter-values`` response schema.
-
-    The response contract predates the unified measurements table and is kept
-    unchanged: ``value_wh`` is the measurement's canonical Wh ``value``, shown
-    with three decimals like the ``Numeric(24, 3)`` column it used to come
-    from (the new column keeps six for non-energy measurands).
-
-    Args:
-        measurement_record: An energy-register measurement queried by the
-            repository.
-
-    Returns:
-        A canonical Wh meter response.
-    """
-    return ChargingSessionMeterValueResponse(
-        meter_value_id=measurement_record.measurement_id,
-        sampled_at=measurement_record.sampled_at,
-        session_id=measurement_record.session_id,
-        value_wh=measurement_record.value.quantize(Decimal("0.001")),
-    )
 
 
 async def create_pending_session(
@@ -1157,7 +482,7 @@ async def activate_pending_session(
         raise ChargingSessionInputError(
             f"id_token is empty or exceeds {ID_TOKEN_MAX_LENGTH} characters"
         )
-    started_at_utc = _normalize_utc(started_at, "started_at")
+    started_at_utc = session_access.normalize_utc(started_at, "started_at")
     validated_meter_start_wh = _validate_energy(meter_start_wh, "meter_start_wh")
     if validated_meter_start_wh is None:
         raise ChargingSessionInputError("meter_start_wh is required to start a session")
@@ -1261,7 +586,7 @@ async def complete_session(
     normalized_transaction_id = transaction_id.strip()
     if not normalized_transaction_id:
         raise ChargingSessionInputError("transaction_id is empty")
-    ended_at_utc = _normalize_utc(ended_at, "ended_at")
+    ended_at_utc = session_access.normalize_utc(ended_at, "ended_at")
     validated_meter_stop_wh = _validate_energy(meter_stop_wh, "meter_stop_wh")
     if stop_reason is not None and len(stop_reason) > STOP_REASON_MAX_LENGTH:
         raise ChargingSessionInputError(
@@ -1379,7 +704,7 @@ async def resolve_session_ended_event(
         Locks the session row (a stop arriving at the same moment runs before
         or after) and reads its newest outlet energy measurement.
     """
-    session_record = await _get_charging_session_record(
+    session_record = await session_access.get_charging_session_record(
         db, session_id, principal, for_update=True
     )
     if session_record.status is SessionStatus.COMPLETED:
@@ -1439,7 +764,7 @@ async def force_close_session(
         Updates the session and runs the session-ended hooks in the caller's
         transaction; logs a warning with the staff member and the reason.
     """
-    session_record = await _get_charging_session_record(
+    session_record = await session_access.get_charging_session_record(
         db, session_id, principal, for_update=True
     )
     if session_record.status is not SessionStatus.ACTIVE:
@@ -1463,7 +788,9 @@ async def force_close_session(
             "close_reason": reason,
         },
     )
-    return await _build_charging_session_detail_response(db, session_record)
+    return await session_mappers.build_charging_session_detail_response(
+        db, session_record
+    )
 
 
 async def ingest_meter_values(
@@ -1502,7 +829,7 @@ async def ingest_meter_values(
         boundary.
     """
     session_record = await _get_open_charging_session_record(db, session_id)
-    sampled_at = _normalize_utc(sample.sampled_at, "sampled_at")
+    sampled_at = session_access.normalize_utc(sample.sampled_at, "sampled_at")
     value_wh = _validate_energy(sample.value_wh, "value_wh")
     if value_wh is None:
         raise ChargingSessionInputError("value_wh is required")
@@ -1581,341 +908,6 @@ async def ingest_measurements(
         )
     _touch_session(session_record)
     return len(validated_samples)
-
-
-async def get_station_energy_summary(
-    db: AsyncSession,
-    *,
-    station_id: UUID,
-    start_time: datetime,
-    end_time: datetime,
-) -> StationEnergySummaryResponse:
-    """Total energy sold at a station within a time window (F-C5).
-
-    Pure aggregation over already-stored session data; no writes.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        station_id: UUID of the station to aggregate over.
-        start_time: Inclusive lower bound on ``ended_at``.
-        end_time: Inclusive upper bound on ``ended_at``.
-
-    Returns:
-        Total energy (kWh) and count of completed sessions ending within
-        the window. An unknown ``station_id`` returns a zero summary rather
-        than a 404 - this domain doesn't own station existence, and a
-        report endpoint legitimately answers "no sessions" for one.
-
-    Raises:
-        ChargingSessionInputError: If either timestamp lacks a timezone, or
-            ``end_time`` isn't after ``start_time``.
-    """
-    energy_total = await resolve_station_energy_total(
-        db, station_id=station_id, start_time=start_time, end_time=end_time
-    )
-    return StationEnergySummaryResponse(
-        station_id=station_id,
-        start_time=_normalize_utc(start_time, "start_time"),
-        end_time=_normalize_utc(end_time, "end_time"),
-        total_energy_kwh=float(energy_total.total_energy_wh / _WH_PER_KWH),
-        session_count=energy_total.session_count,
-    )
-
-
-async def resolve_station_energy_total(
-    db: AsyncSession,
-    *,
-    station_id: UUID,
-    start_time: datetime,
-    end_time: datetime,
-) -> StationEnergyTotal:
-    """Total energy sold at a station within a window, as a DTO (F-C5).
-
-    Public entry point for ``charging_stations``' all-stations report, and
-    the core of ``get_station_energy_summary``: completed sessions of the
-    station whose ``ended_at`` falls within the inclusive window, summing
-    ``energy_delivered_wh``.
-
-    Args:
-        db: The async session owned by the caller's entry boundary.
-        station_id: UUID of the station to aggregate over.
-        start_time: Inclusive lower bound on ``ended_at``; must carry a
-            timezone.
-        end_time: Inclusive upper bound on ``ended_at``; must carry a
-            timezone and be after ``start_time``.
-
-    Returns:
-        The total in Wh and the session count; zero for a station with no
-        matching session (existence is not checked here).
-
-    Raises:
-        ChargingSessionInputError: If either timestamp lacks a timezone, or
-            ``end_time`` isn't after ``start_time``.
-
-    Side Effects:
-        Performs one aggregate query; does not commit or roll back.
-    """
-    normalized_start = _normalize_utc(start_time, "start_time")
-    normalized_end = _normalize_utc(end_time, "end_time")
-    if normalized_end <= normalized_start:
-        raise ChargingSessionInputError("end_time must be after start_time")
-    (
-        total_energy_wh,
-        session_count,
-    ) = await charging_session_repository.get_station_energy_summary(
-        db,
-        station_id=station_id,
-        start_time=normalized_start,
-        end_time=normalized_end,
-    )
-    return StationEnergyTotal(
-        station_id=station_id,
-        total_energy_wh=total_energy_wh,
-        session_count=session_count,
-    )
-
-
-def _floor_to_bucket_start(
-    instant: datetime,
-    *,
-    granularity: EnergySeriesGranularity,
-    report_zone: ZoneInfo,
-) -> datetime:
-    """Return the UTC start of the report-time-zone bucket containing an instant.
-
-    Args:
-        instant: A timezone-aware instant.
-        granularity: Hour or day buckets.
-        report_zone: The time zone that defines an hour/day (D4).
-
-    Returns:
-        The bucket's start, as a UTC instant.
-    """
-    local_instant = instant.astimezone(report_zone)
-    if granularity is EnergySeriesGranularity.HOUR:
-        local_start = local_instant.replace(minute=0, second=0, microsecond=0)
-    else:
-        local_start = local_instant.replace(hour=0, minute=0, second=0, microsecond=0)
-    return local_start.astimezone(timezone.utc)
-
-
-def _next_bucket_start(
-    bucket_start: datetime,
-    *,
-    granularity: EnergySeriesGranularity,
-    report_zone: ZoneInfo,
-) -> datetime:
-    """Return the UTC start of the bucket following ``bucket_start``.
-
-    Hours advance by one absolute hour; days advance to the next local
-    midnight, so a daylight-saving day of 23 or 25 hours stays one bucket.
-
-    Args:
-        bucket_start: A bucket start produced by ``_floor_to_bucket_start``.
-        granularity: Hour or day buckets.
-        report_zone: The time zone that defines a day.
-
-    Returns:
-        The next bucket's start, as a UTC instant.
-    """
-    if granularity is EnergySeriesGranularity.HOUR:
-        return bucket_start + timedelta(hours=1)
-    next_local_date = bucket_start.astimezone(report_zone).date() + timedelta(days=1)
-    return datetime(
-        next_local_date.year,
-        next_local_date.month,
-        next_local_date.day,
-        tzinfo=report_zone,
-    ).astimezone(timezone.utc)
-
-
-def build_energy_series_bucket_starts(
-    *,
-    start_time: datetime,
-    end_time: datetime,
-    granularity: EnergySeriesGranularity,
-    report_zone: ZoneInfo,
-) -> list[datetime]:
-    """List every bucket start of a window, for a dense series (F-C5, D4).
-
-    Args:
-        start_time: Inclusive window start (UTC).
-        end_time: Exclusive window end (UTC), after ``start_time``.
-        granularity: Hour or day buckets.
-        report_zone: The time zone buckets are cut in.
-
-    Returns:
-        UTC bucket starts in time order, from the bucket containing
-        ``start_time`` to the last one starting before ``end_time``.
-    """
-    bucket_starts: list[datetime] = []
-    bucket_start = _floor_to_bucket_start(
-        start_time, granularity=granularity, report_zone=report_zone
-    )
-    while bucket_start < end_time:
-        bucket_starts.append(bucket_start)
-        bucket_start = _next_bucket_start(
-            bucket_start, granularity=granularity, report_zone=report_zone
-        )
-    return bucket_starts
-
-
-def calculate_energy_deltas(
-    readings: Sequence[tuple[datetime, Decimal]],
-) -> list[tuple[datetime, Decimal]]:
-    """Turn one session's energy-register readings into timed deltas (D5).
-
-    Rule:
-        Readings are sorted by time (stable, so readings sharing a time keep
-        their given order); each consecutive pair yields ``(later reading's
-        time, later value - earlier value)``. A negative delta (a register
-        that went backwards, e.g. a meter reset) yields nothing:
-        reconciling it is the deferred reliability path (``deferred.md`` item
-        27), and a negative bucket would be meaningless.
-
-    Args:
-        readings: ``(time, register_wh)`` pairs of one session, in any order.
-
-    Returns:
-        ``(time, delta_wh)`` pairs, one per non-negative consecutive delta.
-    """
-    ordered_readings = sorted(readings, key=lambda reading: reading[0])
-    deltas: list[tuple[datetime, Decimal]] = []
-    for (_, previous_wh), (current_at, current_wh) in zip(
-        ordered_readings, ordered_readings[1:], strict=False
-    ):
-        delta_wh = current_wh - previous_wh
-        if delta_wh >= 0:
-            deltas.append((current_at, delta_wh))
-    return deltas
-
-
-def _session_energy_readings(
-    session_record: ChargingSessionModel,
-    samples: Sequence[tuple[datetime, Decimal]],
-) -> list[tuple[datetime, Decimal]]:
-    """Assemble every energy-register reading known for one session.
-
-    The stored samples alone miss energy: ``meter_start_wh`` (taken at
-    ``started_at``) and the charger's closing ``meter_stop_wh`` (taken at
-    ``ended_at``) are declared on the session row, not stored as samples.
-    Adding both as readings makes a finished session's deltas sum to its
-    delivered energy; when the closing reading is also a stored sample it only
-    adds a zero delta.
-
-    Args:
-        session_record: The session.
-        samples: The session's stored outlet energy samples, ``(sampled_at,
-            value_wh)``.
-
-    Returns:
-        The start reading (if any), the samples, then the closing reading (if
-        any), in that order before sorting by time.
-    """
-    readings: list[tuple[datetime, Decimal]] = []
-    if session_record.meter_start_wh is not None and session_record.started_at:
-        readings.append((session_record.started_at, session_record.meter_start_wh))
-    readings.extend(samples)
-    if session_record.meter_stop_wh is not None and session_record.ended_at:
-        readings.append((session_record.ended_at, session_record.meter_stop_wh))
-    return readings
-
-
-async def get_station_energy_series(
-    db: AsyncSession,
-    *,
-    station_id: UUID,
-    start_time: datetime,
-    end_time: datetime,
-    granularity: EnergySeriesGranularity,
-) -> StationEnergySeriesResponse:
-    """Energy metered at a station per hour or day within a window (F-C5).
-
-    Rule (decisions D4 and D5 of the happy-path completion planner):
-        1. The window is ``[start_time, end_time)``, timezone-aware, at most
-           ``CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS`` long.
-        2. Buckets are clock hours or calendar days of
-           ``APP_REPORT_TIMEZONE``, returned as UTC instants; every bucket
-           from the one containing ``start_time`` is listed (dense series).
-        3. For each session of the station that overlaps the window (active
-           sessions included), consecutive energy-register readings yield
-           deltas (``calculate_energy_deltas``); a delta belongs to the
-           bucket of its later reading and counts only when that reading
-           falls inside the window - so energy crossing a bucket boundary is
-           split at the readings, not attributed whole at ``ended_at``.
-
-    Args:
-        db: The async session owned by the HTTP boundary.
-        station_id: UUID of the station. An unknown station yields an
-            all-zero series, like ``get_station_energy_summary``.
-        start_time: Inclusive window start; must carry a timezone.
-        end_time: Exclusive window end; must carry a timezone.
-        granularity: ``hour`` or ``day``.
-
-    Returns:
-        The dense series and its total, in kWh.
-
-    Raises:
-        ChargingSessionInputError: If a bound lacks a timezone, ``end_time``
-            is not after ``start_time``, or the window is longer than
-            ``CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS``.
-
-    Side Effects:
-        Performs one session query plus one sample query per overlapping
-        session (deliberately unbatched); does not commit or roll back.
-    """
-    normalized_start = _normalize_utc(start_time, "start_time")
-    normalized_end = _normalize_utc(end_time, "end_time")
-    if normalized_end <= normalized_start:
-        raise ChargingSessionInputError("end_time must be after start_time")
-    max_range = timedelta(days=settings.CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS)
-    if normalized_end - normalized_start > max_range:
-        raise ChargingSessionInputError(
-            "The time window must not exceed "
-            f"{settings.CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS} days"
-        )
-    report_zone = ZoneInfo(settings.APP_REPORT_TIMEZONE)
-    bucket_starts = build_energy_series_bucket_starts(
-        start_time=normalized_start,
-        end_time=normalized_end,
-        granularity=granularity,
-        report_zone=report_zone,
-    )
-    bucket_energy_wh = [Decimal(0)] * len(bucket_starts)
-
-    sessions = await charging_session_repository.list_sessions_by_station_in_window(
-        db, station_id, start_time=normalized_start, end_time=normalized_end
-    )
-    for session_record in sessions:
-        samples = await charging_session_repository.list_energy_samples_before(
-            db, session_record.session_id, end_time=normalized_end
-        )
-        readings = _session_energy_readings(session_record, samples)
-        for delta_at, delta_wh in calculate_energy_deltas(readings):
-            if not normalized_start <= delta_at < normalized_end:
-                continue
-            # bucket_starts[0] <= normalized_start <= delta_at, so the index
-            # is never negative.
-            bucket_index = bisect.bisect_right(bucket_starts, delta_at) - 1
-            bucket_energy_wh[bucket_index] += delta_wh
-
-    return StationEnergySeriesResponse(
-        station_id=station_id,
-        start_time=normalized_start,
-        end_time=normalized_end,
-        granularity=granularity,
-        report_timezone=settings.APP_REPORT_TIMEZONE,
-        total_energy_kwh=float(sum(bucket_energy_wh, Decimal(0)) / _WH_PER_KWH),
-        items=[
-            StationEnergySeriesBucketResponse(
-                bucket_start=bucket_start,
-                energy_kwh=float(energy_wh / _WH_PER_KWH),
-            )
-            for bucket_start, energy_wh in zip(
-                bucket_starts, bucket_energy_wh, strict=True
-            )
-        ],
-    )
 
 
 async def has_open_session_by_user(db: AsyncSession, user_id: UUID) -> bool:
@@ -2107,7 +1099,9 @@ async def authorize_session_stop(
         ChargingSessionStateError: The session is neither ``ACTIVE`` nor
             ``PENDING``.
     """
-    session_record = await _get_charging_session_record(db, session_id, principal)
+    session_record = await session_access.get_charging_session_record(
+        db, session_id, principal
+    )
     if session_record.started_by != principal.user_id and not principal.is_internal:
         raise ChargingSessionStopDeniedError(
             "Only the person who started this charge, or our staff, may stop it"
@@ -2116,7 +1110,7 @@ async def authorize_session_stop(
         raise ChargingSessionStateError(
             f"Session '{session_id}' is {session_record.status.value}, not active"
         )
-    return to_charging_session_response(session_record)
+    return session_mappers.to_charging_session_response(session_record)
 
 
 async def prepare_session_stop(
@@ -2290,4 +1284,111 @@ async def resolve_session_command_reference(
         ocpp_transaction_id=session_record.ocpp_transaction_id,
         station_id=session_record.station_id,
         status=session_record.status,
+    )
+
+
+async def get_charging_session(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
+) -> ChargingSessionDetailResponse:
+    """Get the session aggregate and its read-time summary (F-B2).
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the aggregate to view.
+        principal: The caller; a session out of their reach is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10);
+            a session on another truck or with no truck is not found unless
+            the caller started it (hardening D5). `None` means no limit.
+
+    Returns:
+        The session response plus ``duration_seconds``,
+        ``soc_start_percent``, ``soc_end_percent`` and ``max_power_kw``, all
+        computed now from the stored measurements (never stored).
+
+    Raises:
+        ChargingSessionNotFoundError: If the session does not exist.
+
+    Side Effects:
+        Performs one aggregate query and four measurement queries; does not
+        commit or roll back.
+    """
+    return await session_read_service.get_charging_session(
+        db, session_id, principal=principal, visible_vehicle_ids=visible_vehicle_ids
+    )
+
+
+async def get_completed_charging_session(
+    db: AsyncSession,
+    session_id: UUID,
+    *,
+    principal: Principal,
+    visible_vehicle_ids: frozenset[UUID] | None = None,
+) -> ChargingSessionDetailResponse:
+    """Get a session a receipt may be shown for (CHG-03).
+
+    A receipt exists only once the charge completed: a PENDING, ACTIVE or
+    ABANDONED session has none.
+
+    Args:
+        db: The async session owned by the HTTP boundary.
+        session_id: UUID of the session.
+        principal: The caller; a session out of their reach is not found.
+        visible_vehicle_ids: Trucks the caller's fleet limit allows (FL-10),
+            as for `get_charging_session`; `None` means no limit.
+
+    Returns:
+        The session detail, as `get_charging_session` returns it.
+
+    Raises:
+        ChargingSessionNotFoundError: The session does not exist or is out of
+            the caller's reach.
+        ChargingSessionStateError: The session has not completed.
+
+    Side Effects:
+        The read queries of `get_charging_session`; nothing is written.
+    """
+    return await session_read_service.get_completed_charging_session(
+        db, session_id, principal=principal, visible_vehicle_ids=visible_vehicle_ids
+    )
+
+
+async def resolve_station_energy_total(
+    db: AsyncSession,
+    *,
+    station_id: UUID,
+    start_time: datetime,
+    end_time: datetime,
+) -> StationEnergyTotal:
+    """Total energy sold at a station within a window, as a DTO (F-C5).
+
+    Public entry point for ``charging_stations``' all-stations report, and
+    the core of ``get_station_energy_summary``: completed sessions of the
+    station whose ``ended_at`` falls within the inclusive window, summing
+    ``energy_delivered_wh``.
+
+    Args:
+        db: The async session owned by the caller's entry boundary.
+        station_id: UUID of the station to aggregate over.
+        start_time: Inclusive lower bound on ``ended_at``; must carry a
+            timezone.
+        end_time: Inclusive upper bound on ``ended_at``; must carry a
+            timezone and be after ``start_time``.
+
+    Returns:
+        The total in Wh and the session count; zero for a station with no
+        matching session (existence is not checked here).
+
+    Raises:
+        ChargingSessionInputError: If either timestamp lacks a timezone, or
+            ``end_time`` isn't after ``start_time``.
+
+    Side Effects:
+        Performs one aggregate query; does not commit or roll back.
+    """
+    return await session_report_service.resolve_station_energy_total(
+        db, station_id=station_id, start_time=start_time, end_time=end_time
     )

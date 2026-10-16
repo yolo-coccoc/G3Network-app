@@ -13,8 +13,8 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_sessions.read_service as session_read_service
 import app.domains.charging_sessions.repository as charging_session_repository
-import app.domains.charging_sessions.service as charging_session_service
 import app.domains.charging_stations.access as station_access
 import app.domains.charging_stations.location_service as location_service
 import app.domains.charging_stations.repository as charging_stations_repository
@@ -336,7 +336,7 @@ async def test_charging_session_of_another_organization_is_not_found(
 
     for principal in (driver, manager):
         with pytest.raises(ChargingSessionNotFoundError):
-            await charging_session_service.get_charging_session(
+            await session_read_service.get_charging_session(
                 fake_db_session(), uuid4(), principal=principal
             )
 

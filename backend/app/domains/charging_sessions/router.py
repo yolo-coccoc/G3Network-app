@@ -16,6 +16,8 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_sessions.read_service as session_read_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.service as charging_session_service
 from app.domains.charging_sessions.schemas import (
     ChargingSessionDetailResponse,
@@ -124,7 +126,7 @@ async def list_my_charging_sessions_endpoint(
         ChargingSessionInputError: A time bound lacks a timezone or
             ``started_to`` is not after ``started_from`` (HTTP 400).
     """
-    return await charging_session_service.list_my_charging_sessions(
+    return await session_read_service.list_my_charging_sessions(
         db,
         principal=principal,
         page=page_query.page,
@@ -189,7 +191,7 @@ async def list_charging_sessions_endpoint(
         ChargingSessionInputError: A time bound lacks a timezone or
             ``started_to`` is not after ``started_from`` (HTTP 400).
     """
-    return await charging_session_service.list_charging_sessions(
+    return await session_read_service.list_charging_sessions(
         db,
         page=page_query.page,
         page_size=page_query.page_size,
@@ -235,7 +237,7 @@ async def get_charging_session_endpoint(
         ChargingSessionNotFoundError: The session does not exist or is out of
             the caller's reach (HTTP 404).
     """
-    return await charging_session_service.get_charging_session(
+    return await session_read_service.get_charging_session(
         db,
         session_id,
         principal=principal,
@@ -309,7 +311,7 @@ async def list_charging_session_meter_values_endpoint(
     Raises:
         ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    return await charging_session_service.list_charging_session_meter_values(
+    return await session_read_service.list_charging_session_meter_values(
         db,
         session_id,
         page=page_query.page,
@@ -358,7 +360,7 @@ async def list_charging_session_measurements_endpoint(
     Raises:
         ChargingSessionNotFoundError: The session does not exist (HTTP 404).
     """
-    return await charging_session_service.list_charging_session_measurements(
+    return await session_read_service.list_charging_session_measurements(
         db,
         session_id,
         measurand=measurand,
@@ -399,7 +401,7 @@ async def get_station_energy_summary_endpoint(
         ChargingSessionInputError: Either timestamp lacks a timezone or
             ``end_time`` isn't after ``start_time`` (HTTP 400).
     """
-    return await charging_session_service.get_station_energy_summary(
+    return await session_report_service.get_station_energy_summary(
         db,
         station_id=station_id,
         start_time=start_time,
@@ -440,7 +442,7 @@ async def get_station_energy_series_endpoint(
             not after ``start_time``, or the window exceeds
             ``CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS`` (HTTP 400).
     """
-    return await charging_session_service.get_station_energy_series(
+    return await session_report_service.get_station_energy_series(
         db,
         station_id=station_id,
         start_time=start_time,

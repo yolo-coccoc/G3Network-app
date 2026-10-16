@@ -8,8 +8,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_sessions.mappers as session_mappers
+import app.domains.charging_sessions.read_service as session_read_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.repository as charging_repository
-import app.domains.charging_sessions.service as charging_service
 from app.domains.charging_sessions.exceptions import ChargingSessionInputError
 from app.domains.charging_sessions.models import ChargingSessionModel
 from app.domains.charging_sessions.types import (
@@ -34,19 +36,19 @@ def test_duration_uses_ended_at_or_now_and_is_never_negative() -> None:
     session.started_at = T0
     session.ended_at = T0 + timedelta(minutes=45)
 
-    assert charging_service.calculate_session_duration_seconds(
+    assert session_mappers.calculate_session_duration_seconds(
         session, now=T0 + timedelta(hours=5)
     ) == (45 * 60)
 
     session.ended_at = None
     assert (
-        charging_service.calculate_session_duration_seconds(
+        session_mappers.calculate_session_duration_seconds(
             session, now=T0 + timedelta(seconds=90)
         )
         == 90
     )
     assert (
-        charging_service.calculate_session_duration_seconds(
+        session_mappers.calculate_session_duration_seconds(
             session, now=T0 - timedelta(seconds=5)
         )
         == 0
@@ -104,7 +106,7 @@ async def test_session_detail_adds_the_read_time_summary(
     monkeypatch.setattr(charging_repository, "find_last_measurement_value", last_value)
     monkeypatch.setattr(charging_repository, "find_max_measurement_value", max_value)
 
-    detail = await charging_service.get_charging_session(
+    detail = await session_read_service.get_charging_session(
         fake_db_session(), session.session_id, principal=build_internal_principal()
     )
 
@@ -138,7 +140,7 @@ async def test_session_detail_without_measurements_has_null_summary_fields(
     monkeypatch.setattr(charging_repository, "find_last_measurement_value", no_value)
     monkeypatch.setattr(charging_repository, "find_max_measurement_value", no_value)
 
-    detail = await charging_service.get_charging_session(
+    detail = await session_read_service.get_charging_session(
         fake_db_session(), session.session_id, principal=build_internal_principal()
     )
 
@@ -178,7 +180,7 @@ async def test_list_filters_reach_both_queries_normalized_to_utc(
     monkeypatch.setattr(charging_repository, "count_sessions", count_sessions)
     started_from = datetime(2026, 10, 1, 7, 0, tzinfo=HO_CHI_MINH)
 
-    await charging_service.list_charging_sessions(
+    await session_read_service.list_charging_sessions(
         fake_db_session(),
         page=1,
         page_size=10,
@@ -206,7 +208,7 @@ async def test_list_filters_reach_both_queries_normalized_to_utc(
 async def test_list_filters_reject_naive_or_backward_time_bounds() -> None:
     """A naive bound or started_to <= started_from is a 400, before any query."""
     with pytest.raises(ChargingSessionInputError, match="started_from"):
-        await charging_service.list_charging_sessions(
+        await session_read_service.list_charging_sessions(
             fake_db_session(),
             page=1,
             page_size=10,
@@ -214,7 +216,7 @@ async def test_list_filters_reject_naive_or_backward_time_bounds() -> None:
             principal=build_internal_principal(),
         )
     with pytest.raises(ChargingSessionInputError, match="started_to"):
-        await charging_service.list_charging_sessions(
+        await session_read_service.list_charging_sessions(
             fake_db_session(),
             page=1,
             page_size=10,
@@ -229,7 +231,7 @@ async def test_list_filters_reject_naive_or_backward_time_bounds() -> None:
 
 def test_day_buckets_are_cut_at_local_midnight() -> None:
     """D4: a day is a calendar day of APP_REPORT_TIMEZONE, returned as UTC."""
-    bucket_starts = charging_service.build_energy_series_bucket_starts(
+    bucket_starts = session_report_service.build_energy_series_bucket_starts(
         start_time=datetime(2026, 9, 30, 20, 0, tzinfo=timezone.utc),
         end_time=datetime(2026, 10, 2, 17, 0, tzinfo=timezone.utc),
         granularity=EnergySeriesGranularity.DAY,
@@ -245,7 +247,7 @@ def test_day_buckets_are_cut_at_local_midnight() -> None:
 
 def test_hour_buckets_cover_the_window_densely() -> None:
     """Every clock hour from the one containing start_time up to end_time."""
-    bucket_starts = charging_service.build_energy_series_bucket_starts(
+    bucket_starts = session_report_service.build_energy_series_bucket_starts(
         start_time=T0 + timedelta(minutes=30),
         end_time=T0 + timedelta(hours=3),
         granularity=EnergySeriesGranularity.HOUR,
@@ -257,7 +259,7 @@ def test_hour_buckets_cover_the_window_densely() -> None:
 
 def test_energy_deltas_follow_time_order_and_skip_a_decreasing_register() -> None:
     """D5: each delta is stamped with its later reading; a reset adds nothing."""
-    deltas = charging_service.calculate_energy_deltas(
+    deltas = session_report_service.calculate_energy_deltas(
         [
             (T0 + timedelta(minutes=20), Decimal("1600")),
             (T0, Decimal("1000")),
@@ -314,7 +316,7 @@ async def test_energy_series_splits_a_session_across_a_bucket_boundary(
     )
     monkeypatch.setattr(charging_repository, "list_energy_samples_before", list_samples)
 
-    series = await charging_service.get_station_energy_series(
+    series = await session_report_service.get_station_energy_series(
         fake_db_session(),
         station_id=station_id,
         start_time=T0,
@@ -367,7 +369,7 @@ async def test_energy_series_counts_only_deltas_whose_later_reading_is_inside(
     )
     monkeypatch.setattr(charging_repository, "list_energy_samples_before", list_samples)
 
-    series = await charging_service.get_station_energy_series(
+    series = await session_report_service.get_station_energy_series(
         fake_db_session(),
         station_id=session.station_id,
         start_time=T0,
@@ -384,7 +386,7 @@ async def test_energy_series_rejects_a_window_longer_than_the_setting() -> None:
     too_long = timedelta(days=settings.CHARGING_ENERGY_SERIES_MAX_RANGE_DAYS, hours=1)
 
     with pytest.raises(ChargingSessionInputError, match="must not exceed"):
-        await charging_service.get_station_energy_series(
+        await session_report_service.get_station_energy_series(
             fake_db_session(),
             station_id=uuid4(),
             start_time=T0,
@@ -392,7 +394,7 @@ async def test_energy_series_rejects_a_window_longer_than_the_setting() -> None:
             granularity=EnergySeriesGranularity.DAY,
         )
     with pytest.raises(ChargingSessionInputError, match="start_time"):
-        await charging_service.get_station_energy_series(
+        await session_report_service.get_station_energy_series(
             fake_db_session(),
             station_id=uuid4(),
             start_time=datetime(2026, 10, 1),
@@ -415,7 +417,7 @@ async def test_resolve_station_energy_total_returns_a_dto_in_wh(
         charging_repository, "get_station_energy_summary", energy_summary
     )
 
-    total = await charging_service.resolve_station_energy_total(
+    total = await session_report_service.resolve_station_energy_total(
         fake_db_session(),
         station_id=station_id,
         start_time=T0,

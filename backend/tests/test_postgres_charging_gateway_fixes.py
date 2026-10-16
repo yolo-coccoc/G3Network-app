@@ -25,6 +25,7 @@ from sqlalchemy.pool import NullPool
 
 import app.api.charging_session_flow as charging_session_flow
 import app.domains.billing.router as billing_router
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.router as charging_sessions_router
 import app.domains.charging_sessions.service as charging_sessions_service
 from app.domains.billing.schemas import TariffCreateRequest, TariffVersionPublishRequest
@@ -291,7 +292,7 @@ async def test_meter_going_backwards_is_left_out_of_the_station_total(
         )
         now = datetime.now(timezone.utc)
         async with session_factory.begin() as db:
-            total = await charging_sessions_service.resolve_station_energy_total(
+            total = await session_report_service.resolve_station_energy_total(
                 db,
                 station_id=station_id,
                 start_time=now - timedelta(days=30),

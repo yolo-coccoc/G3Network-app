@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.domains.charging_sessions.read_service as session_read_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
 from app.domains.charging_sessions.exceptions import (
@@ -322,7 +324,7 @@ async def test_get_station_energy_summary_converts_wh_to_kwh(
         charging_repository, "get_station_energy_summary", energy_summary
     )
 
-    summary = await charging_service.get_station_energy_summary(
+    summary = await session_report_service.get_station_energy_summary(
         fake_db_session(), station_id=station_id, start_time=start, end_time=end
     )
 
@@ -335,7 +337,7 @@ async def test_get_station_energy_summary_converts_wh_to_kwh(
 async def test_get_station_energy_summary_rejects_naive_timestamp() -> None:
     """A start_time/end_time with no timezone is rejected before any query runs."""
     with pytest.raises(ChargingSessionInputError, match="start_time"):
-        await charging_service.get_station_energy_summary(
+        await session_report_service.get_station_energy_summary(
             fake_db_session(),
             station_id=uuid4(),
             start_time=datetime(2026, 9, 1),
@@ -349,7 +351,7 @@ async def test_get_station_energy_summary_rejects_non_positive_range() -> None:
     same_instant = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
     with pytest.raises(ChargingSessionInputError):
-        await charging_service.get_station_energy_summary(
+        await session_report_service.get_station_energy_summary(
             fake_db_session(),
             station_id=uuid4(),
             start_time=same_instant,
@@ -383,7 +385,7 @@ async def test_list_charging_sessions_keeps_a_page_size_below_the_default(
     monkeypatch.setattr(charging_repository, "list_sessions", list_sessions)
     monkeypatch.setattr(charging_repository, "count_sessions", count_sessions)
 
-    response = await charging_service.list_charging_sessions(
+    response = await session_read_service.list_charging_sessions(
         fake_db_session(), page=2, page_size=3, principal=build_internal_principal()
     )
 
@@ -419,7 +421,7 @@ async def test_a_fleet_limited_session_list_passes_the_visible_trucks_and_the_ca
     manager = build_principal(roles=frozenset({UserRole.FLEET_MANAGER}))
     visible_trucks = frozenset({uuid4()})
 
-    await charging_service.list_charging_sessions(
+    await session_read_service.list_charging_sessions(
         fake_db_session(),
         page=1,
         page_size=20,

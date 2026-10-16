@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+import app.domains.charging_sessions.mappers as session_mappers
+import app.domains.charging_sessions.read_service as session_read_service
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
 from app.domains.charging_sessions.exceptions import (
@@ -48,7 +50,7 @@ def test_meter_value_response_contract_is_unchanged_by_the_unified_table() -> No
         measurement_location="Outlet",
     )
 
-    response = charging_service.to_charging_session_meter_value_response(measurement)
+    response = session_mappers.to_charging_session_meter_value_response(measurement)
 
     assert isinstance(response, ChargingSessionMeterValueResponse)
     assert response.meter_value_id == measurement.measurement_id
@@ -257,7 +259,7 @@ async def test_list_measurements_passes_the_measurand_filter_and_paginates(
     monkeypatch.setattr(charging_repository, "list_measurements", list_rows)
     monkeypatch.setattr(charging_repository, "count_measurements", count_rows)
 
-    response = await charging_service.list_charging_session_measurements(
+    response = await session_read_service.list_charging_session_measurements(
         object(),  # type: ignore[arg-type]
         session.session_id,
         measurand="SoC",
@@ -292,7 +294,7 @@ async def test_list_measurements_for_an_unknown_session_raises_not_found(
     monkeypatch.setattr(charging_repository, "get_session_by_id", get_by_id)
 
     with pytest.raises(ChargingSessionNotFoundError):
-        await charging_service.list_charging_session_measurements(
+        await session_read_service.list_charging_session_measurements(
             object(),  # type: ignore[arg-type]
             uuid4(),
             measurand=None,

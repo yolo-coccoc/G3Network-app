@@ -11,6 +11,7 @@ import pytest
 import app.api.charging_session_flow as flow
 import app.domains.billing.repository as billing_repository
 import app.domains.billing.service as billing_service
+import app.domains.charging_sessions.mappers as session_mappers
 import app.domains.charging_sessions.repository as charging_repository
 import app.domains.charging_sessions.service as charging_service
 import app.domains.charging_stations.ocpp.command_loop as command_loop
@@ -699,5 +700,5 @@ def test_the_response_schema_carries_the_derived_energy_of_a_finished_session() 
     )
 
     assert (
-        charging_service.to_charging_session_response(session).energy_delivered_wh == 15
+        session_mappers.to_charging_session_response(session).energy_delivered_wh == 15
     )

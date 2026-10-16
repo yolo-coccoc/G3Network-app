@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.domains.charging_sessions.service as charging_sessions_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_stations.ocpp_state_repository as ocpp_state_repository
 import app.domains.charging_stations.ocpp_state_service as ocpp_state_service
 import app.domains.charging_stations.repository as charging_stations_repository
@@ -506,7 +506,7 @@ async def test_station_energy_totals_rank_every_station_highest_first(
         list_stations,
     )
     monkeypatch.setattr(
-        charging_sessions_service, "resolve_station_energy_total", energy_total
+        session_report_service, "resolve_station_energy_total", energy_total
     )
 
     response = await station_service.list_station_energy_totals(

@@ -28,8 +28,9 @@ from sqlalchemy.pool import NullPool
 import app.api.charging_session_flow as charging_session_flow
 import app.domains.billing.router as billing_router
 import app.domains.billing.service as billing_service
+import app.domains.charging_sessions.read_service as session_read_service
+import app.domains.charging_sessions.report_service as session_report_service
 import app.domains.charging_sessions.repository as charging_repository
-import app.domains.charging_sessions.service as charging_sessions_service
 import app.domains.charging_stations.access as station_access
 import app.domains.charging_stations.command_service as command_service
 import app.domains.charging_stations.evse_service as evse_service
@@ -1470,14 +1471,14 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 )
 
         async with session_factory() as db:
-            hourly = await charging_sessions_service.get_station_energy_series(
+            hourly = await session_report_service.get_station_energy_series(
                 db,
                 station_id=station_id,
                 start_time=t0,
                 end_time=t0 + timedelta(hours=3),
                 granularity=EnergySeriesGranularity.HOUR,
             )
-            daily = await charging_sessions_service.get_station_energy_series(
+            daily = await session_report_service.get_station_energy_series(
                 db,
                 station_id=station_id,
                 start_time=t0,
@@ -1490,7 +1491,7 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 end_time=t0 + timedelta(days=1),
                 principal=build_internal_principal(),
             )
-            completed = await charging_sessions_service.list_charging_sessions(
+            completed = await session_read_service.list_charging_sessions(
                 db,
                 page=1,
                 page_size=10,
@@ -1498,7 +1499,7 @@ async def test_station_energy_series_splits_energy_across_a_bucket_boundary(
                 status=SessionStatus.COMPLETED,
                 principal=build_internal_principal(),
             )
-            active = await charging_sessions_service.list_charging_sessions(
+            active = await session_read_service.list_charging_sessions(
                 db,
                 page=1,
                 page_size=10,
@@ -3721,7 +3722,7 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                 },
             )
             async with session_factory.begin() as db:
-                live = await charging_sessions_service.get_charging_session(
+                live = await session_read_service.get_charging_session(
                     db, scan.session_id, principal=driver
                 )
             assert live.status is SessionStatus.ACTIVE
@@ -3764,7 +3765,7 @@ async def test_qr_charge_flow_scan_remote_start_meter_values_remote_stop_receipt
                         db_session=db,
                     )
                 )
-                history = await charging_sessions_service.list_my_charging_sessions(
+                history = await session_read_service.list_my_charging_sessions(
                     db, principal=driver, page=1, page_size=10
                 )
             assert receipt.energy_delivered_wh == Decimal(500)
