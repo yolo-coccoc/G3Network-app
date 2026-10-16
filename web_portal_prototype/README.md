@@ -7,7 +7,7 @@ and administration, for customers (fleet owners) and for our own teams.
 
 It runs on **mock data only**: it is not connected to the backend, and every
 number, name, price and model specification in it is invented for
-illustration. It does not decide the portal's stack (still open, TT-20 in
+illustration. It is not the start of the real portal, whose stack is now decided (TT-28 in
 [decision-log.md](../docs/decisions/decision-log.md)); it is plain HTML, CSS and
 JavaScript with no build step and no dependencies.
 

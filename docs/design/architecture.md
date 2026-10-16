@@ -470,7 +470,8 @@ Facts only; the reasoning and alternatives are in the
 | Domain boundaries | import-linter, one contract per domain | CV-01 |
 | Quality gate | local pre-commit hook running `make check`; no CI yet | TT-05 |
 | Reverse proxy / API gateway | none in development | IS-02 |
-| Web portal, vehicle app | proposed only (React + Vite, Flutter); decided when their first task starts | TT-20 |
+| Web portal (decided, not built yet) | TypeScript + React + Vite SPA in pnpm workspaces (`web-portal/`, `packages/api-client/`); Ant Design v6 themed by tokens; TanStack Query + TanStack Router; Zustand (session, organization, UI preferences only); API client generated from the OpenAPI document; MapLibre GL; Apache ECharts; react-i18next; Vitest + Playwright. Same origin as the API, no CORS; web refresh token in an `HttpOnly` cookie | TT-28, TT-29, CV-24, CV-25, IS-13 |
+| Driver mobile app | not decided (React Native + Expo proposed, Flutter the alternative) | open question 12 |
 
 ## Database
 
@@ -702,12 +703,17 @@ dashboard; its live-position and operating-rollup views live in `telemetry`,
 which depends on `fleet`, not the reverse). Their planners in
 `docs/planners/done/` record what was left out.
 
-`web-portal/` (React/TS) and `vehicle-app/` (Flutter) are planned monorepo
-components with no source yet; their directory structure and coding
-convention will be written once the first task for that part starts.
+`web-portal/` has no source yet; its stack is decided (TT-28) and its
+structure and rules are written in
+[web-portal-conventions.md](../../.claude/rules/web-portal-conventions.md) and
+[web-portal-ui.md](../../.claude/rules/web-portal-ui.md); the scaffold is
+planned in [web-portal-scaffold.md](../planners/web-portal-scaffold.md). This
+tree gains `web-portal/`, `packages/` and the root pnpm files when that
+planner is built. The driver mobile app (stack and folder name: open
+question 12) has no source and no decided stack.
 `web_portal_prototype/` is a throwaway clickable prototype of the portal's
-screens on mock data, not the start of `web-portal/`: it decides neither the
-stack (TT-20) nor the portal's conventions.
+screens on mock data, not the start of `web-portal/`: its code is not reused,
+only its screens and flows serve as a reference.
 
 ## Not yet in the MVP
 

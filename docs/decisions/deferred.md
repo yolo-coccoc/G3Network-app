@@ -2041,6 +2041,25 @@ items 9, 10, 12, 14, 18, 24, 30, 35, 47, 49, 54, 63, 74, 80, 82-85, 97, 103 and 
 - **Date recorded**: 2026-10-15
 - **Additional notes**: Before the first real data, check the refactor planner's "Next steps" for
   the items marked as due before deployment (real providers, webhook replay window, rate limits).
+  Added 2026-10-16: the web portal's production build is served as static files by the same
+  reverse proxy, on the API's origin (no CORS, IS-13), with long cache headers for hashed assets
+  and none for `index.html` (`docs/planners/web-portal-scaffold.md` §2.1).
+
+### 107. Machine-readable error codes in API error bodies
+
+- **Short description**: Domain errors answer `{"detail": "<English text>"}` with the HTTP status of
+  their base class (`app/libs/common/errors.py`); there is no stable code per error (e.g.
+  `VEHICLE_VIN_TAKEN`). Add a `code` field to every domain error body, one constant per exception
+  class, listed in the OpenAPI document so the generated client knows them.
+- **Purpose/role in the system**: Lets the portal (and later the mobile app) show a precise
+  Vietnamese message per business error instead of one generic message per status, without
+  matching English text.
+- **Reason for deferral**: The scaffold shows a Vietnamese message per status with the backend text
+  as secondary detail (owner confirmed 2026-10-16, scaffold planner D15); precise messages matter
+  once users meet many business errors on real screens.
+- **Related planner/feature**: `docs/planners/web-portal-scaffold.md` D15;
+  `.claude/rules/web-portal-conventions.md` §8; `backend-coding-conventions.md` §6.
+- **Date recorded**: 2026-10-16
 
 ---
 
