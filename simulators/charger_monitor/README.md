@@ -37,6 +37,11 @@ In `.env`, set `MONITOR_ADMIN_PHONE` and `MONITOR_ADMIN_PASSWORD` to an
 internal staff account (the bootstrap HEAD_ADMIN works). `MONITOR_API_URL`
 defaults to the API on the same machine (`http://127.0.0.1:8000`).
 
+If the backend refuses that login (wrong password, account locked), the
+monitor says so and stops trying until it is restarted: retrying on every page
+refresh would keep the account locked out for everyone (the portal too). Fix
+`.env` and restart it. An API that is not running yet is retried.
+
 ## Run
 
 The backend API must be running (`make backend-dev`), and the OCPP gateway

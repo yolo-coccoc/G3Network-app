@@ -2,8 +2,12 @@
 
 Logs in with the staff phone and password from the settings and sends the
 bearer token with every request. An access token lives about 15 minutes, so
-a ``401`` answer triggers one fresh login and a retry. Thread-safe: the web
-server answers the page from several threads. Standard library only.
+a ``401`` answer triggers one fresh login and a retry. A login the backend
+refuses (wrong password, lockout) is never tried again until a restart: the
+page refreshes every few seconds, and each attempt would count towards the
+backend's login lockout, keeping the admin account locked for everyone.
+Thread-safe: the web server answers the page from several threads. Standard
+library only.
 """
 
 from __future__ import annotations
@@ -58,6 +62,9 @@ class ApiClient:
         """
         self.settings = settings
         self._token: str | None = None
+        # Set once the backend refuses the login; from then on every request
+        # fails with it, without contacting the backend, until a restart.
+        self._login_refusal: ApiError | None = None
         self._lock = threading.Lock()
 
     def get(self, path: str, params: dict[str, object] | None = None) -> Any:
@@ -156,6 +163,11 @@ class ApiClient:
     def _current_token(self, *, force_login: bool = False) -> str:
         """Return a valid access token, logging in when needed.
 
+        A login answered with a ``4xx`` status (wrong password, lockout, a
+        locked account) is remembered and not sent again; an unreachable or
+        failing backend (no status, ``5xx``) is retried on the next request,
+        since the API may start later.
+
         Args:
             force_login: Log in again even if a token is held.
 
@@ -163,20 +175,35 @@ class ApiClient:
             The bearer token.
 
         Raises:
-            ApiError: The login was refused or the backend is unreachable.
+            ApiError: The login was refused (now or earlier in this run) or
+                the backend is unreachable.
         """
         with self._lock:
+            if self._login_refusal is not None:
+                refusal = self._login_refusal
+                raise ApiError(refusal.status, refusal.detail)
             if self._token is None or force_login:
-                answer = self._send(
-                    "POST",
-                    "/api/v1/auth/login",
-                    {
-                        "phone_number": self.settings.admin_phone,
-                        "password": self.settings.admin_password,
-                        "platform": LOGIN_PLATFORM,
-                    },
-                    None,
-                )
+                try:
+                    answer = self._send(
+                        "POST",
+                        "/api/v1/auth/login",
+                        {
+                            "phone_number": self.settings.admin_phone,
+                            "password": self.settings.admin_password,
+                            "platform": LOGIN_PLATFORM,
+                        },
+                        None,
+                    )
+                except ApiError as error:
+                    if error.status is None or error.status >= 500:
+                        raise
+                    self._token = None
+                    self._login_refusal = ApiError(
+                        error.status,
+                        f"login refused ({error.detail}); fix MONITOR_ADMIN_PHONE"
+                        " / MONITOR_ADMIN_PASSWORD in .env and restart the monitor",
+                    )
+                    raise ApiError(error.status, self._login_refusal.detail) from error
                 token = answer.get("access_token") if isinstance(answer, dict) else None
                 if not isinstance(token, str):
                     raise ApiError(None, "the login answer carries no access token")

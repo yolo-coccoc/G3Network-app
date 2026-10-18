@@ -43,7 +43,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
     """Load the settings, check the login, and serve the page until Ctrl+C.
 
     A failed first login is reported but does not stop the monitor: the page
-    shows the error and every refresh tries again (the API may start later).
+    shows the error. An unreachable API is tried again on every refresh (it
+    may start later); a refused login is not, until a restart, so a wrong
+    password cannot keep the admin account locked out.
 
     Args:
         arguments: Command-line arguments; ``None`` = ``sys.argv``.
@@ -85,7 +87,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         chargers = reader.list_chargers()
         print(f"logged in; {len(chargers)} charger(s) visible", flush=True)
     except ApiError as error:
-        print(f"backend API: {error.detail} (the page will keep trying)", flush=True)
+        retry = " (the page will keep trying)" if error.status is None else ""
+        print(f"backend API: {error.detail}{retry}", flush=True)
     try:
         while True:
             time.sleep(3600)
