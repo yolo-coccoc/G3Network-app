@@ -81,6 +81,23 @@ and both guns **Available** once it is connected.
 Both locations charge 3,500 VND/kWh + 8 % VAT. Chargers, guns, locations and
 prices are managed in the monitor's **Chargers** tab.
 
+**After a database reset** (`make db-reset`) all of this is gone. Rebuild it:
+
+1. `make identity-bootstrap` with `IDENTITY_BOOTSTRAP_ADMIN_PHONE` /
+   `IDENTITY_BOOTSTRAP_ADMIN_PASSWORD` in `backend/.env` set to the same
+   account as `MONITOR_ADMIN_*` and `PHONE_BANK_ADMIN_*`. If the passwords
+   differ, the monitor and the bank cannot log in. Fix either side, or reset
+   the HEAD_ADMIN's password with the SMS code flow
+   (`/auth/otp/send` with purpose `PASSWORD_RESET`, then `/auth/password/reset`;
+   the code is in the API log as `fake_sms_sent`).
+2. Monitor, **Chargers**: register the three chargers of the table above
+   (two `IEC_62196_T2_COMBO` guns each; `WD-01`: 240 kW, 1000 V, 300 A per
+   gun) with the price. Leave the real charger's serial and the test-day
+   address as placeholders until the test day.
+3. Sign up the test drivers on the phone numbers above
+   (`/auth/otp/send` with purpose `SIGN_UP`, then `/auth/sign-up`), and top
+   them up from the phone.
+
 ## 4. A full charge
 
 1. **Charger page:** on Gun 1, set the car's battery % and press **Plug in**
